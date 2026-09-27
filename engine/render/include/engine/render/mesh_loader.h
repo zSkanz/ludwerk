@@ -276,6 +276,11 @@ private:
     // reaching observable output, and a log is observable.
     std::vector<core::NameAtom> failed_;
     std::vector<rhi::TextureHandle> textures_;
+    // **What a `view://` name shows until something draws into it** (ADR
+    // 0107): one black pixel, shared by every such name and never destroyed
+    // by `forget` -- a screen that is off. The view host replaces the entry
+    // with the real texture while one exists.
+    rhi::TextureHandle viewBlack_{};
 };
 
 } // namespace engine::render

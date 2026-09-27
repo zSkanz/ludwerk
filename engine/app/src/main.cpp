@@ -697,6 +697,8 @@ int main(int argc, char** argv)
         options.windowTitle = config.windowTitle;
         options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
+        options.maxViewsPerFrame = config.maxViewsPerFrame;
+        options.maxViewResolution = config.maxViewResolution;
         // A server package, run with no posture of its own: what `--serve`
         // would have been, on the default port. A posture on the command line
         // still wins -- the package is also something a person can `--host` --

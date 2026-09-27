@@ -198,3 +198,26 @@ computer screen inside the game, a snow globe with its own weather:
   `WorldHost`s already run side by side.
 - **Drawing every `CameraTexture` every frame.** A wall of monitors would cost a
   view each; a budget and `UpdateInterval` make it a choice.
+
+## Amended while building (2026-09-27)
+
+What building §1 found, recorded here because each changes what this decision
+promises:
+
+- **A `CameraTexture` does not replicate.** §1 said it would, "so a server can
+  place the cameras of a camera game and every client draws its own feeds" --
+  but a `Camera` is excluded from the wire (a replica's view is its own), so a
+  feed would arrive naming a camera the replica does not have, and one kept
+  under its camera would not arrive at all. A feed is set up by the machine
+  that draws it: in a match, a client script makes its cameras and their
+  textures. The wire lists it as excluded, with that reason, and the protocol
+  did not change.
+- **A picture shows truest on a UI image.** The texture holds the finished
+  picture, colours encoded for a screen. The UI draws images in that space; a
+  `Decal` or a material reads its map as a colour to be lit, and the feed comes
+  out lighter. The manual says to show a monitor's picture on a `SurfaceGui`.
+- **A view is absent from its own picture**, rather than showing its previous
+  frame as §1 says: its texture is taken out of the library while it draws, so
+  nothing in the view can sample what is being written. Showing the previous
+  frame needs a second texture per view, which is the mirror-in-a-mirror case
+  of §1 and V3's to build.

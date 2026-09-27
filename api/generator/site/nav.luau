@@ -94,6 +94,7 @@ local Sections: { Section } = {
             { Slug = "particles-and-decals", Title = "Particles and decals" },
             { Slug = "post", Title = "Post effects" },
             { Slug = "surface-shaders", Title = "Surface shaders" },
+            { Slug = "views", Title = "Views: cameras on screens" },
             { Slug = "quality", Title = "Graphics quality settings" },
         },
     },

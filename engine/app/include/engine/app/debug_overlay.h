@@ -45,6 +45,7 @@ class AudioSystem;
 namespace engine::app {
 
 class EditorDrive;
+class ViewHost;
 class IconAtlas;
 class ThumbnailCache;
 class SurfaceCompiler;
@@ -306,6 +307,9 @@ public:
     // A pointer rather than a copy of the numbers, because what the panel shows
     // is a map of every cell's state and that is a vector the host already owns.
     void setStreamingTarget(const StreamingHost* streaming) noexcept { streaming_ = streaming; }
+    // The camera textures (ADR 0107), listed with their cost in both shells'
+    // stats. Not owned.
+    void setViews(const ViewHost* views) noexcept;
 
     // What the renderer did with the last frame, for the Stats readout.
     //

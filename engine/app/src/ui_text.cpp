@@ -1,5 +1,6 @@
 #include "engine/app/ui_text.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "engine/asset/image.h"
@@ -133,6 +134,37 @@ bool UiText::requestImageThunk(void* user, std::string_view urn, ui::ResolvedIma
 
 bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
 {
+    // A view's picture: looked up every time, because the texture behind the
+    // name is remade when its size changes.
+    if (urn.starts_with("view://")) {
+        ViewPicture picture;
+        const bool drawn = viewLookup_ && viewLookup_(urn.substr(7), picture) && picture.texture.valid();
+        auto entry = std::find_if(imageEntries_.begin(), imageEntries_.end(),
+                                  [&](const Image& image) { return image.urn == urn; });
+        if (entry == imageEntries_.end()) {
+            if (!drawn || imageEntries_.size() >= 1024)
+                return false;
+            Image image;
+            image.urn = std::string(urn);
+            image.borrowed = true;
+            image.state = ImageState::Ready;
+            imageEntries_.push_back(std::move(image));
+            entry = imageEntries_.end() - 1;
+        }
+        if (!drawn)
+            return false;
+        if (!(entry->texture == picture.texture)) {
+            entry->texture = picture.texture;
+            imagesChanged_ = true;
+        }
+        entry->width = picture.width;
+        entry->height = picture.height;
+        out.texture = static_cast<core::u32>(entry - imageEntries_.begin()) + 2u;
+        out.width = picture.width;
+        out.height = picture.height;
+        return true;
+    }
+
     for (core::usize index = 0; index < imageEntries_.size(); ++index) {
         const Image& image = imageEntries_[index];
         if (image.urn != urn) {
@@ -465,7 +497,7 @@ void UiText::destroy(rhi::IDevice& device)
     staging_.clear();
     staging_.shrink_to_fit();
     for (const Image& image : imageEntries_) {
-        if (image.texture.valid()) {
+        if (image.texture.valid() && !image.borrowed) {
             device.destroy(image.texture);
         }
     }

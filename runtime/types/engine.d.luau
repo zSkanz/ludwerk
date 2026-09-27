@@ -147,6 +147,9 @@ end
 declare extern type EnumBorderStrokePosition extends EnumItem with
 end
 
+declare extern type EnumViewQuality extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -1277,6 +1280,26 @@ declare extern type Decal extends Instance with
     Color: Color3
     --- 0 paints the image as it is; 1 paints nothing.
     Transparency: number
+end
+
+declare extern type CameraTexture extends Instance with
+    --- The camera it draws from. Nil draws nothing and keeps the last picture.
+    Camera: Camera?
+    --- The name it draws into: `view://` followed by this. Two with one name: the first made draws, and
+    --- the second says so in the log. Until the first picture, the texture is black -- a screen that is
+    --- off.
+    ViewName: string
+    --- The texture's size in pixels. Capped at `[render] max_view_resolution` on a side (1024 by
+    --- default); the cap keeps the shape.
+    Resolution: Vector2
+    --- Off keeps the last picture and costs nothing.
+    Enabled: boolean
+    --- Draw on one frame in this many. A wall of monitors at 4 costs a quarter of what it would at 1,
+    --- and a security feed does not need more.
+    UpdateInterval: number
+    --- `Simple` draws without shadows or the look's effects -- what a feed wants; `Full` draws the way
+    --- the main view does.
+    Quality: EnumViewQuality
 end
 
 declare extern type ParticleEmitter extends Instance with
@@ -3288,6 +3311,11 @@ declare Enum: {
         Inner: EnumBorderStrokePosition,
         GetEnumItems: (self: any) -> { EnumBorderStrokePosition },
     },
+    ViewQuality: {
+        Full: EnumViewQuality,
+        Simple: EnumViewQuality,
+        GetEnumItems: (self: any) -> { EnumViewQuality },
+    },
 }
 
 declare Vector3: {
@@ -3556,6 +3584,7 @@ declare Instance: {
         & (("Camera") -> Camera)
         & (("PointLight") -> PointLight)
         & (("Decal") -> Decal)
+        & (("CameraTexture") -> CameraTexture)
         & (("ParticleEmitter") -> ParticleEmitter)
         & (("SpotLight") -> SpotLight)
         & (("BloomEffect") -> BloomEffect)

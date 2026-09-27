@@ -147,6 +147,15 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.networkServer = *value;
     if (const std::optional<std::string_view> value = document.string("network.role"))
         config.serverRole = *value == "server";
+    // Whole numbers in a sane range; anything else keeps the default.
+    const auto count = [&document](const char* key, core::u32 lowest, core::u32 highest, core::u32& out) {
+        if (const std::optional<f64> value = document.number(key);
+            value.has_value() && *value >= static_cast<f64>(lowest) && *value <= static_cast<f64>(highest))
+            out = static_cast<core::u32>(*value);
+    };
+    count("render.max_views_per_frame", 0, 64, config.maxViewsPerFrame);
+    count("render.max_view_resolution", 16, 4096, config.maxViewResolution);
+    count("render.max_sub_worlds", 0, 8, config.maxSubWorlds);
     if (const std::optional<std::string_view> value = document.string("project.company"))
         config.company = *value;
     if (const std::optional<bool> value = document.boolean("window.fullscreen"))

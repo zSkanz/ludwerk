@@ -678,6 +678,7 @@ Every other concrete class is deliberately off the wire, and this is why.
 | ScrollFrame | Screen-space UI. The same as `ScreenGui`. |
 | UICorner | Screen-space UI. The same as `ScreenGui`. |
 | UIGradient | Screen-space UI. The same as `ScreenGui`. |
+| CameraTexture | Its camera does not replicate -- a replica's view is its own -- so a feed sent without one would show nothing, and one kept under its camera would not arrive at all. A feed is set up by the machine that draws it (ADR 0107's finding). |
 | UIStroke | Screen-space UI. The same as `ScreenGui`. |
 | UIListLayout | Screen-space UI. The same as `ScreenGui`. |
 | UIPadding | Screen-space UI. The same as `ScreenGui`. |

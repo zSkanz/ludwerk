@@ -34,6 +34,12 @@ struct RenderTarget
     rhi::TextureFormat colorFormat = rhi::TextureFormat::Undefined;
     core::u32 width = 0;
     core::u32 height = 0;
+    // **Which view this frame continues** (ADR 0107). A renderer remembers a
+    // view from frame to frame -- the exposure it adapted to, the shadow fit
+    // it keeps, the targets sized to it -- and a camera drawing into a texture
+    // is a second view with a history of its own. The main view is 0, and a
+    // frame that draws only it behaves exactly as before views existed.
+    core::u32 view = 0;
 };
 
 // The counters a frame leaves behind, for `DebugService` and the perf table.
@@ -70,6 +76,16 @@ public:
     // overlay draws after it into the same command list.
     virtual void render(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target, const RenderWorld& world,
                         const MeshCache& meshes) = 0;
+
+    // Forgets a view other than the main one, and frees what it held. A view
+    // nothing draws any more -- a camera texture destroyed, a sub-world
+    // unloaded -- would otherwise keep a full set of screen-sized targets.
+    // Call it outside a frame's command list, or after the list is submitted.
+    virtual void releaseView(rhi::IDevice& device, core::u32 view)
+    {
+        (void)device;
+        (void)view;
+    }
 
     // False before `create` succeeds, and after a `create` that failed. A
     // renderer that never started must be skippable rather than fatal: a machine

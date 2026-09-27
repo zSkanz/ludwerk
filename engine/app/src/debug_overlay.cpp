@@ -2,6 +2,7 @@
 
 #include "engine/app/editor_drive.h"
 #include "engine/app/streaming_host.h"
+#include "engine/app/view_host.h"
 #include "engine/app/world_panels.h"
 #include "engine/asset/terrain_palette.h"
 #include "engine/audio/audio.h"
@@ -430,6 +431,9 @@ struct FrameTimeMeter
 // it reports the window it displayed.
 FrameTimeMeter g_frameTime;
 
+// The camera textures, for the stats (ADR 0107): set once by the frame loop.
+const ViewHost* g_views = nullptr;
+
 // Three facts the host already knows, plus the sampled frame time above.
 void drawStats(const Frame& frame, const RenderCounters& counters)
 {
@@ -470,6 +474,22 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
     ImGui::Text("draws %u (%u instanced) for %u object%s", counters.drawCalls, counters.instancedDraws,
                 counters.visibleObjects, counters.visibleObjects == 1u ? "" : "s");
     ImGui::Text("lod draws %u, %s triangles", counters.lodDraws, formatCount(counters.triangles).c_str());
+
+    // **Every view, with what it costs** (ADR 0107): a camera texture is the
+    // world drawn again, and a wall of them is where a frame's time goes.
+    if (g_views != nullptr && !g_views->views().empty()) {
+        ImGui::SeparatorText("Views");
+        ImGui::TextDisabled("%u a frame at most", g_views->perFrame());
+        for (const ViewHost::View& view : g_views->views()) {
+            if (!view.drawn) {
+                ImGui::Text("view://%s  %u x %u  not drawn yet", view.name.c_str(), view.width, view.height);
+                continue;
+            }
+            const core::u64 ago = frame.index >= view.lastDrawn ? frame.index - view.lastDrawn : 0;
+            ImGui::Text("view://%s  %u x %u  %.2f ms, %llu frame%s ago", view.name.c_str(), view.width, view.height,
+                        view.milliseconds, static_cast<unsigned long long>(ago), ago == 1 ? "" : "s");
+        }
+    }
 }
 
 // Which panel the editor is drawing on, from the panel's own background.
@@ -8233,7 +8253,7 @@ void drawTargetCard(ExportUi& ui, std::string_view name, const IconAtlas* icons)
     else if (status->ready && dedicated && !server && ui.server[0] == 0) {
         // A client of a dedicated server has to be told where the server is;
         // "joins ?" left somebody guessing what the question mark wanted.
-        state = "client -- type the server's address above";
+        state = "client -- no server address";
         colour = ImGui::GetColorU32(themeColor(palette().warning));
     }
     else if (status->ready) {
@@ -12560,6 +12580,11 @@ void DebugOverlay::render(rhi::ICmdList& cmd, rhi::TextureHandle target, const F
     cmd.popDebugGroup();
 }
 
+void DebugOverlay::setViews(const ViewHost* views) noexcept
+{
+    g_views = views;
+}
+
 void DebugOverlay::preserveExplorerOnNextWorld() noexcept
 {
     g_keepExpansionOnce = true;
@@ -12625,6 +12650,11 @@ void DebugOverlay::render(rhi::ICmdList&, rhi::TextureHandle, const Frame&)
 // live in the half of this file that ImGui compiles. Leaving the process log
 // sink alone is the whole behaviour -- the log FILE keeps every line, which is
 // where a shipping build's log was always going to be read from.
+void DebugOverlay::setViews(const ViewHost* views) noexcept
+{
+    (void)views;
+}
+
 void DebugOverlay::preserveExplorerOnNextWorld() noexcept
 {}
 

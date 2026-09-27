@@ -55,6 +55,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Cameras on screens** (ADR 0107, V0 and V1). A `CameraTexture` draws a
+  `Camera` into `view://<ViewName>`, and anything that takes a texture shows
+  it: an `ImageLabel` on a `SurfaceGui` or a `ScreenGui`, a `Decal`, a
+  material's map.
+  - Feeds are drawn before the main view, each with its own exposure, shadow
+    fit and targets.
+  - A budget (`[render] max_views_per_frame`, 4) draws the oldest picture
+    first; `UpdateInterval` and `Resolution` set what each costs.
+  - `Quality = Simple` leaves out shadows and effects.
+  - F3 and the editor's Stats list every view and its cost.
+  - A camera texture does not replicate, because a camera does not.
+  - `examples/26-security-cameras`: a security office at night, six feeds on a
+    monitor wall and one on a tablet.
 - **The editor, remade after VS Code** (the owner's queue of 2026-09-27, Q2):
   - Dark Modern and Light Modern colours and metrics.
   - A command palette (`Ctrl+Shift+P`, `F1`) holding every menu and toolbar
@@ -240,7 +253,7 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   reach the engine's log, once each.
 - **Ctrl+Shift+S overwrote the open scene** instead of asking for a name.
 - Escape now closes the Export window. A client of a dedicated server with no
-  address says to type one, instead of "joins ?".
+  address says "no server address", instead of "joins ?".
 - Two zero-length `memcpy`s from a null pointer that UBSan stops on: the UI
   gradient upload (every capture gate under the sanitizers) and an archive
   test.

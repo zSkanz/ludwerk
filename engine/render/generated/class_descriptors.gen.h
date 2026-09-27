@@ -79,6 +79,7 @@ inline constexpr scene::EnumId ApplyStrokeModeEnumId = 36;
 inline constexpr scene::EnumId LineJoinModeEnumId = 37;
 inline constexpr scene::EnumId StrokeSizingModeEnumId = 38;
 inline constexpr scene::EnumId BorderStrokePositionEnumId = 39;
+inline constexpr scene::EnumId ViewQualityEnumId = 40;
 
 } // namespace generated
 
@@ -156,6 +157,22 @@ scene::Value getDecalTransparency(const scene::World& world, core::InstanceId id
 bool setDecalTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachDecalComponents(scene::World& world, core::InstanceId id);
 void detachDecalComponents(scene::World& world, core::InstanceId id);
+
+// CameraTexture
+scene::Value getCameraTextureCamera(const scene::World& world, core::InstanceId id);
+bool setCameraTextureCamera(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraTextureViewName(const scene::World& world, core::InstanceId id);
+bool setCameraTextureViewName(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraTextureResolution(const scene::World& world, core::InstanceId id);
+bool setCameraTextureResolution(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraTextureEnabled(const scene::World& world, core::InstanceId id);
+bool setCameraTextureEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraTextureUpdateInterval(const scene::World& world, core::InstanceId id);
+bool setCameraTextureUpdateInterval(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraTextureQuality(const scene::World& world, core::InstanceId id);
+bool setCameraTextureQuality(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachCameraTextureComponents(scene::World& world, core::InstanceId id);
+void detachCameraTextureComponents(scene::World& world, core::InstanceId id);
 
 // ParticleEmitter
 scene::Value getParticleEmitterEnabled(const scene::World& world, core::InstanceId id);

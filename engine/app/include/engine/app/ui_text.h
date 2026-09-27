@@ -7,6 +7,7 @@
 // which is exactly what an app is for.
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -81,6 +82,20 @@ public:
     // at all until one could reach it.
     [[nodiscard]] bool requestImage(std::string_view urn, ui::ResolvedImage& out);
 
+    // **Where a `view://` picture comes from** (ADR 0107): a texture something
+    // draws into at run time, lent by whoever draws it and looked up each time
+    // it is asked for, because it is remade whenever its size changes. Given
+    // the name after `view://`; false while nothing draws under that name,
+    // which draws as the element's own tint.
+    struct ViewPicture
+    {
+        rhi::TextureHandle texture{};
+        core::u32 width = 0;
+        core::u32 height = 0;
+    };
+    using ViewLookup = std::function<bool(std::string_view name, ViewPicture& out)>;
+    void setViewLookup(ViewLookup lookup) { viewLookup_ = std::move(lookup); }
+
     // Invalid until something has been rasterised, which is the state a build
     // with no font file stays in -- there the built-in vector face draws solid
     // rectangles and samples nothing.
@@ -146,6 +161,8 @@ private:
     {
         std::string urn;
         rhi::TextureHandle texture{};
+        // A view's texture, lent and not owned: never loaded, never destroyed.
+        bool borrowed = false;
         core::u32 width = 0;
         core::u32 height = 0;
         ImageState state = ImageState::Requested;
@@ -172,6 +189,7 @@ private:
     bool imagesChanged_ = false;
     std::vector<Image> imageEntries_;
     std::vector<rhi::TextureHandle> images_;
+    ViewLookup viewLookup_;
 
     static bool requestImageThunk(void* user, std::string_view urn, ui::ResolvedImage& out);
     void loadPendingImages(rhi::IDevice& device, rhi::ICmdList& cmd);

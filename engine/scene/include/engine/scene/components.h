@@ -440,6 +440,24 @@ struct DecalComponent
     f32 transparency = 0.0f;
 };
 
+// `CameraTexture` (ADR 0107): a camera drawing into a `view://` texture.
+// Rendering only -- the app's view host reads this and nothing in the
+// simulation does.
+struct CameraTextureComponent
+{
+    // The `Camera` it draws from; invalid draws nothing.
+    core::InstanceId camera;
+    // The name after `view://`.
+    core::NameAtom viewName;
+    // Pixels, as authored; the host caps it at the project's limit.
+    core::Vec2 resolution{512.0f, 288.0f};
+    bool enabled = true;
+    // Draw on one frame in this many.
+    u32 updateInterval = 1;
+    // `Enum.ViewQuality`: 0 Full, 1 Simple.
+    i32 quality = 1;
+};
+
 struct SpotLightComponent
 {
     // As on `PointLightComponent` (ADR 0095).

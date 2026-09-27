@@ -1668,6 +1668,66 @@ local Classes: { Schema.Class } = {
         },
     },
     {
+        Name = "CameraTexture",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("Workspace", "Model", "BasePart", "Camera"),
+        Storage = "CameraTexture",
+        Doc = "A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` "
+            .. "followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, "
+            .. "a `Decal`, a material's map -- can show it. A wall of security monitors is one of these per "
+            .. "camera.\n\n**A budget draws them**: at most `[render] max_views_per_frame` a frame (4 by "
+            .. "default), the oldest picture first, so twelve monitors take turns instead of costing twelve "
+            .. "views. Drawn before the main view, so a feed shows this frame's picture; a camera that sees its "
+            .. "own texture sees the previous one. Rendering only: nothing here reaches the simulation, and a "
+            .. "dedicated server draws nothing.\n\n**It does not replicate**, because a camera does not -- a "
+            .. "replica's view is its own. A feed is set up by the machine that draws it: in a match, a "
+            .. "client script makes its cameras and their textures.",
+        Properties = {
+            {
+                Name = "Camera",
+                Type = "Camera?",
+                Doc = "The camera it draws from. Nil draws nothing and keeps the last picture.",
+            },
+            {
+                Name = "ViewName",
+                Type = "string",
+                Doc = "The name it draws into: `view://` followed by this. Two with one name: the first made "
+                    .. "draws, and the second says so in the log. Until the first picture, the texture is black -- "
+                    .. "a screen that is off.",
+            },
+            {
+                Name = "Resolution",
+                Type = "Vector2",
+                Default = "Vector2.new(512, 288)",
+                ErrorKey = "scene.err.size2_positive",
+                Doc = "The texture's size in pixels. Capped at `[render] max_view_resolution` on a side "
+                    .. "(1024 by default); the cap keeps the shape.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Off keeps the last picture and costs nothing.",
+            },
+            {
+                Name = "UpdateInterval",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.whole_number_at_least_one",
+                Doc = "Draw on one frame in this many. A wall of monitors at 4 costs a quarter of what it would "
+                    .. "at 1, and a security feed does not need more.",
+            },
+            {
+                Name = "Quality",
+                Type = "Enum.ViewQuality",
+                Default = "Enum.ViewQuality.Simple",
+                Doc = "`Simple` draws without shadows or the look's effects -- what a feed wants; `Full` draws "
+                    .. "the way the main view does.",
+            },
+        },
+    },
+    {
         Name = "ParticleEmitter",
         Extends = "Instance",
         Module = "render",

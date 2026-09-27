@@ -89,6 +89,14 @@ struct ProjectConfig
     // server starts with no arguments.
     bool serverRole = false;
 
+    // **What the views may cost** (ADR 0107), `[render]`: how many camera
+    // textures are drawn in one frame, the largest side one may have, and how
+    // many sub-worlds may run. Settings rather than constants, because a
+    // camera game on a phone and one on a desktop want different answers.
+    core::u32 maxViewsPerFrame = 4;
+    core::u32 maxViewResolution = 1024;
+    core::u32 maxSubWorlds = 2;
+
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and
     // left empty rather than stamped wrong -- and `[project] company` is who

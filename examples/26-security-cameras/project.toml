@@ -1,0 +1,23 @@
+# A security office (ADR 0107): six cameras around a building, a wall of
+# monitors showing all six, and a tablet showing one full size.
+#
+# No scene file: the script builds the building, because how each feed is made
+# is the subject.
+
+[project]
+name = "Ludwerk Security Cameras"
+id = "dev.ludwerk.security-cameras"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Security cameras"
+width = 1280
+height = 720
+
+# How many camera textures one frame draws, and the largest side one may have.
+# Six feeds at every other frame and one at every frame is about two and a
+# half views a frame, under the ceiling of four.
+[render]
+max_views_per_frame = 4
+max_view_resolution = 1024

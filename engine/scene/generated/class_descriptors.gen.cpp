@@ -5289,6 +5289,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     borderStrokePositionDesc.docKey = {};
     borderStrokePositionDesc.items = borderStrokePositionItems;
     enums.registerEnum(borderStrokePositionDesc);
+
+    // --- ViewQuality ---
+    static std::array<EnumItemDesc, 2> viewQualityItems;
+    viewQualityItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Full"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Simple"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor viewQualityDesc;
+    viewQualityDesc.name = atoms.intern("ViewQuality");
+    viewQualityDesc.docKey = {};
+    viewQualityDesc.items = viewQualityItems;
+    enums.registerEnum(viewQualityDesc);
 }
 
 } // namespace engine::scene::generated

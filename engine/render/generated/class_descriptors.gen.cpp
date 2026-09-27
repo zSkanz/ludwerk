@@ -400,6 +400,91 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     decalDesc.detachComponents = native::detachDecalComponents;
     classes.registerClass(decalDesc);
 
+    // --- CameraTexture ---
+    static std::array<scene::PropertyDesc, 6> cameraTextureProperties;
+    cameraTextureProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Camera"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("Camera"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The camera it draws from. Nil draws nothing and keeps the last picture.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getCameraTextureCamera,
+            .set = native::setCameraTextureCamera,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ViewName"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The name it draws into: `view://` followed by this. Two with one name: the first made draws, and the second says so in the log. Until the first picture, the texture is black -- a screen that is off.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getCameraTextureViewName,
+            .set = native::setCameraTextureViewName,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Resolution"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The texture's size in pixels. Capped at `[render] max_view_resolution` on a side (1024 by default); the cap keeps the shape.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.size2_positive"),
+            .get = native::getCameraTextureResolution,
+            .set = native::setCameraTextureResolution,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Off keeps the last picture and costs nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getCameraTextureEnabled,
+            .set = native::setCameraTextureEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("UpdateInterval"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Draw on one frame in this many. A wall of monitors at 4 costs a quarter of what it would at 1, and a security feed does not need more.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.whole_number_at_least_one"),
+            .get = native::getCameraTextureUpdateInterval,
+            .set = native::setCameraTextureUpdateInterval,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Quality"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ViewQuality"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "`Simple` draws without shadows or the look's effects -- what a feed wants; `Full` draws the way the main view does.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getCameraTextureQuality,
+            .set = native::setCameraTextureQuality,
+        },
+    }};
+    scene::ClassDescriptor cameraTextureDesc;
+    cameraTextureDesc.name = atoms.intern("CameraTexture");
+    cameraTextureDesc.super = instanceClass;
+    cameraTextureDesc.flags = scene::ClassFlags::None;
+    cameraTextureDesc.defaultName = atoms.intern("CameraTexture");
+    cameraTextureDesc.doc = "A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. A wall of security monitors is one of these per camera.\012\012**A budget draws them**: at most `[render] max_views_per_frame` a frame (4 by default), the oldest picture first, so twelve monitors take turns instead of costing twelve views. Drawn before the main view, so a feed shows this frame's picture; a camera that sees its own texture sees the previous one. Rendering only: nothing here reaches the simulation, and a dedicated server draws nothing.\012\012**It does not replicate**, because a camera does not -- a replica's view is its own. A feed is set up by the machine that draws it: in a match, a client script makes its cameras and their textures.";
+    static constexpr std::array<std::string_view, 6> cameraTextureParents{{"Workspace", "Model", "BasePart", "Camera", "ReplicatedStorage", "ServerStorage"}};
+    cameraTextureDesc.parents = cameraTextureParents;
+    cameraTextureDesc.properties = cameraTextureProperties;
+    cameraTextureDesc.attachComponents = native::attachCameraTextureComponents;
+    cameraTextureDesc.detachComponents = native::detachCameraTextureComponents;
+    classes.registerClass(cameraTextureDesc);
+
     // --- ParticleEmitter ---
     static std::array<scene::PropertyDesc, 16> particleEmitterProperties;
     particleEmitterProperties = {{

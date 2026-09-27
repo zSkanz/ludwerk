@@ -1291,7 +1291,8 @@ comments; static). Sections: `[project]` name, id (reverse-DNS), version,
 §3's lifecycle) — `engine = "0.1"`, `icon`; `[window]` title, size; `[dev]`
 port; `[assets]` extra source dirs, import options; `[permissions]` net_serve,
 fs_paths (§7); `[memory]` optional script-heap hard cap and budget overrides;
-`[graphics]` the quality family (below); `[build]` targets, bytecode opt level.
+`[graphics]` the quality family (below); `[render]` what the views may cost
+(below); `[build]` targets, bytecode opt level.
 
 **Five of those sections are read and three are not.** What reaches the engine or
 the CLI is `[project]` `name`, `id`, `icon` and `scene`; `[window]` `title` and
@@ -1326,6 +1327,17 @@ auto_exposure = true
 Three layers, each overriding the one before: the preset, then this table, then
 the host's own flags (`--quality=`, `--render-scale=`, `--no-bloom`, …). `high`
 is exactly what the engine ships with, so a project that says nothing gets it.
+
+**`[render]` — what the views may cost (ADR 0107).** A `CameraTexture` is the
+world drawn again from another camera, so how many are drawn in one frame is a
+budget the project sets rather than a constant the engine picks:
+
+```toml
+[render]
+max_views_per_frame = 4    # camera textures drawn in one frame; the oldest picture first
+max_view_resolution = 1024 # the largest side a view's texture may have
+max_sub_worlds = 2         # sub-worlds running at once (ADR 0107 §3, not yet built)
+```
 
 **`[project] icon`** is a project-relative path to a PNG or a multi-size `.ico`.
 The dev host sets it on its window; `ludwerk build` embeds it in the packaged

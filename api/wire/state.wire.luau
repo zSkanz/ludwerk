@@ -1433,6 +1433,12 @@ local Excluded: { Schema.Excluded } = {
     { Name = "ScrollFrame", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UICorner", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIGradient", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    {
+        Name = "CameraTexture",
+        Reason = "Its camera does not replicate -- a replica's view is its own -- so a feed sent without "
+            .. "one would show nothing, and one kept under its camera would not arrive at all. A feed is set "
+            .. "up by the machine that draws it (ADR 0107's finding).",
+    },
     { Name = "UIStroke", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIListLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIPadding", Reason = "Screen-space UI. The same as `ScreenGui`." },

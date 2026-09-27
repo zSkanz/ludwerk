@@ -204,6 +204,9 @@ void MeshLoader::destroy(rhi::IDevice& device)
         if (texture.valid())
             device.destroy(texture);
     }
+    if (viewBlack_.valid())
+        device.destroy(viewBlack_);
+    viewBlack_ = {};
     textures_.clear();
     failed_.clear();
 }
@@ -366,6 +369,26 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     const auto load = [&](core::NameAtom urn, bool srgb) {
         if (urn.id == 0 || library.find(urn).valid())
             return;
+        // **A `view://` name is drawn, not read** (ADR 0107): the view host
+        // puts the texture here while something draws into it. Until then it
+        // is black, never a file lookup and never the missing-map warning.
+        if (world.atoms().text(urn).starts_with("view://")) {
+            if (!viewBlack_.valid()) {
+                viewBlack_ = device.createTexture({
+                    .format = rhi::TextureFormat::Rgba8Unorm,
+                    .usage = rhi::TextureUsage::Sampled,
+                    .width = 1,
+                    .height = 1,
+                    .debugName = "view-black",
+                });
+                const std::array<std::byte, 4> black{std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0xFF}};
+                if (viewBlack_.valid())
+                    cmd.uploadTexture(viewBlack_, black, 0);
+            }
+            if (viewBlack_.valid())
+                library.set(urn, viewBlack_, 1, 1);
+            return;
+        }
         if (std::binary_search(failed_.begin(), failed_.end(), urn,
                                [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; })) {
             return;
@@ -874,7 +897,7 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
         // The texture, whose handle this owns the lifetime of once it is out of
         // the library. Destroyed here rather than left: a dev session that
         // reloads one 4K map fifty times would otherwise hold fifty of them.
-        if (const rhi::TextureHandle held = textures.take(urn); held.valid()) {
+        if (const rhi::TextureHandle held = textures.take(urn); held.valid() && held != viewBlack_) {
             device.destroy(held);
             ++dropped;
         }

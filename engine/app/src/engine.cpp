@@ -60,6 +60,7 @@
 #include "engine/app/terrain_overlay.h"
 #include "engine/app/thumbnails.h"
 #include "engine/app/ui_text.h"
+#include "engine/app/view_host.h"
 #include "engine/app/world_host.h"
 #include "engine/app/world_ui.h"
 #include "engine/asset/content.h"
@@ -887,6 +888,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // library rather than inside it: a texture is not a property of a mesh, and
     // two materials naming one image share one upload.
     render::TextureLibrary textureLibrary;
+    // Every `CameraTexture`'s texture (ADR 0107), drawn before the main view.
+    ViewHost viewHost;
+    viewHost.setLimits(options.maxViewsPerFrame, options.maxViewResolution);
+    // Reused from frame to frame, so a view's extraction allocates once.
+    render::RenderWorld viewSnapshot;
     render::MeshCache meshCache;
     render::MeshLoader meshLoader;
     core::u64 contentRefreshesSeen = 0;
@@ -1095,6 +1101,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // The same mounts the meshes come from, so `TextLabel.Font` can name a face
     // out of the project the same way `MeshPart.MeshContent` names a model.
     uiText.setMounts(&contentMounts);
+    // An `ImageLabel` showing `view://<name>` shows what that view draws.
+    uiText.setViewLookup([&viewHost](std::string_view name, UiText::ViewPicture& out) {
+        const ViewHost::View* view = viewHost.find(name);
+        if (view == nullptr || !view->texture.valid())
+            return false;
+        out = UiText::ViewPicture{view->texture, view->width, view->height};
+        return true;
+    });
 
     if (isProject) {
         // Mounted after the pack so a loose chunk overrides a built one,
@@ -1443,6 +1457,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // outlives every world this process builds, which is the whole reason
         // `setWorld` is idempotent.
         overlay->setStreamingTarget(&streaming);
+        overlay->setViews(&viewHost);
         if (!options.editorDrive.empty() && editorDrive.load(options.editorDrive))
             overlay->setDrive(&editorDrive);
         // Re-pointed on every reload, unlike streaming: the mixer belongs to the
@@ -3795,6 +3810,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     return;
                 meshLoader.syncPrimitives(*device, *cmd, world, meshCache, meshLibrary);
                 (void)meshLoader.syncTextures(*device, *cmd, world, textureLibrary);
+                // The camera textures of the game's own world -- not of a stamp
+                // being edited, which has no game running in it.
+                if (&world == &host->world() && stageOf() == nullptr)
+                    viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get());
                 // The palette's picture: the tileset of the tilemap the Tiles
                 // tool would paint, as loaded (the 2D layer).
                 if (options.editor && &world == &authored()) {
@@ -4244,6 +4263,64 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 frame.index + 1 >= options.frames)
                 surfaceCompiler->drain();
 #endif
+            // **The camera textures, before the main view** (ADR 0107), so a
+            // feed on a monitor shows this frame's picture. Each is the world
+            // extracted from its camera and drawn with its own renderer state;
+            // a camera that sees its own texture sees the last picture.
+            if (useRenderer && stageOf() == nullptr) {
+                for (ViewHost::View* view : viewHost.due(host->world(), frame.index)) {
+                    const scene::World& world = host->world();
+                    const scene::CameraTextureComponent* source = world.cameraTextures().find(view->owner);
+                    const scene::CameraComponent* camera =
+                        source != nullptr ? world.cameras().find(source->camera) : nullptr;
+                    if (camera == nullptr)
+                        continue;
+                    const core::u64 started = platform::nowNs();
+                    // **A view never samples itself.** A decal or a material
+                    // showing this view's own name, seen by this view's
+                    // camera, would read the texture being drawn into; taken
+                    // out of the library while it draws, it is simply absent
+                    // from its own picture.
+                    const rhi::TextureHandle own = textureLibrary.take(view->urn);
+                    const render::ViewOverride lens{.cframe = camera->cframe,
+                                                    .fieldOfView = camera->fieldOfView,
+                                                    .nearPlane = camera->nearPlane,
+                                                    .farPlane = camera->farPlane,
+                                                    .projection = camera->projection,
+                                                    .orthographicSize = camera->orthographicSize};
+                    render::extract(world, host->workspace(), host->lighting(), meshLibrary,
+                                    static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
+                                    host->animation(), renderAlpha, &transformHistory, viewSnapshot, &lens, {},
+                                    &textureLibrary, terrainNodes);
+                    terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot);
+                    particles.append(viewSnapshot);
+                    skyLoader.append(viewSnapshot);
+                    viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
+                    // `Simple`: no shadows and none of the look's effects; the
+                    // sky and the air stay, because a feed is of this world.
+                    if (source->quality == 1) {
+                        viewSnapshot.environment.globalShadows = false;
+                        viewSnapshot.look.bloomGoverned = true;
+                        viewSnapshot.look.bloomEnabled = false;
+                        viewSnapshot.look.graded = false;
+                        viewSnapshot.look.blurSize = 0.0f;
+                        viewSnapshot.look.depthOfField = false;
+                        viewSnapshot.look.sunRays = false;
+                    }
+                    renderer->render(*device, *cmd,
+                                     {.color = view->texture,
+                                      .colorFormat = ViewFormat,
+                                      .width = view->width,
+                                      .height = view->height,
+                                      .view = view->rendererView},
+                                     viewSnapshot, meshCache);
+                    if (own.valid())
+                        textureLibrary.set(view->urn, own, view->width, view->height);
+                    ViewHost::drawn(*view, frame.index,
+                                    static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
+                }
+            }
+
             if (useRenderer) {
                 renderer->render(
                     *device, *cmd,
@@ -4600,6 +4677,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     }
 
     skyLoader.destroy(*device);
+    viewHost.destroy(*device, textureLibrary, renderer.get());
     uiText.destroy(*device);
     uiRenderer.destroy(*device);
     debugRenderer.destroy(*device);

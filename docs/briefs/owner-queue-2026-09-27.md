@@ -178,6 +178,8 @@ details included. After Q1, and before anything else; defects still come first.
 
 ## Q3 — then
 
-Views ([`views-kickoff.md`](views-kickoff.md), ADR 0107), whose V0 was begun
-and set aside with its first change saved outside the tree; then the AI panel
+Views ([`views-kickoff.md`](views-kickoff.md), ADR 0107): V0 and V1 built on
+2026-09-27 -- more than one view a frame, `view://`, `CameraTexture` and
+`examples/26-security-cameras`, the owner's camera game. V2 (`ViewportFrame`),
+V3 (mirrors and portals) and V4 (`SubWorld`) next; then the AI panel
 ([`ai-kickoff.md`](ai-kickoff.md), ADR 0108).

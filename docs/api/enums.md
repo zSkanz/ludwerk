@@ -526,3 +526,12 @@ Alignment along the Y axis: a `TextLabel`'s `TextYAlignment` and a layout's `Ver
 | `Top` | 0 |  |
 | `Center` | 1 |  |
 | `Bottom` | 2 |  |
+
+## Enum.ViewQuality
+
+How much of the renderer a `CameraTexture` asks for.
+
+| Item | Value | Description |
+|---|---|---|
+| `Full` | 0 | Everything the main view draws: shadows and the look's effects. |
+| `Simple` | 1 | No shadows and no effects -- a feed, a monitor, a minimap. |

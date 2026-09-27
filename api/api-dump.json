@@ -469,6 +469,43 @@
       "Events": []
     },
     {
+      "Name": "CameraTexture",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Camera",
+          "Type": "Camera?"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Quality",
+          "Type": "Enum.ViewQuality",
+          "Default": "Enum.ViewQuality.Simple"
+        },
+        {
+          "Name": "Resolution",
+          "Type": "Vector2",
+          "Default": "Vector2.new(512, 288)"
+        },
+        {
+          "Name": "UpdateInterval",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ViewName",
+          "Type": "string"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "CharacterBody",
       "Extends": "BasePart",
       "Tags": [],
@@ -8521,6 +8558,19 @@
         {
           "Name": "Top",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "ViewQuality",
+      "Items": [
+        {
+          "Name": "Full",
+          "Value": 0
+        },
+        {
+          "Name": "Simple",
+          "Value": 1
         }
       ]
     }

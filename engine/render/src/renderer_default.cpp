@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -387,7 +388,104 @@ struct EnvironmentCache
     }
 };
 
-class DefaultRenderer final : public IRenderer
+// **Everything a renderer remembers about ONE view** (ADR 0107): the targets
+// sized to it, the exposure it has adapted to, the cascade fit it keeps, the
+// environment chain baked for its sky, and the look's images at its size.
+//
+// A frame used to draw one view, and these were plain members. A camera that
+// draws into a texture is a second view in the same frame, and sharing this
+// with the first would be two exposures fighting over one history and every
+// screen-sized target rebuilt twice a frame as the sizes alternated -- which is
+// exactly what a content-browser thumbnail did to the editor's viewport before
+// this existed.
+//
+// **A base the renderer swaps, not a field it indexes.** `DefaultRenderer`
+// derives from it privately, so four thousand lines go on naming `hdr_` and
+// `exposure_` as they always did, and `render` swaps the view it was asked for
+// into the base and the previous one out into `views_`. The main view is view
+// 0 and a frame that draws only it never swaps anything, which is what keeps a
+// game that uses no views drawing exactly as before.
+struct ViewState
+{
+    rhi::TextureHandle hdr_{};
+    rhi::TextureHandle depth_{};
+    // Tonemapped and sRGB-encoded, so the anti-aliasing resolve has an image to
+    // find edges in. FXAA works on perceptual luminance, which is what makes it
+    // a post-tonemap pass rather than a pre-tonemap one.
+    rhi::TextureHandle ldr_{};
+    // Half resolution, and the blur's ping-pong partner. Half because sixteen
+    // taps at full resolution is four times the cost for a term the blur is
+    // about to spread anyway (R16).
+    rhi::TextureHandle occlusion_{};
+    // One channel: which pixels belong to something a tool has selected. Only
+    // ever written when a draw carries `outlined`, which no game does.
+    rhi::TextureHandle outlineMask_{};
+    rhi::TextureHandle occlusionBlur_{};
+    // Full resolution, one channel: the sun's contact shadows. Full rather than
+    // half like the occlusion term, because what it carries is the sharp line
+    // where a caster meets the ground.
+    rhi::TextureHandle contact_{};
+    // The bloom chain, each level its own texture because a `ColorAttachment`
+    // names a texture and not a mip level.
+    rhi::TextureHandle bloom_[kBloomLevels]{};
+    // The automatic exposure's measurement chain, and the two 1x1 targets it
+    // ping-pongs between: one frame reads what the last one wrote.
+    rhi::TextureHandle luminance64_{};
+    rhi::TextureHandle luminance8_{};
+    rhi::TextureHandle exposure_[2]{};
+    u32 exposureIndex_ = 0;
+    bool exposureInitialised_ = false;
+
+    // The prefiltered environment (ADR 0038, environment.h), and the cache that
+    // decides when it is rebaked. Per view because a view of another world --
+    // a preview's own sun, a sub-world's sky -- is another sky, and one chain
+    // shared between two skies rebakes whole on every alternation.
+    rhi::TextureHandle environmentMap_{};
+    EnvironmentCache environment_;
+
+    // The size the offscreen targets were built for. A window resize rebuilds
+    // them rather than stretching, because a stretched HDR target is a bug that
+    // looks like a driver problem.
+    u32 width_ = 0;
+    u32 height_ = 0;
+
+    // What the settings resolve to for this frame: the world is rendered at a
+    // fraction of the output and the final resolve upscales it. `width_` above
+    // is what the internal chain was BUILT for, and these two are what it is
+    // built for now -- the same number until a render scale is set.
+    u32 renderWidth_ = 0;
+    u32 renderHeight_ = 0;
+
+    // The previous frame's cascade fit, so this frame can keep it (D048).
+    ShadowCascades shadowFit_{};
+    bool shadowFitted_ = false;
+
+    // The scene behind blended surface shaders (ADR 0091): its depth as
+    // distances, and its colour -- each made only in a frame that needs it.
+    rhi::TextureHandle sceneDepthCopy_{};
+    rhi::TextureHandle sceneColorCopy_{};
+
+    // **The look's own images, made the first frame one is needed** and
+    // remade when the render size changes -- never on a frame without the
+    // effect that needs them. `lookColor_` is a second full-resolution HDR
+    // image, for a pass that reads the frame and has to write a changed one
+    // somewhere else; the blur's levels are its downsample chain and each
+    // level's ping-pong partner.
+    rhi::TextureHandle lookColor_{};
+    rhi::TextureHandle blurLevels_[kLookBlurLevels]{};
+    rhi::TextureHandle blurPong_[kLookBlurLevels]{};
+    // Depth of field at half resolution: the frame with each texel's circle,
+    // and what the gather made of it.
+    rhi::TextureHandle focusPrepared_{};
+    rhi::TextureHandle focusGathered_{};
+    // Sun rays at half the frame: what can shine, and the shafts.
+    rhi::TextureHandle raysMasked_{};
+    rhi::TextureHandle raysGathered_{};
+    u32 lookWidth_ = 0;
+    u32 lookHeight_ = 0;
+};
+
+class DefaultRenderer final : public IRenderer, private ViewState
 {
 public:
     std::optional<core::EngineError> create(rhi::IDevice& device, const ShaderLibrary& shaders,
@@ -395,6 +493,7 @@ public:
     void destroy(rhi::IDevice& device) override;
     void render(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target, const RenderWorld& world,
                 const MeshCache& meshes) override;
+    void releaseView(rhi::IDevice& device, u32 view) override;
     [[nodiscard]] bool valid() const noexcept override { return valid_; }
 
     // Scaled with the shadow distance, because that is what it describes: the
@@ -552,6 +651,23 @@ private:
     bool valid_ = false;
     rhi::TextureFormat colorFormat_ = rhi::TextureFormat::Undefined;
 
+    // **The views not being drawn right now** (ADR 0107), keyed by the id a
+    // `RenderTarget` carries, and which one the `ViewState` base holds. A frame
+    // drawing only the main view never touches this.
+    std::map<u32, ViewState> parkedViews_;
+    u32 activeView_ = 0;
+    // Brings a view's state into the base, putting the one there away.
+    void useView(u32 view);
+    // Frees the textures of the view in the base and forgets its history.
+    void releaseActiveView(rhi::IDevice& device);
+    // The prefiltered environment's texture, made when the view in the base
+    // has none: the main view gets it at `create`, another view the first
+    // frame it is drawn.
+    [[nodiscard]] bool ensureEnvironmentMap(rhi::IDevice& device);
+    // FXAA writing the views' format (`kLdrFormat`), made at `create` only
+    // when the main target's format is a different one.
+    rhi::PipelineHandle fxaaViewPipeline_{};
+
     rhi::PipelineHandle shadowPipeline_{};
     rhi::PipelineHandle pbrPipeline_{};
     // The skinned variants. Same shading, same state; what differs is the vertex
@@ -600,34 +716,6 @@ private:
     rhi::ShaderHandle shaders_[128]{};
     core::usize shaderCount_ = 0;
 
-    rhi::TextureHandle hdr_{};
-    rhi::TextureHandle depth_{};
-    // Tonemapped and sRGB-encoded, so the anti-aliasing resolve has an image to
-    // find edges in. FXAA works on perceptual luminance, which is what makes it
-    // a post-tonemap pass rather than a pre-tonemap one.
-    rhi::TextureHandle ldr_{};
-    // Half resolution, and the blur's ping-pong partner. Half because sixteen
-    // taps at full resolution is four times the cost for a term the blur is
-    // about to spread anyway (R16).
-    rhi::TextureHandle occlusion_{};
-    // One channel: which pixels belong to something a tool has selected. Only
-    // ever written when a draw carries `outlined`, which no game does.
-    rhi::TextureHandle outlineMask_{};
-    rhi::TextureHandle occlusionBlur_{};
-    // Full resolution, one channel: the sun's contact shadows. Full rather than
-    // half like the occlusion term, because what it carries is the sharp line
-    // where a caster meets the ground.
-    rhi::TextureHandle contact_{};
-    // The bloom chain, each level its own texture because a `ColorAttachment`
-    // names a texture and not a mip level.
-    rhi::TextureHandle bloom_[kBloomLevels]{};
-    // The automatic exposure's measurement chain, and the two 1x1 targets it
-    // ping-pongs between: one frame reads what the last one wrote.
-    rhi::TextureHandle luminance64_{};
-    rhi::TextureHandle luminance8_{};
-    rhi::TextureHandle exposure_[2]{};
-    u32 exposureIndex_ = 0;
-    bool exposureInitialised_ = false;
     rhi::TextureHandle shadowMap_{};
     // The local-light atlas and this frame's assignment of its tiles. Held
     // across frames only so the vector behind `localCandidates_` keeps its
@@ -646,7 +734,6 @@ private:
     // lighting's two textures (ADR 0038, environment.h). Octahedral rather than
     // a cubemap because the frozen RHI has no cube type, and CPU-prefiltered
     // because it has no compute -- ADR 0043 records what that bought.
-    rhi::TextureHandle environmentMap_{};
     rhi::TextureHandle brdfLut_{};
     // The clustered light tables (clusters.h). Uploaded whole every frame --
     // ninety kilobytes between them -- because `uploadTexture` writes a whole
@@ -681,24 +768,6 @@ private:
     // filtering between two light offsets would be a light index that does not
     // exist.
     rhi::SamplerHandle pointSampler_{};
-    EnvironmentCache environment_;
-
-    // The size the offscreen targets were built for. A window resize rebuilds
-    // them rather than stretching, because a stretched HDR target is a bug that
-    // looks like a driver problem.
-    u32 width_ = 0;
-    u32 height_ = 0;
-
-    // What the settings resolve to for this frame: the world is rendered at a
-    // fraction of the output and the final resolve upscales it. `width_` above
-    // is what the internal chain was BUILT for, and these two are what it is
-    // built for now -- the same number until a render scale is set.
-    u32 renderWidth_ = 0;
-    u32 renderHeight_ = 0;
-
-    // The previous frame's cascade fit, so this frame can keep it (D048).
-    ShadowCascades shadowFit_{};
-    bool shadowFitted_ = false;
 
     GraphicsSettings settings_;
     // The tile resolution `shadowMap_` was created for, so a settings change
@@ -787,8 +856,6 @@ private:
     // The scene behind blended surface shaders (ADR 0091): its depth as
     // distances, and its colour -- each made only in a frame that needs it.
     LookPipeline surfaceSceneDepth_;
-    rhi::TextureHandle sceneDepthCopy_{};
-    rhi::TextureHandle sceneColorCopy_{};
     // The sky a `Sky` governs. Made by `ensureSkyLook` rather than as a
     // fullscreen pass: it is drawn INSIDE the forward pass, so it declares
     // that pass's depth format as the plain sky's pipeline does.
@@ -802,24 +869,6 @@ private:
                 &raysMask_,      &raysGather_, &raysAdd_,  &air_,          &surfaceSceneDepth_, &skyLook_};
     }
 
-    // **The look's own images, made the first frame one is needed** and
-    // remade when the render size changes -- never on a frame without the
-    // effect that needs them. `lookColor_` is a second full-resolution HDR
-    // image, for a pass that reads the frame and has to write a changed one
-    // somewhere else; the blur's levels are its downsample chain and each
-    // level's ping-pong partner.
-    rhi::TextureHandle lookColor_{};
-    rhi::TextureHandle blurLevels_[kLookBlurLevels]{};
-    rhi::TextureHandle blurPong_[kLookBlurLevels]{};
-    // Depth of field at half resolution: the frame with each texel's circle,
-    // and what the gather made of it.
-    rhi::TextureHandle focusPrepared_{};
-    rhi::TextureHandle focusGathered_{};
-    // Sun rays at half the frame: what can shine, and the shafts.
-    rhi::TextureHandle raysMasked_{};
-    rhi::TextureHandle raysGathered_{};
-    u32 lookWidth_ = 0;
-    u32 lookHeight_ = 0;
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
                                    const char* name);
     void releaseLookTextures(rhi::IDevice& device);
@@ -1213,6 +1262,10 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         fullscreen(luminanceAdaptVertex, luminanceAdaptFragment, luminanceTarget, "luminance_adapt");
     tonemapPipeline_ = fullscreen(tonemapVertex, tonemapFragment, ldrTarget, "tonemap");
     fxaaPipeline_ = fullscreen(fxaaVertex, fxaaFragment, swapTarget, "fxaa");
+    // The views draw into `kLdrFormat` textures; when the window's format is
+    // another, their resolve needs a pipeline of its own (ADR 0107).
+    if (colorFormat != kLdrFormat)
+        fxaaViewPipeline_ = fullscreen(fxaaVertex, fxaaFragment, ldrTarget, "fxaa_view");
 
     // --- The editor's selection silhouette -----------------------------------
     //
@@ -1340,17 +1393,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         return core::makeError(ENG_TR("render.err.target_create_failed"));
     }
 
-    // The environment's mip chain is the roughness chain, so `mipLevels` is the
-    // number of roughness steps and not a filtering nicety. Written entirely by
-    // `uploadTexture`, which is the one frozen call that takes a level.
-    environmentMap_ = device.createTexture({
-        .format = kHdrFormat,
-        .usage = rhi::TextureUsage::Sampled,
-        .width = kEnvironmentBaseSize,
-        .height = kEnvironmentBaseSize,
-        .mipLevels = kEnvironmentMipCount,
-        .debugName = "environment",
-    });
+    (void)ensureEnvironmentMap(device);
     brdfLut_ = device.createTexture({
         .format = kHdrFormat,
         .usage = rhi::TextureUsage::Sampled,
@@ -1451,8 +1494,84 @@ void DefaultRenderer::setSettings(const GraphicsSettings& settings)
     settings_ = clampSettings(settings);
 }
 
+bool DefaultRenderer::ensureEnvironmentMap(rhi::IDevice& device)
+{
+    if (environmentMap_.valid())
+        return true;
+    // The environment's mip chain is the roughness chain, so `mipLevels` is the
+    // number of roughness steps and not a filtering nicety. Written entirely by
+    // `uploadTexture`, which is the one frozen call that takes a level.
+    environmentMap_ = device.createTexture({
+        .format = kHdrFormat,
+        .usage = rhi::TextureUsage::Sampled,
+        .width = kEnvironmentBaseSize,
+        .height = kEnvironmentBaseSize,
+        .mipLevels = kEnvironmentMipCount,
+        .debugName = "environment",
+    });
+    // A new texture holds no bake, so the cache must not believe it does.
+    environment_ = EnvironmentCache{};
+    return environmentMap_.valid();
+}
+
+void DefaultRenderer::useView(u32 view)
+{
+    if (view == activeView_)
+        return;
+    ViewState& active = *this;
+    ViewState incoming;
+    if (const auto found = parkedViews_.find(view); found != parkedViews_.end()) {
+        incoming = std::move(found->second);
+        parkedViews_.erase(found);
+    }
+    parkedViews_[activeView_] = std::move(active);
+    active = std::move(incoming);
+    activeView_ = view;
+}
+
+void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
+{
+    releaseLookTextures(device);
+    const auto release = [&device](rhi::TextureHandle& texture) {
+        if (texture.valid())
+            device.destroy(texture);
+        texture = {};
+    };
+    for (rhi::TextureHandle* texture : {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
+                                        &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
+        release(*texture);
+    for (rhi::TextureHandle& level : bloom_)
+        release(level);
+    static_cast<ViewState&>(*this) = ViewState{};
+}
+
+void DefaultRenderer::releaseView(rhi::IDevice& device, u32 view)
+{
+    // The main view is the renderer's own and goes with `destroy`.
+    if (view == 0)
+        return;
+    const u32 was = activeView_;
+    if (view != was && !parkedViews_.contains(view))
+        return;
+    useView(view);
+    releaseActiveView(device);
+    parkedViews_.erase(view);
+    // Back to what the base held, or to the main view if that was this one.
+    activeView_ = view;
+    const u32 back = was == view ? 0u : was;
+    ViewState incoming;
+    if (const auto found = parkedViews_.find(back); found != parkedViews_.end()) {
+        incoming = std::move(found->second);
+        parkedViews_.erase(found);
+    }
+    static_cast<ViewState&>(*this) = std::move(incoming);
+    activeView_ = back;
+}
+
 std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& device, u32 width, u32 height)
 {
+    if (!ensureEnvironmentMap(device))
+        return core::makeError(ENG_TR("render.err.target_create_failed"));
     if (hdr_.valid() && width == width_ && height == height_)
         return std::nullopt;
 
@@ -1587,6 +1706,23 @@ std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& de
 
 void DefaultRenderer::destroy(rhi::IDevice& device)
 {
+    // Every view but the one in the base, which the lists below release.
+    while (!parkedViews_.empty()) {
+        const u32 view = parkedViews_.begin()->first;
+        const u32 keep = activeView_;
+        useView(view);
+        releaseActiveView(device);
+        parkedViews_.erase(view);
+        activeView_ = keep;
+        if (const auto found = parkedViews_.find(keep); found != parkedViews_.end()) {
+            static_cast<ViewState&>(*this) = std::move(found->second);
+            parkedViews_.erase(found);
+        }
+    }
+    activeView_ = 0;
+    if (fxaaViewPipeline_.valid())
+        device.destroy(fxaaViewPipeline_);
+    fxaaViewPipeline_ = {};
     for (core::usize index = 0; index < shaderCount_; ++index)
         device.destroy(shaders_[index]);
     shaderCount_ = 0;
@@ -3387,6 +3523,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 {
     if (!valid_ || !target.color.valid() || target.width == 0 || target.height == 0)
         return;
+    useView(target.view);
 
     // **The one place the render scale is applied.** Everything below draws the
     // WORLD at `renderWidth_` by `renderHeight_` and only the final resolve
@@ -4633,7 +4770,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         fxaa.texel[1] = 1.0f / static_cast<f32>(renderHeight_);
         const std::array<rhi::TextureBinding, 1> ldrBinding{rhi::TextureBinding{ldr_, linearSampler_}};
         cmd.pushDebugGroup("fxaa");
-        fullscreenPass(cmd, fxaaPipeline_, target.color, target.width, target.height, "fxaa", ldrBinding,
+        // A view's texture is `kLdrFormat` whatever the window's format is.
+        const rhi::PipelineHandle resolve =
+            target.colorFormat != colorFormat_ && fxaaViewPipeline_.valid() ? fxaaViewPipeline_ : fxaaPipeline_;
+        fullscreenPass(cmd, resolve, target.color, target.width, target.height, "fxaa", ldrBinding,
                        asBytes(&fxaa, sizeof(fxaa)));
         cmd.popDebugGroup();
     }

@@ -72,6 +72,7 @@
   "engine.overlay.warn.init_failed": "The debug overlay could not start; F3 will do nothing.",
   "engine.overlay.warn.window_not_claimed": "The debug overlay needs a window the graphics device has already claimed.",
   "engine.overlay.warn.already_running": "A debug overlay is already running; only one can exist at a time.",
+  "render.warn.view_name_taken": "Two camera textures draw into view://{name}; {instance} was made second and draws nothing.",
   "engine.overlay.warn.interface_error": "The editor's interface reported an error in window {message}",
   "engine.drive.info.shot": "[drive] shot {name}",
   "engine.drive.warn.unknown_step": "[drive] unknown step {verb}",

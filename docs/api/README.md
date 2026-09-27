@@ -60,6 +60,7 @@ guided tour.
 | [`BlurEffect`](blureffect.md) | [`PostEffect`](posteffect.md) | Softens the whole world picture, as behind a pause menu. |
 | [`Bone`](bone.md) | [`Attachment`](attachment.md) | An attachment that follows a joint of the `MeshPart` it is parented to. |
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is rendered from. |
+| [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. |
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: the player, or anything that should climb a ramp and step over a kerb instead of tumbling. |
 | [`ColorCorrectionEffect`](colorcorrectioneffect.md) | [`PostEffect`](posteffect.md) | A grade over the whole picture: brighter or darker, flatter or punchier, greyer or more vivid, and tinted. |
 | [`Constraint`](constraint.md) | [`Instance`](instance.md) | The base of anything the SOLVER holds together. |

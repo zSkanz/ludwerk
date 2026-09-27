@@ -95,7 +95,10 @@ approximating one, and the packaged game ships Luau SOURCE rather than bytecode
   defects first -- an export sweep found five, fixed the same day -- then
   `UIGradient` and `UIStroke` with their recent features, then the editor
   remade after VS Code, and only then Views (ADR 0107) and the AI panel
-  (ADR 0108).
+  (ADR 0108). **Done through Q2 on 2026-09-27**, the owner's export error with
+  it (an ImGui error box in the Export window). **Views V0 and V1 are built**:
+  `CameraTexture`, `view://`, the per-view renderer state and
+  `examples/26-security-cameras`. V2 (`ViewportFrame`) is next.
 
 - **Post-v1 phases 2 and 4 are OPEN and being built.** The owner opened both on
   2026-08-27 in one instruction — *"terrain editor multiplayer voxels etc."* —

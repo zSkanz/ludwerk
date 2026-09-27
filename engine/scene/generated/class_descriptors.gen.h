@@ -77,6 +77,7 @@ inline constexpr EnumId ApplyStrokeModeEnumId = 36;
 inline constexpr EnumId LineJoinModeEnumId = 37;
 inline constexpr EnumId StrokeSizingModeEnumId = 38;
 inline constexpr EnumId BorderStrokePositionEnumId = 39;
+inline constexpr EnumId ViewQualityEnumId = 40;
 
 } // namespace generated
 

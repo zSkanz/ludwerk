@@ -120,6 +120,7 @@ quality = "high"
 | `[network]` | `server` — where `NetworkService:Join()` goes with no address |
 | `[assets]` | `content` — where the asset compiler reads from |
 | `[graphics]` | The quality family. See [Graphics quality settings](manual:rendering/quality) |
+| `[render]` | `max_views_per_frame`, `max_view_resolution` — what camera textures may cost. See [Views](manual:rendering/views) |
 
 The TOML subset is deliberately small: comments, tables, strings, numbers,
 booleans and single-line arrays. A multi-line string, an inline table, an array

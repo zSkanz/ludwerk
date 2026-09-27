@@ -61,51 +61,54 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage V0 — more than one view a frame, and `view://`
 
-- [ ] **Per-view renderer state.** Exposure history, the shadow fit, the
-      environment chain and the screen-sized targets are keyed by a view id
-      instead of held once (`renderer_default.cpp`: `ensureTargets`, the
-      "history of one view" block). The main view is view 0 and behaves exactly
-      as today.
-- [ ] **Draw a `RenderWorld` into any target at any size** in the same command
-      list as the main view, before it. `HostPreviewRenderer` is the precedent;
-      fold it onto the new path rather than keeping two.
-- [ ] **Pipelines for the view format**: views draw `Rgba8Unorm`; if the main
-      target's format differs, the pipelines exist for both.
-- [ ] **`view://` textures**: a registry in `render` (name -> texture handle,
-      size, owner) that `TextureLibrary` and the UI image provider both consult.
-      A name nothing has drawn into is black, not the error texture. Duplicate
-      names: first wins, a keyed warning names both.
-- [ ] **Budgets**: `[render] max_views_per_frame` (4), `max_view_resolution`
-      (1024), `max_sub_worlds` (2) in `project.toml`, documented in
-      `api-design.md`'s `project.toml` section. The scheduler draws the views
-      whose picture is oldest first.
-- [ ] F3: a *Views* section -- each view's name, size, last drawn frame, and
-      time.
-- [ ] Tests: two views of one world in one frame, each with its own exposure
-      (a bright and a dark camera converge separately); a `view://` name
-      resolves in a material and in an `ImageLabel`; the budget draws four of
-      six and the other two next frame; the main view's pixels are unchanged by
-      the existence of the machinery (reference screenshot).
+- [x] **Per-view renderer state.** `ViewState`, a private base of
+      `DefaultRenderer` holding every target, the exposure chain, the shadow
+      fit, the environment map and cache and the look's images; `render` swaps
+      the view a `RenderTarget` names (`view`, 0 for the main one) into it.
+      `releaseView` frees one; the environment map is made per view on demand.
+- [~] **Draw a `RenderWorld` into any target at any size** in the same command
+      list as the main view, before it -- done, from the frame loop.
+      `HostPreviewRenderer` is not yet folded onto it.
+- [x] **Pipelines for the view format**: `fxaa_view` at `Rgba8Unorm`, made only
+      when the window's format is another.
+- [x] **`view://` textures**: `app::ViewHost` makes one per `CameraTexture` and
+      sets it in the `TextureLibrary`; `UiText` looks the name up for an
+      `ImageLabel`; `MeshLoader` never reads a `view://` name from disk and
+      gives one nothing draws into a shared black pixel. First made wins;
+      `render.warn.view_name_taken`. (In `app`, not `render`: the host holds the
+      device and the world, and `render` needs only the library it already has.)
+- [x] **Budgets**: `[render] max_views_per_frame`, `max_view_resolution`,
+      `max_sub_worlds` read into `ProjectConfig`, documented in `api-design.md`
+      and the manual. Never-drawn first, then the oldest picture
+      (`chooseViews`).
+- [x] F3 and the editor's Stats: a *Views* section -- name, size, cost, frames
+      since drawn.
+- [~] Tests: `views_gate` -- two views of one world in one frame, each its own
+      camera, each on an `ImageLabel`, and lighter than the main view because
+      each keeps its own exposure; `view_host_tests` -- four of six, then the
+      other two, oldest first, `UpdateInterval`, the size cap; the capture and
+      screenshot goldens unchanged. Not yet: a `view://` name in a material.
 
 ## Stage V1 — `CameraTexture`, and a camera game
 
-- [ ] IDL: `CameraTexture` (`Camera`, `ViewName`, `Resolution`, `Enabled`,
+- [x] IDL: `CameraTexture` (`Camera`, `ViewName`, `Resolution`, `Enabled`,
       `UpdateInterval`, `Quality`); `Enum.ViewQuality` (`Full`, `Simple`),
-      appended. Accessors, `.d.luau`, the reference page, an editor icon.
-- [ ] Extraction per camera through `ViewOverride`; `Simple` quality skips
-      shadows and post.
-- [ ] A camera that sees its own texture samples last frame's picture.
-- [ ] Replicates as an ordinary instance; a dedicated server draws nothing
-      (and creates no texture).
-- [ ] **The example**: `examples/24-security-cameras` (or the next free
-      number). A small building, six cameras, a monitor wall in the office
-      (`Decal`s showing `view://cam1` to `view://cam6`, `UpdateInterval = 2`),
-      and a tablet in the `ScreenGui` that shows one feed full-screen and
-      switches between them -- the owner's case, playable, with the frame time
-      recorded in `docs/perf-baselines.md`.
-- [ ] Tests: the feed shows what the camera sees (a coloured part in front of
-      it reads back as that colour); `Enabled = false` keeps the last picture
-      and draws no view; `UpdateInterval = 3` draws on one frame in three.
+      appended. Accessors, `.d.luau`, the reference page; the editor icon was
+      already drawn.
+- [x] Extraction per camera through `ViewOverride`; `Simple` quality skips
+      shadows and the look's effects, and keeps the sky and the air.
+- [~] A view is absent from its own picture (its texture leaves the library
+      while it draws) -- not its last frame's picture; see Findings.
+- [x] **Does not replicate** -- see Findings; a dedicated server draws nothing.
+- [x] **The example**: `examples/26-security-cameras`: a building at night,
+      six cameras, a `SurfaceGui` monitor wall (`ImageLabel`s rather than
+      `Decal`s -- see Findings), `UpdateInterval = 2`, and a tablet whose feed
+      draws every frame at twice the size. Frame time not yet recorded in
+      `docs/perf-baselines.md`.
+- [~] Tests: the feed shows what the camera sees (`views_gate`);
+      `UpdateInterval = 3` (`view_host_tests`); the API
+      (`world/camera_texture.spec.luau`). Not yet: `Enabled = false` keeps the
+      last picture.
 
 ## Stage V2 — `ViewportFrame`
 
@@ -171,4 +174,19 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Findings
 
-(Filled in as the work finds things.)
+- **A `CameraTexture` cannot replicate usefully**, because a `Camera` does not
+  (a replica's view is its own): a feed would arrive naming a camera the
+  replica lacks, and one under its camera would not arrive. Excluded from the
+  wire with that reason; a feed is set up by the client that draws it. ADR 0107
+  is amended. A generic `InstanceRef` in a component field -- which it would
+  have needed -- was written and taken back out, because nothing else uses one
+  and unused code is untested code.
+- **The view texture holds screen-encoded colour** (the tonemap writes it into
+  `Rgba8Unorm` itself). The UI draws images in that space, so a feed on an
+  `ImageLabel` is true; a `Decal` or a material reads its map as colour to be
+  lit, and the feed is lighter. The example uses a `SurfaceGui` for that
+  reason, and the manual says so. Fixing it for materials would mean a second,
+  linear copy -- not worth it until something needs it.
+- **Each view's exposure is its own, and it shows**: a camera looking at a dark
+  wall opens up. The gate's feeds are lighter than the main view for exactly
+  this reason, and the gate asserts it.

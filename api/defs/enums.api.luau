@@ -1054,6 +1054,23 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0107. At the END.
+        {
+            Name = "ViewQuality",
+            Doc = "How much of the renderer a `CameraTexture` asks for.",
+            Items = {
+                {
+                    Name = "Full",
+                    Value = 0,
+                    Doc = "Everything the main view draws: shadows and the look's effects.",
+                },
+                {
+                    Name = "Simple",
+                    Value = 1,
+                    Doc = "No shadows and no effects -- a feed, a monitor, a minimap.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 
