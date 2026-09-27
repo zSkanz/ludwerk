@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
 #include <vector>
 
@@ -476,6 +477,52 @@ void tintBy(RenderMaterial& material, const Color3& color)
 
 } // namespace
 
+namespace {
+
+// See the call in `extract`. `projection` and `view` are column-major
+// (`m[column][row]`); `view` is rotation only, so a world point is taken
+// relative to `eye` first.
+void obliqueNearPlane(core::Mat4& projection, const core::Mat4& view, const core::CFrameD& plane, core::DVec3 eye)
+{
+    // The plane's normal is its look direction: `-m[2]`.
+    const f32 nx = -plane.rotation.m[2][0];
+    const f32 ny = -plane.rotation.m[2][1];
+    const f32 nz = -plane.rotation.m[2][2];
+    const auto px = static_cast<f32>(plane.position.x - eye.x);
+    const auto py = static_cast<f32>(plane.position.y - eye.y);
+    const auto pz = static_cast<f32>(plane.position.z - eye.z);
+    const auto rotate = [&view](f32 x, f32 y, f32 z, f32 out[3]) {
+        for (int row = 0; row < 3; ++row)
+            out[row] = view.m[0][row] * x + view.m[1][row] * y + view.m[2][row] * z;
+    };
+    f32 normal[3];
+    f32 point[3];
+    rotate(nx, ny, nz, normal);
+    rotate(px, py, pz, point);
+    const f32 clip[4]{normal[0], normal[1], normal[2],
+                      -(normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2])};
+    // The eye at the view's origin must be behind the plane.
+    if (!(clip[3] < 0.0f))
+        return;
+
+    // The far corner of the frustum on the plane's side, back into view space.
+    const core::Mat4 inverse = core::inverse(projection);
+    const f32 corner[4]{clip[0] > 0.0f ? 1.0f : (clip[0] < 0.0f ? -1.0f : 0.0f),
+                        clip[1] > 0.0f ? 1.0f : (clip[1] < 0.0f ? -1.0f : 0.0f), 1.0f, 1.0f};
+    f32 q[4];
+    for (int row = 0; row < 4; ++row) {
+        q[row] = inverse.m[0][row] * corner[0] + inverse.m[1][row] * corner[1] + inverse.m[2][row] * corner[2] +
+                 inverse.m[3][row] * corner[3];
+    }
+    const f32 dot = clip[0] * q[0] + clip[1] * q[1] + clip[2] * q[2] + clip[3] * q[3];
+    if (!(dot > 0.0f) || !std::isfinite(dot))
+        return;
+    for (int column = 0; column < 4; ++column)
+        projection.m[column][2] = clip[column] / dot;
+}
+
+} // namespace
+
 void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
              f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, f32 alpha,
              const TransformHistory* history, RenderWorld& out, const ViewOverride* view,
@@ -578,12 +625,16 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // no tick ever wrote. That is correct rather than a shortcut -- an editor's
     // camera moves on the render clock, so a frame drawn at `t + alpha` from it
     // is already the camera's position at that instant.
-    scene::CameraComponent overrideCamera =
-        view != nullptr ? scene::CameraComponent{view->cframe, view->fieldOfView, view->nearPlane, view->farPlane}
-                        : scene::CameraComponent{};
+    scene::CameraComponent overrideCamera;
     if (view != nullptr) {
+        overrideCamera.cframe = view->cframe;
+        overrideCamera.fieldOfView = view->fieldOfView;
+        overrideCamera.nearPlane = view->nearPlane;
+        overrideCamera.farPlane = view->farPlane;
         overrideCamera.projection = view->projection;
         overrideCamera.orthographicSize = view->orthographicSize;
+        overrideCamera.clipPlane = view->clipPlane;
+        overrideCamera.clipPlaneOn = view->clipPlaneOn;
     }
     const scene::CameraComponent* camera = view != nullptr ? &overrideCamera : worldCamera;
 
@@ -609,6 +660,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             orthographic ? core::orthographic(camera->orthographicSize, aspect, camera->nearPlane, camera->farPlane)
                          : core::perspective(camera->fieldOfView * kDegreesToRadians, aspect, camera->nearPlane,
                                              camera->farPlane);
+        // **The oblique near plane** (ADR 0107; the technique is Lengyel's):
+        // the projection's depth row replaced by the clip plane in view space,
+        // scaled so the far plane still meets the frustum's far corner. What
+        // is behind the plane lands below zero depth and is clipped like
+        // anything nearer than the near plane. Only for a camera BEHIND its
+        // plane -- a mirror's, a portal's -- because one in front of it would
+        // have its whole view clipped away; that one draws as if there were
+        // no plane.
+        Mat4 unclipped = out.camera.projection;
+        if (camera->clipPlaneOn && !orthographic)
+            obliqueNearPlane(out.camera.projection, out.camera.view, camera->clipPlane, cameraFrame.position);
+
         // The jitter, folded into the projection's translation row -- which is
         // where a sub-pixel offset belongs, because it must move the whole frustum
         // rather than the geometry inside it. Zero everywhere today, so this is a
@@ -618,7 +681,10 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         const int jitterRow = orthographic ? 3 : 2;
         out.camera.projection.m[jitterRow][0] += out.camera.jitter.x;
         out.camera.projection.m[jitterRow][1] += out.camera.jitter.y;
+        unclipped.m[jitterRow][0] += out.camera.jitter.x;
+        unclipped.m[jitterRow][1] += out.camera.jitter.y;
         out.camera.viewProjection = out.camera.projection * out.camera.view;
+        out.camera.skyViewProjection = unclipped * out.camera.view;
         out.camera.frustum = core::frustumFromViewProjection(out.camera.viewProjection);
     }
 

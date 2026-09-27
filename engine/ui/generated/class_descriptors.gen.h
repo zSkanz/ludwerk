@@ -219,6 +219,10 @@ scene::Value getImageLabelScaleType(const scene::World& world, core::InstanceId 
 bool setImageLabelScaleType(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getImageLabelSliceCenter(const scene::World& world, core::InstanceId id);
 bool setImageLabelSliceCenter(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getImageLabelImageRectOffset(const scene::World& world, core::InstanceId id);
+bool setImageLabelImageRectOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getImageLabelImageRectSize(const scene::World& world, core::InstanceId id);
+bool setImageLabelImageRectSize(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachImageLabelComponents(scene::World& world, core::InstanceId id);
 void detachImageLabelComponents(scene::World& world, core::InstanceId id);
 

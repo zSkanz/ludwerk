@@ -438,6 +438,15 @@
           "Type": "CFrame"
         },
         {
+          "Name": "ClipPlane",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "ClipPlaneEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
           "Name": "FarPlane",
           "Type": "number"
         },
@@ -1104,6 +1113,16 @@
           "Name": "ImageColor",
           "Type": "Color3",
           "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "ImageRectOffset",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        },
+        {
+          "Name": "ImageRectSize",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
         },
         {
           "Name": "ScaleType",

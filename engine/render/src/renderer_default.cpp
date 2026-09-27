@@ -1048,7 +1048,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = pbrFragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -1069,7 +1069,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = pbrFragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrBlendTarget,
         .depthStencilFormat = kDepthFormat,
@@ -1093,7 +1093,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = pbrSkinnedFragment,
         .vertexBuffers = skinnedBuffers,
         .vertexAttributes = skinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -1105,7 +1105,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = pbrSkinnedFragment,
         .vertexBuffers = skinnedBuffers,
         .vertexAttributes = skinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrBlendTarget,
         .depthStencilFormat = kDepthFormat,
@@ -1127,7 +1127,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = shadowFragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = {},
         .depthStencilFormat = kDepthFormat,
@@ -1138,7 +1138,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = shadowSkinnedFragment,
         .vertexBuffers = skinnedBuffers,
         .vertexAttributes = shadowSkinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = {},
         .depthStencilFormat = kDepthFormat,
@@ -1232,7 +1232,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = shadowInstancedFragment,
         .vertexBuffers = instancedBuffers,
         .vertexAttributes = shadowInstancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = {},
         .depthStencilFormat = kDepthFormat,
@@ -1243,7 +1243,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .fragmentShader = pbrInstancedFragment,
         .vertexBuffers = instancedBuffers,
         .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -2018,7 +2018,7 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
         .fragmentShader = shader(0, true),
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = depthWriting,
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -2029,7 +2029,7 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
         .fragmentShader = shader(1, true),
         .vertexBuffers = instancedBuffers,
         .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = depthWriting,
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -2040,7 +2040,7 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
         .fragmentShader = shader(2, true),
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrBlendTarget,
         .depthStencilFormat = kDepthFormat,
@@ -2055,7 +2055,7 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
                                        : std::span<const rhi::VertexBufferLayout>(buffers),
             .vertexAttributes = instanced ? std::span<const rhi::VertexAttribute>(instancedAttributes)
                                           : std::span<const rhi::VertexAttribute>(attributes),
-            .rasterizer = {.cullMode = cull},
+            .rasterizer = {.cullMode = cull, .depthClip = true},
             .depthStencil = depthWriting,
             .colorTargets = {},
             .depthStencilFormat = format,
@@ -3392,7 +3392,7 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
         voxelTilePipeline_ = device.createGraphicsPipeline({
             .vertexShader = tileVertex,
             .fragmentShader = tileFragment,
-            .rasterizer = {.cullMode = rhi::CullMode::None},
+            .rasterizer = {.cullMode = rhi::CullMode::None, .depthClip = true},
             .colorTargets = atlasTarget,
             .debugName = "voxel-tile",
         });
@@ -3403,7 +3403,7 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
         .fragmentShader = fragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -3421,7 +3421,7 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
         .fragmentShader = fragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .rasterizer = {.cullMode = rhi::CullMode::None, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = blendTarget,
         .depthStencilFormat = kDepthFormat,
@@ -3491,7 +3491,7 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
         .fragmentShader = fragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = hdrTarget,
         .depthStencilFormat = kDepthFormat,
@@ -4125,7 +4125,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // so it needs the inverse. Computed once per frame rather than per
         // pixel, which is the only reason it is a uniform rather than a
         // derivation.
-        skyUniforms.inverseViewProjection = core::inverse(world.camera.viewProjection);
+        skyUniforms.inverseViewProjection = core::inverse(world.camera.skyViewProjection);
         skyUniforms.sunDirectionSize[0] = sky.sunDirection.x;
         skyUniforms.sunDirectionSize[1] = sky.sunDirection.y;
         skyUniforms.sunDirectionSize[2] = sky.sunDirection.z;
@@ -4412,7 +4412,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             cmd.endRenderPass();
             const AirMedium medium = airMediumOf(world.look.atmosphere, world.camera.origin.y);
             GpuLookAirUniforms airBlock;
-            airBlock.inverseViewProjection = core::inverse(world.camera.viewProjection);
+            airBlock.inverseViewProjection = core::inverse(world.camera.skyViewProjection);
             airBlock.density[0] = medium.extinction;
             airBlock.density[1] = medium.falloff;
             airBlock.density[2] = medium.height;

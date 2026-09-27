@@ -136,14 +136,24 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage V3 — mirrors and portals
 
-- [ ] `Camera.ClipPlane` (a plane in world space, or none): an oblique near
-      plane so what is behind a mirror or a portal is not drawn into it.
-- [ ] `@engine/views`: `views.mirror(part: BasePart): CameraTexture` and
-      `views.portal(a: BasePart, b: BasePart)`, which make the camera and move
-      it every frame, reflected or offset from `Workspace.CurrentCamera`.
-- [ ] Documented recursion: a mirror in a mirror shows last frame's picture.
-- [ ] Tests: a part behind the mirror's plane is absent from its texture; the
-      portal's texture matches a camera placed at the far side.
+- [x] `Camera.ClipPlane` (a `CFrame`) and `ClipPlaneEnabled`: an oblique near
+      plane (Lengyel's), and `rhi::RasterizerState::depthClip` on the world's
+      geometry so what falls behind it is cut rather than clamped; the sky and
+      the air use a view-projection without it.
+- [x] `@engine/views`: `views.mirror(part, options?)` and
+      `views.portal(a, b, options?)`, each returning a `Surface` (`Texture`,
+      `Camera`, `Picture`, `Destroy`). Exact rather than approximate: the
+      camera looks straight through the glass and `ImageLabel.ImageRectOffset`
+      / `ImageRectSize` (new; a negative size reads backwards) cut the glass
+      out of the picture.
+- [x] Documented recursion: a mirror in a mirror shows the other mirror
+      without its picture (a view is absent from its own).
+- [x] Tests: `mirrors_gate` -- red and blue behind the camera in the mirror,
+      turned, and not the green block behind the glass; yellow through the
+      portal and not the purple behind its far pane.
+      `world/mirrors.spec.luau` -- the clip plane, the image rectangle, where
+      the module puts its cameras, and `Destroy`. A clip-plane unit test in
+      `render_world_tests`. `examples/27-mirrors-and-portals`.
 
 ## Stage V4 — `SubWorld` (after the other ledger's S2)
 
@@ -194,6 +204,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   lit, and the feed is lighter. The example uses a `SurfaceGui` for that
   reason, and the manual says so. Fixing it for materials would mean a second,
   linear copy -- not worth it until something needs it.
+- **A view draws the world and not the UI in it.** `SurfaceGui` and
+  `BillboardGui` are built into the main view's snapshot after extraction,
+  and a view's snapshot is extracted on its own; so signs, monitors and other
+  mirrors' pictures are absent from every camera texture. That is also what
+  makes a mirror in a mirror safe. Drawing them would need the world UI built
+  per view, and a rule for what a view seeing a view shows.
 - **Each view's exposure is its own, and it shows**: a camera looking at a dark
   wall opens up. The gate's feeds are lighter than the main view for exactly
   this reason, and the gate asserts it.
+- **Depth was clamped, never clipped, on every pipeline**, which nothing had
+  noticed until an oblique near plane needed what falls behind it cut away.
+  `rhi::RasterizerState::depthClip` is now on for the world's geometry. It is
+  not free of consequence: a triangle that crosses the near plane is cut into
+  pieces, and two reference screenshots moved by a handful of pixels on shadow
+  edges -- re-recorded, with the reason in the commit.

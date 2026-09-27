@@ -69,6 +69,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   - `examples/26-security-cameras`: a security office at night, six feeds on a
     monitor wall and one on a tablet, and three items turning in inventory
     slots.
+- **Mirrors and portals** (ADR 0107, V3). `@engine/views` has
+  `views.mirror(part)` and `views.portal(a, b)`. Each is a `CameraTexture`
+  whose camera is moved every tick, with its picture on the part's front face.
+  - The pictures are exact from any angle: the camera looks straight through
+    the glass, and the glass is cut out of its picture with the new
+    `ImageLabel.ImageRectOffset` and `ImageRectSize` (a negative size reads
+    backwards).
+  - `Camera.ClipPlane` and `ClipPlaneEnabled` give a camera an oblique near
+    plane, so what stands behind the glass is not in the picture.
+  - The RHI gains `RasterizerState::depthClip`, on for the world's geometry,
+    which the oblique plane needs.
+  - `examples/27-mirrors-and-portals`.
 - **Instances in the UI** (ADR 0107, V2). A `ViewportFrame` draws the parts and
   models inside it, unsimulated, by its own light (`Ambient`, `LightColor`,
   `LightDirection`), with no sky, so with `BackgroundTransparency = 1` only

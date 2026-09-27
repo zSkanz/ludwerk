@@ -125,6 +125,10 @@ scene::Value getCameraProjection(const scene::World& world, core::InstanceId id)
 bool setCameraProjection(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getCameraOrthographicSize(const scene::World& world, core::InstanceId id);
 bool setCameraOrthographicSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraClipPlane(const scene::World& world, core::InstanceId id);
+bool setCameraClipPlane(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCameraClipPlaneEnabled(const scene::World& world, core::InstanceId id);
+bool setCameraClipPlaneEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachCameraComponents(scene::World& world, core::InstanceId id);
 void detachCameraComponents(scene::World& world, core::InstanceId id);
 

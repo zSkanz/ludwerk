@@ -221,3 +221,25 @@ promises:
   nothing in the view can sample what is being written. Showing the previous
   frame needs a second texture per view, which is the mirror-in-a-mirror case
   of §1 and V3's to build.
+- **`Camera.ClipPlane` is two properties**: `ClipPlane` (a `CFrame` -- the
+  plane through its position, keeping what is in front of its `LookVector`)
+  and `ClipPlaneEnabled`. A property may not be an optional value type, and a
+  `CFrame` says both where the plane is and which side is kept.
+- **The oblique near plane needed depth clipping, which the RHI had never
+  asked for**: every pipeline clamped depth, so what fell behind the plane was
+  pressed flat onto it rather than cut away -- the wall behind a mirror filling
+  the mirror. `rhi::RasterizerState::depthClip` (default off) is on for the
+  world's geometry (the PBR, prepass, surface, voxel and terrain pipelines)
+  and off for shadows, the sky, the UI in the world, particles, sprites and
+  decals. The sky and the air turn screen positions back into directions with
+  a view-projection without the oblique plane, whose far plane has points at
+  infinity in it. Turning clipping on moved two reference screenshots
+  (`contact-0930`, `specular-frame120`) by 5 and 7 pixels on shadow edges: a
+  floor that runs under the camera is now cut at the near plane rather than
+  rasterised whole, and the pieces interpolate a hair differently. Both were
+  re-recorded.
+- **Mirrors and portals are exact, not approximate.** `@engine/views` points
+  the camera straight through the glass, so the glass is an axis-aligned
+  rectangle in its picture, and cuts it out with a new pair of image
+  properties, `ImageLabel.ImageRectOffset` and `ImageRectSize` (a negative size
+  reads backwards, which turns a mirror's picture round).

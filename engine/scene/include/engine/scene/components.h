@@ -362,6 +362,10 @@ struct CameraComponent
     i32 projection = 0;
     // Half the view's height in metres, for an orthographic camera.
     f32 orthographicSize = 10.0f;
+    // **An oblique near plane** (ADR 0107): nothing behind this plane -- the
+    // side its look direction faces away from -- is drawn, while `clipPlaneOn`.
+    core::CFrameD clipPlane{};
+    bool clipPlaneOn = false;
 };
 
 struct PointLightComponent
@@ -1239,6 +1243,10 @@ struct ImageLabelComponent
 {
     std::string image;
     core::Rect sliceCenter;
+    // The part of the picture shown, in source pixels; a zero size is all of
+    // it, and a negative one reads it mirrored.
+    core::Vec2 imageRectOffset;
+    core::Vec2 imageRectSize;
     core::Color3 imageColor{1.0f, 1.0f, 1.0f};
     // `Enum.ScaleType`: 0 Stretch, 1 Slice, 2 Tile.
     i32 scaleType = 0;

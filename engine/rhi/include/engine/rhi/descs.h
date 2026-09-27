@@ -111,6 +111,12 @@ struct RasterizerState
     FillMode fillMode = FillMode::Solid;
     CullMode cullMode = CullMode::Back;
     FrontFace frontFace = FrontFace::CounterClockwise;
+    // **Clip what lies outside the depth range instead of clamping it.** Off,
+    // a triangle nearer than the near plane is flattened onto it -- which a
+    // shadow map wants, so a caster behind the light still casts. On, it is
+    // cut away -- which an oblique near plane needs (ADR 0107), or a mirror's
+    // camera would see the wall behind the glass pressed flat over the room.
+    bool depthClip = false;
 };
 
 struct GraphicsPipelineDesc

@@ -5,7 +5,7 @@
   shared conformance suite runs these modules against BOTH Lute and the
   engine in CI.
 - `engine/` — pure-Luau engine libraries exposed as `@engine/*`
-  (`camera`, `signal`, `testing`, dev-only `imgui`), `--!strict`.
+  (`camera`, `ragdoll`, `testing`, `views`), `--!strict`.
 - `types/` — **GENERATED** `.d.luau` definitions + luau-lsp docs JSON
   (`api/generator/`). Checked in; CI regenerates and diffs — never edit by
   hand.

@@ -80,6 +80,11 @@ struct RenderCamera
     Mat4 view;
     Mat4 projection;
     Mat4 viewProjection;
+    // **The view-projection without an oblique near plane** (ADR 0107): the
+    // same as `viewProjection` unless the camera has a `ClipPlane`. What turns
+    // a screen position back into a direction -- the sky, the air -- uses
+    // this, because an oblique far plane has points at infinity in it.
+    Mat4 skyViewProjection;
     // In the same camera-relative space, so culling needs no conversion.
     Frustum frustum;
     f32 nearPlane = 0.1f;
@@ -756,6 +761,9 @@ struct ViewOverride
     // one: the editor's 2D view is this lens on its own camera.
     core::i32 projection = 0;
     f32 orthographicSize = 10.0f;
+    // `Camera.ClipPlane` (ADR 0107), when `clipPlaneOn`.
+    core::CFrameD clipPlane{};
+    bool clipPlaneOn = false;
 };
 
 // Fills `out` from the world.

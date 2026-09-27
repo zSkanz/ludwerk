@@ -1,0 +1,16 @@
+# Mirrors and portals (ADR 0107): a mirror on a wall and a pair of portals
+# between two rooms, seen by a camera that walks slowly past them.
+#
+# No scene file: the script builds the rooms, because how a mirror and a
+# portal are made is the subject.
+
+[project]
+name = "Ludwerk Mirrors and Portals"
+id = "dev.ludwerk.mirrors-and-portals"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Mirrors and portals"
+width = 1280
+height = 720

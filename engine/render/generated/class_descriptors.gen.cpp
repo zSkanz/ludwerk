@@ -148,7 +148,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(boneDesc);
 
     // --- Camera ---
-    static std::array<scene::PropertyDesc, 7> cameraProperties;
+    static std::array<scene::PropertyDesc, 9> cameraProperties;
     cameraProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -229,6 +229,28 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
             .get = native::getCameraOrthographicSize,
             .set = native::setCameraOrthographicSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ClipPlane"),
+            .type = scene::ValueType::CFrame,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A plane the camera does not see behind (ADR 0107), used while `ClipPlaneEnabled` is true: it passes through this CFrame's position, and what lies in front of its `LookVector` is drawn while what lies behind is not. A mirror's camera, standing behind the glass, sees the room and not the wall the mirror hangs on. `@engine/views` sets it for you. The camera must be behind the plane; one in front of it draws as if there were none.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getCameraClipPlane,
+            .set = native::setCameraClipPlane,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ClipPlaneEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether `ClipPlane` is used.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getCameraClipPlaneEnabled,
+            .set = native::setCameraClipPlaneEnabled,
         },
     }};
     scene::ClassDescriptor cameraDesc;

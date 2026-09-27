@@ -1625,3 +1625,37 @@ TEST_CASE("a light with no part shines from its own CFrame; in a part, relative 
     CHECK(nearly(held.lights[0].position.y, 1.0f));
     CHECK(nearly(held.lights[0].position.z, -5.0f));
 }
+
+TEST_CASE("a clip plane cuts what is behind it out of the camera's depth range (ADR 0107)")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    render::RenderWorld snapshot;
+    // A camera at z = -11.8 looking along +Z, and a plane at z = -5.9 facing
+    // +Z: the mirror's camera and the mirror of `tests/screenshots/mirrors`.
+    render::ViewOverride lens;
+    lens.cframe =
+        core::lookAtCFrame(core::DVec3{0.0, 2.0, -11.8}, core::DVec3{0.0, 2.0, 0.0}, core::Vec3{0.0f, 1.0f, 0.0f});
+    lens.fieldOfView = 86.0f;
+    lens.clipPlane =
+        core::lookAtCFrame(core::DVec3{-3.0, 2.0, -5.9}, core::DVec3{-3.0, 2.0, 0.0}, core::Vec3{0.0f, 1.0f, 0.0f});
+    lens.clipPlaneOn = true;
+    render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
+                    snapshot, &lens);
+    REQUIRE(snapshot.camera.valid);
+
+    // Depth of a camera-relative point, as the GPU would divide it.
+    const auto depth = [&](core::Vec3 point) {
+        const core::Mat4& m = snapshot.camera.viewProjection;
+        const float z = m.m[0][2] * point.x + m.m[1][2] * point.y + m.m[2][2] * point.z + m.m[3][2];
+        const float w = m.m[0][3] * point.x + m.m[1][3] * point.y + m.m[2][3] * point.z + m.m[3][3];
+        return z / w;
+    };
+    // Between the camera and the plane: behind it, clipped.
+    CHECK(depth(core::Vec3{0.0f, 0.0f, 3.8f}) < 0.0f);
+    // Beyond the plane: drawn.
+    const float beyond = depth(core::Vec3{0.0f, 0.0f, 15.0f});
+    CHECK(beyond > 0.0f);
+    CHECK(beyond < 1.0f);
+}

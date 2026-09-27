@@ -673,6 +673,38 @@ bool setImageLabelSliceCenter(scene::World& world, core::InstanceId id, const Va
     return true;
 }
 
+Value getImageLabelImageRectOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->imageRectOffset};
+}
+
+bool setImageLabelImageRectOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* offset = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || offset == nullptr || !isFinite(*offset))
+        return false;
+    component->imageRectOffset = *offset;
+    return true;
+}
+
+Value getImageLabelImageRectSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->imageRectSize};
+}
+
+bool setImageLabelImageRectSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* size = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || size == nullptr || !isFinite(*size))
+        return false;
+    component->imageRectSize = *size;
+    return true;
+}
+
 // --- ScrollFrame -----------------------------------------------------------
 
 Value getScrollFrameCanvasSize(const scene::World& world, core::InstanceId id)

@@ -1237,6 +1237,14 @@ declare extern type Camera extends PVInstance with
     --- Half the height of what an orthographic camera shows, in metres. Its width follows from the
     --- window's shape. Zooming a 2D view is changing this.
     OrthographicSize: number
+    --- A plane the camera does not see behind (ADR 0107), used while `ClipPlaneEnabled` is true: it
+    --- passes through this CFrame's position, and what lies in front of its `LookVector` is drawn while
+    --- what lies behind is not. A mirror's camera, standing behind the glass, sees the room and not the
+    --- wall the mirror hangs on. `@engine/views` sets it for you. The camera must be behind the plane;
+    --- one in front of it draws as if there were none.
+    ClipPlane: CFrame
+    --- Whether `ClipPlane` is used.
+    ClipPlaneEnabled: boolean
 end
 
 declare extern type PointLight extends Instance with
@@ -1804,6 +1812,13 @@ declare extern type ImageLabel extends UIObject with
     --- top of each other. An inverted or empty rectangle is kept as given rather than corrected: a
     --- slice quietly fixed up is a panel that draws wrong with no way to find out why.
     SliceCenter: Rect
+    --- Where the part of the picture to show starts, in source pixels from its top-left corner: one
+    --- frame of a sprite sheet, one icon of an atlas. Read with `ImageRectSize`.
+    ImageRectOffset: Vector2
+    --- How much of the picture to show, in source pixels from `ImageRectOffset`. Zero is the whole
+    --- picture. **A negative size reads the rectangle backwards** -- mirrored across that axis -- which
+    --- is what a mirror's picture needs (ADR 0107).
+    ImageRectSize: Vector2
 end
 
 declare extern type ImageButton extends ImageLabel with

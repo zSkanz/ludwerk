@@ -88,6 +88,42 @@ end)
   its size. Forty still items are forty pictures once; one turning is one
   picture a frame.
 
+## Mirrors and portals
+
+```luau
+--!strict
+local views = require("@engine/views")
+
+views.mirror(workspace.Bathroom.Mirror)                     -- a mirror on its front face
+views.portal(workspace.BlueDoor, workspace.OrangeDoor)      -- in the blue, out of the orange
+```
+
+- **`views.mirror(part)`** puts the picture on the part's front face and,
+  every tick, moves a camera to where `workspace.CurrentCamera` would be
+  reflected through the glass. What stands in front of the glass is in it,
+  turned the way a mirror turns things.
+- **`views.portal(a, b)`** shows, in `a`, what is in front of `b`: stepping
+  through `a` would bring you out of `b`'s front, turned round. The two panes
+  should be the same size, and a pair both ways is two calls.
+- Each returns an object with the `Texture`, the `Camera` and the `Picture`
+  it made -- their `Resolution`, `UpdateInterval` and `Quality` are yours to
+  change -- and `Destroy()`, which takes them all away.
+
+**The pictures are exact.** The camera looks straight through the glass, so
+the glass is a rectangle in its picture; the `ImageLabel`'s `ImageRectOffset`
+and `ImageRectSize` cut that rectangle out, and a negative width turns it round
+for a mirror. The reflection lines up with the room from wherever it is seen.
+
+**`Camera.ClipPlane`** is what keeps the wall behind the glass out of the
+picture: with `ClipPlaneEnabled`, the camera draws nothing behind the plane
+through the `ClipPlane`'s position, facing its `LookVector`. The camera must be
+behind the plane, as a mirror's and a portal's always are.
+
+**A view draws the world, not the UI in it**: a `SurfaceGui` or a
+`BillboardGui` -- a sign, a monitor, another mirror's picture -- is not in a
+camera texture's picture. A mirror seen in another mirror is its bare glass,
+and a feed of the security office shows its monitor wall dark.
+
 ## What it costs
 
 A camera texture is the world drawn again, from another place. So the budget
@@ -114,6 +150,9 @@ in a match a client script makes its cameras and their textures. A dedicated
 server draws nothing.
 
 ## A worked example
+
+`examples/27-mirrors-and-portals` is a gallery with a mirror and a door onto
+a garden room across the map, seen by a camera walking past.
 
 `examples/26-security-cameras` is a security office at night: six cameras in
 six rooms, a `SurfaceGui` monitor wall showing all six, and a tablet that shows

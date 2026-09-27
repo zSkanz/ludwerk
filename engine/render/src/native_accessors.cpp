@@ -338,6 +338,38 @@ bool setCameraProjection(scene::World& world, core::InstanceId id, const Value& 
     return true;
 }
 
+Value getCameraClipPlane(const scene::World& world, core::InstanceId id)
+{
+    const scene::CameraComponent* camera = readCamera(world, id);
+    return camera == nullptr ? Value{} : Value{camera->clipPlane};
+}
+
+bool setCameraClipPlane(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* cframe = std::get_if<core::CFrameD>(&value);
+    scene::CameraComponent* camera = writeCamera(world, id);
+    if (cframe == nullptr || camera == nullptr)
+        return false;
+    camera->clipPlane = *cframe;
+    return true;
+}
+
+Value getCameraClipPlaneEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::CameraComponent* camera = readCamera(world, id);
+    return camera == nullptr ? Value{} : Value{camera->clipPlaneOn};
+}
+
+bool setCameraClipPlaneEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    scene::CameraComponent* camera = writeCamera(world, id);
+    if (flag == nullptr || camera == nullptr)
+        return false;
+    camera->clipPlaneOn = *flag;
+    return true;
+}
+
 Value getCameraOrthographicSize(const scene::World& world, core::InstanceId id)
 {
     const scene::CameraComponent* camera = readCamera(world, id);

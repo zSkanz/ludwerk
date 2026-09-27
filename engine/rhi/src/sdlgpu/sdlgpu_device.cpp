@@ -587,6 +587,7 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
     info.rasterizer_state.fill_mode = toSdl(desc.rasterizer.fillMode);
     info.rasterizer_state.cull_mode = toSdl(desc.rasterizer.cullMode);
     info.rasterizer_state.front_face = toSdl(desc.rasterizer.frontFace);
+    info.rasterizer_state.enable_depth_clip = desc.rasterizer.depthClip;
     info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
     info.depth_stencil_state.compare_op = toSdl(desc.depthStencil.depthCompare);
     info.depth_stencil_state.enable_depth_test = desc.depthStencil.depthTest;

@@ -297,7 +297,8 @@ void appendTile(core::Rect box, const ResolvedImage& image, core::Color3 tint, u
 }
 
 void appendImageQuads(core::Rect box, const ResolvedImage& image, bool ready, i32 scaleType, core::Rect sliceCenter,
-                      core::Color3 tint, u32 scissor, f32 cornerRadius, std::vector<DrawQuad>& out)
+                      core::Color3 tint, u32 scissor, f32 cornerRadius, std::vector<DrawQuad>& out,
+                      core::Vec2 rectOffset = {}, core::Vec2 rectSize = {})
 {
     if (!ready) {
         // The flat tint, which is what M6 drew for every image and is now what a
@@ -320,11 +321,16 @@ void appendImageQuads(core::Rect box, const ResolvedImage& image, bool ready, i3
     case 2:
         appendTile(box, image, tint, scissor, out);
         return;
-    default:
-        // Stretch: the whole picture into the whole box, aspect ratio and all.
-        pushImageQuad(box, core::Rect{{0.0f, 0.0f}, {static_cast<f32>(image.width), static_cast<f32>(image.height)}},
-                      image, tint, scissor, cornerRadius, out);
+    default: {
+        // Stretch: the whole picture into the whole box, aspect ratio and all
+        // -- or, with `ImageRectSize`, that part of it. A negative size reads
+        // backwards, which the UVs do by themselves: a larger start than end.
+        core::Rect source{{0.0f, 0.0f}, {static_cast<f32>(image.width), static_cast<f32>(image.height)}};
+        if (rectSize.x != 0.0f && rectSize.y != 0.0f)
+            source = core::Rect{rectOffset, Vec2{rectOffset.x + rectSize.x, rectOffset.y + rectSize.y}};
+        pushImageQuad(box, source, image, tint, scissor, cornerRadius, out);
         return;
+    }
     }
 }
 
@@ -565,7 +571,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             ResolvedImage resolved;
             const bool ready = resolveImage(image->image, resolved);
             appendImageQuads(box, resolved, ready, image->scaleType, image->sliceCenter, image->imageColor,
-                             entry.scissor, cornerRadius, out.quads);
+                             entry.scissor, cornerRadius, out.quads, image->imageRectOffset, image->imageRectSize);
         }
         return;
     }

@@ -4327,7 +4327,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                     .nearPlane = camera->nearPlane,
                                                     .farPlane = camera->farPlane,
                                                     .projection = camera->projection,
-                                                    .orthographicSize = camera->orthographicSize};
+                                                    .orthographicSize = camera->orthographicSize,
+                                                    .clipPlane = camera->clipPlane,
+                                                    .clipPlaneOn = camera->clipPlaneOn};
                     render::extract(world, host->workspace(), host->lighting(), meshLibrary,
                                     static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
                                     host->animation(), renderAlpha, &transformHistory, viewSnapshot, &lens, {},

@@ -714,7 +714,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(textInputDesc);
 
     // --- ImageLabel ---
-    static std::array<scene::PropertyDesc, 4> imageLabelProperties;
+    static std::array<scene::PropertyDesc, 6> imageLabelProperties;
     imageLabelProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Image"),
@@ -761,6 +761,28 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_rect"),
             .get = native::getImageLabelSliceCenter,
             .set = native::setImageLabelSliceCenter,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ImageRectOffset"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where the part of the picture to show starts, in source pixels from its top-left corner: one frame of a sprite sheet, one icon of an atlas. Read with `ImageRectSize`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getImageLabelImageRectOffset,
+            .set = native::setImageLabelImageRectOffset,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ImageRectSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the picture to show, in source pixels from `ImageRectOffset`. Zero is the whole picture. **A negative size reads the rectangle backwards** -- mirrored across that axis -- which is what a mirror's picture needs (ADR 0107).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getImageLabelImageRectSize,
+            .set = native::setImageLabelImageRectSize,
         },
     }};
     scene::ClassDescriptor imageLabelDesc;

@@ -798,20 +798,24 @@ public:
             if (layout.perInstance)
                 ++instancedStreams;
         }
-        stream_ += Line("createGraphicsPipeline")
-                       .num("pipeline", static_cast<u64>(handle.id))
-                       .num("vertexShader", static_cast<u64>(desc.vertexShader.id))
-                       .num("fragmentShader", static_cast<u64>(desc.fragmentShader.id))
-                       .num("instancedStreams", instancedStreams)
-                       .str("primitive", name(desc.primitive))
-                       .str("fill", name(desc.rasterizer.fillMode))
-                       .str("cull", name(desc.rasterizer.cullMode))
-                       .flag("depthTest", desc.depthStencil.depthTest)
-                       .flag("depthWrite", desc.depthStencil.depthWrite)
-                       .num("colorTargets", static_cast<u64>(desc.colorTargets.size()))
-                       .str("depthFormat", name(desc.depthStencilFormat))
-                       .str("name", desc.debugName)
-                       .finish();
+        Line line("createGraphicsPipeline");
+        line.num("pipeline", static_cast<u64>(handle.id))
+            .num("vertexShader", static_cast<u64>(desc.vertexShader.id))
+            .num("fragmentShader", static_cast<u64>(desc.fragmentShader.id))
+            .num("instancedStreams", instancedStreams)
+            .str("primitive", name(desc.primitive))
+            .str("fill", name(desc.rasterizer.fillMode))
+            .str("cull", name(desc.rasterizer.cullMode));
+        // Only when on: a pipeline that clamps, as every one did before
+        // ADR 0107, records what it always recorded.
+        if (desc.rasterizer.depthClip)
+            line.flag("depthClip", true);
+        line.flag("depthTest", desc.depthStencil.depthTest)
+            .flag("depthWrite", desc.depthStencil.depthWrite)
+            .num("colorTargets", static_cast<u64>(desc.colorTargets.size()))
+            .str("depthFormat", name(desc.depthStencilFormat))
+            .str("name", desc.debugName);
+        stream_ += line.finish();
         return handle;
     }
 

@@ -16,6 +16,8 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `CFrame` | `CFrame` | — | read/write | Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which is -Z. |
+| `ClipPlane` | `CFrame` | — | read/write | A plane the camera does not see behind (ADR 0107), used while `ClipPlaneEnabled` is true: it passes through this CFrame's position, and what lies in front of its `LookVector` is drawn while what lies behind is not. A mirror's camera, standing behind the glass, sees the room and not the wall the mirror hangs on. `@engine/views` sets it for you. The camera must be behind the plane; one in front of it draws as if there were none. |
+| `ClipPlaneEnabled` | `boolean` | `false` | read/write | Whether `ClipPlane` is used. |
 | `FarPlane` | `number` | — | read/write | Distance in metres to the far clip plane; geometry beyond it is not drawn. |
 | `FieldOfView` | `number` | — | read/write | The vertical field of view in degrees. Clamped to a sane open interval: zero and 180 both produce a projection matrix that renders nothing. |
 | `NearPlane` | `number` | — | read/write | Distance in metres to the near clip plane. Small values buy little and cost depth precision everywhere, so this is worth raising rather than lowering. |
