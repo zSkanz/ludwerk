@@ -332,6 +332,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   works out what is typed into it (`0+2`, `1/2`, `90/4`), and an enum shows
   its item's name closed and its whole name open. Stats is drawn in the same
   grid. An instance whose `Enabled` is off is dimmed in the Explorer.
+- **A material's textures tile by size on a part** (`TileSize`, 4 m by
+  default): a face shows as many repeats as it is long, so the edges of a long,
+  thin slab are no longer the whole texture squeezed into a strip. 0 stretches
+  each texture over the face, as before; a `MeshPart` keeps its file's UVs. The
+  material editor shows it under Textures, and its preview ball is one repeat
+  across.
 - **A folder with something in it is drawn filled**, in the Content browser's
   grid and tree and in the Explorer.
 - **The activity bar marks a panel that is open**, wherever it is: a click

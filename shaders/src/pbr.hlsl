@@ -41,6 +41,14 @@ struct VertexInput
     float2 Uv : TEXCOORD3;
 };
 
+// How long the surface's own U and V directions are in the world, per object
+// unit: what turns a primitive's 0..1 face UV into metres.
+float2 uvMetresScale(float3x3 model, float3 normal, float4 tangent)
+{
+    const float3 bitangent = cross(normal, tangent.xyz) * (tangent.w < 0.0f ? -1.0f : 1.0f);
+    return float2(length(mul(model, tangent.xyz)), length(mul(model, bitangent)));
+}
+
 Interpolants VertexMain(VertexInput input)
 {
     Interpolants output;
@@ -61,6 +69,7 @@ Interpolants VertexMain(VertexInput input)
     // carried through untouched.
     output.Tangent = float4(mul((float3x3)Model, input.Tangent.xyz), input.Tangent.w);
     output.Uv = input.Uv;
+    output.UvMetres = input.Uv * uvMetresScale((float3x3)Model, input.Normal, input.Tangent);
     output.InstanceAlpha = InstanceAlphaUnused.x;
 
     return output;

@@ -404,6 +404,9 @@ void pushMaterialField(lua_State* L, MaterialField field, const asset::MaterialP
     case MaterialField::DoubleSided:
         lua_pushboolean(L, values.doubleSided);
         return;
+    case MaterialField::TileSize:
+        lua_pushnumber(L, static_cast<double>(values.tileSize));
+        return;
     case MaterialField::Count:
         break;
     }
@@ -478,6 +481,9 @@ bool readMaterialParameter(lua_State* L, int index, MaterialField field, asset::
             return false;
         into.doubleSided = lua_toboolean(L, index) != 0;
         return true;
+    case MaterialField::TileSize:
+        // Metres, and zero for the stretched face.
+        return number(into.tileSize) && into.tileSize >= 0.0f;
     case MaterialField::Count:
         break;
     }

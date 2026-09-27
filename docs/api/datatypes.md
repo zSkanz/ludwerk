@@ -357,6 +357,7 @@ The shared, read-only handle for a material asset: `Material.load("asset://mater
 | `NormalScale` | `number` | — | read/write | Scales the sampled normal's XY. One is the map as authored; zero is a flat surface. |
 | `Roughness` | `number` | — | read/write | 0 is a mirror and 1 is chalk. The default is 0.7, what an untextured building block looks like. |
 | `Source` | `Content` | — | read-only | The material asset this handle is, or the asset a clone was copied from -- a clone of a clone included. Always an asset's `Content`: a clone has nothing else to be named by. |
+| `TileSize` | `number` | — | read/write | How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. |
 | `Transparency` | `number` | — | read/write | How see-through the surface is, 0 opaque and 1 invisible. |
 
 ## Material — methods

@@ -71,6 +71,8 @@ Interpolants VertexMain(VertexInput input)
     // carried through untouched.
     output.Tangent = float4(mul((float3x3)Model, mul((float3x3)skin, input.Tangent.xyz)), input.Tangent.w);
     output.Uv = input.Uv;
+    // A skinned mesh is a `MeshPart`'s, which keeps its file's UVs.
+    output.UvMetres = input.Uv;
     output.InstanceAlpha = InstanceAlphaUnused.x;
 
     return output;

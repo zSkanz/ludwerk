@@ -57,6 +57,14 @@ float4x4 instanceModel(VertexInput input)
     return transpose(float4x4(input.ModelColumn0, input.ModelColumn1, input.ModelColumn2, input.ModelColumn3));
 }
 
+// How long the surface's own U and V directions are in the world, per object
+// unit: what turns a primitive's 0..1 face UV into metres.
+float2 uvMetresScale(float3x3 model, float3 normal, float4 tangent)
+{
+    const float3 bitangent = cross(normal, tangent.xyz) * (tangent.w < 0.0f ? -1.0f : 1.0f);
+    return float2(length(mul(model, tangent.xyz)), length(mul(model, bitangent)));
+}
+
 Interpolants VertexMain(VertexInput input)
 {
     Interpolants output;
@@ -81,6 +89,7 @@ Interpolants VertexMain(VertexInput input)
     // the model matrix rather than on the cofactor one.
     output.Tangent = float4(mul((float3x3)model, input.Tangent.xyz), input.Tangent.w);
     output.Uv = input.Uv;
+    output.UvMetres = input.Uv * uvMetresScale((float3x3)model, input.Normal, input.Tangent);
     output.InstanceAlpha = input.InstanceAlphaTint.x;
     output.InstanceTint = input.InstanceAlphaTint.yzw;
 

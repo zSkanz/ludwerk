@@ -3824,6 +3824,16 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
                     asset::MaterialProperties& p = row.begin(F::EmissiveMap);
                     row.end(F::EmissiveMap, drawMapField(p.emissiveMap, editor.content()));
                 }
+                {
+                    // One repeat of the textures on a part's faces, in metres;
+                    // zero stretches each over the whole face.
+                    asset::MaterialProperties& p = row.begin(F::TileSize);
+                    const bool edited = dragNumber("##value", ImGuiDataType_Float, &p.tileSize, 1, 0.05f, "%.2f m");
+                    p.tileSize = std::max(p.tileSize, 0.0f);
+                    ImGui::SetItemTooltip("how big one repeat of the textures is on a part's faces; 0 stretches "
+                                          "each texture over the whole face; a MeshPart keeps its own UVs");
+                    row.end(F::TileSize, edited);
+                }
                 endSectionGrid();
             }
             if (section("Surface Shader", "surface-shader")) {

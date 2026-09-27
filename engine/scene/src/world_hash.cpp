@@ -182,6 +182,9 @@ void hashMaterialFields(Hasher& hasher, asset::MaterialFieldMask set, const asse
         case asset::MaterialField::DoubleSided:
             hasher.flag(values.doubleSided);
             break;
+        case asset::MaterialField::TileSize:
+            hasher.number(values.tileSize);
+            break;
         case asset::MaterialField::Count:
             break;
         }

@@ -246,6 +246,11 @@ struct Interpolants
     // ones the material's own factor gave.
     nointerpolation float3 InstanceTint : TEXCOORD6;
 #endif
+    // The UV in metres along the surface: `Uv` times how long the tangent and
+    // the bitangent are in the world. On a primitive, whose faces each span
+    // one object unit, that is where on the face in metres -- what a material's
+    // tile size divides (`EmissiveFactor.w`).
+    float2 UvMetres : TEXCOORD7;
     float4 Position : SV_Position;
 };
 
@@ -352,11 +357,16 @@ float4 shadeForward(Interpolants input)
     const float normalScale = MetallicRoughnessNormalCutoff.z;
     const float alphaCutoff = MetallicRoughnessNormalCutoff.w;
 
+    // **Textures by size on a primitive's faces** (a material's `TileSize`, in
+    // `EmissiveFactor.w`): the same metre of texture on a 40 m face and on a
+    // 1 m edge. Zero keeps the mesh's own UVs.
+    const float2 uv = EmissiveFactor.w > 0.0f ? input.UvMetres / EmissiveFactor.w : input.Uv;
+
     float4 baseColor = BaseColorFactor;
 #if defined(ENG_INSTANCE_TINT)
     baseColor.rgb = input.InstanceTint;
 #endif
-    const float4 sampledBase = BaseColorTexture.Sample(BaseColorSampler, input.Uv);
+    const float4 sampledBase = BaseColorTexture.Sample(BaseColorSampler, uv);
     baseColor *= lerp(float4(1.0f, 1.0f, 1.0f, 1.0f), sampledBase, TextureFlags.x);
     // The two sources of transparency multiply: a glTF material can be
     // see-through on its own, and a script can make an otherwise opaque mesh
@@ -376,13 +386,13 @@ float4 shadeForward(Interpolants input)
     // unless the same texture is also referenced as the occlusion map, and
     // `MaterialDef` has no occlusion strength to gate it with, so reading it
     // would darken correct materials at random.
-    const float3 sampledMetallicRoughness = MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, input.Uv).rgb;
+    const float3 sampledMetallicRoughness = MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, uv).rgb;
     const float roughness = roughnessFactor * lerp(1.0f, sampledMetallicRoughness.g, TextureFlags.z);
     const float metallic = metallicFactor * lerp(1.0f, sampledMetallicRoughness.b, TextureFlags.z);
 
     const float3 geometricNormal = normalize(input.Normal);
     const float3x3 frame = tangentFrame(geometricNormal, input.Tangent);
-    float3 tangentNormal = NormalTexture.Sample(NormalSampler, input.Uv).xyz * 2.0f - 1.0f;
+    float3 tangentNormal = NormalTexture.Sample(NormalSampler, uv).xyz * 2.0f - 1.0f;
     tangentNormal.xy *= normalScale;
     const float3 mappedNormal = normalize(mul(normalize(tangentNormal), frame));
     const float3 normal = normalize(lerp(geometricNormal, mappedNormal, TextureFlags.y));
@@ -401,7 +411,7 @@ float4 shadeForward(Interpolants input)
     float3 color = lightSurface(surface, input.ShadingPosition, normal, input.ViewDepth, input.Position.xy);
 
     float3 emissive = EmissiveFactor.rgb;
-    emissive *= lerp(float3(1.0f, 1.0f, 1.0f), EmissiveTexture.Sample(EmissiveSampler, input.Uv).rgb, TextureFlags.w);
+    emissive *= lerp(float3(1.0f, 1.0f, 1.0f), EmissiveTexture.Sample(EmissiveSampler, uv).rgb, TextureFlags.w);
     color += emissive;
 
     // The eye is this space's origin, so the distance to it is the length of the

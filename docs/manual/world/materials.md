@@ -41,7 +41,8 @@ plain part has always looked like.
     "NormalScale": 1,
     "AlphaMode": "Opaque",
     "AlphaCutoff": 0.5,
-    "DoubleSided": false
+    "DoubleSided": false,
+    "TileSize": 4
   }
 }
 ```
@@ -57,6 +58,7 @@ plain part has always looked like.
 | `NormalScale` | Scales the normal map. 1 is as authored. |
 | `AlphaMode`, `AlphaCutoff` | `Opaque`, `Mask` (tested against `AlphaCutoff`) or `Blend`. |
 | `DoubleSided` | Whether back faces are drawn. |
+| `TileSize` | How big one repeat of the textures is on a part's faces, in metres (4 by default). A part's faces are textured by their size in the world, so a long, thin slab shows the texture at the same scale on its top and on its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. |
 
 The editor writes the file for you: right-click in the content browser and
 choose **New Material**, then edit it in the **Material** panel.

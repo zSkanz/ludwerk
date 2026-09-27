@@ -263,6 +263,12 @@ namespace {
     // "cutoff > 0" rather than a second uniform saying which mode this is.
     out.uniforms.metallicRoughnessNormalCutoff[3] =
         material.alphaMode == static_cast<core::i32>(asset::MaterialAlphaMode::Mask) ? material.alphaCutoff : 0.0f;
+    // The texture's size on a primitive's faces, in metres (the shader's
+    // `EmissiveFactor.w`, which was unused); zero keeps the mesh's own UVs --
+    // and is what a material with no texture carries, having nothing to tile.
+    const bool textured = !material.colorMap.empty() || !material.normalMap.empty() ||
+                          !material.metallicRoughnessMap.empty() || !material.emissiveMap.empty();
+    out.uniforms.emissive[3] = textured ? std::max(material.tileSize, 0.0f) : 0.0f;
 
     const auto mapOf = [&](const std::string& urn) -> rhi::TextureHandle {
         if (textures == nullptr || urn.empty())
@@ -972,6 +978,9 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     tintBy(block, look.tint);
                 else
                     block = look.block;
+                // A mesh keeps the UVs its file gives it; tiling by size is a
+                // primitive's, whose faces have none worth keeping.
+                block.uniforms.emissive[3] = 0.0f;
                 (void)addMaterial(block);
                 resolved.push_back(ResolvedMaterial{meshPart.meshContent, localMaterial, materialSlot, look});
             }

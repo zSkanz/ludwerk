@@ -634,6 +634,10 @@ declare extern type Material with
     AlphaCutoff: number
     --- Whether the back faces are drawn. Leaves and cloth want this; anything solid does not.
     DoubleSided: boolean
+    --- How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats
+    --- as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0
+    --- stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs.
+    TileSize: number
     --- A writable runtime copy: the same properties, the same `Source`, owned by nobody and never
     --- saved. Put it on a part with `part.Material = copy`, then change it -- every part wearing this
     --- copy changes with it, and nothing else does.

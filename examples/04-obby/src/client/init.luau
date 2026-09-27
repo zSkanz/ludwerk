@@ -32,11 +32,15 @@
 ---   5. **The animation** is a skinned glTF welded to the character, playing a
 ---      looping clip. `AnimationPlayer` under the `MeshPart`, one
 ---      `AnimationTrack`, and nothing per frame.
+---   6. **It remembers you** (ADR 0111): the last checkpoint and the best time
+---      are kept in a `SaveService` slot, so a player who closes the game comes
+---      back where they were.
 
 local AudioService = game:GetService("AudioService")
 local InputService = game:GetService("InputService")
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
+local SaveService = game:GetService("SaveService")
 local TweenService = game:GetService("TweenService")
 local UIService = game:GetService("UIService")
 
@@ -491,6 +495,11 @@ finishLabel.Parent = finishPanel
 
 local playing = false
 local finished = false
+-- Seconds on the course, counted by the frame rather than read off a clock,
+-- so a replay counts the same.
+local elapsed = 0
+-- **What the last run left** (ADR 0111): the slot, once it has been read.
+local progress: SaveSlot? = nil
 
 local function startPlaying()
     if playing then
@@ -555,11 +564,29 @@ for index, spot in CheckpointSpots do
         end
         checkpointsReached = index
         respawn = spot + vector.create(0, 3, 0)
+        if progress then
+            progress:Set("checkpoint", index)
+        end
         status.Text = `Checkpoint {checkpointsReached} / {#CheckpointSpots}`
         objective.Text = Objectives[index] or "Reach the flag"
         checkpointSound:Play()
     end)
 end
+
+-- Read in a task of its own: `GetSlotAsync` waits for the disk, and the
+-- course should not.
+task.spawn(function()
+    local slot = SaveService:GetSlotAsync("obby")
+    progress = slot
+    local saved = slot:Get("checkpoint")
+    if typeof(saved) == "number" and saved > checkpointsReached and saved <= #CheckpointSpots then
+        checkpointsReached = saved
+        respawn = CheckpointSpots[saved] + vector.create(0, 3, 0)
+        character.Position = respawn
+        status.Text = `Checkpoint {checkpointsReached} / {#CheckpointSpots}`
+        objective.Text = Objectives[saved] or "Reach the flag"
+    end
+end)
 
 -- The finish. A PAD you stand on rather than a pole you walk into: `Touched`
 -- fires for the surface under a character's feet and not for a wall it presses
@@ -573,6 +600,18 @@ flag.Touched:Connect(function(other: BasePart)
         return
     end
     finished = true
+    -- The best time kept, and the course started from the start next time.
+    local shown = `Finished in {string.format("%.1f", elapsed)} s`
+    if progress then
+        local best = progress:Get("bestTime")
+        if typeof(best) ~= "number" or elapsed < best then
+            progress:Set("bestTime", elapsed)
+            best = elapsed
+        end
+        progress:Set("checkpoint", 0)
+        shown ..= ` (best {string.format("%.1f", best :: number)} s)`
+    end
+    finishLabel.Text = shown
     -- **The gate's fact.** `tests/replay/obby` requires this attribute, and it is
     -- set here rather than on the way out so that a run which never reached the
     -- flag cannot claim it did.
@@ -599,6 +638,9 @@ local wasGrounded = true
 local clipStarted = false
 
 RunService.Heartbeat:Connect(function(dt: number)
+    if playing and not finished then
+        elapsed += dt
+    end
     -- The animation track is loaded once, on the first frame the mesh has
     -- actually been read: a track made before then finds no skeleton, and its
     -- own doc says to load one and keep it.

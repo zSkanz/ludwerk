@@ -18,7 +18,7 @@ namespace {
 
 constexpr std::array<std::string_view, MaterialFieldCount> FieldNames{
     "Color",     "Transparency", "ColorMap",    "NormalMap", "MetallicRoughnessMap", "Emissive",    "EmissiveMap",
-    "Metalness", "Roughness",    "NormalScale", "AlphaMode", "AlphaCutoff",          "DoubleSided",
+    "Metalness", "Roughness",    "NormalScale", "AlphaMode", "AlphaCutoff",          "DoubleSided", "TileSize",
 };
 
 constexpr std::array<std::string_view, 3> AlphaModeNames{"Opaque", "Mask", "Blend"};
@@ -74,6 +74,8 @@ template <class Properties>
         return &p.normalScale;
     case MaterialField::AlphaCutoff:
         return &p.alphaCutoff;
+    case MaterialField::TileSize:
+        return &p.tileSize;
     default:
         return static_cast<decltype(&p.transparency)>(nullptr);
     }
@@ -718,7 +720,8 @@ namespace {
 constexpr std::array<char, 4> CompiledMagic{'L', 'M', 'A', 'T'};
 // 2: the surface shader and its parameters (ADR 0091).
 // 3: the shader parameters a part may override, by name. 2 is still read.
-constexpr core::u32 CompiledVersion = 3;
+// 4 carries `tileSize`, at the end so a 3 reads as it did.
+constexpr core::u32 CompiledVersion = 4;
 
 class ByteWriter
 {
@@ -857,6 +860,7 @@ std::vector<std::byte> encodeMaterial(const CompiledMaterial& material)
     out.word(static_cast<core::u32>(asset.instanceShaderParameters.size()));
     for (const std::string& name : asset.instanceShaderParameters)
         out.text(name);
+    out.real(p.tileSize);
     return out.take();
 }
 
@@ -871,8 +875,8 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
     core::u32 version = 0;
     core::u32 written = 0;
     core::u32 declared = 0;
-    if (!in.word(version) || (version != CompiledVersion && version != 2) || !in.word(written) || !in.word(declared) ||
-        !in.text(asset.parent))
+    if (!in.word(version) || (version != CompiledVersion && version != 3 && version != 2) || !in.word(written) ||
+        !in.word(declared) || !in.text(asset.parent))
         return std::nullopt;
     asset.written = static_cast<MaterialFieldMask>(written & AllMaterialFields);
     asset.instanceParameters = static_cast<MaterialFieldMask>(declared & DeclarableParameters);
@@ -928,6 +932,8 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
             addShaderParameterName(asset.instanceShaderParameters, name);
         }
     }
+    if (version >= 4 && !in.real(p.tileSize))
+        return std::nullopt;
     if (!in.done())
         return std::nullopt;
     return out;

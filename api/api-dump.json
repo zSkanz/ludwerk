@@ -5963,6 +5963,11 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "TileSize",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "Transparency",
           "Type": "number",
           "ThreadSafety": "Safe"

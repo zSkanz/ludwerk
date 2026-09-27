@@ -168,6 +168,31 @@ TEST_CASE("a slot is written, read back, and survives damage through its backup"
     }
 }
 
+TEST_CASE("a write that dies between its two renames leaves the last save readable")
+{
+    // The writer first makes the previous save the backup, then renames the
+    // new file into place. A process killed between the two leaves only the
+    // backup -- and that is what is read, with nothing lost but the save that
+    // never finished.
+    TempFolder folder;
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        SaveSlotData* slot = store.open("killed");
+        slot->values["gold"] = scalar(scene::Value{core::f64{7.0}});
+        ++slot->generation;
+        store.flush(1.0);
+    }
+    std::error_code error;
+    std::filesystem::rename(folder.path / "killed.save", folder.path / "killed.bak", error);
+    REQUIRE_FALSE(error);
+    SaveStore store(SaveStore::Options{.directory = folder.path});
+    script::SaveDamage damage = script::SaveDamage::Lost;
+    SaveSlotData* slot = store.open("killed", &damage);
+    REQUIRE(slot != nullptr);
+    CHECK(slot->recovered);
+    CHECK(std::get<core::f64>(slot->values.at("gold").scalar) == doctest::Approx(7.0));
+}
+
 TEST_CASE("the slot limit and removal")
 {
     TempFolder folder;

@@ -2361,6 +2361,15 @@ local Datatypes: { Schema.Datatype } = {
                 ThreadSafety = "Safe",
                 Doc = "Whether the back faces are drawn. Leaves and cloth want this; anything solid does not.",
             },
+            {
+                Name = "TileSize",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How big one repeat of the textures is on a part's faces, in metres: a face shows as many "
+                    .. "repeats as it is long, so a long, thin slab has the texture at one scale on its top and "
+                    .. "its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's "
+                    .. "own UVs.",
+            },
         } :: { Schema.Property },
         Methods = {
             {

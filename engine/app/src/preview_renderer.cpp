@@ -256,7 +256,15 @@ bool HostPreviewRenderer::swatchOf(const std::string& material, core::i32 shape)
     // number keeps the picture the same if somebody changes the view later.
     (void)scratch_->setProperty(ball, shapeProperty_,
                                 scene::Value{scene::EnumValue{partShapeEnum_, std::clamp(shape, 0, 2)}});
-    (void)scratch_->setProperty(ball, sizeProperty_, scene::Value{core::Vec3{1.0f, 1.0f, 1.0f}});
+    // **One repeat of its textures across**, when it tiles them by size: a
+    // metre ball wearing a 4 m repeat would show a quarter of the texture,
+    // magnified, and a preview is for seeing the texture. The framing fits
+    // whatever size this is.
+    core::f32 edge = 1.0f;
+    const asset::ResolvedMaterial resolved = scratch_->resolveMaterial(atoms_.intern(material), 0);
+    if (resolved.properties.tileSize > 0.0f && !resolved.properties.colorMap.empty())
+        edge = resolved.properties.tileSize;
+    (void)scratch_->setProperty(ball, sizeProperty_, scene::Value{core::Vec3{edge, edge, edge}});
     (void)scratch_->setProperty(ball, materialProperty_, scene::Value{scene::MaterialRef{material, 0}});
     return true;
 }
