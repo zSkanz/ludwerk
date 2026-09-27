@@ -10,6 +10,14 @@ project(Engine
     DESCRIPTION "Standalone game engine scripted in Luau with a familiar Instance/Service developer experience"
     LANGUAGES CXX C)
 
+# Objective-C++ on Apple, for the one file that talks to `NSURLSession`
+# (`engine/net`, ADR 0063). Here and not in that module: a language enabled in
+# a subdirectory leaves CMake's rules for it unset everywhere else, and the
+# configure fails on `CMAKE_OBJCXX_COMPILE_OBJECT`.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
     message(FATAL_ERROR "In-tree builds are forbidden (rule R14). Use a preset: cmake --preset <name>")
 endif()

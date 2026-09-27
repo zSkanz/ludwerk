@@ -43,7 +43,7 @@ elseif(ANDROID)
     target_sources(engine_net_api PRIVATE src/https_android.cpp)
     target_link_libraries(engine_net_api PRIVATE engine::platform)
 elseif(APPLE)
-    enable_language(OBJCXX)
+    # OBJCXX is enabled by the root CMakeLists.
     target_sources(engine_net_api PRIVATE src/https_apple.mm)
     set_source_files_properties(src/https_apple.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(engine_net_api PUBLIC "-framework Foundation")
