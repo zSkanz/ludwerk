@@ -63,6 +63,10 @@ public:
     // that debt is the same number of seconds whatever the tick becomes.
     void setFixedDt(f64 seconds) noexcept { timing_.fixedDt = seconds; }
 
+    // How long until the accumulator owes the next tick, at `nowNs`. Zero when
+    // one is already owed.
+    [[nodiscard]] u64 nanosUntilNextTick(u64 nowNs) const noexcept;
+
     [[nodiscard]] u64 totalTicks() const noexcept { return totalTicks_; }
     [[nodiscard]] u64 totalFrames() const noexcept { return totalFrames_; }
     [[nodiscard]] const FrameTiming& timing() const noexcept { return timing_; }

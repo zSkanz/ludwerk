@@ -11,6 +11,7 @@
 #include <SDL3/SDL_process.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_system.h>
+#include <SDL3/SDL_timer.h>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -258,6 +259,12 @@ u64 nowNs() noexcept
     // every platform we target.
     const auto since = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(since).count());
+}
+
+void sleepNs(u64 ns) noexcept
+{
+    if (ns > 0)
+        SDL_DelayPrecise(ns);
 }
 
 core::i64 threadCpuNs() noexcept

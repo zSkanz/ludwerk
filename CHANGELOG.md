@@ -187,7 +187,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **A dedicated server opens no graphics device.** It used to open one and draw
   every frame offscreen for nobody; on a Linux host with no GPU that device is
   Mesa's software rasteriser, and an exported server crashed in it seconds after
-  starting. `--rhi=` still chooses one.
+  starting. `--rhi=` still chooses one. **And it sleeps between ticks**: with
+  no device to wait on it had spun a thousand empty frames a second on a whole
+  core.
 - **`ludwerk keystore new --alias upload --out release.keystore` works as its
   usage text shows.** Every option that carries a value takes `--name value` as
   well as `--name=value`; before, the space form made a keystore named `true`.

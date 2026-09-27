@@ -60,6 +60,12 @@ void shutdown();
 // a fixed dt down precisely so nothing below it needs the real time.
 [[nodiscard]] u64 nowNs() noexcept;
 
+// Gives the CPU back for `ns` nanoseconds, to within the system's timer rather
+// than its default tick: on Windows a plain sleep of five milliseconds is
+// fifteen. For a loop with nothing to do until a deadline -- a server between
+// ticks -- and never for simulation, for `nowNs`'s reason.
+void sleepNs(u64 ns) noexcept;
+
 // **The CPU time the calling thread has used**, in nanoseconds, or -1 where it
 // cannot be read. Not a clock of the world: it stops while the thread is not
 // running, which is the point -- the difference between it and `nowNs` over a

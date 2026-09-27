@@ -56,4 +56,13 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     return frame;
 }
 
+u64 FrameScheduler::nanosUntilNextTick(u64 nowNs) const noexcept
+{
+    if (!started_)
+        return 0;
+    const f64 since = nowNs > lastNs_ ? static_cast<f64>(nowNs - lastNs_) / 1'000'000'000.0 : 0.0;
+    const f64 owed = timing_.fixedDt - accumulator_ - since;
+    return owed > 0.0 ? static_cast<u64>(owed * 1'000'000'000.0) : 0;
+}
+
 } // namespace engine::app

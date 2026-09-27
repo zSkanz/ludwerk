@@ -4353,6 +4353,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         device->submitAndPresent();
 
+        // **A process with no window and a real clock sleeps until its next
+        // tick** -- a dedicated server, above all. A window's present waits for
+        // the display, and a headless run on the synthetic clock is meant to
+        // run flat out; this one had neither, and with no device to wait on
+        // (a server draws nothing) it spun a thousand empty frames a second on
+        // a whole core.
+        if (options.headless && !syntheticClock)
+            platform::sleepNs(scheduler.nanosUntilNextTick(platform::nowNs()));
+
         if (options.frames != 0 && options.exitAfterFrames && frame.index + 1 >= options.frames)
             quit = true;
         // **The device is gone** (a driver reset, most often a shader that ran
