@@ -76,6 +76,7 @@
 #include "engine/scene/skeleton_host.h"
 #include "engine/scene/value.h"
 #include "engine/scene/world.h"
+#include "engine/script/save_store.h"
 #include "icon_ids.gen.h"
 
 #endif
@@ -315,6 +316,8 @@ const rhi::IDevice* g_device = nullptr;
 // and pointed at from here for the same reason `g_device` is: the row that wants
 // one is drawn several call frames below anything holding an overlay.
 ThumbnailCache* g_thumbnails = nullptr;
+// The game's saves (ADR 0111), for the Saves panel. The host's.
+script::SaveStore* g_saves = nullptr;
 
 // The surface shader compiler, for the material panel's status line (ADR
 // 0091). Owned by the frame loop, like the thumbnails.
@@ -1129,6 +1132,12 @@ void acceptContentMove(EditorCommands& commands, std::string_view folder)
 [[nodiscard]] bool isTextureDrag(const ContentDrag& drag) noexcept
 {
     return contentKindOf(std::filesystem::path(drag.path).filename().string()) == ContentKind::Texture;
+}
+
+// A mesh, which a drop into the world or the tree makes a `MeshPart` of.
+[[nodiscard]] bool isMeshDrag(const ContentDrag& drag) noexcept
+{
+    return !drag.folder && contentKindOf(std::filesystem::path(drag.path).filename().string()) == ContentKind::Mesh;
 }
 
 // The instance tree, virtualised.
@@ -1988,6 +1997,14 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                         commands->placeStampParent = row.id;
                     }
                 }
+                // A mesh becomes a `MeshPart` wearing it, under the row.
+                else if (fromBrowser && isMeshDrag(*static_cast<const ContentDrag*>(peek->Data)) &&
+                         Editor::canParentInto(world, row.id, root)) {
+                    if (const ImGuiPayload* took = ImGui::AcceptDragDropPayload(kContentDragPayload); took != nullptr) {
+                        commands->placeMesh = static_cast<const ContentDrag*>(took->Data)->path;
+                        commands->placeMeshParent = row.id;
+                    }
+                }
                 ImGui::EndDragDropTarget();
             }
 
@@ -2216,8 +2233,12 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 // an ImGui item and has to be placed against the icon's own box
                 // rather than against whatever the cursor is after it.
                 const ImVec2 iconOrigin = ImGui::GetCursorScreenPos();
-                if (drawIcon(icons, classIconFor(icons, world.classes(), world.atoms(), world.classOf(row.id)),
-                             iconSize, Editor::folderColor(world, row.id))) {
+                // A `Folder` with something in it is drawn filled, as the
+                // content browser's are (the owner).
+                std::string rowIcon = classIconFor(icons, world.classes(), world.atoms(), world.classOf(row.id));
+                if (rowIcon == icons::ClassFolder && world.firstChild(row.id).valid())
+                    rowIcon = std::string(icons::ContentFolderFilled);
+                if (drawIcon(icons, rowIcon, iconSize, Editor::folderColor(world, row.id))) {
                     // **The badge goes on the stamp's ROOT and nowhere else.**
                     // Every part of a stamped house is inside a stamped
                     // subtree, and badging all forty of them is noise -- the
@@ -6402,8 +6423,10 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
                 (void)drawIcon(icons, icon, glyph);
                 ImGui::SetItemTooltip("%s", tip);
                 measured();
+                // Back on the row: `SameLine` returns to the LINE's height, not
+                // the lifted icon's, so the field needs no correction -- one
+                // put it a lift above every other button on the bar.
                 ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - lift);
             }
             ImGui::SetNextItemWidth(width);
             f32 step = editor.snapStep(mode);
@@ -6832,7 +6855,8 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
         const ImGuiPayload* offered = ImGui::GetDragDropPayload();
         const bool placeable = offered != nullptr && offered->IsDataType(kContentDragPayload) &&
                                (isMaterialDrag(*static_cast<const ContentDrag*>(offered->Data)) ||
-                                isStampDrag(*static_cast<const ContentDrag*>(offered->Data)));
+                                isStampDrag(*static_cast<const ContentDrag*>(offered->Data)) ||
+                                isMeshDrag(*static_cast<const ContentDrag*>(offered->Data)));
         if (placeable && ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* dropped = ImGui::AcceptDragDropPayload(kContentDragPayload); dropped != nullptr) {
                 const auto* drag = static_cast<const ContentDrag*>(dropped->Data);
@@ -6847,6 +6871,13 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
                     commands.placeStamp = drag->path;
                     commands.placeStampLinked = true;
                     commands.placeStampParent = {};
+                }
+                // **A mesh becomes a `MeshPart` standing where it was dropped**
+                // (the owner): the pick at the pointer says on what.
+                else if (isMeshDrag(*drag)) {
+                    const ImVec2 at = ImGui::GetMousePos();
+                    commands.placeMesh = drag->path;
+                    commands.placeMeshPixel = core::Vec2{at.x - origin.x, at.y - origin.y};
                 }
             }
             ImGui::EndDragDropTarget();
@@ -7397,6 +7428,9 @@ bool drawContentIcon(const IconAtlas* icons, const scene::World* world, const Co
                  size, tint)) {
         return true;
     }
+    // A folder with something in it is drawn filled (the owner).
+    if (entry.kind == ContentKind::Folder && entry.filled)
+        return drawIcon(icons, icons::ContentFolderFilled, size, tint);
     return drawIcon(icons, contentKindIcon(entry.kind), size, tint);
 }
 
@@ -7593,6 +7627,8 @@ struct ContentFolderNode
     std::string name;
     std::string relative;
     std::vector<std::size_t> children;
+    // Holds anything at all, a folder or a file: drawn filled (the owner).
+    bool filled = false;
 };
 
 void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtlas* icons)
@@ -7607,6 +7643,9 @@ void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtla
         s_folders.clear();
         s_folders.push_back(ContentFolderNode{"content", "", {}});
         std::vector<std::string> found;
+        // The folders a file sits directly in: a folder holding only files is
+        // as full as one holding folders.
+        std::unordered_set<std::string> holdFiles;
         std::error_code ec;
         for (std::filesystem::recursive_directory_iterator walk(s_root, ec), done; !ec && walk != done;
              walk.increment(ec)) {
@@ -7618,6 +7657,8 @@ void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtla
             }
             if (walk->is_directory(ec))
                 found.push_back(walk->path().lexically_relative(s_root).generic_string());
+            else
+                holdFiles.insert(walk->path().parent_path().lexically_relative(s_root).generic_string());
             // A tree of thousands is a tree nobody reads; the path still gets there.
             if (found.size() >= 4000)
                 break;
@@ -7634,6 +7675,11 @@ void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtla
             s_folders[up->second].children.push_back(s_folders.size());
             s_folders.push_back(
                 ContentFolderNode{slash == std::string::npos ? relative : relative.substr(slash + 1), relative, {}});
+        }
+        for (ContentFolderNode& folder : s_folders) {
+            // The root's own files are under "." to `lexically_relative`.
+            const std::string key = folder.relative.empty() ? std::string(".") : folder.relative;
+            folder.filled = !folder.children.empty() || holdFiles.contains(key);
         }
     }
 
@@ -7660,12 +7706,14 @@ void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtla
             acceptContentMove(commands, folder.relative);
             ImGui::EndDragDropTarget();
         }
-        // The folder's own picture, in the colour somebody gave it.
+        // The folder's own picture, in the colour somebody gave it -- filled
+        // when there is something in it.
+        const std::string_view folderIcon = folder.filled ? icons::ContentFolderFilled : icons::ContentFolder;
         if (icons != nullptr && icons->ready() && g_device != nullptr) {
-            const IconSprite sprite = icons->find(icons::ContentFolder, static_cast<core::u32>(glyph + 0.5f));
+            const IconSprite sprite = icons->find(folderIcon, static_cast<core::u32>(glyph + 0.5f));
             if (SDL_GPUTexture* texture = rhi::nativeTexture(*g_device, icons->texture());
                 sprite.valid && texture != nullptr) {
-                ImVec4 tint = iconTint(icons, icons::ContentFolder);
+                ImVec4 tint = iconTint(icons, folderIcon);
                 if (const std::optional<core::Color3> own = editor.contentColor(folder.relative); own.has_value())
                     tint = ImVec4(own->r, own->g, own->b, tint.w);
                 const ImVec2 corner(ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing(),
@@ -8408,6 +8456,7 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
         panelItem("Console", panels.console);
         panelItem("Stats", panels.stats);
         panelItem("Streaming", panels.streaming);
+        panelItem("Saves", panels.saves);
         panelItem("Viewport", panels.viewport);
         panelItem("Viewport Settings", panels.viewportSettings);
         ImGui::Separator();
@@ -10484,6 +10533,8 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
             id = std::string(icons::ClassDebugService);
         else if (name.ends_with("###Welcome"))
             id = std::string(icons::ActionInformation);
+        else if (name.ends_with("###Saves"))
+            id = std::string(icons::ActionSave);
         else if (name.ends_with("###Material"))
             id = std::string(icons::ContentMaterial);
         else if (name.ends_with("###Export"))
@@ -11322,6 +11373,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
     panel("Viewport", "", icons::ClassCamera, panels.viewport);
     panel("Stats", "", icons::ClassDebugService, panels.stats);
     panel("Streaming", "", icons::ClassStreamingService, panels.streaming);
+    panel("Saves", "", icons::ActionSave, panels.saves);
     panel("Viewport Settings", "", icons::ClassCamera, panels.viewportSettings);
     panel("Debug", "", icons::ClassDebugService, panels.debug);
     panel("Grid", "", icons::ActionGrid, panels.showGrid);
@@ -12045,6 +12097,164 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
         revealPanel(panels, "###Debug", panels.debug);
 }
 
+// --- Saves (ADR 0111) ----------------------------------------------------------
+//
+// **What the game saved, where a person can see it**: the slots the project's
+// Play and `ludwerk dev` wrote, each key in the Properties grid, a text, a
+// number or a switch changed in place, and a key, a slot or all of them
+// removed. The store is the running world's, so a change here is a change the
+// game reads.
+
+// A value, as one line: a table by what is in it.
+[[nodiscard]] std::string describeSaveValue(const scene::World& world, const script::SaveValue& value)
+{
+    if (value.table == nullptr)
+        return formatValue(world, value.scalar);
+    std::string out = "{";
+    bool first = true;
+    for (const script::SaveValue& item : value.table->array) {
+        if (out.size() > 80)
+            break;
+        out += first ? "" : ", ";
+        out += describeSaveValue(world, item);
+        first = false;
+    }
+    for (const auto& [key, item] : value.table->fields) {
+        if (out.size() > 80)
+            break;
+        out += first ? "" : ", ";
+        out += key + " = " + describeSaveValue(world, item);
+        first = false;
+    }
+    return out.size() > 80 ? out + ", ...}" : out + "}";
+}
+
+void drawSaves(scene::World& world, const IconAtlas* icons)
+{
+    if (g_saves == nullptr) {
+        ImGui::TextDisabled("This run keeps no saves.");
+        return;
+    }
+    static std::string s_selected;
+    const std::vector<std::string> slots = g_saves->list();
+    const core::f64 version = world.engineState().saveVersion;
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", g_saves->options().directory.empty() ? "in memory"
+                                                                   : g_saves->options().directory.string().c_str());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(slots.empty());
+    if (labeledIconButton(icons, icons::ActionDelete, "Clear all")) {
+        for (const std::string& name : slots)
+            (void)g_saves->remove(name);
+        s_selected.clear();
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("remove every slot and its backup");
+
+    const ImGuiTableFlags split =
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##saves-split", 2, split, ImGui::GetContentRegionAvail()))
+        return;
+    ImGui::TableSetupColumn("slots", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+    ImGui::TableSetupColumn("values", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    if (ImGui::BeginChild("##save-slots")) {
+        if (slots.empty())
+            ImGui::TextDisabled("No slot saved yet. A script saves with SaveService:GetSlotAsync.");
+        for (const std::string& name : slots) {
+            if (ImGui::Selectable(name.c_str(), name == s_selected))
+                s_selected = name;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::TableSetColumnIndex(1);
+    if (ImGui::BeginChild("##save-values")) {
+        script::SaveSlotData* slot =
+            s_selected.empty() || std::find(slots.begin(), slots.end(), s_selected) == slots.end()
+                ? nullptr
+                : g_saves->open(s_selected);
+        if (slot == nullptr) {
+            ImGui::TextDisabled("Pick a slot to see what it holds.");
+        }
+        else {
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%s -- version %g, %zu key(s)%s", slot->name.c_str(), slot->version, slot->values.size(),
+                        slot->recovered ? "" : ", recovered empty");
+            ImGui::SameLine();
+            if (labeledIconButton(icons, icons::ActionDelete, "Delete slot")) {
+                (void)g_saves->remove(slot->name);
+                s_selected.clear();
+                slot = nullptr;
+            }
+        }
+        if (slot != nullptr && beginSectionGrid("save-grid")) {
+            std::optional<std::string> removeKey;
+            bool changed = false;
+            for (auto& [key, value] : slot->values) {
+                ImGui::PushID(key.c_str());
+                sectionName(key);
+                const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+                const float trash = ImGui::GetFrameHeight();
+                // Where the cell starts and how wide it is, so the remove button
+                // lands at its right end whatever the widget before it is.
+                const float cellStart = ImGui::GetCursorPosX();
+                const float cellWidth = ImGui::GetContentRegionAvail().x;
+                ImGui::SetNextItemWidth(-(trash + inner));
+                if (value.table == nullptr && std::holds_alternative<bool>(value.scalar)) {
+                    bool held = std::get<bool>(value.scalar);
+                    if (ImGui::Checkbox("##value", &held)) {
+                        value.scalar = scene::Value{held};
+                        changed = true;
+                    }
+                }
+                else if (value.table == nullptr && std::holds_alternative<core::f64>(value.scalar)) {
+                    core::f64 held = std::get<core::f64>(value.scalar);
+                    if (dragNumber("##value", ImGuiDataType_Double, &held, 1, 0.1f, "%.6g")) {
+                        value.scalar = scene::Value{held};
+                        changed = true;
+                    }
+                }
+                else if (value.table == nullptr && std::holds_alternative<std::string>(value.scalar)) {
+                    char buffer[512]{};
+                    const std::string& text = std::get<std::string>(value.scalar);
+                    (void)std::snprintf(buffer, sizeof(buffer), "%s", text.c_str());
+                    if (ImGui::InputText("##value", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        value.scalar = scene::Value{std::string(buffer)};
+                        changed = true;
+                    }
+                }
+                else {
+                    // Read here, changed by the game: a field of the same width
+                    // as the others, so every row's remove sits in one column.
+                    std::string shown = describeSaveValue(world, value);
+                    ImGui::InputText("##shown", shown.data(), shown.size() + 1, ImGuiInputTextFlags_ReadOnly);
+                }
+                ImGui::SameLine(0.0f, inner);
+                ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), cellStart + cellWidth - trash));
+                if (iconButton(icons, icons::ActionDelete, ImGui::GetFontSize(), "##remove", "x", "remove this key"))
+                    removeKey = key;
+                ImGui::PopID();
+            }
+            if (removeKey.has_value()) {
+                slot->values.erase(*removeKey);
+                changed = true;
+            }
+            if (changed) {
+                // Written now: a person who changed a save in a tool expects the
+                // file to say so.
+                ++slot->generation;
+                g_saves->flush(version);
+            }
+            endSectionGrid();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::EndTable();
+}
+
 // --- The Welcome page (the owner's queue, Q2) -------------------------------
 //
 // **What the editor this follows shows when nothing is open**: the name, a
@@ -12551,6 +12761,15 @@ terrainPanelDone:;
             if (runtime != nullptr)
                 drawMemory(*runtime);
         }
+        ImGui::End();
+    }
+    // Under the world, beside the Console: a list and a table want width.
+    if (panels.saves && world != nullptr) {
+        if (const ImGuiWindow* console = ImGui::FindWindowByName("###Console");
+            console != nullptr && console->DockNode != nullptr)
+            ImGui::SetNextWindowDockID(console->DockNode->ID, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin((tabIconPad() + "Saves###Saves").c_str(), &panels.saves))
+            drawSaves(*world, icons);
         ImGui::End();
     }
     if (panels.streaming) {
@@ -13661,12 +13880,18 @@ DebugOverlay::~DebugOverlay()
     g_window = nullptr;
     g_device = nullptr;
     g_thumbnails = nullptr;
+    g_saves = nullptr;
     g_surfaceCompiler = nullptr;
 }
 
 void DebugOverlay::setThumbnails(ThumbnailCache* thumbnails) noexcept
 {
     g_thumbnails = thumbnails;
+}
+
+void DebugOverlay::setSaves(script::SaveStore* saves) noexcept
+{
+    g_saves = saves;
 }
 
 void DebugOverlay::setSurfaceCompiler(SurfaceCompiler* compiler) noexcept
@@ -13917,6 +14142,9 @@ void DebugOverlay::handleEvents(std::span<const platform::Event>)
 // picture in. The frame loop still owns a cache and still offers it, which is
 // what keeps that loop free of an #ifdef.
 void DebugOverlay::setThumbnails(ThumbnailCache*) noexcept
+{}
+
+void DebugOverlay::setSaves(script::SaveStore*) noexcept
 {}
 
 void DebugOverlay::setSurfaceCompiler(SurfaceCompiler*) noexcept

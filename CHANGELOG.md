@@ -55,6 +55,22 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`SaveService`: a game keeps what outlives a run** (ADR 0111, the
+  game-ready plan's A2). `GetSlotAsync(name)` hands back a `SaveSlot` --
+  `Get`, `Set`, `Update`, `Remove`, `GetKeys`, `SaveAsync`, `Changed`,
+  `Recovered` -- holding strings, numbers, booleans, the geometry and colour
+  types, sequences and tables of them, each read back as the type it went in.
+  What is set is written by itself, at most once a second, on close and when a
+  phone backgrounds the game; a damaged file is read from its backup. Saves go
+  to the player's folder named by `[project]` company and name, and to the
+  project's `.engine/saves/` from the editor and `ludwerk dev`. `Version` and
+  `OnMigrate` bring an older slot up to date. `[save] max_slot_bytes` and
+  `max_slots` bound it. The editor has a Saves panel (View > Saves) and the
+  CLI `ludwerk saves list|clear`.
+- **A mesh dragged from the Content browser becomes a `MeshPart`**: onto the
+  viewport it stands where it was dropped, onto a row of the Explorer it goes
+  under it, and either way it measures what the mesh measures. A mesh given to
+  a `MeshPart` in Properties sizes the part the same way.
 - **`https://` in `net.request`, from the platform** (ADR 0063, the game-ready
   plan's A1): WinHTTP on Windows, the system's OpenSSL on Linux (loaded at the
   first request), `NSURLSession` on macOS and the Java stack on Android. The
@@ -316,6 +332,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   works out what is typed into it (`0+2`, `1/2`, `90/4`), and an enum shows
   its item's name closed and its whole name open. Stats is drawn in the same
   grid. An instance whose `Enabled` is off is dimmed in the Explorer.
+- **A folder with something in it is drawn filled**, in the Content browser's
+  grid and tree and in the Explorer.
 - **The activity bar marks a panel that is open**, wherever it is: a click
   closes it as its own X would, and a click on a closed one opens it with the
   keyboard in it.

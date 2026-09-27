@@ -85,6 +85,47 @@ namespace {
 
 } // namespace
 
+bool writeFileDurable(const std::filesystem::path& path, std::span<const std::byte> bytes)
+{
+    if (path.empty())
+        return false;
+    const std::string temporary = toUtf8(temporaryNameFor(path));
+    SDL_IOStream* stream = SDL_IOFromFile(temporary.c_str(), "wb");
+    if (stream == nullptr)
+        return false;
+    const bool written = bytes.empty() || SDL_WriteIO(stream, bytes.data(), bytes.size()) == bytes.size();
+    const bool flushed = written && SDL_FlushIO(stream);
+    const bool closed = SDL_CloseIO(stream);
+    if (!written || !flushed || !closed || !SDL_RenamePath(temporary.c_str(), toUtf8(path).c_str())) {
+        (void)SDL_RemovePath(temporary.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool renameFile(const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    return SDL_RenamePath(toUtf8(from).c_str(), toUtf8(to).c_str());
+}
+
+bool removeFile(const std::filesystem::path& path)
+{
+    if (SDL_RemovePath(toUtf8(path).c_str()))
+        return true;
+    SDL_PathInfo info;
+    return !SDL_GetPathInfo(toUtf8(path).c_str(), &info);
+}
+
+std::filesystem::path preferencePath(std::string_view company, std::string_view name)
+{
+    char* pref = SDL_GetPrefPath(std::string(company).c_str(), std::string(name).c_str());
+    if (pref == nullptr)
+        return {};
+    std::filesystem::path out(pref);
+    SDL_free(pref);
+    return out;
+}
+
 bool readFile(const std::filesystem::path& path, std::vector<std::byte>& out)
 {
     std::size_t size = 0;

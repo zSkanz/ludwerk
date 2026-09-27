@@ -1804,6 +1804,22 @@ Value getPhysicsServiceFixedTimestep(const World& world, core::InstanceId)
     return world.engineState().requestedFixedTimestep;
 }
 
+Value getSaveServiceVersion(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().saveVersion};
+}
+
+// A whole number from 1 (ADR 0111): a version is counted, and a slot migrates
+// from one to the next.
+bool setSaveServiceVersion(World& world, core::InstanceId, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !finite(*number) || *number < 1.0 || *number != std::floor(*number) || *number > 1.0e9)
+        return false;
+    world.engineState().saveVersion = *number;
+    return true;
+}
+
 bool setPhysicsServiceFixedTimestep(World& world, core::InstanceId, const Value& value)
 {
     const auto* number = std::get_if<f64>(&value);

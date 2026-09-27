@@ -333,6 +333,15 @@ into them. No properties or methods of their own; the tree *is* the API.
 but `GlobalScriptService` included; the change happens between two ticks, and
 in a match only the authority makes it and every client follows.
 
+**`SaveService`** — what a game keeps between runs (ADR 0111):
+`GetSlotAsync(name)` hands back a `SaveSlot` (`Get`, `Set`, `Update`,
+`Remove`, `GetKeys`, `SaveAsync`, `Changed`, `Recovered`), `ListSlots()`,
+`DeleteSlot(name)`, a `Version` and an `OnMigrate` callback for a slot an
+older version wrote. A slot is a file in the player's own folder, named by
+the game's `[project]` company and name; the editor's Play and `ludwerk dev`
+save into the project's `.engine/saves/` instead. The only path from a script
+to a disk, and it names slots, never paths.
+
 **`HotReloadService`** — dev builds only (§3).
 
 **`KeyboardService` existed for exactly one milestone and is gone.** M5 shipped

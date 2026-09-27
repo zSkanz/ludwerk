@@ -276,6 +276,11 @@ struct EngineState
     // not what the world is, so none of it reaches the hash.
     std::string currentScene;
     std::vector<u8> sceneLoadData;
+
+    // **`SaveService.Version`** (ADR 0111): the game's save layout, set by a
+    // script before its first slot. A fact about the game's files, not about
+    // the world, so it stays out of the hash.
+    f64 saveVersion = 1.0;
     // A `LoadScene` waiting for the safe point between ticks. The host takes
     // it; nothing else acts on it.
     struct PendingSceneLoad

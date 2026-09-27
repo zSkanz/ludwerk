@@ -157,6 +157,10 @@ enum class UserdataTag : int
     NumberSequence = 24,
     NumberSequenceKeypoint = 25,
 
+    // ADR 0111: a handle onto one of `SaveStore`'s slots, which the store
+    // keeps for its own lifetime -- the payload is a pointer into it.
+    SaveSlot = 26,
+
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.
     Count,

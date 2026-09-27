@@ -31,6 +31,7 @@ struct lua_State;
 namespace engine::script {
 
 class Debugger;
+class SaveStore;
 
 class ScriptRuntime
 {
@@ -63,6 +64,10 @@ public:
     // the binding asks upward, and a VM nobody gave one raises rather than
     // handing back an empty prefab.
     void setStampSource(std::function<std::optional<std::string>(std::string_view)> source);
+
+    // Where `SaveService` keeps its slots (ADR 0111). The host's, and it
+    // outlives this VM; null answers every save call with an error.
+    void setSaveStore(SaveStore* store) noexcept;
 
 private:
     // The same thing with the memory category chosen rather than derived. The

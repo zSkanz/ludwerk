@@ -2002,6 +2002,92 @@ local Datatypes: { Schema.Datatype } = {
         } :: { Schema.Method },
     },
     {
+        Name = "SaveSlot",
+        Module = "script",
+        Doc = "One named save of a game, returned by `SaveService:GetSlotAsync` (ADR 0111): keys, each "
+            .. "holding a value. A value is anything an attribute holds -- a string, a number, a boolean, a "
+            .. "vector, a `CFrame`, a `Color3`, a `Vector2`, a `UDim`, a `UDim2`, a `Rect`, a sequence -- or "
+            .. "a table of them, nested, with string or array keys. A function, a thread, an Instance or a "
+            .. "table that holds itself is an error at `Set`, not a silent loss later.\n\n"
+            .. "**What is set is written by itself**: at most once a second while something changed, when "
+            .. "the game closes, and when the app goes to the background -- a phone may end a backgrounded "
+            .. "game without warning. `SaveAsync` writes now and waits for it. A value handed back by `Get` "
+            .. "is a copy: changing it changes nothing until it is `Set`.",
+        Properties = {
+            {
+                Name = "Name",
+                Type = "string",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The slot's name.",
+            },
+            {
+                Name = "Recovered",
+                Type = "boolean",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "False when the slot's file and its backup were both damaged and it was started "
+                    .. "empty: the game can tell the player rather than pretend nothing was lost. True "
+                    .. "otherwise, including for a slot that simply did not exist yet.",
+            },
+            {
+                Name = "Changed",
+                Type = "Signal<string>",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Fires with the key after a `Set`, an `Update` or a `Remove` changed it.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Get",
+                Parameters = { { Name = "key", Type = "string" } },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "A copy of what `key` holds, or nil.",
+            },
+            {
+                Name = "Set",
+                Parameters = { { Name = "key", Type = "string" }, { Name = "value", Type = "any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stores a copy of `value` under `key`; nil removes it. Raises for a value a save cannot "
+                    .. "hold, and for one that would take the slot past the project's `[save] "
+                    .. "max_slot_bytes`.",
+            },
+            {
+                Name = "Update",
+                Parameters = { { Name = "key", Type = "string" }, { Name = "transform", Type = "(any) -> any" } },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "Calls `transform` with what `key` holds and stores what it returns, which it also "
+                    .. "returns. The function must not yield.",
+            },
+            {
+                Name = "Remove",
+                Parameters = { { Name = "key", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Removes `key`.",
+            },
+            {
+                Name = "GetKeys",
+                Parameters = {},
+                Returns = { "{ string }" },
+                ThreadSafety = "Unsafe",
+                Doc = "Every key, sorted.",
+            },
+            {
+                Name = "SaveAsync",
+                Parameters = {},
+                Returns = {},
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Writes the slot now and yields until it is on disk. Raises when the write failed.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "InputObject",
         Module = "script",
         Doc = "One raw input, as `InputService.InputBegan`, `InputChanged` and `InputEnded` carry it (§2.4, "

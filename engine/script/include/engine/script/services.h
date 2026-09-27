@@ -15,8 +15,10 @@
 
 #include <array>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -36,6 +38,7 @@
 #include "engine/script/animation.h"
 #include "engine/script/binding.h"
 #include "engine/script/reload_state.h"
+#include "engine/script/save_store.h"
 #include "engine/script/tweens.h"
 
 struct lua_State;
@@ -283,6 +286,30 @@ public:
     // process-global for the same reason everything else here is: two worlds in
     // one process must not share one.
     TweenSystem tweens;
+
+    // **`SaveService`** (ADR 0111). The store is the host's and outlives this
+    // VM; null in a run that keeps no saves, where every call raises.
+    SaveStore* saves = nullptr;
+    // A thread waiting for a slot, and the migration it waits behind.
+    struct SlotWaiter
+    {
+        SaveSlotData* slot = nullptr;
+        int threadRef = -1;
+        int migrateRef = -1;
+    };
+    std::vector<SlotWaiter> slotWaiters;
+    // A thread waiting for `SaveAsync`'s write.
+    struct SaveWaiter
+    {
+        u64 ticket = 0;
+        int threadRef = -1;
+        std::string slot;
+    };
+    std::vector<SaveWaiter> saveWaiters;
+    // `SaveService.OnMigrate`, or -1.
+    int migrateHandler = -1;
+    // Each slot's `Changed`, by name, made when first asked for.
+    std::map<std::string, SignalId, std::less<>> slotSignals;
 };
 
 // Creates `game` and the two services that exist from boot, installs the

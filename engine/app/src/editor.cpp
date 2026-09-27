@@ -1360,6 +1360,37 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
     return true;
 }
 
+bool Editor::placeMesh(scene::World& world, std::string_view path, core::InstanceId parent, core::InstanceId root,
+                       Inspector& inspector, std::optional<core::DVec3> restOn)
+{
+    const scene::ClassId meshPart = world.classes().findId(world.atoms().lookup("MeshPart"));
+    if (meshPart == scene::InvalidClass) {
+        m_status = EditorStatus{"this build has no MeshPart", true};
+        return false;
+    }
+    if (!createInstance(world, meshPart, parent, root, inspector))
+        return false;
+    const core::InstanceId made = inspector.selection();
+    if (!world.alive(made) || world.classOf(made) != meshPart)
+        return false;
+    // The file's own name, minus its folders and its extension: what somebody
+    // will look for in the tree.
+    std::string stem = std::filesystem::path(std::string(path)).stem().string();
+    if (!stem.empty())
+        world.setName(made, world.atoms().intern(stem));
+    (void)world.setProperty(made, world.atoms().intern("MeshContent"),
+                            scene::Value{std::string(asset::AssetScheme) + std::string(path)});
+    if (restOn.has_value()) {
+        core::CFrameD frame;
+        frame.position = *restOn;
+        (void)world.setProperty(made, world.atoms().intern("CFrame"), scene::Value{frame});
+    }
+    m_meshFits.push_back(MeshFit{made, restOn, 0});
+    touch();
+    m_status = EditorStatus{"placed " + stem, false};
+    return true;
+}
+
 bool Editor::canReparent(const scene::World& world, std::span<const core::InstanceId> ids, core::InstanceId newParent,
                          core::InstanceId root)
 {

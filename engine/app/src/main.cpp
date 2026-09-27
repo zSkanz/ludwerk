@@ -26,6 +26,7 @@
 #include "engine/core/log.h"
 #include "engine/platform/console.h"
 #include "engine/platform/crash.h"
+#include "engine/platform/file.h"
 #include "engine/platform/platform.h"
 #include "engine/platform/stop_signal.h"
 
@@ -700,6 +701,38 @@ int main(int argc, char** argv)
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxViewResolution = config.maxViewResolution;
         options.maxSubWorlds = config.maxSubWorlds;
+
+        // **Where a game's saves go** (ADR 0111): a player's own folder, named
+        // by the game's company and name, for a game; the project's
+        // `.engine/saves/` for the editor's Play, `ludwerk dev` and a match's
+        // windows -- one folder each, so four players do not share one -- so a
+        // test run never touches a real player's saves; and a folder of its
+        // own for a conformance run.
+        options.saveMaxSlotBytes = config.saveMaxSlotBytes;
+        options.saveMaxSlots = config.saveMaxSlots;
+        if (!options.conformanceRoot.empty()) {
+            std::error_code tempError;
+            options.saveDirectory = std::filesystem::temp_directory_path(tempError) /
+                                    ("engine-conformance-saves-" + std::to_string(engine::platform::nowNs()));
+        }
+        else if (isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty())) {
+            options.saveDirectory = options.scriptPath / ".engine" / "saves";
+            if (!options.windowLabel.empty()) {
+                std::string folder = options.windowLabel;
+                for (char& c : folder) {
+                    const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+                    c = plain ? c : '-';
+                }
+                options.saveDirectory /= folder;
+            }
+        }
+        else if (isProject) {
+            const std::string game = config.name.empty() ? config.id : config.name;
+            if (const std::filesystem::path home =
+                    engine::platform::preferencePath(config.company.empty() ? game : config.company, game);
+                !home.empty())
+                options.saveDirectory = home / "saves";
+        }
         // A server package, run with no posture of its own: what `--serve`
         // would have been, on the default port. A posture on the command line
         // still wins -- the package is also something a person can `--host` --

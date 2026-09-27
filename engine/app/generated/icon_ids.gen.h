@@ -187,6 +187,7 @@ inline constexpr std::string_view ClassWorkspace = "class.Workspace";
 inline constexpr std::string_view ContentAudio = "content.Audio";
 inline constexpr std::string_view ContentChunk = "content.Chunk";
 inline constexpr std::string_view ContentFolder = "content.Folder";
+inline constexpr std::string_view ContentFolderFilled = "content.FolderFilled";
 inline constexpr std::string_view ContentFont = "content.Font";
 inline constexpr std::string_view ContentMaterial = "content.Material";
 inline constexpr std::string_view ContentMesh = "content.Mesh";

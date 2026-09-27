@@ -424,6 +424,12 @@ void translate(const SDL_Event& raw, std::vector<Event>& out)
         out.push_back(event);
         break;
     }
+    case SDL_EVENT_WILL_ENTER_BACKGROUND: {
+        Event event;
+        event.type = EventType::WillEnterBackground;
+        out.push_back(event);
+        break;
+    }
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED: {
         Event event;
         event.type = EventType::WindowCloseRequested;

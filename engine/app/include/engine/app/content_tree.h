@@ -78,6 +78,9 @@ struct ContentEntry
     // Bytes, or zero for a folder. Shown rather than used: a person deciding
     // whether a texture is the 4K one wants this and nothing else does.
     core::u64 size = 0;
+    // A folder with something in it, which is drawn filled (the owner): an
+    // empty folder and a full one are two different things to go looking in.
+    bool filled = false;
 };
 
 // Which kind a file name is, by extension. `.scene.json` before `.json`,

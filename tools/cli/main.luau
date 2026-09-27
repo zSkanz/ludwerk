@@ -27,6 +27,7 @@ local keystore = require("./commands/keystore")
 local migrate = require("./commands/migrate")
 local new = require("./commands/new")
 local projectlib = require("./project")
+local saves = require("./commands/saves")
 local setup = require("./commands/setup")
 local test = require("./commands/test")
 local version = require("./commands/version")
@@ -77,6 +78,7 @@ local ValueFlags: { [string]: boolean } = {
     port = true,
     progress = true,
     report = true,
+    slot = true,
     target = true,
     template = true,
     validity = true,
@@ -283,6 +285,20 @@ local function main(): number
             name = parsed.flags.name,
             validity = tonumber(parsed.flags.validity),
             remember = parsed.flags.remember ~= nil,
+        })
+    end
+
+    -- **A game's saves** (ADR 0111): the project's test saves, or with
+    -- `--player` a player's own on this machine.
+    if parsed.command == "saves" then
+        if not rejectUnknownFlags(parsed, { "slot", "player" }) then
+            return 2
+        end
+        return saves.run({
+            action = parsed.positional[1],
+            path = parsed.positional[2] or ".",
+            slot = parsed.flags.slot,
+            player = parsed.flags.player ~= nil,
         })
     end
 

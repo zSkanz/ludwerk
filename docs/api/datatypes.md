@@ -654,6 +654,48 @@ A rectangle from its two corners.
 |---|---|---|
 | `__eq` | `(other: Rect): boolean` | Exact equality of both corners. |
 
+## SaveSlot
+
+One named save of a game, returned by `SaveService:GetSlotAsync` (ADR 0111): keys, each holding a value. A value is anything an attribute holds -- a string, a number, a boolean, a vector, a `CFrame`, a `Color3`, a `Vector2`, a `UDim`, a `UDim2`, a `Rect`, a sequence -- or a table of them, nested, with string or array keys. A function, a thread, an Instance or a table that holds itself is an error at `Set`, not a silent loss later.
+
+**What is set is written by itself**: at most once a second while something changed, when the game closes, and when the app goes to the background -- a phone may end a backgrounded game without warning. `SaveAsync` writes now and waits for it. A value handed back by `Get` is a copy: changing it changes nothing until it is `Set`.
+
+## SaveSlot — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Changed` | `Signal<string>` | — | read-only | Fires with the key after a `Set`, an `Update` or a `Remove` changed it. |
+| `Name` | `string` | — | read-only | The slot's name. |
+| `Recovered` | `boolean` | — | read-only | False when the slot's file and its backup were both damaged and it was started empty: the game can tell the player rather than pretend nothing was lost. True otherwise, including for a slot that simply did not exist yet. |
+
+## SaveSlot — methods
+
+### `Get(key: string): any`
+
+A copy of what `key` holds, or nil.
+
+### `GetKeys(): { string }`
+
+Every key, sorted.
+
+### `Remove(key: string)`
+
+Removes `key`.
+
+### `SaveAsync()`
+
+**Yields.** The calling thread parks until it completes.
+
+Writes the slot now and yields until it is on disk. Raises when the write failed.
+
+### `Set(key: string, value: any)`
+
+Stores a copy of `value` under `key`; nil removes it. Raises for a value a save cannot hold, and for one that would take the slot past the project's `[save] max_slot_bytes`.
+
+### `Update(key: string, transform: (any) -> any): any`
+
+Calls `transform` with what `key` holds and stores what it returns, which it also returns. The function must not yield.
+
 ## Signal
 
 THE signal type, spelled `Signal<T...>` where the pack is what handlers receive and `Wait` returns. Delivery is **deferred only** (ADR 0015): a fire enqueues, and handlers run at the next drain in the order they were raised, with connection order guaranteed within one fire. A script makes its own with `Signal.new`, and there is no separate event object to parent into the tree. Handler errors are contained: each runs on its own coroutine, and an error stops neither the other handlers, nor the drain, nor the firing script.

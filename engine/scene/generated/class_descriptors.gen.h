@@ -457,6 +457,10 @@ Value getWorkspaceTerrain(const World& world, core::InstanceId id);
 void attachWorkspaceComponents(World& world, core::InstanceId id);
 void detachWorkspaceComponents(World& world, core::InstanceId id);
 
+// SaveService
+Value getSaveServiceVersion(const World& world, core::InstanceId id);
+bool setSaveServiceVersion(World& world, core::InstanceId id, const Value& value);
+
 // Team
 Value getTeamColor(const World& world, core::InstanceId id);
 bool setTeamColor(World& world, core::InstanceId id, const Value& value);

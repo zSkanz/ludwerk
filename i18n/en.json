@@ -481,5 +481,15 @@
   "cli.dev.reloaded": {
     "one": "Reloaded {count} script in {ms} ms.",
     "other": "Reloaded {count} scripts in {ms} ms."
-  }
+  },
+  "script.err.save_version": "Cannot set {className}.{property}: it takes a whole number from 1.",
+  "script.err.save_unavailable": "This run keeps no saves: SaveService has nowhere to write.",
+  "script.err.save_slot_name": "\"{name}\" is not a slot name: a slot is 1 to 64 letters, digits, _ and -.",
+  "script.err.save_too_many_slots": "A game keeps at most {limit} slots ([save] max_slots).",
+  "script.err.save_value": "A save cannot hold {valueType}: it holds strings, numbers, booleans, vectors, CFrames, Color3s, Vector2s, UDims, UDim2s, Rects, sequences and tables of them.",
+  "script.err.save_too_large": "Slot {slot} would be larger than {limit} bytes ([save] max_slot_bytes).",
+  "script.err.save_write_failed": "Slot {slot} could not be written to disk.",
+  "script.err.save_migrate_handler": "SaveService.OnMigrate takes a function, or nil to remove it.",
+  "script.warn.save_from_backup": "Slot {slot} was damaged and was read from the backup its previous save left.",
+  "script.warn.save_lost": "Slot {slot} and its backup were both damaged; it starts empty and Recovered is false."
 }

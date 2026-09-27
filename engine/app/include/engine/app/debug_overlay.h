@@ -230,6 +230,8 @@ public:
     // live command list, and this class is handed one nowhere -- so the browser
     // asks while it draws and the loop answers between frames.
     void setThumbnails(ThumbnailCache* thumbnails) noexcept;
+    // The game's saves, for the Saves panel (ADR 0111). The host's.
+    void setSaves(script::SaveStore* saves) noexcept;
 
     // What the material panel asks about the surface shader a material names
     // (ADR 0091): whether it compiled, and what it said if not. Null in a

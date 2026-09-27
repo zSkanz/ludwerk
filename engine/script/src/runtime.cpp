@@ -14,6 +14,7 @@
 #include "engine/script/modules.h"
 #include "engine/script/net_module.h"
 #include "engine/script/sandbox.h"
+#include "engine/script/save_service.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
 #include "engine/script/tasks.h"
@@ -210,6 +211,11 @@ ScriptRuntime::ScriptRuntime(scene::World& world) : m_world(world), m_impl(std::
 void ScriptRuntime::setStampSource(std::function<std::optional<std::string>(std::string_view)> source)
 {
     m_impl->context.stamps = std::move(source);
+}
+
+void ScriptRuntime::setSaveStore(SaveStore* store) noexcept
+{
+    m_impl->services.saves = store;
 }
 
 ScriptRuntime::~ScriptRuntime()
@@ -544,6 +550,9 @@ void ScriptRuntime::resumeTimers()
     // `task.wait()` see a stale world one tick out of every one.
     resumeChildWaiters(m_impl->state);
     resumeDueTimers(m_impl->state, m_world.engineState().tick);
+    // Saves (ADR 0111): the periodic write, and the threads waiting on a slot
+    // or a write. Every tick, so shutdown's ticks finish a save too.
+    resumeSaveWaiters(m_impl->state, m_world.engineState().fixedTimestep);
 }
 
 void ScriptRuntime::firePhase(core::Phase phase, f64 delta)

@@ -91,6 +91,8 @@ const char* typeName(UserdataTag tag) noexcept
         return "TweenInfo";
     case UserdataTag::Tween:
         return "Tween";
+    case UserdataTag::SaveSlot:
+        return "SaveSlot";
     case UserdataTag::AnimationTrack:
         return "AnimationTrack";
     case UserdataTag::InputObject:

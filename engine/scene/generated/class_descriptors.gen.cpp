@@ -2535,6 +2535,54 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     replicatedStorageDesc.doc = "What every machine has and nobody sees (ADR 0080): templates to clone, `RemoteEvent`s, anything a game keeps rather than shows. It is not the world -- nothing under it is drawn, collides or moves -- and it is saved with the scene, so what the editor puts here is here when the game starts.\012\012**Its contents reach every replica, whatever their distance.** A replica's copy is the authority's: what the scene put here on the replica is replaced by what the authority sends, as `Workspace` is. Reach it with `game:GetService(\"ReplicatedStorage\")`, and clone what you want in the world into `Workspace`.";
     classes.registerClass(replicatedStorageDesc);
 
+    // --- SaveService ---
+    static std::array<PropertyDesc, 1> saveServiceProperties;
+    saveServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Version"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The version of this game's save layout, a whole number from 1. Set it before the first `GetSlotAsync`; a slot written by an older version is handed to `OnMigrate` first, once, and saved at this version.",
+            .errKeyOnInvalidSet = ENG_TR("script.err.save_version"),
+            .get = native::getSaveServiceVersion,
+            .set = native::setSaveServiceVersion,
+        },
+    }};
+    static std::array<MethodDesc, 3> saveServiceMethods;
+    saveServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetSlotAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The slot called `name`, read from disk -- yields until it is. A name is 1 to 64 letters, digits, `_` and `-`; anything else is an error, because a slot is a file and a name is never a path. A slot that does not exist yet is an empty one. One whose file is damaged is read from the backup the previous save left, with a warning; when both are, it is empty and `Recovered` is false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ListSlots"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The names of the slots this game has saved, sorted.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DeleteSlot"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Removes a slot and its backup. A `SaveSlot` already handed out is emptied.",
+        },
+    }};
+    ClassDescriptor saveServiceDesc;
+    saveServiceDesc.name = atoms.intern("SaveService");
+    saveServiceDesc.super = instanceClass;
+    saveServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    saveServiceDesc.defaultName = atoms.intern("SaveService");
+    saveServiceDesc.doc = "Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. It keeps named SLOTS, each a file on the player's own machine, under the folder the game's `[project]` name and company say -- `%APPDATA%\\<company>\\<name>\\saves` on Windows. In the editor's Play and under `ludwerk dev` the saves go to `.engine/saves/` in the project instead, so a test run never touches a real player's.\012\012**The only way from a script to a disk**, and it names slots, never paths. It is not replicated: every machine keeps its own. What a slot held is a fact about this machine, not about the simulation, so a replay that loads one records the load as an input.";
+    saveServiceDesc.properties = saveServiceProperties;
+    saveServiceDesc.methods = saveServiceMethods;
+    classes.registerClass(saveServiceDesc);
+
     // --- TeamService ---
     static std::array<MethodDesc, 1> teamServiceMethods;
     teamServiceMethods = {{

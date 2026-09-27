@@ -97,6 +97,11 @@ struct ProjectConfig
     core::u32 maxViewResolution = 1024;
     core::u32 maxSubWorlds = 2;
 
+    // `[save]` (ADR 0111): how large one slot may grow, and how many a game
+    // may keep.
+    core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
+    core::u32 saveMaxSlots = 64;
+
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and
     // left empty rather than stamped wrong -- and `[project] company` is who

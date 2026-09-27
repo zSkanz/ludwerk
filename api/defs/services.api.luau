@@ -361,6 +361,72 @@ local Classes: { Schema.Class } = {
             .. "what you want in the world into `Workspace`.",
     },
     {
+        Name = "SaveService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. "
+            .. "It keeps named SLOTS, each a file on the player's own machine, under the folder the game's "
+            .. "`[project]` name and company say -- `%APPDATA%\\<company>\\<name>\\saves` on Windows. In the "
+            .. "editor's Play and under `ludwerk dev` the saves go to `.engine/saves/` in the project instead, "
+            .. "so a test run never touches a real player's.\n\n"
+            .. "**The only way from a script to a disk**, and it names slots, never paths. It is not "
+            .. "replicated: every machine keeps its own. What a slot held is a fact about this machine, not "
+            .. "about the simulation, so a replay that loads one records the load as an input.",
+        Properties = {
+            {
+                Name = "Version",
+                Type = "number",
+                Default = "1",
+                Transient = true,
+                HostFact = true,
+                ErrorKey = "script.err.save_version",
+                Doc = "The version of this game's save layout, a whole number from 1. Set it before the first "
+                    .. "`GetSlotAsync`; a slot written by an older version is handed to `OnMigrate` first, "
+                    .. "once, and saved at this version.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "GetSlotAsync",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = { "SaveSlot" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "The slot called `name`, read from disk -- yields until it is. A name is 1 to 64 "
+                    .. "letters, digits, `_` and `-`; anything else is an error, because a slot is a file and "
+                    .. "a name is never a path. A slot that does not exist yet is an empty one. One whose file "
+                    .. "is damaged is read from the backup the previous save left, with a warning; when both "
+                    .. "are, it is empty and `Recovered` is false.",
+            },
+            {
+                Name = "ListSlots",
+                Parameters = {},
+                Returns = { "{ string }" },
+                ThreadSafety = "Unsafe",
+                Doc = "The names of the slots this game has saved, sorted.",
+            },
+            {
+                Name = "DeleteSlot",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Removes a slot and its backup. A `SaveSlot` already handed out is emptied.",
+            },
+        } :: { Schema.Method },
+        Callbacks = {
+            {
+                Name = "OnMigrate",
+                Parameters = { { Name = "slot", Type = "SaveSlot" }, { Name = "fromVersion", Type = "number" } },
+                Returns = {},
+                Doc = "Brings a slot saved by an older `Version` up to this one, by editing it in place. Runs "
+                    .. "once, before `GetSlotAsync` returns that slot, in a thread of its own; the slot is then "
+                    .. "saved at the current version. An error in it is logged and leaves the slot as it was "
+                    .. "read.",
+            },
+        } :: { Schema.Callback },
+    },
+    {
         Name = "TeamService",
         Extends = "Instance",
         Module = "scene",

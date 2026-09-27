@@ -19,6 +19,7 @@
 #include "engine/script/input_events.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/materials.h"
+#include "engine/script/save_service.h"
 #include "engine/script/sequences.h"
 #include "engine/script/tweens.h"
 
@@ -1778,6 +1779,7 @@ void registerDatatypes(lua_State* L)
     registerQueryTypes(L, ctx, atoms);
     registerEnumTypes(L, ctx, atoms);
     registerTweenTypes(L);
+    registerSaveTypes(L);
     registerAnimationTypes(L);
     registerInputTypes(L);
     registerMaterialTypes(L);

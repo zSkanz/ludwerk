@@ -33,6 +33,7 @@ guided tour.
 | [`PhysicsService`](physicsservice.md) | [`Instance`](instance.md) | The simulation tick grid and the physics controls that do not belong on an individual part. |
 | [`ReplicatedStorage`](replicatedstorage.md) | [`Instance`](instance.md) | What every machine has and nobody sees (ADR 0080): templates to clone, `RemoteEvent`s, anything a game keeps rather than shows. |
 | [`RunService`](runservice.md) | [`Instance`](instance.md) | The frame loop: the phase signals per-frame work hangs off, and the clock that work reads. |
+| [`SaveService`](saveservice.md) | [`Instance`](instance.md) | Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. |
 | [`SceneService`](sceneservice.md) | [`Instance`](instance.md) | Which scene the game is in, and the way to go to another (ADR 0106). |
 | [`ServerScriptService`](serverscriptservice.md) | [`Instance`](instance.md) | This scene's server code (ADR 0105): the arena's rules, the lobby's countdown. |
 | [`ServerStorage`](serverstorage.md) | [`Instance`](instance.md) | What only the authority has (ADR 0080): templates and data a client has no business holding. |

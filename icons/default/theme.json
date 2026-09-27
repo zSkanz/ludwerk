@@ -364,6 +364,7 @@
     "content.Audio": "content/Audio.png",
     "content.Chunk": "class/StreamingService.png",
     "content.Folder": "class/Folder.png",
+    "content.FolderFilled": "content/FolderFilled.png",
     "content.Font": "content/Font.png",
     "content.Material": "class/Material.png",
     "content.Mesh": "class/MeshPart.png",

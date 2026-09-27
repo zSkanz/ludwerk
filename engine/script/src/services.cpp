@@ -25,6 +25,7 @@
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/remote.h"
+#include "engine/script/save_service.h"
 #include "engine/script/signals.h"
 #include "engine/script/tweens.h"
 
@@ -1996,6 +1997,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "GetPlayers", networkServiceGetPlayers},
     {"Team", "GetPlayers", teamGetPlayers},
     {"TeamService", "GetTeams", teamServiceGetTeams},
+    {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
+    {"SaveService", "ListSlots", saveServiceListSlots},
+    {"SaveService", "DeleteSlot", saveServiceDeleteSlot},
     {"Player", "GetIntent", playerGetIntent},
     {"ParticleEmitter", "Emit", particleEmitterEmit},
     {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},

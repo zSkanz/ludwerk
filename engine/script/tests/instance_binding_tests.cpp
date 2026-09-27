@@ -574,8 +574,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 144);
-    CHECK(coverage.bound == 144);
+    CHECK(coverage.declared == 147);
+    CHECK(coverage.bound == 147);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

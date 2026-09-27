@@ -25,6 +25,8 @@ engine_add_module(script
         src/debugger.cpp
         src/net_module.cpp
         src/print_tree.cpp
+        src/save_store.cpp
+        src/save_service.cpp
         src/services.cpp
         src/remote.cpp
         src/signals.cpp
@@ -47,6 +49,9 @@ engine_add_module(script
 )
 
 target_link_libraries(engine_script PRIVATE engine::luau)
+# xxh3, for a save file's checksum (ADR 0111), header-only and private, as the
+# world hash uses it.
+target_include_directories(engine_script SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/xxhash")
 
 # `render` is linked into the TEST executable and nowhere else, the same
 # arrangement `render`'s own tests use for `rhi_null` and for the same reason: a
@@ -67,6 +72,7 @@ engine_add_module_tests(script
         tests/task_tests.cpp
         tests/debugger_tests.cpp
         tests/print_tests.cpp
+        tests/save_tests.cpp
 )
 
 # The sandbox tests boot a VM directly rather than through `ScriptRuntime`, so

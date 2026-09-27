@@ -39,6 +39,7 @@
 #include "engine/scene/world.h"
 #include "engine/script/modules.h"
 #include "engine/script/runtime.h"
+#include "engine/script/save_store.h"
 #include "engine/script/services.h"
 
 namespace engine::render {
@@ -185,6 +186,14 @@ struct WorldHostOptions
     bool subWorld = false;
     // `[render] max_sub_worlds`: how many sub-worlds this world may run at once.
     core::u32 maxSubWorlds = 2;
+
+    // **Where `SaveService` writes** (ADR 0111), decided by the host: the
+    // player's own folder for a game, `.engine/saves/` in the project for the
+    // editor's Play and `ludwerk dev`. Empty keeps saves in memory.
+    std::filesystem::path saveDirectory{};
+    // `[save] max_slot_bytes` and `max_slots`.
+    core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
+    core::u32 saveMaxSlots = 64;
 };
 
 // What the conformance run reported. Read after the loop, because the run ends
@@ -444,6 +453,12 @@ public:
     [[nodiscard]] scene::PhysicsSync2D* physics2d() noexcept { return m_physics2d ? &*m_physics2d : nullptr; }
     [[nodiscard]] script::ScriptRuntime& runtime() noexcept { return *m_runtime; }
 
+    // The game's saves (ADR 0111): written now and waited for. On close, before
+    // the runtime is rebuilt, and when the app goes to the background -- a
+    // phone ends a backgrounded game without a close.
+    void flushSaves();
+    [[nodiscard]] script::SaveStore* saves() noexcept { return m_saves.get(); }
+
     // **Throws the VM away and builds another one on the same world** (ADR 0058).
     //
     // What a play session accumulates is not in the world: it is connections,
@@ -530,6 +545,8 @@ private:
     // Constructed in `boot`, because the registries have to be populated first
     // and a `World` holds references to them.
     std::optional<scene::World> m_world;
+    // Before the runtime, so it outlives every VM that holds a slot of it.
+    std::unique_ptr<script::SaveStore> m_saves;
     std::optional<script::ScriptRuntime> m_runtime;
     // Instances reparented to nil because a script held them when they
     // streamed out, in the order they left.

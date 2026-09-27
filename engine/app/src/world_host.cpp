@@ -297,7 +297,13 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().maxSubWorlds = options.subWorld ? 0u : options.maxSubWorlds;
     m_seed = options.seed;
 
+    m_saves = std::make_unique<script::SaveStore>(script::SaveStore::Options{
+        .directory = options.saveDirectory,
+        .maxSlotBytes = options.saveMaxSlotBytes,
+        .maxSlots = options.saveMaxSlots,
+    });
     m_runtime.emplace(*m_world);
+    m_runtime->setSaveStore(m_saves.get());
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
         return error;
 
@@ -586,10 +592,14 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
     std::vector<script::ModuleRegistry::Entry> mounted = script::mountedEntries(m_runtime->state());
 
     // Every connection, every required module, every queued resumption and every
-    // timer goes with this line. That is the whole point of it.
+    // timer goes with the reset below. That is the whole point of it.
+
+    // What the ending run saved is on disk before its VM goes.
+    flushSaves();
     m_runtime.reset();
 
     m_runtime.emplace(*m_world);
+    m_runtime->setSaveStore(m_saves.get());
     if (std::optional<core::EngineError> error = m_runtime->boot(dataModel); error.has_value())
         return error;
 
@@ -1232,6 +1242,9 @@ void WorldHost::pumpInput(std::span<const platform::Event> events)
     for (const platform::Event& event : events) {
         if (event.type == platform::EventType::WindowFocusLost)
             m_input.releaseAll(*m_world);
+        // The last moment a phone promises (ADR 0111 section 5).
+        if (event.type == platform::EventType::WillEnterBackground)
+            flushSaves();
     }
 }
 
@@ -1363,6 +1376,14 @@ void WorldHost::close(core::f64 graceSeconds)
         }
         tick();
     }
+    // Whatever the close handlers saved, on disk before the process goes.
+    flushSaves();
+}
+
+void WorldHost::flushSaves()
+{
+    if (m_saves != nullptr && m_world.has_value())
+        m_saves->flush(m_world->engineState().saveVersion);
 }
 
 } // namespace engine::app

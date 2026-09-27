@@ -510,6 +510,31 @@ declare extern type Tween with
     function Cancel(self): ()
 end
 
+declare extern type SaveSlot with
+    --- The slot's name.
+    read Name: string
+    --- False when the slot's file and its backup were both damaged and it was started empty: the game
+    --- can tell the player rather than pretend nothing was lost. True otherwise, including for a slot
+    --- that simply did not exist yet.
+    read Recovered: boolean
+    --- Fires with the key after a `Set`, an `Update` or a `Remove` changed it.
+    read Changed: Signal<string>
+    --- A copy of what `key` holds, or nil.
+    function Get(self, key: string): any
+    --- Stores a copy of `value` under `key`; nil removes it. Raises for a value a save cannot hold, and
+    --- for one that would take the slot past the project's `[save] max_slot_bytes`.
+    function Set(self, key: string, value: any): ()
+    --- Calls `transform` with what `key` holds and stores what it returns, which it also returns. The
+    --- function must not yield.
+    function Update(self, key: string, transform: (any) -> any): any
+    --- Removes `key`.
+    function Remove(self, key: string): ()
+    --- Every key, sorted.
+    function GetKeys(self): { string }
+    --- Writes the slot now and yields until it is on disk. Raises when the write failed.
+    function SaveAsync(self): ()
+end
+
 declare extern type InputObject with
     --- What kind of input this is. The coarse question, for a handler that does not care which key.
     read UserInputType: EnumUserInputType
@@ -2278,6 +2303,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Workspace"): Workspace
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
+    function GetService(self, name: "SaveService"): SaveService
     function GetService(self, name: "TeamService"): TeamService
     function GetService(self, name: "SceneService"): SceneService
     function GetService(self, name: "ServerStorage"): ServerStorage
@@ -2413,6 +2439,26 @@ declare extern type Lighting extends Instance with
 end
 
 declare extern type ReplicatedStorage extends Instance with
+end
+
+declare extern type SaveService extends Instance with
+    --- The version of this game's save layout, a whole number from 1. Set it before the first
+    --- `GetSlotAsync`; a slot written by an older version is handed to `OnMigrate` first, once, and
+    --- saved at this version.
+    Version: number
+    --- Brings a slot saved by an older `Version` up to this one, by editing it in place. Runs once,
+    --- before `GetSlotAsync` returns that slot, in a thread of its own; the slot is then saved at the
+    --- current version. An error in it is logged and leaves the slot as it was read.
+    OnMigrate: ((slot: SaveSlot, fromVersion: number) -> ())?
+    --- The slot called `name`, read from disk -- yields until it is. A name is 1 to 64 letters, digits,
+    --- `_` and `-`; anything else is an error, because a slot is a file and a name is never a path. A
+    --- slot that does not exist yet is an empty one. One whose file is damaged is read from the backup
+    --- the previous save left, with a warning; when both are, it is empty and `Recovered` is false.
+    function GetSlotAsync(self, name: string): SaveSlot
+    --- The names of the slots this game has saved, sorted.
+    function ListSlots(self): { string }
+    --- Removes a slot and its backup. A `SaveSlot` already handed out is emptied.
+    function DeleteSlot(self, name: string): ()
 end
 
 declare extern type TeamService extends Instance with

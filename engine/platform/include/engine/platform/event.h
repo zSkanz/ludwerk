@@ -44,6 +44,10 @@ enum class EventType : u8
     FingerDown,
     FingerMoved,
     FingerUp,
+    // The app is about to go to the background (a phone's home button, a
+    // call). A mobile OS may end a backgrounded process without a close, so
+    // this is the last moment a game's saves are sure to be written (ADR 0111).
+    WillEnterBackground,
 };
 
 // Physical keys, named by the US-layout legend the way scancodes are.

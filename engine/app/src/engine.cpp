@@ -1381,6 +1381,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .startScripts = !options.editor && !options.writeTypesOnly,
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
+        .saveDirectory = options.saveDirectory,
+        .saveMaxSlotBytes = options.saveMaxSlotBytes,
+        .saveMaxSlots = options.saveMaxSlots,
     };
 
     auto host = std::make_unique<WorldHost>();
@@ -1736,7 +1739,26 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (options.editor && inspector.pendingCount() > 0)
             editor.touch();
 
+        // **A mesh given to a `MeshPart` in Properties sizes it** when the part
+        // never had a size of its own (`MeshSize` still one): it draws at the
+        // mesh's own size and `Size` says what that is, as a mesh dropped in
+        // does (`Editor::meshFits`).
+        std::vector<core::InstanceId> meshAssigned;
+        if (options.editor) {
+            const core::NameAtom meshContent = authored().atoms().lookup("MeshContent");
+            for (const PendingWrite& write : inspector.pending()) {
+                if (meshContent.valid() && write.kind == WriteKind::Property && write.property == meshContent)
+                    meshAssigned.push_back(write.target);
+            }
+        }
+
         inspector.applyPending(authored());
+
+        for (const core::InstanceId assigned : meshAssigned) {
+            const scene::MeshPartComponent* mesh = authored().meshParts().find(assigned);
+            if (mesh != nullptr && mesh->meshSize == core::Vec3{1.0f, 1.0f, 1.0f})
+                editor.meshFits().push_back(Editor::MeshFit{assigned, std::nullopt, 0});
+        }
 
         // A click resolves here too, and AFTER the drain rather than before:
         // whatever was typed into the old selection lands before the selection
@@ -2591,6 +2613,28 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             : editorCommands.stampFolder + "/" +
                                   std::string(authored().atoms().text(authored().name(editorCommands.stampSubject)));
                     (void)editor.createStamp(authored(), editorCommands.stampSubject, authoredRoot(), name);
+                }
+                // A mesh dropped into the world or onto the tree: a `MeshPart`
+                // wearing it, standing where the drop's pick landed.
+                if (!editorCommands.placeMesh.empty()) {
+                    std::optional<core::DVec3> restOn;
+                    if (editorCommands.placeMeshPixel.has_value()) {
+                        const PickRay ray = editor.rayThrough(*editorCommands.placeMeshPixel);
+                        if (const std::optional<PickHit> hit = pickNearest(authored(), authoredRoot(), ray);
+                            hit.has_value()) {
+                            const auto along = static_cast<core::f64>(hit->distance);
+                            restOn = core::DVec3{ray.origin.x + static_cast<core::f64>(ray.direction.x) * along,
+                                                 ray.origin.y + static_cast<core::f64>(ray.direction.y) * along,
+                                                 ray.origin.z + static_cast<core::f64>(ray.direction.z) * along};
+                        }
+                    }
+                    const core::InstanceId parent =
+                        editorCommands.placeMeshParent.valid() &&
+                                Editor::canParentInto(authored(), editorCommands.placeMeshParent, authoredRoot())
+                            ? editorCommands.placeMeshParent
+                            : defaultParent();
+                    (void)editor.placeMesh(authored(), editorCommands.placeMesh, parent, authoredRoot(), inspector,
+                                           restOn);
                 }
                 if (!editorCommands.placeStamp.empty()) {
                     // **Under the selection when there is one**, which is what
@@ -3938,6 +3982,52 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 meshCompletions.clear();
                 (void)meshLoader.sync(*device, *cmd, world, workspace, meshCache, meshLibrary, nullptr,
                                       &meshCompletions);
+
+                // **A `MeshPart` waiting for its mesh is sized to it** the frame
+                // the mesh is known (`Editor::meshFits`): `MeshSize` and `Size`
+                // become what it measures, and one dropped on a surface stands
+                // on it. Not an undo step of its own -- it is the rest of the
+                // placing that recorded one.
+                if (options.editor) {
+                    std::vector<Editor::MeshFit>& fits = editor.meshFits();
+                    scene::World& authoring = authored();
+                    const core::NameAtom sizeName = authoring.atoms().intern("Size");
+                    const core::NameAtom meshSizeName = authoring.atoms().intern("MeshSize");
+                    const core::NameAtom frameName = authoring.atoms().intern("CFrame");
+                    for (auto fit = fits.begin(); fit != fits.end();) {
+                        const scene::MeshPartComponent* mesh =
+                            authoring.alive(fit->part) ? authoring.meshParts().find(fit->part) : nullptr;
+                        const render::MeshLibrary::Entry* entry =
+                            mesh != nullptr ? meshLibrary.find(mesh->meshContent) : nullptr;
+                        const core::AABB bounds = entry != nullptr ? entry->bounds : core::AABB{};
+                        if (entry != nullptr && bounds.min.x <= bounds.max.x && bounds.min.y <= bounds.max.y &&
+                            bounds.min.z <= bounds.max.z) {
+                            const core::Vec3 measured{std::max(bounds.max.x - bounds.min.x, 0.01f),
+                                                      std::max(bounds.max.y - bounds.min.y, 0.01f),
+                                                      std::max(bounds.max.z - bounds.min.z, 0.01f)};
+                            (void)authoring.setProperty(fit->part, meshSizeName, scene::Value{measured});
+                            (void)authoring.setProperty(fit->part, sizeName, scene::Value{measured});
+                            if (fit->restOn.has_value()) {
+                                // Its lowest point on the surface, its middle
+                                // over the point: drawn at its own size, the
+                                // mesh's bounds are where they say.
+                                core::CFrameD frame;
+                                frame.position = core::DVec3{
+                                    fit->restOn->x - static_cast<core::f64>(bounds.min.x + bounds.max.x) * 0.5,
+                                    fit->restOn->y - static_cast<core::f64>(bounds.min.y),
+                                    fit->restOn->z - static_cast<core::f64>(bounds.min.z + bounds.max.z) * 0.5};
+                                (void)authoring.setProperty(fit->part, frameName, scene::Value{frame});
+                            }
+                            fit = fits.erase(fit);
+                        }
+                        else if (mesh == nullptr || ++fit->frames > 600) {
+                            fit = fits.erase(fit);
+                        }
+                        else {
+                            ++fit;
+                        }
+                    }
+                }
                 if (host->physics() != nullptr) {
                     for (const core::NameAtom content : meshCompletions) {
                         const render::MeshLibrary::Entry* entry = meshLibrary.find(content);
@@ -4648,6 +4738,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     overlay->setEditorTarget(&editor, viewportTarget.texture());
                     overlay->setIcons(&iconAtlas);
                     overlay->setThumbnails(&thumbnails);
+                    overlay->setSaves(host->saves());
 #if ENG_DEBUG_UI
                     overlay->setSurfaceCompiler(surfaceCompiler.get());
 #endif

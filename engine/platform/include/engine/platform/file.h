@@ -124,4 +124,25 @@ namespace engine::platform {
 // capability.
 [[nodiscard]] bool createDirectories(const std::filesystem::path& path);
 
+// **`writeFile`, and the bytes flushed to the device before the rename** (ADR
+// 0111): a game's save is the one file whose loss a player notices, and a
+// power cut between the write and the platter is how a phone loses one. The
+// flush is `SDL_FlushIO`, which asks the OS to write its buffers out where the
+// platform can.
+[[nodiscard]] bool writeFileDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
+
+// Renames `from` over `to`, replacing it. False when either is not there to
+// take part, or the OS refused.
+[[nodiscard]] bool renameFile(const std::filesystem::path& from, const std::filesystem::path& to);
+
+// Removes a file, or an empty directory. True when it is gone, including when
+// it was never there.
+bool removeFile(const std::filesystem::path& path);
+
+// **Where a game keeps its own files on this machine**, by the company and the
+// name it declares (ADR 0111): `%APPDATA%/<company>/<name>/` on Windows,
+// `~/.local/share/<company>/<name>/` on Linux, the app's internal storage on
+// Android. Made if it is not there. Empty where the platform has no such place.
+[[nodiscard]] std::filesystem::path preferencePath(std::string_view company, std::string_view name);
+
 } // namespace engine::platform

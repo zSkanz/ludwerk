@@ -2832,6 +2832,67 @@
       ]
     },
     {
+      "Name": "SaveService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Version",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "DeleteSlot",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetSlotAsync",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["SaveSlot"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ListSlots",
+          "Parameters": [],
+          "Returns": ["{ string }"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [],
+      "Callbacks": [
+        {
+          "Name": "OnMigrate",
+          "Parameters": [
+            {
+              "Name": "slot",
+              "Type": "SaveSlot"
+            },
+            {
+              "Name": "fromVersion",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        }
+      ]
+    },
+    {
       "Name": "SceneService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -6642,6 +6703,99 @@
           "Returns": ["boolean"]
         }
       ]
+    },
+    {
+      "Name": "SaveSlot",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Changed",
+          "Type": "Signal<string>",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Name",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Recovered",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Get",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetKeys",
+          "Parameters": [],
+          "Returns": ["{ string }"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Remove",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SaveAsync",
+          "Parameters": [],
+          "Returns": [],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Set",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Update",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "transform",
+              "Type": "(any) -> any"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
     },
     {
       "Name": "Signal",

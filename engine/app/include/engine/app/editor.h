@@ -307,6 +307,8 @@ struct EditorPanels
     bool console = true;
     bool stats = true;
     bool streaming = false;
+    // The game's saves (ADR 0111): the slots the project's Play wrote.
+    bool saves = false;
     bool viewportSettings = false;
     // **The terrain brush's own dock**, off until somebody asks for it -- a
     // panel every project sees whether or not it has ground would be furniture,
@@ -640,6 +642,12 @@ struct EditorCommands
     std::string moveContent;
     std::string moveContentInto;
 
+    // A mesh dragged out of the content: onto the viewport, at a pixel, or
+    // onto a row of the tree, under it (`Editor::placeMesh`).
+    std::string placeMesh;
+    std::optional<core::Vec2> placeMeshPixel;
+    core::InstanceId placeMeshParent;
+
     // A stamp dropped onto an instance-reference property: the file, and which
     // property to point at it. The selection is the target, read at the drain
     // like every other batch verb.
@@ -702,7 +710,7 @@ struct EditorCommands
                duplicateSelection || groupSelection || groupAsFolder || ungroupSelection || reparentTo.valid() ||
                reorderChild.valid() || renameInstance.valid() || paste || pasteInto || cutSelection ||
                !placeStamp.empty() || breakStamp.valid() || stampSubject.valid() || undo || redo || newScene ||
-               !assignMaterialPath.empty() || !assignSkyboxPath.empty();
+               !assignMaterialPath.empty() || !assignSkyboxPath.empty() || !placeMesh.empty();
     }
 
     [[nodiscard]] bool any() const noexcept
@@ -718,7 +726,7 @@ struct EditorCommands
                !assignStampPath.empty() || importAssets || importParent.valid() || openScript.valid() ||
                !assignMaterialPath.empty() || !openMaterial.empty() || !newMaterial.empty() ||
                !newMaterialVariantOf.empty() || !assignSkyboxPath.empty() || !newShader.empty() || !openFile.empty() ||
-               !moveContent.empty();
+               !moveContent.empty() || !placeMesh.empty();
     }
 };
 
@@ -1096,6 +1104,29 @@ public:
     // special case here.
     bool createInstance(scene::World& world, scene::ClassId classId, core::InstanceId parent, core::InstanceId root,
                         Inspector& inspector);
+
+    // **A mesh from the content, made a `MeshPart`** (the owner: dragged onto
+    // the viewport or a row of the tree, it becomes one wearing that mesh).
+    // Named after the file, placed at `restOn` -- where the drop landed on a
+    // surface, standing on it -- or in front of the camera, and sized to the
+    // mesh the moment it has loaded (`meshFits`). One step to undo.
+    bool placeMesh(scene::World& world, std::string_view path, core::InstanceId parent, core::InstanceId root,
+                   Inspector& inspector, std::optional<core::DVec3> restOn);
+
+    // A `MeshPart` waiting to be sized to its mesh, which only something that
+    // loaded the mesh can do: `MeshSize` and `Size` become what the mesh
+    // measures, so the part draws at the mesh's own size and says so. A part
+    // given a new mesh in Properties while its `MeshSize` was never set waits
+    // here too.
+    struct MeshFit
+    {
+        core::InstanceId part;
+        // Stand it on this point once its size is known.
+        std::optional<core::DVec3> restOn;
+        // Frames waited, so a mesh that never loads stops being waited for.
+        core::u32 frames = 0;
+    };
+    [[nodiscard]] std::vector<MeshFit>& meshFits() noexcept { return m_meshFits; }
 
     // **A script made inside a script service is a file** (ADR 0105): code
     // lives in `src/`, where a diff and a text editor find it. `createInstance`
@@ -2560,6 +2591,7 @@ private:
     std::vector<std::vector<ClipboardMark>> m_clipboardMarks;
 
     StampSession m_stamp;
+    std::vector<MeshFit> m_meshFits;
     // The text each stamp had when the instances in the world were built from
     // it, by path, filled as `stampSource` reads them. What an outside change
     // to the file is measured against (`stampChangedOnDisk`). Shared with the

@@ -163,6 +163,12 @@ struct EngineOptions
     // `[render] max_sub_worlds` (ADR 0107 §3).
     core::u32 maxSubWorlds = 2;
 
+    // Where `SaveService` writes, and its limits (ADR 0111): decided in `main`
+    // from what kind of run this is. Empty keeps saves in memory.
+    std::filesystem::path saveDirectory;
+    core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
+    core::u32 saveMaxSlots = 64;
+
     // The returning-focus soak check (D066's successor). Zero asserts nothing,
     // like every other soak threshold: only the caller running a particular
     // fly-through knows whether its path comes back.

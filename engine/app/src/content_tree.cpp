@@ -173,6 +173,16 @@ bool ContentTree::refresh()
 
         if (entry.is_directory(ec)) {
             row.kind = ContentKind::Folder;
+            // Anything visible in it; a hidden file is the tools', as above.
+            for (const std::filesystem::directory_entry& inside :
+                 std::filesystem::directory_iterator(entry.path(), ec)) {
+                const std::string innerName = inside.path().filename().string();
+                if (!innerName.empty() && innerName.front() != '.') {
+                    row.filled = true;
+                    break;
+                }
+            }
+            ec.clear();
         }
         else {
             row.kind = contentKindOf(name);
