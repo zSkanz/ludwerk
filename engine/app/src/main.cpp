@@ -509,6 +509,11 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             continue;
         }
 
+        if (arg.starts_with("--editor-drive=")) {
+            options.editorDrive = std::filesystem::path(arg.substr(15));
+            continue;
+        }
+
         if (arg.starts_with("--rhi=")) {
             const std::optional<engine::rhi::BackendId> backend = engine::app::parseBackendId(arg.substr(6));
             if (!backend.has_value()) {

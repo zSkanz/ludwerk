@@ -171,7 +171,11 @@ void releaseScriptPaneFocus();
 // The stack, the variables and the transport. A panel of its own rather than a
 // strip inside the code pane, because it is worth looking at while looking at
 // the code -- which is what a dock node is for.
+//
+// `header`, when given, draws at the top before the debugger's own controls:
+// the shell puts what starts the game there, as the editor this follows puts
+// its launch configuration at the top of Run and Debug.
 void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands& out, bool& open,
-                    const ScriptActionButton& actionButton = {});
+                    const ScriptActionButton& actionButton = {}, const std::function<void()>& header = {});
 
 } // namespace engine::app

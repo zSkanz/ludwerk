@@ -47,7 +47,7 @@ void checkContrast(const app::Theme& theme)
         {"text over surfaceRaised", p.text, p.surfaceRaised},
         {"textMuted over surfaceRaised", p.textMuted, p.surfaceRaised},
         // The label of a primary button.
-        {"onAccent", p.onAccent, p.accent},
+        {"onAccent", p.onAccent, p.accentFill},
     };
 
     for (const Foreground& foreground : foregrounds) {
@@ -181,6 +181,7 @@ TEST_CASE("an unknown theme opens on the default rather than on nothing")
 {
     CHECK(app::themeById("dark").id == "dark");
     CHECK(app::themeById("light").id == "light");
+    CHECK(app::themeById("orbit-dark").id == "orbit-dark");
     // A file written by a build that carried a theme this one does not. Same
     // rule the scene format and `editor.json` follow: a newer file is a file
     // from next week, not a broken one.

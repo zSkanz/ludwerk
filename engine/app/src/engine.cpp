@@ -1,5 +1,6 @@
 #include "engine/app/engine.h"
 
+#include "engine/app/editor_drive.h"
 #include "engine/app/match_launcher.h"
 #include "engine/app/network_session.h"
 #include "engine/app/script_editor.h"
@@ -713,6 +714,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // pipeline is built against the swapchain's colour format, which does not
     // exist until the device owns the window. Compiled out entirely in shipping
     // (ADR 0011), where the constructor is a no-op and active() is false.
+    // Declared before the overlay, which holds a pointer to it.
+    EditorDrive editorDrive;
     std::optional<DebugOverlay> overlay;
     if (window != nullptr) {
         // The layout lives inside the project it belongs to, not beside the
@@ -1440,6 +1443,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // outlives every world this process builds, which is the whole reason
         // `setWorld` is idempotent.
         overlay->setStreamingTarget(&streaming);
+        if (!options.editorDrive.empty() && editorDrive.load(options.editorDrive))
+            overlay->setDrive(&editorDrive);
         // Re-pointed on every reload, unlike streaming: the mixer belongs to the
         // `WorldHost` a reload destroys. What the properties grid does with it is
         // audition a `Content`, which is the one thing that has to work
@@ -4361,6 +4366,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        if (overlay.has_value() && overlay->driveAskedToQuit())
+            quit = true;
         // Cleared once the frame is over. A `DrawLine` from a task resumed
         // outside a frame has nowhere to go and is the silent no-op the headless
         // contract already describes.

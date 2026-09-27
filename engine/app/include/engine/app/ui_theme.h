@@ -39,10 +39,17 @@ struct ThemePalette
     // means quieter, not unreadable, and the usual failure of a "subtle" grey is
     // that it is subtle to whoever has the same monitor as its author.
     core::Color3 textMuted;
-    // Orbit teal, adjusted per surface to retain the text contrast floor.
+    // The accent as a FOREGROUND: a link, a check mark, a focused word. Held to
+    // the text contrast floor on the ground.
     core::Color3 accent;
-    // What is legible ON the accent -- the label of a primary button. Not
-    // derivable from the accent by a rule anybody would trust, so it is a token.
+    // The accent as a FILL: a primary button, the active tab's line, a focused
+    // field's edge, a selected row's tint. A second token because one blue
+    // cannot be both -- the fill a white label reads on is too dark to read on
+    // a dark ground itself, which is why the editor this shell now follows
+    // keeps two as well (2026-09-27).
+    core::Color3 accentFill;
+    // What is legible ON the fill -- the label of a primary button. Not
+    // derivable from it by a rule anybody would trust, so it is a token.
     core::Color3 onAccent;
     // Something is wrong but nothing is lost: a project that has moved, a
     // template directory that is not there, a name the field will not take.
@@ -86,35 +93,39 @@ struct SyntaxPalette
 };
 
 // The numbers. One set, shared by every theme -- see the header note.
+// **Compact, square-edged and quiet**, the geometry of the code editor most of
+// the people who open this one already live in (the owner, 2026-09-27: "o mais
+// próximo possível do VS Code"): 22-pixel rows, square panels and tabs, four
+// pixels of rounding on a control, hairline separators.
 struct ThemeMetrics
 {
-    // Compact controls and larger containers share the Orbit rounded geometry.
-    core::f32 rounding = 5.0f;
-    core::f32 containerRounding = 8.0f;
+    core::f32 rounding = 4.0f;
+    core::f32 containerRounding = 6.0f;
     core::f32 borderSize = 1.0f;
 
-    core::f32 windowPaddingX = 14.0f;
-    core::f32 windowPaddingY = 12.0f;
-    core::f32 framePaddingX = 10.0f;
-    core::f32 framePaddingY = 6.0f;
+    core::f32 windowPaddingX = 10.0f;
+    core::f32 windowPaddingY = 8.0f;
+    core::f32 framePaddingX = 8.0f;
+    core::f32 framePaddingY = 4.0f;
     core::f32 itemSpacingX = 8.0f;
-    core::f32 itemSpacingY = 8.0f;
+    core::f32 itemSpacingY = 5.0f;
     core::f32 itemInnerSpacingX = 6.0f;
-    core::f32 itemInnerSpacingY = 5.0f;
-    core::f32 cellPaddingX = 7.0f;
-    core::f32 cellPaddingY = 4.0f;
-    core::f32 indentSpacing = 18.0f;
+    core::f32 itemInnerSpacingY = 4.0f;
+    core::f32 cellPaddingX = 6.0f;
+    core::f32 cellPaddingY = 3.0f;
+    core::f32 indentSpacing = 16.0f;
     core::f32 scrollbarSize = 10.0f;
-    core::f32 grabMinSize = 12.0f;
-    // A quiet baseline and a mint overline identify the active document.
+    core::f32 grabMinSize = 10.0f;
+    // The active document is marked by a one-pixel line of the accent along
+    // its top edge, and the bar by a hairline under it.
     core::f32 tabBarBorderSize = 1.0f;
-    core::f32 tabBarOverlineSize = 2.0f;
-    core::f32 dockingSeparatorSize = 4.0f;
+    core::f32 tabBarOverlineSize = 1.0f;
+    core::f32 dockingSeparatorSize = 2.0f;
 
-    // Inter at 16 px. The default ImGui font is a 13 px bitmap face designed for
-    // a debugger, and drawing an application in it is most of why the editor
-    // read as an overlay.
-    core::f32 fontSize = 16.0f;
+    // Inter at 14 px: the size a 13-pixel Segoe UI reads at, which is what a
+    // VS Code user's eye is calibrated to. The default ImGui font is a 13 px
+    // bitmap face designed for a debugger.
+    core::f32 fontSize = 14.0f;
 };
 
 struct Theme

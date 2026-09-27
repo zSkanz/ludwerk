@@ -47,8 +47,82 @@ using core::f32;
 // because a comment claiming 5.2:1 is a comment that stops being true the first
 // time somebody nudges a hex digit.
 
+// **The default pair follows VS Code's modern themes** (the owner, 2026-09-27):
+// neutral greys with no hue of their own, the side bars a step darker than the
+// editor, one blue for what is active, and hairline borders. A person who
+// spends the day in that editor should not have to recalibrate their eyes
+// between the two.
 constexpr Theme kDark{
     .id = "dark",
+    .name = "Dark",
+    .dark = true,
+    .palette =
+        {
+            // The side bars, panels and menus.
+            .background = rgb(0x181818),
+            // The editor's own ground: code, fields, lists.
+            .surface = rgb(0x1F1F1F),
+            .surfaceRaised = rgb(0x313131),
+            .border = rgb(0x2B2B2B),
+            .text = rgb(0xCCCCCC),
+            .textMuted = rgb(0x9D9D9D),
+            .accent = rgb(0x3794FF),
+            .accentFill = rgb(0x0078D4),
+            .onAccent = rgb(0xFFFFFF),
+            .warning = rgb(0xCCA700),
+            .danger = rgb(0xF14C4C),
+            .success = rgb(0x89D185),
+        },
+    .syntax =
+        {
+            .keyword = rgb(0x569CD6),
+            .identifier = rgb(0x9CDCFE),
+            .number = rgb(0xB5CEA8),
+            .string = rgb(0xCE9178),
+            .comment = rgb(0x6A9955),
+            .operatorToken = rgb(0xD4D4D4),
+            .attribute = rgb(0xDCDCAA),
+            .typeName = rgb(0x4EC9B0),
+            .errorToken = rgb(0xF44747),
+        },
+};
+
+constexpr Theme kLight{
+    .id = "light",
+    .name = "Light",
+    .dark = false,
+    .palette =
+        {
+            .background = rgb(0xF8F8F8),
+            .surface = rgb(0xFFFFFF),
+            .surfaceRaised = rgb(0xE8E8E8),
+            .border = rgb(0xE5E5E5),
+            .text = rgb(0x3B3B3B),
+            .textMuted = rgb(0x616161),
+            .accent = rgb(0x005FB8),
+            .accentFill = rgb(0x005FB8),
+            .onAccent = rgb(0xFFFFFF),
+            .warning = rgb(0x895503),
+            .danger = rgb(0xCD3131),
+            .success = rgb(0x2E7D32),
+        },
+    .syntax =
+        {
+            .keyword = rgb(0x0000FF),
+            .identifier = rgb(0x001080),
+            .number = rgb(0x0A7B55),
+            .string = rgb(0xA31515),
+            .comment = rgb(0x008000),
+            .operatorToken = rgb(0x3B3B3B),
+            .attribute = rgb(0x795E26),
+            .typeName = rgb(0x267F99),
+            .errorToken = rgb(0xCD3131),
+        },
+};
+
+// The Orbit pair (2026-09-23), kept for whoever chose it.
+constexpr Theme kOrbitDark{
+    .id = "orbit-dark",
     .name = "Orbit Dark",
     .dark = true,
     .palette =
@@ -61,6 +135,7 @@ constexpr Theme kDark{
             .text = rgb(0xE8F0F2),
             .textMuted = rgb(0xA6B8C0),
             .accent = rgb(0x55E0C5),
+            .accentFill = rgb(0x55E0C5),
             .onAccent = rgb(0x102B27),
             .warning = rgb(0xE0A34A),
             .danger = rgb(0xF87F73),
@@ -80,8 +155,8 @@ constexpr Theme kDark{
         },
 };
 
-constexpr Theme kLight{
-    .id = "light",
+constexpr Theme kOrbitLight{
+    .id = "orbit-light",
     .name = "Orbit Light",
     .dark = false,
     .palette =
@@ -94,6 +169,7 @@ constexpr Theme kLight{
             .textMuted = rgb(0x52666E),
             // Deep teal retains contrast for links on the light surfaces.
             .accent = rgb(0x076C63),
+            .accentFill = rgb(0x076C63),
             .onAccent = rgb(0xFFFFFF),
             .warning = rgb(0x8A5A00),
             .danger = rgb(0xB3261E),
@@ -113,7 +189,7 @@ constexpr Theme kLight{
         },
 };
 
-constexpr Theme kThemes[]{kDark, kLight};
+constexpr Theme kThemes[]{kDark, kLight, kOrbitDark, kOrbitLight};
 
 // sRGB -> linear, the specification's own piecewise transfer function.
 [[nodiscard]] f32 linearize(f32 channelValue) noexcept
@@ -288,14 +364,15 @@ void applyTheme(const Theme& theme, f32 scale)
     style.ScrollbarSize = metrics.scrollbarSize;
     style.GrabMinSize = metrics.grabMinSize;
 
-    // Docked edges remain flush; controls and floating surfaces share a radius.
+    // Panels and tabs are square, as the side bars and editor tabs they follow
+    // are; floating surfaces and controls take the small radius.
     style.WindowRounding = metrics.containerRounding;
-    style.ChildRounding = metrics.containerRounding;
+    style.ChildRounding = metrics.rounding;
     style.PopupRounding = metrics.containerRounding;
     style.FrameRounding = metrics.rounding;
     style.ScrollbarRounding = metrics.rounding;
     style.GrabRounding = metrics.rounding;
-    style.TabRounding = metrics.rounding;
+    style.TabRounding = 0.0f;
     style.ImageRounding = metrics.rounding;
     style.MenuItemRounding = metrics.rounding;
     style.SelectableRounding = metrics.rounding;
@@ -310,7 +387,10 @@ void applyTheme(const Theme& theme, f32 scale)
     // One close affordance per tab; the extra node button closes an entire group.
     style.DockingNodeHasCloseButton = false;
     style.TabCloseButtonMinWidthSelected = -1.0f;
-    style.TabCloseButtonMinWidthUnselected = -1.0f;
+    // The editor this follows shows a tab's close button on the active tab, and
+    // on another only under the pointer: a row of crosses is a row of ways to
+    // lose a panel by missing its title.
+    style.TabCloseButtonMinWidthUnselected = 0.0f;
     style.TabBarBorderSize = metrics.tabBarBorderSize;
     style.TabBarOverlineSize = metrics.tabBarOverlineSize;
     style.DockingSeparatorSize = metrics.dockingSeparatorSize;
@@ -335,9 +415,13 @@ void applyTheme(const Theme& theme, f32 scale)
     colors[ImGuiCol_Border] = opaque(p.border);
     colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    colors[ImGuiCol_FrameBg] = opaque(p.surface);
-    colors[ImGuiCol_FrameBgHovered] = opaque(mix(p.surface, p.accent, 0.14f));
-    colors[ImGuiCol_FrameBgActive] = opaque(mix(p.surface, p.accent, 0.24f));
+    // A field is a step off whatever it sits on, toward the text: the recessed
+    // look of an input box, in either theme.
+    // #313131 on the dark ground, the field and checkbox colour of the editor
+    // this follows: a box somebody can see before hovering it.
+    colors[ImGuiCol_FrameBg] = opaque(mix(p.surface, p.text, theme.dark ? 0.10f : 0.03f));
+    colors[ImGuiCol_FrameBgHovered] = opaque(mix(p.surface, p.text, theme.dark ? 0.15f : 0.06f));
+    colors[ImGuiCol_FrameBgActive] = opaque(mix(p.surface, p.accentFill, 0.20f));
 
     colors[ImGuiCol_TitleBg] = opaque(p.surface);
     colors[ImGuiCol_TitleBgActive] = opaque(p.surfaceRaised);
@@ -347,46 +431,51 @@ void applyTheme(const Theme& theme, f32 scale)
     colors[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     colors[ImGuiCol_ScrollbarGrab] = opaque(mix(p.border, p.textMuted, 0.25f));
     colors[ImGuiCol_ScrollbarGrabHovered] = opaque(p.textMuted);
-    colors[ImGuiCol_ScrollbarGrabActive] = opaque(p.accent);
+    colors[ImGuiCol_ScrollbarGrabActive] = opaque(p.textMuted);
 
     colors[ImGuiCol_CheckMark] = opaque(p.accent);
-    colors[ImGuiCol_CheckboxSelectedBg] = fade(p.accent, 0.20f);
-    colors[ImGuiCol_SliderGrab] = opaque(p.accent);
-    colors[ImGuiCol_SliderGrabActive] = opaque(mix(p.accent, p.text, 0.25f));
+    colors[ImGuiCol_CheckboxSelectedBg] = fade(p.accentFill, 0.25f);
+    colors[ImGuiCol_SliderGrab] = opaque(p.accentFill);
+    colors[ImGuiCol_SliderGrabActive] = opaque(p.accent);
 
     // A button is the raised surface, not the accent. The accent is reserved for
     // what is selected and for the ONE primary action on a screen -- spend it on
     // every button and it stops meaning anything, which is the failure mode of
     // every palette that starts from a brand colour.
     colors[ImGuiCol_Button] = opaque(p.surfaceRaised);
-    colors[ImGuiCol_ButtonHovered] = opaque(mix(p.surfaceRaised, p.accent, 0.10f));
-    colors[ImGuiCol_ButtonActive] = opaque(mix(p.surfaceRaised, p.accent, 0.18f));
+    colors[ImGuiCol_ButtonHovered] = opaque(mix(p.surfaceRaised, p.text, 0.08f));
+    colors[ImGuiCol_ButtonActive] = opaque(mix(p.surfaceRaised, p.text, 0.14f));
 
-    colors[ImGuiCol_Header] = fade(p.accent, 0.16f);
-    colors[ImGuiCol_HeaderHovered] = fade(p.accent, 0.16f);
-    colors[ImGuiCol_HeaderActive] = fade(p.accent, 0.22f);
+    // A list row: the accent's fill, faintly, for what is selected, and the
+    // text's own colour at a whisper for what is under the pointer -- a hover
+    // that looked like a selection would be a second selection.
+    colors[ImGuiCol_Header] = fade(p.accentFill, theme.dark ? 0.40f : 0.18f);
+    colors[ImGuiCol_HeaderHovered] = fade(p.text, 0.07f);
+    colors[ImGuiCol_HeaderActive] = fade(p.accentFill, theme.dark ? 0.50f : 0.26f);
 
     colors[ImGuiCol_Separator] = opaque(p.border);
-    colors[ImGuiCol_SeparatorHovered] = opaque(p.accent);
-    colors[ImGuiCol_SeparatorActive] = opaque(p.accent);
+    colors[ImGuiCol_SeparatorHovered] = opaque(p.accentFill);
+    colors[ImGuiCol_SeparatorActive] = opaque(p.accentFill);
 
     colors[ImGuiCol_ResizeGrip] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_ResizeGripHovered] = fade(p.accent, 0.55f);
-    colors[ImGuiCol_ResizeGripActive] = opaque(p.accent);
+    colors[ImGuiCol_ResizeGripHovered] = fade(p.accentFill, 0.55f);
+    colors[ImGuiCol_ResizeGripActive] = opaque(p.accentFill);
 
-    colors[ImGuiCol_InputTextCursor] = opaque(p.accent);
+    colors[ImGuiCol_InputTextCursor] = opaque(p.text);
 
-    colors[ImGuiCol_Tab] = opaque(p.surface);
-    colors[ImGuiCol_TabHovered] = opaque(mix(p.surfaceRaised, p.accent, 0.20f));
-    colors[ImGuiCol_TabSelected] = opaque(p.background);
-    colors[ImGuiCol_TabSelectedOverline] = opaque(p.accent);
-    colors[ImGuiCol_TabDimmed] = opaque(p.surface);
-    colors[ImGuiCol_TabDimmedSelected] = opaque(p.background);
+    // Tabs: the unselected ones on the bar's own ground, the selected one on
+    // the ground of what it shows, with the accent's line along its top.
+    colors[ImGuiCol_Tab] = opaque(p.background);
+    colors[ImGuiCol_TabHovered] = opaque(mix(p.background, p.text, 0.06f));
+    colors[ImGuiCol_TabSelected] = opaque(p.surface);
+    colors[ImGuiCol_TabSelectedOverline] = opaque(p.accentFill);
+    colors[ImGuiCol_TabDimmed] = opaque(p.background);
+    colors[ImGuiCol_TabDimmedSelected] = opaque(p.surface);
     // Muted rather than absent: an unfocused dock node still has a selected tab,
     // and hiding the mark makes the panel look like it has none.
     colors[ImGuiCol_TabDimmedSelectedOverline] = opaque(p.border);
 
-    colors[ImGuiCol_DockingPreview] = fade(p.accent, 0.45f);
+    colors[ImGuiCol_DockingPreview] = fade(p.accentFill, 0.45f);
     colors[ImGuiCol_DockingEmptyBg] = opaque(p.surface);
 
     colors[ImGuiCol_PlotLines] = opaque(p.accent);
@@ -394,7 +483,7 @@ void applyTheme(const Theme& theme, f32 scale)
     colors[ImGuiCol_PlotHistogram] = opaque(p.accent);
     colors[ImGuiCol_PlotHistogramHovered] = opaque(mix(p.accent, p.text, 0.30f));
 
-    colors[ImGuiCol_TableHeaderBg] = opaque(p.surfaceRaised);
+    colors[ImGuiCol_TableHeaderBg] = opaque(p.background);
     colors[ImGuiCol_TableBorderStrong] = opaque(p.border);
     colors[ImGuiCol_TableBorderLight] = opaque(mix(p.background, p.border, 0.60f));
     colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -403,13 +492,16 @@ void applyTheme(const Theme& theme, f32 scale)
     colors[ImGuiCol_TableRowBgAlt] = fade(theme.dark ? p.text : p.background, 0.03f);
 
     colors[ImGuiCol_TextLink] = opaque(p.accent);
-    colors[ImGuiCol_TextSelectedBg] = fade(p.accent, 0.35f);
-    colors[ImGuiCol_TreeLines] = opaque(p.border);
-    colors[ImGuiCol_DragDropTarget] = opaque(p.accent);
-    colors[ImGuiCol_DragDropTargetBg] = fade(p.accent, 0.15f);
-    colors[ImGuiCol_UnsavedMarker] = opaque(p.warning);
-    colors[ImGuiCol_NavCursor] = opaque(p.accent);
-    colors[ImGuiCol_NavWindowingHighlight] = fade(p.accent, 0.70f);
+    colors[ImGuiCol_TextSelectedBg] = fade(p.accentFill, 0.45f);
+    // The indent guides: there, but no louder than a border.
+    colors[ImGuiCol_TreeLines] = opaque(mix(p.background, p.textMuted, 0.35f));
+    colors[ImGuiCol_DragDropTarget] = opaque(p.accentFill);
+    colors[ImGuiCol_DragDropTargetBg] = fade(p.accentFill, 0.15f);
+    // A dot on an unsaved tab, the text's own colour, as the tabs this follows
+    // have it.
+    colors[ImGuiCol_UnsavedMarker] = opaque(p.text);
+    colors[ImGuiCol_NavCursor] = opaque(p.accentFill);
+    colors[ImGuiCol_NavWindowingHighlight] = fade(p.accentFill, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.45f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
 

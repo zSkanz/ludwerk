@@ -50,6 +50,8 @@ engine_add_module(app
         src/terrain_overlay.cpp
         src/world_panels.cpp
         src/editor.cpp
+        src/command_palette.cpp
+        src/editor_drive.cpp
         src/content_tree.cpp
         src/content_import.cpp
         src/icons.cpp
@@ -308,6 +310,7 @@ engine_add_module_tests(app
         tests/two_worlds_tests.cpp
         tests/project_config_tests.cpp
         tests/export_runner_tests.cpp
+        tests/command_palette_tests.cpp
         tests/ui_theme_tests.cpp
         tests/ui_text_tests.cpp
         tests/thumbnail_tests.cpp

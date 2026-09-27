@@ -55,6 +55,33 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The editor, remade after VS Code** (the owner's queue of 2026-09-27, Q2):
+  - Dark Modern and Light Modern colours and metrics.
+  - A command palette (`Ctrl+Shift+P`, `F1`) holding every menu and toolbar
+    action by name, plus "Insert: <class>" and "Color Theme" commands.
+  - Quick open (`Ctrl+P`) for scenes, stamps, materials, shaders and
+    scripts.
+  - A status bar: run state, the open scene and whether it is saved, error
+    and warning counts, the selection and the tool. It turns blue while the
+    game runs.
+  - An activity bar that switches the side bar between Explorer, Content,
+    Run and Debug and the world tools, and folds it away (`Ctrl+B`).
+  - VS Code's menus (File, Edit, Selection, View, Go, Run, Help), drawn from
+    the palette's commands, and one toolbar row in place of the ribbon's
+    four tabs.
+  - The match's players and dedicated server at the top of Run and Debug
+    and in the Run menu.
+  - A Console filtered by level and text, with its prompt labelled.
+  - Notifications as cards in the bottom-right corner.
+  - "Insert Object" first on the Explorer's right-click menu.
+  - Close buttons only on the active or hovered tab.
+  - The keys VS Code users expect: `F5`, `Shift+F5`, `Ctrl+J`, `` Ctrl+` ``,
+    `Ctrl+,`, `Ctrl+Shift+E`/`A`/`D`.
+
+  A layout saved before this is rebuilt once, to the new arrangement.
+  `--editor-drive=FILE` drives the editor from a script of input events, so
+  every state of it can be photographed with nobody at the machine.
+
 - **`UIGradient` and `UIStroke`** (ADR 0110). A gradient colours and fades the
   element it is under -- background, picture and text -- along a
   `ColorSequence` and a `NumberSequence`: **linear, radial or conical**, rotated

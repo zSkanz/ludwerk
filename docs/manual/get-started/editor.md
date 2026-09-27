@@ -21,7 +21,22 @@ the camera and the keyboard — and pressing play hands them back.
 
 ## The panels
 
-A dockspace you can rearrange, and the layout is remembered per project.
+The editor is laid out the way VS Code is, so a person who lives in one finds
+their way round the other:
+
+- the **activity bar** down the left edge switches the side bar between the
+  **Explorer**, **Content**, **Run and Debug**, and the Terrain, Blocks and
+  Tiles tools; a click on the view already showing folds the side bar away,
+  and so does `Ctrl+B`;
+- the **Viewport** is the editor area in the middle;
+- **Properties** is the secondary side bar, on the right;
+- the **panel** under the viewport holds the **Console** and **Stats**;
+- the **status bar** along the bottom says whether the game is running (the
+  bar turns blue while it is), which scene is open and whether it is saved,
+  how many errors and warnings the console holds, what is selected and which
+  tool is in hand. Each of those is also a button.
+
+Every panel can be dragged anywhere, and the layout is remembered per project.
 
 | Panel | Is |
 |---|---|
@@ -29,8 +44,18 @@ A dockspace you can rearrange, and the layout is remembered per project.
 | **Explorer** | The instance tree. |
 | **Properties** | Everything the selected instance declares, typed. |
 | **Content** | The project's assets, as folders. |
-| **Console** | What the running game has said. |
+| **Run and Debug** | Start the game or a match, and the script debugger. |
+| **Console** | What the running game has said, filtered by level and by text, and a line to run Luau in it. |
 | **Stats** | The same numbers the debug overlay shows. |
+
+## The command palette
+
+**`Ctrl+Shift+P` (or `F1`) runs any command by typing part of its name** --
+every menu item and toolbar button is one, named "Area: Verb", so "save",
+"ins part" and "theme light" all find what they mean. **`Ctrl+P` opens any
+file** -- a scene, a stamp, a material, a shader, or a script in the tree --
+and typing `>` there turns it into the palette. The commands used last come
+first.
 
 ## The loop
 
@@ -93,14 +118,20 @@ Ctrl or Alt is held, so a shortcut never moves the camera.
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+Shift+V | Copy / cut / paste beside / paste into |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Shift+P (playing) | Fly free: leave the game's camera and fly the editor's while the game runs |
+| Ctrl+Shift+P or F1 / Ctrl+P | The command palette / open a file |
+| F5 / Shift+F5 | Start / stop the game (F5 continues a script stopped at a breakpoint) |
+| Ctrl+B / Ctrl+Alt+B | Fold the side bar away / hide Properties |
+| Ctrl+Shift+E / Ctrl+Shift+A / Ctrl+Shift+D | Show the Explorer / Content / Run and Debug |
+| Ctrl+J / Ctrl+` | Hide or show the Console / go to it |
+| Ctrl+, | Settings |
 
 Picking up a terrain or block brush lets go of the selection, and selecting
 something (in the Explorer, or by inserting it) puts the brush down.
 
-Above the viewport, the **Home** tab is the toolbar with the snap steps beside
-the snap switch; **Model** inserts a part, model, folder or script and groups
-and duplicates; **Test** plays, pauses, steps and flies free; **View** shows and
-hides panels and overlays.
+The menus are VS Code's -- **File, Edit, Selection, View, Go, Run, Help** --
+and the toolbar under them holds play, the transform tools and the snap steps
+beside the snap switch. Right-click a row in the Explorer and **Insert Object**
+is the first thing on the menu.
 
 ## Where things can go
 

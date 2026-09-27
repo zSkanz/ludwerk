@@ -3147,7 +3147,7 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
 } // namespace
 
 void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands& out, bool& open,
-                    const ScriptActionButton& actionButton)
+                    const ScriptActionButton& actionButton, const std::function<void()>& header)
 {
     // **Beside the Console, even in a layout written before this panel
     // existed.** `buildDefaultLayout` docks it for a fresh arrangement, but a
@@ -3159,9 +3159,13 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
         ImGui::SetNextWindowDockID(console->DockId, ImGuiCond_FirstUseEver);
     }
 
-    if (!ImGui::Begin((tabIconPad() + "Debug###Debug").c_str(), &open)) {
+    if (!ImGui::Begin((tabIconPad() + "Run and Debug###Debug").c_str(), &open)) {
         ImGui::End();
         return;
+    }
+    if (header) {
+        header();
+        ImGui::Spacing();
     }
 
     const ThemePalette& p = currentTheme().palette;
@@ -3374,7 +3378,8 @@ void drawScriptEditor(ScriptEditor&, core::u32, DebugView&, const scene::World*,
 void releaseScriptPaneFocus()
 {}
 
-void drawDebugPanel(ScriptEditor&, DebugView&, ScriptEditorCommands&, bool&, const ScriptActionButton&)
+void drawDebugPanel(ScriptEditor&, DebugView&, ScriptEditorCommands&, bool&, const ScriptActionButton&,
+                    const std::function<void()>&)
 {}
 
 } // namespace engine::app

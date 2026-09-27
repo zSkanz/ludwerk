@@ -54,8 +54,9 @@ hears `Disconnected` and decides for itself.
 
 ## Playing a match from the editor
 
-Beside **Play** are a player count, from 1 to 4, and a **Dedicated server**
-box. With one player and no server, Play is the ordinary Play in the viewport.
+At the top of **Run and Debug** (`Ctrl+Shift+D`), and under the **Run** menu,
+are a player count, from 1 to 4, and a **Dedicated server** box. With one
+player and no server, Start (`F5`) is the ordinary Play in the viewport.
 With more, Play saves the scene and starts a match of separate windows (ADR
 0106):
 

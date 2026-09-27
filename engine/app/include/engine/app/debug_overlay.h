@@ -43,6 +43,8 @@ class AudioSystem;
 }
 
 namespace engine::app {
+
+class EditorDrive;
 class IconAtlas;
 class ThumbnailCache;
 class SurfaceCompiler;
@@ -182,6 +184,12 @@ public:
     // tabs outlive a reload and the overlay does not own the world they point
     // into.
     void setScriptEditor(ScriptEditor* scripts) noexcept { scripts_ = scripts; }
+
+    // `--editor-drive=FILE` (`editor_drive.h`): a script of input fed to ImGui
+    // each frame. Null -- every ordinary run -- feeds nothing. Not owned.
+    void setDrive(EditorDrive* drive) noexcept { drive_ = drive; }
+    // True once the script's `quit` step has run.
+    [[nodiscard]] bool driveAskedToQuit() const noexcept { return driveQuit_; }
 
     // **The next world is the same world rebuilt, so keep the Explorer as it
     // is.** The tree throws away which rows were expanded whenever the world
@@ -345,6 +353,8 @@ public:
 private:
     bool active_ = false;
     bool visible_ = false;
+    EditorDrive* drive_ = nullptr;
+    bool driveQuit_ = false;
 
     // Non-owning and rebindable, because the world they describe is rebuilt by
     // every hot reload while the overlay is not (ADR 0024: the reload destroys

@@ -67,6 +67,9 @@ struct EngineOptions
     // renders into the swapchain, which has been presented and is gone by the
     // time anyone could read it.
     std::filesystem::path screenshotPath;
+    // `--editor-drive=FILE`: input for the editor from a script
+    // (`editor_drive.h`). Development builds only; empty drives nothing.
+    std::filesystem::path editorDrive;
 
     // Where to write the recorded command stream. Only the capture backend
     // records one; asking any other backend for it is a usage error rather

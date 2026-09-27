@@ -72,6 +72,8 @@
   "engine.overlay.warn.init_failed": "The debug overlay could not start; F3 will do nothing.",
   "engine.overlay.warn.window_not_claimed": "The debug overlay needs a window the graphics device has already claimed.",
   "engine.overlay.warn.already_running": "A debug overlay is already running; only one can exist at a time.",
+  "engine.drive.info.shot": "[drive] shot {name}",
+  "engine.drive.warn.unknown_step": "[drive] unknown step {verb}",
   "engine.overlay.warn.font_missing": "The interface typeface is not staged beside the engine; falling back to the built-in font.",
   "engine.overlay.warn.code_font_missing": "The monospace typeface is not staged beside the engine; the script editor falls back to the interface font.",
   "engine.overlay.look.disabled": "Off: Enabled is false, so this effect changes nothing.",

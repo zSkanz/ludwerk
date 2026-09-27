@@ -1679,7 +1679,12 @@ public:
     //
     // Bump it only for a default that was WRONG rather than merely different. A
     // number that moved for a preference would be a preference overwritten.
-    static constexpr core::i64 CurrentLayoutRevision = 1;
+    //
+    // 2 is the one exception, and it was asked for: the owner's remake of the
+    // editor after VS Code (2026-09-27) moved every panel -- the side bar, the
+    // secondary side bar, the panel -- and a layout saved before it is rebuilt
+    // once, as Reset Layout would.
+    static constexpr core::i64 CurrentLayoutRevision = 2;
 
     [[nodiscard]] core::i64 layoutRevision() const noexcept { return m_layoutRevision; }
     void setLayoutRevision(core::i64 revision) noexcept

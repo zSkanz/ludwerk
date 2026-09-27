@@ -102,9 +102,60 @@ details included. After Q1, and before anything else; defects still come first.
 - [x] Home no longer carries the match controls (player count, dedicated
       server); they live on the Test tab alone. Play on Home still plays what
       Test says.
-- [ ] The survey: every panel, every state, screenshot by screenshot, with
-      what VS Code does in its place.
-- [ ] The remake, item by item, from that survey.
+- [x] **An instrument to see it with**: `--editor-drive=FILE` feeds a script of
+      pointer, key and text events into ImGui itself, frame by frame, and logs
+      a marker a watcher photographs the window at (`PrintWindow`). The editor
+      is driven and pictured with nobody's mouse moved -- the gap every
+      milestone since E1 recorded ("no automated picture of the editor").
+- [~] **The survey** (2026-09-27, photographs in the session's scratchpad):
+
+  | Where | What a VS Code user meets | What VS Code does |
+  |---|---|---|
+  | Chrome | Four rows before the work: the OS title bar, a menu row, the ribbon tabs, the ribbon's buttons | One title bar that holds the menus and a command centre; everything else is the activity bar, the editor's own title actions and the palette |
+  | Commands | `Ctrl+Shift+P` and `Ctrl+P` do nothing: no palette, no quick open | The palette runs every command by name; quick open finds any file |
+  | Layout | No activity bar; Explorer, Content and Properties are loose docked windows, each with its own always-visible `X` | Activity bar -> side bar with collapsible sections; editor area; panel below; secondary side bar |
+  | Status | No status bar; the scene's path sits at the right of the menu row and "Editing" in the toolbar | A status bar: what is open, its state, problems, notifications |
+  | Explorer | Nineteen services listed flat, the scene buried among them | The workspace first; the rest grouped and collapsible; indent guides; hover actions |
+  | Context menu | No "Insert object"; "Import..." first | New file / new folder first, then clipboard, then rename/delete |
+  | Properties | Names cut ("OrthographicSi"); an enum reads "Enum.CameraP..."; two styles of section header | Full labels (wrapped or on their own line), the value's own name, one header style |
+  | Menus | File has no Open Recent or Save All; Edit has no Cut/Copy/Paste/Find; "Window" and the "View" tab duplicate each other; Help is one item | File, Edit, Selection, View, Go, Run, Help, each full |
+  | Tabs | A close button on every tab always; the active tab a filled block | The active tab lifted with a top accent line; close on hover; a dot when unsaved |
+  | Panel | Console: a box inside a box, an unlabelled input line; "Reset" greyed at the far right | PROBLEMS / OUTPUT / DEBUG CONSOLE, the input labelled, actions in the panel's title |
+  | Test tab | The dedicated-server checkbox is nearly invisible | Checkboxes with a visible box in both themes |
+  | Colour | A teal-graphite palette of its own | Neutral greys, one blue accent, hairline borders |
+
+- [~] **The remake**, in this order, each one photographed before and after:
+  1. [x] The theme: VS Code's Dark Modern and Light Modern families (neutral
+     greys, `#0078D4` accent, hairline borders, compact rows), fonts and
+     metrics; fields and checkboxes on `#313131`, so a box is seen before it
+     is hovered.
+  2. [x] The status bar: run state (the bar turns blue while the game runs),
+     the scene and its unsaved dot, error and warning counts, the selection,
+     the tool or brush, the frame rate -- each one a button.
+  3. [x] The command palette (`Ctrl+Shift+P`, `F1`) and quick open (`Ctrl+P`):
+     every menu and toolbar action as a named command, "Insert: <class>" for
+     each creatable class, "Color Theme" per theme, recently used first;
+     `F5`, `Shift+F5`, `Ctrl+J`, `` Ctrl+` ``, `Ctrl+,`, `Ctrl+B`.
+  4. [x] The activity bar (Explorer, Content, Run and Debug, Terrain, Blocks,
+     Tiles, and the Manage gear); a click on the active view folds the whole
+     side bar away and the next brings it back, as `Ctrl+B` does. Properties
+     and the world tools on the secondary side bar (a terrain selected in the
+     tree opens its panel, and in the side bar that would put the Explorer
+     away under the click); Console and Stats in the panel. Layout revision 2
+     rebuilds a saved layout once.
+  5. [x] The menus rebuilt on VS Code's (File, Edit, Selection, View, Go, Run,
+     Help), every item a palette command by id; the ribbon's tab row gone,
+     its toolbar one row; the match's shape at the top of Run and Debug and in
+     the Run menu.
+  6. [~] Done: close buttons only on the active or hovered tab; "Insert
+     Object" first on the Explorer's right-click; the Console filtered by
+     level with counts, its actions as icons at the right, no box inside the
+     box, its prompt labelled. Not yet: the Explorer's services grouped (a
+     virtual row breaks selection and drag, which index real instances --
+     needs its own design), Properties' two header styles made one.
+  7. [~] Done: notifications as cards in the bottom-right corner. Not yet: a
+     Welcome page, a settings editor with search (the Preferences dialog has
+     three sections; a search worth having is a settings model of its own).
 
 ## Q3 — then
 
