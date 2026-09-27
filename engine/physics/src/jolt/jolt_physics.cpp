@@ -1705,11 +1705,30 @@ public:
     {
 #ifdef JPH_DEBUG_RENDERER
         DebugBridge bridge(sink, m_origin);
-        JPH::BodyManager::DrawSettings settings;
-        settings.mDrawShape = true;
-        settings.mDrawShapeWireframe = true;
-        settings.mDrawVelocity = false;
-        m_system.DrawBodies(settings, &bridge);
+        // **Body by body rather than `DrawBodies`**, so each is drawn where the
+        // sink says it is on screen (`IDebugDrawSink::drawnPose`). Coloured by
+        // how it moves -- still, moved by a script, simulated -- which is the
+        // question a person looking at colliders is usually asking.
+        const JPH::BodyLockInterfaceNoLock& locks = m_system.GetBodyLockInterfaceNoLock();
+        for (const BodyRecord& record : m_bodies) {
+            if (!record.alive)
+                continue;
+            const JPH::BodyLockRead lock(locks, record.id);
+            if (!lock.Succeeded())
+                continue;
+            const JPH::Body& body = lock.GetBody();
+            const JPH::Shape* shape = body.GetShape();
+            JPH::RMat44 transform = body.GetCenterOfMassTransform();
+            if (const std::optional<core::CFrameD> pose = sink.drawnPose(record.userData); pose.has_value()) {
+                transform =
+                    JPH::RMat44::sRotationTranslation(toJolt(pose->rotation), toJoltPosition(pose->position - m_origin))
+                        .PreTranslated(shape->GetCenterOfMass());
+            }
+            const JPH::Color color = record.motion == MotionType::Static      ? JPH::Color(154, 154, 154)
+                                     : record.motion == MotionType::Kinematic ? JPH::Color(64, 255, 64)
+                                                                              : JPH::Color(255, 208, 64);
+            shape->Draw(&bridge, transform, JPH::Vec3::sOne(), color, false, true);
+        }
 #endif
     }
 

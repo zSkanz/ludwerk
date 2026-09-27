@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cfloat>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,7 @@
 #include "engine/app/command_palette.h"
 #include "engine/app/export_runner.h"
 #include "engine/app/icons.h"
+#include "engine/app/number_expression.h"
 #include "engine/app/project_config.h"
 #include "engine/app/script_editor.h"
 #include "engine/app/script_editor_settings.h"
@@ -55,6 +57,7 @@
 #include "engine/asset/surface_shader.h"
 #include "engine/core/build_info.h"
 #include "engine/core/i18n.h"
+#include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/core/math.h"
 #include "engine/core/text_key.h"
@@ -437,25 +440,47 @@ FrameTimeMeter g_frameTime;
 const ViewHost* g_views = nullptr;
 
 // Three facts the host already knows, plus the sampled frame time above.
+// The Properties panel's grid and headings, used by the panels drawn before
+// it in this file (the Stats panel: the owner asked for it to look the same).
+bool propertiesSection(const char* label);
+bool beginSectionGrid(const char* id);
+void endSectionGrid();
+void sectionName(std::string_view text, bool muted = false);
+
+// One row of a stats grid: the name, and a value made by `format`.
+void statRow(const char* name, const char* format, ...) IM_FMTARGS(2);
+void statRow(const char* name, const char* format, ...)
+{
+    sectionName(name);
+    ImGui::AlignTextToFramePadding();
+    va_list args;
+    va_start(args, format);
+    ImGui::TextV(format, args);
+    va_end(args);
+}
+
+// **The same grid and headings as Properties** (the owner, 2026-09-27): a
+// name on the left, its number on the right, under a heading that folds.
 void drawStats(const Frame& frame, const RenderCounters& counters)
 {
     g_frameTime.accumulate(frame.renderDt);
 
-    // Dashes rather than a made-up 0.00 before the first window closes: a
-    // quarter second of "no measurement yet" is honest and 0.00 ms is not.
-    if (g_frameTime.primed) {
-        ImGui::Text("%.2f ms (%.0f fps)  worst %.2f ms", g_frameTime.meanMs, g_frameTime.perSecond,
-                    g_frameTime.worstMs);
+    if (propertiesSection("Frame") && beginSectionGrid("frame")) {
+        // Dashes rather than a made-up 0.00 before the first window closes: a
+        // quarter second of "no measurement yet" is honest and 0.00 ms is not.
+        if (g_frameTime.primed) {
+            statRow("Time", "%.2f ms (%.0f fps)", g_frameTime.meanMs, g_frameTime.perSecond);
+            statRow("Worst", "%.2f ms", g_frameTime.worstMs);
+        }
+        else {
+            statRow("Time", "-- ms (-- fps)");
+        }
+        const std::string_view backend = backendName(g_device->backend());
+        statRow("Backend", "%.*s", static_cast<int>(backend.size()), backend.data());
+        const platform::WindowSize size = platform::windowPixelSize(*g_window);
+        statRow("Drawable", "%d x %d", size.width, size.height);
+        endSectionGrid();
     }
-    else {
-        ImGui::TextUnformatted("-- ms (-- fps)");
-    }
-
-    const std::string_view backend = backendName(g_device->backend());
-    ImGui::Text("backend %.*s", static_cast<int>(backend.size()), backend.data());
-
-    const platform::WindowSize size = platform::windowPixelSize(*g_window);
-    ImGui::Text("drawable %d x %d", size.width, size.height);
 
     // **What the frame actually cost the GPU**, which neither shell showed for
     // nine milestones. Both draw through here, so the person authoring a world
@@ -463,34 +488,33 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
     // needs them, because a scene that costs four thousand draw calls is a
     // scene somebody built that way.
     //
-    // Two pairs rather than five loose numbers, because each pair is a QUESTION
-    // and neither half answers it alone:
-    //
-    //   draws vs objects -- one call can cover a run of objects since M7.5, so
-    //   these being equal means the instanced path did nothing this frame, and
-    //   the gap between them is what it saved.
-    //
-    //   lod vs triangles -- a scene of distant meshes reporting zero coarse
-    //   draws is a selector that is not selecting, which is exactly the shape a
-    //   counter nobody looks at hides.
-    ImGui::Text("draws %u (%u instanced) for %u object%s", counters.drawCalls, counters.instancedDraws,
-                counters.visibleObjects, counters.visibleObjects == 1u ? "" : "s");
-    ImGui::Text("lod draws %u, %s triangles", counters.lodDraws, formatCount(counters.triangles).c_str());
+    // Draws beside objects, because one call can cover a run of objects since
+    // M7.5 and the gap between them is what the instanced path saved; LOD
+    // draws beside triangles, because a scene of distant meshes reporting zero
+    // coarse draws is a selector that is not selecting.
+    if (propertiesSection("Rendering") && beginSectionGrid("rendering")) {
+        statRow("Draw calls", "%u (%u instanced)", counters.drawCalls, counters.instancedDraws);
+        statRow("Objects", "%u", counters.visibleObjects);
+        statRow("LOD draws", "%u", counters.lodDraws);
+        statRow("Triangles", "%s", formatCount(counters.triangles).c_str());
+        endSectionGrid();
+    }
 
     // **Every view, with what it costs** (ADR 0107): a camera texture is the
     // world drawn again, and a wall of them is where a frame's time goes.
-    if (g_views != nullptr && !g_views->views().empty()) {
-        ImGui::SeparatorText("Views");
-        ImGui::TextDisabled("%u a frame at most", g_views->perFrame());
+    if (g_views != nullptr && !g_views->views().empty() && propertiesSection("Views") && beginSectionGrid("views")) {
+        statRow("Budget", "%u a frame at most", g_views->perFrame());
         for (const ViewHost::View& view : g_views->views()) {
+            const std::string name = "view://" + view.name;
             if (!view.drawn) {
-                ImGui::Text("view://%s  %u x %u  not drawn yet", view.name.c_str(), view.width, view.height);
+                statRow(name.c_str(), "%u x %u, not drawn yet", view.width, view.height);
                 continue;
             }
             const core::u64 ago = frame.index >= view.lastDrawn ? frame.index - view.lastDrawn : 0;
-            ImGui::Text("view://%s  %u x %u  %.2f ms, %llu frame%s ago", view.name.c_str(), view.width, view.height,
-                        view.milliseconds, static_cast<unsigned long long>(ago), ago == 1 ? "" : "s");
+            statRow(name.c_str(), "%u x %u, %.2f ms, %llu frame%s ago", view.width, view.height, view.milliseconds,
+                    static_cast<unsigned long long>(ago), ago == 1 ? "" : "s");
         }
+        endSectionGrid();
     }
 }
 
@@ -514,8 +538,17 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
 // was a palette, and it is what all of them do when tinting is off. The set was
 // drawn and collision-checked in a single ink, so an uncoloured editor is not a
 // worse one.
+// **An icon on an accent fill** -- a toolbar toggle that is on -- is drawn in
+// the colour made to read on that fill, whatever its role's colour is: a blue
+// move handle on a blue button is a button with no picture.
+bool g_iconOnAccent = false;
+
 [[nodiscard]] ImVec4 iconTint(const IconAtlas* icons, std::string_view id) noexcept
 {
+    if (g_iconOnAccent) {
+        const core::Color3 on = palette().onAccent;
+        return ImVec4(on.r, on.g, on.b, ImGui::GetStyleColorVec4(ImGuiCol_Text).w);
+    }
     if (icons != nullptr) {
         if (const std::optional<core::Color3> role = icons->tintFor(id, currentPanel()); role.has_value()) {
             // Alpha from the panel's own text colour, so a disabled row's icon
@@ -772,7 +805,9 @@ bool iconButton(const IconAtlas* icons, std::string_view id, float size, const c
 
 // Paint without submitting another ImGui item: keyboard navigation, tooltips
 // and disabled state must still belong to the labeled control underneath.
-void paintActionIcon(const IconAtlas* atlas, std::string_view id, ImVec2 origin, float size)
+//
+// `into` is the draw list to paint on, when it is not the current window's.
+void paintActionIcon(const IconAtlas* atlas, std::string_view id, ImVec2 origin, float size, ImDrawList* into = nullptr)
 {
     if (atlas == nullptr || !atlas->ready() || !atlas->has(id) || g_device == nullptr)
         return;
@@ -780,9 +815,10 @@ void paintActionIcon(const IconAtlas* atlas, std::string_view id, ImVec2 origin,
     SDL_GPUTexture* texture = rhi::nativeTexture(*g_device, atlas->texture());
     if (!sprite.valid || texture == nullptr)
         return;
-    ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture)), origin,
-                                         ImVec2(origin.x + size, origin.y + size), ImVec2(sprite.u0, sprite.v0),
-                                         ImVec2(sprite.u1, sprite.v1), ImGui::GetColorU32(ImGuiCol_Text));
+    ImDrawList* list = into != nullptr ? into : ImGui::GetWindowDrawList();
+    list->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture)), origin,
+                   ImVec2(origin.x + size, origin.y + size), ImVec2(sprite.u0, sprite.v0), ImVec2(sprite.u1, sprite.v1),
+                   ImGui::GetColorU32(ImGuiCol_Text));
 }
 
 bool labeledIconButton(const IconAtlas* atlas, std::string_view id, const char* label, ImVec2 size = ImVec2())
@@ -827,14 +863,17 @@ bool iconBeginMenu(const IconAtlas* atlas, std::string_view id, const char* labe
     if (atlas == nullptr || !atlas->ready() || !atlas->has(id))
         return ImGui::BeginMenu(label, enabled);
     const std::string padded = tabIconPad() + label + "###" + label;
+    // **Where the row is, taken before the menu opens** (the owner: the icon
+    // vanished while its submenu was open). An open `BeginMenu` has already
+    // begun the submenu's window, so the item rect and the draw list read
+    // after it are the submenu's -- and the icon was painted there, out of
+    // sight. The row's text starts at the cursor, a line high.
+    const ImVec2 row = ImGui::GetCursorScreenPos();
+    ImDrawList* parent = ImGui::GetWindowDrawList();
     const bool open = ImGui::BeginMenu(padded.c_str(), enabled);
-    const ImVec2 min = ImGui::GetItemRectMin();
     const float glyph = ImGui::GetFontSize();
     ImGui::BeginDisabled(!enabled);
-    paintActionIcon(
-        atlas, id,
-        ImVec2(min.x + ImGui::GetStyle().ItemSpacing.x * 0.5f, min.y + (ImGui::GetItemRectSize().y - glyph) * 0.5f),
-        glyph);
+    paintActionIcon(atlas, id, row, glyph, parent);
     ImGui::EndDisabled();
     return open;
 }
@@ -1030,7 +1069,9 @@ struct InstanceDrag
 constexpr const char* kContentDragPayload = "engine.content";
 struct ContentDrag
 {
-    char path[240]{};
+    // Long enough for any path a person makes; a longer one is not dragged at
+    // all rather than dragged cut short (`beginContentDrag`).
+    char path[512]{};
     // The class of the instance the stamp is a file OF, so a drop target can
     // decide whether it wants this one BEFORE it lights up. A field that
     // highlighted for any stamp and then refused a `Part` where a `Material`
@@ -1038,6 +1079,8 @@ struct ContentDrag
     // avoid -- and the browser already knows the answer, because it draws the
     // row with that class's icon.
     char rootClass[48]{};
+    // A folder: said as a flag, not as a class name nothing else can take.
+    bool folder = false;
 };
 
 // Whether a browser drag is a material file (ADR 0090), by the compound suffix
@@ -1056,7 +1099,31 @@ struct ContentDrag
 // A folder, and a picture: what a `Sky` row takes (ADR 0096).
 [[nodiscard]] bool isFolderDrag(const ContentDrag& drag) noexcept
 {
-    return std::string_view(drag.rootClass) == "folder";
+    return drag.folder;
+}
+
+// **A drop into a folder of the content** (the owner: things are dragged
+// between folders): a file or folder from the browser moves there, with every
+// reference to it (`Editor::moveContent`). Not into where it already is, and a
+// folder not into itself or anything inside it -- refused before the target
+// lights up, so it never promises what it will not do. Call inside a
+// `BeginDragDropTarget`.
+void acceptContentMove(EditorCommands& commands, std::string_view folder)
+{
+    const ImGuiPayload* peek = ImGui::GetDragDropPayload();
+    if (peek == nullptr || !peek->IsDataType(kContentDragPayload))
+        return;
+    const auto* drag = static_cast<const ContentDrag*>(peek->Data);
+    const std::string_view path(drag->path);
+    const std::size_t slash = path.rfind('/');
+    const std::string_view parent = slash == std::string_view::npos ? std::string_view{} : path.substr(0, slash);
+    if (parent == folder || path == folder ||
+        (folder.size() > path.size() && folder.starts_with(path) && folder[path.size()] == '/'))
+        return;
+    if (const ImGuiPayload* took = ImGui::AcceptDragDropPayload(kContentDragPayload); took != nullptr) {
+        commands.moveContent = static_cast<const ContentDrag*>(took->Data)->path;
+        commands.moveContentInto = std::string(folder);
+    }
 }
 
 [[nodiscard]] bool isTextureDrag(const ContentDrag& drag) noexcept
@@ -2130,6 +2197,19 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
             // rather than in the toolbar because which parent is the whole of
             // the question, and after the name rather than before it because
             // before it is where the name goes.
+            // **Switched off, it looks switched off** (the owner): an instance
+            // whose `Enabled` is false -- a script, a light, an emitter, a
+            // screen -- has its icon and its name dimmed, so a tree of forty
+            // scripts says which of them will not run without opening one.
+            bool switchedOff = false;
+            if (const core::NameAtom enabledName = world.atoms().lookup("Enabled"); enabledName.valid()) {
+                const std::optional<scene::Value> enabled = world.getProperty(row.id, enabledName);
+                const bool* flag = enabled.has_value() ? std::get_if<bool>(&*enabled) : nullptr;
+                switchedOff = flag != nullptr && !*flag;
+            }
+            if (switchedOff)
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
+
             if (haveIcon) {
                 ImGui::SetCursorPos(ImVec2(penX, centred(iconSize)));
                 // Screen space, taken before the draw: the badge below is not
@@ -2172,6 +2252,11 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", inactive.c_str());
+            }
+            if (switchedOff) {
+                ImGui::PopStyleVar();
+                if (inactive.empty() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("disabled -- Enabled is off");
             }
             penX += ImGui::CalcTextSize(label).x + ImGui::GetStyle().ItemSpacing.x;
 
@@ -2334,6 +2419,91 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
     return kind == EditorKind::UDim || kind == EditorKind::UDim2;
 }
 
+// --- Arithmetic in a number field --------------------------------------------
+//
+// **`0+2` is 2 and `1/2` is 0.5** (the owner). ImGui once read operators in a
+// typed number and no longer does: it scans the leading number and drops the
+// rest, so `0+2` became 0. What it still keeps is the text somebody typed, for
+// the frame the field lets go of the keyboard -- and that is read here, worked
+// out, and written over what ImGui made of it. Nothing else changes: a drag is
+// a drag, and a field that was never typed into is never re-read.
+
+// The field being typed into as text, while it is.
+ImGuiID g_typedNumber = 0;
+
+// What was typed into field `id`, worked out -- once, on the frame it lets go
+// of the keyboard. Called every frame the field is drawn, which is how it sees
+// the typing start.
+[[nodiscard]] std::optional<double> typedArithmetic(ImGuiID id)
+{
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (id != 0 && g.TempInputId == id && g.ActiveId == id) {
+        g_typedNumber = id;
+        return std::nullopt;
+    }
+    if (id == 0 || g_typedNumber != id)
+        return std::nullopt;
+    g_typedNumber = 0;
+    const char* text = nullptr;
+    if (g.InputTextDeactivatedState.ID == id && g.InputTextDeactivatedState.TextA.Size > 0)
+        text = g.InputTextDeactivatedState.TextA.Data;
+    else if (g.InputTextState.ID == id)
+        text = g.InputTextState.GetText();
+    if (text == nullptr)
+        return std::nullopt;
+    return evaluateNumberExpression(text);
+}
+
+// `DragScalar`, or `DragScalarN` for more than one component, that also takes
+// arithmetic typed into any of its fields.
+bool dragNumber(const char* label, ImGuiDataType type, void* data, int components, float speed, const char* format,
+                const void* minimum = nullptr, const void* maximum = nullptr)
+{
+    bool changed = components == 1 ? ImGui::DragScalar(label, type, data, speed, minimum, maximum, format)
+                                   : ImGui::DragScalarN(label, type, data, components, speed, minimum, maximum, format);
+    const ImGuiID single = components == 1 ? ImGui::GetItemID() : 0;
+    for (int index = 0; index < components; ++index) {
+        ImGuiID id = single;
+        if (components > 1) {
+            // The id `DragScalarN` gave the component: its label's scope, the
+            // index's, and an empty label.
+            ImGui::PushID(label);
+            ImGui::PushID(index);
+            id = ImGui::GetID("");
+            ImGui::PopID();
+            ImGui::PopID();
+        }
+        const std::optional<double> typed = typedArithmetic(id);
+        if (!typed.has_value())
+            continue;
+        switch (type) {
+        case ImGuiDataType_Float: {
+            auto* slot = static_cast<float*>(data) + index;
+            const auto next = static_cast<float>(*typed);
+            changed = changed || *slot != next;
+            *slot = next;
+            break;
+        }
+        case ImGuiDataType_Double: {
+            auto* slot = static_cast<double*>(data) + index;
+            changed = changed || *slot != *typed;
+            *slot = *typed;
+            break;
+        }
+        case ImGuiDataType_S32: {
+            auto* slot = static_cast<int*>(data) + index;
+            const auto next = static_cast<int>(std::lround(*typed));
+            changed = changed || *slot != next;
+            *slot = next;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return changed;
+}
+
 // One sub-row: an indented name on the left, one number on the right.
 [[nodiscard]] bool numberRow(const char* label, float& value, float step, bool mixed, const char* format)
 {
@@ -2348,7 +2518,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
     ImGui::TableSetColumnIndex(ImGui::TableGetColumnCount() == 1 ? 0 : 1);
     ImGui::PushID(label);
     ImGui::SetNextItemWidth(-FLT_MIN);
-    const bool changed = ImGui::DragFloat("##value", &value, step, 0.0f, 0.0f, mixed ? "--" : format);
+    const bool changed = dragNumber("##value", ImGuiDataType_Float, &value, 1, step, mixed ? "--" : format);
     ImGui::PopID();
     return changed;
 }
@@ -2967,6 +3137,15 @@ void drawMaterialParameters(scene::World& world, Inspector& inspector, std::span
 
 // --- The material panel (ADR 0090) ----------------------------------------------
 
+// Puts the cursor at the right end of the current table cell, for one small
+// button there -- a row's inherit or reset, beside its name.
+void moveToCellEnd()
+{
+    const ImVec2 cell = ImGui::GetCursorScreenPos();
+    const float button = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetCursorScreenPos(ImVec2(cell.x + std::max(ImGui::GetContentRegionAvail().x - button, 0.0f), cell.y));
+}
+
 // One field of the open material. A variant shows its parent's value for what it
 // does not write, and editing one makes it the variant's own; `inherit` takes it
 // back. A base writes every field and has nothing to inherit.
@@ -2979,28 +3158,30 @@ struct MaterialFieldRow
     bool continuing = false;
     const IconAtlas* icons = nullptr;
 
-    // Draws the row's label and, for a variant, its inherit control; returns
-    // the values the widget should edit.
+    // Starts the field's row of the grid: its name on the left -- dimmed when a
+    // variant inherits it, with an inherit button when the variant has its own
+    // -- and returns the values the widget on the right should edit.
     asset::MaterialProperties& begin(asset::MaterialField field)
     {
         ImGui::PushID(static_cast<int>(field));
         const bool own = !variant || (next.written & asset::fieldBit(field)) != 0;
         if (!own)
             asset::copyMaterialField(field, inherited, next.properties);
-        ImGui::TextUnformatted(std::string(asset::materialFieldName(field)).c_str());
+        const std::string name(asset::materialFieldName(field));
+        sectionName(name, variant && !own);
+        if (variant && !own)
+            ImGui::SetItemTooltip("inherited from the parent material -- change it to make it this one's own");
         if (variant && own) {
-            ImGui::SameLine();
+            ImGui::TableSetColumnIndex(0);
+            moveToCellEnd();
             if (iconButton(icons, icons::ActionInherit, ImGui::GetFontSize(), "inherit", "inherit",
-                           "Inherit parent material value")) {
+                           "back to the parent material's value")) {
                 next.written = static_cast<asset::MaterialFieldMask>(next.written & ~asset::fieldBit(field));
                 asset::copyMaterialField(field, inherited, next.properties);
                 changed = true;
             }
         }
-        else if (variant) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("inherited");
-        }
+        ImGui::TableSetColumnIndex(1);
         ImGui::SetNextItemWidth(-FLT_MIN);
         return next.properties;
     }
@@ -3018,8 +3199,9 @@ struct MaterialFieldRow
     }
 };
 
-// A map field: the texture's URN, a picker of the project's textures, and a drop
-// target for a texture row.
+// A texture slot: the picture it holds, the texture's URN, a picker of the
+// project's textures, a clear, and a drop target for a texture from the browser
+// over all of it (the owner: dragging is how a texture gets somewhere).
 [[nodiscard]] bool drawMapField(std::string& urn, ContentTree& tree)
 {
     char buffer[256]{};
@@ -3027,11 +3209,49 @@ struct MaterialFieldRow
         std::snprintf(buffer, sizeof(buffer), "%s", urn.c_str());
     bool changed = false;
     const float pick = ImGui::GetFrameHeight();
-    ImGui::SetNextItemWidth(-(pick + ImGui::GetStyle().ItemInnerSpacing.x));
-    if (ImGui::InputTextWithHint("##map", "none", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+    ImGui::BeginGroup();
+    // The texture itself, a frame high, so a slot says what it holds at a
+    // glance; an empty square when it holds nothing.
+    {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const ImVec2 end(at.x + pick, at.y + pick);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(at, end, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
+        if (g_thumbnails != nullptr && g_device != nullptr && urn.starts_with(asset::AssetScheme)) {
+            const ThumbnailCache::Thumbnail picture =
+                g_thumbnails->request(tree.root() / std::filesystem::path(urn.substr(asset::AssetScheme.size())));
+            if (SDL_GPUTexture* native = picture.valid() ? rhi::nativeTexture(*g_device, picture.texture) : nullptr;
+                native != nullptr) {
+                draw->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(native)), ImVec2(at.x + 1, at.y + 1),
+                               ImVec2(end.x - 1, end.y - 1));
+            }
+        }
+        ImGui::Dummy(ImVec2(pick, pick));
+        if (!urn.empty())
+            ImGui::SetItemTooltip("%s", urn.c_str());
+        ImGui::SameLine(0.0f, inner);
+    }
+    const float clear = urn.empty() ? 0.0f : pick + inner;
+    ImGui::SetNextItemWidth(-(pick + inner + clear));
+    if (ImGui::InputTextWithHint("##map", "none -- drop a texture here", buffer, sizeof(buffer),
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
         urn = buffer;
         changed = true;
     }
+    ImGui::SameLine(0.0f, inner);
+    if (ImGui::Button("...", ImVec2(pick, 0.0f)))
+        ImGui::OpenPopup("map-pick");
+    ImGui::SetItemTooltip("the project's textures");
+    if (!urn.empty()) {
+        ImGui::SameLine(0.0f, inner);
+        if (ImGui::Button("x", ImVec2(pick, 0.0f))) {
+            urn.clear();
+            changed = true;
+        }
+        ImGui::SetItemTooltip("no texture");
+    }
+    ImGui::EndGroup();
     if (ImGui::BeginDragDropTarget()) {
         const ImGuiPayload* peek = ImGui::GetDragDropPayload();
         if (peek != nullptr && peek->IsDataType(kContentDragPayload) &&
@@ -3045,9 +3265,6 @@ struct MaterialFieldRow
         }
         ImGui::EndDragDropTarget();
     }
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    if (ImGui::Button("...", ImVec2(pick, 0.0f)))
-        ImGui::OpenPopup("map-pick");
     if (ImGui::BeginPopup("map-pick")) {
         if (ImGui::Selectable("(none)")) {
             urn.clear();
@@ -3161,7 +3378,6 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
 {
     asset::MaterialAsset& next = row.next;
     asset::MaterialProperties& p = next.properties;
-    ImGui::SeparatorText("surface shader");
     ImGui::PushID("surface");
 
     const bool own = !variant || next.shaderWritten;
@@ -3169,20 +3385,18 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
         p.shader = inherited.shader;
         p.readsSceneColor = inherited.readsSceneColor;
     }
-    ImGui::TextUnformatted("shader");
+    sectionName("Shader", variant && !own);
     if (variant && own) {
-        ImGui::SameLine();
+        ImGui::TableSetColumnIndex(0);
+        moveToCellEnd();
         if (iconButton(row.icons, icons::ActionInherit, ImGui::GetFontSize(), "inherit", "inherit",
-                       "Inherit parent material value")) {
+                       "back to the parent material's shader")) {
             next.shaderWritten = false;
             p.shader = inherited.shader;
             p.readsSceneColor = inherited.readsSceneColor;
             row.changed = true;
         }
-    }
-    else if (variant) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("inherited");
+        ImGui::TableSetColumnIndex(1);
     }
     // The file's own name in the box; the whole URN is in the tooltip.
     const bool canEdit = p.shader.starts_with(asset::AssetScheme);
@@ -3214,7 +3428,8 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Open the shader in the text editor");
     }
-    if (ImGui::Checkbox("reads the scene behind", &p.readsSceneColor)) {
+    sectionName("ReadsSceneBehind");
+    if (ImGui::Checkbox("##reads-scene", &p.readsSceneColor)) {
         next.shaderWritten = true;
         row.changed = true;
     }
@@ -3228,6 +3443,8 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
 
     // Whether it compiles, and what the compiler said if it does not.
     if (g_surfaceCompiler != nullptr) {
+        sectionName("Status");
+        ImGui::AlignTextToFramePadding();
         const std::optional<render::SurfaceStatus> status = g_surfaceCompiler->status(p.shader);
         if (!g_surfaceCompiler->available()) {
             ImGui::TextDisabled("no shader compiler in this build: drawn with the built-in surface");
@@ -3243,15 +3460,19 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
         }
         else {
             ImGui::TextColored(themeColor(palette().danger), "does not compile:");
+            ImGui::PushTextWrapPos(0.0f);
             for (const SurfaceError& error : g_surfaceCompiler->errors(p.shader)) {
                 const std::string where = std::filesystem::path(error.file).filename().string();
                 ImGui::TextWrapped("%s:%u  %s", where.c_str(), error.line, error.message.c_str());
             }
+            ImGui::PopTextWrapPos();
         }
     }
 
     const asset::SurfaceReflection* reflection = surfaceReflectionOf(editor.content(), p.shader);
     if (reflection == nullptr) {
+        sectionName("Source");
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("the shader file cannot be read");
         ImGui::PopID();
         return;
@@ -3274,12 +3495,14 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
         const asset::ShaderParameter* current = effective(param.name);
         const bool set = p.shaderParameter(param.name) != nullptr;
         std::array<core::f32, 4> value = current != nullptr ? current->value : param.value;
-        ImGui::TextUnformatted(param.name.c_str());
+        sectionName(param.name, !set);
         if (set) {
-            ImGui::SameLine();
+            ImGui::TableSetColumnIndex(0);
+            moveToCellEnd();
             if (iconButton(row.icons, icons::ActionInherit, ImGui::GetFontSize(), "reset", "reset",
-                           "Back to the shader's default"))
+                           "back to the shader's default"))
                 drop(param.name);
+            ImGui::TableSetColumnIndex(1);
         }
         if (drawSurfaceParam(param, value)) {
             asset::ShaderParameter written;
@@ -3296,7 +3519,7 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
         ImGui::PushID(texture.name.c_str());
         const asset::ShaderParameter* current = effective(texture.name);
         std::string urn = current != nullptr ? current->texture : std::string{};
-        ImGui::TextUnformatted(texture.name.c_str());
+        sectionName(texture.name);
         if (drawMapField(urn, editor.content())) {
             if (urn.empty()) {
                 drop(texture.name);
@@ -3316,7 +3539,10 @@ void drawSurfaceShaderFields(Editor& editor, MaterialFieldRow& row, const asset:
     for (const asset::SurfaceDiagnostic& problem : reflection->errors) {
         const std::array<core::I18nArg, 1> args{core::I18nArg{"subject", problem.subject}};
         const std::string text = core::engineCatalog().format(core::TextKey{core::hashTextKey(problem.key)}, args);
+        sectionName("Problem");
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(themeColor(palette().danger), "line %u: %s", problem.line, text.c_str());
+        ImGui::PopTextWrapPos();
     }
     ImGui::PopID();
 }
@@ -3332,193 +3558,354 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
     if (!session.open())
         return;
 
-    bool keepOpen = true;
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 24.0f, ImGui::GetFontSize() * 36.0f),
+    // **Where the Viewport is, the size it is** (the owner: as the big engines
+    // open theirs), the first time -- and wherever somebody moves it after.
+    if (const ImGuiWindow* world3d = ImGui::FindWindowByName("###Viewport");
+        world3d != nullptr && world3d->DockNode != nullptr)
+        ImGui::SetNextWindowDockID(world3d->DockNode->ID, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 60.0f, ImGui::GetFontSize() * 36.0f),
                              ImGuiCond_FirstUseEver);
-    const std::string title = std::string(session.dirty() ? "Material *" : "Material") + "###Material";
-    if (ImGui::Begin(title.c_str(), &keepOpen)) {
-        ImGui::TextUnformatted(session.path.c_str());
-        asset::MaterialProperties inherited;
-        const bool variant = !session.asset.parent.empty();
-        asset::MaterialFieldMask parentDeclares = 0;
-        std::vector<std::string> parentDeclaresShader;
-        if (variant) {
-            ImGui::TextDisabled("a variant of %s", session.asset.parent.c_str());
-            if (asset::MaterialLibrary* library = editor.materialLibrary(); library != nullptr) {
-                const asset::ResolvedMaterial& parent = library->resolve(session.asset.parent);
-                inherited = parent.properties;
-                parentDeclares = parent.instanceParameters;
-                parentDeclaresShader = parent.instanceShaderParameters;
-            }
-        }
 
-        // The ball, drawn by the renderer the browser's rows use and through the
-        // same library, so it shows an edit before the file has it.
-        const std::filesystem::path absolute = editor.content().root() / std::filesystem::path(session.path);
-        if (g_thumbnails != nullptr && g_device != nullptr) {
-            const ThumbnailCache::Thumbnail ball = g_thumbnails->request(absolute);
-            if (SDL_GPUTexture* native = ball.valid() ? rhi::nativeTexture(*g_device, ball.texture) : nullptr;
-                native != nullptr) {
-                const float edge = ImGui::GetFontSize() * 8.0f;
-                ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(native)), ImVec2(edge, edge));
-            }
-        }
+    // What the window's own X asks when there is something unsaved.
+    static bool s_askClose = false;
+    bool keepOpen = true;
+    const std::string fileName = std::filesystem::path(session.path).filename().string();
+    const std::string title = tabIconPad() + fileName + (session.dirty() ? " *" : "") + "###Material";
+    const bool visible = ImGui::Begin(title.c_str(), &keepOpen);
+    if (!keepOpen) {
+        if (session.dirty())
+            s_askClose = true;
+        else
+            editor.closeMaterial();
+        keepOpen = true;
+    }
+    if (!visible) {
+        ImGui::End();
+        return;
+    }
 
-        const auto nextAction = [](const char* label) {
-            ImGui::SameLine();
-            const float width = ImGui::CalcTextSize(label).x + ImGui::CalcTextSize(tabIconPad().c_str()).x +
-                                ImGui::GetStyle().FramePadding.x * 2.0f;
-            if (ImGui::GetContentRegionAvail().x < width)
-                ImGui::NewLine();
-        };
-        ImGui::BeginDisabled(!session.dirty());
-        if (labeledIconButton(icons, icons::ActionSave, "Save"))
-            (void)editor.saveMaterial();
-        ImGui::EndDisabled();
-        nextAction("Undo");
-        ImGui::BeginDisabled(session.undo.empty());
-        if (labeledIconButton(icons, icons::ActionUndo, "Undo") && editor.undoMaterial() && g_thumbnails != nullptr)
-            g_thumbnails->refresh(absolute);
-        ImGui::EndDisabled();
-        nextAction("Redo");
-        ImGui::BeginDisabled(session.redo.empty());
-        if (labeledIconButton(icons, icons::ActionRedo, "Redo") && editor.redoMaterial() && g_thumbnails != nullptr)
-            g_thumbnails->refresh(absolute);
-        ImGui::EndDisabled();
-        nextAction("Close");
-        if (labeledIconButton(icons, icons::ActionClose, "Close"))
-            keepOpen = false;
-        if (session.dirty() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Closing without saving puts the file's own look back in every world.");
-        ImGui::Separator();
-
-        asset::MaterialAsset next = session.asset;
-        MaterialFieldRow row{next, inherited, variant};
-        row.icons = icons;
-        using F = asset::MaterialField;
-        {
-            asset::MaterialProperties& p = row.begin(F::Color);
-            row.end(F::Color, ImGui::ColorEdit3("##value", &p.color.r, ImGuiColorEditFlags_Float));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::Transparency);
-            row.end(F::Transparency, ImGui::SliderFloat("##value", &p.transparency, 0.0f, 1.0f, "%.3f"));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::ColorMap);
-            row.end(F::ColorMap, drawMapField(p.colorMap, editor.content()));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::NormalMap);
-            row.end(F::NormalMap, drawMapField(p.normalMap, editor.content()));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::MetallicRoughnessMap);
-            row.end(F::MetallicRoughnessMap, drawMapField(p.metallicRoughnessMap, editor.content()));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::Emissive);
-            row.end(F::Emissive,
-                    ImGui::ColorEdit3("##value", &p.emissive.r, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::EmissiveMap);
-            row.end(F::EmissiveMap, drawMapField(p.emissiveMap, editor.content()));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::Metalness);
-            row.end(F::Metalness, ImGui::SliderFloat("##value", &p.metalness, 0.0f, 1.0f, "%.3f"));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::Roughness);
-            row.end(F::Roughness, ImGui::SliderFloat("##value", &p.roughness, 0.0f, 1.0f, "%.3f"));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::NormalScale);
-            row.end(F::NormalScale, ImGui::DragFloat("##value", &p.normalScale, 0.01f, 0.0f, 4.0f, "%.3f"));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::AlphaMode);
-            constexpr std::array<const char*, 3> Modes{"Opaque", "Mask", "Blend"};
-            int mode = std::clamp(p.alphaMode, 0, 2);
-            const bool picked = ImGui::Combo("##value", &mode, Modes.data(), static_cast<int>(Modes.size()));
-            if (picked)
-                p.alphaMode = mode;
-            row.end(F::AlphaMode, picked);
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::AlphaCutoff);
-            row.end(F::AlphaCutoff, ImGui::SliderFloat("##value", &p.alphaCutoff, 0.0f, 1.0f, "%.3f"));
-        }
-        {
-            asset::MaterialProperties& p = row.begin(F::DoubleSided);
-            row.end(F::DoubleSided, ImGui::Checkbox("##value", &p.doubleSided));
-        }
-
-        drawSurfaceShaderFields(editor, row, inherited, variant, commands);
-
-        // **What a part wearing this may change about it** (ADR 0090). Nothing
-        // by default, so an authored material is what its author made; a
-        // variant inherits its parent's list and may add to it.
-        ImGui::SeparatorText("a part may change");
-        for (const F field :
-             {F::Color, F::Transparency, F::Emissive, F::Metalness, F::Roughness, F::NormalScale, F::AlphaCutoff}) {
-            ImGui::PushID(100 + static_cast<int>(field));
-            const bool fromParent = (parentDeclares & asset::fieldBit(field)) != 0;
-            bool declared = fromParent || (next.instanceParameters & asset::fieldBit(field)) != 0;
-            ImGui::BeginDisabled(fromParent);
-            if (ImGui::Checkbox(std::string(asset::materialFieldName(field)).c_str(), &declared)) {
-                if (declared)
-                    next.instanceParameters |= asset::fieldBit(field);
-                else
-                    next.instanceParameters =
-                        static_cast<asset::MaterialFieldMask>(next.instanceParameters & ~asset::fieldBit(field));
-                row.changed = true;
-            }
-            ImGui::EndDisabled();
-            if (fromParent && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("declared by the parent material");
-            ImGui::PopID();
-        }
-        // And the surface shader's own parameters (ADR 0091), by name: every
-        // value one declares, and none of its textures -- a part with a
-        // texture of its own is a material of its own.
-        if (const asset::SurfaceReflection* reflection =
-                next.properties.shader.empty() ? nullptr
-                                               : surfaceReflectionOf(editor.content(), next.properties.shader);
-            reflection != nullptr) {
-            for (const asset::SurfaceParam& param : reflection->params) {
-                ImGui::PushID(param.name.c_str());
-                const bool fromParent =
-                    std::binary_search(parentDeclaresShader.begin(), parentDeclaresShader.end(), param.name);
-                const auto mine = std::lower_bound(next.instanceShaderParameters.begin(),
-                                                   next.instanceShaderParameters.end(), param.name);
-                const bool listed = mine != next.instanceShaderParameters.end() && *mine == param.name;
-                bool declared = fromParent || listed;
-                ImGui::BeginDisabled(fromParent);
-                if (ImGui::Checkbox(param.name.c_str(), &declared)) {
-                    if (declared)
-                        asset::addShaderParameterName(next.instanceShaderParameters, param.name);
-                    else if (listed)
-                        next.instanceShaderParameters.erase(mine);
-                    row.changed = true;
-                }
-                ImGui::EndDisabled();
-                if (fromParent && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("declared by the parent material");
-                ImGui::PopID();
-            }
-        }
-
-        if (row.changed) {
-            editor.editMaterial(next, row.continuing);
-            if (g_thumbnails != nullptr)
-                g_thumbnails->refresh(absolute);
+    asset::MaterialProperties inherited;
+    const bool variant = !session.asset.parent.empty();
+    asset::MaterialFieldMask parentDeclares = 0;
+    std::vector<std::string> parentDeclaresShader;
+    if (variant) {
+        if (asset::MaterialLibrary* library = editor.materialLibrary(); library != nullptr) {
+            const asset::ResolvedMaterial& parent = library->resolve(session.asset.parent);
+            inherited = parent.properties;
+            parentDeclares = parent.instanceParameters;
+            parentDeclaresShader = parent.instanceShaderParameters;
         }
     }
+    const std::filesystem::path absolute = editor.content().root() / std::filesystem::path(session.path);
+
+    // --- The bar: what is open, and what can be done to it ---------------------
+    {
+        const float glyph = ImGui::GetFontSize();
+        ImGui::AlignTextToFramePadding();
+        if (drawIcon(icons, variant ? icons::ActionMaterialVariant : icons::ContentMaterial, glyph))
+            ImGui::SameLine();
+        ImGui::TextUnformatted(session.path.c_str());
+        if (variant) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("a variant of %s", session.asset.parent.c_str());
+        }
+        // Right-aligned by what they measure: an icon button is its picture and
+        // its padding, and Save is its picture, a gap and its word as well.
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float button = glyph + style.FramePadding.x * 2.0f;
+        const float spacing = style.ItemSpacing.x;
+        const float saveWidth =
+            glyph + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Save").x + style.FramePadding.x * 2.0f;
+        const float actions = saveWidth + (button + spacing) * 2.0f + style.WindowPadding.x;
+        ImGui::SameLine(std::max(ImGui::GetWindowWidth() - actions, ImGui::GetCursorPosX() + spacing));
+        ImGui::BeginDisabled(session.undo.empty());
+        if (iconButton(icons, icons::ActionUndo, glyph, "##undo", "undo", "undo the last change to this material") &&
+            editor.undoMaterial() && g_thumbnails != nullptr)
+            g_thumbnails->refresh(absolute);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(session.redo.empty());
+        if (iconButton(icons, icons::ActionRedo, glyph, "##redo", "redo", "redo") && editor.redoMaterial() &&
+            g_thumbnails != nullptr)
+            g_thumbnails->refresh(absolute);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.dirty());
+        if (session.dirty()) {
+            ImGui::PushStyleColor(ImGuiCol_Button, themeColor(palette().accentFill));
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().onAccent));
+        }
+        g_iconOnAccent = session.dirty();
+        const bool save = labeledIconButton(icons, icons::ActionSave, "Save");
+        g_iconOnAccent = false;
+        if (session.dirty())
+            ImGui::PopStyleColor(2);
+        ImGui::EndDisabled();
+        if (save)
+            (void)editor.saveMaterial();
+        ImGui::SetItemTooltip("write it to its file; until then, closing puts the file's own look back");
+    }
+    ImGui::Separator();
+
+    asset::MaterialAsset next = session.asset;
+    MaterialFieldRow row{next, inherited, variant};
+    row.icons = icons;
+
+    // --- The preview and the fields, side by side, the split movable -----------
+    const ImGuiTableFlags split = ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV |
+                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings;
+    if (ImGui::BeginTable("##material-split", 2, split, ImGui::GetContentRegionAvail())) {
+        ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+        ImGui::TableSetupColumn("fields", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+        ImGui::TableNextRow();
+
+        // The preview: as large as its column allows, turned by dragging, on
+        // the shape somebody picks under it.
+        ImGui::TableSetColumnIndex(0);
+        {
+            static ThumbnailCache::ShowcaseView s_view;
+            const float room = ImGui::GetContentRegionAvail().x;
+            const float below = ImGui::GetFrameHeightWithSpacing() * 2.0f;
+            const float height = ImGui::GetContentRegionAvail().y > 0.0f
+                                     ? ImGui::GetContentRegionAvail().y
+                                     : ImGui::GetWindowHeight() - ImGui::GetCursorPosY();
+            const float edge = std::max(64.0f, std::min(room, height - below));
+            // Rendered at the pixels it is shown at, in steps, so a resize does
+            // not redraw it every frame of the drag.
+            const float pixels = edge * ImGui::GetIO().DisplayFramebufferScale.x;
+            s_view.edge = std::clamp<core::u32>(static_cast<core::u32>(std::ceil(pixels / 64.0f) * 64.0f), 128u, 1024u);
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const float offset = std::max(0.0f, (room - edge) * 0.5f);
+            ImGui::SetCursorScreenPos(ImVec2(at.x + offset, at.y));
+            const ImVec2 corner = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##preview", ImVec2(edge, edge));
+            const bool turning = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
+            if (turning) {
+                const ImVec2 delta = ImGui::GetIO().MouseDelta;
+                s_view.yaw -= delta.x * 0.01f;
+                s_view.pitch = std::clamp(s_view.pitch + delta.y * 0.01f, -1.2f, 1.2f);
+            }
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                s_view.yaw = 0.0f;
+                s_view.pitch = 0.0f;
+            }
+            ImGui::SetItemTooltip("drag to turn it, double-click to face it the usual way");
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(corner, ImVec2(corner.x + edge, corner.y + edge), ImGui::GetColorU32(ImGuiCol_FrameBg),
+                                ImGui::GetStyle().FrameRounding);
+            if (g_thumbnails != nullptr && g_device != nullptr) {
+                const ThumbnailCache::Thumbnail picture = g_thumbnails->requestShowcase(absolute, s_view);
+                if (SDL_GPUTexture* native = picture.valid() ? rhi::nativeTexture(*g_device, picture.texture) : nullptr;
+                    native != nullptr) {
+                    draw->AddImageRounded(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(native)), corner,
+                                          ImVec2(corner.x + edge, corner.y + edge), ImVec2(0, 0), ImVec2(1, 1),
+                                          IM_COL32_WHITE, ImGui::GetStyle().FrameRounding);
+                }
+            }
+            // What wears it, as a row of pictures under it.
+            ImGui::SetCursorScreenPos(ImVec2(at.x + offset, corner.y + edge + ImGui::GetStyle().ItemSpacing.y));
+            struct Shape
+            {
+                std::string_view icon;
+                const char* word;
+                core::i32 value;
+            };
+            constexpr Shape Shapes[] = {{icons::ActionShapeBall, "ball", 1},
+                                        {icons::ActionShapeBlock, "block", 0},
+                                        {icons::ActionShapeCylinder, "cylinder", 2}};
+            for (const Shape& shape : Shapes) {
+                const bool chosen = s_view.shape == shape.value;
+                if (chosen)
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                const std::string id = std::string("##shape-") + shape.word;
+                const std::string tip = std::string("on a ") + shape.word;
+                if (iconButton(icons, shape.icon, ImGui::GetFontSize(), id.c_str(), shape.word, tip.c_str()))
+                    s_view.shape = shape.value;
+                if (chosen)
+                    ImGui::PopStyleColor();
+                ImGui::SameLine();
+            }
+            ImGui::NewLine();
+        }
+
+        // The fields, in the Properties panel's grid and headings.
+        ImGui::TableSetColumnIndex(1);
+        if (ImGui::BeginChild("##material-fields", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
+            using F = asset::MaterialField;
+            const auto section = [](const char* name, const char* id) {
+                ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                return propertiesSection(name) && beginSectionGrid(id);
+            };
+            if (section("Surface", "surface")) {
+                {
+                    asset::MaterialProperties& p = row.begin(F::Color);
+                    row.end(F::Color, ImGui::ColorEdit3("##value", &p.color.r, ImGuiColorEditFlags_Float));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::Transparency);
+                    row.end(F::Transparency, ImGui::SliderFloat("##value", &p.transparency, 0.0f, 1.0f, "%.3f"));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::AlphaMode);
+                    constexpr std::array<const char*, 3> Modes{"Opaque", "Mask", "Blend"};
+                    int mode = std::clamp(p.alphaMode, 0, 2);
+                    const bool picked = ImGui::Combo("##value", &mode, Modes.data(), static_cast<int>(Modes.size()));
+                    if (picked)
+                        p.alphaMode = mode;
+                    row.end(F::AlphaMode, picked);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::AlphaCutoff);
+                    row.end(F::AlphaCutoff, ImGui::SliderFloat("##value", &p.alphaCutoff, 0.0f, 1.0f, "%.3f"));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::DoubleSided);
+                    row.end(F::DoubleSided, ImGui::Checkbox("##value", &p.doubleSided));
+                }
+                endSectionGrid();
+            }
+            if (section("Lighting", "lighting")) {
+                {
+                    asset::MaterialProperties& p = row.begin(F::Metalness);
+                    row.end(F::Metalness, ImGui::SliderFloat("##value", &p.metalness, 0.0f, 1.0f, "%.3f"));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::Roughness);
+                    row.end(F::Roughness, ImGui::SliderFloat("##value", &p.roughness, 0.0f, 1.0f, "%.3f"));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::Emissive);
+                    row.end(F::Emissive, ImGui::ColorEdit3("##value", &p.emissive.r,
+                                                           ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR));
+                }
+                endSectionGrid();
+            }
+            if (section("Textures", "textures")) {
+                {
+                    asset::MaterialProperties& p = row.begin(F::ColorMap);
+                    row.end(F::ColorMap, drawMapField(p.colorMap, editor.content()));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::NormalMap);
+                    row.end(F::NormalMap, drawMapField(p.normalMap, editor.content()));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::NormalScale);
+                    row.end(F::NormalScale,
+                            dragNumber("##value", ImGuiDataType_Float, &p.normalScale, 1, 0.01f, "%.3f"));
+                    p.normalScale = std::clamp(p.normalScale, 0.0f, 4.0f);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::MetallicRoughnessMap);
+                    row.end(F::MetallicRoughnessMap, drawMapField(p.metallicRoughnessMap, editor.content()));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::EmissiveMap);
+                    row.end(F::EmissiveMap, drawMapField(p.emissiveMap, editor.content()));
+                }
+                endSectionGrid();
+            }
+            if (section("Surface Shader", "surface-shader")) {
+                drawSurfaceShaderFields(editor, row, inherited, variant, commands);
+                endSectionGrid();
+            }
+
+            // **What a part wearing this may change about it** (ADR 0090).
+            // Nothing by default, so an authored material is what its author
+            // made; a variant inherits its parent's list and may add to it.
+            if (section("Part Overrides", "part-overrides")) {
+                for (const F field : {F::Color, F::Transparency, F::Emissive, F::Metalness, F::Roughness,
+                                      F::NormalScale, F::AlphaCutoff}) {
+                    ImGui::PushID(100 + static_cast<int>(field));
+                    const bool fromParent = (parentDeclares & asset::fieldBit(field)) != 0;
+                    bool declared = fromParent || (next.instanceParameters & asset::fieldBit(field)) != 0;
+                    sectionName(asset::materialFieldName(field));
+                    ImGui::BeginDisabled(fromParent);
+                    if (ImGui::Checkbox("##declared", &declared)) {
+                        if (declared)
+                            next.instanceParameters |= asset::fieldBit(field);
+                        else
+                            next.instanceParameters = static_cast<asset::MaterialFieldMask>(next.instanceParameters &
+                                                                                            ~asset::fieldBit(field));
+                        row.changed = true;
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip(fromParent ? "declared by the parent material"
+                                                     : "a part wearing this material may set its own");
+                    ImGui::PopID();
+                }
+                // And the surface shader's own parameters (ADR 0091), by name:
+                // every value one declares, and none of its textures -- a part
+                // with a texture of its own is a material of its own.
+                if (const asset::SurfaceReflection* reflection =
+                        next.properties.shader.empty() ? nullptr
+                                                       : surfaceReflectionOf(editor.content(), next.properties.shader);
+                    reflection != nullptr) {
+                    for (const asset::SurfaceParam& param : reflection->params) {
+                        ImGui::PushID(param.name.c_str());
+                        const bool fromParent =
+                            std::binary_search(parentDeclaresShader.begin(), parentDeclaresShader.end(), param.name);
+                        const auto mine = std::lower_bound(next.instanceShaderParameters.begin(),
+                                                           next.instanceShaderParameters.end(), param.name);
+                        const bool listed = mine != next.instanceShaderParameters.end() && *mine == param.name;
+                        bool declared = fromParent || listed;
+                        sectionName(param.name);
+                        ImGui::BeginDisabled(fromParent);
+                        if (ImGui::Checkbox("##declared", &declared)) {
+                            if (declared)
+                                asset::addShaderParameterName(next.instanceShaderParameters, param.name);
+                            else if (listed)
+                                next.instanceShaderParameters.erase(mine);
+                            row.changed = true;
+                        }
+                        ImGui::EndDisabled();
+                        if (fromParent && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            ImGui::SetTooltip("declared by the parent material");
+                        ImGui::PopID();
+                    }
+                }
+                endSectionGrid();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndTable();
+    }
+
+    if (row.changed) {
+        editor.editMaterial(next, row.continuing);
+        if (g_thumbnails != nullptr)
+            g_thumbnails->refresh(absolute);
+    }
+
+    // **Closing with something unsaved asks** -- the window's X used to put the
+    // file's look back without a word, which is the edit a person loses once.
+    if (s_askClose) {
+        ImGui::OpenPopup("Unsaved material");
+        s_askClose = false;
+    }
+    if (ImGui::BeginPopupModal("Unsaved material", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Save the changes to %s?", fileName.c_str());
+        ImGui::TextDisabled("Not saving puts the file's own look back in every world.");
+        ImGui::Spacing();
+        if (ImGui::Button("Save")) {
+            if (editor.saveMaterial())
+                editor.closeMaterial();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save")) {
+            editor.closeMaterial();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            g_escapeTaken = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
     ImGui::End();
-    if (!keepOpen)
-        editor.closeMaterial();
 }
 
 // The skinned mesh at or above `id`, or an invalid id.
@@ -3833,7 +4220,7 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
         // opens an empty field that parses. Which is exactly right for a value
         // that is nobody's -- the alternative shows one member's number as if
         // it were everyone's.
-        if (ImGui::DragScalar("##value", ImGuiDataType_Double, &value, 0.01f, nullptr, nullptr, mixed ? "--" : "%.4f"))
+        if (dragNumber("##value", ImGuiDataType_Double, &value, 1, 0.01f, mixed ? "--" : "%.4f"))
             commit(scene::Value{value});
         break;
     }
@@ -4007,10 +4394,23 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
         // **The field itself takes a drop from the browser.** Dragging a file
         // onto the property it belongs to is the gesture every engine has, and
         // it is the one that does not require knowing what the path is called.
+        //
+        // **Only a file of the kind it takes** lights it up: a folder or a
+        // material dropped on a texture was written in as a path to nothing.
         if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* took = ImGui::AcceptDragDropPayload(kContentDragPayload); took != nullptr) {
+            const ImGuiPayload* peek = ImGui::GetDragDropPayload();
+            const ContentKind wanted = contentKindNamed(kindName);
+            const bool fits =
+                peek != nullptr && peek->IsDataType(kContentDragPayload) &&
+                !static_cast<const ContentDrag*>(peek->Data)->folder &&
+                (wanted == ContentKind::Other ||
+                 contentKindOf(
+                     std::filesystem::path(static_cast<const ContentDrag*>(peek->Data)->path).filename().string()) ==
+                     wanted);
+            if (const ImGuiPayload* took = fits ? ImGui::AcceptDragDropPayload(kContentDragPayload) : nullptr;
+                took != nullptr) {
                 const auto* dragged = static_cast<const ContentDrag*>(took->Data);
-                commit(scene::Value{std::string("asset://") + dragged->path});
+                commit(scene::Value{std::string(asset::AssetScheme) + dragged->path});
             }
             ImGui::EndDragDropTarget();
         }
@@ -4105,15 +4505,14 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
     case EditorKind::Vector3: {
         const core::Vec3 value = std::get<core::Vec3>(shared.value);
         float components[3]{value.x, value.y, value.z};
-        if (ImGui::DragFloat3("##value", components, 0.01f, 0.0f, 0.0f, mixed ? "--" : "%.3f"))
+        if (dragNumber("##value", ImGuiDataType_Float, components, 3, 0.01f, mixed ? "--" : "%.3f"))
             commit(scene::Value{core::Vec3{components[0], components[1], components[2]}});
         break;
     }
     case EditorKind::CFrame: {
         core::CFrameD value = std::get<core::CFrameD>(shared.value);
         f64 position[3]{value.position.x, value.position.y, value.position.z};
-        if (ImGui::DragScalarN("##value", ImGuiDataType_Double, position, 3, 0.01f, nullptr, nullptr,
-                               mixed ? "--" : "%.3f m")) {
+        if (dragNumber("##value", ImGuiDataType_Double, position, 3, 0.01f, mixed ? "--" : "%.3f m")) {
             value.position = core::DVec3{position[0], position[1], position[2]};
             commit(scene::Value{value});
         }
@@ -4129,7 +4528,7 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
         // `+ 0.0f` turns a negative zero into a zero, so a square part reads 0.0 and not -0.0.
         float degrees[3]{radians.x * kDegrees + 0.0f, radians.y * kDegrees + 0.0f, radians.z * kDegrees + 0.0f};
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::DragFloat3("##orientation", degrees, 0.5f, 0.0f, 0.0f, mixed ? "--" : "%.1f\xC2\xB0")) {
+        if (dragNumber("##orientation", ImGuiDataType_Float, degrees, 3, 0.5f, mixed ? "--" : "%.1f\xC2\xB0")) {
             const core::Mat3 turned =
                 core::fromEulerYxz(core::Vec3{degrees[0] / kDegrees, degrees[1] / kDegrees, degrees[2] / kDegrees});
             for (const core::InstanceId target : targets) {
@@ -4162,14 +4561,14 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
     case EditorKind::Vector2: {
         const core::Vec2 value = std::get<core::Vec2>(shared.value);
         float components[2]{value.x, value.y};
-        if (ImGui::DragFloat2("##value", components, 0.5f, 0.0f, 0.0f, mixed ? "--" : "%.3f"))
+        if (dragNumber("##value", ImGuiDataType_Float, components, 2, 0.5f, mixed ? "--" : "%.3f"))
             commit(scene::Value{core::Vec2{components[0], components[1]}});
         break;
     }
     case EditorKind::Rect: {
         const core::Rect value = std::get<core::Rect>(shared.value);
         float components[4]{value.min.x, value.min.y, value.max.x, value.max.y};
-        if (ImGui::DragFloat4("##value", components, 1.0f, 0.0f, 0.0f, mixed ? "--" : "%.3f")) {
+        if (dragNumber("##value", ImGuiDataType_Float, components, 4, 1.0f, mixed ? "--" : "%.3f")) {
             commit(scene::Value{
                 core::Rect{core::Vec2{components[0], components[1]}, core::Vec2{components[2], components[3]}}});
         }
@@ -4198,11 +4597,18 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
             ImGui::TextUnformatted(preview.c_str());
             break;
         }
-        if (ImGui::BeginCombo("##value", preview.c_str())) {
+        // **Closed, the item; open, the whole name** (the owner): a row reads
+        // `Landscape`, which is what somebody scanning the grid wants, and the
+        // list says `Enum.ScreenOrientation.Landscape`, which is what they type
+        // in a script. The full name is under the pointer on the closed box.
+        const std::size_t lastDot = preview.rfind('.');
+        const std::string shortPreview = mixed || lastDot == std::string::npos ? preview : preview.substr(lastDot + 1);
+        const std::string enumName(world.atoms().text(enumDescriptor->name));
+        if (ImGui::BeginCombo("##value", shortPreview.c_str())) {
             // Declaration order, which is `GetEnumItems`'s documented order and
             // therefore not something a panel gets to re-sort either.
             for (const scene::EnumItemDesc& item : enumDescriptor->items) {
-                const std::string itemName(world.atoms().text(item.name));
+                const std::string itemName = "Enum." + enumName + "." + std::string(world.atoms().text(item.name));
                 // Nothing is ticked while the members disagree: a tick would
                 // name one of them as the selection's answer.
                 const bool selected = !mixed && domain == value.enumId && item.value == value.value;
@@ -4210,6 +4616,9 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
                     commit(scene::Value{scene::EnumValue{domain, item.value}});
             }
             ImGui::EndCombo();
+        }
+        else if (!mixed) {
+            ImGui::SetItemTooltip("%s", preview.c_str());
         }
         break;
     }
@@ -4269,15 +4678,82 @@ core::u64 g_propertyGesture = 0;
 // Attributes and Tags were framed collapsing headers with their arrow further
 // in -- two kinds of heading one above the other, which the survey counted
 // against the panel. This draws the categories' kind outside the grid.
+//
+// **A heading has to look like one** (the owner: "Data", "Transform" and the
+// rest were the size and colour of the properties under them, one step to the
+// right). The band is the panel's ground tinted toward the accent, and the
+// name -- with its arrow -- is in the accent, which is how an inspector tells
+// a group from its members at a glance without a second font.
+[[nodiscard]] ImU32 propertyHeadingBand()
+{
+    const ImVec4 ground = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    const ImVec4 tint = themeColor(palette().accentFill);
+    constexpr float mix = 0.16f;
+    return ImGui::GetColorU32(ImVec4(ground.x + (tint.x - ground.x) * mix, ground.y + (tint.y - ground.y) * mix,
+                                     ground.z + (tint.z - ground.z) * mix, 1.0f));
+}
+
+[[nodiscard]] ImVec4 propertyHeadingInk()
+{
+    return themeColor(palette().accent);
+}
+
 bool propertiesSection(const char* label)
 {
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float left = ImGui::GetWindowPos().x;
     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(left, at.y),
                                               ImVec2(left + ImGui::GetWindowWidth(), at.y + ImGui::GetFrameHeight()),
-                                              ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+                                              propertyHeadingBand());
     ImGui::AlignTextToFramePadding();
-    return ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+    ImGui::PushStyleColor(ImGuiCol_Text, propertyHeadingInk());
+    const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+    ImGui::PopStyleColor();
+    return open;
+}
+
+// **The property grid's own shape** (the owner: the boxes were not like the
+// rest of the panel): two columns at the grid's split, the name on the left in
+// from the heading, the value on the right, one frame high. Each section in an
+// id scope of its own -- both have an "Add", and two buttons with one id are
+// one button to ImGui, which is how pressing Add under Tags added under
+// Attributes and set off ImGui's conflicting-id warning.
+bool beginSectionGrid(const char* id)
+{
+    ImGui::PushID(id);
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x * 1.5f, 2.0f));
+    const ImGuiTableFlags flags =
+        ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg;
+    if (!ImGui::BeginTable("grid", 2, flags)) {
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+        return false;
+    }
+    ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+    return true;
+}
+
+void endSectionGrid()
+{
+    ImGui::EndTable();
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+}
+
+// The name cell of a row: in from the heading's arrow, level with the widget.
+void sectionName(std::string_view text, bool muted)
+{
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::Indent(ImGui::GetStyle().IndentSpacing * 0.5f);
+    ImGui::AlignTextToFramePadding();
+    if (muted)
+        ImGui::TextDisabled("%.*s", static_cast<int>(text.size()), text.data());
+    else
+        ImGui::TextUnformatted(text.data(), text.data() + text.size());
+    ImGui::Unindent(ImGui::GetStyle().IndentSpacing * 0.5f);
+    ImGui::TableSetColumnIndex(1);
 }
 
 // The primary's, not the selection's. Over four instances "the attributes" is
@@ -4289,23 +4765,21 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
 {
     if (!propertiesSection("Attributes"))
         return;
+    if (!beginSectionGrid("attributes"))
+        return;
 
     static scene::AttributeMap rows;
     rows.clear();
     world.collectAttributes(primary, rows);
 
     if (rows.empty())
-        ImGui::TextDisabled("none");
+        sectionName("none", true);
 
+    const float trash = ImGui::GetFrameHeight();
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
     for (const auto& [name, value] : rows) {
         ImGui::PushID(static_cast<int>(name.id));
-        const std::string_view text = world.atoms().text(name);
-
-        const float trash = ImGui::GetFrameHeight();
-        const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
-        ImGui::SetNextItemWidth(140.0f * ImGui::GetStyle().FontScaleMain);
-        ImGui::TextUnformatted(text.data(), text.data() + text.size());
-        ImGui::SameLine(150.0f * ImGui::GetStyle().FontScaleMain);
+        sectionName(world.atoms().text(name));
         ImGui::SetNextItemWidth(-(trash + inner));
 
         // **Typed by what it HOLDS.** An attribute has no declared type, so the
@@ -4322,7 +4796,7 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
         }
         else if (const auto* number = std::get_if<f64>(&value)) {
             f64 held = *number;
-            changed = ImGui::DragScalar("##value", ImGuiDataType_Double, &held, 0.01f);
+            changed = dragNumber("##value", ImGuiDataType_Double, &held, 1, 0.01f, "%.3f");
             edited = scene::Value{held};
         }
         else if (const auto* str = std::get_if<std::string>(&value)) {
@@ -4334,7 +4808,7 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
         }
         else if (const auto* offset = std::get_if<core::Vec3>(&value)) {
             std::array<f32, 3> held{offset->x, offset->y, offset->z};
-            changed = ImGui::DragFloat3("##value", held.data(), 0.01f);
+            changed = dragNumber("##value", ImGuiDataType_Float, held.data(), 3, 0.01f, "%.3f");
             edited = scene::Value{core::Vec3{held[0], held[1], held[2]}};
         }
         else if (const auto* tint = std::get_if<core::Color3>(&value)) {
@@ -4349,6 +4823,7 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
             // rather than hidden, because a person needs to know it is there
             // even where the panel cannot edit it, and the `x` beside it still
             // removes it.
+            ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("<%s>", scene::valueTypeName(scene::valueType(value)));
         }
         if (changed)
@@ -4359,22 +4834,26 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
         // than something this panel invented.
         if (ImGui::Button("x", ImVec2(trash, 0.0f)))
             inspector.enqueueAttribute(primary, name, scene::Value{});
+        ImGui::SetItemTooltip("remove this attribute");
         ImGui::PopID();
     }
 
-    ImGui::Separator();
+    // **A new one: its name where names are, its kind and Add where values
+    // are.**
     static std::array<char, 96> newName{};
     static int newType = 1;
-    ImGui::SetNextItemWidth(140.0f * ImGui::GetStyle().FontScaleMain);
-    ImGui::InputTextWithHint("##attr-name", "name", newName.data(), newName.size());
-    ImGui::SameLine(150.0f * ImGui::GetStyle().FontScaleMain);
-    ImGui::SetNextItemWidth(110.0f * ImGui::GetStyle().FontScaleMain);
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##attr-name", "new attribute", newName.data(), newName.size());
+    ImGui::TableSetColumnIndex(1);
+    const float addWidth = ImGui::CalcTextSize("Add").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetNextItemWidth(-(addWidth + inner));
     ImGui::Combo("##attr-type", &newType, "true/false\0number\0text\0vector\0colour\0");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, inner);
     const bool named = newName[0] != '\0';
-    if (!named)
-        ImGui::BeginDisabled();
-    if (ImGui::Button("Add")) {
+    ImGui::BeginDisabled(!named);
+    if (ImGui::Button("Add##attribute", ImVec2(addWidth, 0.0f))) {
         const core::NameAtom atom = world.atoms().intern(std::string_view(newName.data()));
         // The four the section can EDIT, plus text. Offering a `CFrame` here
         // would put a row on screen the panel then refuses to change, which is
@@ -4398,8 +4877,8 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
         }
         newName.fill(0);
     }
-    if (!named)
-        ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    endSectionGrid();
 }
 
 // --- Tags (S5.5) --------------------------------------------------------------
@@ -4414,31 +4893,25 @@ void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primar
 {
     if (!propertiesSection("Tags"))
         return;
+    if (!beginSectionGrid("tags"))
+        return;
 
     static scene::TagSet held;
     held.clear();
     world.collectTags(primary, held);
 
     if (held.empty())
-        ImGui::TextDisabled("none");
+        sectionName("none", true);
 
-    // Chips, wrapped, because a tag is a short word and a row each would make
-    // six of them a column of mostly empty space.
-    const float wrap = ImGui::GetContentRegionAvail().x;
-    float used = 0.0f;
+    // A row a tag, as a property is: the name, and removing it where a value
+    // would be.
+    const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
     for (const core::NameAtom tag : held) {
-        const std::string label = std::string(world.atoms().text(tag)) + "  x";
-        const float width = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        if (used > 0.0f && used + width < wrap)
-            ImGui::SameLine();
-        else
-            used = 0.0f;
-        used += width + ImGui::GetStyle().ItemSpacing.x;
-
         ImGui::PushID(static_cast<int>(tag.id));
-        if (ImGui::Button(label.c_str())) {
-            // Removed from the WHOLE selection. A chip is drawn from the
-            // primary's list, and somebody clicking it with four things
+        sectionName(world.atoms().text(tag));
+        if (ImGui::Button("remove", ImVec2(-FLT_MIN, 0.0f))) {
+            // Removed from the WHOLE selection. The rows are drawn from the
+            // primary's list, and somebody removing one with four things
             // selected means all four.
             for (const core::InstanceId target : targets) {
                 if (world.alive(target))
@@ -4448,14 +4921,25 @@ void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primar
         ImGui::PopID();
     }
 
-    ImGui::Separator();
+    // **What this world already uses.** A tag is free text and a typo is a tag
+    // nothing will ever find -- which is the single worst failure this feature
+    // has, because it looks exactly like a working one. Offering the names
+    // already in use is what turns that from a silent bug into a click.
+    static scene::TagSet known;
+    known.clear();
+    world.collectAllTags(known);
+
     static std::array<char, 96> pending{};
-    const float addWidth = ImGui::GetFrameHeight() * 2.4f;
-    ImGui::SetNextItemWidth(-(addWidth + ImGui::GetStyle().ItemInnerSpacing.x));
-    const bool entered = ImGui::InputTextWithHint("##tag-name", "tag", pending.data(), pending.size(),
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const bool entered = ImGui::InputTextWithHint("##tag-name", "new tag", pending.data(), pending.size(),
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    const bool pressed = ImGui::Button("Add", ImVec2(addWidth, 0.0f));
+    ImGui::TableSetColumnIndex(1);
+    const float pickWidth = known.empty() ? 0.0f : ImGui::GetFrameHeight() + inner;
+    ImGui::BeginDisabled(pending[0] == '\0');
+    const bool pressed = ImGui::Button("Add##tag", ImVec2(-(pickWidth > 0.0f ? pickWidth : FLT_MIN), 0.0f));
+    ImGui::EndDisabled();
     if ((entered || pressed) && pending[0] != '\0') {
         const core::NameAtom atom = world.atoms().intern(std::string_view(pending.data()));
         for (const core::InstanceId target : targets) {
@@ -4464,33 +4948,26 @@ void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primar
         }
         pending.fill(0);
     }
-
-    // **What this world already uses.** A tag is free text and a typo is a tag
-    // nothing will ever find -- which is the single worst failure this feature
-    // has, because it looks exactly like a working one. Offering the names
-    // already in use is what turns that from a silent bug into a click.
-    static scene::TagSet known;
-    known.clear();
-    world.collectAllTags(known);
-    if (known.empty())
-        return;
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("..."))
-        ImGui::OpenPopup("tag-pick");
-    if (ImGui::BeginPopup("tag-pick")) {
-        for (const core::NameAtom tag : known) {
-            const std::string_view text = world.atoms().text(tag);
-            if (ImGui::Selectable(std::string(text).c_str())) {
-                for (const core::InstanceId target : targets) {
-                    if (world.alive(target))
-                        inspector.enqueueTag(target, tag, true);
+    if (!known.empty()) {
+        ImGui::SameLine(0.0f, inner);
+        if (ImGui::Button("...##tag-pick", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+            ImGui::OpenPopup("tag-pick");
+        ImGui::SetItemTooltip("the tags this world already uses");
+        if (ImGui::BeginPopup("tag-pick")) {
+            for (const core::NameAtom tag : known) {
+                const std::string_view text = world.atoms().text(tag);
+                if (ImGui::Selectable(std::string(text).c_str())) {
+                    for (const core::InstanceId target : targets) {
+                        if (world.alive(target))
+                            inspector.enqueueTag(target, tag, true);
+                    }
+                    ImGui::CloseCurrentPopup();
                 }
-                ImGui::CloseCurrentPopup();
             }
+            ImGui::EndPopup();
         }
-        ImGui::EndPopup();
     }
+    endSectionGrid();
 }
 
 void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspector, ContentTree* tree = nullptr,
@@ -4603,9 +5080,8 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         return;
     }
 
-    // **Rows grouped by the task they serve** (`propertyCategory`), in the
-    // panel's heading order, and in declaration order inside a heading -- the
-    // sort is stable. A heading was the class that declared the row, which put
+    // **Rows grouped by the task they serve** (`propertyCategory`), the
+    // headings and the rows under each in alphabetical order. A heading was the class that declared the row, which put
     // a part's colour, size and collision under three headings nobody reads.
     struct PropertyRow
     {
@@ -4626,8 +5102,20 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
         if (propertyMatches(name, needle))
             s_rows.push_back(PropertyRow{descriptor, propertyCategory(name)});
     }
-    std::stable_sort(s_rows.begin(), s_rows.end(),
-                     [](const PropertyRow& a, const PropertyRow& b) { return a.category.order < b.category.order; });
+    // **A to Z: the headings, and the rows under each** (the owner, 2026-09-27):
+    // a grid somebody scans for a name is one sorted by name. Case folded, so
+    // `CFrame` sits between `CanCollide` and `CastShadow` rather than before
+    // every lower-case name.
+    const auto folded = [](std::string_view a, std::string_view b) {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+            return std::tolower(static_cast<unsigned char>(x)) < std::tolower(static_cast<unsigned char>(y));
+        });
+    };
+    std::stable_sort(s_rows.begin(), s_rows.end(), [&](const PropertyRow& a, const PropertyRow& b) {
+        if (a.category.name != b.category.name)
+            return folded(a.category.name, b.category.name);
+        return folded(world.atoms().text(a.descriptor->name), world.atoms().text(b.descriptor->name));
+    });
     if (s_rows.empty()) {
         ImGui::TextDisabled("no property matches \"%s\"", filter.data());
         return;
@@ -4662,16 +5150,24 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
             // heading it matched in, because a match hidden under a closed
             // heading is a filter that found nothing.
             if (row.category.name != heading) {
+                // A little air above every heading but the first, so a group
+                // ends before the next one starts.
+                if (!heading.empty()) {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, ImGui::GetStyle().ItemSpacing.y * 1.5f);
+                    ImGui::TableSetColumnIndex(0);
+                }
                 heading = row.category.name;
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, propertyHeadingBand());
                 char headingLabel[64];
                 (void)std::snprintf(headingLabel, sizeof(headingLabel), "%.*s##heading",
                                     static_cast<int>(heading.size()), heading.data());
+                ImGui::PushStyleColor(ImGuiCol_Text, propertyHeadingInk());
                 const bool expanded = ImGui::TreeNodeEx(
                     headingLabel, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_NoTreePushOnOpen |
                                       ImGuiTreeNodeFlags_SpanAllColumns | ImGuiTreeNodeFlags_LabelSpanAllColumns);
+                ImGui::PopStyleColor();
                 headingOpen = expanded || !needle.empty();
             }
             if (!headingOpen)
@@ -4810,7 +5306,7 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
     // two kinds of heading in one panel read as two different panels.
     if (const core::InstanceId primary = inspector.selection(); world.alive(primary)) {
         ImGui::Spacing();
-        const ImU32 headingBg = ImGui::GetColorU32(ImGuiCol_TableHeaderBg);
+        const ImU32 headingBg = propertyHeadingBand();
         ImGui::PushStyleColor(ImGuiCol_Header, headingBg);
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetColorU32(ImGuiCol_HeaderHovered, 0.6f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, headingBg);
@@ -4920,6 +5416,14 @@ struct ConsoleLog
         // Counts up for as long as the process runs, so a selection names the
         // lines it spans and survives the oldest ones dropping off the front.
         core::u64 seq = 0;
+        // A printed table's rows (`print_tree.h`), folded under the line.
+        std::string tree;
+        // The script and line that printed it, when a script did.
+        std::optional<SourceLocation> source;
+        // **The same message from the same place, again and again, is one line
+        // with a count** (the owner): a print in a loop is not four hundred
+        // lines that push everything else out.
+        core::u32 repeats = 1;
     };
 
     std::mutex mutex;
@@ -4941,34 +5445,23 @@ ConsoleLog& console()
 void drawMemory(script::ScriptRuntime& runtime)
 {
     const std::vector<script::ScriptRuntime::MemoryCategory> rows = runtime.memoryByCategory();
+    if (!propertiesSection("Script memory") || !beginSectionGrid("script-memory"))
+        return;
 
     core::usize total = 0;
     for (const auto& row : rows)
         total += row.bytes;
-    ImGui::Text("script heap: %.1f KB across %d categories", static_cast<double>(total) / 1024.0,
-                static_cast<int>(rows.size()));
-
-    if (!ImGui::BeginTable("memcat", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-        return;
-
-    ImGui::TableSetupColumn("cat", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-    ImGui::TableSetupColumn("what");
-    ImGui::TableSetupColumn("KB", ImGuiTableColumnFlags_WidthFixed, 64.0f);
-    ImGui::TableHeadersRow();
-
+    statRow("Heap", "%.1f KB across %d categor%s", static_cast<double>(total) / 1024.0, static_cast<int>(rows.size()),
+            rows.size() == 1 ? "y" : "ies");
     for (const auto& row : rows) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::Text("%u", row.category);
-        ImGui::TableNextColumn();
         // A category with no name is one the pool assigned and whose script has
         // since been replaced -- worth showing as a number rather than hiding,
         // because that is exactly the leak the table is for.
-        ImGui::TextUnformatted(row.name.empty() ? "(recycled)" : std::string(row.name).c_str());
-        ImGui::TableNextColumn();
-        ImGui::Text("%.1f", static_cast<double>(row.bytes) / 1024.0);
+        const std::string name =
+            row.name.empty() ? "(recycled) #" + std::to_string(row.category) : std::string(row.name);
+        statRow(name.c_str(), "%.1f KB", static_cast<double>(row.bytes) / 1024.0);
     }
-    ImGui::EndTable();
+    endSectionGrid();
 }
 
 // Whether `line` matches what is typed in the filter, case-insensitively.
@@ -5010,6 +5503,91 @@ struct ConsoleSelection
     // The link a press landed on, followed on a release that did not move.
     std::optional<SourceLocation> pressedLink;
 };
+
+// Which printed tables are open: a line's number, then the index of each row
+// opened under it. **Closed until opened** (the owner): a table printed every
+// frame must not unfold into a wall.
+std::unordered_set<std::string> g_consoleOpen;
+
+bool toggleConsoleFold(const std::string& key)
+{
+    if (g_consoleOpen.erase(key) > 0)
+        return false;
+    g_consoleOpen.insert(key);
+    return true;
+}
+
+// The rows of a printed table under its line, from `print_tree.h`'s form: one
+// row a field, `depth 0x1F key 0x1F value`, a table's fields right after it.
+// Each table row folds, closed until opened.
+void drawConsoleTree(std::string_view tree, const std::string& lineKey, ImVec2 origin, float lineHeight, float rowStep)
+{
+    struct TreeRow
+    {
+        int depth = 0;
+        std::string_view key;
+        std::string_view value;
+    };
+    std::vector<TreeRow> parsed;
+    for (std::size_t at = 0; at < tree.size();) {
+        std::size_t end = tree.find('\n', at);
+        if (end == std::string_view::npos)
+            end = tree.size();
+        const std::string_view row = tree.substr(at, end - at);
+        at = end + 1;
+        const std::size_t first = row.find('\x1F');
+        const std::size_t second = first == std::string_view::npos ? first : row.find('\x1F', first + 1);
+        if (second == std::string_view::npos)
+            continue;
+        int depth = 0;
+        for (const char digit : row.substr(0, first))
+            depth = digit >= '0' && digit <= '9' ? depth * 10 + (digit - '0') : depth;
+        parsed.push_back(TreeRow{depth, row.substr(first + 1, second - first - 1), row.substr(second + 1)});
+    }
+
+    const ThemePalette& p = palette();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float indent = lineHeight;
+    ImVec2 cursor = origin;
+    // Rows deeper than this are under a closed table.
+    int hiddenBelow = std::numeric_limits<int>::max();
+    for (std::size_t index = 0; index < parsed.size(); ++index) {
+        const TreeRow& row = parsed[index];
+        if (row.depth > hiddenBelow)
+            continue;
+        hiddenBelow = std::numeric_limits<int>::max();
+        const bool parent = index + 1 < parsed.size() && parsed[index + 1].depth > row.depth;
+        const std::string key = lineKey + "/" + std::to_string(index);
+        bool open = parent && g_consoleOpen.contains(key);
+        const float x = cursor.x + static_cast<float>(row.depth) * indent;
+        if (parent) {
+            ImGui::SetCursorScreenPos(ImVec2(x, cursor.y));
+            ImGui::PushID(key.c_str());
+            if (ImGui::InvisibleButton("##fold", ImVec2(lineHeight, lineHeight)))
+                open = toggleConsoleFold(key);
+            ImGui::PopID();
+            ImGui::RenderArrow(draw, ImVec2(x + lineHeight * 0.2f, cursor.y + lineHeight * 0.15f),
+                               ImGui::GetColorU32(ImGuiCol_TextDisabled), open ? ImGuiDir_Down : ImGuiDir_Right, 0.7f);
+        }
+        const float textX = x + lineHeight;
+        const ImU32 keyInk = ImGui::ColorConvertFloat4ToU32(themeColor(p.accent));
+        draw->AddText(ImVec2(textX, cursor.y), keyInk, row.key.data(), row.key.data() + row.key.size());
+        const float keyWidth = ImGui::CalcTextSize(row.key.data(), row.key.data() + row.key.size()).x;
+        constexpr std::string_view Equals = " = ";
+        draw->AddText(ImVec2(textX + keyWidth, cursor.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), Equals.data(),
+                      Equals.data() + Equals.size());
+        const float valueX = textX + keyWidth + ImGui::CalcTextSize(Equals.data(), Equals.data() + Equals.size()).x;
+        draw->AddText(ImVec2(valueX, cursor.y), ImGui::GetColorU32(ImGuiCol_Text), row.value.data(),
+                      row.value.data() + row.value.size());
+        // Its width, so the log's horizontal scroll reaches the end of it.
+        ImGui::SetCursorScreenPos(ImVec2(x, cursor.y));
+        ImGui::Dummy(ImVec2(valueX - x + ImGui::CalcTextSize(row.value.data(), row.value.data() + row.value.size()).x,
+                            lineHeight));
+        cursor.y += rowStep;
+        if (parent && !open)
+            hiddenBelow = row.depth;
+    }
+}
 
 // What was typed at the REPL, oldest first -- see `consoleHistoryStep`.
 struct ConsoleHistory
@@ -5156,8 +5734,25 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
                                              : line.level == core::LogLevel::Warn  ? p.warning
                                              : line.level == core::LogLevel::Debug ? p.textMuted
                                                                                    : p.text);
-            const ImVec2 at = ImGui::GetCursorScreenPos();
+            // A line with a table under it has its fold arrow in front, and its
+            // text starts after it -- which is where the selection measures from.
+            const ImVec2 lineStart = ImGui::GetCursorScreenPos();
+            const bool folds = !line.tree.empty();
+            const ImVec2 at(lineStart.x + (folds ? lineHeight : 0.0f), lineStart.y);
             rows.push_back(Row{line.seq, line.text, at, false});
+            const std::string foldKey = std::to_string(line.seq);
+            bool unfolded = false;
+            if (folds) {
+                unfolded = g_consoleOpen.contains(foldKey);
+                ImGui::PushID(foldKey.c_str());
+                if (ImGui::InvisibleButton("##fold", ImVec2(lineHeight, lineHeight)))
+                    unfolded = toggleConsoleFold(foldKey);
+                ImGui::PopID();
+                ImGui::RenderArrow(draw, ImVec2(lineStart.x + lineHeight * 0.2f, lineStart.y + lineHeight * 0.15f),
+                                   ImGui::ColorConvertFloat4ToU32(colour), unfolded ? ImGuiDir_Down : ImGuiDir_Right,
+                                   0.7f);
+                ImGui::SetCursorScreenPos(at);
+            }
 
             if (selecting && line.seq >= firstSeq && line.seq <= lastSeq) {
                 const core::usize from = line.seq == firstSeq ? firstOffset : 0;
@@ -5173,6 +5768,51 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
             ImGui::PushStyleColor(ImGuiCol_Text, colour);
             ImGui::TextUnformatted(line.text.c_str());
             ImGui::PopStyleColor();
+            const float textEnd = ImGui::GetItemRectMax().x;
+            // The link below reads the text's own rect, so the count and the
+            // source are drawn after it has.
+            const auto afterText = [&, textEnd, lineStart]() {
+                float x = textEnd + ImGui::GetStyle().ItemSpacing.x;
+                if (line.repeats > 1) {
+                    char count[24];
+                    (void)std::snprintf(count, sizeof(count), "x%u", static_cast<unsigned>(line.repeats));
+                    const ImVec2 size = ImGui::CalcTextSize(count);
+                    const float pad = ImGui::GetStyle().FramePadding.x * 0.5f;
+                    draw->AddRectFilled(ImVec2(x, lineStart.y),
+                                        ImVec2(x + size.x + pad * 2.0f, lineStart.y + lineHeight),
+                                        ImGui::GetColorU32(ImGuiCol_FrameBg), lineHeight * 0.3f);
+                    draw->AddText(ImVec2(x + pad, lineStart.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), count);
+                    ImGui::SetItemTooltip("the same line, %u times in a row", static_cast<unsigned>(line.repeats));
+                    x += size.x + pad * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+                }
+                // **Where it was printed, at the right edge**, and a click opens
+                // it -- the question after "what did it say" is "who said it".
+                if (line.source.has_value()) {
+                    const std::string where = line.source->chunk + ":" + std::to_string(line.source->line);
+                    const ImVec2 size = ImGui::CalcTextSize(where.c_str());
+                    const float right = ImGui::GetCurrentWindow()->InnerRect.Max.x + ImGui::GetScrollX() -
+                                        ImGui::GetStyle().ItemSpacing.x - size.x;
+                    const float left = std::max(x, right);
+                    ImGui::SetCursorScreenPos(ImVec2(left, lineStart.y));
+                    ImGui::PushID(foldKey.c_str());
+                    if (ImGui::InvisibleButton("##source", size) && scriptCommands != nullptr)
+                        scriptCommands->jumpTo = line.source;
+                    ImGui::PopID();
+                    const bool over = ImGui::IsItemHovered();
+                    draw->AddText(ImVec2(left, lineStart.y),
+                                  ImGui::GetColorU32(over ? ImGuiCol_Text : ImGuiCol_TextDisabled), where.c_str());
+                    if (over) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        ImGui::SetTooltip("open %s at line %u", line.source->chunk.c_str(),
+                                          static_cast<unsigned>(line.source->line));
+                    }
+                }
+                // The cursor is on the next line already: the text, or the
+                // source after it, put it there.
+                if (unfolded)
+                    drawConsoleTree(line.tree, foldKey, ImVec2(lineStart.x + lineHeight, lineStart.y + rowStep),
+                                    lineHeight, rowStep);
+            };
 
             // **A line that names a source location is a link** (S5.11). An
             // error in the console names a file and a line and nothing takes you
@@ -5192,6 +5832,7 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
                     ImGui::SetTooltip("%s, line %u", link->chunk.c_str(), static_cast<unsigned>(link->line));
                 }
             }
+            afterText();
         }
         // **A filter that hides everything says so.** An empty pane and a pane
         // filtered down to nothing look identical, and one of them means the
@@ -5256,7 +5897,7 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
         // Not over the scrollbars, whose drag is theirs.
         const bool overText = ImGui::IsWindowHovered() && ImGui::GetCurrentWindow()->InnerRect.Contains(mouse);
         if (!rows.empty()) {
-            if (overText && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (overText && !ImGui::IsAnyItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 const auto [row, offset] = placeAt(mouse);
                 selection.headSeq = rows[row].seq;
                 selection.headOffset = offset;
@@ -5467,6 +6108,29 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
         return iconButton(icons, id, glyph, word, word, tip);
     };
 
+    // **A toggle that is on says so in the accent** (the owner: what is
+    // selected up here was barely visible). A lighter grey was the whole of the
+    // difference between the tool in hand and the others; the fill the active
+    // tab and a primary button wear is one nobody has to look twice for.
+    const auto beginOn = [](bool on) {
+        if (!on)
+            return;
+        const ThemePalette& accentPalette = palette();
+        const ImVec4 fill = themeColor(accentPalette.accentFill);
+        ImGui::PushStyleColor(ImGuiCol_Button, fill);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(std::min(1.0f, fill.x * 1.15f), std::min(1.0f, fill.y * 1.15f),
+                                     std::min(1.0f, fill.z * 1.15f), fill.w));
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor(accentPalette.onAccent));
+        g_iconOnAccent = true;
+    };
+    const auto endOn = [](bool on) {
+        if (!on)
+            return;
+        g_iconOnAccent = false;
+        ImGui::PopStyleColor(3);
+    };
+
     // **A stamp is open, so the transport is the STAMP's.** Play, pause and
     // step have nothing to mean on a stage -- nothing there ticks -- and what a
     // person wants in their place is exactly what a session offers: keep it,
@@ -5554,16 +6218,14 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
             // would be furniture.
             ImGui::SameLine();
             const bool detached = editor.cameraDetached();
-            if (detached)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            beginOn(detached);
             if (toolButton(icons::ActionVisible, "eye",
                            detached ? "looking through the editor's camera -- click to go back to the game's  (Shift+P)"
                                     : "fly the editor's camera while the game runs. The simulation is untouched  "
                                       "(Shift+P)")) {
                 editor.setCameraDetached(!detached);
             }
-            if (detached)
-                ImGui::PopStyleColor();
+            endOn(detached);
         }
     };
 
@@ -5571,26 +6233,22 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     //
     // Selection and transforms stay here; specialized operations live in their panels.
     const bool selecting = editor.tool() == Editor::Tool::Select && !editor.handlesShown();
-    if (selecting)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    beginOn(selecting);
     if (toolButton(icons::ActionSelect, "select", "select, with no handles in the way  (Ctrl+1)")) {
         editor.setTool(Editor::Tool::Select);
         editor.setHandlesShown(false);
     }
-    if (selecting)
-        ImGui::PopStyleColor();
+    endOn(selecting);
 
     const auto modeButton = [&](GizmoMode mode, std::string_view id, const char* word, const char* tip) {
         ImGui::SameLine();
         const bool on = editor.tool() == Editor::Tool::Select && editor.handlesShown() && editor.gizmoMode() == mode;
-        if (on)
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        beginOn(on);
         if (toolButton(id, word, tip)) {
             editor.setTool(Editor::Tool::Select);
             editor.setGizmoMode(mode);
         }
-        if (on)
-            ImGui::PopStyleColor();
+        endOn(on);
     };
     modeButton(GizmoMode::Translate, icons::ActionMove, "move", "move the selection  (Ctrl+2)");
     modeButton(GizmoMode::Scale, icons::ActionScale, "size", "resize the selection  (Ctrl+3)");
@@ -5633,14 +6291,12 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     ImGui::SameLine();
     const bool snapping = editor.snapping();
     {
-        if (snapping)
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        beginOn(snapping);
         if (toolButton(icons::ActionGrid, "snap",
                        "snap to the grid  (hold Alt to suspend, right-click for the step)")) {
             editor.setSnap(!editor.snapping());
         }
-        if (snapping)
-            ImGui::PopStyleColor();
+        endOn(snapping);
 
         // **The step, behind a right-click on the button it belongs to** (S5.13).
         // `setSnapStep` has existed since the manipulator did and nothing could
@@ -6169,7 +6825,15 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
         // placement is a position -- the two only meet through a pick, and
         // a prefab that landed inside whatever happened to be behind the
         // cursor would be a surprise every time it worked.
-        if (ImGui::BeginDragDropTarget()) {
+        //
+        // Only what it can place: a stamp, or a material for the part under
+        // the pointer. Anything else is not offered a place it would be
+        // quietly dropped from.
+        const ImGuiPayload* offered = ImGui::GetDragDropPayload();
+        const bool placeable = offered != nullptr && offered->IsDataType(kContentDragPayload) &&
+                               (isMaterialDrag(*static_cast<const ContentDrag*>(offered->Data)) ||
+                                isStampDrag(*static_cast<const ContentDrag*>(offered->Data)));
+        if (placeable && ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* dropped = ImGui::AcceptDragDropPayload(kContentDragPayload); dropped != nullptr) {
                 const auto* drag = static_cast<const ContentDrag*>(dropped->Data);
                 if (isMaterialDrag(*drag)) {
@@ -6372,17 +7036,19 @@ void buildDefaultLayout(ImGuiID dockspace)
     // the tree, that would put the Explorer away under the click that chose
     // the terrain.
     ImGui::DockBuilderDockWindow("Properties", right);
+    // The numbers beside the selection's properties (the owner): a tab away
+    // from the inspector, where a glance does not cost the bottom panel.
+    ImGui::DockBuilderDockWindow("Stats", right);
     ImGui::DockBuilderDockWindow("Terrain", right);
     ImGui::DockBuilderDockWindow("Blocks", right);
     ImGui::DockBuilderDockWindow("Tiles", right);
     ImGui::DockBuilderDockWindow("Viewport Settings", right);
-    // Under everything: the files, what the game said, the debugger, and the
-    // numbers. A tab node opens on whichever window was docked last, so which
-    // one greets somebody is set explicitly after the build (`selectDockTab`).
+    // Under everything: the files, what the game said and the debugger. A tab
+    // node opens on whichever window was docked last, so which one greets
+    // somebody is set explicitly after the build (`selectDockTab`).
     ImGui::DockBuilderDockWindow("Content", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Debug", bottom);
-    ImGui::DockBuilderDockWindow("Stats", bottom);
     ImGui::DockBuilderDockWindow("Streaming", bottom);
 
     ImGui::DockBuilderFinish(dockspace);
@@ -6410,9 +7076,14 @@ void buildDefaultLayout(ImGuiID dockspace)
 // `CloseCurrentPopup` takes effect immediately, so the shell's own Escape
 // handler would otherwise find no popup where this one had been and drop the
 // selection on the same press -- which is D095, one dialog over.
+//
+// Not while a shortcut is being recorded in Preferences: there Escape cancels
+// the recording, and closing the window under it would lose the page too.
+bool g_escapeRecordsChord = false;
+
 [[nodiscard]] bool dialogCancelled()
 {
-    if (!ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    if (!ImGui::IsKeyPressed(ImGuiKey_Escape, false) || g_escapeRecordsChord)
         return false;
     g_escapeTaken = true;
     return true;
@@ -6428,63 +7099,95 @@ void saveScriptPreferences()
     (void)saveScriptEditorSettings(scriptEditorSettingsFile(), scriptEditorSettings());
 }
 
-void drawScriptColourPreferences()
+// **Each page of Preferences both counts and draws** (the owner, 2026-09-27:
+// a search above a tree, as the content browser has one). Called with `draw`
+// false, a page only says how many of its rows `needle` finds -- which is what
+// the tree beside it shows, and how a page with nothing found is left out --
+// and with it true, it draws those rows in the Properties panel's grid.
+struct PreferenceQuery
+{
+    std::string_view needle;
+    // The page's own name or its group matched: every row of it shows.
+    bool whole = false;
+    bool draw = false;
+
+    [[nodiscard]] bool shows(std::string_view label) const
+    {
+        return needle.empty() || whole || containsFold(label, needle);
+    }
+};
+
+// A setting's explanation, under its widget where the value is.
+void preferenceHint(const char* text)
+{
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+// A small reset beside a value, dimmed when there is nothing to reset.
+bool preferenceReset(const IconAtlas* icons, bool changed, const char* tip)
+{
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::BeginDisabled(!changed);
+    const bool pressed = iconButton(icons, icons::ActionRevert, ImGui::GetFontSize(), "##reset", "reset", nullptr);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", tip);
+    return pressed;
+}
+
+// The width a value leaves for a reset beside it.
+[[nodiscard]] float besideReset()
+{
+    return -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+}
+
+std::size_t drawScriptColourPreferences(const PreferenceQuery& query, const IconAtlas* icons)
 {
     ScriptEditorSettings& settings = scriptEditorSettings();
     const Theme& theme = themeById(g_appearance.themeId);
-    ImGui::TextWrapped("Colours nobody changed follow the theme. Changed ones are kept for every project.");
-    if (ImGui::Button("Reset all colours")) {
-        settings.colors = {};
-        saveScriptPreferences();
-    }
-    // **A search, as the settings of the editor this follows have one**: the
-    // list is thirty colours long, and the one wanted is found by its name.
-    static std::array<char, 64> colourFilter{};
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##colour-filter", "search colours", colourFilter.data(), colourFilter.size());
-    const std::string_view colourNeedle{colourFilter.data()};
-    ImGui::Spacing();
-
-    const float height = std::max(ImGui::GetFrameHeightWithSpacing() * 8.0f,
-                                  ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f);
-    if (ImGui::BeginTable("##script-colours", 3,
-                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH,
-                          ImVec2(0.0f, std::min(height, ImGui::GetFrameHeightWithSpacing() * 16.0f)))) {
-        ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("colour", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() * 6.0f);
-        ImGui::TableSetupColumn("reset", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("theme").x * 1.6f);
-        for (std::size_t index = 0; index < kScriptColorCount; ++index) {
-            const auto which = static_cast<ScriptColor>(index);
-            const ScriptColorInfo& info = scriptColorInfo()[index];
-            if (!colourNeedle.empty() && !containsFold(info.label, colourNeedle))
-                continue;
-            ImGui::PushID(static_cast<int>(index));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(std::string(info.label).c_str());
-            ImGui::TableSetColumnIndex(1);
-            const core::Color3 current = settings.color(which, theme);
-            float value[3]{current.r, current.g, current.b};
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::ColorEdit3("##colour", value, ImGuiColorEditFlags_DisplayHex))
-                settings.colors[index] = core::Color3{value[0], value[1], value[2]};
-            if (ImGui::IsItemDeactivatedAfterEdit())
-                saveScriptPreferences();
-            ImGui::TableSetColumnIndex(2);
-            ImGui::BeginDisabled(!settings.colors[index].has_value());
-            if (ImGui::SmallButton("theme")) {
-                settings.colors[index].reset();
-                saveScriptPreferences();
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("back to the theme's colour");
-            ImGui::EndDisabled();
-            ImGui::PopID();
+    std::size_t found = 0;
+    const bool grid = query.draw && beginSectionGrid("script-colours");
+    if (grid && query.needle.empty()) {
+        const bool anyChanged =
+            std::any_of(settings.colors.begin(), settings.colors.end(),
+                        [](const std::optional<core::Color3>& colour) { return colour.has_value(); });
+        sectionName("All colours");
+        ImGui::BeginDisabled(!anyChanged);
+        if (ImGui::Button("Reset to the theme", ImVec2(-FLT_MIN, 0.0f))) {
+            settings.colors = {};
+            saveScriptPreferences();
         }
-        ImGui::EndTable();
+        ImGui::EndDisabled();
+        preferenceHint("Colours nobody changed follow the theme. Changed ones are kept for every project.");
     }
+    for (std::size_t index = 0; index < kScriptColorCount; ++index) {
+        const auto which = static_cast<ScriptColor>(index);
+        const ScriptColorInfo& info = scriptColorInfo()[index];
+        if (!query.shows(info.label))
+            continue;
+        ++found;
+        if (!grid)
+            continue;
+        ImGui::PushID(static_cast<int>(index));
+        sectionName(info.label);
+        const core::Color3 current = settings.color(which, theme);
+        float value[3]{current.r, current.g, current.b};
+        ImGui::SetNextItemWidth(besideReset());
+        if (ImGui::ColorEdit3("##colour", value, ImGuiColorEditFlags_DisplayHex))
+            settings.colors[index] = core::Color3{value[0], value[1], value[2]};
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            saveScriptPreferences();
+        if (preferenceReset(icons, settings.colors[index].has_value(), "back to the theme's colour")) {
+            settings.colors[index].reset();
+            saveScriptPreferences();
+        }
+        ImGui::PopID();
+    }
+    if (grid)
+        endSectionGrid();
+    return found;
 }
 
 // The command waiting for a chord, when somebody clicked one to rebind it.
@@ -6492,114 +7195,120 @@ std::optional<ScriptAction> g_capturingChord;
 // Set to open Preferences on its Shortcuts page, and read once.
 bool g_preferencesToShortcuts = false;
 
-void drawScriptShortcutPreferences()
+// The chord being recorded: the first key that is not a modifier, with the
+// modifiers held at that moment. Every frame Preferences is open, whichever
+// page is on screen -- a search typed meanwhile must not strand a capture.
+void captureScriptChord()
+{
+    if (!g_capturingChord.has_value())
+        return;
+    ScriptEditorSettings& settings = scriptEditorSettings();
+    const ImGuiIO& io = ImGui::GetIO();
+    for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key) {
+        const auto k = static_cast<ImGuiKey>(key);
+        const bool modifier = (k >= ImGuiKey_LeftCtrl && k <= ImGuiKey_RightSuper) ||
+                              (k >= ImGuiKey_ReservedForModCtrl && k <= ImGuiKey_ReservedForModSuper);
+        if (modifier || !ImGui::IsKeyPressed(k, false))
+            continue;
+        if (k >= ImGuiKey_MouseLeft && k <= ImGuiKey_MouseWheelY)
+            continue;
+        const std::size_t index = static_cast<std::size_t>(*g_capturingChord);
+        if (k == ImGuiKey_Escape && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
+            // The key was the capture's, not the dialog's.
+            g_escapeTaken = true;
+            g_capturingChord.reset();
+        }
+        else if (k == ImGuiKey_Backspace && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
+            settings.keys[index] = KeyChord{};
+            g_capturingChord.reset();
+            saveScriptPreferences();
+        }
+        else {
+            settings.keys[index] =
+                KeyChord{.key = ImGui::GetKeyName(k), .ctrl = io.KeyCtrl, .shift = io.KeyShift, .alt = io.KeyAlt};
+            g_capturingChord.reset();
+            saveScriptPreferences();
+        }
+        break;
+    }
+}
+
+// Searched by the command's name or by its keys, as the keyboard shortcuts
+// editor of the editor this follows searches: "ctrl+d" finds what that chord
+// does.
+std::size_t drawScriptShortcutPreferences(const PreferenceQuery& query, const IconAtlas* icons)
 {
     ScriptEditorSettings& settings = scriptEditorSettings();
     const ThemePalette& p = palette();
-    ImGui::TextWrapped("Click a shortcut and press the new keys. Escape cancels; Backspace leaves the command "
+    std::size_t found = 0;
+    const bool grid = query.draw && beginSectionGrid("script-keys");
+    if (grid && query.needle.empty()) {
+        const bool anyChanged = std::any_of(settings.keys.begin(), settings.keys.end(),
+                                            [](const std::optional<KeyChord>& chord) { return chord.has_value(); });
+        sectionName("All shortcuts");
+        ImGui::BeginDisabled(!anyChanged);
+        if (ImGui::Button("Reset to the defaults", ImVec2(-FLT_MIN, 0.0f))) {
+            settings.keys = {};
+            g_capturingChord.reset();
+            saveScriptPreferences();
+        }
+        ImGui::EndDisabled();
+        preferenceHint("Click a shortcut and press the new keys. Escape cancels; Backspace leaves the command "
                        "without a key.");
-    if (ImGui::Button("Reset all shortcuts")) {
-        settings.keys = {};
-        g_capturingChord.reset();
-        saveScriptPreferences();
     }
-    // Searched by the command's name or by its keys, as the keyboard
-    // shortcuts editor of the editor this follows searches: "ctrl+d" finds
-    // what that chord does.
-    static std::array<char, 64> keyFilter{};
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##key-filter", "search by command or keys", keyFilter.data(), keyFilter.size());
-    const std::string_view keyNeedle{keyFilter.data()};
-    ImGui::Spacing();
-
-    // The chord being recorded: the first key that is not a modifier, with the
-    // modifiers held at that moment.
-    if (g_capturingChord.has_value()) {
-        const ImGuiIO& io = ImGui::GetIO();
-        for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key) {
-            const auto k = static_cast<ImGuiKey>(key);
-            const bool modifier = (k >= ImGuiKey_LeftCtrl && k <= ImGuiKey_RightSuper) ||
-                                  (k >= ImGuiKey_ReservedForModCtrl && k <= ImGuiKey_ReservedForModSuper);
-            if (modifier || !ImGui::IsKeyPressed(k, false))
-                continue;
-            if (k >= ImGuiKey_MouseLeft && k <= ImGuiKey_MouseWheelY)
-                continue;
-            const std::size_t index = static_cast<std::size_t>(*g_capturingChord);
-            if (k == ImGuiKey_Escape && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
-                g_capturingChord.reset();
-            }
-            else if (k == ImGuiKey_Backspace && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
-                settings.keys[index] = KeyChord{};
-                g_capturingChord.reset();
-                saveScriptPreferences();
-            }
-            else {
-                settings.keys[index] =
-                    KeyChord{.key = ImGui::GetKeyName(k), .ctrl = io.KeyCtrl, .shift = io.KeyShift, .alt = io.KeyAlt};
-                g_capturingChord.reset();
-                saveScriptPreferences();
-            }
-            break;
+    for (std::size_t index = 0; index < kScriptActionCount; ++index) {
+        const auto which = static_cast<ScriptAction>(index);
+        const ScriptActionInfo& info = scriptActionInfo()[index];
+        const KeyChord chord = settings.chord(which);
+        if (!query.shows(info.label) && (chord.key.empty() || !containsFold(formatChord(chord), query.needle)))
+            continue;
+        ++found;
+        if (!grid)
+            continue;
+        const std::optional<ScriptAction> clash = settings.conflictOf(which, chord);
+        ImGui::PushID(static_cast<int>(index));
+        sectionName(info.label);
+        const bool capturing = g_capturingChord == which;
+        const std::string shown = capturing           ? std::string("press keys...")
+                                  : chord.key.empty() ? std::string("(none)")
+                                                      : formatChord(chord);
+        if (capturing)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(shown.c_str(), ImVec2(besideReset(), 0.0f)))
+            g_capturingChord = capturing ? std::optional<ScriptAction>{} : std::optional<ScriptAction>{which};
+        if (capturing)
+            ImGui::PopStyleColor();
+        ImGui::SetItemTooltip("click, then press the new keys");
+        const std::string back = "back to " + (info.chord.empty() ? std::string("no key") : std::string(info.chord));
+        if (preferenceReset(icons, settings.keys[index].has_value(), back.c_str())) {
+            settings.keys[index].reset();
+            saveScriptPreferences();
         }
-    }
-
-    if (ImGui::BeginTable("##script-keys", 3,
-                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH,
-                          ImVec2(0.0f, ImGui::GetFrameHeightWithSpacing() * 16.0f))) {
-        ImGui::TableSetupColumn("command", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("keys", ImGuiTableColumnFlags_WidthFixed,
-                                ImGui::CalcTextSize("Ctrl+Shift+Alt+Backslash").x);
-        ImGui::TableSetupColumn("reset", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("default").x * 1.6f);
-        for (std::size_t index = 0; index < kScriptActionCount; ++index) {
-            const auto which = static_cast<ScriptAction>(index);
-            const ScriptActionInfo& info = scriptActionInfo()[index];
-            const KeyChord chord = settings.chord(which);
-            if (!keyNeedle.empty() && !containsFold(info.label, keyNeedle) &&
-                (chord.key.empty() || !containsFold(formatChord(chord), keyNeedle)))
-                continue;
-            const std::optional<ScriptAction> clash = settings.conflictOf(which, chord);
-            ImGui::PushID(static_cast<int>(index));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(std::string(info.label).c_str());
-            if (clash.has_value()) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(p.danger.r, p.danger.g, p.danger.b, 1.0f), "also %s",
-                                   std::string(scriptActionInfo()[static_cast<std::size_t>(*clash)].label).c_str());
-            }
-            ImGui::TableSetColumnIndex(1);
-            const bool capturing = g_capturingChord == which;
-            const std::string shown = capturing           ? std::string("press keys...")
-                                      : chord.key.empty() ? std::string("(none)")
-                                                          : formatChord(chord);
-            if (ImGui::Button(shown.c_str(), ImVec2(-1.0f, 0.0f)))
-                g_capturingChord = capturing ? std::optional<ScriptAction>{} : std::optional<ScriptAction>{which};
-            ImGui::TableSetColumnIndex(2);
-            ImGui::BeginDisabled(!settings.keys[index].has_value());
-            if (ImGui::SmallButton("default")) {
-                settings.keys[index].reset();
-                saveScriptPreferences();
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", std::string(info.chord).c_str());
-            ImGui::EndDisabled();
-            ImGui::PopID();
+        if (clash.has_value()) {
+            ImGui::TextColored(ImVec4(p.danger.r, p.danger.g, p.danger.b, 1.0f), "also %s",
+                               std::string(scriptActionInfo()[static_cast<std::size_t>(*clash)].label).c_str());
         }
-        ImGui::EndTable();
+        ImGui::PopID();
     }
+    if (grid)
+        endSectionGrid();
+    return found;
 }
 
 // Every modal has the same escape route. Closing is cancellation, never acceptance.
 // Cancel handlers clear pending requests that would otherwise reopen on the next frame.
 template <typename Cancel>
-bool beginEditorDialog(const char* title, float width, Cancel cancel)
+//
+// A `height` gives the dialog a size of its own that does not follow what is
+// on show -- Preferences, whose pages must not resize the window under the
+// hand moving between them (the owner). Zero fits the contents.
+bool beginEditorDialog(const char* title, float width, Cancel cancel, float height = 0.0f)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float scale = ImGui::GetStyle().FontScaleMain;
     const float fittedWidth = std::max(1.0f, std::min(width * scale, viewport->WorkSize.x - 32.0f));
-    ImGui::SetNextWindowSize(ImVec2(fittedWidth, 0.0f));
+    const float fittedHeight = height > 0.0f ? std::min(height * scale, viewport->WorkSize.y * 0.9f) : 0.0f;
+    ImGui::SetNextWindowSize(ImVec2(fittedWidth, fittedHeight));
     ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(fittedWidth, viewport->WorkSize.y * 0.9f));
     bool open = true;
     const bool visible = ImGui::BeginPopupModal(title, &open, ImGuiWindowFlags_NoResize);
@@ -6886,7 +7595,7 @@ struct ContentFolderNode
     std::vector<std::size_t> children;
 };
 
-void drawContentFolders(Editor& editor, const IconAtlas* icons)
+void drawContentFolders(Editor& editor, EditorCommands& commands, const IconAtlas* icons)
 {
     ContentTree& tree = editor.content();
     static std::vector<ContentFolderNode> s_folders;
@@ -6947,6 +7656,10 @@ void drawContentFolders(Editor& editor, const IconAtlas* icons)
                                             "%s%s", tabIconPad().c_str(), folder.name.c_str());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             go = folder.relative;
+        if (ImGui::BeginDragDropTarget()) {
+            acceptContentMove(commands, folder.relative);
+            ImGui::EndDragDropTarget();
+        }
         // The folder's own picture, in the colour somebody gave it.
         if (icons != nullptr && icons->ready() && g_device != nullptr) {
             const IconSprite sprite = icons->find(icons::ContentFolder, static_cast<core::u32>(glyph + 0.5f));
@@ -7084,6 +7797,10 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
         while (!tree.atRoot())
             (void)tree.leave();
     }
+    if (ImGui::BeginDragDropTarget()) {
+        acceptContentMove(commands, "");
+        ImGui::EndDragDropTarget();
+    }
 
     {
         // A COPY, and navigation deferred to after the loop. Both are load
@@ -7129,6 +7846,10 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
             }
             else if (crumbButton(segment.c_str())) {
                 climb = depth - step - 1;
+            }
+            if (!last && ImGui::BeginDragDropTarget()) {
+                acceptContentMove(commands, here);
+                ImGui::EndDragDropTarget();
             }
             ImGui::PopID();
         }
@@ -7201,7 +7922,7 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
         const float folderWidth =
             std::clamp(ImGui::GetContentRegionAvail().x * 0.2f, 170.0f * browserScale, 280.0f * browserScale);
         if (ImGui::BeginChild("folders", ImVec2(folderWidth, 0.0f), ImGuiChildFlags_ResizeX))
-            drawContentFolders(editor, icons);
+            drawContentFolders(editor, commands, icons);
         ImGui::EndChild();
         ImGui::SameLine();
     }
@@ -7336,18 +8057,33 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
                     // field, an Explorer row or the part in the viewport, and
                     // the part wears it.
                     // And a folder, which a `Sky` takes as its six pictures.
-                    if ((entry.kind == ContentKind::Stamp || entry.kind == ContentKind::Material ||
-                         entry.kind == ContentKind::Texture || entry.kind == ContentKind::Folder) &&
+                    // And **everything drags onto another folder**, which
+                    // moves it there (the owner) -- a mesh onto a
+                    // `MeshContent`, a sound onto a `Sound` too.
+                    if (entry.path.size() < sizeof(ContentDrag::path) &&
                         ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
                         ContentDrag payload;
                         (void)std::snprintf(payload.path, sizeof(payload.path), "%s", entry.path.c_str());
-                        // A folder has no root class; it is marked as a folder
-                        // so a drop target can tell it from a file with none.
                         (void)std::snprintf(payload.rootClass, sizeof(payload.rootClass), "%s",
-                                            entry.kind == ContentKind::Folder ? "folder" : entry.rootClass.c_str());
+                                            entry.kind == ContentKind::Folder ? "" : entry.rootClass.c_str());
+                        payload.folder = entry.kind == ContentKind::Folder;
                         ImGui::SetDragDropPayload(kContentDragPayload, &payload, sizeof(payload));
+                        (void)drawIcon(icons, contentKindIcon(entry.kind), ImGui::GetFontSize());
+                        ImGui::SameLine();
                         ImGui::TextUnformatted(ContentTree::displayNameOf(entry).c_str());
                         ImGui::EndDragDropSource();
+                    }
+                    // A folder takes what is dropped on it: a file or folder
+                    // moves in, and an instance from the Explorer becomes a
+                    // stamp in it rather than in the folder around it.
+                    if (entry.kind == ContentKind::Folder && ImGui::BeginDragDropTarget()) {
+                        acceptContentMove(commands, entry.path);
+                        if (const ImGuiPayload* dropped = ImGui::AcceptDragDropPayload(kInstanceDragPayload);
+                            dropped != nullptr) {
+                            commands.stampSubject = static_cast<const InstanceDrag*>(dropped->Data)->id;
+                            commands.stampFolder = entry.path;
+                        }
+                        ImGui::EndDragDropTarget();
                     }
 
                     if (ImGui::BeginPopupContextItem("entry-menu")) {
@@ -8047,7 +8783,9 @@ struct ExportUi
     std::array<char, 96> linuxExecutable{};
     std::array<char, 128> package{};
     int versionCode = 1;
-    int orientation = 0; // landscape, portrait, sensor
+    // The start scene's `UIService.ScreenOrientation`, which is what the APK
+    // is held at from its first frame -- shown, not set here (`android.luau`).
+    std::string orientation = "LandscapeSensor";
     std::array<char, 16> background{};
     bool release = false;
     std::array<char, 200> keystore{};
@@ -8122,7 +8860,6 @@ constexpr bool kWindowsHost = false;
 #endif
 
 constexpr std::array<const char*, 3> kMultiplayerModes{"none", "host", "dedicated"};
-constexpr std::array<const char*, 3> kOrientations{"landscape", "portrait", "sensor"};
 
 template <std::size_t N>
 void copyInto(std::array<char, N>& buffer, std::string_view text)
@@ -8181,8 +8918,18 @@ void readExportSettings(ExportUi& ui)
     copyInto(ui.linuxExecutable, stringOf("export.linux.executable"));
     copyInto(ui.package, stringOf("export.android.package"));
     ui.versionCode = static_cast<int>(document.number("export.android.version_code").value_or(1.0));
-    const std::string orientation = stringOf("export.android.orientation", "landscape");
-    ui.orientation = orientation == "portrait" ? 1 : orientation == "sensor" ? 2 : 0;
+    ui.orientation = "LandscapeSensor";
+    if (const std::string scene = stringOf("project.scene"); !scene.empty()) {
+        std::string sceneText;
+        core::JsonDocument sceneDocument;
+        if (platform::readTextFile(ui.root / "content" / std::filesystem::path(scene), sceneText) &&
+            sceneDocument.parse(sceneText).ok) {
+            const core::JsonValue value =
+                sceneDocument.root()["storage"]["UIService"]["properties"]["ScreenOrientation"];
+            if (value.type() == core::JsonType::String)
+                ui.orientation = std::string(value.asString());
+        }
+    }
     copyInto(ui.background, stringOf("export.android.icon_background"));
     ui.release = document.boolean("export.android.release").value_or(false);
     copyInto(ui.keystore, stringOf("export.android.keystore"));
@@ -8515,11 +9262,12 @@ void drawExportSettings(Editor& editor, ExportUi& ui, EditorDialogs& dialogs)
         ImGui::Checkbox("bump on export", &ui.bumpVersionCode);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("a store refuses an update whose version code is not higher than the last one");
+        // **The start scene's, not a setting of its own** (the owner): two
+        // answers to how the phone is held turned the screen the moment the
+        // game started whenever they differed.
         ImGui::TextUnformatted("Orientation");
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
-        if (ImGui::Combo("##orientation", &ui.orientation, "landscape\0portrait\0sensor\0"))
-            writeExportSetting(ui, "export.android.orientation",
-                               core::tomlString(kOrientations[static_cast<std::size_t>(ui.orientation)]));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s, from the start scene's UIService.ScreenOrientation", ui.orientation.c_str());
         ImGui::TextUnformatted("Icon background");
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
         ImGui::InputTextWithHint("##background", "#FFFFFF", ui.background.data(), ui.background.size());
@@ -8743,8 +9491,16 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
     if (!ui.open)
         return;
 
+    // **A tab beside the Viewport, the first time** (the owner), as a script
+    // opens: in the node the world is in, wherever somebody has put it. Only
+    // the first time -- once it has been dragged somewhere, the layout keeps it
+    // there, as it keeps every panel where its owner left it.
+    if (const ImGuiWindow* world3d = ImGui::FindWindowByName("###Viewport");
+        world3d != nullptr && world3d->DockNode != nullptr)
+        ImGui::SetNextWindowDockID(world3d->DockNode->ID, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(760.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Export", &ui.open)) {
+    // Room at the front of its title for the tab's picture (`drawTabIcons`).
+    if (!ImGui::Begin((tabIconPad() + "Export###Export").c_str(), &ui.open)) {
         ImGui::End();
         return;
     }
@@ -8885,6 +9641,310 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
     }
 }
 
+// --- Preferences ----------------------------------------------------------
+//
+// **One window of one size, a search above a tree** (the owner, 2026-09-27:
+// the pages were three sizes and three layouts, and a setting was found by
+// opening tabs until it turned up). The tree down the left is the content
+// browser's; the settings on the right are the Properties panel's grid, under
+// its headings -- one page after another in one scroll, so the tree moves the
+// view rather than swapping it. Whatever is typed above filters every page at
+// once, and the tree says how much each one holds.
+
+enum class PreferencePage : core::u8
+{
+    Appearance,
+    Viewport,
+    Icons,
+    ScriptColours,
+    ScriptShortcuts,
+};
+
+struct PreferencePageInfo
+{
+    PreferencePage page;
+    // The tree's branch it hangs from.
+    const char* group;
+    const char* name;
+    std::string_view icon;
+};
+
+constexpr PreferencePageInfo PreferencePages[] = {
+    {PreferencePage::Appearance, "General", "Appearance", icons::ActionPaint},
+    {PreferencePage::Viewport, "General", "Viewport", icons::ClassCamera},
+    {PreferencePage::Icons, "General", "Icons", icons::ActionVisible},
+    {PreferencePage::ScriptColours, "Script Editor", "Colours", icons::ClassScript},
+    {PreferencePage::ScriptShortcuts, "Script Editor", "Keyboard Shortcuts", icons::ActionKeyboard},
+};
+
+std::size_t drawAppearancePreferences(const PreferenceQuery& query, const IconAtlas* icons)
+{
+    std::size_t found = 0;
+    const bool theme = query.shows("Theme");
+    const bool scaling = query.shows("Interface scale");
+    found += (theme ? 1 : 0) + (scaling ? 1 : 0);
+    if (!query.draw || found == 0 || !beginSectionGrid("appearance"))
+        return found;
+
+    // **First, because it is the one setting that changes what every other
+    // panel looks like** -- and because a person who came here looking for one
+    // thing came looking for this.
+    if (theme) {
+        const Theme& current = themeById(g_appearance.themeId);
+        sectionName("Theme");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##theme", std::string(current.name).c_str())) {
+            for (const Theme& each : themes()) {
+                const bool selected = each.id == current.id;
+                if (ImGui::Selectable(std::string(each.name).c_str(), selected)) {
+                    g_appearance.themeId = std::string(each.id);
+                    // Applied on the spot rather than on Close: a theme you
+                    // have to dismiss a dialog to see is a theme you choose by
+                    // trial and error.
+                    applyAppearance();
+                }
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        preferenceHint("For every project.");
+    }
+
+    if (scaling) {
+        // Shown resolved rather than as the stored zero, so the slider says
+        // what the shell is actually drawn at.
+        //
+        // **Applied when the slider is let go, not while it is dragged**
+        // (reported as the scale "not respecting" the hand on it): every step
+        // of a live drag resized the dialog and the slider itself, so the value
+        // under the pointer moved while the pointer did not, and the drag ran
+        // away. The number follows the drag; the interface follows the release.
+        static f32 s_draggedScale = 0.0f;
+        f32 scale = s_draggedScale > 0.0f ? s_draggedScale : resolveUiScale(g_appearance.scale, g_displayScale);
+        sectionName("Interface scale");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::SliderFloat("##interface-scale", &scale, kMinimumUiScale, kMaximumUiScale, "%.2fx"))
+            s_draggedScale = scale;
+        if (ImGui::IsItemDeactivatedAfterEdit() && s_draggedScale > 0.0f) {
+            g_appearance.scale = s_draggedScale;
+            s_draggedScale = 0.0f;
+            applyAppearance();
+        }
+        // The sizes people actually pick, one click each.
+        for (const f32 preset : {1.0f, 1.25f, 1.5f, 1.75f, 2.0f}) {
+            char label[16];
+            (void)std::snprintf(label, sizeof(label), "%d%%", static_cast<int>(std::lround(preset * 100.0f)));
+            if (preset != 1.0f)
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            if (ImGui::Button(label)) {
+                g_appearance.scale = preset;
+                s_draggedScale = 0.0f;
+                applyAppearance();
+            }
+        }
+        if (labeledIconButton(icons, icons::ActionRefresh, "Match display")) {
+            // Zero is the stored spelling of "ask the display", which is what
+            // this button puts back -- not the number the display happens to
+            // report today, because that one is wrong the moment somebody
+            // changes monitors.
+            g_appearance.scale = 0.0f;
+            applyAppearance();
+        }
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("display: %.2fx", static_cast<double>(g_displayScale));
+        preferenceHint("For every project.");
+    }
+    endSectionGrid();
+    return found;
+}
+
+std::size_t drawViewportPreferences(const PreferenceQuery& query, Editor& editor)
+{
+    if (!query.shows("Camera speed"))
+        return 0;
+    if (query.draw && beginSectionGrid("viewport")) {
+        f32 speed = editor.cameraSpeed();
+        sectionName("Camera speed");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (dragNumber("##camera-speed", ImGuiDataType_Float, &speed, 1, 0.5f, "%.1f m/s"))
+            editor.setCameraSpeed(std::clamp(speed, 0.1f, 2000.0f));
+        preferenceHint("The scroll wheel changes this while flying, too.");
+        endSectionGrid();
+    }
+    return 1;
+}
+
+std::size_t drawIconPreferences(const PreferenceQuery& query, IconAtlas* icons)
+{
+    if (icons == nullptr || !query.shows("Colour icons by role"))
+        return 0;
+    if (query.draw && beginSectionGrid("icons")) {
+        bool tinting = icons->tinting();
+        sectionName("Colour icons by role");
+        if (ImGui::Checkbox("##tinting", &tinting))
+            icons->setTinting(tinting);
+        preferenceHint("Category colours, or monochrome with this off.");
+        endSectionGrid();
+    }
+    return 1;
+}
+
+std::size_t drawPreferencePage(PreferencePage page, const PreferenceQuery& query, Editor& editor, IconAtlas* icons)
+{
+    switch (page) {
+    case PreferencePage::Appearance:
+        return drawAppearancePreferences(query, icons);
+    case PreferencePage::Viewport:
+        return drawViewportPreferences(query, editor);
+    case PreferencePage::Icons:
+        return drawIconPreferences(query, icons);
+    case PreferencePage::ScriptColours:
+        return drawScriptColourPreferences(query, icons);
+    case PreferencePage::ScriptShortcuts:
+        return drawScriptShortcutPreferences(query, icons);
+    }
+    return 0;
+}
+
+void drawPreferences(Editor& editor, IconAtlas* icons)
+{
+    g_escapeRecordsChord = g_capturingChord.has_value();
+    const bool open = beginEditorDialog("Preferences", 900.0f, []() { g_capturingChord.reset(); }, 600.0f);
+    g_escapeRecordsChord = false;
+    if (!open)
+        return;
+    captureScriptChord();
+
+    // The page the tree was last pressed on, to be scrolled to; and the one at
+    // the top of the view, which the tree marks. Both by index.
+    static std::optional<std::size_t> s_scrollTo;
+    static std::size_t s_atTop = 0;
+    static std::array<char, 96> s_search{};
+    // Back to the top: on opening, and on every change to the search.
+    static bool s_toTop = false;
+    if (dialogOpening()) {
+        s_search.fill(0);
+        s_toTop = true;
+        ImGui::SetKeyboardFocusHere();
+    }
+    // Opened on the shortcuts by Preferences: Keyboard Shortcuts.
+    if (std::exchange(g_preferencesToShortcuts, false))
+        s_scrollTo = static_cast<std::size_t>(PreferencePage::ScriptShortcuts);
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (searchField(icons, "##preferences-search", "Search settings", s_search.data(), s_search.size()))
+        s_toTop = true;
+    const std::string_view needle{s_search.data()};
+
+    // How much each page holds of what is searched, for the tree and for
+    // leaving out the pages that hold none of it.
+    std::array<std::size_t, std::size(PreferencePages)> found{};
+    const auto queryOf = [&](const PreferencePageInfo& info, bool draw) {
+        const bool whole = !needle.empty() && (containsFold(info.name, needle) || containsFold(info.group, needle));
+        return PreferenceQuery{needle, whole, draw};
+    };
+    for (std::size_t index = 0; index < std::size(PreferencePages); ++index)
+        found[index] =
+            drawPreferencePage(PreferencePages[index].page, queryOf(PreferencePages[index], false), editor, icons);
+
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float treeWidth = std::round(220.0f * scale);
+    if (ImGui::BeginChild("##preferences-tree", ImVec2(treeWidth, 0.0f), ImGuiChildFlags_Borders)) {
+        const float glyph = ImGui::GetFontSize();
+        const char* group = nullptr;
+        bool groupOpen = false;
+        for (std::size_t index = 0; index < std::size(PreferencePages); ++index) {
+            const PreferencePageInfo& info = PreferencePages[index];
+            if (group == nullptr || std::string_view(group) != info.group) {
+                if (group != nullptr && groupOpen)
+                    ImGui::TreePop();
+                group = info.group;
+                ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                groupOpen = ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_SpanAvailWidth);
+                // The group's first page, pressed on the group.
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                    s_scrollTo = index;
+            }
+            if (!groupOpen)
+                continue;
+            ImGuiTreeNodeFlags flags =
+                ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (index == s_atTop && found[index] > 0)
+                flags |= ImGuiTreeNodeFlags_Selected;
+            ImGui::BeginDisabled(found[index] == 0);
+            ImGui::TreeNodeEx(info.name, flags, "%s%s", tabIconPad().c_str(), info.name);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemClicked())
+                s_scrollTo = index;
+            const ImVec2 corner(ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing(),
+                                ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - glyph) * 0.5f);
+            paintActionIcon(icons, info.icon, corner, glyph);
+            // How many rows of it a search found, at the row's end.
+            if (!needle.empty() && found[index] > 0) {
+                const std::string count = std::to_string(found[index]);
+                const ImVec2 size = ImGui::CalcTextSize(count.c_str());
+                ImGui::GetWindowDrawList()->AddText(
+                    ImVec2(ImGui::GetItemRectMax().x - size.x - ImGui::GetStyle().FramePadding.x,
+                           ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - size.y) * 0.5f),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), count.c_str());
+            }
+        }
+        if (group != nullptr && groupOpen)
+            ImGui::TreePop();
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    if (ImGui::BeginChild("##preferences-page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders)) {
+        if (std::exchange(s_toTop, false))
+            ImGui::SetScrollY(0.0f);
+        const float top = ImGui::GetWindowPos().y;
+        bool any = false;
+        std::size_t atTop = s_atTop;
+        bool topFound = false;
+        for (std::size_t index = 0; index < std::size(PreferencePages); ++index) {
+            if (found[index] == 0)
+                continue;
+            any = true;
+            const PreferencePageInfo& info = PreferencePages[index];
+            ImGui::PushID(static_cast<int>(index));
+            if (s_scrollTo == index) {
+                ImGui::SetScrollHereY(0.0f);
+                s_scrollTo.reset();
+            }
+            // The last heading at or above the view's top is the page on show.
+            if (!topFound || ImGui::GetCursorScreenPos().y <= top + ImGui::GetFrameHeight()) {
+                atTop = index;
+                topFound = true;
+            }
+            // Open while searching, whatever was folded: a match inside a
+            // closed heading is a match nobody sees.
+            if (!needle.empty())
+                ImGui::SetNextItemOpen(true);
+            else
+                ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (propertiesSection(info.name))
+                (void)drawPreferencePage(info.page, queryOf(info, true), editor, icons);
+            ImGui::PopID();
+            ImGui::Spacing();
+        }
+        // A pressed page scrolled to when nothing before it had room to move.
+        s_scrollTo.reset();
+        s_atTop = atTop;
+        if (!any)
+            ImGui::TextDisabled("No setting matches \"%s\".", s_search.data());
+    }
+    ImGui::EndChild();
+
+    // No Close button: the window's own X closes it, and a second way to do
+    // one thing at the bottom of a settings page is clutter (the owner's
+    // call). Everything here applies the moment it changes, so there is
+    // nothing for a button to confirm.
+    ImGui::EndPopup();
+}
+
 void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& dialogs, IconAtlas* icons)
 {
     if (dialogs.saveAs) {
@@ -8961,127 +10021,7 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         ImGui::EndPopup();
     }
 
-    if (beginEditorDialog("Preferences", 680.0f, []() {})) {
-        // **Three pages**: the shell, and the script editor's colours and keys
-        // (the owner: "every colour the other editor lets you change, and the
-        // shortcuts, are the user's preferences").
-        const bool tabs = ImGui::BeginTabBar("##preferences-pages");
-        const bool general = tabs && ImGui::BeginTabItem("General");
-        if (general) {
-            // Deliberately small and deliberately real. An empty preferences window
-            // is a promise; one holding the setting somebody actually reaches for is
-            // a place the next setting knows where to go.
-            // **First, because it is the one setting that changes what every other
-            // panel looks like** -- and because a person who came here looking for
-            // one thing came looking for this.
-            ImGui::SeparatorText("Appearance");
-            const Theme& current = themeById(g_appearance.themeId);
-            ImGui::TextUnformatted("Theme");
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::BeginCombo("##theme", std::string(current.name).c_str())) {
-                for (const Theme& theme : themes()) {
-                    const bool selected = theme.id == current.id;
-                    if (ImGui::Selectable(std::string(theme.name).c_str(), selected)) {
-                        g_appearance.themeId = std::string(theme.id);
-                        // Applied on the spot rather than on Close: a theme you
-                        // have to dismiss a dialog to see is a theme you choose by
-                        // trial and error.
-                        applyAppearance();
-                    }
-                    if (selected)
-                        ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-
-            // Shown resolved rather than as the stored zero, so the slider says what
-            // the shell is actually drawn at. Committed on release: dragging it
-            // rewrites the whole style every frame, and writing the file that often
-            // is a file write per pixel of travel.
-            //
-            // **Applied when the slider is let go, not while it is dragged**
-            // (reported as the scale "not respecting" the hand on it): every step
-            // of a live drag resized the dialog and the slider itself, so the value
-            // under the pointer moved while the pointer did not, and the drag ran
-            // away. The number follows the drag; the interface follows the release.
-            static f32 s_draggedScale = 0.0f;
-            f32 scale = s_draggedScale > 0.0f ? s_draggedScale : resolveUiScale(g_appearance.scale, g_displayScale);
-            ImGui::TextUnformatted("Interface scale");
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::SliderFloat("##interface-scale", &scale, kMinimumUiScale, kMaximumUiScale, "%.2fx"))
-                s_draggedScale = scale;
-            if (ImGui::IsItemDeactivatedAfterEdit() && s_draggedScale > 0.0f) {
-                g_appearance.scale = s_draggedScale;
-                s_draggedScale = 0.0f;
-                applyAppearance();
-            }
-            // The sizes people actually pick, one click each.
-            for (const f32 preset : {1.0f, 1.25f, 1.5f, 1.75f, 2.0f}) {
-                char label[16];
-                (void)std::snprintf(label, sizeof(label), "%d%%", static_cast<int>(std::lround(preset * 100.0f)));
-                if (preset != 1.0f)
-                    ImGui::SameLine();
-                if (ImGui::Button(label)) {
-                    g_appearance.scale = preset;
-                    s_draggedScale = 0.0f;
-                    applyAppearance();
-                }
-            }
-            if (labeledIconButton(icons, icons::ActionRefresh, "Match display")) {
-                // Zero is the stored spelling of "ask the display", which is what
-                // this button puts back -- not the number the display happens to
-                // report today, because that one is wrong the moment somebody
-                // changes monitors.
-                g_appearance.scale = 0.0f;
-                applyAppearance();
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("Display: %.2fx", static_cast<double>(g_displayScale));
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("Viewport");
-            f32 speed = editor.cameraSpeed();
-            ImGui::TextUnformatted("Camera speed (m/s)");
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::DragFloat("##camera-speed", &speed, 0.5f, 0.1f, 2000.0f, "%.1f"))
-                editor.setCameraSpeed(speed);
-            ImGui::TextDisabled("The scroll wheel changes this while flying, too.");
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("Icons");
-            if (icons != nullptr) {
-                bool tinting = icons->tinting();
-                if (ImGui::Checkbox("Colour icons by role", &tinting))
-                    icons->setTinting(tinting);
-                ImGui::TextWrapped("Use category colors, or turn this off for monochrome icons.");
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::TextWrapped("Theme and interface scale apply to all your projects.");
-        }
-        if (general)
-            ImGui::EndTabItem();
-        if (tabs && ImGui::BeginTabItem("Script editor")) {
-            drawScriptColourPreferences();
-            ImGui::EndTabItem();
-        }
-        // Opened on this page by Preferences: Keyboard Shortcuts.
-        const ImGuiTabItemFlags toShortcuts =
-            std::exchange(g_preferencesToShortcuts, false) ? ImGuiTabItemFlags_SetSelected : 0;
-        if (tabs && ImGui::BeginTabItem("Shortcuts", nullptr, toShortcuts)) {
-            drawScriptShortcutPreferences();
-            ImGui::EndTabItem();
-        }
-        if (tabs)
-            ImGui::EndTabBar();
-
-        // No Close button: the window's own X closes it, and a second way to
-        // do one thing at the bottom of a settings page is clutter (the
-        // owner's call). Everything here applies the moment it changes, so
-        // there is nothing for a button to confirm.
-        ImGui::EndPopup();
-    }
+    drawPreferences(editor, icons);
 
     if (dialogs.renameInstance || dialogs.renameContent) {
         ImGui::OpenPopup("Rename");
@@ -9544,6 +10484,10 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
             id = std::string(icons::ClassDebugService);
         else if (name.ends_with("###Welcome"))
             id = std::string(icons::ActionInformation);
+        else if (name.ends_with("###Material"))
+            id = std::string(icons::ContentMaterial);
+        else if (name.ends_with("###Export"))
+            id = std::string(icons::ActionExport);
         else if (scripts != nullptr && world != nullptr) {
             for (const OpenScript& tab : scripts->tabs()) {
                 if (!name.ends_with(scriptWindowId(tab)))
@@ -10961,16 +11905,6 @@ struct ActivityView
     const char* shortcut;
 };
 
-// Whether a panel is on screen now: open, and the front tab of its node. Read
-// off last frame's window, because the bar draws before the panels do.
-[[nodiscard]] bool panelShowing(const char* window, bool open)
-{
-    if (!open)
-        return false;
-    const ImGuiWindow* found = ImGui::FindWindowByName(window);
-    return found != nullptr && found->WasActive && (found->DockNode == nullptr || found->DockTabIsVisible);
-}
-
 constexpr ActivityView ActivityViews[] = {
     {"###Explorer", "Explorer", icons::ClassModel, &EditorPanels::explorer, "Ctrl+Shift+E"},
     {"###Content", "Content", icons::ContentFolder, &EditorPanels::content, "Ctrl+Shift+A"},
@@ -10980,66 +11914,37 @@ constexpr ActivityView ActivityViews[] = {
     {"###Tiles", "Tiles", icons::ClassTilemap2D, &EditorPanels::tiles, ""},
 };
 
-// **What a collapsed side bar put away**, so showing it brings back every view
-// it held and not only the one clicked. The editor this follows collapses the
-// whole bar on a click of the active icon; closing only that view would show
-// the next tab in the node instead -- a click on Explorer answered by Debug.
-std::vector<bool EditorPanels::*> g_sideBarStash;
-const char* g_sideBarFront = nullptr;
-
-// Shows a panel and brings it to the front of its node, and with it whatever
-// was put away beside it.
-void revealPanel(EditorPanels& panels, const char* window, bool& open)
+// Shows a panel, brings it to the front of its node and gives it the keyboard.
+//
+// **Only that panel** (the owner: the Content icon opened Content AND Run and
+// Debug). This used to put back everything a collapse had put away with it --
+// the VS Code side bar, where the views shared one column. In an engine's
+// layout the panels live in different places, and a button is one panel.
+void revealPanel(EditorPanels&, const char* window, bool& open)
 {
-    for (bool EditorPanels::*stashed : g_sideBarStash)
-        panels.*stashed = true;
-    g_sideBarStash.clear();
     open = true;
     selectDockTab(window);
     ImGui::SetWindowFocus(window);
 }
 
-// Hides every activity view that shares a node with `window`: the side bar.
+// Hides the one panel a button stands for.
 void collapseSideBar(EditorPanels& panels, const char* window)
 {
-    const ImGuiWindow* front = ImGui::FindWindowByName(window);
-    const ImGuiDockNode* node = front != nullptr ? front->DockNode : nullptr;
-    g_sideBarStash.clear();
-    g_sideBarFront = window;
     for (const ActivityView& view : ActivityViews) {
-        bool& open = panels.*view.visible;
-        if (!open)
-            continue;
-        const ImGuiWindow* other = ImGui::FindWindowByName(view.window);
-        const bool together =
-            node == nullptr ? std::string_view(view.window) == window : other != nullptr && other->DockNode == node;
-        if (!together)
-            continue;
-        open = false;
-        g_sideBarStash.push_back(view.visible);
+        if (std::string_view(view.window) == window)
+            panels.*view.visible = false;
     }
 }
 
 } // namespace
 
-// **Ctrl+B**: the side bar away, or back as it was.
+// **Ctrl+B**: the tree on the left away, or back.
 void toggleSideBar(EditorPanels& panels)
 {
-    if (!g_sideBarStash.empty() && g_sideBarFront != nullptr) {
-        for (const ActivityView& view : ActivityViews) {
-            if (std::string_view(view.window) == g_sideBarFront) {
-                revealPanel(panels, view.window, panels.*view.visible);
-                return;
-            }
-        }
-    }
-    for (const ActivityView& view : ActivityViews) {
-        if (panelShowing(view.window, panels.*view.visible)) {
-            collapseSideBar(panels, view.window);
-            return;
-        }
-    }
-    revealPanel(panels, "###Explorer", panels.explorer);
+    if (panels.explorer)
+        panels.explorer = false;
+    else
+        revealPanel(panels, "###Explorer", panels.explorer);
 }
 
 void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtlas* icons)
@@ -11080,14 +11985,17 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
             return pressed;
         };
 
+        // **The mark says the panel EXISTS, not that it is in front** (the
+        // owner): a click on a panel that is open anywhere -- behind another
+        // tab, unfocused, on another monitor -- closes it as its own x would,
+        // and a click on a closed one opens it with the keyboard in it.
         for (const ActivityView& view : ActivityViews) {
             bool& open = panels.*view.visible;
-            const bool showing = panelShowing(view.window, open);
             std::string tip = view.title;
             if (view.shortcut[0] != '\0')
                 tip += std::string(" (") + view.shortcut + ")";
-            if (button(view.window, view.icon, showing, tip)) {
-                if (showing)
+            if (button(view.window, view.icon, open, tip)) {
+                if (open)
                     collapseSideBar(panels, view.window);
                 else
                     revealPanel(panels, view.window, open);
@@ -11281,6 +12189,30 @@ void drawWelcome(Editor& editor, EditorPanels& panels, EditorCommands& commands,
     ImGui::End();
 }
 
+// **Which tab each dock node shows, and which window has the keyboard**, kept
+// across anything that takes every panel away and brings them back -- a launch,
+// F3. Panels that come back together all "appear" in one frame, and ImGui then
+// gives the focus, and the front of each node, to whichever appeared last: F3
+// twice turned Properties into Stats (the owner). What was in front is put
+// back for a few frames after.
+std::vector<std::pair<ImGuiID, ImGuiID>> g_savedTabs;
+std::string g_savedFocus;
+int g_restoreTabs = -1;
+constexpr int RestoreTabFrames = 12;
+
+void rememberDockTabs()
+{
+    g_savedTabs.clear();
+    const ImGuiContext& context = *ImGui::GetCurrentContext();
+    for (int index = 0; index < context.DockContext.Nodes.Data.Size; ++index) {
+        const auto* node = static_cast<const ImGuiDockNode*>(context.DockContext.Nodes.Data[index].val_p);
+        if (node != nullptr && node->SelectedTabId != 0)
+            g_savedTabs.emplace_back(node->ID, node->SelectedTabId);
+    }
+    const ImGuiWindow* focused = context.NavWindow != nullptr ? context.NavWindow->RootWindow : nullptr;
+    g_savedFocus = focused != nullptr && focused->DockNode != nullptr ? focused->Name : "###Explorer";
+}
+
 void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId root, Inspector* inspector,
                      script::ScriptRuntime* runtime, Editor* editor, rhi::TextureHandle viewport, bool& laidOut,
                      EditorCommands& commands, EditorPanels& panels, EditorDialogs& dialogs, IconAtlas* icons,
@@ -11300,10 +12232,19 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     // **F3 down: the world and nothing else.** Returning before the dockspace
     // rather than hiding each panel, because a dockspace with no windows in it
     // is still a dockspace and would draw its own background over the picture.
+    static bool s_furnitureShown = true;
     if (!furniture) {
+        if (s_furnitureShown) {
+            rememberDockTabs();
+            s_furnitureShown = false;
+        }
         if (editor != nullptr)
             drawViewportFullscreen(*editor, viewport, commands);
         return;
+    }
+    if (!s_furnitureShown) {
+        s_furnitureShown = true;
+        g_restoreTabs = RestoreTabFrames;
     }
 
     // Before the dockspace. `DockSpaceOverViewport` measures the work area, and
@@ -11335,10 +12276,9 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     // each node's line, which is the whole of what ImGui kept -- and put back
     // for the first frames; a click in the first tenth of a second is the
     // price. (ImGui's own parsed copy is a type private to its source file.)
-    static std::vector<std::pair<ImGuiID, ImGuiID>> s_savedTabs;
-    static int s_restoreTabs = -1;
-    if (s_restoreTabs < 0) {
-        s_restoreTabs = 0;
+    if (g_restoreTabs < 0) {
+        g_restoreTabs = 0;
+        g_savedFocus = "###Explorer";
         std::string layout;
         if (const char* file = ImGui::GetIO().IniFilename; file != nullptr && platform::readTextFile(file, layout)) {
             for (std::size_t at = 0; at < layout.size();) {
@@ -11354,11 +12294,11 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
                 const auto hex = [&line](std::size_t from) {
                     return static_cast<ImGuiID>(std::strtoul(std::string(line.substr(from, 8)).c_str(), nullptr, 16));
                 };
-                s_savedTabs.emplace_back(hex(id + 6), hex(selected + 12));
+                g_savedTabs.emplace_back(hex(id + 6), hex(selected + 12));
             }
         }
-        if (!s_savedTabs.empty())
-            s_restoreTabs = 12;
+        if (!g_savedTabs.empty())
+            g_restoreTabs = RestoreTabFrames;
     }
 
     // A transparent central node, so a layout that has not been built yet shows
@@ -11387,7 +12327,7 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
         // there is nothing to throw away.
         // And once for a layout older than the workbench's arrangement, which moved
         // every panel (`Editor::CurrentLayoutRevision`).
-        const bool beforeWorkbench = editor != nullptr && editor->layoutRevision() < Editor::CurrentLayoutRevision;
+        const bool beforeWorkbench = editor != nullptr && editor->layoutRevision() < Editor::LastRebuiltLayoutRevision;
         if (asked || beforeWorkbench || node == nullptr || (!node->IsSplitNode() && node->Windows.Size == 0)) {
             buildDefaultLayout(dockspace);
             builtThisFrame = true;
@@ -11924,16 +12864,16 @@ terrainPanelDone:;
     // put where it belongs, and every panel size and split stays exactly where
     // it was. A person who chooses `stats` afterwards keeps it, because the
     // revision has already moved and this never runs again.
-    if (s_restoreTabs > 0) {
-        // **And the keyboard to the tree, once.** A window that appears takes
-        // the focus, the last one to appear keeps it, and a node always shows
-        // the tab of the focused window -- so the bottom panel went on opening
-        // on Stats, the last panel drawn, whatever tab had been left in front.
-        // This is the focus a freshly built layout gives too.
-        if (s_restoreTabs == 12)
-            ImGui::SetWindowFocus("###Explorer");
-        --s_restoreTabs;
-        for (const auto& [nodeId, tabId] : s_savedTabs) {
+    if (g_restoreTabs > 0) {
+        // **And the keyboard back where it was, once** -- the tree, at launch.
+        // A window that appears takes the focus, the last one to appear keeps
+        // it, and a node always shows the tab of the focused window -- so the
+        // bottom panel went on opening on Stats, the last panel drawn, whatever
+        // tab had been left in front.
+        if (g_restoreTabs == RestoreTabFrames && !g_savedFocus.empty())
+            ImGui::SetWindowFocus(g_savedFocus.c_str());
+        --g_restoreTabs;
+        for (const auto& [nodeId, tabId] : g_savedTabs) {
             ImGuiDockNode* node = ImGui::DockBuilderGetNode(nodeId);
             if (node != nullptr && node->TabBar != nullptr &&
                 ImGui::TabBarFindTabByID(node->TabBar, tabId) != nullptr) {
@@ -11942,17 +12882,24 @@ terrainPanelDone:;
             }
         }
         if (builtThisFrame)
-            s_restoreTabs = 0;
+            g_restoreTabs = 0;
     }
 
     const bool migrating = editor != nullptr && editor->layoutRevision() < Editor::CurrentLayoutRevision;
+    // Forgotten where they floated, so they open beside the Viewport the next
+    // time -- and are then remembered wherever somebody moves them.
+    if (migrating) {
+        ImGui::ClearWindowSettings("###Material");
+        ImGui::ClearWindowSettings("###Export");
+    }
     if (builtThisFrame || migrating) {
-        // The panel under the world in the order an engine keeps it: the
-        // files, then what the game said, then the debugger and the numbers.
-        // A tab bar sorts the tabs it adds by this, and the layout file keeps
-        // it; without it the order is whichever panel was drawn first.
+        // Each node's tabs in the order an engine keeps them: under the world
+        // the files, what the game said, then the debugger; on the right the
+        // inspector, then the numbers. A tab bar sorts the tabs it adds by
+        // this, and the layout file keeps it; without it the order is
+        // whichever panel was drawn first.
         short order = 0;
-        for (const char* name : {"###Content", "###Console", "###Debug", "###Stats", "###Streaming"}) {
+        for (const char* name : {"###Content", "###Console", "###Debug", "###Streaming", "###Properties", "###Stats"}) {
             if (ImGuiWindow* window = ImGui::FindWindowByName(name); window != nullptr)
                 window->DockOrder = order++;
         }
@@ -12911,10 +13858,37 @@ void DebugOverlay::captureLog()
     log.previous = core::setLogSink([](core::LogLevel level, std::string_view text) {
         ConsoleLog& sink = console();
         {
+            // A script's line carries where it came from first, then a printed
+            // table's rows (`core::logDetail`, `print_tree.h`).
+            std::string_view tree = core::logDetail();
+            std::optional<SourceLocation> source;
+            if (!tree.empty() && tree.front() == '@') {
+                const std::size_t end = tree.find('\n');
+                const std::string_view head = tree.substr(1, end == std::string_view::npos ? tree.npos : end - 1);
+                const std::size_t split = head.find('\x1F');
+                if (split != std::string_view::npos) {
+                    const std::string_view number = head.substr(split + 1);
+                    core::u32 line = 0;
+                    for (const char digit : number)
+                        line = digit >= '0' && digit <= '9' ? line * 10 + static_cast<core::u32>(digit - '0') : line;
+                    source = SourceLocation{std::string(head.substr(0, split)), line};
+                }
+                tree = end == std::string_view::npos ? std::string_view{} : tree.substr(end + 1);
+            }
             std::lock_guard<std::mutex> lock(sink.mutex);
-            sink.lines.push_back(ConsoleLog::Line{level, std::string(text), sink.nextSeq++});
-            while (sink.lines.size() > ConsoleLog::kMaxLines)
-                sink.lines.pop_front();
+            ConsoleLog::Line* last = sink.lines.empty() ? nullptr : &sink.lines.back();
+            const bool sameSource =
+                last != nullptr && last->source.has_value() == source.has_value() &&
+                (!source.has_value() || (last->source->chunk == source->chunk && last->source->line == source->line));
+            if (last != nullptr && last->level == level && last->text == text && last->tree == tree && sameSource) {
+                ++last->repeats;
+            }
+            else {
+                sink.lines.push_back(
+                    ConsoleLog::Line{level, std::string(text), sink.nextSeq++, std::string(tree), std::move(source)});
+                while (sink.lines.size() > ConsoleLog::kMaxLines)
+                    sink.lines.pop_front();
+            }
         }
         // Chained rather than replaced: the console pane and the log FILE both
         // get every line. A shell that ate the log would be the last place

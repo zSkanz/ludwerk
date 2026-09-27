@@ -153,6 +153,24 @@ class PhysicsWireframe final : public physics::IDebugDrawSink
 public:
     explicit PhysicsWireframe(render::DebugDraw& draw) noexcept : m_draw(draw) {}
 
+    // Drawn where the frame draws the parts: between the last two ticks, as
+    // `render::extract` places them, rather than where the bodies are.
+    PhysicsWireframe(render::DebugDraw& draw, const scene::PhysicsSync& physics, const scene::World& world,
+                     const render::TransformHistory& history, f32 alpha) noexcept
+        : m_draw(draw), m_physics(&physics), m_world(&world), m_history(&history), m_alpha(alpha)
+    {}
+
+    [[nodiscard]] std::optional<core::CFrameD> drawnPose(core::u64 userData) override
+    {
+        if (m_physics == nullptr)
+            return std::nullopt;
+        const core::InstanceId id = m_physics->instanceOf(userData);
+        const scene::PartComponent* part = id.valid() ? m_world->parts().find(id) : nullptr;
+        if (part == nullptr)
+            return std::nullopt;
+        return render::interpolatedCFrame(m_history, id, part->cframe, m_alpha, render::teleportReach(part->size));
+    }
+
     void line(core::DVec3 from, core::DVec3 to, core::u32 color) override
     {
         // Rebased the same way every other debug line is: `DebugDraw` holds
@@ -167,6 +185,10 @@ public:
 
 private:
     render::DebugDraw& m_draw;
+    const scene::PhysicsSync* m_physics = nullptr;
+    const scene::World* m_world = nullptr;
+    const render::TransformHistory* m_history = nullptr;
+    f32 m_alpha = 0.0f;
 };
 
 // A fixed camera looking at the origin from slightly above. Fixed on purpose:
@@ -1683,9 +1705,30 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             Editor::Stage* const open = stageOf();
             return open != nullptr ? open->workspace() : host->runtime().dataModel();
         };
+        // Where something goes when nothing is selected to put it in: the
+        // Workspace, or while a stamp is open the stamp itself -- its stage's
+        // Workspace is beside the stamp, where the tree does not show it and
+        // the save does not write it (B10).
+        const auto defaultParent = [&]() -> core::InstanceId {
+            Editor::Stage* const open = stageOf();
+            if (open == nullptr)
+                return host->workspace();
+            const core::InstanceId stamped = editor.stampSession().root;
+            return open->world().alive(stamped) ? stamped : open->workspace();
+        };
 
-        if (options.editor && inspector.pendingCount() > 0)
-            editor.history().record(authored(), "Edit", coalesceKeyFor(inspector.gesture(), inspector.pending()));
+        if (options.editor && inspector.pendingCount() > 0) {
+            // **Which property**, so the history -- and the toast an undo shows
+            // -- says "Edit CFrame" rather than "Edit".
+            const std::span<const PendingWrite> writes = inspector.pending();
+            std::string label = "Edit";
+            const core::NameAtom first = writes.front().property;
+            const bool oneProperty = std::all_of(
+                writes.begin(), writes.end(), [first](const PendingWrite& write) { return write.property == first; });
+            if (oneProperty && first.valid())
+                label += " " + std::string(authored().atoms().text(first));
+            editor.history().record(authored(), label, coalesceKeyFor(inspector.gesture(), inspector.pending()));
+        }
 
         // **A typed property is a change to the document**, and it does not come
         // through `EditorCommands` -- it is drained here, which is the one place
@@ -2044,7 +2087,21 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     if (!w.alive(tab->instance))
                         continue;
                     (void)w.setProperty(tab->instance, w.atoms().intern("Source"), scene::Value{tab->document.text()});
-                    editor.touch();
+                    // A stamp's script is the stamp's to save. The scene's are
+                    // counted below from their tabs, which know whether the
+                    // text is still what was saved; a script that is a file
+                    // was never the scene's to save.
+                    if (tab->origin == ScriptOrigin::Stamp)
+                        editor.touch();
+                }
+                {
+                    bool sceneScriptUnsaved = false;
+                    for (std::size_t index = 0; index < scripts.count() && !sceneScriptUnsaved; ++index) {
+                        const OpenScript* tab = scripts.at(index);
+                        sceneScriptUnsaved =
+                            tab != nullptr && tab->origin == ScriptOrigin::Scene && tab->file.empty() && tab->dirty();
+                    }
+                    editor.setSceneScriptsUnsaved(sceneScriptUnsaved);
                 }
 
                 // **A surface shader's compile errors, on its lines** (ADR
@@ -2455,9 +2512,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         authored().classes().findId(authored().atoms().lookup(editorCommands.insertClassName));
                     const core::InstanceId primary = inspector.selection();
                     const core::InstanceId parent =
-                        primary.valid() && Editor::canParentInto(authored(), primary, authoredRoot())
-                            ? primary
-                            : (stageOf() != nullptr ? stageOf()->workspace() : host->workspace());
+                        primary.valid() && Editor::canParentInto(authored(), primary, authoredRoot()) ? primary
+                                                                                                      : defaultParent();
                     if (cls != scene::InvalidClass)
                         openIfScript(editor.createInstance(authored(), cls, parent, authoredRoot(), inspector));
                 }
@@ -2546,9 +2602,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                          ? editorCommands.placeStampParent
                                                          : inspector.selection();
                     const core::InstanceId parent =
-                        primary.valid() && Editor::canParentInto(authored(), primary, authoredRoot())
-                            ? primary
-                            : (stageOf() != nullptr ? stageOf()->workspace() : host->workspace());
+                        primary.valid() && Editor::canParentInto(authored(), primary, authoredRoot()) ? primary
+                                                                                                      : defaultParent();
                     (void)editor.instantiateStamp(authored(), editorCommands.placeStamp, parent, authoredRoot(),
                                                   inspector, editorCommands.placeStampLinked);
                 }
@@ -2565,9 +2620,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // Narrowing it to the stamp would stop the search finding a
                     // material that is already there and place a duplicate.
                     const core::InstanceId placeUnder =
-                        editor.stampSession().open() && editor.stampSession().root.valid()
-                            ? editor.stampSession().root
-                            : (stageOf() != nullptr ? stageOf()->workspace() : host->workspace());
+                        editor.stampSession().open() && editor.stampSession().root.valid() ? editor.stampSession().root
+                                                                                           : defaultParent();
                     (void)editor.assignStampTo(authored(), authoredRoot(), placeUnder, editorCommands.assignStampPath,
                                                editorCommands.assignStampProperty, inspector.selectionSet());
                 }
@@ -2591,6 +2645,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     else if (!editorCommands.assignMaterialPixel.has_value()) {
                         (void)editor.assignMaterialTo(authored(), editorCommands.assignMaterialPath,
                                                       inspector.selectionSet());
+                    }
+                    else {
+                        // Dropped on the sky: said, rather than a drop that
+                        // did nothing and looked as if it had worked.
+                        editor.report("nothing under the pointer to wear " + editorCommands.assignMaterialPath, true);
                     }
                 }
                 if (!editorCommands.assignSkyboxPath.empty())
@@ -2681,11 +2740,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // with a tree draws and the only one a person has to be
                     // told. With nothing selected both mean the Workspace.
                     const core::InstanceId primary = inspector.selection();
-                    core::InstanceId parent = host->workspace();
+                    core::InstanceId parent = defaultParent();
                     if (primary.valid() && authored().alive(primary)) {
                         parent = editorCommands.pasteInto ? primary : authored().parentOf(primary);
                         if (!parent.valid())
-                            parent = host->workspace();
+                            parent = defaultParent();
                     }
                     (void)editor.paste(authored(), parent, authoredRoot(), inspector);
                 }
@@ -2707,6 +2766,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     (void)editor.createStampOfClass(authored(), authoredRoot(), editorCommands.newStampClass,
                                                     editorCommands.newStampName);
                 }
+                // Moved by a drag onto a folder, with every reference to it.
+                if (!editorCommands.moveContent.empty())
+                    (void)editor.moveContent(host->world(), editorCommands.moveContent, editorCommands.moveContentInto);
                 if (!editorCommands.deleteContent.empty() || !editorCommands.renameContent.empty() ||
                     !editorCommands.duplicateContent.empty()) {
                     const std::string& wanted = !editorCommands.deleteContent.empty() ? editorCommands.deleteContent
@@ -2728,7 +2790,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                           made.empty());
                         }
                         else {
-                            (void)editor.content().rename(entry, editorCommands.renameContentTo);
+                            // With every reference to it, as a move is.
+                            const std::string before = entry.path;
+                            std::string after;
+                            if (editor.content().rename(entry, editorCommands.renameContentTo, &after))
+                                (void)editor.followContent(host->world(), before, after);
                         }
                         break;
                     }
@@ -2782,7 +2848,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // inside the row that asked for it.
                 if (editorCommands.overrideApply.has_value() && editorCommands.overrideSubject.valid() &&
                     editorCommands.overrideProperty.valid()) {
-                    if (*editorCommands.overrideApply) {
+                    // Of a placed instance, which is in the scene's world: with
+                    // a stamp open the id names something in the stamp's (B10).
+                    if (stageOf() != nullptr) {
+                        editor.report("close the stamp to revert or apply what a placed one changed", true);
+                    }
+                    else if (*editorCommands.overrideApply) {
                         (void)editor.applyOverride(host->world(), host->runtime().dataModel(),
                                                    editorCommands.overrideSubject, editorCommands.overrideProperty);
                     }
@@ -3128,6 +3199,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             ++dropped;
                         }
                     }
+                    // A stamp changed by something other than this editor:
+                    // its linked instances follow, keeping their own (B13).
+                    if (options.editor) {
+                        for (const core::NameAtom urn : urns) {
+                            const std::string_view text = host->world().atoms().text(urn);
+                            constexpr std::string_view Suffix = ".stamp.json";
+                            if (text.size() > Suffix.size() && text.ends_with(Suffix))
+                                dropped += editor.stampChangedOnDisk(host->world(), host->runtime().dataModel(),
+                                                                     text.substr(std::string_view("asset://").size()));
+                        }
+                    }
                     const core::I18nArg args[] = {{"count", static_cast<core::i64>(dropped)}};
                     core::log(core::LogLevel::Info, ENG_TR("engine.dev.info.assets_reloaded"), args);
                     replyOk("asset-changed", command.id, [dropped](core::JsonWriter& writer) {
@@ -3464,7 +3546,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // world being built was always empty.
             if (host->world().engineState().paused || (options.editor && editing(editor.runState())))
                 physics->mirror();
-            PhysicsWireframe sink(debugDraw);
+            PhysicsWireframe sink(debugDraw, *physics, host->world(), transformHistory, renderAlpha);
             physics->backend().debugDraw(physics->worldHandle(), sink);
         }
 

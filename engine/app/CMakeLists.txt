@@ -54,6 +54,7 @@ engine_add_module(app
         src/command_palette.cpp
         src/editor_drive.cpp
         src/view_host.cpp
+        src/number_expression.cpp
         src/content_tree.cpp
         src/content_import.cpp
         src/icons.cpp
@@ -315,6 +316,7 @@ engine_add_module_tests(app
         tests/export_runner_tests.cpp
         tests/command_palette_tests.cpp
         tests/view_host_tests.cpp
+        tests/number_expression_tests.cpp
         tests/ui_theme_tests.cpp
         tests/ui_text_tests.cpp
         tests/thumbnail_tests.cpp

@@ -154,9 +154,13 @@ private:
 // attribute on the service -- saved as `content/global.json`, because no scene
 // owns it. Empty text when there is nothing to save. `readGlobal` puts it back
 // under the service, into its fixed folders by name.
-[[nodiscard]] std::string writeGlobal(const World& world, SceneIoReport* report = nullptr);
-[[nodiscard]] std::optional<core::EngineError> readGlobal(World& world, std::string_view json,
-                                                          SceneIoReport* report = nullptr);
+//
+// A stamped instance in it is written as its mark when `stamps` is given, and
+// read back through `source` (B11: without them, every one was saved unlinked).
+[[nodiscard]] std::string writeGlobal(const World& world, SceneIoReport* report = nullptr,
+                                      StampLibrary* stamps = nullptr);
+[[nodiscard]] std::optional<core::EngineError>
+readGlobal(World& world, std::string_view json, SceneIoReport* report = nullptr, const StampSource* source = nullptr);
 
 // Removes everything a scene describes, leaving the world otherwise intact.
 //
@@ -208,6 +212,12 @@ readScene(World& world, std::string_view json, SceneIoReport* report = nullptr, 
 // file that refers to the file being written.
 [[nodiscard]] std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport* report = nullptr,
                                      StampLibrary* stamps = nullptr);
+
+// **What a stamp name means, as a path under `content/`**: `\` as `/`, a
+// typed `content/` dropped, a bare name in `stamps/`, a whole file name at the
+// root, and `.stamp.json` put on when it is not there. One rule for the editor
+// and for `Instance.stamp`, whose documentation promised it (B12).
+[[nodiscard]] std::string normalizeStampPath(std::string_view typed);
 
 // Instantiates a stamp under `parent` and marks the new root with `stamp`.
 //

@@ -84,6 +84,11 @@ enum class PreviewKind : core::u8
 // a preview of nothing should be a picture of nothing.
 [[nodiscard]] render::ViewOverride previewView(const core::AABB& bounds) noexcept;
 
+// The same framing, turned: `yaw` radians about the vertical and `pitch` above
+// the fixed three-quarter view. The material panel's preview, which a person
+// turns by hand; zero for both is `previewView(bounds)` exactly.
+[[nodiscard]] render::ViewOverride previewView(const core::AABB& bounds, core::f32 yaw, core::f32 pitch) noexcept;
+
 // Everything the render half is handed, once this cache has done every part of a
 // preview that does not need a device.
 struct PreviewJob
@@ -108,6 +113,11 @@ struct PreviewJob
     std::string_view text;
     // The longer side of the picture wanted, in pixels: `ThumbnailCache::Edge`.
     core::u32 edge = 0;
+    // `Material`: what wears it, as `Enum.PartShape` -- 0 a block, 1 a ball, 2
+    // a cylinder -- and the angle it is seen from (`previewView`).
+    core::i32 swatchShape = 1;
+    core::f32 yaw = 0.0f;
+    core::f32 pitch = 0.0f;
 };
 
 // What one came out as. The picture keeps the source's aspect for the same
@@ -285,6 +295,23 @@ public:
     // nothing different to do about it.
     [[nodiscard]] Thumbnail request(const std::filesystem::path& path);
 
+    // **One large picture of a material, turned by hand** (the owner, 2026-09-27:
+    // a material editor as the big engines have one). The size, what wears it
+    // and the angle are the caller's; it is drawn again when any of them changes
+    // or `refresh` names its file, and never otherwise. Apart from the rows: a
+    // row is 128 pixels from a fixed angle, and stays that.
+    struct ShowcaseView
+    {
+        core::u32 edge = 512;
+        // `Enum.PartShape`: 0 a block, 1 a ball, 2 a cylinder.
+        core::i32 shape = 1;
+        core::f32 yaw = 0.0f;
+        core::f32 pitch = 0.0f;
+
+        [[nodiscard]] bool operator==(const ShowcaseView&) const noexcept = default;
+    };
+    [[nodiscard]] Thumbnail requestShowcase(const std::filesystem::path& path, const ShowcaseView& view);
+
     // **Draws `path` again**, keeping the old picture until the new one is
     // ready. What the material panel calls after an edit, so the ball it shows
     // is the material as it now is rather than as it was when first drawn.
@@ -383,7 +410,20 @@ private:
     void drawPreviews(rhi::IDevice& device, rhi::ICmdList& cmd);
     void evict(rhi::IDevice& device);
 
+    // The one large picture (`requestShowcase`).
+    struct Showcase
+    {
+        std::string key;
+        ShowcaseView view;
+        rhi::TextureHandle texture;
+        core::u32 width = 0;
+        core::u32 height = 0;
+        bool stale = false;
+    };
+    void drawShowcase(rhi::IDevice& device, rhi::ICmdList& cmd);
+
     std::vector<Entry> entries_;
+    Showcase showcase_;
     IPreviewRenderer* preview_ = nullptr;
     // Bumped by `flush`, so "least recently wanted" means "not asked for in the
     // most frames" without the caller having to have a frame number.

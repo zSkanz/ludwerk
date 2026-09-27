@@ -134,7 +134,6 @@ executable = "skyhopper"
 [export.android]
 package = "com.skanz.skyhopper"   # default: [project] id
 version_code = 7                  # the export offers to bump it
-orientation = "landscape"         # landscape | portrait | sensor
 icon_background = "#1E90FF"
 release = false                   # false: debug-signed, installs anywhere; true: the keystore below
 keystore = "keys/release.keystore"
@@ -295,3 +294,11 @@ check caches.
 - **Doing the export inside the editor process.** A crash in a packer would
   take the author's unsaved scene with it, and the CLI would drift from the
   button.
+
+## Amended 2026-09-27: the orientation is the start scene's
+
+`[export.android] orientation` is gone. The manifest's `screenOrientation` is
+the start scene's `UIService.ScreenOrientation`, read at export: the manifest
+holds the phone before any scene has loaded, the scene once one has, and two
+settings for one question turned the screen at launch whenever they differed.
+The export window shows the value and does not set it.

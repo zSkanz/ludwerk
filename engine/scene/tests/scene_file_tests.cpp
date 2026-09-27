@@ -612,6 +612,119 @@ TEST_CASE("changing the stamp changes every instance, except where one has its o
     CHECK(static_cast<double>(scene::testing::transparencyOf(*restored)) == doctest::Approx(0.5));
 }
 
+TEST_CASE("two children of one name keep their own overrides")
+{
+    // B1: a stamp whose parts keep the default name. Both had one path in the
+    // file, and the loader gave the second one's values to the first and the
+    // stamp's to the second.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId model = partUnder(fixture, workspace, "Model", core::DVec3{});
+    const core::InstanceId first = partUnder(fixture, model, "Part", core::DVec3{});
+    const core::InstanceId second = partUnder(fixture, model, "Part", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, model);
+    fixture.world.setStamp(model, fixture.atom("pair"));
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(first), 0.25f);
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(second), 0.75f);
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+    CHECK(sceneText.find("Part#2") != std::string::npos);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, source).has_value());
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Model")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const core::InstanceId one = other.world.firstChild(placed);
+    const core::InstanceId two = other.world.nextSibling(one);
+    REQUIRE(two.valid());
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(one))) == doctest::Approx(0.25));
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(two))) == doctest::Approx(0.75));
+}
+
+TEST_CASE("a child renamed in one instance keeps its name and its overrides")
+{
+    // B2: the overrides were written under the new name, which the stamp's
+    // fresh copy does not have -- so the rename and the child's edits went.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    fixture.world.setName(lantern, fixture.atom("Lamp"));
+    scene::testing::setTransparencyOf(*fixture.world.parts().find(lantern), 0.5f);
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    SceneIoReport wrote;
+    const std::string sceneText = scene::writeScene(fixture.world, &wrote, &library);
+    CHECK(wrote.stamped == 1);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, &read, source).has_value());
+    CHECK(read.refusedProperties == 0);
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    const core::InstanceId child = other.world.firstChild(placed);
+    REQUIRE(child.valid());
+    CHECK(other.world.atoms().text(other.world.name(child)) == "Lamp");
+    CHECK(static_cast<double>(scene::testing::transparencyOf(*other.world.parts().find(child))) ==
+          doctest::Approx(0.5));
+}
+
+TEST_CASE("a linked instance keeps the attributes and tags given to it")
+{
+    // B3: only properties were compared, so an attribute or a tag on a placed
+    // stamp was gone at the next save.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId post = partUnder(fixture, workspace, "Post", core::DVec3{});
+    const core::InstanceId lantern = partUnder(fixture, post, "Lantern", core::DVec3{});
+
+    const std::string stampText = scene::writeStamp(fixture.world, post);
+    fixture.world.setStamp(post, fixture.atom("lantern-post"));
+    REQUIRE(fixture.world.setAttribute(post, fixture.atom("Difficulty"), scene::Value{core::f64{3.0}}));
+    REQUIRE(fixture.world.addTag(lantern, fixture.atom("Light")));
+
+    const auto source = [&stampText](std::string_view) -> std::optional<std::string> { return stampText; };
+    scene::StampLibrary library(fixture.world, source);
+    const std::string sceneText = scene::writeScene(fixture.world, nullptr, &library);
+
+    Fixture other;
+    (void)makeWorkspace(other);
+    REQUIRE_FALSE(scene::readScene(other.world, sceneText, nullptr, source).has_value());
+    core::InstanceId placed;
+    other.world.parts().forEach([&](core::InstanceId id, const scene::PartComponent&) {
+        if (other.world.atoms().text(other.world.name(id)) == "Post")
+            placed = id;
+    });
+    REQUIRE(placed.valid());
+    CHECK(other.world.stampOf(placed).valid());
+    scene::AttributeMap attributes;
+    other.world.collectAttributes(placed, attributes);
+    REQUIRE(attributes.size() == 1);
+    CHECK(std::get<core::f64>(attributes.front().second) == doctest::Approx(3.0));
+    scene::TagSet tags;
+    other.world.collectTags(other.world.firstChild(placed), tags);
+    REQUIRE(tags.size() == 1);
+    CHECK(other.world.atoms().text(tags.front()) == "Light");
+}
+
 TEST_CASE("a structural change is not an override, so the instance is written in full")
 {
     // Adding a child to one instance is not "a parameter of this one" -- it is

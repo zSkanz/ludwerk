@@ -24,6 +24,7 @@ engine_add_module(script
         src/modules.cpp
         src/debugger.cpp
         src/net_module.cpp
+        src/print_tree.cpp
         src/services.cpp
         src/remote.cpp
         src/signals.cpp
@@ -65,6 +66,7 @@ engine_add_module_tests(script
         tests/signal_tests.cpp
         tests/task_tests.cpp
         tests/debugger_tests.cpp
+        tests/print_tests.cpp
 )
 
 # The sandbox tests boot a VM directly rather than through `ScriptRuntime`, so

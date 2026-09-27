@@ -72,15 +72,6 @@ constexpr f32 kDegreesToRadians = kPi / 180.0f;
     return world.characterBodies().find(id) != nullptr ? Capsule : part.shape;
 }
 
-// How far a part may move in one tick and still be drawn gliding there: its
-// largest side, and never less than half a metre, so a small fast thing -- a
-// ball, a bullet -- keeps its interpolation. Past it, the move is a teleport.
-[[nodiscard]] core::f64 teleportReach(Vec3 size) noexcept
-{
-    const f32 largest = std::fmax(size.x, std::fmax(size.y, size.z));
-    return static_cast<core::f64>(std::fmax(largest, 0.5f));
-}
-
 [[nodiscard]] Vec3 primitiveScale(core::i32 shape, Vec3 size) noexcept
 {
     switch (shape) {
@@ -575,38 +566,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // less than its own size per tick and is interpolated as before.
     const auto at = [&](core::InstanceId id, const CFrameD& current,
                         core::f64 teleport = std::numeric_limits<core::f64>::infinity()) -> CFrameD {
-        if (history == nullptr || alpha <= 0.0f)
-            return current;
-        const CFrameD* earlier = history->previous(id);
-        if (earlier == nullptr)
-            return current;
-        {
-            const DVec3 step = current.position - earlier->position;
-            if (step.x * step.x + step.y * step.y + step.z * step.z > teleport * teleport)
-                return current;
-        }
-
-        // **Two early outs, and they are the difference between this costing
-        // nothing and costing two and a half milliseconds.** `core::lerp` on a
-        // CFrame slerps the rotation, which is a quaternion round trip with a
-        // trig pair in it -- and an open world is thousands of parts that did
-        // not move at all. Measured on `examples/10-open-world`: the median
-        // frame at 1080p went from 3.5 ms to 6.1 ms with the slerp on every
-        // part, and back with these two comparisons in front of it.
-        if (earlier->rotation == current.rotation) {
-            if (earlier->position == current.position)
-                return current;
-            // Moved without turning, which is most of what moves: a lift, a
-            // sliding platform, anything driven along a path.
-            const core::f64 t = static_cast<core::f64>(alpha);
-            const DVec3 delta = current.position - earlier->position;
-            CFrameD moved = current;
-            moved.position = DVec3{earlier->position.x + delta.x * t, earlier->position.y + delta.y * t,
-                                   earlier->position.z + delta.z * t};
-            return moved;
-        }
-
-        return core::lerp(*earlier, current, static_cast<core::f64>(alpha));
+        return interpolatedCFrame(history, id, current, alpha, teleport);
     };
 
     // --- The camera, and therefore the space everything else is expressed in --

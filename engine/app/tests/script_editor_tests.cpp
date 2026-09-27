@@ -18,6 +18,7 @@
 using namespace engine;
 using app::OpenScript;
 using app::Position;
+using app::Range;
 using app::ScriptEditor;
 using engine::app::parseSourceLocation;
 using engine::app::SourceLocation;
@@ -118,11 +119,37 @@ TEST_CASE("dirty is a comparison, so it cannot be forgotten")
     editor.markSaved(0);
     CHECK_FALSE(tab.dirty());
 
-    // Undoing back to the saved text is still a new revision, and saying so is
-    // the honest answer: what was written out is not what is in the buffer's
-    // history, and pretending otherwise means a file that never gets rewritten.
+    // Undone past the save: the text is not what was written out.
     Position caret{0, 0};
     CHECK(tab.document.undo(caret));
+    CHECK(tab.dirty());
+}
+
+TEST_CASE("text that is back to what was saved is not unsaved, however it got there")
+{
+    // The owner: an edit undone -- or typed back by hand -- still asked to be
+    // saved. An undo is a new revision, and so is retyping; neither is a
+    // change to what is in the file.
+    TwoScripts fixture;
+    ScriptEditor editor;
+    app::OpenScript& tab =
+        editor.open(fixture.first, app::ScriptOrigin::Scene, "a", "src/client/a.luau", "a", "local x = 1");
+
+    tab.document.insert(Position{0, 0}, "-");
+    CHECK(tab.dirty());
+    Position caret{0, 0};
+    CHECK(tab.document.undo(caret));
+    CHECK_FALSE(tab.dirty());
+    CHECK_FALSE(editor.anyDirty());
+
+    // Changed and changed back by hand.
+    tab.document.insert(Position{0, 10}, "2");
+    CHECK(tab.dirty());
+    (void)tab.document.erase(Range{Position{0, 10}, Position{0, 11}});
+    CHECK_FALSE(tab.dirty());
+
+    // And a real change is still one.
+    tab.document.insert(Position{0, 10}, "0");
     CHECK(tab.dirty());
 }
 

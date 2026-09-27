@@ -306,7 +306,7 @@ local Lines: { string } = {
     "    Connect: (self: Signal<T...>, handler: (T...) -> ()) -> Connection,",
     "    Once: (self: Signal<T...>, handler: (T...) -> ()) -> Connection,",
     "    Wait: (self: Signal<T...>) -> (T...),",
-    "    Fire: (self: Signal<T...>, ...any) -> (),",
+    "    Fire: (self: Signal<T...>, T...) -> (),",
     "    Destroy: (self: Signal<T...>) -> (),",
     "    DisconnectAll: (self: Signal<T...>) -> (),",
     "}",

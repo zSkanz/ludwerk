@@ -18,6 +18,7 @@
 // every recorded determinism trace stays valid.
 #pragma once
 
+#include <limits>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -65,5 +66,20 @@ private:
     std::vector<Entry> entries_;
     core::u64 stamp_ = 0;
 };
+
+// A part's own largest side, and never less than half a metre, so a small fast
+// thing -- a ball, a bullet -- keeps its interpolation. Past it, a move in one
+// tick is a teleport.
+[[nodiscard]] core::f64 teleportReach(core::Vec3 size) noexcept;
+
+// **Where `id` is drawn this frame**: `alpha` of the way from where the last
+// capture saw it to `current`. Anything with no previous transform is drawn
+// where it is, and a move longer than `teleport` is drawn where it landed.
+// One function, because everything drawn over the world -- the collision
+// wireframe included -- has to sit where the world itself is drawn (the
+// owner: the collision box lagged the spinning cube it belongs to).
+[[nodiscard]] core::CFrameD interpolatedCFrame(const TransformHistory* history, core::InstanceId id,
+                                               const core::CFrameD& current, core::f32 alpha,
+                                               core::f64 teleport = std::numeric_limits<core::f64>::infinity());
 
 } // namespace engine::render

@@ -190,8 +190,44 @@ ThumbnailCache::Thumbnail ThumbnailCache::request(const std::filesystem::path& p
     return {};
 }
 
+ThumbnailCache::Thumbnail ThumbnailCache::requestShowcase(const std::filesystem::path& path, const ShowcaseView& view)
+{
+    const std::string key = path.string();
+    if (showcase_.key != key || !(showcase_.view == view)) {
+        showcase_.key = key;
+        showcase_.view = view;
+        showcase_.stale = true;
+    }
+    return Thumbnail{showcase_.texture, showcase_.width, showcase_.height};
+}
+
+void ThumbnailCache::drawShowcase(rhi::IDevice& device, rhi::ICmdList& cmd)
+{
+    if (!showcase_.stale || previews_ == nullptr || showcase_.key.empty())
+        return;
+    showcase_.stale = false;
+    PreviewJob job;
+    job.kind = PreviewKind::Material;
+    job.path = std::filesystem::path(showcase_.key);
+    job.edge = std::clamp<core::u32>(showcase_.view.edge, 64u, 2048u);
+    job.swatchShape = showcase_.view.shape;
+    job.yaw = showcase_.view.yaw;
+    job.pitch = showcase_.view.pitch;
+    PreviewResult result;
+    if (!previews_->drawPreview(device, cmd, job, result) || !result.texture.valid())
+        return;
+    // The old picture goes once the new one exists, as a refreshed row's does.
+    if (showcase_.texture.valid())
+        device.destroy(showcase_.texture);
+    showcase_.texture = result.texture;
+    showcase_.width = result.width;
+    showcase_.height = result.height;
+}
+
 void ThumbnailCache::refresh(const std::filesystem::path& path)
 {
+    if (path.string() == showcase_.key)
+        showcase_.stale = true;
     Entry* found = find(path.string());
     if (found == nullptr || found->stage == Stage::Reading || found->stage == Stage::Decoding)
         return;
@@ -466,6 +502,7 @@ void ThumbnailCache::flush(rhi::IDevice& device, rhi::ICmdList& cmd)
     collectReads();
     collectDecodes(device, cmd);
     collectDraws(device, cmd);
+    drawShowcase(device, cmd);
     admit();
     evict(device);
 }
@@ -484,6 +521,9 @@ void ThumbnailCache::destroy(rhi::IDevice& device)
             device.destroy(entry.texture);
     }
     entries_.clear();
+    if (showcase_.texture.valid())
+        device.destroy(showcase_.texture);
+    showcase_ = Showcase{};
 }
 
 usize ThumbnailCache::residentCount() const noexcept
@@ -537,6 +577,11 @@ PreviewKind previewKindOf(const std::filesystem::path& path) noexcept
 
 render::ViewOverride previewView(const core::AABB& bounds) noexcept
 {
+    return previewView(bounds, 0.0f, 0.0f);
+}
+
+render::ViewOverride previewView(const core::AABB& bounds, f32 yaw, f32 pitch) noexcept
+{
     render::ViewOverride view;
 
     // **An empty box is framed as a unit box at the origin.** `center` and
@@ -566,7 +611,15 @@ render::ViewOverride previewView(const core::AABB& bounds) noexcept
     // than a preference -- a straight-on view of a cube is a square, and every
     // asset browser worth using draws models this way so a box reads as a box
     // and a character reads as facing somewhere.
-    const core::Vec3 direction = core::normalize(core::Vec3{-0.55f, -0.42f, -0.72f});
+    core::Vec3 direction = core::normalize(core::Vec3{-0.55f, -0.42f, -0.72f});
+    // Turned by hand: about the vertical, then up or down, and never over the
+    // top -- a camera looking straight down has no "up" to keep.
+    if (yaw != 0.0f || pitch != 0.0f) {
+        const f32 heading = std::atan2(direction.x, direction.z) + yaw;
+        const f32 elevation = std::clamp(std::asin(-direction.y) + pitch, -1.45f, 1.45f);
+        direction = core::Vec3{std::cos(elevation) * std::sin(heading), -std::sin(elevation),
+                               std::cos(elevation) * std::cos(heading)};
+    }
 
     // A square target, so the vertical and horizontal fields of view are equal
     // and one distance frames both. The half-angle is what the sphere has to fit

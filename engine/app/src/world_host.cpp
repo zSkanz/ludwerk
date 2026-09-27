@@ -440,7 +440,9 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // **The game's own contents before the scene's** (ADR 0105): no scene owns
     // them, and a scene's scripts may reach for them the moment they start.
     if (!options.bootGlobalText.empty()) {
-        if (const std::optional<core::EngineError> globalError = scene::readGlobal(*m_world, options.bootGlobalText);
+        scene::SceneIoReport globalReport;
+        if (const std::optional<core::EngineError> globalError = scene::readGlobal(
+                *m_world, options.bootGlobalText, &globalReport, options.bootStamps ? &options.bootStamps : nullptr);
             globalError.has_value())
             core::logText(LogLevel::Error, globalError->message);
     }
@@ -470,6 +472,13 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
             m_bootSceneApplied = true;
             const std::array<I18nArg, 1> args{I18nArg{"count", static_cast<core::i64>(m_bootSceneReport.instances)}};
             core::log(LogLevel::Info, ENG_TR("scene.info.scene_loaded"), args);
+            // Said, because a stamp file that moved or went takes its
+            // instances out of the game with nothing else to show for it (B4).
+            if (m_bootSceneReport.missingStamps > 0) {
+                const std::array<I18nArg, 1> missing{
+                    I18nArg{"count", static_cast<core::i64>(m_bootSceneReport.missingStamps)}};
+                core::log(LogLevel::Warn, ENG_TR("scene.warn.missing_stamps"), missing);
+            }
         }
     }
 

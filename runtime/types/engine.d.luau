@@ -19,7 +19,7 @@ export type Signal<T...> = {
     Connect: (self: Signal<T...>, handler: (T...) -> ()) -> Connection,
     Once: (self: Signal<T...>, handler: (T...) -> ()) -> Connection,
     Wait: (self: Signal<T...>) -> (T...),
-    Fire: (self: Signal<T...>, ...any) -> (),
+    Fire: (self: Signal<T...>, T...) -> (),
     Destroy: (self: Signal<T...>) -> (),
     DisconnectAll: (self: Signal<T...>) -> (),
 }
@@ -2990,13 +2990,14 @@ declare extern type VoxelService extends Instance with
 end
 
 declare extern type NavigationService extends Instance with
-    --- How wide the agent is, in metres, from its middle: paths keep this far from walls.
+    --- The DEFAULT agent type's width, in metres from its middle: paths keep this far from walls. A
+    --- size of its own is `DefineAgent`, and an agent picks one by name.
     AgentRadius: number
-    --- How tall it is: a gap lower than this is not a way through.
+    --- The default agent type's height: a gap lower than this is not a way through.
     AgentHeight: number
-    --- The highest step it walks up rather than around, in metres.
+    --- The highest step the default agent type walks up rather than around, in metres.
     AgentMaxClimb: number
-    --- The steepest ground it walks on, in degrees from level.
+    --- The steepest ground the default agent type walks on, in degrees from level.
     AgentMaxSlope: number
     --- The waypoints from `from` to `to`, each a corner to walk to in a straight line, and whether they
     --- reach the goal. **Nil when `from` is not on walkable ground at all.** A path that stops short --

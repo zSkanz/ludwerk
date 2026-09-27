@@ -70,7 +70,8 @@ private:
     // (ADR 0090): roughness, metalness and a normal map are all about how light
     // moves ACROSS a curvature, and a flat swatch shows none of them. False
     // only when the world refused to build one.
-    [[nodiscard]] bool swatchOf(const std::string& material);
+    // A part of `shape` (`Enum.PartShape`) wearing `material`.
+    [[nodiscard]] bool swatchOf(const std::string& material, core::i32 shape = 1);
 
     scene::ClassRegistry& classes_;
     scene::EnumRegistry& enums_;

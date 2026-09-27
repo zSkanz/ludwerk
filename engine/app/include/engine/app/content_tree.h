@@ -178,7 +178,16 @@ public:
     // `main.scene.json` to `level` produces `level.scene.json`, because the
     // suffix is what makes it a scene and typing a name is not asking to stop
     // being one.
-    bool rename(const ContentEntry& entry, std::string_view newName);
+    // `renamedTo`, when given, receives the new content-relative path.
+    bool rename(const ContentEntry& entry, std::string_view newName, std::string* renamedTo = nullptr);
+
+    // **Moves `from` into the folder `intoFolder`** -- both content-relative,
+    // the folder empty for the root -- keeping its name, and re-reads (the
+    // owner: things are dragged between folders). Returns the new path, `from`
+    // itself when it is already there, or empty with `why` saying what stopped
+    // it: a folder into itself or into one inside it, or a name already taken
+    // there -- refused rather than replaced, as a rename is.
+    [[nodiscard]] std::string move(std::string_view from, std::string_view intoFolder, std::string* why = nullptr);
 
     // Removes an entry and re-reads. A folder goes with everything in it, which
     // is what a person means and is why the caller is expected to have asked
@@ -289,5 +298,14 @@ private:
     std::vector<ContentEntry> m_entries;
     core::u64 m_refreshes = 0;
 };
+
+// **Every reference to `from` in the project's files, pointed at `to`**: the
+// `asset://` URNs in scenes, stamps and materials, the stamp marks, and the
+// start scene in `project.toml` -- and for a folder, everything inside it too.
+// A string in a script is a script's business and is left alone. Returns how
+// many files changed.
+std::size_t retargetContentReferences(const std::filesystem::path& contentRoot,
+                                      const std::filesystem::path& projectFile, std::string_view from,
+                                      std::string_view to);
 
 } // namespace engine::app

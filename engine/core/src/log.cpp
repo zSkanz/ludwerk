@@ -120,17 +120,36 @@ void closeLogFile() noexcept
     }
 }
 
-void logText(LogLevel level, std::string_view text)
+namespace {
+// The detail of the line being handed to the sinks, on the thread handing it.
+// Set around the sink's call alone and put back after it, so a line a sink
+// logs while it runs carries its own detail and not the outer line's.
+thread_local std::string_view t_detail;
+} // namespace
+
+void logText(LogLevel level, std::string_view text, std::string_view detail)
 {
     // Before the sink rather than after, and outside the branch: a host that
     // installs a sink -- the DebugShell's log pane, a test capturing output --
     // must not be able to take the file away with it.
     writeFile(level, text);
 
+    const std::string_view outer = std::exchange(t_detail, detail);
     if (const LogSink& sink = sinkSlot())
         sink(level, text);
     else
         writeDefault(level, text);
+    t_detail = outer;
+}
+
+void logText(LogLevel level, std::string_view text)
+{
+    logText(level, text, {});
+}
+
+std::string_view logDetail() noexcept
+{
+    return t_detail;
 }
 
 void log(LogLevel level, TextKey key, std::span<const I18nArg> args)

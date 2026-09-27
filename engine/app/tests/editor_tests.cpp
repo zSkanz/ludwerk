@@ -1398,6 +1398,8 @@ TEST_CASE("a stamp name lands in content/stamps and cannot leave content/")
     // thing to do and the wrong thing to keep.
     CHECK(Editor::normalizeStampPath("content/props/lantern") == "props/lantern.stamp.json");
     CHECK(Editor::normalizeStampPath("props\\lantern.stamp.json") == "props/lantern.stamp.json");
+    // A whole file name is one at the content's root, as the browser sends it.
+    CHECK(Editor::normalizeStampPath("lantern.stamp.json") == "lantern.stamp.json");
 
     CHECK(Editor::stampNameIsUsable("lantern-post"));
     CHECK_FALSE(Editor::stampNameIsUsable(""));

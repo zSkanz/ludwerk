@@ -70,4 +70,13 @@ void log(LogLevel level, TextKey key, std::span<const I18nArg> args = {});
 // i18n lint treats a literal reaching this from engine sources as a violation.
 void logText(LogLevel level, std::string_view text);
 
+// **The same, with a structure beside the text** (the owner: a printed table
+// opens and closes in the console). `detail` goes to whichever sink asks for
+// it with `logDetail` during its call and to nobody else: the log FILE and
+// every other sink get the text alone, so nothing that reads the log changes.
+void logText(LogLevel level, std::string_view text, std::string_view detail);
+
+// During a sink's call, the detail its line was logged with; empty otherwise.
+[[nodiscard]] std::string_view logDetail() noexcept;
+
 } // namespace engine::core

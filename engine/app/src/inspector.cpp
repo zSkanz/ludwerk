@@ -306,9 +306,14 @@ struct CategoryRow
 // The headings, in the order the panel shows them. What a person looks at
 // first -- how it looks, what it is called, where it is -- comes first, and
 // the specialist groups follow.
-constexpr std::array<std::string_view, 17> kCategoryOrder{
-    "Appearance", "Data",  "Transform", "Behavior", "Collision",  "Physics",   "Text",      "Image",      "Layout",
-    "Camera",     "Light", "Audio",     "Emission", "Constraint", "Character", "Streaming", "Navigation",
+// `Default Agent` is `NavigationService`'s four sizes (the owner asked why a
+// service showed an agent's numbers): the agent type the default walkable
+// ground is built for, which another size replaces with `DefineAgent` -- a
+// heading of its own says that where "Navigation" did not.
+constexpr std::array<std::string_view, 18> kCategoryOrder{
+    "Appearance", "Data",       "Transform", "Behavior",  "Collision",  "Physics",
+    "Text",       "Image",      "Layout",    "Camera",    "Light",      "Audio",
+    "Emission",   "Constraint", "Character", "Streaming", "Navigation", "Default Agent",
 };
 
 // Sorted by property name, so a lookup is a binary search. A name several
@@ -319,10 +324,10 @@ constexpr std::array<CategoryRow, 155> kCategories{{
     {"Acceleration", "Emission"},
     {"Active", "Behavior"},
     {"Adornee", "Data"},
-    {"AgentHeight", "Navigation"},
-    {"AgentMaxClimb", "Navigation"},
-    {"AgentMaxSlope", "Navigation"},
-    {"AgentRadius", "Navigation"},
+    {"AgentHeight", "Default Agent"},
+    {"AgentMaxClimb", "Default Agent"},
+    {"AgentMaxSlope", "Default Agent"},
+    {"AgentRadius", "Default Agent"},
     {"AlwaysOnTop", "Appearance"},
     {"Ambient", "Appearance"},
     {"AnchorPoint", "Transform"},

@@ -81,6 +81,7 @@ void CommandPalette::open(Mode mode)
     mode_ = mode;
     query_.clear();
     selected_ = 0;
+    revealSelected_ = true;
     shownFrames_ = 0;
 }
 
@@ -232,7 +233,9 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
         if (ImGui::InputTextWithHint("##query", hint, buffer, sizeof(buffer))) {
             query_ = buffer;
             selected_ = 0;
+            revealSelected_ = true;
         }
+        const int before = selected_;
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
             selected_ = count == 0 ? 0 : (selected_ + 1) % count;
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
@@ -241,6 +244,8 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
             selected_ = std::min(selected_ + 10, std::max(count - 1, 0));
         if (ImGui::IsKeyPressed(ImGuiKey_PageUp))
             selected_ = std::max(selected_ - 10, 0);
+        if (selected_ != before)
+            revealSelected_ = true;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape))
             close = true;
         if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) && count > 0 &&
@@ -268,8 +273,17 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
                 }
                 if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0f)
                     selected_ = index;
-                if (isSelected)
-                    ImGui::SetScrollHereY(0.5f);
+                // Into view by the least scroll that shows it, and only when
+                // the keyboard moved it there -- the wheel is the mouse's.
+                if (isSelected && revealSelected_) {
+                    revealSelected_ = false;
+                    const float top = ImGui::GetWindowPos().y;
+                    const float bottom = top + ImGui::GetWindowHeight();
+                    if (ImGui::GetItemRectMin().y < top)
+                        ImGui::SetScrollHereY(0.0f);
+                    else if (ImGui::GetItemRectMax().y > bottom)
+                        ImGui::SetScrollHereY(1.0f);
+                }
                 ImGui::SetCursorPos(ImVec2(rowStart.x + 6.0f, rowStart.y + ImGui::GetStyle().FramePadding.y));
                 if (!item.icon.empty()) {
                     drawIcon(item.icon, ImGui::GetTextLineHeight());

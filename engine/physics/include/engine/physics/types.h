@@ -12,6 +12,7 @@
 // rather than two things this module would have to name.
 #pragma once
 
+#include <optional>
 #include <span>
 
 #include "engine/core/math.h"
@@ -534,6 +535,15 @@ public:
 
     // World space, f64 -- the sink rebases. Colour is 0xRRGGBB.
     virtual void line(core::DVec3 from, core::DVec3 to, u32 color) = 0;
+
+    // **Where the body whose `userData` this is should be DRAWN**, when that
+    // is not where the simulation holds it: the pose the renderer shows
+    // between two ticks. A wireframe drawn at the body's own pose lags the
+    // mesh it outlines by up to a tick -- more for an anchored part a script
+    // moves, whose body catches up only at the next step (the owner: the
+    // collision box turned behind the spinning cube). Nothing draws it where
+    // the simulation has it.
+    [[nodiscard]] virtual std::optional<core::CFrameD> drawnPose([[maybe_unused]] u64 userData) { return std::nullopt; }
 };
 
 } // namespace engine::physics

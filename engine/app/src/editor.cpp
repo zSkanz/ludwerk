@@ -228,7 +228,7 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // is nothing left to keep in it.
     if (!m_content.root().empty()) {
         const std::filesystem::path global = m_content.root() / "global.json";
-        if (const std::string globalText = scene::writeGlobal(world); !globalText.empty()) {
+        if (const std::string globalText = scene::writeGlobal(world, nullptr, &stamps); !globalText.empty()) {
             if (!platform::writeTextFile(global, globalText)) {
                 m_status = EditorStatus{"could not write " + global.string(), true};
                 return false;
@@ -283,6 +283,8 @@ bool Editor::load(scene::World& world, const std::filesystem::path& path, Inspec
     }
 
     scene::SceneIoReport report;
+    // A world built afresh: what it is built from is what is read now.
+    m_stampTexts->clear();
     // **The stamps the scene names, read through this editor's content root.**
     // `scene` is L3 and has no filesystem; a scene loaded without this opens
     // with its stamped instances missing and a count saying so.
@@ -311,7 +313,15 @@ bool Editor::load(scene::World& world, const std::filesystem::path& path, Inspec
     std::string message = "loaded " + std::to_string(report.instances) + " instance(s) from " + path.string();
     if (report.unknownClasses > 0)
         message += " (" + std::to_string(report.unknownClasses) + " unknown class(es) skipped)";
-    m_status = EditorStatus{message, false};
+    // **A stamp the scene names and the content no longer has** (B4): its
+    // instances are not in the world, and saving now would take them out of
+    // the file too -- said loudly, rather than found out later.
+    if (report.missingStamps > 0) {
+        message += " -- " + std::to_string(report.missingStamps) +
+                   " stamped instance(s) not loaded: their stamp file is gone or moved. Put it back before saving, "
+                   "or saving drops them";
+    }
+    m_status = EditorStatus{message, report.missingStamps > 0};
     return true;
 }
 
@@ -873,7 +883,9 @@ bool Editor::undo(scene::World& world, Inspector& inspector)
     inspector.pruneDead(world);
     inspector.onWorldRestored();
 
-    m_status = EditorStatus{"undid " + label, false};
+    // "Undone: Edit CFrame" -- what the step was, as the history names it (the
+    // owner: "undid Edit" read strangely).
+    m_status = EditorStatus{"Undone: " + label, false};
     return true;
 }
 
@@ -887,7 +899,7 @@ bool Editor::redo(scene::World& world, Inspector& inspector)
     inspector.pruneDead(world);
     inspector.onWorldRestored();
 
-    m_status = EditorStatus{"redid " + label, false};
+    m_status = EditorStatus{"Redone: " + label, false};
     return true;
 }
 
@@ -1222,9 +1234,44 @@ Editor::ReparentPlan Editor::planReparent(const scene::World& world, std::span<c
     return plan;
 }
 
+namespace {
+
+// Where `id` is under `root`, child index by child index.
+[[nodiscard]] std::vector<core::usize> childPosition(const scene::World& world, core::InstanceId root,
+                                                     core::InstanceId id)
+{
+    std::vector<core::usize> path;
+    for (core::InstanceId walk = id; walk.valid() && walk != root; walk = world.parentOf(walk)) {
+        core::usize index = 0;
+        for (core::InstanceId sibling = world.firstChild(world.parentOf(walk)); sibling.valid() && sibling != walk;
+             sibling = world.nextSibling(sibling))
+            ++index;
+        path.insert(path.begin(), index);
+    }
+    return path;
+}
+
+[[nodiscard]] core::InstanceId atChildPosition(const scene::World& world, core::InstanceId root,
+                                               const std::vector<core::usize>& path)
+{
+    core::InstanceId at = root;
+    for (const core::usize index : path) {
+        core::InstanceId child = world.firstChild(at);
+        for (core::usize step = 0; step < index && child.valid(); ++step)
+            child = world.nextSibling(child);
+        if (!child.valid())
+            return {};
+        at = child;
+    }
+    return at;
+}
+
+} // namespace
+
 void Editor::copySelection(const scene::World& world, std::span<const core::InstanceId> ids, core::InstanceId root)
 {
     m_clipboard.clear();
+    m_clipboardMarks.clear();
     if (ids.empty())
         return;
 
@@ -1251,6 +1298,17 @@ void Editor::copySelection(const scene::World& world, std::span<const core::Inst
         if (insideAnother)
             continue;
         m_clipboard.push_back(scene::writeStamp(world, id));
+        // **The stamp marks in it, by where they are** (B11): the text holds
+        // every stamped instance in full, and a paste that dropped their marks
+        // made unlinked copies the next change to the stamp left behind.
+        std::vector<ClipboardMark> marks;
+        std::vector<core::InstanceId> subtree{id};
+        world.collectDescendants(id, subtree);
+        for (const core::InstanceId each : subtree) {
+            if (const core::NameAtom mark = world.stampOf(each); mark.valid())
+                marks.push_back(ClipboardMark{childPosition(world, id, each), std::string(world.atoms().text(mark))});
+        }
+        m_clipboardMarks.push_back(std::move(marks));
     }
 
     m_status = EditorStatus{"copied " + std::to_string(m_clipboard.size()) + " instance(s)", false};
@@ -1271,15 +1329,20 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
     m_history.record(world, m_clipboard.size() == 1 ? "Paste" : "Paste " + std::to_string(m_clipboard.size()));
 
     std::vector<core::InstanceId> pasted;
-    for (const std::string& text : m_clipboard) {
+    for (core::usize index = 0; index < m_clipboard.size(); ++index) {
         scene::SceneIoReport report;
-        const core::InstanceId placed = scene::readStamp(world, text, parent, "<clipboard>", &report);
+        const core::InstanceId placed = scene::readStamp(world, m_clipboard[index], parent, "<clipboard>", &report);
         if (!placed.valid())
             continue;
-        // **The mark does not come with it.** What was copied is a subtree, and
-        // a mark naming `<clipboard>` would point at a file that does not
-        // exist -- the marks INSIDE it are kept, because those name real ones.
+        // **Not the `<clipboard>` mark reading gives it**, which names no file;
+        // the marks the copied instances had, which do.
         world.setStamp(placed, core::NameAtom{});
+        if (index < m_clipboardMarks.size()) {
+            for (const ClipboardMark& mark : m_clipboardMarks[index]) {
+                if (const core::InstanceId at = atChildPosition(world, placed, mark.position); at.valid())
+                    world.setStamp(at, world.atoms().intern(mark.stamp));
+            }
+        }
         pasted.push_back(placed);
     }
 
@@ -1303,37 +1366,115 @@ bool Editor::canReparent(const scene::World& world, std::span<const core::Instan
     return !ids.empty() && !planReparent(world, ids, newParent, root).movable.empty();
 }
 
+namespace {
+
+// `text` with `from` at its start replaced by `to` -- the whole of it, or a
+// path inside it -- or nothing when it does not name `from`.
+[[nodiscard]] std::optional<std::string> movedPath(std::string_view text, std::string_view from, std::string_view to)
+{
+    if (text == from)
+        return std::string(to);
+    if (text.size() > from.size() && text.starts_with(from) && text[from.size()] == '/')
+        return std::string(to) + std::string(text.substr(from.size()));
+    return std::nullopt;
+}
+
+// Every instance of `world` that names `from` -- a content property, a
+// material, a stamp mark -- pointed at `to`. How many it changed.
+std::size_t retargetWorld(scene::World& world, std::string_view from, std::string_view to)
+{
+    const std::string oldUrn = std::string(asset::AssetScheme) + std::string(from);
+    const std::string newUrn = std::string(asset::AssetScheme) + std::string(to);
+    std::size_t changed = 0;
+    std::vector<core::InstanceId> pending;
+    for (core::InstanceId root = world.firstChild(core::InstanceId{}); root.valid(); root = world.nextSibling(root))
+        pending.push_back(root);
+    while (!pending.empty()) {
+        const core::InstanceId id = pending.back();
+        pending.pop_back();
+        for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
+            pending.push_back(child);
+
+        if (const core::NameAtom mark = world.stampOf(id); mark.valid()) {
+            if (const std::optional<std::string> moved = movedPath(world.atoms().text(mark), from, to)) {
+                world.setStamp(id, world.atoms().intern(*moved));
+                ++changed;
+            }
+        }
+        for (scene::ClassId cls = world.classOf(id); cls != scene::InvalidClass;) {
+            const scene::ClassDescriptor* descriptor = world.classes().find(cls);
+            if (descriptor == nullptr)
+                break;
+            for (const scene::PropertyDesc& property : descriptor->properties) {
+                if (property.readOnly ||
+                    (property.type != scene::ValueType::String && property.type != scene::ValueType::Material))
+                    continue;
+                const std::optional<scene::Value> value = world.getProperty(id, property.name);
+                if (!value.has_value())
+                    continue;
+                if (const auto* text = std::get_if<std::string>(&*value)) {
+                    if (const std::optional<std::string> moved = movedPath(*text, oldUrn, newUrn)) {
+                        (void)world.setProperty(id, property.name, scene::Value{*moved});
+                        ++changed;
+                    }
+                }
+                else if (const auto* material = std::get_if<scene::MaterialRef>(&*value)) {
+                    if (const std::optional<std::string> moved = movedPath(material->source, oldUrn, newUrn)) {
+                        (void)world.setProperty(id, property.name,
+                                                scene::Value{scene::MaterialRef{*moved, material->clone}});
+                        ++changed;
+                    }
+                }
+            }
+            cls = descriptor->super;
+        }
+    }
+    return changed;
+}
+
+} // namespace
+
+std::string Editor::moveContent(scene::World& world, std::string_view from, std::string_view intoFolder)
+{
+    std::string why;
+    const std::string moved = m_content.move(from, intoFolder, &why);
+    if (moved.empty()) {
+        report("could not move " + std::string(from) + ": " + why, true);
+        return {};
+    }
+    if (moved == from)
+        return moved;
+
+    const std::size_t references = followContent(world, from, moved);
+    std::string said = "moved to " + moved;
+    if (references > 0)
+        said += " -- " + std::to_string(references) + " reference(s) follow it";
+    report(std::move(said), false);
+    return moved;
+}
+
+std::size_t Editor::followContent(scene::World& world, std::string_view from, std::string_view to)
+{
+    if (from == to)
+        return 0;
+    const std::size_t files =
+        retargetContentReferences(m_content.root(), m_content.root().parent_path() / "project.toml", from, to);
+    // The scene's world, and the stamp open over it, which is a world of its own.
+    std::size_t instances = retargetWorld(world, from, to);
+    if (m_stage != nullptr)
+        instances += retargetWorld(m_stage->world(), from, to);
+    // What is open here follows it, so the next save writes where it now is
+    // rather than bringing the old path back.
+    for (std::string* path : {&m_openScene, &m_stamp.path, &m_material.path}) {
+        if (const std::optional<std::string> followed = movedPath(*path, from, to))
+            *path = *followed;
+    }
+    return files + instances;
+}
+
 std::string Editor::normalizeStampPath(std::string_view typed)
 {
-    std::string path(typed);
-
-    // The same normalisation a scene path gets, for the same reason: the box is
-    // labelled `content/`, so typing the prefix is the natural thing to do and
-    // the wrong thing to keep (D068).
-    for (char& c : path) {
-        if (c == '\\')
-            c = '/';
-    }
-    while (!path.empty() && path.front() == '/')
-        path.erase(path.begin());
-    constexpr std::string_view kContentPrefix = "content/";
-    while (path.compare(0, kContentPrefix.size(), kContentPrefix) == 0)
-        path.erase(0, kContentPrefix.size());
-
-    if (path.empty())
-        return path;
-
-    // **A bare name lands in `content/stamps/`**, and a name with a folder in it
-    // is taken at its word. A default that a person can step outside of, which
-    // is what makes it a convention rather than a rule.
-    if (path.find('/') == std::string::npos)
-        path = std::string(kStampFolder) + "/" + path;
-
-    if (path.size() < kStampExtension.size() ||
-        path.compare(path.size() - kStampExtension.size(), kStampExtension.size(), kStampExtension) != 0) {
-        path += kStampExtension;
-    }
-    return path;
+    return scene::normalizeStampPath(typed);
 }
 
 bool Editor::stampNameIsUsable(std::string_view typed)
@@ -1347,12 +1488,38 @@ scene::StampSource Editor::stampSource() const
     // reference into an editor that has been destroyed is the kind of thing
     // that works until somebody loads a scene during shutdown.
     const std::filesystem::path root = m_content.root();
-    return [root](std::string_view stamp) -> std::optional<std::string> {
+    const std::shared_ptr<std::unordered_map<std::string, std::string>> built = m_stampTexts;
+    return [root, built](std::string_view stamp) -> std::optional<std::string> {
         std::string text;
         if (!platform::readTextFile(root / std::filesystem::path(stamp), text))
             return std::nullopt;
+        // The first reading is what the world was built from; a later one of
+        // the same stamp is the same file unless something changed it, and
+        // then `stampChangedOnDisk` is what moves the record on.
+        (void)built->try_emplace(std::string(stamp), text);
         return text;
     };
+}
+
+core::u32 Editor::stampChangedOnDisk(scene::World& world, core::InstanceId gameRoot, std::string_view path)
+{
+    const auto found = m_stampTexts->find(std::string(path));
+    if (found == m_stampTexts->end() || !world.alive(gameRoot))
+        return 0;
+    std::string now;
+    if (!platform::readTextFile(m_content.root() / std::filesystem::path(path), now) || now == found->second)
+        return 0;
+    const std::string before = found->second;
+    found->second = now;
+    scene::SceneIoReport moved;
+    const core::u32 followed = scene::restamp(world, gameRoot, path, before, now, &moved);
+    if (followed > 0) {
+        world.retireDestroyed();
+        m_sceneDirty = true;
+        m_status = EditorStatus{
+            std::string(path) + " changed on disk; " + std::to_string(followed) + " instance(s) follow it", false};
+    }
+    return followed;
 }
 
 bool Editor::breakStamp(scene::World& world, core::InstanceId id)
@@ -1939,6 +2106,13 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
         m_status = EditorStatus{"could not read " + name, true};
         return false;
     }
+    // **A reference names an instance of THIS world**, and the file's scratch
+    // copy has its own ids -- written there, it pointed at whatever held that
+    // number (B14). Refused, and said.
+    if (descriptor->type == scene::ValueType::Instance) {
+        m_status = EditorStatus{name + " points at an instance, which a stamp file cannot take from here", true};
+        return false;
+    }
 
     const std::optional<std::string> before = stampSource()(path);
     if (!before.has_value()) {
@@ -1983,6 +2157,14 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
         }
         target = child;
     }
+    // The same position is the same instance only when it is the same class:
+    // one whose stamp moved on structurally could otherwise write into a
+    // different thing in the file (B14).
+    // One registry for both worlds, so the class ids compare.
+    if (scratch.classOf(target) != world.classOf(id)) {
+        m_status = EditorStatus{"that instance is not in " + path + " any more", true};
+        return false;
+    }
 
     const scene::World::SetResult intoStamp = scratch.setProperty(target, property, *mine);
     if (intoStamp != scene::World::SetResult::Changed && intoStamp != scene::World::SetResult::Unchanged) {
@@ -2005,8 +2187,15 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     scene::SceneIoReport moved;
     const core::u32 followed =
         gameRoot.valid() && world.alive(gameRoot) ? scene::restamp(world, gameRoot, path, *before, after, &moved) : 0u;
+    // The children it replaced leave the pools now: a paused world runs no
+    // drain to retire them, as `load` says (B5).
+    if (followed > 0)
+        world.retireDestroyed();
     if (m_stamp.open() && m_stamp.path == path)
         m_stamp.baseline = after;
+    // What the instances are now built from, so the watcher seeing this very
+    // write does not take it for somebody else's.
+    (*m_stampTexts)[path] = after;
     if (followed > 0 || moved.unlinkedStamps > 0)
         m_sceneDirty = true;
 
@@ -2052,7 +2241,10 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     scene::SceneIoReport moved;
     const core::u32 followed =
         game.alive(gameRoot) ? scene::restamp(game, gameRoot, m_stamp.path, m_stamp.baseline, text, &moved) : 0u;
+    if (followed > 0)
+        game.retireDestroyed();
     m_stamp.baseline = text;
+    (*m_stampTexts)[m_stamp.path] = text;
 
     // **Every instance it moved is a change to the SCENE, and the scene has to
     // know.** `restamp` rebuilds live instances in the game's world -- that is
@@ -2096,6 +2288,14 @@ bool Editor::closeStamp(scene::World& game, core::InstanceId gameRoot, Inspector
 
     const std::string closed = m_stamp.path;
     const bool wrote = save && saveStamp(game, gameRoot);
+    // **A save that failed keeps it open** (B9): closing anyway threw the edits
+    // away behind a message that said it had closed -- on a read-only or locked
+    // file, the one case where the edits exist nowhere else.
+    if (save && !wrote) {
+        m_status =
+            EditorStatus{"could not save " + closed + ", so it is still open -- " + m_status.value().message, true};
+        return false;
+    }
 
     // The stage goes, and with it every instance in it. **The game's world was
     // never touched**, so there is nothing to restore and no snapshot to keep --
@@ -2149,7 +2349,11 @@ std::string Editor::createStampOfClass(scene::World& world, core::InstanceId roo
         return {};
     }
 
-    if (!createStamp(world, made, root, name)) {
+    // One step to undo, the one recorded above (B8): the mark is part of it.
+    m_stampRecorded = true;
+    const bool stamped = createStamp(world, made, root, name);
+    m_stampRecorded = false;
+    if (!stamped) {
         // `createStamp` said why. Taking the instance back with it, because an
         // instance in the world that nothing wrote is not what was asked for.
         (void)m_history.undo(world);
@@ -2197,8 +2401,24 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
         child = child == id ? core::InstanceId{} : world.nextSibling(child);
     }
 
+    // Nor inside one: the outer file owns what is under it, and a mark in
+    // there is lost the next time it is saved (B6).
+    for (core::InstanceId above = world.parentOf(id); above.valid(); above = world.parentOf(above)) {
+        if (world.stampOf(above).valid()) {
+            m_status = EditorStatus{"that is inside a stamped instance -- break its link first", true};
+            return false;
+        }
+    }
+
     const std::string relative = normalizeStampPath(name);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
+    // **Never over a stamp that exists** (B7): the instances of that one would
+    // be measured against a file they were never made from.
+    std::error_code taken;
+    if (std::filesystem::exists(absolute, taken)) {
+        m_status = EditorStatus{"a stamp is already called that", true};
+        return false;
+    }
     if (!platform::createDirectories(absolute.parent_path())) {
         m_status = EditorStatus{"could not make the folder for that stamp", true};
         return false;
@@ -2214,8 +2434,11 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // **And the thing it was made from becomes an instance of it.** A file plus
     // a copy of it that nothing connects is two things that drift apart by
     // tomorrow, which is the state this whole model exists to avoid.
-    m_history.record(world, "Create Stamp");
+    if (!m_stampRecorded)
+        m_history.record(world, "Create Stamp");
     world.setStamp(id, world.atoms().intern(relative));
+    // The world changed: the scene has something to save (B8).
+    touch();
 
     (void)m_content.refresh();
     m_status = EditorStatus{"stamped " + std::to_string(report.instances) + " instance(s) into " + relative, false};
@@ -2275,6 +2498,13 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
 {
     if (!canParentInto(world, parent, root)) {
         m_status = EditorStatus{"nothing authored can live in that", true};
+        return false;
+    }
+    // **Not into a stamp being edited** (B6): a stamp inside a stamp is a
+    // question the format has not answered, and the inner one was lost on the
+    // next save of the outer.
+    if (linked && m_stage != nullptr && &world == &m_stage->world()) {
+        m_status = EditorStatus{"a stamp cannot hold another stamp yet", true};
         return false;
     }
 
@@ -2528,7 +2758,9 @@ bool Editor::reorder(scene::World& world, core::InstanceId child, core::u32 inde
     if (world.moveChild(parent, child, index) != scene::World::MoveResult::Moved)
         return false;
 
-    m_sceneDirty = true;
+    // The stamp's, when a stamp is open: reordering inside it is an edit to
+    // the stamp and not to the scene behind it (B15).
+    touch();
     inspector.reveal(child);
     m_status = EditorStatus{"reordered", false};
     return true;

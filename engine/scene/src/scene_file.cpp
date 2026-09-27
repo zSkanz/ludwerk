@@ -555,18 +555,45 @@ void collectPaths(const World& world, core::InstanceId id, const std::string& pr
 // the source" is a question about two trees, and comparing serialised text
 // would compare formatting as well as values.
 
-// The path of `id` inside the stamped subtree rooted at `stampRoot`: names
+// One step of an override path: the child's name, and when a sibling shares it,
+// `#` and which of them it is, counting from one.
+//
+// **Two parts both called `Part` were one path**, and the file then held two
+// overrides under one key -- the loader applied the last to the first part and
+// nothing to the second (the stamp audit, B1). Only when the name is shared:
+// a path a person can read stays the path they can read.
+[[nodiscard]] std::string overrideSegment(const World& world, core::InstanceId id)
+{
+    const core::NameAtom name = world.name(id);
+    const core::InstanceId parent = world.parentOf(id);
+    int shared = 0;
+    int ordinal = 0;
+    for (core::InstanceId sibling = world.firstChild(parent); sibling.valid(); sibling = world.nextSibling(sibling)) {
+        if (world.name(sibling) != name)
+            continue;
+        ++shared;
+        if (sibling == id)
+            ordinal = shared;
+    }
+    std::string segment(world.atoms().text(name));
+    if (shared > 1)
+        segment += "#" + std::to_string(ordinal);
+    return segment;
+}
+
+// The path of `id` inside the stamped subtree rooted at `stampRoot`: steps
 // joined by '.', and empty for the root itself.
 //
-// By NAME rather than by index, because a name is what a person reading the
-// file can find, and the structural rule below means two children of one parent
-// cannot both be overridden under one name without the link already being gone.
+// **Written from the STAMP's tree, not the instance's** (B2): the loader finds
+// the path in a fresh copy of the stamp, so a child renamed in one instance is
+// still found by the name the stamp gives it -- and the rename is an override
+// like any other.
 [[nodiscard]] std::string overridePath(const World& world, core::InstanceId stampRoot, core::InstanceId id)
 {
     std::string path;
     for (core::InstanceId walk = id; walk.valid() && walk != stampRoot; walk = world.parentOf(walk)) {
-        const std::string_view name = world.atoms().text(world.name(walk));
-        path = path.empty() ? std::string(name) : std::string(name) + "." + path;
+        const std::string segment = overrideSegment(world, walk);
+        path = path.empty() ? segment : segment + "." + path;
     }
     return path;
 }
@@ -692,6 +719,119 @@ void collectPaths(const World& world, core::InstanceId id, const std::string& pr
     return !theirs.has_value() || !(*theirs == mine);
 }
 
+// **What an instance carries beside its properties**: its attributes, its tags
+// and a part's own surface shader parameters (ADR 0091). One writer for a whole
+// instance and for an override of a stamped one (B3: a linked instance's lost
+// them on every save, because only its properties were compared).
+void writeAttributes(JsonWriter& out, const World& world, core::InstanceId id,
+                     const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
+{
+    AttributeMap attributes;
+    world.collectAttributes(id, attributes);
+    out.key("attributes");
+    out.beginObject();
+    // Insertion-ordered by construction, so this is stable without sorting
+    // -- the same property the world hash relies on.
+    for (const auto& entry : attributes) {
+        out.key(world.atoms().text(entry.first));
+        writeValue(out, world, entry.second, paths, report);
+    }
+    out.endObject();
+}
+
+void writeTags(JsonWriter& out, const World& world, core::InstanceId id)
+{
+    TagSet tags;
+    world.collectTags(id, tags);
+    out.key("tags");
+    out.beginArray();
+    for (const core::NameAtom tag : tags)
+        out.value(world.atoms().text(tag));
+    out.endArray();
+}
+
+// A number, or two to four in an array. Sorted by name already, so the file is
+// stable.
+void writeShaderParameters(JsonWriter& out, const std::vector<asset::ShaderParameter>& own)
+{
+    out.key("shaderParameters");
+    out.beginObject();
+    for (const asset::ShaderParameter& parameter : own) {
+        out.key(parameter.name);
+        if (parameter.components <= 1) {
+            out.value(static_cast<double>(parameter.value[0]));
+            continue;
+        }
+        out.beginInlineArray();
+        for (core::u8 component = 0; component < parameter.components; ++component)
+            out.value(static_cast<double>(parameter.value[component]));
+        out.endArray();
+    }
+    out.endObject();
+}
+
+void writeCarried(JsonWriter& out, const World& world, core::InstanceId id,
+                  const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
+{
+    AttributeMap attributes;
+    world.collectAttributes(id, attributes);
+    if (!attributes.empty())
+        writeAttributes(out, world, id, paths, report);
+    TagSet tags;
+    world.collectTags(id, tags);
+    if (!tags.empty())
+        writeTags(out, world, id);
+    if (const std::vector<asset::ShaderParameter>* own = world.partShaderParameters(id); own != nullptr)
+        writeShaderParameters(out, *own);
+}
+
+// Whether two instances carry the same attributes, tags and shader parameters.
+[[nodiscard]] bool sameAttributes(const World& live, core::InstanceId a, const World& reference, core::InstanceId b)
+{
+    AttributeMap mine;
+    AttributeMap theirs;
+    live.collectAttributes(a, mine);
+    reference.collectAttributes(b, theirs);
+    if (mine.size() != theirs.size())
+        return false;
+    for (const auto& [name, value] : mine) {
+        const core::NameAtom other = reference.atoms().lookup(live.atoms().text(name));
+        const auto found =
+            std::find_if(theirs.begin(), theirs.end(), [&](const auto& entry) { return entry.first == other; });
+        if (!other.valid() || found == theirs.end() || !(found->second == value))
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool sameTags(const World& live, core::InstanceId a, const World& reference, core::InstanceId b)
+{
+    TagSet mine;
+    TagSet theirs;
+    live.collectTags(a, mine);
+    reference.collectTags(b, theirs);
+    if (mine.size() != theirs.size())
+        return false;
+    for (const core::NameAtom tag : mine) {
+        const core::NameAtom other = reference.atoms().lookup(live.atoms().text(tag));
+        if (!other.valid() || std::find(theirs.begin(), theirs.end(), other) == theirs.end())
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool sameShaderParameters(const World& live, core::InstanceId a, const World& reference,
+                                        core::InstanceId b)
+{
+    const std::vector<asset::ShaderParameter>* mine = live.partShaderParameters(a);
+    const std::vector<asset::ShaderParameter>* theirs = reference.partShaderParameters(b);
+    const bool mineEmpty = mine == nullptr || mine->empty();
+    const bool theirsEmpty = theirs == nullptr || theirs->empty();
+    if (mineEmpty || theirsEmpty)
+        return mineEmpty == theirsEmpty;
+    return *mine == *theirs;
+}
+
 void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, core::InstanceId liveId,
                       const World& reference, core::InstanceId refId, core::InstanceId stampRoot,
                       core::InstanceId referenceRoot, const std::unordered_map<core::u32, std::string>& paths,
@@ -699,6 +839,27 @@ void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, cor
 {
     const ClassDescriptor* descriptor = live.classes().find(live.classOf(liveId));
     bool anyHere = false;
+    const auto open = [&]() {
+        if (anyHere)
+            return;
+        if (!anyOverride) {
+            out.key("overrides");
+            out.beginObject();
+            anyOverride = true;
+        }
+        out.key(overridePath(reference, referenceRoot, refId));
+        out.beginObject();
+        anyHere = true;
+    };
+
+    // A child renamed in this instance (B2). The root's own name is the
+    // instance's and is written beside its mark.
+    if (liveId != stampRoot && live.atoms().text(live.name(liveId)) != reference.atoms().text(reference.name(refId))) {
+        open();
+        out.key("Name");
+        out.value(live.atoms().text(live.name(liveId)));
+        ++report.overrides;
+    }
 
     for (const ClassDescriptor* current = descriptor; current != nullptr;
          current = live.classes().find(current->super)) {
@@ -713,20 +874,30 @@ void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, cor
 
             if (!differsFromReference(live, property, name, reference, refId, stampRoot, referenceRoot, *mine))
                 continue;
-            if (!anyHere) {
-                if (!anyOverride) {
-                    out.key("overrides");
-                    out.beginObject();
-                    anyOverride = true;
-                }
-                out.key(overridePath(live, stampRoot, liveId));
-                out.beginObject();
-                anyHere = true;
-            }
+            open();
             out.key(name);
             writeValue(out, live, *mine, paths, report);
             ++report.overrides;
         }
+    }
+    // The carried sets, each whole when it differs: an attribute removed in
+    // this instance is one the stamp's copy must lose, which a list of the
+    // changed ones cannot say.
+    if (!sameAttributes(live, liveId, reference, refId)) {
+        open();
+        writeAttributes(out, live, liveId, paths, report);
+        ++report.overrides;
+    }
+    if (!sameTags(live, liveId, reference, refId)) {
+        open();
+        writeTags(out, live, liveId);
+        ++report.overrides;
+    }
+    if (!sameShaderParameters(live, liveId, reference, refId)) {
+        open();
+        const std::vector<asset::ShaderParameter>* own = live.partShaderParameters(liveId);
+        writeShaderParameters(out, own != nullptr ? *own : std::vector<asset::ShaderParameter>{});
+        ++report.overrides;
     }
     if (anyHere)
         out.endObject();
@@ -834,48 +1005,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
     if (anyProperty)
         out.endObject();
 
-    AttributeMap attributes;
-    world.collectAttributes(id, attributes);
-    if (!attributes.empty()) {
-        out.key("attributes");
-        out.beginObject();
-        // Insertion-ordered by construction, so this is stable without sorting
-        // -- the same property the world hash relies on.
-        for (const auto& entry : attributes) {
-            out.key(world.atoms().text(entry.first));
-            writeValue(out, world, entry.second, paths, report);
-        }
-        out.endObject();
-    }
-
-    TagSet tags;
-    world.collectTags(id, tags);
-    if (!tags.empty()) {
-        out.key("tags");
-        out.beginArray();
-        for (const core::NameAtom tag : tags)
-            out.value(world.atoms().text(tag));
-        out.endArray();
-    }
-
-    // A part's own surface shader parameters (ADR 0091): a number, or two to
-    // four in an array. Sorted by name already, so the file is stable.
-    if (const std::vector<asset::ShaderParameter>* own = world.partShaderParameters(id); own != nullptr) {
-        out.key("shaderParameters");
-        out.beginObject();
-        for (const asset::ShaderParameter& parameter : *own) {
-            out.key(parameter.name);
-            if (parameter.components <= 1) {
-                out.value(static_cast<double>(parameter.value[0]));
-                continue;
-            }
-            out.beginInlineArray();
-            for (core::u8 component = 0; component < parameter.components; ++component)
-                out.value(static_cast<double>(parameter.value[component]));
-            out.endArray();
-        }
-        out.endObject();
-    }
+    writeCarried(out, world, id, paths, report);
 
     // **The ground, because a sculpted world is somebody's afternoon.**
     //
@@ -1217,6 +1347,18 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
     if (properties.type() == core::JsonType::Object) {
         for (core::usize index = 0; index < properties.size(); ++index) {
             const std::string_view name = properties.keyAt(index);
+            // An override's carried sets, applied by `applyCarried`.
+            if (name == "attributes" || name == "tags" || name == "shaderParameters")
+                continue;
+            // Only an override carries it -- an instance's own name is its
+            // `name` -- and it is a child of a stamp renamed in one instance.
+            if (name == "Name") {
+                if (const JsonValue renamed = properties[name]; renamed.type() == core::JsonType::String)
+                    world.setName(id, world.atoms().intern(renamed.asString()));
+                else
+                    ++report.refusedProperties;
+                continue;
+            }
             if (convertVersion1(world, id, name, properties[name], report))
                 continue;
             core::NameAtom atom = world.atoms().intern(name);
@@ -1277,10 +1419,32 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
 // world as its children's are. `CurrentCamera` is the one that proves it: a
 // scene that restored every part and not the camera would load into a world
 // nothing can see.
-void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::vector<PendingReference>& pending,
-               SceneIoReport& report)
+// The attributes, tags and shader parameters in `json`, onto `id` -- replacing
+// what it had of each set the JSON names when `replace` is set, which is what an
+// override of a stamped instance means (`writeCarried`).
+void applyCarried(World& world, core::InstanceId id, const JsonValue& json, SceneIoReport& report, bool replace)
 {
-    applyProperties(world, id, json["properties"], pending, report);
+    if (replace && json["attributes"].type() == core::JsonType::Object) {
+        AttributeMap had;
+        world.collectAttributes(id, had);
+        for (const auto& entry : had)
+            (void)world.setAttribute(id, entry.first, Value{});
+    }
+    if (replace && json["tags"].type() == core::JsonType::Array) {
+        TagSet had;
+        world.collectTags(id, had);
+        for (const core::NameAtom tag : had)
+            (void)world.removeTag(id, tag);
+    }
+    if (replace && json["shaderParameters"].type() == core::JsonType::Object) {
+        if (const std::vector<asset::ShaderParameter>* had = world.partShaderParameters(id); had != nullptr) {
+            std::vector<std::string> names;
+            for (const asset::ShaderParameter& parameter : *had)
+                names.push_back(parameter.name);
+            for (const std::string& name : names)
+                (void)world.clearPartShaderParameter(id, name);
+        }
+    }
 
     if (const JsonValue attributes = json["attributes"]; attributes.type() == core::JsonType::Object) {
         for (core::usize index = 0; index < attributes.size(); ++index) {
@@ -1351,6 +1515,13 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
                 ++report.refusedProperties;
         }
     }
+}
+
+void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::vector<PendingReference>& pending,
+               SceneIoReport& report)
+{
+    applyProperties(world, id, json["properties"], pending, report);
+    applyCarried(world, id, json, report, false);
 
     // A tilemap's painted blocks.
     if (const JsonValue tiles = json["tiles"]; tiles.type() == core::JsonType::Array) {
@@ -1465,6 +1636,7 @@ void applyOverrides(World& world, core::InstanceId placed, const JsonValue& over
             continue;
         }
         applyProperties(world, target, overrides[path], pending, report);
+        applyCarried(world, target, overrides[path], report, true);
         ++report.overrides;
     }
 }
@@ -1562,10 +1734,32 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
     while (!path.empty() && at.valid()) {
         const core::usize cursor = path.find('.');
         const std::string_view segment = cursor == std::string_view::npos ? path : path.substr(0, cursor);
-        const core::NameAtom atom = world.atoms().lookup(segment);
-        if (!atom.valid())
-            return {};
-        at = world.findFirstChild(at, atom);
+        // The name itself first: a child may really be called `Door#2`.
+        if (const core::NameAtom whole = world.atoms().lookup(segment);
+            whole.valid() && world.findFirstChild(at, whole).valid()) {
+            at = world.findFirstChild(at, whole);
+        }
+        else {
+            // `name#n`: the n-th child of that name (`overrideSegment`).
+            const core::usize hash = segment.rfind('#');
+            int ordinal = 0;
+            if (hash != std::string_view::npos) {
+                for (const char digit : segment.substr(hash + 1))
+                    ordinal = digit >= '0' && digit <= '9' ? ordinal * 10 + (digit - '0') : -1000000;
+            }
+            const core::NameAtom atom = ordinal > 0 ? world.atoms().lookup(segment.substr(0, hash)) : core::NameAtom{};
+            if (!atom.valid())
+                return {};
+            core::InstanceId found;
+            int seen = 0;
+            for (core::InstanceId child = world.firstChild(at); child.valid(); child = world.nextSibling(child)) {
+                if (world.name(child) == atom && ++seen == ordinal) {
+                    found = child;
+                    break;
+                }
+            }
+            at = found;
+        }
         if (cursor == std::string_view::npos)
             break;
         path.remove_prefix(cursor + 1);
@@ -1981,7 +2175,7 @@ constexpr core::i64 kGlobalVersion = 1;
 
 } // namespace
 
-std::string writeGlobal(const World& world, SceneIoReport* report)
+std::string writeGlobal(const World& world, SceneIoReport* report, StampLibrary* stamps)
 {
     SceneIoReport local;
     SceneIoReport& out = report != nullptr ? *report : local;
@@ -2006,12 +2200,13 @@ std::string writeGlobal(const World& world, SceneIoReport* report)
     writer.field("format", kGlobalFormat);
     writer.field("version", kGlobalVersion);
     writer.key("root");
-    writeInstance(writer, world, service, paths, out, core::InstanceId{}, nullptr);
+    writeInstance(writer, world, service, paths, out, core::InstanceId{}, stamps);
     writer.endObject();
     return writer.text();
 }
 
-std::optional<core::EngineError> readGlobal(World& world, std::string_view json, SceneIoReport* report)
+std::optional<core::EngineError> readGlobal(World& world, std::string_view json, SceneIoReport* report,
+                                            const StampSource* source)
 {
     SceneIoReport local;
     SceneIoReport& out = report != nullptr ? *report : local;
@@ -2034,7 +2229,7 @@ std::optional<core::EngineError> readGlobal(World& world, std::string_view json,
         applyNode(world, service, node, pending, out);
         if (const JsonValue children = node["children"]; children.type() == core::JsonType::Array) {
             for (core::usize index = 0; index < children.size(); ++index)
-                (void)readInstance(world, service, children.at(index), pending, out, nullptr, 0);
+                (void)readInstance(world, service, children.at(index), pending, out, source, 0);
         }
     }
 
@@ -2204,6 +2399,46 @@ std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport*
     return writer.text();
 }
 
+std::string normalizeStampPath(std::string_view typed)
+{
+    constexpr std::string_view StampExtension = ".stamp.json";
+    std::string path(typed);
+
+    // The same normalisation a scene path gets, for the same reason: the box is
+    // labelled `content/`, so typing the prefix is the natural thing to do and
+    // the wrong thing to keep (D068).
+    for (char& c : path) {
+        if (c == '\\')
+            c = '/';
+    }
+    while (!path.empty() && path.front() == '/')
+        path.erase(path.begin());
+    constexpr std::string_view kContentPrefix = "content/";
+    while (path.compare(0, kContentPrefix.size(), kContentPrefix) == 0)
+        path.erase(0, kContentPrefix.size());
+
+    if (path.empty())
+        return path;
+
+    // **A bare name lands in `content/stamps/`**, and a name with a folder in it
+    // is taken at its word. A default that a person can step outside of, which
+    // is what makes it a convention rather than a rule.
+    //
+    // A whole file name is a path too, one at the content's root: that is what
+    // the browser hands over for a stamp kept there, which was "not there any
+    // more" when it was sent to `stamps/` (B12).
+    const bool named = path.size() >= StampExtension.size() &&
+                       path.compare(path.size() - StampExtension.size(), StampExtension.size(), StampExtension) == 0;
+    if (path.find('/') == std::string::npos && !named)
+        path = std::string("stamps") + "/" + path;
+
+    if (path.size() < StampExtension.size() ||
+        path.compare(path.size() - StampExtension.size(), StampExtension.size(), StampExtension) != 0) {
+        path += StampExtension;
+    }
+    return path;
+}
+
 core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId parent, std::string_view stamp,
                            SceneIoReport* report)
 {
@@ -2218,6 +2453,109 @@ core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId
     };
     return placeStamp(world, parent, stamp, out, &source, 0);
 }
+
+namespace {
+
+// The position of `id` under `root`, child index by child index; empty for the
+// root. A restamp rebuilds a subtree of the same SHAPE, so a position names the
+// same instance before and after, where an id does not.
+[[nodiscard]] std::vector<core::usize> positionUnder(const World& world, core::InstanceId root, core::InstanceId id)
+{
+    std::vector<core::usize> path;
+    for (core::InstanceId walk = id; walk.valid() && walk != root; walk = world.parentOf(walk)) {
+        core::usize index = 0;
+        for (core::InstanceId sibling = world.firstChild(world.parentOf(walk)); sibling.valid() && sibling != walk;
+             sibling = world.nextSibling(sibling))
+            ++index;
+        path.insert(path.begin(), index);
+    }
+    return path;
+}
+
+[[nodiscard]] core::InstanceId atPosition(const World& world, core::InstanceId root,
+                                          const std::vector<core::usize>& path)
+{
+    core::InstanceId at = root;
+    for (const core::usize index : path) {
+        core::InstanceId child = world.firstChild(at);
+        for (core::usize step = 0; step < index && child.valid(); ++step)
+            child = world.nextSibling(child);
+        if (!child.valid())
+            return {};
+        at = child;
+    }
+    return at;
+}
+
+// **A reference a restamp has to put back** (B5): one held BY an instance the
+// rebuild replaces, or held TO one. Each end is a position under the stamped
+// instance when it is inside it, and an id when it is not -- an id outside
+// survives the rebuild and a position inside names the new instance there.
+struct Repoint
+{
+    bool ownerInside = false;
+    core::InstanceId owner;
+    std::vector<core::usize> ownerAt;
+    core::NameAtom property;
+    bool valueInside = false;
+    core::InstanceId value;
+    std::vector<core::usize> valueAt;
+};
+
+// Every instance-valued property in `world` that crosses into the part of
+// `target` a rebuild replaces -- its descendants, not itself. From inside, only
+// what this instance changed from `reference`: what it did not change takes the
+// file's new value, which is the point of a restamp.
+void collectRepoints(const World& world, core::InstanceId target, const World& reference,
+                     core::InstanceId referenceRoot, std::vector<Repoint>& out)
+{
+    const auto inside = [&](core::InstanceId id) { return id != target && world.isAncestorOf(target, id); };
+    std::vector<core::InstanceId> everyone;
+    for (core::InstanceId top = world.firstChild(core::InstanceId{}); top.valid(); top = world.nextSibling(top)) {
+        everyone.push_back(top);
+        world.collectDescendants(top, everyone);
+    }
+    for (const core::InstanceId owner : everyone) {
+        const bool ownerInside = inside(owner);
+        for (ClassId cls = world.classOf(owner); cls != InvalidClass;) {
+            const ClassDescriptor* descriptor = world.classes().find(cls);
+            if (descriptor == nullptr)
+                break;
+            for (const PropertyDesc& property : descriptor->properties) {
+                if (property.type != ValueType::Instance || !savedProperty(world, property))
+                    continue;
+                const std::optional<Value> held = property.get(world, owner);
+                const core::InstanceId* value = held.has_value() ? std::get_if<core::InstanceId>(&*held) : nullptr;
+                if (value == nullptr || !value->valid())
+                    continue;
+                const bool valueInside = inside(*value);
+                if (!ownerInside && !valueInside)
+                    continue;
+                if (ownerInside) {
+                    const core::InstanceId refOwner =
+                        atPosition(reference, referenceRoot, positionUnder(world, target, owner));
+                    if (refOwner.valid() && !differsFromReference(world, property, world.atoms().text(property.name),
+                                                                  reference, refOwner, target, referenceRoot, *held))
+                        continue;
+                }
+                Repoint entry;
+                entry.ownerInside = ownerInside;
+                entry.owner = owner;
+                if (ownerInside)
+                    entry.ownerAt = positionUnder(world, target, owner);
+                entry.property = property.name;
+                entry.valueInside = valueInside;
+                entry.value = *value;
+                if (valueInside)
+                    entry.valueAt = positionUnder(world, target, *value);
+                out.push_back(std::move(entry));
+            }
+            cls = descriptor->super;
+        }
+    }
+}
+
+} // namespace
 
 core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, std::string_view before,
                   std::string_view after, SceneIoReport* report)
@@ -2293,6 +2631,10 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
 
         core::JsonDocument overrides;
         const bool hasOverrides = anyOverride && overrides.parse(kept.text()).ok;
+        // And the references the text above cannot carry: they name instances
+        // by id, and the ids inside are about to be new ones.
+        std::vector<Repoint> repoints;
+        collectRepoints(world, target, reference, referenceRoot, repoints);
 
         // **The instance itself survives**: its id, its parent, its place among
         // its siblings and every reference anything else holds to it. Destroying
@@ -2326,6 +2668,15 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
                 (void)world.setAttribute(entry.owner, entry.property, Value{found});
             else
                 (void)world.setProperty(entry.owner, entry.property, Value{found});
+        }
+        for (const Repoint& entry : repoints) {
+            const core::InstanceId owner = entry.ownerInside ? atPosition(world, target, entry.ownerAt) : entry.owner;
+            const core::InstanceId value = entry.valueInside ? atPosition(world, target, entry.valueAt) : entry.value;
+            if (!owner.valid() || !world.alive(owner) || !value.valid()) {
+                ++out.droppedReferences;
+                continue;
+            }
+            (void)world.setProperty(owner, entry.property, Value{value});
         }
 
         ++out.stamped;
@@ -2452,11 +2803,12 @@ std::vector<core::NameAtom> stampOverrides(const World& world, core::InstanceId 
     for (const ClassDescriptor* current = descriptor; current != nullptr;
          current = world.classes().find(current->super)) {
         for (const PropertyDesc& property : current->properties) {
-            if (property.get == nullptr || property.set == nullptr || property.readOnly)
+            // What the save writes, and nothing else: a transient property is
+            // the running game's, and marking it overridden offered to revert
+            // or apply something no file will ever hold (B15).
+            if (!savedProperty(world, property))
                 continue;
             const std::string_view name = world.atoms().text(property.name);
-            if (isStructuralProperty(name))
-                continue;
             const std::optional<Value> mine = property.get(world, id);
             if (!mine.has_value())
                 continue;

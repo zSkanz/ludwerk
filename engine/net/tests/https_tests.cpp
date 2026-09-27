@@ -130,6 +130,15 @@ TEST_CASE("a request that keeps being redirected stops after five")
 TEST_CASE("a certificate this device does not trust is refused, and nothing is sent")
 {
     seedCatalog();
+#if defined(__APPLE__)
+    // **No TLS server here to refuse.** The test's server is Schannel on
+    // Windows and the system OpenSSL on Linux; macOS refuses to load its own
+    // `libssl` into a process, and serving TLS from the Security framework is
+    // a server of its own to write. The client is `NSURLSession`, which checks
+    // the certificate with no switch to stop it.
+    MESSAGE("skipped on macOS: no in-process TLS server to test the refusal against");
+    return;
+#endif
     const testing::TlsIdentity identity;
     REQUIRE_MESSAGE(identity.ok(), "could not make a test certificate");
 

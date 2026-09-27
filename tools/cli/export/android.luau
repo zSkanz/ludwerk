@@ -255,6 +255,7 @@ end
 export type Settings = {
     package: string,
     versionCode: number,
+    -- The manifest's `screenOrientation`, from the start scene.
     orientation: string,
     background: string?,
     foreground: string?,
@@ -264,11 +265,55 @@ export type Settings = {
     keyAlias: string?,
 }
 
-local Orientations: { [string]: string } = {
-    landscape = "sensorLandscape",
-    portrait = "sensorPortrait",
-    sensor = "fullSensor",
+--- `Enum.ScreenOrientation`, by name and by number, as the manifest spells it.
+local SceneOrientations: { [string | number]: string } = {
+    LandscapeLeft = "landscape",
+    LandscapeRight = "reverseLandscape",
+    LandscapeSensor = "sensorLandscape",
+    Portrait = "portrait",
+    Sensor = "fullSensor",
+    [0] = "landscape",
+    [1] = "reverseLandscape",
+    [2] = "sensorLandscape",
+    [3] = "portrait",
+    [4] = "fullSensor",
 }
+
+--- The engine's `UIService.ScreenOrientation`, for a scene that never set it.
+local DefaultOrientation = "sensorLandscape"
+
+--- **The start scene's `UIService.ScreenOrientation`, as the manifest names
+--- it** (the owner, 2026-09-27). The manifest is how the phone holds the game
+--- from its first frame, before any scene has loaded, and the scene says how
+--- it is held once one has. An export setting of its own beside the scene's
+--- was two answers to one question, and when they differed the screen turned
+--- the moment the game started -- so there is one, and it is the scene's.
+local function startOrientation(project: projectlib.Project): string
+    local projectSection = project.config.project
+    local scene = if typeof(projectSection) == "table" and typeof(projectSection.scene) == "string"
+        then projectSection.scene
+        else nil
+    if scene == nil then
+        return DefaultOrientation
+    end
+    local file = projectlib.joined(project.root, "content", scene)
+    if not fs.exists(file) then
+        return DefaultOrientation
+    end
+    local ok, decoded = pcall(json.deserialize, fs.readFileToString(file))
+    if not ok or typeof(decoded) ~= "table" then
+        return DefaultOrientation
+    end
+    local document = decoded :: { [string]: any }
+    local storage = document.storage
+    local service = if typeof(storage) == "table" then storage.UIService else nil
+    local properties = if typeof(service) == "table" then service.properties else nil
+    local value = if typeof(properties) == "table" then properties.ScreenOrientation else nil
+    if (typeof(value) == "string" or typeof(value) == "number") and SceneOrientations[value] ~= nil then
+        return SceneOrientations[value]
+    end
+    return DefaultOrientation
+end
 
 --- `[export.android]`, with its defaults (ADR 0104 §3). The message is set
 --- when a value is present and wrong, which is refused rather than guessed.
@@ -287,10 +332,7 @@ local function settings(project: projectlib.Project): (Settings?, string?)
     if versionCode < 1 or versionCode ~= math.floor(versionCode) then
         return nil, tr("cli.build.err.android_version_code", { code = tostring(versionCode) })
     end
-    local orientation = if typeof(section.orientation) == "string" then section.orientation else "landscape"
-    if Orientations[orientation] == nil then
-        return nil, tr("cli.build.err.android_orientation", { orientation = orientation })
-    end
+    local orientation = startOrientation(project)
     local background = if typeof(section.icon_background) == "string" then section.icon_background else nil
     local foreground = if typeof(section.icon_foreground) == "string"
         then projectlib.joined(project.root, section.icon_foreground)
@@ -516,7 +558,7 @@ local function assemble(options: AssembleOptions): (string?, string?)
             `-Pengine.buildRoot={buildRoot}`,
             `-Pengine.versionCode={math.floor(options.settings.versionCode)}`,
             `-Pengine.versionName={options.versionName}`,
-            `-Pengine.orientation={Orientations[options.settings.orientation]}`,
+            `-Pengine.orientation={options.settings.orientation}`,
             `-Pengine.keystore={options.keystore}`,
             `-Pengine.keyAlias={options.keyAlias}`,
         }

@@ -103,13 +103,17 @@ executable = "skyhopper"          # default: the name, in lower case
 [export.android]
 package = "com.studio.skyhopper"  # default: [project] id
 version_code = 7                  # a store refuses an update whose code is not higher
-orientation = "landscape"         # landscape | portrait | sensor
 icon_background = "#1E90FF"       # the adaptive icon's background
 icon_foreground = "branding/foreground.png"  # optional: a foreground drawn for the safe zone
 release = false                   # false: this machine's debug key; true: the keystore below
 keystore = "keys/release.keystore"
 key_alias = "skyhopper"
 ```
+
+**Which way up the phone is held** is not a setting here: it is the start
+scene's `UIService.ScreenOrientation`, which the APK is held at from its first
+frame and which a script may change later. One answer, so the screen does not
+turn the moment the game starts.
 
 **Bump on export** (`ludwerk build --target=android --bump-version-code`) raises
 `version_code` by one in `project.toml` before it exports, leaving the rest of

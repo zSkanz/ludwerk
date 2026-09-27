@@ -594,11 +594,17 @@ core::InstanceId World::clone(core::InstanceId id)
         const InstanceRecord* record = m_instances.find(original);
         const ClassId sourceClass = record->classId;
         const core::NameAtom sourceName = record->name;
+        const core::NameAtom sourceStamp = record->stamp;
 
         const core::InstanceId copy = create(sourceClass);
         if (!copy.valid())
             return {};
         setName(copy, sourceName);
+        // **A copy of a stamped instance is another instance of that stamp**
+        // (B11): duplicating a linked lamp post made an unlinked one, which the
+        // next change to the stamp then left behind.
+        if (sourceStamp.valid())
+            setStamp(copy, sourceStamp);
         mapping[key(original)] = copy;
     }
 

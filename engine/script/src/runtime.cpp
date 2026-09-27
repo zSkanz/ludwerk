@@ -18,6 +18,7 @@
 #include "engine/script/signals.h"
 #include "engine/script/tasks.h"
 #include "engine/script/tweens.h"
+#include "print_tree.h"
 
 // ADR 0002: shipping links Luau.VM and Luau.CodeGen only, and this header comes
 // with the Compiler that profile drops. `runSource` refuses below rather than
@@ -63,19 +64,55 @@ int16_t internAtom(lua_State* L, const char* text, size_t length)
 // Concatenates the call's arguments the way `print` does -- tab-separated,
 // `tostring` applied to each -- so that `warn` differs from `print` in severity
 // and in nothing else.
-std::string concatArguments(lua_State* L)
+//
+// **A table prints as what is in it** (the owner, 2026-09-27), not as its
+// address: `{a = 1, b = {...}}` on the line, and every field -- the tables
+// inside it too -- in `tree` for the console to fold (`print_tree.h`). With
+// more than one table among the arguments, each is a row of its own there,
+// named by its position.
+std::string concatArguments(lua_State* L, std::string* tree = nullptr)
 {
     std::string line;
     const int count = lua_gettop(L);
+    int tables = 0;
+    for (int index = 1; index <= count; ++index)
+        tables += printsAsTree(L, index) ? 1 : 0;
     for (int index = 1; index <= count; ++index) {
-        size_t length = 0;
-        const char* text = luaL_tolstring(L, index, &length);
         if (index > 1)
             line += '\t';
+        if (printsAsTree(L, index)) {
+            line += printSummary(L, index);
+            if (tree == nullptr)
+                continue;
+            if (tables == 1) {
+                appendPrintTree(L, index, 0, *tree);
+            }
+            else {
+                *tree += "0\x1F[" + std::to_string(index) + "]\x1F" + printSummary(L, index) + "\n";
+                appendPrintTree(L, index, 1, *tree);
+            }
+            continue;
+        }
+        size_t length = 0;
+        const char* text = luaL_tolstring(L, index, &length);
         line.append(text, length);
         lua_pop(L, 1);
     }
     return line;
+}
+
+// Where the script that called is, as the first row of a print's detail:
+// `@<chunk> 0x1F <line>`. The console names it beside the line and stacks a
+// message only with the same one from the same place (the owner).
+std::string callerRow(lua_State* L)
+{
+    lua_Debug ar{};
+    if (lua_getinfo(L, 1, "sl", &ar) == 0 || ar.source == nullptr || ar.currentline <= 0)
+        return {};
+    std::string_view chunk{ar.source};
+    if (!chunk.empty() && (chunk.front() == '=' || chunk.front() == '@'))
+        chunk.remove_prefix(1);
+    return "@" + std::string(chunk) + "\x1F" + std::to_string(ar.currentline) + "\n";
 }
 
 // `warn` is a global api-design.md §1.1 lists and Luau does not define -- its
@@ -85,8 +122,9 @@ std::string concatArguments(lua_State* L)
 // not what a game says.
 int scriptWarn(lua_State* L)
 {
-    const std::string line = concatArguments(L);
-    core::logText(core::LogLevel::Warn, line);
+    std::string tree = callerRow(L);
+    const std::string line = concatArguments(L, &tree);
+    core::logText(core::LogLevel::Warn, line, tree);
     // Exactly ONE deferred fire per call, carrying the text verbatim
     // (api-design.md §2.1). Not per argument, and not per log line.
     publishMessage(L, core::LogLevel::Warn, line);
@@ -95,8 +133,9 @@ int scriptWarn(lua_State* L)
 
 int scriptPrint(lua_State* L)
 {
-    const std::string line = concatArguments(L);
-    core::logText(core::LogLevel::Info, line);
+    std::string tree = callerRow(L);
+    const std::string line = concatArguments(L, &tree);
+    core::logText(core::LogLevel::Info, line, tree);
     publishMessage(L, core::LogLevel::Info, line);
     return 0;
 }

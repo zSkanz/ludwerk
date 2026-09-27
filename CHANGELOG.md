@@ -281,20 +281,71 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 - **The editor is laid out as a game engine** (the owner, 2026-09-27: the look
   may be the code editor's, the layout has to be an engine's). The Explorer
-  alone on the left, Properties the full height on the right, and along the
-  bottom, under the tree and the world, the Content browser, the Console, Run
-  and Debug and Stats. Every open script is a tab beside the Viewport -- and
+  alone on the left, Properties the full height on the right with Stats a tab
+  beside it, and along the bottom, under the tree and the world, the Content
+  browser, the Console and Run and Debug. Every open script is a tab beside the Viewport -- and
   one that would open undocked, from an older layout, opens there too. Play,
   pause and step sit in the middle of the toolbar, the transform tools on the
   left, and the snap steps, the tools and Export on the right. The browser
   shows the project's folders beside a grid wide enough for names. Layouts
   saved before are rebuilt once.
+- **The material editor opens beside the Viewport, the Viewport's size**: a
+  large preview turned by dragging, on a ball, a block or a cylinder, beside
+  its fields in the Properties grid -- Surface, Lighting, Textures, Surface
+  Shader and what a part may change. A texture slot shows its picture, takes a
+  texture dragged onto it and clears with one click. Closing with unsaved
+  changes asks. The Export window opens beside the Viewport too.
+- **Preferences is one window of one size**: a search over every setting, the
+  pages in a tree down the left, the settings in the Properties grid.
+- **Anything in the Content browser drags onto a folder to move there** -- a
+  folder cell, the folder tree or a step of the path -- and every scene,
+  stamp, material, the start scene in `project.toml` and the open world that
+  named it follow. A rename does the same. A field that takes a file lights up
+  only for a file of its kind.
+- **A printed table opens in the console**, and the tables inside it,
+  closed until opened; the line says what is in it rather than its address.
+  The same line printed again from the same place is one line with a count, and
+  a script's line names where it was printed, which a click opens.
+- **The reference grid fades between its spacings** as the camera climbs,
+  instead of jumping to ten times the spacing at one height.
+- **The collision wireframe is drawn where the parts are drawn**, between two
+  ticks, and coloured by how a body moves.
+- **Properties, from the owner's pass over it**: categories and the
+  properties in them are in alphabetical order, a category is a heading that
+  reads as one, Attributes and Tags are rows of the same grid, a number field
+  works out what is typed into it (`0+2`, `1/2`, `90/4`), and an enum shows
+  its item's name closed and its whole name open. Stats is drawn in the same
+  grid. An instance whose `Enabled` is off is dimmed in the Explorer.
+- **The activity bar marks a panel that is open**, wherever it is: a click
+  closes it as its own X would, and a click on a closed one opens it with the
+  keyboard in it.
+- **An Android export's orientation is the start scene's
+  `UIService.ScreenOrientation`**: `[export.android] orientation` is gone. Two
+  answers to how the phone is held turned the screen the moment the game
+  started whenever they differed.
 - `SetMaterialParameter` with a name no built-in field has, on a part whose
   material does not declare it, raises *not declared* rather than *not a
   parameter*: such a name may be a surface shader's.
 
 ### Fixed
 
+- **Stamps** (an audit of the whole feature): two children of one name no
+  longer swap their overrides; a child renamed in one instance keeps its name
+  and its edits; attributes, tags and a part's shader parameters on a linked
+  instance survive a save; references to and from the children a stamp
+  rebuilds survive saving the stamp; duplicating, copying and pasting a linked
+  instance keeps it linked, and so does one under `GlobalScriptService`; a
+  stamp at the content's root opens and places; `Instance.stamp("name")`
+  finds `stamps/name.stamp.json` as documented; a stamp is never made over one
+  that exists, nor inside a stamped instance; closing a stamp whose save failed
+  keeps it open; a scene naming a stamp that is gone says so when it loads; and
+  a stamp changed on disk during `ludwerk dev` moves its linked instances.
+- **Editor defects the owner reported**: a script edited and edited back is
+  not unsaved; F3 twice brings back the tabs that were in front, not the last
+  one drawn; the Command Palette scrolls under the wheel; a submenu keeps its
+  icon while it is open; a toast says "Undone: Edit Size" rather than
+  "undid Edit"; and the default agent's settings sit under their own heading
+  on `NavigationService`, where they are documented as the default agent's.
 - **The editor asked to save scripts nobody had changed**: a script written
   with spaces was converted to tabs on opening and marked unsaved, and its
   scene with it -- which is every template and example. The conversion stays;

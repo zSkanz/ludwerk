@@ -73,6 +73,10 @@ private:
     Mode mode_ = Mode::Commands;
     std::string query_;
     int selected_ = 0;
+    // Set when the KEYBOARD (or a new query) moved the selection, which is the
+    // only time the list follows it: following it every frame fought the
+    // mouse wheel back to the selected row (the owner).
+    bool revealSelected_ = false;
     int shownFrames_ = 0;
     // The titles of the commands run most recently, newest first: an empty
     // palette lists these above everything else.

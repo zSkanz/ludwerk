@@ -61,6 +61,9 @@ public:
     void clear() noexcept;
 
     void line(Vec3 from, Vec3 to, DebugColor color);
+    // A colour at each end, blended along it: a line that fades out, as the
+    // reference grid's do into the distance.
+    void line(Vec3 from, Vec3 to, DebugColor fromColor, DebugColor toColor);
 
     // Axis-aligned. `halfExtents` rather than a size, because every caller of
     // this so far has a centre and a radius, and halving at each call site is

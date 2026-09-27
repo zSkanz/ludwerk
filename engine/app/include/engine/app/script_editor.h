@@ -198,10 +198,27 @@ struct OpenScript
     // arrowing down into a document they cannot see.
     Position shownCaret{~0u, 0};
 
-    // The revision the text had when it was last written out. **Dirty is a
-    // comparison rather than a flag**, so there is no way to change the text and
-    // forget to set it -- which is the defect a bool invites.
+    // The revision the text had when it was last written out, and the text
+    // itself. **Dirty is a comparison rather than a flag**, so there is no way
+    // to change the text and forget to set it -- which is the defect a bool
+    // invites. And it compares the TEXT when the revision differs (the owner:
+    // an edit undone back to where it was still asked to be saved), because an
+    // undo is a revision too, and text that is what was saved is not unsaved.
     core::u64 savedRevision = 0;
+    std::string savedText;
+    // What the last text comparison answered, and at which revision: it runs
+    // once per change of revision, not once per frame.
+    mutable core::u64 comparedRevision = ~0ull;
+    mutable bool differs = false;
+
+    // The text as it is now, taken as the saved state.
+    void markSavedNow()
+    {
+        savedRevision = document.revision();
+        savedText = document.text();
+        comparedRevision = savedRevision;
+        differs = false;
+    }
 
     // The revision seen on the previous frame. **How the pane knows the text is
     // at rest**: parsing on every keystroke would re-parse a file per character,
@@ -290,7 +307,16 @@ struct OpenScript
     // caret on its first line, instead of waiting for a click.
     bool claimCaret = false;
 
-    [[nodiscard]] bool dirty() const noexcept { return document.revision() != savedRevision; }
+    [[nodiscard]] bool dirty() const
+    {
+        if (document.revision() == savedRevision)
+            return false;
+        if (comparedRevision != document.revision()) {
+            comparedRevision = document.revision();
+            differs = document.text() != savedText;
+        }
+        return differs;
+    }
 };
 
 class ScriptEditor
@@ -382,13 +408,13 @@ public:
     // Marks a tab as written out. Called after the file or the scene took the
     // text, never before -- a document that says it is saved and is not is the
     // one lie this class must never tell.
-    void markSaved(std::size_t index) noexcept;
+    void markSaved(std::size_t index);
     // **Every tab the written file carries**: a scene or a stamp holds the
     // `Source` of each of its scripts, so writing it saves all of them -- and
     // marking only the tab that asked left the others with the floppy of an
     // unsaved script that was already on disk (reported with a screenshot).
     // A script that is its own file under `src/scripts` is not in either.
-    void markSavedWhere(ScriptOrigin origin) noexcept;
+    void markSavedWhere(ScriptOrigin origin);
 
     // **Closes tabs whose instance is gone.** A script can be deleted from the
     // Explorer, and a hot reload replaces every instance in the world -- so a

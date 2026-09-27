@@ -92,6 +92,12 @@ void DebugDraw::line(Vec3 from, Vec3 to, DebugColor color)
     vertices_.push_back({to, color});
 }
 
+void DebugDraw::line(Vec3 from, Vec3 to, DebugColor fromColor, DebugColor toColor)
+{
+    vertices_.push_back({from, fromColor});
+    vertices_.push_back({to, toColor});
+}
+
 void DebugDraw::wireBox(Vec3 center, Vec3 halfExtents, DebugColor color)
 {
     std::array<Vec3, kBoxCornerCount> corners{};

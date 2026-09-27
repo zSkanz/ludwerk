@@ -763,7 +763,9 @@ int instanceStamp(lua_State* L)
 {
     size_t length = 0;
     const char* text = luaL_checklstring(L, 1, &length);
-    const std::string name(text, length);
+    // `"lantern-post"` is `stamps/lantern-post.stamp.json`, as the editor reads
+    // it and as the error text says (B12).
+    const std::string name = scene::normalizeStampPath(std::string_view(text, length));
     const bool linked = lua_isnoneornil(L, 2) || lua_toboolean(L, 2) != 0;
 
     VmContext& ctx = context(L);

@@ -20,10 +20,10 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `AgentHeight` | `number` | `2` | read/write | How tall it is: a gap lower than this is not a way through. |
-| `AgentMaxClimb` | `number` | `0.5` | read/write | The highest step it walks up rather than around, in metres. |
-| `AgentMaxSlope` | `number` | `45` | read/write | The steepest ground it walks on, in degrees from level. |
-| `AgentRadius` | `number` | `0.5` | read/write | How wide the agent is, in metres, from its middle: paths keep this far from walls. |
+| `AgentHeight` | `number` | `2` | read/write | The default agent type's height: a gap lower than this is not a way through. |
+| `AgentMaxClimb` | `number` | `0.5` | read/write | The highest step the default agent type walks up rather than around, in metres. |
+| `AgentMaxSlope` | `number` | `45` | read/write | The steepest ground the default agent type walks on, in degrees from level. |
+| `AgentRadius` | `number` | `0.5` | read/write | The DEFAULT agent type's width, in metres from its middle: paths keep this far from walls. A size of its own is `DefineAgent`, and an agent picks one by name. |
 
 ## Methods
 

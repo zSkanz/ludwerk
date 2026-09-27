@@ -118,6 +118,7 @@
   "scene.info.scene_written": "Wrote {count} instance(s) to {path}.",
   "scene.info.scene_changed": "The scene is now {path}: {count} instance(s).",
   "scene.info.scene_loaded": "Loaded a scene of {count} instance(s).",
+  "scene.warn.missing_stamps": "{count} stamped instance(s) were not loaded: the stamp file they name is not in the content.",
   "scene.warn.two_sources": "This project has two sources for one world: the scene put {scene} instance(s) under Workspace and the entry scripts then added {scripts} more. Anything the scene already held and the scripts build again is now in the world twice. Either stop building that world in code, or do not give this project a scene.",
   "scene.err.unknown_collision_group": "No collision group by that name is registered.",
   "scene.err.ragdoll_no_rig": "A Ragdoll has to be parented to a MeshPart with a skeleton; this one is not.",

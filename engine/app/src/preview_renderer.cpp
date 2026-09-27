@@ -163,7 +163,7 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
         const std::filesystem::path relative = std::filesystem::relative(job.path, contentRoot_, ec);
         if (ec || relative.empty())
             return false;
-        if (!swatchOf(std::string(asset::AssetScheme) + relative.generic_string()))
+        if (!swatchOf(std::string(asset::AssetScheme) + relative.generic_string(), job.swatchShape))
             return false;
         (void)loader_.syncPrimitives(device, cmd, *scratch_, meshes_, library_);
         (void)loader_.syncTextures(device, cmd, *scratch_, textures_);
@@ -211,7 +211,7 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
         return core::AABB{core::Vec3{static_cast<f32>(min.x), static_cast<f32>(min.y), static_cast<f32>(min.z)},
                           core::Vec3{static_cast<f32>(max.x), static_cast<f32>(max.y), static_cast<f32>(max.z)}};
     }();
-    const render::ViewOverride view = previewView(bounds);
+    const render::ViewOverride view = previewView(bounds, job.yaw, job.pitch);
 
     render::RenderWorld snapshot;
     render::extract(*scratch_, workspace_, core::InstanceId{}, library_, 1.0f, renderer_.shadowRadius(), nullptr, 0.0f,
@@ -240,7 +240,7 @@ bool HostPreviewRenderer::drawPreview(rhi::IDevice& device, rhi::ICmdList& cmd, 
     return true;
 }
 
-bool HostPreviewRenderer::swatchOf(const std::string& material)
+bool HostPreviewRenderer::swatchOf(const std::string& material, core::i32 shape)
 {
     if (partClass_ == scene::InvalidClass)
         return true;
@@ -254,7 +254,8 @@ bool HostPreviewRenderer::swatchOf(const std::string& material)
     // A ball of a metre, at the origin. The size is arbitrary and the framing
     // does not care -- `previewView` fits whatever it is given -- but a round
     // number keeps the picture the same if somebody changes the view later.
-    (void)scratch_->setProperty(ball, shapeProperty_, scene::Value{scene::EnumValue{partShapeEnum_, 1}});
+    (void)scratch_->setProperty(ball, shapeProperty_,
+                                scene::Value{scene::EnumValue{partShapeEnum_, std::clamp(shape, 0, 2)}});
     (void)scratch_->setProperty(ball, sizeProperty_, scene::Value{core::Vec3{1.0f, 1.0f, 1.0f}});
     (void)scratch_->setProperty(ball, materialProperty_, scene::Value{scene::MaterialRef{material, 0}});
     return true;

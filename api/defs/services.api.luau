@@ -1920,28 +1920,29 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "0.5",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "How wide the agent is, in metres, from its middle: paths keep this far from walls.",
+                Doc = "The DEFAULT agent type's width, in metres from its middle: paths keep this far from walls. "
+                    .. "A size of its own is `DefineAgent`, and an agent picks one by name.",
             },
             {
                 Name = "AgentHeight",
                 Type = "number",
                 Default = "2",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "How tall it is: a gap lower than this is not a way through.",
+                Doc = "The default agent type's height: a gap lower than this is not a way through.",
             },
             {
                 Name = "AgentMaxClimb",
                 Type = "number",
                 Default = "0.5",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The highest step it walks up rather than around, in metres.",
+                Doc = "The highest step the default agent type walks up rather than around, in metres.",
             },
             {
                 Name = "AgentMaxSlope",
                 Type = "number",
                 Default = "45",
                 ErrorKey = "scene.err.nav_slope",
-                Doc = "The steepest ground it walks on, in degrees from level.",
+                Doc = "The steepest ground the default agent type walks on, in degrees from level.",
             },
         } :: { Schema.Property },
         Methods = {

@@ -72,8 +72,10 @@ struct Fixture
         //
         // The sink is process-global, so two live fixtures fight over it and the
         // younger wins. No test below keeps two alive while asserting on output.
-        core::setLogSink(
-            [this](core::LogLevel level, std::string_view text) { logged.emplace_back(level, std::string(text)); });
+        core::setLogSink([this](core::LogLevel level, std::string_view text) {
+            logged.emplace_back(level, std::string(text));
+            details.emplace_back(core::logDetail());
+        });
     }
 
     ~Fixture() { core::resetLogSink(); }
@@ -82,6 +84,9 @@ struct Fixture
     Fixture& operator=(const Fixture&) = delete;
 
     std::vector<std::pair<core::LogLevel, std::string>> logged;
+    // What each line carried beside its text (`core::logDetail`): a printed
+    // table's rows.
+    std::vector<std::string> details;
 
     // Constructed after the registries are populated, because
     // `registerInstanceBinding` resolves every method against them at boot.

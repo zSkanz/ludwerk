@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -634,6 +635,10 @@ struct EditorCommands
     std::string newStampName;
     std::string renameContent;
     std::string renameContentTo;
+    // A file or folder of the content dragged onto a folder: what, and into
+    // which (content-relative, empty for the root). `Editor::moveContent`.
+    std::string moveContent;
+    std::string moveContentInto;
 
     // A stamp dropped onto an instance-reference property: the file, and which
     // property to point at it. The selection is the target, read at the drain
@@ -712,7 +717,8 @@ struct EditorCommands
                !duplicateContent.empty() || newStampClass != scene::InvalidClass || !renameContent.empty() ||
                !assignStampPath.empty() || importAssets || importParent.valid() || openScript.valid() ||
                !assignMaterialPath.empty() || !openMaterial.empty() || !newMaterial.empty() ||
-               !newMaterialVariantOf.empty() || !assignSkyboxPath.empty() || !newShader.empty() || !openFile.empty();
+               !newMaterialVariantOf.empty() || !assignSkyboxPath.empty() || !newShader.empty() || !openFile.empty() ||
+               !moveContent.empty();
     }
 };
 
@@ -916,6 +922,19 @@ public:
     // a scene.
     [[nodiscard]] ContentTree& content() noexcept { return m_content; }
     [[nodiscard]] const ContentTree& content() const noexcept { return m_content; }
+
+    // **Moves a file or folder of the content into another folder, and every
+    // reference to it with it** (the owner: dragging between folders has to be
+    // practical, and a move that broke every scene naming the file is not):
+    // the project's files (`retargetContentReferences`), the instances in
+    // `world`, and the scene, stamp and material open here. Reported on the
+    // status line either way. Returns the new path, or empty when refused.
+    std::string moveContent(scene::World& world, std::string_view from, std::string_view intoFolder);
+
+    // What a move does after the file has moved, for a rename too: the
+    // references in the project's files and in the worlds, and the paths of
+    // what is open. How many references it changed.
+    std::size_t followContent(scene::World& world, std::string_view from, std::string_view to);
 
     // Writes a new entry script under `<project>/src/scripts/<name>.luau` and
     // returns whether it landed.
@@ -1489,6 +1508,13 @@ public:
     // `scene` is L3 and has no filesystem.
     [[nodiscard]] scene::StampSource stampSource() const;
 
+    // **A stamp file changed on disk by something else** -- a text editor, a
+    // version-control checkout (B13): every linked instance of it in `world`
+    // follows, measured against the text it was built from so what an instance
+    // has of its own stays. Nothing when the text is the one already built.
+    // How many instances moved.
+    core::u32 stampChangedOnDisk(scene::World& world, core::InstanceId gameRoot, std::string_view path);
+
     // What `createStamp` will actually write, given what somebody typed.
     // Public and pure so a dialog can preview the resolved path while it is
     // being typed, which is the half that makes the rule visible rather than
@@ -1685,12 +1711,19 @@ public:
     // Bump it only for a default that was WRONG rather than merely different. A
     // number that moved for a preference would be a preference overwritten.
     //
-    // 2 and 3 are the exceptions, and both were asked for: the owner's remake
-    // of the editor after VS Code (2026-09-27) moved every panel, and the same
-    // day's "a game engine's layout" moved them again -- the files under the
-    // world, the tree alone, the inspector the full height. A layout saved
-    // before either is rebuilt once, as Reset Layout would.
-    static constexpr core::i64 CurrentLayoutRevision = 3;
+    // 2, 3 and 4 are the exceptions, and all were asked for: the owner's
+    // remake of the editor after VS Code (2026-09-27) moved every panel, the
+    // same day's "a game engine's layout" moved them again -- the files under
+    // the world, the tree alone, the inspector the full height -- and Stats
+    // then went beside Properties. A layout saved before is rebuilt once, as
+    // Reset Layout would.
+    //
+    // 5 rebuilds nothing: it puts the Material editor and the Export window,
+    // which a layout remembered floating, beside the Viewport once -- where
+    // they now open (the owner) -- and leaves every other panel where it is.
+    static constexpr core::i64 CurrentLayoutRevision = 5;
+    // The last revision that rebuilt the whole arrangement.
+    static constexpr core::i64 LastRebuiltLayoutRevision = 4;
 
     [[nodiscard]] core::i64 layoutRevision() const noexcept { return m_layoutRevision; }
     void setLayoutRevision(core::i64 revision) noexcept
@@ -2385,8 +2418,18 @@ public:
     //
     // Advisory rather than a lock, exactly as the stamp's is: what it decides is
     // whether a question is asked, never whether an edit is allowed.
-    [[nodiscard]] bool sceneDirty() const noexcept { return m_sceneDirty; }
-    [[nodiscard]] bool hasUnsavedWork() const noexcept { return m_sceneDirty || m_stamp.dirty; }
+    [[nodiscard]] bool sceneDirty() const noexcept { return m_sceneDirty || m_sceneScriptsUnsaved; }
+    [[nodiscard]] bool hasUnsavedWork() const noexcept
+    {
+        return m_sceneDirty || m_sceneScriptsUnsaved || m_stamp.dirty;
+    }
+
+    // **Whether a script that lives in the scene differs from what was
+    // saved**, asked of the open tabs every frame rather than latched by the
+    // edit (the owner: an edit undone, or typed back, left the scene asking to
+    // be saved). A script's text is compared; the rest of the scene is not,
+    // and stays a flag.
+    void setSceneScriptsUnsaved(bool unsaved) noexcept { m_sceneScriptsUnsaved = unsaved; }
 
     // Marks whatever is being edited as changed: the STAGE when one is open,
     // and the scene otherwise. One call at the frame's safe point rather than a
@@ -2508,8 +2551,24 @@ private:
 
     // What a copy left behind, as text. See `copySelection`.
     std::vector<std::string> m_clipboard;
+    // Each copied subtree's stamp marks, by position under its root.
+    struct ClipboardMark
+    {
+        std::vector<core::usize> position;
+        std::string stamp;
+    };
+    std::vector<std::vector<ClipboardMark>> m_clipboardMarks;
 
     StampSession m_stamp;
+    // The text each stamp had when the instances in the world were built from
+    // it, by path, filled as `stampSource` reads them. What an outside change
+    // to the file is measured against (`stampChangedOnDisk`). Shared with the
+    // sources handed out, which outlive the call that made them.
+    std::shared_ptr<std::unordered_map<std::string, std::string>> m_stampTexts =
+        std::make_shared<std::unordered_map<std::string, std::string>>();
+    // Set while `createStampOfClass` calls `createStamp`, whose own undo step
+    // would be a second one for one gesture.
+    bool m_stampRecorded = false;
     MaterialSession m_material;
     asset::MaterialLibrary* m_materials = nullptr;
     // The world a stamp is edited in, or nothing. Built on open and dropped on
@@ -2723,6 +2782,7 @@ private:
     UndoStack m_history;
 
     bool m_sceneDirty = false;
+    bool m_sceneScriptsUnsaved = false;
     bool m_debuggerParked = false;
     bool m_closeRequested = false;
     core::CFrameD m_cameraCFrame;

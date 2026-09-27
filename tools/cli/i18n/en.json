@@ -86,7 +86,6 @@
   "cli.build.err.android_no_shaders": "No SPIR-V shaders were found for the Android player: neither beside it nor in a desktop build of the engine.",
   "cli.build.err.android_package": "\"{package}\" is not an Android package name. It is reverse-DNS, like com.studio.game: at least two parts, each starting with a letter.",
   "cli.build.err.android_version_code": "[export.android] version_code = {code}: it has to be a whole number of at least 1.",
-  "cli.build.err.android_orientation": "[export.android] orientation = \"{orientation}\" is not one. It is landscape, portrait or sensor.",
   "cli.build.err.android_keystore": "The debug key could not be made at {path}.",
   "cli.build.err.android_gradle": "Gradle could not assemble the APK. Its output is above.",
   "cli.build.err.android_no_apksigner": "The SDK's apksigner is not at {path}. Install build-tools 35.0.0.",

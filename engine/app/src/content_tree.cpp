@@ -327,7 +327,7 @@ std::string ContentTree::displayNameOf(const ContentEntry& entry)
     return entry.name;
 }
 
-bool ContentTree::rename(const ContentEntry& entry, std::string_view newName)
+bool ContentTree::rename(const ContentEntry& entry, std::string_view newName, std::string* renamedTo)
 {
     if (!isUsableName(newName) || m_root.empty())
         return false;
@@ -363,8 +363,108 @@ bool ContentTree::rename(const ContentEntry& entry, std::string_view newName)
     std::filesystem::rename(folder / std::filesystem::path(entry.name), folder / std::filesystem::path(target), ec);
     if (ec)
         return false;
+    if (renamedTo != nullptr)
+        *renamedTo = m_relative.empty() ? target : m_relative + "/" + target;
 
     return refresh();
+}
+
+std::string ContentTree::move(std::string_view from, std::string_view intoFolder, std::string* why)
+{
+    const auto refuse = [why](const char* reason) {
+        if (why != nullptr)
+            *why = reason;
+        return std::string{};
+    };
+    if (m_root.empty() || from.empty())
+        return refuse("nothing to move");
+    const std::string source(from);
+    const std::string folder(intoFolder);
+    const std::size_t slash = source.rfind('/');
+    const std::string name = slash == std::string::npos ? source : source.substr(slash + 1);
+    const std::string parent = slash == std::string::npos ? std::string{} : source.substr(0, slash);
+    if (parent == folder)
+        return source;
+    // Into itself, or into a folder inside it: a folder cannot hold itself.
+    if (folder == source || folder.starts_with(source + "/"))
+        return refuse("a folder cannot go inside itself");
+
+    std::error_code ec;
+    const std::filesystem::path oldPath = m_root / std::filesystem::path(source);
+    const std::filesystem::path newFolder = folder.empty() ? m_root : m_root / std::filesystem::path(folder);
+    if (!std::filesystem::exists(oldPath, ec))
+        return refuse("it is not there any more");
+    if (!std::filesystem::is_directory(newFolder, ec))
+        return refuse("the folder is not there any more");
+    if (std::filesystem::exists(newFolder / std::filesystem::path(name), ec))
+        return refuse("something there already has that name");
+    std::filesystem::rename(oldPath, newFolder / std::filesystem::path(name), ec);
+    if (ec)
+        return refuse("the file system refused the move");
+    (void)refresh();
+    return folder.empty() ? name : folder + "/" + name;
+}
+
+namespace {
+
+// Replaces every `needle` in `text` with `replacement`; how many it replaced.
+std::size_t replaceAll(std::string& text, std::string_view needle, std::string_view replacement)
+{
+    std::size_t count = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + replacement.size())) {
+        text.replace(at, needle.size(), replacement);
+        ++count;
+    }
+    return count;
+}
+
+// The references to `from` in one file's text, pointed at `to`. Quoted, so a
+// path is only ever replaced whole: `a/b` must not rewrite `a/bc`.
+std::size_t retargetText(std::string& text, std::string_view from, std::string_view to)
+{
+    std::size_t count = 0;
+    for (const std::string_view scheme : {std::string_view("asset://"), std::string_view()}) {
+        const std::string head = "\"" + std::string(scheme);
+        count += replaceAll(text, head + std::string(from) + "\"", head + std::string(to) + "\"");
+        count += replaceAll(text, head + std::string(from) + "/", head + std::string(to) + "/");
+    }
+    return count;
+}
+
+bool retargetFile(const std::filesystem::path& file, std::string_view from, std::string_view to)
+{
+    std::string text;
+    if (!platform::readTextFile(file, text))
+        return false;
+    if (retargetText(text, from, to) == 0)
+        return false;
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+    return static_cast<bool>(out);
+}
+
+} // namespace
+
+std::size_t retargetContentReferences(const std::filesystem::path& contentRoot,
+                                      const std::filesystem::path& projectFile, std::string_view from,
+                                      std::string_view to)
+{
+    if (from.empty() || from == to)
+        return 0;
+    std::size_t changed = 0;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator walk(contentRoot, ec), done; !ec && walk != done;
+         walk.increment(ec)) {
+        if (!walk->is_regular_file(ec))
+            continue;
+        const std::string name = walk->path().filename().string();
+        if (name.size() < 5 || name.compare(name.size() - 5, 5, ".json") != 0)
+            continue;
+        changed += retargetFile(walk->path(), from, to) ? 1 : 0;
+    }
+    if (!projectFile.empty() && std::filesystem::exists(projectFile, ec))
+        changed += retargetFile(projectFile, from, to) ? 1 : 0;
+    return changed;
 }
 
 std::string ContentTree::duplicate(const ContentEntry& entry)

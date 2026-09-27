@@ -5,6 +5,7 @@
 // and one that moves as you fly is not a reference; a grid centred on the camera
 // slides under the thing being placed and lines up with nothing. Both look
 // perfectly fine in a screenshot taken from one position.
+#include <algorithm>
 #include <cmath>
 #include <doctest/doctest.h>
 
@@ -100,4 +101,30 @@ TEST_CASE("the grid is a fixed number of lines however high the camera is")
     app::drawReferenceGrid(core::DVec3{0.0, 4000.0, 0.0}, 0.0, 1.0f, high);
 
     CHECK(low.vertices().size() == high.vertices().size());
+}
+
+TEST_CASE("a line the grid thins away has faded out before it goes")
+{
+    // The owner, 2026-09-27: the grid changed as the camera moved. It jumped to
+    // ten times its spacing at one height; now the finer lines fade over the
+    // decade below it, so just under the height they go at they are already
+    // invisible, and just over it they are simply not drawn.
+    const auto alphaAtX = [](core::f64 height, core::f32 at) {
+        render::DebugDraw draw;
+        app::drawReferenceGrid(core::DVec3{7.3, height, -4.9}, 0.0, 1.0f, draw);
+        core::u32 brightest = 0;
+        bool found = false;
+        for (const render::DebugVertex& vertex : draw.vertices()) {
+            if (std::abs(vertex.position.x - at) < 1.0e-3f) {
+                found = true;
+                brightest = std::max(brightest, vertex.color.rgba >> 24);
+            }
+        }
+        return found ? static_cast<int>(brightest) : -1;
+    };
+    // Reach is three times the height, and sixty one-metre lines reach 60 m:
+    // the one-metre lines go at 200 m.
+    CHECK(alphaAtX(10.0, 7.0f) == 255);
+    CHECK(alphaAtX(199.9, 7.0f) <= 1);
+    CHECK(alphaAtX(200.1, 7.0f) == -1);
 }

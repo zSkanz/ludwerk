@@ -125,3 +125,6 @@ That last point is why the decision is not obvious, and why it is written down.
   system OpenSSL on Linux. On Windows only the refusal can be tested -- adding
   a root asks the person at the machine -- and Linux tests the accepted request
   too, through a hook compiled only into a build with tests.
+- **macOS has no refusal test**: its test server would have to be written
+  on the Security framework, because macOS will not load its own `libssl`
+  into a process. The redirect and parsing tests run there as everywhere.

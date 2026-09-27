@@ -44,7 +44,7 @@ OpenScript& ScriptEditor::open(core::InstanceId instance, ScriptOrigin origin, s
     // with the first save of a real edit, which hands the whole text over.
     const std::string indented = indentWithTabs(source);
     (void)tab.document.setText(indented);
-    tab.savedRevision = tab.document.revision();
+    tab.markSavedNow();
 
     m_tabs.push_back(std::move(tab));
     m_active = m_tabs.size() - 1;
@@ -67,7 +67,7 @@ OpenScript& ScriptEditor::openFile(std::string file, std::string title, std::str
     tab.document.setLanguage(scriptLanguageOf(file));
     tab.file = std::move(file);
     (void)tab.document.setText(source);
-    tab.savedRevision = tab.document.revision();
+    tab.markSavedNow();
 
     m_tabs.push_back(std::move(tab));
     m_active = m_tabs.size() - 1;
@@ -175,17 +175,17 @@ std::size_t ScriptEditor::dirtyCount() const noexcept
         std::count_if(m_tabs.begin(), m_tabs.end(), [](const OpenScript& tab) { return tab.dirty(); }));
 }
 
-void ScriptEditor::markSaved(std::size_t index) noexcept
+void ScriptEditor::markSaved(std::size_t index)
 {
     if (OpenScript* tab = at(index); tab != nullptr)
-        tab->savedRevision = tab->document.revision();
+        tab->markSavedNow();
 }
 
-void ScriptEditor::markSavedWhere(ScriptOrigin origin) noexcept
+void ScriptEditor::markSavedWhere(ScriptOrigin origin)
 {
     for (OpenScript& tab : m_tabs) {
         if (tab.origin == origin && tab.file.empty())
-            tab.savedRevision = tab.document.revision();
+            tab.markSavedNow();
     }
 }
 
