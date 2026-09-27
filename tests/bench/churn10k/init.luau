@@ -1,0 +1,93 @@
+--!strict
+--- The property-churn benchmark (roadmap M2: "10k parts / 1k listeners").
+---
+--- This is the scene the deferred-signal design was chosen against, and it is
+--- here to keep that choice honest. The M2 brief's Decision 6 records the shape
+--- of the risk: a property write that enqueued unconditionally would make this
+--- scenario pathological, because 10,000 parts moving every tick would raise
+--- 10,000 facts whether or not anything changed. What makes it survivable is
+--- that a write which does not change the value raises nothing -- so the
+--- *third* of the parts that hold still cost nothing but the compare.
+---
+--- 1,000 listeners, not 10,000: the point is that a signal with subscribers is
+--- more expensive than one without, and having every part listen would measure
+--- a scene nobody builds. One in ten is a plausible game.
+---
+--- The budget is a catastrophe detector rather than an instrument. This scene is
+--- not meant to fit inside a frame alongside everything else; the number that
+--- matters is the one recorded in docs/perf-baselines.md, and this only fails
+--- when something has gone badly wrong.
+---
+--- **It was 16 ms until M6 and is 32 now, and the reason is a semantic change
+--- rather than a slower engine** (D031). An `Anchored` part whose `CFrame` is
+--- written is a KINEMATIC body from M6 on -- which it always should have been,
+--- because a static body that teleports is how a moving platform failed to carry
+--- anything -- so two thirds of this scene's ten thousand parts are now in the
+--- broadphase layer Jolt re-fits every tick. The local mean went from 4.96 ms to
+--- 7.32, and a CI runner is regularly two to three times slower than the
+--- reference machine: 19.6 ms on one of them, against a 16 ms threshold, is the
+--- runner rather than the engine.
+---
+--- Doubling it keeps the same shape of check with the same amount of headroom
+--- the number had before. What it costs is sensitivity, and the honest place to
+--- notice a 50% regression is `perf-baselines.md`, where the real numbers are --
+--- which is what that file is for.
+
+local RunService = game:GetService("RunService")
+
+local Rng = Random.new(77)
+local Root = Instance.new("Folder")
+Root.Name = "Churn"
+Root.Parent = workspace
+
+local PartCount = 10000
+local ListenerCount = 1000
+
+local Parts: { Part } = table.create(PartCount) :: { Part }
+local Notified = 0
+
+for index = 1, PartCount do
+    local part = Instance.new("Part")
+    part.Name = `P{index}`
+    part.Size = vector.create(1, 1, 1)
+    part.CFrame = CFrame.new(vector.create(Rng:NextNumber(-200, 200), 0, Rng:NextNumber(-200, 200)))
+    -- Anchored, from M5 on, and this is what keeps the measurement comparable
+    -- across milestones. What this benchmark measures is the quiet-write path
+    -- with ten thousand instances and a thousand listeners (M2 Decision 6);
+    -- leaving the parts unanchored would silently turn it into a
+    -- ten-thousand-body physics benchmark and compare its number against six
+    -- milestones of a different measurement. The physics budget the M5 gate
+    -- wants is its own scenario, next door.
+    part.Anchored = true
+    part.Parent = Root
+    Parts[index] = part
+end
+
+-- Every tenth part is watched. `GetPropertyChangedSignal` rather than a blanket
+-- `Changed`, because that is the shape the API recommends and the one whose cost
+-- the engine should be tuned for.
+for index = 1, ListenerCount do
+    local part = Parts[index * (PartCount // ListenerCount)]
+    part:GetPropertyChangedSignal("CFrame"):Connect(function()
+        Notified += 1
+    end)
+end
+
+local Phase = 0.0
+
+RunService.Heartbeat:Connect(function(deltaTime: number)
+    Phase += deltaTime
+
+    for index, part in Parts do
+        -- Two thirds move, one third is written with the value it already has.
+        -- The still third is the case the whole design rests on: the write is a
+        -- compare that raises nothing, and if that ever stops being true this
+        -- benchmark is where it shows.
+        if index % 3 == 0 then
+            part.CFrame = part.CFrame
+        else
+            local position = part.CFrame.Position
+            part.CFrame = CFrame.new(vector.create(position.x, math.sin(Phase + index) * 2, position.z))
+        end
+    end
+end)

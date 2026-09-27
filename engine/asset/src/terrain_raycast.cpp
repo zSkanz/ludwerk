@@ -1,0 +1,220 @@
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include "engine/asset/terrain.h"
+
+namespace engine::asset {
+namespace {
+
+using core::DVec3;
+using core::Vec3;
+
+// How many bisection steps refine the crossing once the march has bracketed it.
+//
+// Twenty halvings take one voxel to about a millionth of it, which is far below
+// anything a brush cares about and cheap enough that the count is a constant
+// rather than a tolerance somebody tunes. A tolerance would also have to be in
+// metres, and this function is used at voxel sizes it does not know in advance.
+constexpr int RefineSteps = 20;
+
+// **The march step is a fraction of a voxel, not a voxel** (D-shaped hazard, and
+// worth stating). The field is a distance function only near the surface: far
+// from it a sample saturates, so a sphere-tracing march would either overshoot
+// or crawl. A fixed sub-voxel step cannot skip a surface thinner than the step,
+// and half a voxel is fine enough that no terrain feature the mesher can express
+// is missed -- the mesher itself only resolves at one voxel.
+constexpr double StepFraction = 0.5;
+
+} // namespace
+
+FieldSample sampleField(const TerrainField& field, DVec3 at)
+{
+    const double voxel = static_cast<double>(field.settings().voxelSize);
+    // A field with no lattice has no surface anywhere: air.
+    if (!(voxel > 0.0))
+        return FieldSample{1.0f, 0};
+    // **Trilinear between the eight surrounding voxel centres, never snapped to
+    // the nearest one.**
+    //
+    // Snapping was the first version and it is wrong in a way that looks almost
+    // right: it makes the field a STEP function with steps one voxel wide, so a
+    // bisection converges on the step's edge rather than on the surface, and
+    // every hit lands half a voxel out. On a flat field at y = 4 with a
+    // half-metre voxel, it reported 4.25.
+    //
+    // Interpolating also makes this agree with the MESHER, which places a vertex
+    // by linear interpolation along an edge for the same reason -- so a hit sits
+    // on the triangle that was drawn there, and a decal placed at one is flush
+    // with the ground rather than sunk into it.
+    // Voxel centres sit half a voxel in, so the lattice is shifted by that.
+    const double gridX = at.x / voxel - 0.5;
+    const double gridY = at.y / voxel - 0.5;
+    const double gridZ = at.z / voxel - 0.5;
+    const double baseX = std::floor(gridX);
+    const double baseY = std::floor(gridY);
+    const double baseZ = std::floor(gridZ);
+    const auto lowX = static_cast<core::i32>(baseX);
+    const auto lowY = static_cast<core::i32>(baseY);
+    const auto lowZ = static_cast<core::i32>(baseZ);
+    const auto tx = static_cast<float>(gridX - baseX);
+    const auto ty = static_cast<float>(gridY - baseY);
+    const auto tz = static_cast<float>(gridZ - baseZ);
+
+    const auto blend = [](float a, float b, float t) { return a + (b - a) * t; };
+
+    float corner[8];
+    core::u8 materials[8];
+    for (int at8 = 0; at8 < 8; ++at8) {
+        const FieldSample got = field.sample(lowX + (at8 & 1), lowY + ((at8 >> 1) & 1), lowZ + ((at8 >> 2) & 1));
+        corner[at8] = got.distance;
+        materials[at8] = got.material;
+    }
+
+    const float x00 = blend(corner[0], corner[1], tx);
+    const float x10 = blend(corner[2], corner[3], tx);
+    const float x01 = blend(corner[4], corner[5], tx);
+    const float x11 = blend(corner[6], corner[7], tx);
+    const float y0 = blend(x00, x10, ty);
+    const float y1 = blend(x01, x11, ty);
+
+    // The material of the NEAREST corner rather than a blend: a material is
+    // an identity, and the average of "rock" and "sand" is neither.
+    const int nearest = (tx >= 0.5f ? 1 : 0) | (ty >= 0.5f ? 2 : 0) | (tz >= 0.5f ? 4 : 0);
+    return FieldSample{blend(y0, y1, tz), materials[nearest]};
+}
+
+std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, Vec3 direction, double maxDistance)
+{
+    // **Every promotion is explicit**, which is R9's f32/f64 split showing up as
+    // an ergonomic cost: a direction is an extent and is `f32`, a ray's origin is
+    // a world position and is `f64`, and the two have to meet somewhere. Clang
+    // diagnoses each implicit widening and MSVC does not, so leaving them
+    // implicit would be a Linux-only build break every time.
+    const double dirX = static_cast<double>(direction.x);
+    const double dirY = static_cast<double>(direction.y);
+    const double dirZ = static_cast<double>(direction.z);
+    const double length = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+    if (!(length > 0.0) || !(maxDistance > 0.0)) {
+        return std::nullopt;
+    }
+    const DVec3 step{dirX / length, dirY / length, dirZ / length};
+
+    const double voxel = static_cast<double>(field.settings().voxelSize);
+    if (!(voxel > 0.0)) {
+        return std::nullopt;
+    }
+
+    // The field's own sampler (`sampleField`), along the ray.
+    const auto distanceAt = [&](double along) {
+        return sampleField(field,
+                           DVec3{origin.x + step.x * along, origin.y + step.y * along, origin.z + step.z * along});
+    };
+
+    const double marchStep = voxel * StepFraction;
+
+    FieldSample previous = distanceAt(0.0);
+    // **A ray that starts inside the ground hits at once.** Refusing would be
+    // wrong for the case that produces it: a brush dragged into a hillside, or a
+    // camera inside terrain, both want the surface they are already past rather
+    // than nothing.
+    if (previous.distance <= 0.0f) {
+        const Vec3 normal{0.0f, 1.0f, 0.0f};
+        return TerrainHit{origin, normal, 0.0, previous.material};
+    }
+
+    // **Chunks of air are crossed in one step.** A point is in air for certain
+    // when no chunk holds anything within a voxel of it, which is most of the
+    // sky and most of a long ray; there the march jumps to where the ray
+    // leaves that chunk, less a voxel so a surface on its far side is not
+    // stepped over.
+    const double chunkMetres = voxel * static_cast<double>(ChunkEdge);
+    const auto emptyAround = [&](double along) {
+        const DVec3 p{origin.x + step.x * along, origin.y + step.y * along, origin.z + step.z * along};
+        for (int corner = 0; corner < 8; ++corner) {
+            const double ox = (corner & 1) != 0 ? voxel : -voxel;
+            const double oy = (corner & 2) != 0 ? voxel : -voxel;
+            const double oz = (corner & 4) != 0 ? voxel : -voxel;
+            const ChunkKey key{static_cast<core::i32>(std::floor((p.x + ox) / chunkMetres)),
+                               static_cast<core::i32>(std::floor((p.y + oy) / chunkMetres)),
+                               static_cast<core::i32>(std::floor((p.z + oz) / chunkMetres))};
+            if (field.findChunk(key) != nullptr)
+                return false;
+        }
+        return true;
+    };
+    // How far along the ray it leaves the chunk it is in at `along`.
+    const auto chunkExit = [&](double along) {
+        const DVec3 p{origin.x + step.x * along, origin.y + step.y * along, origin.z + step.z * along};
+        double exit = std::numeric_limits<double>::max();
+        const double axes[3][2] = {{p.x, step.x}, {p.y, step.y}, {p.z, step.z}};
+        for (const auto& axis : axes) {
+            if (std::abs(axis[1]) < 1e-12)
+                continue;
+            const double cell = std::floor(axis[0] / chunkMetres);
+            const double wall = axis[1] > 0.0 ? (cell + 1.0) * chunkMetres : cell * chunkMetres;
+            exit = std::min(exit, (wall - axis[0]) / axis[1]);
+        }
+        return along + std::max(exit, 0.0);
+    };
+
+    double previousAlong = 0.0;
+    for (double along = marchStep; along <= maxDistance; along += marchStep) {
+        if (emptyAround(along)) {
+            // Landing inside ground is possible beside a perpendicular wall;
+            // then the march just carries on in small steps from here.
+            const double leap = std::min(chunkExit(along) - voxel, maxDistance);
+            if (leap > along && distanceAt(leap).distance > 0.0f) {
+                previousAlong = leap;
+                along = leap;
+                continue;
+            }
+        }
+        const FieldSample current = distanceAt(along);
+        if (current.distance <= 0.0f) {
+            // Bracketed between `previousAlong` (air) and `along` (ground).
+            // Bisected rather than interpolated linearly: trilinear is not
+            // linear along a diagonal ray.
+            double low = previousAlong;
+            double high = along;
+            for (int refine = 0; refine < RefineSteps; ++refine) {
+                const double middle = (low + high) * 0.5;
+                if (distanceAt(middle).distance <= 0.0f) {
+                    high = middle;
+                }
+                else {
+                    low = middle;
+                }
+            }
+
+            const double hitAlong = high;
+            const DVec3 position{origin.x + step.x * hitAlong, origin.y + step.y * hitAlong,
+                                 origin.z + step.z * hitAlong};
+
+            // The gradient of the interpolated field, a voxel either side: the
+            // same surface the mesher interpolates, so a decal placed on a hit
+            // sits flush with the triangle under it.
+            const auto at = [&](double dx, double dy, double dz) {
+                return sampleField(field, DVec3{position.x + dx, position.y + dy, position.z + dz}).distance;
+            };
+            Vec3 normal{at(voxel, 0.0, 0.0) - at(-voxel, 0.0, 0.0), at(0.0, voxel, 0.0) - at(0.0, -voxel, 0.0),
+                        at(0.0, 0.0, voxel) - at(0.0, 0.0, -voxel)};
+            const float normalLength = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+            if (normalLength < 1e-8f) {
+                normal = Vec3{0.0f, 1.0f, 0.0f};
+            }
+            else {
+                normal = Vec3{normal.x / normalLength, normal.y / normalLength, normal.z / normalLength};
+            }
+
+            return TerrainHit{position, normal, hitAlong, current.material};
+        }
+
+        previous = current;
+        previousAlong = along;
+    }
+
+    return std::nullopt;
+}
+
+} // namespace engine::asset

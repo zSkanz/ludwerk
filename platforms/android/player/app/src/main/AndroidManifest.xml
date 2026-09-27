@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A Ludwerk game. Modelled on the triangle sample's manifest, which says why
+    Vulkan and the touchscreen are declared not required and why configChanges
+    is SDL's list verbatim.
+
+    The launcher label, the icon and the orientation come from the game's
+    project.toml, passed in by the Android export of `ludwerk build`: the label as a
+    generated resource, the other two as manifest placeholders. Landscape is
+    the default, because the games this packages are drawn for a wide window.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:installLocation="auto">
+
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:version="0x400003"
+        android:required="false" />
+
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="${engineIcon}"
+        android:roundIcon="${engineIcon}"
+        android:allowBackup="false"
+        android:theme="@style/AppTheme"
+        android:enableOnBackInvokedCallback="false"
+        android:hardwareAccelerated="true">
+
+        <activity
+            android:name="engine.player.PlayerActivity"
+            android:label="@string/app_name"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="${engineOrientation}"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

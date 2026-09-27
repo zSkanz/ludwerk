@@ -1,0 +1,811 @@
+// Picking, aimed at the places a click never lands.
+//
+// The bug this file exists for is the aspect-ratio error: swap a width for a
+// height, or forget that a viewport is a panel rather than the window, and the
+// centre of the screen is still exactly right while every edge is wrong. A
+// person testing an editor aims at what they meant to hit and never finds it.
+// So the cases here are the corners, an off-origin viewport, a non-square one,
+// and a click on nothing.
+#include <array>
+#include <cmath>
+#include <doctest/doctest.h>
+#include <limits>
+#include <vector>
+
+#include "engine/app/picking.h"
+#include "engine/core/math.h"
+#include "engine/scene/components.h"
+#include "engine/scene/world.h"
+#include "inspector_fixture.h"
+
+using namespace engine;
+using engine::app::gizmoDragAngle;
+using engine::app::gizmoDragPoint;
+using engine::app::GizmoFrame;
+using engine::app::GizmoHandle;
+using engine::app::GizmoMode;
+using engine::app::intersectBox;
+using engine::app::metresPerPixel;
+using engine::app::pickGizmo;
+using engine::app::PickRay;
+using engine::app::rayThroughPixel;
+using engine::app::ViewportRect;
+using engine::app::worldToViewport;
+using engine::core::f32;
+
+namespace {
+
+// `doctest::Approx` holds a double, so comparing an f32 against one promotes --
+// and Clang's `-Wdouble-promotion` is right to say so under `-Werror`. Widening
+// deliberately in one named place beats a cast at every call site and beats
+// pretending the comparison is not happening.
+[[nodiscard]] double wide(f32 value) noexcept
+{
+    return static_cast<double>(value);
+}
+constexpr double kEpsilon = 1e-4;
+
+// A camera at the world origin looking down -Z, which is what `lookAt` and
+// `perspective` agree forward means.
+struct TestCamera
+{
+    core::Mat4 projection;
+    core::Mat4 view;
+    core::DVec3 origin;
+};
+
+TestCamera cameraAt(core::DVec3 eye, core::Vec3 target, f32 fovYDegrees, f32 aspect)
+{
+    const f32 fov = fovYDegrees * 3.14159265f / 180.0f;
+    return TestCamera{
+        core::perspective(fov, aspect, 0.1f, 1000.0f),
+        // The view is built in the camera-relative space the renderer works in,
+        // so the eye is the origin of that space and the target is relative
+        // to it -- which is why `origin` is carried separately.
+        core::lookAt(core::Vec3{0.0f, 0.0f, 0.0f}, target, core::Vec3{0.0f, 1.0f, 0.0f}),
+        eye,
+    };
+}
+
+core::CFrameD boxAt(core::DVec3 position)
+{
+    return core::CFrameD{position, core::Mat3{}};
+}
+} // namespace
+
+TEST_CASE("a ray through the centre of the viewport points straight ahead")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    const PickRay ray = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {960.0f, 540.0f});
+
+    CHECK(wide(ray.direction.x) == doctest::Approx(0.0).epsilon(kEpsilon));
+    CHECK(wide(ray.direction.y) == doctest::Approx(0.0).epsilon(kEpsilon));
+    CHECK(wide(ray.direction.z) == doctest::Approx(-1.0).epsilon(kEpsilon));
+}
+
+TEST_CASE("an orthographic camera's rays are parallel and start where the pixel is")
+{
+    // Ten metres above and below the middle, twice as wide as tall: the 2D
+    // layer's camera.
+    const core::Mat4 projection = core::orthographic(10.0f, 2.0f, 0.1f, 1000.0f);
+    const core::Mat4 view =
+        core::lookAt(core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f});
+    const core::DVec3 origin{5.0, 3.0, 50.0};
+    const ViewportRect rect{0.0f, 0.0f, 400.0f, 200.0f};
+
+    const PickRay corner = rayThroughPixel(projection, view, origin, rect, {0.0f, 0.0f});
+    CHECK(corner.origin.x == doctest::Approx(-15.0).epsilon(kEpsilon));
+    CHECK(corner.origin.y == doctest::Approx(13.0).epsilon(kEpsilon));
+    CHECK(wide(corner.direction.z) == doctest::Approx(-1.0).epsilon(kEpsilon));
+    CHECK(wide(corner.direction.x) == doctest::Approx(0.0).epsilon(kEpsilon));
+
+    const auto pixel = worldToViewport(projection, view, origin, rect, core::DVec3{25.0, -7.0, -7.0});
+    REQUIRE(pixel.has_value());
+    CHECK(wide(pixel->x) == doctest::Approx(400.0).epsilon(kEpsilon));
+    CHECK(wide(pixel->y) == doctest::Approx(200.0).epsilon(kEpsilon));
+
+    // A pixel is a tenth of a metre wherever the thing is.
+    CHECK(wide(metresPerPixel(projection, rect, origin, core::DVec3{0.0, 0.0, -900.0})) ==
+          doctest::Approx(0.1).epsilon(kEpsilon));
+}
+
+TEST_CASE("the corners open outwards, and the horizontal spread is the aspect ratio")
+{
+    // 90 degrees vertical makes the vertical tangent exactly 1, so the numbers
+    // below are the aspect ratio itself rather than something derived from it.
+    // An aspect bug cannot hide behind arithmetic here.
+    const f32 aspect = 16.0f / 9.0f;
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 90.0f, aspect);
+    const ViewportRect rect{0.0f, 0.0f, 1600.0f, 900.0f};
+
+    const PickRay topLeft = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {0.0f, 0.0f});
+    const PickRay bottomRight = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {1600.0f, 900.0f});
+
+    // Normalised, so compare the ratios rather than the components.
+    CHECK(wide((topLeft.direction.x / -topLeft.direction.z)) == doctest::Approx(-wide(aspect)).epsilon(kEpsilon));
+    CHECK(wide((topLeft.direction.y / -topLeft.direction.z)) == doctest::Approx(1.0).epsilon(kEpsilon));
+    CHECK(wide((bottomRight.direction.x / -bottomRight.direction.z)) ==
+          doctest::Approx(wide(aspect)).epsilon(kEpsilon));
+    CHECK(wide((bottomRight.direction.y / -bottomRight.direction.z)) == doctest::Approx(-1.0).epsilon(kEpsilon));
+
+    // The tell for a swapped width and height: a tall viewport must spread
+    // LESS horizontally than a wide one, at the same field of view.
+    const TestCamera tall = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 90.0f, 9.0f / 16.0f);
+    const ViewportRect tallRect{0.0f, 0.0f, 900.0f, 1600.0f};
+    const PickRay tallCorner = rayThroughPixel(tall.projection, tall.view, tall.origin, tallRect, {0.0f, 0.0f});
+    CHECK(std::abs(tallCorner.direction.x / tallCorner.direction.z) <
+          std::abs(topLeft.direction.x / topLeft.direction.z));
+}
+
+TEST_CASE("a viewport is a panel, so its offset moves the ray and its size does not follow the window")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 1.0f);
+
+    // The same pixel is the centre of one viewport and a corner of another.
+    const ViewportRect panel{300.0f, 100.0f, 800.0f, 800.0f};
+    const PickRay centre = rayThroughPixel(camera.projection, camera.view, camera.origin, panel, {700.0f, 500.0f});
+    CHECK(wide(centre.direction.x) == doctest::Approx(0.0).epsilon(kEpsilon));
+    CHECK(wide(centre.direction.y) == doctest::Approx(0.0).epsilon(kEpsilon));
+
+    const ViewportRect window{0.0f, 0.0f, 800.0f, 800.0f};
+    const PickRay offCentre = rayThroughPixel(camera.projection, camera.view, camera.origin, window, {700.0f, 500.0f});
+    CHECK(offCentre.direction.x > 0.01f);
+    CHECK(offCentre.direction.y < -0.01f);
+}
+
+TEST_CASE("a collapsed viewport gives forward rather than a NaN")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 1.0f);
+    const ViewportRect collapsed{0.0f, 0.0f, 0.0f, 0.0f};
+
+    const PickRay ray = rayThroughPixel(camera.projection, camera.view, camera.origin, collapsed, {0.0f, 0.0f});
+
+    CHECK(std::isfinite(ray.direction.x));
+    CHECK(std::isfinite(ray.direction.y));
+    CHECK(std::isfinite(ray.direction.z));
+}
+
+TEST_CASE("the ray carries the camera's f64 world position, not a narrowed one")
+{
+    // Four kilometres out, which is inside the flagship's world and outside
+    // what f32 keeps to the millimetre.
+    const core::DVec3 far{4321.5, 12.25, -8765.75};
+    const TestCamera camera = cameraAt(far, {0.0f, 0.0f, -1.0f}, 60.0f, 1.0f);
+    const ViewportRect rect{0.0f, 0.0f, 100.0f, 100.0f};
+
+    const PickRay ray = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {50.0f, 50.0f});
+
+    CHECK(ray.origin.x == doctest::Approx(far.x));
+    CHECK(ray.origin.z == doctest::Approx(far.z));
+}
+
+TEST_CASE("a box in front is hit at its near face, and one behind is not hit at all")
+{
+    const PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+
+    const auto ahead = intersectBox(forward, boxAt({0.0, 0.0, -10.0}), {2.0f, 2.0f, 2.0f});
+    REQUIRE(ahead.has_value());
+    CHECK(wide(*ahead) == doctest::Approx(9.0).epsilon(kEpsilon));
+
+    CHECK_FALSE(intersectBox(forward, boxAt({0.0, 0.0, 10.0}), {2.0f, 2.0f, 2.0f}).has_value());
+}
+
+TEST_CASE("a ray that starts inside a box hits it at zero rather than missing it")
+{
+    const PickRay inside{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+
+    const auto hit = intersectBox(inside, boxAt({0.0, 0.0, 0.0}), {10.0f, 10.0f, 10.0f});
+    REQUIRE(hit.has_value());
+    CHECK(wide(*hit) == doctest::Approx(0.0));
+}
+
+TEST_CASE("a rotated box is tested in its own space")
+{
+    // Forty-five degrees about Y. A thin tall slab edge-on to the ray is missed
+    // if the rotation is ignored and hit if it is not -- the two answers differ,
+    // which is the only useful kind of test for a transform.
+    const f32 c = 0.70710678f;
+    core::CFrameD rotated;
+    rotated.position = {0.0, 0.0, -10.0};
+    rotated.rotation = core::Mat3{{{c, 0.0f, -c}, {0.0f, 1.0f, 0.0f}, {c, 0.0f, c}}};
+
+    const core::Vec3 slab{8.0f, 8.0f, 0.5f};
+
+    // Down the +X side of the slab: within its long axis once rotated, outside
+    // its thin one if the rotation were dropped.
+    const PickRay offAxis{{3.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    const auto rotatedHit = intersectBox(offAxis, rotated, slab);
+
+    core::CFrameD unrotated = rotated;
+    unrotated.rotation = core::Mat3{};
+    const auto unrotatedHit = intersectBox(offAxis, unrotated, slab);
+
+    CHECK(rotatedHit.has_value());
+    REQUIRE(unrotatedHit.has_value());
+    CHECK(wide(*rotatedHit) != doctest::Approx(wide(*unrotatedHit)).epsilon(kEpsilon));
+}
+
+TEST_CASE("a ray parallel to a slab is rejected by the origin rather than by a divide")
+{
+    // Straight up, past a box that is beside it. Without the parallel guard this
+    // is a zero divide and the answer is whatever infinity compares as.
+    const PickRay up{{0.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}};
+    CHECK_FALSE(intersectBox(up, boxAt({50.0, 0.0, 0.0}), {1.0f, 1.0f, 1.0f}).has_value());
+
+    const auto through = intersectBox(up, boxAt({0.0, 20.0, 0.0}), {1.0f, 1.0f, 1.0f});
+    REQUIRE(through.has_value());
+    CHECK(wide(*through) == doctest::Approx(19.5).epsilon(kEpsilon));
+}
+
+TEST_CASE("picking a world returns the nearest part, and empty space returns nothing")
+{
+    // The fixture's classes rather than the shipped ones, for the same reason
+    // `inspector_tests.cpp` uses them: picking reads the part pool and never
+    // asks what class anything is, and a test that used `Part` would be
+    // asserting that alongside what it means to assert.
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId root = fixture.widget(world, "Root");
+    const core::InstanceId near = fixture.widget(world, "Near");
+    const core::InstanceId far = fixture.widget(world, "Far");
+    REQUIRE(world.setParent(near, root) == std::nullopt);
+    REQUIRE(world.setParent(far, root) == std::nullopt);
+
+    scene::PartComponent nearPart;
+    nearPart.cframe = boxAt({0.0, 0.0, -5.0});
+    nearPart.size = {2.0f, 2.0f, 2.0f};
+    world.parts().add(near, nearPart);
+
+    scene::PartComponent farPart;
+    farPart.cframe = boxAt({0.0, 0.0, -50.0});
+    farPart.size = {2.0f, 2.0f, 2.0f};
+    world.parts().add(far, farPart);
+
+    const PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    const auto hit = app::pickNearest(world, root, forward);
+    REQUIRE(hit.has_value());
+    CHECK(hit->instance == near);
+
+    const PickRay away{{0.0, 0.0, 0.0}, {0.0f, 1.0f, 0.0f}};
+    CHECK_FALSE(app::pickNearest(world, root, away).has_value());
+}
+
+TEST_CASE("a part that is not in the world cannot be picked")
+{
+    // **The defect a person sees as "selecting an invisible box".** Picking
+    // walked the whole part pool, which is not the set on screen: an instance
+    // that is in the pools but not under the root is drawn by nothing and was
+    // still clickable, so a click produced a selection outline around empty
+    // space with a `Parent` of nil in the inspector.
+    //
+    // It compounds, too. `clearScene` walks the root's children to decide what
+    // to remove, so an orphan survives every scene load and accumulates.
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId root = fixture.widget(world, "Root");
+    const core::InstanceId onScreen = fixture.widget(world, "OnScreen");
+    const core::InstanceId orphan = fixture.widget(world, "Orphan");
+    REQUIRE(world.setParent(onScreen, root) == std::nullopt);
+
+    scene::PartComponent behind;
+    behind.cframe = boxAt({0.0, 0.0, -50.0});
+    behind.size = {2.0f, 2.0f, 2.0f};
+    world.parts().add(onScreen, behind);
+
+    // The orphan is NEARER, so a pick that considered it would prefer it -- and
+    // that is exactly what happened.
+    scene::PartComponent stray;
+    stray.cframe = boxAt({0.0, 0.0, -5.0});
+    stray.size = {2.0f, 2.0f, 2.0f};
+    world.parts().add(orphan, stray);
+
+    const PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    const auto hit = app::pickNearest(world, root, forward);
+    REQUIRE(hit.has_value());
+    CHECK(hit->instance == onScreen);
+
+    // And with nothing else in the way it is a miss rather than a hit on the
+    // orphan: clicking empty space deselects, which is what the person wanted.
+    world.parts().remove(onScreen);
+    CHECK_FALSE(app::pickNearest(world, root, forward).has_value());
+}
+
+TEST_CASE("a part under a DIFFERENT root cannot be picked")
+{
+    // Two worlds' worth of instances live in one `World` while a stamp is open
+    // for editing, and the viewport draws one root. A click has to land in the
+    // half that is on screen.
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId shown = fixture.widget(world, "Shown");
+    const core::InstanceId elsewhere = fixture.widget(world, "Elsewhere");
+    const core::InstanceId hidden = fixture.widget(world, "Hidden");
+    REQUIRE(world.setParent(hidden, elsewhere) == std::nullopt);
+
+    scene::PartComponent part;
+    part.cframe = boxAt({0.0, 0.0, -5.0});
+    part.size = {2.0f, 2.0f, 2.0f};
+    world.parts().add(hidden, part);
+
+    const PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    CHECK_FALSE(app::pickNearest(world, shown, forward).has_value());
+    CHECK(app::pickNearest(world, elsewhere, forward).has_value());
+}
+
+TEST_CASE("a transparent part is pickable, because an editor must be able to select what it cannot see")
+{
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId root = fixture.widget(world, "Root");
+    const core::InstanceId ghost = fixture.widget(world, "Ghost");
+    REQUIRE(world.setParent(ghost, root) == std::nullopt);
+
+    scene::PartComponent part;
+    part.cframe = boxAt({0.0, 0.0, -5.0});
+    part.size = {2.0f, 2.0f, 2.0f};
+    // Invisible: the default material's Transparency, overridden to one.
+    asset::MaterialProperties invisible;
+    invisible.transparency = 1.0f;
+    (void)asset::setOverride(part.materialParameters, asset::MaterialField::Transparency, invisible);
+    world.parts().add(ghost, part);
+
+    const PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    const auto hit = app::pickNearest(world, root, forward);
+    REQUIRE(hit.has_value());
+    CHECK(hit->instance == ghost);
+}
+
+namespace {
+
+// An ABSOLUTE tolerance, because every quantity below is a length in pixels or
+// in metres and a relative one would be tight at the origin and loose four
+// kilometres out -- which is the opposite of what these cases are checking.
+[[nodiscard]] bool close(f32 value, f32 expected, f32 tolerance) noexcept
+{
+    const f32 difference = value - expected;
+    return (difference < 0.0f ? -difference : difference) <= tolerance;
+}
+
+} // namespace
+
+// --- E2: the manipulators ---------------------------------------------------
+//
+// Every one of these is a case that is right at the centre of the screen and
+// wrong somewhere else, which is the whole reason this file exists rather than
+// a person dragging things and looking.
+
+TEST_CASE("worldToViewport is the exact inverse of rayThroughPixel, at the corners too")
+{
+    // Not square, deliberately: an aspect-ratio error is exactly zero at the
+    // centre and grows towards the edges, so a square viewport cannot see it.
+    const TestCamera camera = cameraAt({120.0, 4.0, -60.0}, {0.0f, 0.0f, -1.0f}, 55.0f, 21.0f / 9.0f);
+    const ViewportRect rect{37.0f, 11.0f, 1680.0f, 720.0f};
+
+    const core::Vec2 pixels[] = {
+        {rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f},
+        {rect.x + 0.5f, rect.y + 0.5f},
+        {rect.x + rect.width - 0.5f, rect.y + 0.5f},
+        {rect.x + 0.5f, rect.y + rect.height - 0.5f},
+        {rect.x + rect.width - 0.5f, rect.y + rect.height - 0.5f},
+    };
+
+    for (const core::Vec2 pixel : pixels) {
+        const PickRay ray = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, pixel);
+
+        // A point forty metres down that ray must project back to the pixel it
+        // came from. Round-tripped rather than compared against a second
+        // formula, because a second formula is a second thing to be wrong.
+        const core::DVec3 point = ray.origin + core::toDVec3(ray.direction * 40.0f);
+        const std::optional<core::Vec2> back =
+            worldToViewport(camera.projection, camera.view, camera.origin, rect, point);
+        REQUIRE(back.has_value());
+        CHECK(close(back->x, pixel.x, 0.01f));
+        CHECK(close(back->y, pixel.y, 0.01f));
+    }
+}
+
+TEST_CASE("a point behind the camera has no place on the screen")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    // Projected without the check this comes out in FRONT of the camera on the
+    // opposite side, which is a handle drawn where nothing is.
+    CHECK_FALSE(worldToViewport(camera.projection, camera.view, camera.origin, rect, {0.0, 0.0, 10.0}).has_value());
+    CHECK(worldToViewport(camera.projection, camera.view, camera.origin, rect, {0.0, 0.0, -10.0}).has_value());
+}
+
+TEST_CASE("a manipulator is the same size on screen however far away it is")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    const f32 near = metresPerPixel(camera.projection, rect, camera.origin, {0.0, 0.0, -10.0});
+    const f32 far = metresPerPixel(camera.projection, rect, camera.origin, {0.0, 0.0, -100.0});
+    REQUIRE(near > 0.0f);
+    // Ten times the distance is ten times the metres per pixel, which is what
+    // makes a gizmo built in metres and scaled by this a constant number of
+    // pixels.
+    CHECK(close(far / near, 10.0f, 0.001f));
+
+    // Measured rather than asserted: a gizmo asked to be ninety pixels long
+    // must project to ninety pixels of screen.
+    const core::DVec3 centre{0.0, 0.0, -37.0};
+    const f32 size = metresPerPixel(camera.projection, rect, camera.origin, centre) * 90.0f;
+    const std::optional<core::Vec2> from = worldToViewport(camera.projection, camera.view, camera.origin, rect, centre);
+    const std::optional<core::Vec2> to = worldToViewport(camera.projection, camera.view, camera.origin, rect,
+                                                         centre + core::DVec3{static_cast<core::f64>(size), 0.0, 0.0});
+    REQUIRE(from.has_value());
+    REQUIRE(to.has_value());
+    CHECK(close(to->x - from->x, 90.0f, 0.5f));
+}
+
+namespace {
+
+// A gizmo on the world's axes, ninety pixels of it, wherever it is put.
+[[nodiscard]] GizmoFrame gizmoAt(const TestCamera& camera, const ViewportRect& rect, core::DVec3 position)
+{
+    return GizmoFrame{core::CFrameD{position, core::Mat3{}},
+                      metresPerPixel(camera.projection, rect, camera.origin, position) * 90.0f};
+}
+
+// The ray through the pixel a world point falls at, which is how a test aims at
+// a handle it can only describe in world space.
+[[nodiscard]] PickRay rayAtWorld(const TestCamera& camera, const ViewportRect& rect, core::DVec3 point)
+{
+    const std::optional<core::Vec2> pixel = worldToViewport(camera.projection, camera.view, camera.origin, rect, point);
+    REQUIRE(pixel.has_value());
+    return rayThroughPixel(camera.projection, camera.view, camera.origin, rect, *pixel);
+}
+
+} // namespace
+
+TEST_CASE("a click on an arm picks that arm, and one on the middle picks the middle")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+
+    // Two thirds along each arm, which is arm and not centre and not past the
+    // tip.
+    const core::DVec3 axis[3] = {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
+    for (core::u8 index = 0; index < 3; ++index) {
+        // Z points at the camera here, so its arm is the near-parallel case and
+        // is checked on its own below.
+        if (index == 2)
+            continue;
+        const auto reach = static_cast<core::f64>(frame.size) * 0.7;
+        const core::DVec3 on =
+            centre + core::DVec3{axis[index].x * reach, axis[index].y * reach, axis[index].z * reach};
+        const std::optional<GizmoHandle> hit = pickGizmo(rayAtWorld(camera, rect, on), frame, GizmoMode::Translate);
+        REQUIRE(hit.has_value());
+        CHECK(hit->axis == index);
+        CHECK_FALSE(hit->plane);
+        CHECK_FALSE(hit->uniform);
+    }
+
+    const std::optional<GizmoHandle> middle = pickGizmo(rayAtWorld(camera, rect, centre), frame, GizmoMode::Translate);
+    REQUIRE(middle.has_value());
+    CHECK(middle->uniform);
+
+    // Well outside everything.
+    const core::DVec3 away = centre + core::DVec3{static_cast<core::f64>(frame.size) * 6.0, 0.0, 0.0};
+    CHECK_FALSE(pickGizmo(rayAtWorld(camera, rect, away), frame, GizmoMode::Translate).has_value());
+}
+
+TEST_CASE("an arm pointing at the camera is refused rather than divided by")
+{
+    // The Z arm points straight down the view direction. There is no nearest
+    // pair between a ray and a line it is parallel to, and the wrong answer here
+    // is not a miss but a NaN that poisons everything downstream.
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+
+    const PickRay straight = rayAtWorld(camera, rect, centre);
+    const GizmoHandle zAxis{2, false, false, 0.0f};
+    const std::optional<core::DVec3> point = gizmoDragPoint(straight, frame, zAxis);
+    if (point.has_value()) {
+        CHECK(std::isfinite(point->x));
+        CHECK(std::isfinite(point->y));
+        CHECK(std::isfinite(point->z));
+    }
+}
+
+TEST_CASE("a drag along an arm reports a point on that arm, and the delta is the drag")
+{
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+    const GizmoHandle xAxis{0, false, false, 0.0f};
+
+    const core::DVec3 grabbed = centre + core::DVec3{static_cast<core::f64>(frame.size) * 0.7, 0.0, 0.0};
+    const std::optional<core::DVec3> start = gizmoDragPoint(rayAtWorld(camera, rect, grabbed), frame, xAxis);
+    REQUIRE(start.has_value());
+    // The solve lands on the axis, which is what "a point on that arm" means.
+    CHECK(close(static_cast<f32>(start->y - centre.y), 0.0f, 0.01f));
+    CHECK(close(static_cast<f32>(start->z - centre.z), 0.0f, 0.01f));
+
+    // A drag that starts OFF the axis still solves onto it -- somebody grabbing
+    // an arm is never exactly on its centre line.
+    const core::DVec3 offAxis = grabbed + core::DVec3{0.0, static_cast<core::f64>(frame.size) * 0.05, 0.0};
+    const std::optional<core::DVec3> moved = gizmoDragPoint(rayAtWorld(camera, rect, offAxis), frame, xAxis);
+    REQUIRE(moved.has_value());
+    CHECK(close(static_cast<f32>(moved->y - centre.y), 0.0f, 0.01f));
+
+    // And a pointer four metres further along the axis is four metres of drag.
+    const core::DVec3 further = grabbed + core::DVec3{4.0, 0.0, 0.0};
+    const std::optional<core::DVec3> end = gizmoDragPoint(rayAtWorld(camera, rect, further), frame, xAxis);
+    REQUIRE(end.has_value());
+    CHECK(close(static_cast<f32>(end->x - start->x), 4.0f, 0.01f));
+}
+
+TEST_CASE("an arm dragged past its horizon stays in front of the camera and in reach")
+{
+    // **The defect a person reported as "a small mouse movement moves it
+    // forever".** The Z arm runs away from a camera looking level over the
+    // ground, so on screen it climbs toward the horizon and stops there. The old
+    // solve took the point on the infinite line nearest the pointer's ray, and a
+    // pointer at or above that horizon is nearest a point kilometres away or
+    // BEHIND the camera -- one pixel of mouse was the part leaving the world.
+    const TestCamera camera = cameraAt({0.0, 2.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+    const GizmoHandle zAxis{2, false, false, 0.0f};
+
+    const std::optional<core::Vec2> grabbed =
+        worldToViewport(camera.projection, camera.view, camera.origin, rect, centre);
+    REQUIRE(grabbed.has_value());
+
+    // From the handle up past the horizon (row 540 for a level camera) one pixel
+    // at a time. Every answer must be in front of the camera and no further than
+    // a sane multiple of the distance the drag started at; a pixel with no usable
+    // answer returns nothing and the part stays where the last one put it.
+    const f32 horizon = rect.height * 0.5f;
+    for (f32 row = grabbed->y; row > horizon - 20.0f; row -= 1.0f) {
+        const PickRay ray = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {grabbed->x, row});
+        const std::optional<core::DVec3> point = gizmoDragPoint(ray, frame, zAxis);
+        if (!point.has_value())
+            continue;
+        CHECK(std::isfinite(point->z));
+        CHECK(point->z < camera.origin.z);
+        CHECK(point->z > centre.z - 30.0 * 50.0);
+    }
+
+    // And well below the horizon the drag still follows the pointer along the
+    // arm, away from the camera as the pointer rises.
+    const PickRay nearer = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, *grabbed);
+    const PickRay farther =
+        rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {grabbed->x, grabbed->y - 10.0f});
+    const std::optional<core::DVec3> from = gizmoDragPoint(nearer, frame, zAxis);
+    const std::optional<core::DVec3> to = gizmoDragPoint(farther, frame, zAxis);
+    REQUIRE(from.has_value());
+    REQUIRE(to.has_value());
+    CHECK(to->z < from->z);
+    CHECK(close(static_cast<f32>(from->z - centre.z), 0.0f, 0.05f));
+}
+
+TEST_CASE("a plane handle seen above its horizon answers nothing rather than a point behind the camera")
+{
+    const TestCamera camera = cameraAt({0.0, 2.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const GizmoFrame frame = gizmoAt(camera, rect, core::DVec3{0.0, 0.0, -30.0});
+    const GizmoHandle floor{1, true, false, 0.0f};
+
+    // Straight ahead and a little up: this ray never meets the ground plane in
+    // front of the camera, only behind it.
+    const PickRay sky = rayThroughPixel(camera.projection, camera.view, camera.origin, rect, {960.0f, 400.0f});
+    CHECK_FALSE(gizmoDragPoint(sky, frame, floor).has_value());
+}
+
+TEST_CASE("a plane handle drags in its own plane and never out of it")
+{
+    const TestCamera camera = cameraAt({0.0, 20.0, 0.0}, {0.0f, -1.0f, -0.4f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+
+    // The XZ plane: its normal is Y, which is the axis the drag does not move
+    // along.
+    const GizmoHandle floor{1, true, false, 0.0f};
+    const core::DVec3 grabbed =
+        centre + core::DVec3{static_cast<core::f64>(frame.size) * 0.4, 0.0, static_cast<core::f64>(frame.size) * 0.4};
+
+    const std::optional<core::DVec3> start = gizmoDragPoint(rayAtWorld(camera, rect, grabbed), frame, floor);
+    REQUIRE(start.has_value());
+    CHECK(close(static_cast<f32>(start->y - centre.y), 0.0f, 0.01f));
+
+    const core::DVec3 further = grabbed + core::DVec3{3.0, 0.0, -2.0};
+    const std::optional<core::DVec3> end = gizmoDragPoint(rayAtWorld(camera, rect, further), frame, floor);
+    REQUIRE(end.has_value());
+    CHECK(close(static_cast<f32>(end->y - start->y), 0.0f, 0.01f));
+    CHECK(close(static_cast<f32>(end->x - start->x), 3.0f, 0.01f));
+    CHECK(close(static_cast<f32>(end->z - start->z), -2.0f, 0.01f));
+}
+
+TEST_CASE("a rotate ring is picked at its radius and reports the angle round it")
+{
+    // The camera looks down -Z, so the Z ring is face-on and unambiguous -- and
+    // the other two are edge-on, which is the case that must NOT be picked
+    // instead. Looking straight down the Y axis was the obvious way to write
+    // this and is the wrong one: `lookAt` with an up vector parallel to the look
+    // direction has no answer, and the matrix it returns is not a camera.
+    const TestCamera camera = cameraAt({0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{0.0, 0.0, -30.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+
+    const core::DVec3 onRing = centre + core::DVec3{static_cast<core::f64>(frame.size), 0.0, 0.0};
+    const std::optional<GizmoHandle> hit = pickGizmo(rayAtWorld(camera, rect, onRing), frame, GizmoMode::Rotate);
+    REQUIRE(hit.has_value());
+    CHECK(hit->axis == 2);
+
+    // A quarter turn round it, measured rather than assumed. The Z ring's own
+    // two axes are X and Y in that order, so a point on +X is at atan2(0, r) and
+    // one on +Y at atan2(r, 0).
+    const GizmoHandle ring{2, false, false, 0.0f};
+    const std::optional<f32> from = gizmoDragAngle(rayAtWorld(camera, rect, onRing), frame, ring);
+    const core::DVec3 quarter = centre + core::DVec3{0.0, static_cast<core::f64>(frame.size), 0.0};
+    const std::optional<f32> to = gizmoDragAngle(rayAtWorld(camera, rect, quarter), frame, ring);
+    REQUIRE(from.has_value());
+    REQUIRE(to.has_value());
+
+    f32 turned = *to - *from;
+    while (turned > 3.14159265f)
+        turned -= 6.2831853f;
+    while (turned < -3.14159265f)
+        turned += 6.2831853f;
+    CHECK(close(std::abs(turned), 1.5707963f, 0.01f));
+
+    // The middle of a rotate gizmo is nothing: there is no uniform rotation, and
+    // a centre handle that answered would rotate a selection about an axis
+    // nobody chose.
+    CHECK_FALSE(pickGizmo(rayAtWorld(camera, rect, centre), frame, GizmoMode::Rotate).has_value());
+}
+
+TEST_CASE("a manipulator four kilometres out is picked exactly as one at arm's length")
+{
+    // The whole of ADR 0014 in one case: the origin is f64 and every tolerance
+    // in the picker is a fraction of the gizmo, so distance changes nothing.
+    const TestCamera camera = cameraAt({4000.0, 12.0, -4000.0}, {0.0f, 0.0f, -1.0f}, 60.0f, 16.0f / 9.0f);
+    const ViewportRect rect{0.0f, 0.0f, 1920.0f, 1080.0f};
+    const core::DVec3 centre{4000.0, 12.0, -4030.0};
+    const GizmoFrame frame = gizmoAt(camera, rect, centre);
+
+    const core::DVec3 on = centre + core::DVec3{static_cast<core::f64>(frame.size) * 0.7, 0.0, 0.0};
+    const std::optional<GizmoHandle> hit = pickGizmo(rayAtWorld(camera, rect, on), frame, GizmoMode::Translate);
+    REQUIRE(hit.has_value());
+    CHECK(hit->axis == 0);
+
+    const GizmoHandle xAxis{0, false, false, 0.0f};
+    const std::optional<core::DVec3> start = gizmoDragPoint(rayAtWorld(camera, rect, on), frame, xAxis);
+    const std::optional<core::DVec3> end =
+        gizmoDragPoint(rayAtWorld(camera, rect, on + core::DVec3{2.0, 0.0, 0.0}), frame, xAxis);
+    REQUIRE(start.has_value());
+    REQUIRE(end.has_value());
+    CHECK(close(static_cast<f32>(end->x - start->x), 2.0f, 0.01f));
+}
+
+// --- What is not a part (S5.1) -----------------------------------------------
+//
+// **An editor in which you cannot click a camera or a light is an editor in
+// which those things do not exist.** Picking walked the part pool and nothing
+// else, so a `Camera`, a `PointLight`, an `Attachment` and a `Ragdoll` could be
+// reached only through the Explorer -- and the one you want to move is the one
+// you can see in the viewport.
+
+TEST_CASE("an instance with no transform of its own is at its nearest ancestor that has one")
+{
+    // Not a fallback: it is the rule the RENDERER already follows. A
+    // `PointLight` has no position and is lit from the part it hangs on, so a
+    // marker anywhere else would be a marker for a light that is not there.
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+
+    const core::InstanceId root = fixture.widget(world, "Root");
+    const core::InstanceId lamp = world.create(fixture.partClass);
+    REQUIRE_FALSE(world.setParent(lamp, root).has_value());
+    world.parts().find(lamp)->cframe.position = core::DVec3{4.0, 3.0, -2.0};
+
+    const core::InstanceId glow = world.create(fixture.pointLightClass);
+    REQUIRE_FALSE(world.setParent(glow, lamp).has_value());
+
+    const std::optional<core::DVec3> at = app::markerPoint(world, glow);
+    REQUIRE(at.has_value());
+    CHECK(at->x == doctest::Approx(4.0));
+    CHECK(at->y == doctest::Approx(3.0));
+    CHECK(at->z == doctest::Approx(-2.0));
+}
+
+TEST_CASE("a part is never a marker, because clicking its shape is what picking already does")
+{
+    // A marker over a part would be a second, smaller target on top of a bigger
+    // correct one -- so aiming at the middle of a crate would select the crate
+    // through a pinhole and miss it everywhere else.
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+
+    const core::InstanceId root = fixture.widget(world, "Root");
+    const core::InstanceId crate = world.create(fixture.partClass);
+    REQUIRE_FALSE(world.setParent(crate, root).has_value());
+
+    std::vector<app::PickMarker> markers;
+    app::collectPickMarkers(world, root, markers);
+    for (const app::PickMarker& marker : markers)
+        CHECK(marker.instance != crate);
+}
+
+TEST_CASE("a marker the ray passes near is picked, and one it misses is not")
+{
+    const std::array<app::PickMarker, 1> markers{app::PickMarker{core::InstanceId{}, core::DVec3{0.0, 0.0, -10.0}}};
+    const app::PickRay straight{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+
+    const std::optional<app::PickHit> hit =
+        app::pickMarker(markers, straight, 0.3f, std::numeric_limits<core::f32>::infinity());
+    REQUIRE(hit.has_value());
+    CHECK(static_cast<core::f64>(hit->distance) == doctest::Approx(10.0));
+
+    // A ray a metre off the side, with a thirty-centimetre marker.
+    const app::PickRay wide{{1.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    CHECK_FALSE(app::pickMarker(markers, wide, 0.3f, std::numeric_limits<core::f32>::infinity()).has_value());
+}
+
+TEST_CASE("a marker behind a wall is not what somebody is pointing at")
+{
+    // The other half of making markers win over geometry: being smaller must not
+    // make one harder to click, and being behind a wall must still make it
+    // unreachable.
+    const std::array<app::PickMarker, 1> markers{app::PickMarker{core::InstanceId{}, core::DVec3{0.0, 0.0, -10.0}}};
+    const app::PickRay straight{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+
+    // A solid hit at five metres: the marker at ten is behind it.
+    CHECK_FALSE(app::pickMarker(markers, straight, 0.3f, 5.0f).has_value());
+    // A solid hit at ten and a marker at ten: the marker sits ON the surface,
+    // which is where every light on a part is. It has to win, or most lights are
+    // permanently unclickable.
+    CHECK(app::pickMarker(markers, straight, 0.3f, 10.0f).has_value());
+}
+
+TEST_CASE("a marker behind the camera is never picked")
+{
+    const std::array<app::PickMarker, 1> markers{app::PickMarker{core::InstanceId{}, core::DVec3{0.0, 0.0, 10.0}}};
+    const app::PickRay forward{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+    CHECK_FALSE(app::pickMarker(markers, forward, 0.3f, std::numeric_limits<core::f32>::infinity()).has_value());
+}
+
+TEST_CASE("two overlapping markers resolve to the one the pointer is more on")
+{
+    // A marker is an aiming target rather than geometry, so the nearest ALONG
+    // the ray is the wrong answer: the one further away can be the one under the
+    // pointer, and that is the one somebody meant.
+    const core::InstanceId near{1, 1};
+    const core::InstanceId far{2, 1};
+    const std::array<app::PickMarker, 2> markers{
+        app::PickMarker{near, core::DVec3{0.25, 0.0, -5.0}},
+        app::PickMarker{far, core::DVec3{0.02, 0.0, -9.0}},
+    };
+    const app::PickRay straight{{0.0, 0.0, 0.0}, {0.0f, 0.0f, -1.0f}};
+
+    const std::optional<app::PickHit> hit =
+        app::pickMarker(markers, straight, 0.5f, std::numeric_limits<core::f32>::infinity());
+    REQUIRE(hit.has_value());
+    CHECK(hit->instance == far);
+}
+
+TEST_CASE("a marker the eye is inside is not one the eye can see or click")
+{
+    // **The owner's "is a grid on the camera normal?"**: the editor starts where
+    // the scene's Camera is, inside that camera's marker, which from there is
+    // two lines across the whole view -- and a ray from inside it hits it
+    // whatever it is aimed at.
+    CHECK(engine::app::eyeInsideMarker(core::DVec3{1.0, 2.0, 3.0}, core::DVec3{1.0, 2.0, 3.0}));
+    CHECK(engine::app::eyeInsideMarker(core::DVec3{0.0, 0.0, 0.0}, core::DVec3{0.3, 0.0, 0.0}));
+    // A step back and it is an ordinary marker again.
+    CHECK_FALSE(engine::app::eyeInsideMarker(core::DVec3{0.0, 0.0, 0.0}, core::DVec3{2.0, 0.0, 0.0}));
+}

@@ -1,0 +1,6 @@
+# Generated: the engine types `ludwerk new` and `ludwerk setup` write, for an outside
+# editor. Rebuilt from the pinned engine.
+.engine/
+
+# What `ludwerk build` exports: rebuilt from the project on every export.
+dist/

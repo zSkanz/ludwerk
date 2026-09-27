@@ -1,0 +1,393 @@
+#include "engine/app/field_streamer.h"
+
+#include <algorithm>
+#include <iterator>
+#include <set>
+
+#include "engine/app/streaming_host.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
+#include "engine/platform/platform.h"
+#include "engine/scene/components.h"
+#include "engine/scene/voxel_fluid.h"
+#include "engine/scene/world.h"
+
+namespace engine::app {
+namespace {
+
+[[nodiscard]] f64 millisecondsSince(u64 startedNs)
+{
+    return static_cast<f64>(platform::nowNs() - startedNs) / 1.0e6;
+}
+
+} // namespace
+
+void FieldStreamer::setIndex(const asset::ChunkIndex& index, const CellResolver& resolve)
+{
+    m_paths.clear();
+    for (const asset::ChunkIndexEntry& entry : index.chunks) {
+        if (const std::optional<std::filesystem::path> path = resolve(entry); path.has_value())
+            m_paths.emplace(entry.id, *path);
+    }
+    m_manager.setIndex(index);
+    m_active = !index.chunks.empty();
+    m_primed = !m_active;
+    installCallbacks();
+}
+
+void FieldStreamer::adoptTerrain(const asset::ChunkIndex& index, const CellResolver& resolve)
+{
+    asset::ChunkIndex merged;
+    merged.chunkSize = static_cast<core::f32>(asset::FieldCellMetres);
+    for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
+        if (entry.id.layer != asset::FieldLayerTerrain)
+            merged.chunks.push_back(entry);
+    }
+    for (auto at = m_paths.begin(); at != m_paths.end();) {
+        at = at->first.layer == asset::FieldLayerTerrain ? m_paths.erase(at) : std::next(at);
+    }
+    for (const asset::ChunkIndexEntry& entry : index.chunks) {
+        if (entry.id.layer != asset::FieldLayerTerrain)
+            continue;
+        merged.chunks.push_back(entry);
+        if (const std::optional<std::filesystem::path> path = resolve(entry); path.has_value())
+            m_paths.emplace(entry.id, *path);
+    }
+    // A different terrain's cells are nobody's now: its field went with it.
+    m_terrainCells.clear();
+    if (!m_active) {
+        m_manager.setIndex(merged);
+        installCallbacks();
+    }
+    else {
+        m_manager.replaceIndex(merged);
+    }
+    m_active = !merged.chunks.empty();
+    m_primed = m_primed || !m_active;
+}
+
+void FieldStreamer::reconcile()
+{
+    if (m_world == nullptr || m_terrainCells.empty())
+        return;
+    scene::TerrainComponent* component = terrain();
+    if (component == nullptr)
+        return;
+    for (const auto& held : m_terrainCells)
+        component->field.shareFrom(held.second.field);
+    component->fieldRevision += 1;
+}
+
+FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWriter& writer)
+{
+    TerrainSaveReport report;
+    scene::TerrainComponent* component = m_world != nullptr ? terrain() : nullptr;
+    if (component == nullptr) {
+        report.ok = false;
+        return report;
+    }
+    const asset::FieldSettings settings = component->field.settings();
+    const core::u32 across = asset::terrainCellChunks(settings.voxelSize);
+
+    // What the index holds now, terrain rows only, by id.
+    std::map<asset::ChunkId, asset::ChunkIndexEntry> rows;
+    for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
+        if (entry.id.layer == asset::FieldLayerTerrain)
+            rows.emplace(entry.id, entry);
+    }
+
+    std::vector<asset::TerrainCell> cells = asset::splitTerrain(component->field);
+    std::set<asset::ChunkId> present;
+    for (asset::TerrainCell& cell : cells) {
+        const asset::ChunkId id{cell.x, cell.z, asset::FieldLayerTerrain};
+        present.insert(id);
+        const auto held = m_terrainCells.find(id);
+        if (held != m_terrainCells.end() && asset::terrainCellUntouched(component->field, held->second, across)) {
+            report.unchanged += 1;
+            continue;
+        }
+        // **Ground the field does not hold is still the cell's.** A cell that
+        // is not resident -- nobody loaded it, or it was let go -- may still
+        // have ground written into its square (Generate Flat Ground over a
+        // large square reaches past what is loaded). The file is the rest of
+        // it, and what the field holds wins, because it is newer.
+        if (held == m_terrainCells.end()) {
+            if (const auto row = rows.find(id); row != rows.end() && writer.read) {
+                if (const std::optional<std::vector<std::byte>> bytes = writer.read(row->second); bytes.has_value()) {
+                    asset::TerrainCell onDisk;
+                    if (!asset::decodeTerrainCell(*bytes, onDisk).has_value())
+                        cell.field.shareFrom(onDisk.field);
+                }
+            }
+        }
+        cell.settings = settings;
+        const std::vector<std::byte> bytes = asset::encodeTerrainCell(cell);
+        const std::optional<std::string> urn = writer.write(id, bytes);
+        if (!urn.has_value()) {
+            report.ok = false;
+            continue;
+        }
+        asset::ChunkIndexEntry entry;
+        entry.id = id;
+        entry.bounds = asset::terrainCellBounds(cell, across, component->origin);
+        entry.urn = *urn;
+        entry.bytes = static_cast<core::u32>(bytes.size());
+        rows[id] = entry;
+        if (writer.resolve) {
+            if (const std::optional<std::filesystem::path> path = writer.resolve(entry); path.has_value())
+                m_paths[id] = *path;
+        }
+        // An ordinary cell again: what it holds is what its file holds, so the
+        // camera moving away may let it go.
+        m_terrainCells[id] = std::move(cell);
+        report.written += 1;
+    }
+
+    // A cell this streamer loaded whose square is now empty was dug to
+    // nothing: its file goes, and its row with it.
+    for (auto held = m_terrainCells.begin(); held != m_terrainCells.end();) {
+        if (present.contains(held->first)) {
+            ++held;
+            continue;
+        }
+        if (const auto row = rows.find(held->first); row != rows.end()) {
+            if (writer.remove)
+                writer.remove(row->second);
+            rows.erase(row);
+            report.removed += 1;
+        }
+        m_paths.erase(held->first);
+        held = m_terrainCells.erase(held);
+    }
+
+    report.index.chunkSize = static_cast<core::f32>(asset::FieldCellMetres);
+    for (const auto& row : rows)
+        report.index.chunks.push_back(row.second);
+
+    asset::ChunkIndex merged = report.index;
+    for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
+        if (entry.id.layer != asset::FieldLayerTerrain)
+            merged.chunks.push_back(entry);
+    }
+    if (!m_active) {
+        m_manager.setIndex(merged);
+        installCallbacks();
+    }
+    else {
+        m_manager.replaceIndex(merged);
+    }
+    m_active = !merged.chunks.empty();
+    return report;
+}
+
+void FieldStreamer::setWorld(scene::World* world, core::InstanceId workspace)
+{
+    if (m_world == world && m_workspace == workspace)
+        return;
+    m_world = world;
+    m_workspace = workspace;
+    m_terrainCells.clear();
+    m_voxelCells.clear();
+    m_manager.forgetResidency();
+    // A new world has none of its ground yet, and waits for it like the first.
+    m_primed = !m_active;
+    m_waitingSinceNs = platform::nowNs();
+}
+
+void FieldStreamer::installCallbacks()
+{
+    asset::StreamingCallbacks callbacks;
+    callbacks.beginLoad = [this](asset::ChunkId id, const asset::ChunkIndexEntry&) {
+        // Refused rather than failed when the IO service is saturated, on
+        // `StreamingHost`'s terms: a full queue is not a broken cell.
+        const platform::IoStats io = platform::ioStats();
+        if (io.queued + io.inFlight >= platform::MaxIoRequests / 2)
+            return false;
+        // **High, above the parts' Normal**: a missing collider under a
+        // character is a fall, and a missing prop is not.
+        const auto path = m_paths.find(id);
+        const platform::IoRequest request = path != m_paths.end()
+                                                ? platform::readFileAsync(path->second, platform::IoPriority::High)
+                                                : platform::IoRequest{};
+        // A start that failed is reported AFTER the tick (D158): reported here,
+        // the manager would mark the cell loading as this returns and it would
+        // wait for a read that never began.
+        if (!request.valid())
+            m_failedStarts.push_back(id);
+        else
+            m_reads.emplace_back(request, id);
+        return true;
+    };
+    callbacks.materializeBytes = [this](asset::ChunkId id, std::span<const std::byte> bytes) {
+        return materialize(id, bytes);
+    };
+    callbacks.evict = [this](asset::ChunkId id) { evict(id); };
+    m_manager.setCallbacks(std::move(callbacks));
+}
+
+scene::TerrainComponent* FieldStreamer::terrain() const
+{
+    // The one directly under the workspace, which is where a `Terrain` lives.
+    scene::TerrainComponent* found = nullptr;
+    m_world->terrains().forEach([&](core::InstanceId id, scene::TerrainComponent& component) {
+        if (found == nullptr && m_world->parentOf(id) == m_workspace)
+            found = &component;
+    });
+    return found;
+}
+
+scene::VoxelComponent* FieldStreamer::voxels() const
+{
+    scene::VoxelComponent* found = nullptr;
+    m_world->voxels().forEach([&](core::InstanceId, scene::VoxelComponent& component) {
+        if (found == nullptr)
+            found = &component;
+    });
+    return found;
+}
+
+f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> bytes)
+{
+    const u64 started = platform::nowNs();
+    if (id.layer == asset::FieldLayerTerrain) {
+        asset::TerrainCell cell;
+        if (asset::decodeTerrainCell(bytes, cell).has_value())
+            return -1.0;
+        // A world whose script removed its terrain has nowhere to put the
+        // ground; the cell counts as resident, and costs what reading it did.
+        if (scene::TerrainComponent* component = terrain(); component != nullptr) {
+            component->field.shareFrom(cell.field);
+            component->fieldRevision += 1;
+            m_terrainCells[id] = std::move(cell);
+        }
+        return millisecondsSince(started);
+    }
+
+    asset::VoxelCell cell;
+    if (asset::decodeVoxelCell(bytes, cell).has_value())
+        return -1.0;
+    if (scene::VoxelComponent* component = voxels(); component != nullptr) {
+        component->grid.shareFrom(cell.grid);
+        component->revision += 1;
+        // Its water was saved without the steps it was due. A still lake
+        // settles in one look; water that moves makes the cell one somebody
+        // changed, which is what it now is.
+        scene::wakeFluidsIn(*component, cell.grid);
+        m_voxelCells[id] = std::move(cell);
+    }
+    return millisecondsSince(started);
+}
+
+void FieldStreamer::evict(asset::ChunkId id)
+{
+    if (id.layer == asset::FieldLayerTerrain) {
+        const auto held = m_terrainCells.find(id);
+        if (held == m_terrainCells.end())
+            return;
+        if (scene::TerrainComponent* component = terrain(); component != nullptr) {
+            const core::u32 across = asset::terrainCellChunks(held->second.settings.voxelSize);
+            if (asset::terrainCellUntouched(component->field, held->second, across)) {
+                asset::removeTerrainCell(component->field, held->second);
+                component->fieldRevision += 1;
+            }
+            else {
+                ++m_kept;
+            }
+        }
+        m_terrainCells.erase(held);
+        return;
+    }
+
+    const auto held = m_voxelCells.find(id);
+    if (held == m_voxelCells.end())
+        return;
+    if (scene::VoxelComponent* component = voxels(); component != nullptr) {
+        const core::u32 across = asset::voxelCellChunks(held->second.blockSize);
+        if (asset::voxelCellUntouched(component->grid, held->second, across)) {
+            asset::removeVoxelCell(component->grid, held->second);
+            component->revision += 1;
+        }
+        else {
+            ++m_kept;
+        }
+    }
+    m_voxelCells.erase(held);
+}
+
+void FieldStreamer::pump(f64 budgetMilliseconds)
+{
+    if (!m_active || m_world == nullptr)
+        return;
+    const u64 started = platform::nowNs();
+
+    // Finished reads, inside the budget, on `StreamingHost::pump`'s terms
+    // (D127 and D131: the drain is budgeted, and a failed read gives its slot
+    // back).
+    platform::pumpIo();
+    for (std::size_t index = 0; index < m_reads.size();) {
+        if (budgetMilliseconds > 0.0 && millisecondsSince(started) >= budgetMilliseconds)
+            break;
+        const platform::IoStatus status = platform::ioStatus(m_reads[index].first);
+        if (status == platform::IoStatus::Pending) {
+            ++index;
+            continue;
+        }
+        std::vector<std::byte> bytes;
+        if (status == platform::IoStatus::Ready && platform::takeIoResult(m_reads[index].first, bytes)) {
+            m_manager.onChunkLoaded(m_reads[index].second, bytes);
+        }
+        else {
+            platform::cancelIo(m_reads[index].first);
+            m_manager.onChunkFailed(m_reads[index].second);
+        }
+        m_reads.erase(m_reads.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    // **The terrain radii for both kinds of cell.** `TerrainLoadRadius` and
+    // `TerrainMinRadius` have named "cells of terrain" since they were
+    // reserved; the block world is ground too. A zero there follows the focus's
+    // own pair, which is the rule every layer has.
+    std::vector<asset::StreamingFocus> foci =
+        m_focusOverride.has_value() ? std::vector<asset::StreamingFocus>{streamingFocusAt(*m_world, *m_focusOverride)}
+                                    : collectStreamingFoci(*m_world, m_workspace);
+    for (asset::StreamingFocus& focus : foci) {
+        focus.layers[asset::FieldLayerTerrain] = focus.layers[2];
+        focus.layers[asset::FieldLayerVoxels] = focus.layers[2];
+    }
+    m_manager.setFoci(foci);
+    m_manager.setEnabled(m_world->engineState().streamingEnabled);
+
+    asset::StreamingBudget budget;
+    budget.milliseconds = std::max(0.0, budgetMilliseconds - millisecondsSince(started));
+    // **Thirty-two reads open, not the parts' eight.** A cell of ground is a
+    // few kilobytes and the minimum ring is a couple of hundred of them, all of
+    // which the simulation is waiting for; eight at a time made the first load
+    // a matter of seconds for nothing but queueing.
+    budget.maxInFlight = 32;
+    m_manager.tick(budget);
+    for (const asset::ChunkId id : m_failedStarts)
+        m_manager.onChunkFailed(id);
+    m_failedStarts.clear();
+
+    // **No focus, no wait** (D169). The first load holds the simulation so a
+    // character standing on streamed ground does not fall through it -- and a
+    // world with no camera and no focus has nobody standing anywhere, and never
+    // will have a ring to be resident. Held, it waited for ever: a project whose
+    // scene carried terrain and no camera ran with its scripts' Heartbeat never
+    // firing. Scripts have run by the first pump (`WorldHost::boot`), so a game
+    // that makes its own camera has one by now and still waits for its ground.
+    if (!m_primed && foci.empty()) {
+        m_primed = true;
+        core::log(core::LogLevel::Warn, ENG_TR("app.warn.field_no_focus"), {});
+    }
+    if (!m_primed && !foci.empty() && m_manager.minimumRingResident()) {
+        m_primed = true;
+        // Said once, because how long the first load took is the number a
+        // person tuning `TerrainMinRadius` needs.
+        const core::I18nArg args[] = {{"cells", static_cast<core::i64>(m_manager.stats().chunksLoaded)},
+                                      {"ms", static_cast<core::i64>(millisecondsSince(m_waitingSinceNs))}};
+        core::log(core::LogLevel::Info, ENG_TR("app.info.field_primed"), args);
+    }
+}
+
+} // namespace engine::app

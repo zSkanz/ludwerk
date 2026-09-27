@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<polygon points="2,6 6,6 8,3 14,3 16,6 18,6 18,15 2,15" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="10" cy="9" r="3.9" fill="white"/>
+<circle cx="10" cy="9" r="2.1" fill="black"/>
+<polygon points="21.5,17 21.5975,17.0096 21.6913,17.0381 21.7778,17.0843 21.8536,17.1464 21.9157,17.2222 21.9619,17.3087 21.9904,17.4025 22,17.5 22,21.5 21.9904,21.5975 21.9619,21.6913 21.9157,21.7778 21.8536,21.8536 21.7778,21.9157 21.6913,21.9619 21.5975,21.9904 21.5,22 14.5,22 14.4025,21.9904 14.3087,21.9619 14.2222,21.9157 14.1464,21.8536 14.0843,21.7778 14.0381,21.6913 14.0096,21.5975 14,21.5 14,17.5 14.0096,17.4025 14.0381,17.3087 14.0843,17.2222 14.1464,17.1464 14.2222,17.0843 14.3087,17.0381 14.4025,17.0096 14.5,17" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="6,18 6,20 10,20" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="8,18 10,20 8,22" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>
+</svg>

@@ -1,0 +1,109 @@
+# Build output — builds are ALWAYS out-of-tree via $env:ENG_BUILD_ROOT (rule R14).
+# These patterns are defensive only; nothing should ever create them in-tree.
+#
+# ROOT-ANCHORED, and that leading slash is load-bearing. Unanchored, `build-*/`
+# matches at any depth, which silently swallowed
+# third_party/sdl_shadercross/build-scripts/ — upstream source, including the
+# very file ADR 0032 cites — on the way into the repo. A vendored tree is
+# upstream's tracked files by construction (ADR 0021); our own ignore rules have
+# no business deciding which of them survive.
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+/.cache/
+
+# Local tooling installed by scripts/bootstrap (Lute binary etc.)
+.tooling/
+
+# Generated per-project state of example/user projects
+.engine/
+
+# Bytecode / shader / asset caches
+*.luauc
+shaders/compiled/
+content/cache/
+
+# Gradle's own state for the Android package. Root-anchored patterns above
+# cannot reach it, and Android Studio creates both on first open.
+/samples/triangle/android/.gradle/
+/samples/triangle/android/local.properties
+
+# IDE / editor cruft
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.user
+*.suo
+*.swp
+*~
+
+# OS / sync artifacts
+desktop.ini
+Thumbs.db
+.DS_Store
+~$*
+
+# Logs, dumps, profiling traces
+*.log
+*.dmp
+*.perfetto-trace
+
+# Packaging output
+dist/
+*.lpack
+
+# `tests/packaging` scaffolds a project, builds it and runs it, all under this
+# directory. It removes it on the way out; the entry is here so that a run
+# interrupted halfway does not leave a whole scaffolded project staged.
+/.engine-packaging-test/
+# `tests/installed` does the same through the PACKAGED CLI rather than this
+# tree's, which is the difference the suite exists for.
+/.engine-installed-test/
+# The export suites' own (ADR 0104): the sentinel test's dedicated game, and the
+# Linux export unpacked and run in the gate's container.
+/.engine-sides-test/
+/.engine-linux-export-test/
+/.engine-linux-server-test/
+/.engine-android-test/
+
+# `ludwerk test`'s machine-readable report. Written beside the suite when no
+# --report path is given, and regenerated on every run.
+test-report.json
+
+# The host writes these beside whatever it was run from (main.cpp): a log file
+# and, on a fault, a minidump. They are evidence a person sends, never something
+# a repository keeps.
+engine.log
+engine-crash-*.dmp
+engine-crash-*.txt
+
+# `examples/05-streaming`'s world is GENERATED (M7 brief, Decision 8): its
+# chunk sources come from `tools/generate_world.luau` and its compiled payloads
+# from `ludwerk build-assets`. What is committed is the forty-line generator, not
+# the megabyte and a half it writes -- the roadmap's own deliverable line asks
+# for "no giant binary assets in the repo", and generated JSON is the same thing
+# wearing a text extension. `run.bat` regenerates it when it is missing.
+examples/05-streaming/content/world/
+
+# `examples/10-open-world`'s world is generated the same way and for the same
+# reason: 289 chunk sources, 4.8 MB of JSON, from a hundred committed lines.
+examples/10-open-world/content/world/
+
+# `art/` is source, not scratch: `icons/bake.py` reads the masters under
+# `art/editor-icons/` to produce the theme under `icons/default/`, which IS
+# committed. A generated artifact whose input is missing is an artifact nobody
+# can regenerate, so the masters belong in the repository.
+#
+# What does NOT belong is the part of a working directory that is a working
+# directory: drafts that were retired, marks that were rejected, and a folder
+# whose own name says it is temporary. They are large, they are history nobody
+# will read, and a public repository cannot take them back out of its history
+# afterwards. The reasoning that produced the surviving art is kept -- every
+# brief, every review note and every sheet under `art/communication/` -- because
+# that is the part somebody drawing the next icon needs.
+art/**/_to_delete/
+art/editor-icons/temporary/
+art/branding/candidates/

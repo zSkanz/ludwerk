@@ -1,0 +1,12 @@
+// GENERATED FILE -- do not edit, and do not commit.
+// Produced by cmake/engine_provenance.cmake from third_party/manifest.json at
+// configure time (ADR 0031). The pinned dependency version and commit exist
+// here and nowhere else in C++ source, so `--version` can never report a value
+// somebody typed from memory.
+#pragma once
+
+#define ENG_VERSION_STRING "@PROJECT_VERSION@"
+#define ENG_PROFILE_NAME "@ENG_PROFILE@"
+
+#define ENG_LUAU_VERSION "@ENG_LUAU_VERSION@"
+#define ENG_LUAU_COMMIT "@ENG_LUAU_COMMIT@"

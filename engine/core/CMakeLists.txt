@@ -1,0 +1,59 @@
+# L0 -- depends on nothing. Deliberately does not include Luau headers:
+# architecture.md §2 reserves those for `script` (and the host above it), so
+# core stays usable by tooling and tests that have no VM.
+
+# **The engine's own transcendentals** (ADR 0083), as a library of their own
+# rather than a source of `core`: Luau's VM and compiler link them too -- their
+# `^` goes through `luaug_dpow` (the patch in third_party/patches/luau) -- and
+# must not pull the rest of core in with them. Core links it publicly, so every
+# module sees `engine/core/dmath.h` as it sees the rest of core.
+add_library(engine_dmath STATIC src/dmath.cpp)
+target_include_directories(engine_dmath PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(engine_dmath PRIVATE engine::warnings)
+target_link_libraries(Luau.VM PUBLIC engine_dmath)
+target_link_libraries(Luau.Compiler PUBLIC engine_dmath)
+
+engine_add_module(core
+    LAYER 0
+    SOURCES
+        src/base64.cpp
+        src/content_hash.cpp
+        src/i18n.cpp
+        src/json.cpp
+        src/json_writer.cpp
+        src/log.cpp
+        src/error.cpp
+        src/easing.cpp
+        src/math.cpp
+        src/phase.cpp
+        src/name_atom.cpp
+        src/number_parse.cpp
+        src/random.cpp
+        src/toml.cpp
+        src/toml_edit.cpp
+    PUBLIC_DEPS
+        engine_dmath
+        engine::build_info
+    PRIVATE_DEPS
+        blake3::blake3
+)
+
+engine_add_module_tests(core
+    SOURCES
+        tests/base64_tests.cpp
+        tests/content_hash_tests.cpp
+        tests/dmath_tests.cpp
+        tests/text_key_tests.cpp
+        tests/i18n_tests.cpp
+        tests/json_tests.cpp
+        tests/json_writer_tests.cpp
+        tests/log_tests.cpp
+        tests/error_tests.cpp
+        tests/math_tests.cpp
+        tests/phase_tests.cpp
+        tests/slotmap_tests.cpp
+        tests/name_atom_tests.cpp
+        tests/random_tests.cpp
+        tests/toml_edit_tests.cpp
+        tests/toml_tests.cpp
+)

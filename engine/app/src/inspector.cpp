@@ -1,0 +1,1093 @@
+﻿#include "engine/app/inspector.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <variant>
+#include <vector>
+
+#include "engine/core/math.h"
+#include "engine/scene/enum_registry.h"
+
+namespace engine::app {
+namespace {
+
+using core::f64;
+
+// Wide enough for the longest thing formatted below -- a CFrame's position.
+// Truncation here would be a display bug rather than a memory one, but a
+// silently shortened number in an inspector is a lie about the world's state.
+constexpr usize FormatBufferSize = 160;
+
+// One `operator()` per alternative of `scene::Value`, deliberately, rather than
+// a generic lambda with a fallback. Appending an alternative to the variant
+// then becomes a compile error here instead of a `ValueType` that quietly
+// renders as an empty field -- entering risk 6's exact failure mode, moved from
+// runtime to the build.
+//
+// Every format string is a literal at its call site: `-Wformat=2` rejects a
+// format that arrived through a variable, and it is right to.
+struct ValueFormatter
+{
+    const scene::World& world;
+
+    [[nodiscard]] std::string operator()(std::monostate) const { return "nil"; }
+
+    [[nodiscard]] std::string operator()(bool value) const { return value ? "true" : "false"; }
+
+    [[nodiscard]] std::string operator()(f64 value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "%.6g", value);
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const std::string& value) const { return "\"" + value + "\""; }
+
+    [[nodiscard]] std::string operator()(const core::Vec3& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "%.3f, %.3f, %.3f", static_cast<f64>(value.x), static_cast<f64>(value.y),
+                      static_cast<f64>(value.z));
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::CFrameD& value) const
+    {
+        // Position only. The rotation is nine numbers and no inspector row is
+        // wide enough for them; the properties panel draws the basis beneath
+        // the position, where there is space.
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "pos %.3f, %.3f, %.3f", value.position.x, value.position.y,
+                      value.position.z);
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::Color3& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "rgb %.3f, %.3f, %.3f", static_cast<f64>(value.r),
+                      static_cast<f64>(value.g), static_cast<f64>(value.b));
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::Vec2& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "%.3f, %.3f", static_cast<f64>(value.x), static_cast<f64>(value.y));
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::UDim& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "%.3f, %.0f", static_cast<f64>(value.scale),
+                      static_cast<f64>(value.offset));
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::UDim2& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "{%.3f, %.0f}, {%.3f, %.0f}", static_cast<f64>(value.x.scale),
+                      static_cast<f64>(value.x.offset), static_cast<f64>(value.y.scale),
+                      static_cast<f64>(value.y.offset));
+        return std::string(buffer);
+    }
+
+    [[nodiscard]] std::string operator()(const core::Rect& value) const
+    {
+        char buffer[FormatBufferSize]{};
+        std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f -> %.1f, %.1f", static_cast<f64>(value.min.x),
+                      static_cast<f64>(value.min.y), static_cast<f64>(value.max.x), static_cast<f64>(value.max.y));
+        return std::string(buffer);
+    }
+
+    // The asset's URN, and the clone's number when it is one: a clone is the
+    // same asset changed at runtime, and the panel says which.
+    [[nodiscard]] std::string operator()(const scene::MaterialRef& value) const
+    {
+        if (value.clone == 0)
+            return value.source;
+        return value.source + " (clone " + std::to_string(value.clone) + ")";
+    }
+
+    // The overridden parameters by name, in name order -- the order a scene
+    // file writes them in.
+    [[nodiscard]] std::string operator()(const asset::MaterialOverrides& value) const
+    {
+        std::vector<std::string_view> names;
+        for (core::usize index = 0; index < asset::MaterialFieldCount; ++index) {
+            const auto field = static_cast<asset::MaterialField>(index);
+            if (value.has(field))
+                names.push_back(asset::materialFieldName(field));
+        }
+        std::sort(names.begin(), names.end());
+        std::string out;
+        for (const std::string_view name : names) {
+            if (!out.empty())
+                out += ", ";
+            out += name;
+        }
+        return out.empty() ? std::string("none") : out;
+    }
+
+    [[nodiscard]] std::string operator()(core::InstanceId value) const
+    {
+        if (!value.valid())
+            return "nil";
+        // A reference the world has already let go of. Said out loud rather
+        // than drawn as a name, because a dangling reference is a fact about
+        // the world and the panel exists to show facts about the world.
+        if (!world.alive(value))
+            return "<stale>";
+
+        const std::string_view instanceName = world.atoms().text(world.name(value));
+        const scene::ClassDescriptor* classDescriptor = world.classes().find(world.classOf(value));
+        const std::string_view className =
+            classDescriptor != nullptr ? world.atoms().text(classDescriptor->name) : std::string_view("?");
+        return std::string(instanceName) + " (" + std::string(className) + ")";
+    }
+
+    [[nodiscard]] std::string operator()(const scene::EnumValue& value) const
+    {
+        char buffer[FormatBufferSize]{};
+
+        const scene::EnumDescriptor* enumDescriptor = world.enums().find(value.enumId);
+        if (enumDescriptor == nullptr) {
+            std::snprintf(buffer, sizeof(buffer), "<enum %u>.%d", static_cast<unsigned>(value.enumId), value.value);
+            return std::string(buffer);
+        }
+
+        const std::string_view enumName = world.atoms().text(enumDescriptor->name);
+        const scene::EnumItemDesc* item = world.enums().findValue(value.enumId, value.value);
+        if (item != nullptr)
+            return "Enum." + std::string(enumName) + "." + std::string(world.atoms().text(item->name));
+
+        // A stored number no item carries. Shown rather than hidden: it is
+        // exactly the state a snapshot from an older enum leaves behind.
+        std::snprintf(buffer, sizeof(buffer), "%d", value.value);
+        return "Enum." + std::string(enumName) + ".<" + buffer + ">";
+    }
+};
+
+} // namespace
+
+EditorKind editorFor(scene::ValueType type) noexcept
+{
+    switch (type) {
+    case scene::ValueType::Nil:
+        break;
+    case scene::ValueType::Bool:
+        return EditorKind::Checkbox;
+    case scene::ValueType::Number:
+        return EditorKind::Number;
+    case scene::ValueType::String:
+        return EditorKind::Text;
+    case scene::ValueType::Vector3:
+        return EditorKind::Vector3;
+    case scene::ValueType::CFrame:
+        return EditorKind::CFrame;
+    case scene::ValueType::Color3:
+        return EditorKind::Color;
+    case scene::ValueType::Instance:
+        return EditorKind::InstanceRef;
+    case scene::ValueType::EnumItem:
+        return EditorKind::EnumCombo;
+    case scene::ValueType::Vector2:
+        return EditorKind::Vector2;
+    case scene::ValueType::UDim:
+        return EditorKind::UDim;
+    case scene::ValueType::UDim2:
+        return EditorKind::UDim2;
+    case scene::ValueType::Rect:
+        return EditorKind::Rect;
+    case scene::ValueType::Material:
+        return EditorKind::Material;
+    case scene::ValueType::MaterialParameters:
+        return EditorKind::MaterialParameters;
+    }
+
+    // `Nil` is a property holding nothing, and so is anything the switch above
+    // stops naming. Both land on a disabled field rather than on no field at
+    // all: a `ValueType` that renders nothing stops being inspectable without
+    // anyone finding out (entering risk 6).
+    return EditorKind::ReadOnlyText;
+}
+
+EditorKind editorFor(const scene::PropertyDesc& descriptor) noexcept
+{
+    // A `Content` is a string, and the descriptor is the only thing that knows
+    // it is one: the value cannot say, because a URI and a name are the same
+    // bytes. `contentKind` is set by the IDL for exactly these properties.
+    if (descriptor.type == scene::ValueType::String && descriptor.contentKind.valid())
+        return EditorKind::Content;
+    // And the same for code, which is a string in exactly the way a URI is one.
+    if (descriptor.type == scene::ValueType::String && descriptor.code)
+        return EditorKind::Code;
+    return editorFor(descriptor.type);
+}
+
+bool editable(const scene::PropertyDesc& descriptor) noexcept
+{
+    if (descriptor.readOnly || descriptor.set == nullptr)
+        return false;
+
+    const EditorKind kind = editorFor(descriptor);
+    // **`InstanceRef` used to be here, and taking it out is the whole of D130.**
+    //
+    // A reference was deliberately read-only at M4 -- reparenting from the panel
+    // was out of that milestone's scope, and `Parent` is an Instance property,
+    // so an editable reference widget would have been the one feature the brief
+    // excluded arriving by accident. The panel grew a real reference editor
+    // later, with a picker, a drag from the Explorer and a drag from the content
+    // browser, and this predicate was not told.
+    //
+    // The result was a feature that was entirely inert in the shipped editor: the
+    // button came up disabled, the drop target was never installed, and
+    // `BasePart.Material` -- a property whose only purpose is to be set -- could
+    // not be set by any means. Nothing caught it because every test reached the
+    // COMMAND and none reached the predicate.
+    return kind != EditorKind::ReadOnlyText && kind != EditorKind::Code;
+}
+
+scene::EnumId enumDomainOf(const scene::EnumRegistry& enums, const scene::PropertyDesc& descriptor) noexcept
+{
+    if (descriptor.type != scene::ValueType::EnumItem)
+        return scene::InvalidEnum;
+    // `findId` on an empty atom answers `InvalidEnum` already, so a hand-built
+    // descriptor that names no enum falls out here rather than needing a case.
+    return enums.findId(descriptor.enumName);
+}
+
+namespace {
+
+struct CategoryRow
+{
+    std::string_view property;
+    std::string_view category;
+};
+
+// The headings, in the order the panel shows them. What a person looks at
+// first -- how it looks, what it is called, where it is -- comes first, and
+// the specialist groups follow.
+constexpr std::array<std::string_view, 17> kCategoryOrder{
+    "Appearance", "Data",  "Transform", "Behavior", "Collision",  "Physics",   "Text",      "Image",      "Layout",
+    "Camera",     "Light", "Audio",     "Emission", "Constraint", "Character", "Streaming", "Navigation",
+};
+
+// Sorted by property name, so a lookup is a binary search. A name several
+// classes share is one row: it means the same thing wherever it is declared.
+constexpr std::array<CategoryRow, 155> kCategories{{
+    {"AbsolutePosition", "Layout"},
+    {"AbsoluteSize", "Layout"},
+    {"Acceleration", "Emission"},
+    {"Active", "Behavior"},
+    {"Adornee", "Data"},
+    {"AgentHeight", "Navigation"},
+    {"AgentMaxClimb", "Navigation"},
+    {"AgentMaxSlope", "Navigation"},
+    {"AgentRadius", "Navigation"},
+    {"AlwaysOnTop", "Appearance"},
+    {"Ambient", "Appearance"},
+    {"AnchorPoint", "Transform"},
+    {"Anchored", "Physics"},
+    {"Angle", "Light"},
+    {"AngularVelocity", "Physics"},
+    {"Archivable", "Data"},
+    {"Attachment0", "Constraint"},
+    {"Attachment1", "Constraint"},
+    {"Authority", "Data"},
+    {"AutoStepHeight", "Character"},
+    {"AutomaticSize", "Layout"},
+    {"BackgroundColor", "Appearance"},
+    {"BackgroundTransparency", "Appearance"},
+    {"Brightness", "Light"},
+    {"C0", "Constraint"},
+    {"C1", "Constraint"},
+    {"CFrame", "Transform"},
+    {"CanCollide", "Collision"},
+    {"CanQuery", "Collision"},
+    {"CanTouch", "Collision"},
+    {"CanvasPosition", "Layout"},
+    {"CanvasSize", "Layout"},
+    {"CastShadow", "Appearance"},
+    {"CellSize", "Data"},
+    {"ClassName", "Data"},
+    {"ClipsDescendants", "Layout"},
+    {"ClockTime", "Appearance"},
+    {"CollideConnected", "Constraint"},
+    {"Collides", "Collision"},
+    {"CollisionFidelity", "Collision"},
+    {"CollisionGroup", "Collision"},
+    {"Color", "Appearance"},
+    {"ColorEnd", "Emission"},
+    {"Content", "Data"},
+    {"CornerRadius", "Appearance"},
+    {"CurrentCamera", "Camera"},
+    {"Density", "Physics"},
+    {"DisplayName", "Data"},
+    {"DisplayOrder", "Layout"},
+    {"Drag", "Emission"},
+    {"Elasticity", "Physics"},
+    {"Enabled", "Behavior"},
+    {"ExposureCompensation", "Appearance"},
+    {"Face", "Light"},
+    {"FarPlane", "Camera"},
+    {"FieldOfView", "Camera"},
+    {"FillDirection", "Layout"},
+    {"FixedRotation", "Physics"},
+    {"FlipX", "Appearance"},
+    {"FogColor", "Appearance"},
+    {"FogEnd", "Appearance"},
+    {"FogStart", "Appearance"},
+    {"Font", "Text"},
+    {"Friction", "Physics"},
+    {"GeographicLatitude", "Appearance"},
+    {"Gravity", "Physics"},
+    {"GravityScale", "Physics"},
+    {"HorizontalAlignment", "Layout"},
+    {"Image", "Image"},
+    {"ImageColor", "Image"},
+    {"ImageRectOffset", "Image"},
+    {"ImageRectSize", "Image"},
+    {"JumpSpeed", "Character"},
+    {"LayoutOrder", "Layout"},
+    {"Lifetime", "Emission"},
+    {"LightEmission", "Emission"},
+    {"LimitsEnabled", "Constraint"},
+    {"LinearVelocity", "Physics"},
+    {"LoadRadius", "Streaming"},
+    {"Looped", "Audio"},
+    {"LowerAngle", "Constraint"},
+    {"MasterVolume", "Audio"},
+    {"Material", "Appearance"},
+    {"MaterialParameters", "Appearance"},
+    {"MaxDistance", "Audio"},
+    {"MaxSlopeAngle", "Character"},
+    {"MeshContent", "Data"},
+    {"MeshSize", "Transform"},
+    {"MinRadius", "Streaming"},
+    {"Name", "Data"},
+    {"NearPlane", "Camera"},
+    {"Orientation", "Transform"},
+    {"OrthographicSize", "Camera"},
+    {"OutdoorAmbient", "Appearance"},
+    {"Padding", "Layout"},
+    {"PaddingBottom", "Layout"},
+    {"PaddingLeft", "Layout"},
+    {"PaddingRight", "Layout"},
+    {"PaddingTop", "Layout"},
+    {"Parent", "Data"},
+    {"Part0", "Constraint"},
+    {"Part1", "Constraint"},
+    {"PauseOutsideLoadedArea", "Streaming"},
+    {"PivotOffset", "Transform"},
+    {"PixelsPerMetre", "Appearance"},
+    {"PlaceholderText", "Text"},
+    {"PlaybackSpeed", "Audio"},
+    {"Playing", "Audio"},
+    {"Position", "Transform"},
+    {"PrimaryPart", "Data"},
+    {"Priority", "Behavior"},
+    {"Projection", "Camera"},
+    {"Range", "Light"},
+    {"Rate", "Emission"},
+    {"Restitution", "Physics"},
+    {"RichText", "Text"},
+    {"RollOffMaxDistance", "Audio"},
+    {"RollOffMinDistance", "Audio"},
+    {"Rotation", "Transform"},
+    {"Scale", "Transform"},
+    {"ScaleType", "Image"},
+    {"ScrollBarThickness", "Layout"},
+    {"Sensor", "Collision"},
+    {"Shadows", "Light"},
+    {"Shape", "Appearance"},
+    {"Size", "Transform"},
+    {"SizeEnd", "Emission"},
+    {"SliceCenter", "Image"},
+    {"SortOrder", "Layout"},
+    {"Source", "Data"},
+    {"Speed", "Emission"},
+    {"SpreadAngle", "Emission"},
+    {"StreamingMode", "Streaming"},
+    {"Text", "Text"},
+    {"TextColor", "Text"},
+    {"TextScaled", "Text"},
+    {"TextSize", "Text"},
+    {"TextTransparency", "Text"},
+    {"TextWrapped", "Text"},
+    {"TextXAlignment", "Text"},
+    {"TextYAlignment", "Text"},
+    {"Texture", "Appearance"},
+    {"Tileset", "Data"},
+    {"TimeLength", "Audio"},
+    {"TimePosition", "Audio"},
+    {"Transparency", "Appearance"},
+    {"TransparencyEnd", "Emission"},
+    {"TwistLimit", "Constraint"},
+    {"UpperAngle", "Constraint"},
+    {"Velocity", "Physics"},
+    {"VerticalAlignment", "Layout"},
+    {"Visible", "Appearance"},
+    {"Volume", "Audio"},
+    {"WalkSpeed", "Character"},
+    {"ZIndex", "Layout"},
+}};
+
+// The lookup is a binary search, so an entry out of order is an entry that is
+// never found -- checked where it is written rather than discovered in a panel.
+static_assert(std::is_sorted(kCategories.begin(), kCategories.end(),
+                             [](const CategoryRow& a, const CategoryRow& b) { return a.property < b.property; }));
+static_assert(std::adjacent_find(kCategories.begin(), kCategories.end(),
+                                 [](const CategoryRow& a, const CategoryRow& b) { return a.property == b.property; }) ==
+              kCategories.end());
+
+[[nodiscard]] char lowerAscii(char c) noexcept
+{
+    return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+[[nodiscard]] bool containsIgnoringCase(std::string_view haystack, std::string_view needle) noexcept
+{
+    if (needle.size() > haystack.size())
+        return false;
+    for (std::size_t start = 0; start + needle.size() <= haystack.size(); ++start) {
+        std::size_t index = 0;
+        while (index < needle.size() && lowerAscii(haystack[start + index]) == lowerAscii(needle[index]))
+            ++index;
+        if (index == needle.size())
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+PropertyCategory propertyCategory(std::string_view property) noexcept
+{
+    std::string_view category = "Behavior";
+    const auto found =
+        std::lower_bound(kCategories.begin(), kCategories.end(), property,
+                         [](const CategoryRow& row, std::string_view name) { return row.property < name; });
+    if (found != kCategories.end() && found->property == property)
+        category = found->category;
+    int order = 0;
+    for (std::size_t index = 0; index < kCategoryOrder.size(); ++index) {
+        if (kCategoryOrder[index] == category)
+            order = static_cast<int>(index);
+    }
+    return PropertyCategory{category, order};
+}
+
+bool propertyMatches(std::string_view property, std::string_view filter) noexcept
+{
+    const std::string_view category = propertyCategory(property).name;
+    std::size_t at = 0;
+    while (at < filter.size()) {
+        while (at < filter.size() && (filter[at] == ' ' || filter[at] == '\t'))
+            ++at;
+        std::size_t end = at;
+        while (end < filter.size() && filter[end] != ' ' && filter[end] != '\t')
+            ++end;
+        if (end > at) {
+            const std::string_view word = filter.substr(at, end - at);
+            if (!containsIgnoringCase(property, word) && !containsIgnoringCase(category, word))
+                return false;
+        }
+        at = end;
+    }
+    return true;
+}
+
+const char* propertyTag(const scene::PropertyDesc& descriptor) noexcept
+{
+    if (descriptor.readOnly)
+        return "(ro)";
+    if (descriptor.inert)
+        return "(stored)";
+    return nullptr;
+}
+
+void collectProperties(const scene::ClassRegistry& classes, scene::ClassId classId,
+                       std::vector<const scene::PropertyDesc*>& out)
+{
+    out.clear();
+
+    // The descriptor's `properties` span holds only what the class declares, so
+    // the sweep is the ancestry walk. Collected leaf-first and replayed in
+    // reverse, because the numbering that matters -- `propertySlot`'s -- puts
+    // the root's members first.
+    std::vector<scene::ClassId> ancestry;
+    for (scene::ClassId id = classId; id != scene::InvalidClass;) {
+        const scene::ClassDescriptor* descriptor = classes.find(id);
+        if (descriptor == nullptr)
+            break;
+        ancestry.push_back(id);
+        id = descriptor->super;
+    }
+
+    for (auto step = ancestry.rbegin(); step != ancestry.rend(); ++step) {
+        const scene::ClassDescriptor* descriptor = classes.find(*step);
+        for (const scene::PropertyDesc& property : descriptor->properties) {
+            // A class that redeclares an inherited property keeps the inherited
+            // position and shows the derived descriptor -- the same rule the
+            // registry follows for the slot, which a subscription made through
+            // the base depends on.
+            const auto shadowed =
+                std::find_if(out.begin(), out.end(), [&property](const scene::PropertyDesc* candidate) {
+                    return candidate->name == property.name;
+                });
+            if (shadowed != out.end())
+                *shadowed = &property;
+            else
+                out.push_back(&property);
+        }
+    }
+}
+
+bool sameValue(const scene::Value& a, const scene::Value& b) noexcept
+{
+    const f64* left = std::get_if<f64>(&a);
+    const f64* right = std::get_if<f64>(&b);
+    if (left != nullptr && right != nullptr && std::isnan(*left) && std::isnan(*right))
+        return true;
+    return a == b;
+}
+
+core::InstanceId resolveSelection(const scene::World& world, core::InstanceId root, core::InstanceId id,
+                                  core::InstanceId drilled)
+{
+    if (!id.valid() || !world.alive(id))
+        return id;
+
+    // **Inside what somebody opened, the rule is off.** Double-clicking into a
+    // model is how you get at its parts, and a resolve that pulled back out
+    // would make that gesture do nothing at all.
+    if (drilled.valid() && world.alive(drilled) && (id == drilled || world.isAncestorOf(drilled, id)))
+        return id;
+
+    // The OUTERMOST model at or above it, stopping below the root: walking past
+    // the root would resolve every click to the world itself.
+    core::InstanceId chosen = id;
+    for (core::InstanceId walk = id; walk.valid() && walk != root; walk = world.parentOf(walk)) {
+        if (world.models().find(walk) != nullptr)
+            chosen = walk;
+    }
+    return chosen;
+}
+
+scene::ClassId declaringClassOf(const scene::ClassRegistry& classes, scene::ClassId classId, core::NameAtom name)
+{
+    scene::ClassId declaring = scene::InvalidClass;
+    for (scene::ClassId id = classId; id != scene::InvalidClass;) {
+        const scene::ClassDescriptor* descriptor = classes.find(id);
+        if (descriptor == nullptr)
+            break;
+        for (const scene::PropertyDesc& property : descriptor->properties) {
+            if (property.name == name) {
+                // Not a `break` out of both: the walk continues UP, because the
+                // root-most declarer is the answer and a nearer one only shadows
+                // it.
+                declaring = id;
+                break;
+            }
+        }
+        id = descriptor->super;
+    }
+    return declaring;
+}
+
+void collectCommonProperties(const scene::World& world, std::span<const core::InstanceId> targets,
+                             std::vector<const scene::PropertyDesc*>& out)
+{
+    out.clear();
+
+    usize first = 0;
+    while (first < targets.size() && !world.alive(targets[first]))
+        ++first;
+    if (first >= targets.size())
+        return;
+
+    collectProperties(world.classes(), world.classOf(targets[first]), out);
+
+    // A shift-range over five hundred parts is one class five hundred times,
+    // and intersecting a set with itself is the whole of the work. The memo is
+    // the immediately preceding class rather than a set of every class seen,
+    // because a run of one class is what a real selection is and the answer is
+    // correct either way -- intersection is idempotent, so skipping a repeat
+    // cannot change the result, only the time it takes to reach it.
+    scene::ClassId previous = world.classOf(targets[first]);
+
+    std::vector<const scene::PropertyDesc*> other;
+    for (usize i = first + 1; i < targets.size() && !out.empty(); ++i) {
+        if (!world.alive(targets[i]))
+            continue;
+        const scene::ClassId classId = world.classOf(targets[i]);
+        if (classId == previous)
+            continue;
+        previous = classId;
+
+        collectProperties(world.classes(), classId, other);
+
+        usize write = 0;
+        for (const scene::PropertyDesc* mine : out) {
+            const auto match = std::find_if(other.begin(), other.end(), [mine](const scene::PropertyDesc* candidate) {
+                return candidate->name == mine->name && candidate->type == mine->type &&
+                       candidate->enumName == mine->enumName;
+            });
+            if (match == other.end())
+                continue;
+            out[write++] = (*match)->readOnly && !mine->readOnly ? *match : mine;
+        }
+        out.resize(write);
+    }
+}
+
+SharedValue sharedValue(const scene::World& world, std::span<const core::InstanceId> targets, core::NameAtom property)
+{
+    SharedValue shared;
+    bool seen = false;
+    for (const core::InstanceId id : targets) {
+        if (!world.alive(id))
+            continue;
+
+        const std::optional<scene::Value> value = world.getProperty(id, property);
+        if (!value.has_value())
+            return SharedValue{};
+
+        if (!seen) {
+            shared.state = SharedState::Same;
+            shared.value = *value;
+            seen = true;
+        }
+        else if (!sameValue(shared.value, *value)) {
+            shared.state = SharedState::Mixed;
+        }
+    }
+    return shared;
+}
+
+void collectAncestors(const scene::World& world, core::InstanceId id, core::InstanceId root,
+                      std::vector<core::InstanceId>& out)
+{
+    out.clear();
+    if (!world.alive(id))
+        return;
+
+    for (core::InstanceId walk = world.parentOf(id); walk.valid() && world.alive(walk); walk = world.parentOf(walk)) {
+        out.push_back(walk);
+        if (walk == root)
+            break;
+    }
+}
+
+void orderByTree(const scene::World& world, core::InstanceId root, std::span<const core::InstanceId> ids,
+                 std::vector<core::InstanceId>& out)
+{
+    out.clear();
+    if (ids.empty())
+        return;
+
+    // One walk of the tree rather than a sort with a comparator that would have
+    // to answer "which of these two comes first" by walking it anyway.
+    static thread_local std::vector<TreeRow> rows;
+    collectTree(world, root, rows);
+    out.reserve(ids.size());
+    for (const TreeRow& row : rows) {
+        if (std::find(ids.begin(), ids.end(), row.id) != ids.end() &&
+            std::find(out.begin(), out.end(), row.id) == out.end()) {
+            out.push_back(row.id);
+        }
+    }
+}
+
+bool creatable(const scene::ClassDescriptor& descriptor) noexcept
+{
+    return !scene::hasFlag(descriptor.flags, scene::ClassFlags::Abstract) &&
+           !scene::hasFlag(descriptor.flags, scene::ClassFlags::Service) &&
+           !scene::hasFlag(descriptor.flags, scene::ClassFlags::NotCreatable);
+}
+
+void collectCreatableClasses(const scene::World& world, std::vector<scene::ClassId>& out)
+{
+    out.clear();
+    const scene::ClassRegistry& classes = world.classes();
+    // From 1: slot zero is the registry's placeholder and never a class.
+    for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
+        const scene::ClassDescriptor* descriptor = classes.find(id);
+        if (descriptor != nullptr && creatable(*descriptor))
+            out.push_back(id);
+    }
+
+    std::sort(out.begin(), out.end(), [&world, &classes](scene::ClassId a, scene::ClassId b) {
+        return world.atoms().text(classes.find(a)->name) < world.atoms().text(classes.find(b)->name);
+    });
+}
+
+bool worksUnder(const scene::World& world, scene::ClassId child, core::InstanceId parent)
+{
+    const scene::ClassRegistry& classes = world.classes();
+    // The class's own list, or its nearest superclass's.
+    const scene::ClassDescriptor* descriptor = classes.find(child);
+    while (descriptor != nullptr && descriptor->parents.empty() && descriptor->super != scene::InvalidClass)
+        descriptor = classes.find(descriptor->super);
+    if (descriptor == nullptr || descriptor->parents.empty() || !parent.valid() || !world.alive(parent))
+        return true;
+
+    core::InstanceId context = parent;
+    const scene::ClassId folder = classes.findId(world.atoms().lookup("Folder"));
+    while (folder != scene::InvalidClass && world.classOf(context) == folder && world.parentOf(context).valid())
+        context = world.parentOf(context);
+
+    const scene::ClassId contextClass = world.classOf(context);
+    return std::any_of(descriptor->parents.begin(), descriptor->parents.end(), [&](std::string_view place) {
+        const scene::ClassId placeClass = classes.findId(world.atoms().lookup(place));
+        return placeClass != scene::InvalidClass && classes.isA(contextClass, placeClass);
+    });
+}
+
+void orderClassPicks(const scene::World& world, core::InstanceId parent, std::span<const scene::ClassId> creatable,
+                     std::span<const std::string> favorites, std::vector<ClassPick>& out)
+{
+    out.clear();
+    out.reserve(creatable.size());
+    const auto starred = [&](scene::ClassId id) {
+        const std::string_view name = world.atoms().text(world.classes().find(id)->name);
+        return std::find(favorites.begin(), favorites.end(), name) != favorites.end();
+    };
+    for (const ClassPickGroup group : {ClassPickGroup::Favorite, ClassPickGroup::Works, ClassPickGroup::Elsewhere}) {
+        for (const scene::ClassId id : creatable) {
+            if (world.classes().find(id) == nullptr)
+                continue;
+            const ClassPickGroup mine = starred(id)                     ? ClassPickGroup::Favorite
+                                        : worksUnder(world, id, parent) ? ClassPickGroup::Works
+                                                                        : ClassPickGroup::Elsewhere;
+            if (mine == group)
+                out.push_back(ClassPick{id, group});
+        }
+    }
+}
+
+void collectTree(const scene::World& world, core::InstanceId root, std::vector<TreeRow>& out)
+{
+    out.clear();
+    if (!root.valid() || !world.alive(root))
+        return;
+
+    std::vector<TreeRow> stack{TreeRow{root, 0}};
+    std::vector<core::InstanceId> children;
+
+    while (!stack.empty()) {
+        const TreeRow row = stack.back();
+        stack.pop_back();
+        out.push_back(row);
+
+        // Children are pushed in reverse so the first one pops first. That is
+        // what makes this preorder, and preorder over `collectChildren` is
+        // parenting order at every level -- the order `GetDescendants`
+        // promises, and the one the panel is forbidden from improving on.
+        children.clear();
+        world.collectChildren(row.id, children);
+        for (auto child = children.rbegin(); child != children.rend(); ++child)
+            stack.push_back(TreeRow{*child, row.depth + 1});
+    }
+}
+
+void collectVisibleTree(const scene::World& world, core::InstanceId root, bool includeRoot,
+                        const std::function<TreeVisit(const TreeRow&)>& visit, std::vector<TreeRow>& out)
+{
+    out.clear();
+    if (!root.valid() || !world.alive(root) || !visit)
+        return;
+
+    // A stack of candidates rather than of subtrees, so the answer for a node is
+    // asked once and its children are only ever pushed after an `Expanded`. That
+    // is the whole difference from `collectTree`: a closed or hidden subtree is
+    // never touched, so nothing here is a function of how big the world is.
+    std::vector<TreeRow> stack{TreeRow{root, 0}};
+    std::vector<core::InstanceId> children;
+
+    while (!stack.empty()) {
+        const TreeRow row = stack.back();
+        stack.pop_back();
+
+        const TreeVisit answer = visit(row);
+        if (answer == TreeVisit::Skip)
+            continue;
+        if (row.depth > 0 || includeRoot)
+            out.push_back(row);
+        if (answer != TreeVisit::Expanded)
+            continue;
+
+        // Reversed for the reason `collectTree` reverses: the first child has to
+        // pop first, which is what makes this preorder rather than a mirror of
+        // it. Sibling order is parenting order and the panel does not sort.
+        children.clear();
+        world.collectChildren(row.id, children);
+        for (auto child = children.rbegin(); child != children.rend(); ++child)
+            stack.push_back(TreeRow{*child, row.depth + 1});
+    }
+}
+
+std::string formatValue(const scene::World& world, const scene::Value& value)
+{
+    return std::visit(ValueFormatter{world}, value);
+}
+
+const char* setResultLabel(scene::World::SetResult result) noexcept
+{
+    switch (result) {
+    case scene::World::SetResult::Changed:
+        return "changed";
+    case scene::World::SetResult::Unchanged:
+        return "unchanged";
+    case scene::World::SetResult::UnknownProperty:
+        return "unknown property";
+    case scene::World::SetResult::ReadOnly:
+        return "read-only";
+    case scene::World::SetResult::InvalidValue:
+        return "invalid value";
+    }
+    return "?";
+}
+
+void selectVisibleRange(Inspector& inspector, std::span<const TreeRow> rows, core::InstanceId anchor,
+                        core::InstanceId to)
+{
+    const auto find = [rows](core::InstanceId id) -> usize {
+        for (usize i = 0; i < rows.size(); ++i) {
+            if (rows[i].id == id)
+                return i;
+        }
+        return rows.size();
+    };
+
+    const usize from = find(anchor);
+    const usize until = find(to);
+    if (from == rows.size() || until == rows.size())
+        return;
+
+    const usize first = from < until ? from : until;
+    const usize last = from < until ? until : from;
+
+    std::vector<core::InstanceId> range;
+    range.reserve(last - first + 1);
+    for (usize i = first; i <= last; ++i) {
+        if (rows[i].id != anchor)
+            range.push_back(rows[i].id);
+    }
+    // Last, so it is the primary: the anchor is what the next shift-click
+    // extends from, and a range that promoted its far end would walk the anchor
+    // along with every click.
+    range.push_back(anchor);
+    inspector.select(range);
+}
+
+bool Inspector::isSelected(core::InstanceId id) const noexcept
+{
+    return std::find(selection_.begin(), selection_.end(), id) != selection_.end();
+}
+
+void Inspector::select(core::InstanceId id) noexcept
+{
+    selection_.clear();
+    if (id.valid())
+        selection_.push_back(id);
+}
+
+void Inspector::select(std::span<const core::InstanceId> ids)
+{
+    selection_.clear();
+    for (const core::InstanceId id : ids)
+        add(id);
+}
+
+void Inspector::add(core::InstanceId id)
+{
+    if (!id.valid())
+        return;
+    // Promoted rather than duplicated. Clicking something already selected has
+    // to make it the primary -- that is how somebody chooses which member a
+    // manipulator anchors to without losing the rest of the selection.
+    std::erase(selection_, id);
+    selection_.push_back(id);
+}
+
+void Inspector::toggle(core::InstanceId id)
+{
+    if (!id.valid())
+        return;
+    if (const auto it = std::find(selection_.begin(), selection_.end(), id); it != selection_.end()) {
+        selection_.erase(it);
+        return;
+    }
+    selection_.push_back(id);
+}
+
+void Inspector::pruneDead(const scene::World& world)
+{
+    std::erase_if(selection_, [&world](const core::InstanceId id) { return !world.alive(id); });
+}
+
+core::u64 Inspector::beginGesture() noexcept
+{
+    if (gesture_ != 0)
+        return gesture_;
+    // The top bit, so a gesture id and the property-derived fallback key can
+    // never be the same number -- see `coalesceKeyFor`.
+    gesture_ = (core::u64{1} << 63) | ++nextGesture_;
+    return gesture_;
+}
+
+core::u64 coalesceKeyFor(core::u64 gesture, std::span<const PendingWrite> pending) noexcept
+{
+    if (gesture != 0)
+        return gesture;
+    if (pending.empty())
+        return 0;
+
+    const PendingWrite& first = pending.front();
+    for (const PendingWrite& write : pending) {
+        if (!(write.target == first.target) || !(write.property == first.property))
+            return 0;
+    }
+    return (static_cast<core::u64>(first.target.index) << 32) | first.property.id;
+}
+
+void Inspector::enqueue(core::InstanceId target, core::NameAtom property, scene::Value value)
+{
+    pending_.push_back(PendingWrite{target, property, std::move(value), WriteKind::Property});
+}
+
+void Inspector::enqueueAttribute(core::InstanceId target, core::NameAtom attribute, scene::Value value)
+{
+    pending_.push_back(PendingWrite{target, attribute, std::move(value), WriteKind::Attribute});
+}
+
+void Inspector::enqueueTag(core::InstanceId target, core::NameAtom tag, bool present)
+{
+    pending_.push_back(PendingWrite{target, tag, scene::Value{present}, WriteKind::Tag});
+}
+
+void Inspector::enqueueShaderParameter(core::InstanceId target, core::NameAtom name, asset::ShaderParameter parameter)
+{
+    PendingWrite write{target, name, scene::Value{true}, WriteKind::ShaderParameter};
+    write.shader = std::move(parameter);
+    pending_.push_back(std::move(write));
+}
+
+void Inspector::enqueueShaderParameterClear(core::InstanceId target, core::NameAtom name)
+{
+    pending_.push_back(PendingWrite{target, name, scene::Value{false}, WriteKind::ShaderParameter});
+}
+
+void Inspector::applyPending(scene::World& world)
+{
+    for (const PendingWrite& write : pending_) {
+        switch (write.kind) {
+        case WriteKind::ShaderParameter: {
+            const auto* set = std::get_if<bool>(&write.value);
+            bool changed = false;
+            if (set != nullptr && *set) {
+                world.setPartShaderParameter(write.target, write.shader);
+                changed = world.alive(write.target);
+            }
+            else {
+                changed = world.clearPartShaderParameter(write.target, world.atoms().text(write.property));
+            }
+            recordOutcome(
+                WriteOutcome{write.target, write.property,
+                             changed ? scene::World::SetResult::Changed : scene::World::SetResult::Unchanged});
+            break;
+        }
+        case WriteKind::Attribute: {
+            // **The world's own refusal, reported the same way a property's
+            // is.** `setAttribute` rejects a value outside the documented
+            // domain, and a panel that swallowed that would be a field somebody
+            // types into and watches do nothing.
+            const bool accepted = world.setAttribute(write.target, write.property, write.value);
+            recordOutcome(
+                WriteOutcome{write.target, write.property,
+                             accepted ? scene::World::SetResult::Changed : scene::World::SetResult::InvalidValue});
+            break;
+        }
+        case WriteKind::Tag: {
+            const auto* present = std::get_if<bool>(&write.value);
+            const bool wanted = present != nullptr && *present;
+            // **Asked BEFORE, because the world's own answer cannot tell these
+            // apart.** `addTag` is idempotent and says `true` whether it added
+            // the tag or found it already there; `false` means the instance is
+            // gone. So "did anything move" is a question only this side can
+            // answer, and it has to be asked first.
+            const bool already = world.hasTag(write.target, write.property);
+            const bool accepted =
+                wanted ? world.addTag(write.target, write.property) : world.removeTag(write.target, write.property);
+
+            // **`Unchanged` and not a failure.** Tagging four things when one
+            // already carries it is the NORMAL case over a selection, and
+            // reporting it as a refusal would fire the toast on the one gesture
+            // people use tags for.
+            recordOutcome(WriteOutcome{write.target, write.property,
+                                       !accepted           ? scene::World::SetResult::InvalidValue
+                                       : already == wanted ? scene::World::SetResult::Unchanged
+                                                           : scene::World::SetResult::Changed});
+            break;
+        }
+        case WriteKind::Property:
+        default: {
+            // Decision 14, and the whole of it: the same call a script's
+            // assignment makes, so the change queue, the `readOnly` refusal and
+            // the world hash all see an overlay edit exactly as they see a
+            // scripted one.
+            const scene::World::SetResult result = world.setProperty(write.target, write.property, write.value);
+            recordOutcome(WriteOutcome{write.target, write.property, result});
+            break;
+        }
+        }
+    }
+    pending_.clear();
+}
+
+void Inspector::onWorldRestored() noexcept
+{
+    // The values moved; the ids did not. So the value-keyed half goes and the
+    // id-keyed half stays -- see the header, and D071 for what conflating the
+    // two cost.
+    ++worldGeneration_;
+    gesture_ = 0;
+    pending_.clear();
+}
+
+void Inspector::onWorldChanged() noexcept
+{
+    ++worldGeneration_;
+    ++worldIdentity_;
+    selection_.clear();
+    // A different world recycles slot indices from zero, so an id minted by the
+    // old one names an unrelated instance in the new one -- and revealing that
+    // would open a branch nobody asked about.
+    reveal_ = core::InstanceId{};
+    // A gesture is a drag over instances this world no longer has. Leaving it
+    // open would coalesce the next unrelated edit into whatever came before the
+    // reload.
+    gesture_ = 0;
+    pending_.clear();
+    outcomes_.clear();
+}
+
+void Inspector::recordOutcome(const WriteOutcome& outcome)
+{
+    outcomes_.push_back(outcome);
+    // One at a time in, one at a time out: a panel is not a log, and an
+    // unbounded history is memory a debug overlay grows for as long as it runs.
+    if (outcomes_.size() > OutcomeHistory)
+        outcomes_.erase(outcomes_.begin());
+}
+
+} // namespace engine::app

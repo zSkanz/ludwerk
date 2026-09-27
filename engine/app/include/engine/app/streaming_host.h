@@ -1,0 +1,183 @@
+// Where the streaming pieces meet (roadmap M7, architecture.md §10).
+//
+// Four modules own a quarter of this each and none of them can see the others:
+// `asset` decides which chunks should be resident, `platform` reads them,
+// `scene` turns them into instances, and `script` holds the coroutine a
+// `LoadAreaAsync` parked. This is the one place that knows all four exist,
+// which is what `app` is for.
+//
+// It also owns the origin. The trigger for a rebase is a focus leaving its
+// tolerance, and the focus set is streaming's -- so the decision belongs here
+// rather than in the physics mirror, which has no idea where the camera is.
+#pragma once
+
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include "engine/asset/chunk.h"
+#include "engine/asset/streaming.h"
+#include "engine/core/id.h"
+#include "engine/core/types.h"
+#include "engine/platform/async_io.h"
+#include "engine/scene/streaming_glue.h"
+
+namespace engine::asset {
+class ContentMounts;
+}
+
+namespace engine::scene {
+class World;
+class PhysicsSync;
+} // namespace engine::scene
+
+namespace engine::app {
+
+using core::f64;
+using core::u32;
+using core::u64;
+using core::usize;
+
+// The foci a world streams around, on the rules `StreamingHost` applies: every
+// registered focus with its per-layer radii, or the camera of the workspace
+// above `streamRoot` when nothing is registered (D098). A free function so the
+// terrain and block-world streamer asks the same question the same way.
+// One focus at `position`, with the radii the world's `StreamingService` sets:
+// the camera fallback below, and the editor's own camera (ADR 0087).
+[[nodiscard]] asset::StreamingFocus streamingFocusAt(const scene::World& world, core::DVec3 position);
+
+[[nodiscard]] std::vector<asset::StreamingFocus> collectStreamingFoci(const scene::World& world,
+                                                                      core::InstanceId streamRoot);
+
+class StreamingHost
+{
+public:
+    // False when the project has no chunk index, which is every project before
+    // this milestone and most projects after it. Not an error: a world that
+    // fits in memory does not need streaming, and a host that logged a warning
+    // for its absence would warn on every example in the tree.
+    [[nodiscard]] bool load(const asset::ContentMounts& mounts, const std::filesystem::path& indexPath);
+
+    // Adds the cells an index names, resolving each entry's file with
+    // `resolve`. Callable more than once before the first `pump`, because a
+    // project may have two sources of cells: a world a generator built and
+    // compiled, and one the partitioner wrote from the scene (ADR 0053).
+    //
+    // **A `ChunkId` present twice is refused and named.** It is the index's
+    // key, so a second entry under it is a chunk nothing can ever reach -- and
+    // a world quietly missing a cell is the kind of defect that reports itself
+    // as a hole in the ground three minutes into a walk.
+    using ChunkResolver = std::function<std::optional<std::filesystem::path>(const asset::ChunkIndexEntry&)>;
+    bool addIndex(const asset::ChunkIndex& index, const ChunkResolver& resolve);
+
+    // Idempotent, and that is the contract rather than an optimisation. The
+    // frame loop calls this every frame so that a hot reload's new world is
+    // picked up at the safe point -- and the glue is where the record of WHICH
+    // instances belong to which resident chunk lives, so rebuilding it on an
+    // unchanged world throws that record away. The manager goes on believing
+    // those chunks are resident and asks to evict them; the fresh glue has
+    // never heard of them and does nothing. That was D032: a world that grew by
+    // a thousand instances every fifteen seconds and never shrank.
+    void setWorld(scene::World* world, core::InstanceId streamRoot);
+    void setPhysics(scene::PhysicsSync* physics) noexcept { m_physics = physics; }
+
+    // Asked before an instance is evicted: true keeps it as a husk. Kept here
+    // and handed to every glue this host builds, since a reload builds a new one.
+    void setReferenceProbe(std::function<bool(core::InstanceId)> probe);
+
+    // Where the world is being watched from this frame: every focus a script
+    // registered, or the current camera when it registered none (D098).
+    //
+    // Public because it is the RULE and not a step. A world with no focus loads
+    // no cell, and a project that has just been made registers none -- so the
+    // difference between "there is a world here" and "there is nothing here at
+    // all" is this function's answer, and that is worth asserting directly
+    // rather than through a frame nobody can run in a test.
+    [[nodiscard]] std::vector<asset::StreamingFocus> collectFoci() const;
+
+    [[nodiscard]] bool active() const noexcept { return m_active; }
+
+    // One frame. Reads the service's knobs and focus set out of the world,
+    // scores, issues reads, materialises inside the budget, and rebases the
+    // origin when the primary focus has drifted too far.
+    void pump(f64 budgetMilliseconds);
+
+    // Instances that became husks this frame, for the host to turn into
+    // deferred `InstanceStreamedOut` fires.
+    [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut();
+
+    // A `LoadAreaAsync` whose area has arrived. The host resumes the coroutine
+    // and fires `AreaLoaded`; deciding WHICH are ready is this class's job
+    // because only it knows what is resident.
+    [[nodiscard]] bool areaResident(core::DVec3 position, f64 radius) const;
+
+    // Every cell this host knows about, which is what a partition asks before
+    // it writes: a cell a built world already owns is one the scene may not
+    // file anything into.
+    [[nodiscard]] const asset::ChunkIndex& index() const noexcept { return m_manager.index(); }
+
+    [[nodiscard]] const asset::StreamingStats& stats() const noexcept { return m_manager.stats(); }
+    [[nodiscard]] std::vector<asset::StreamingManager::ChunkView> view() const { return m_manager.view(); }
+    [[nodiscard]] u64 rebases() const noexcept { return m_rebases; }
+
+    // Wall-clock milliseconds the last `pump` spent, for the soak gate.
+    //
+    // The gate M7 owes is "zero hitches ATTRIBUTABLE to streaming", and this is
+    // the attribution. A whole-frame time cannot make that claim: on a shared CI
+    // runner most of a long frame is the runner, and a gate that fails on the
+    // host machine being busy is a gate everyone learns to re-run.
+    [[nodiscard]] f64 lastPumpMilliseconds() const noexcept { return m_lastPumpMs; }
+    // The same pump in this thread's CPU time, or a negative number where the
+    // platform cannot say. The pump never waits -- reads are polled -- so any
+    // wall time beyond this is the machine keeping the thread off a CPU.
+    [[nodiscard]] f64 lastPumpCpuMilliseconds() const noexcept { return m_lastPumpCpuMs; }
+
+    // Every chunk inside every focus's minimum ring is resident.
+    [[nodiscard]] bool minimumRingResident() const noexcept { return m_manager.minimumRingResident(); }
+
+private:
+    void installCallbacks();
+    void beginRead(asset::ChunkId id, const asset::ChunkIndexEntry& entry);
+
+    asset::StreamingManager m_manager;
+    std::unique_ptr<scene::StreamingGlue> m_glue;
+    const asset::ContentMounts* m_mounts = nullptr;
+    // Every chunk's file, resolved ONCE when the index is read (D039).
+    //
+    // Resolution touches the filesystem -- it has to open the candidate to know
+    // whether it is there -- and doing that inside the pump put a filesystem
+    // call on the frame thread once per chunk load. On a slow filesystem that is
+    // ten to thirty milliseconds of hitch for a question whose answer was fixed
+    // when the project was built. Keyed by chunk id; an entry that is absent is
+    // a chunk whose file the index names and the build did not produce.
+    std::map<asset::ChunkId, std::filesystem::path> m_chunkPaths;
+    scene::World* m_world = nullptr;
+    // Half of `setWorld`'s identity check. The root matters as much as the
+    // world: the same `World` re-rooted elsewhere is a different mount, and a
+    // glue still holding the old root would parent chunks into a folder that is
+    // no longer the stream root.
+    core::InstanceId m_streamRoot;
+    scene::PhysicsSync* m_physics = nullptr;
+    std::function<bool(core::InstanceId)> m_probe;
+    bool m_active = false;
+    u64 m_rebases = 0;
+    f64 m_lastPumpMs = 0.0;
+    f64 m_lastPumpCpuMs = -1.0;
+
+    // Which chunk an outstanding read belongs to. The IO service answers with
+    // its own handle and nothing else, and a chunk id does not fit in a
+    // callback that was declared before chunks existed.
+    // Chunks whose read could not start, reported after the manager's tick.
+    std::vector<asset::ChunkId> m_failedStarts;
+
+    struct Pending
+    {
+        asset::ChunkId id;
+    };
+    std::vector<std::pair<platform::IoRequest, Pending>> m_reads;
+};
+
+} // namespace engine::app

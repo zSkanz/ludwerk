@@ -1,0 +1,886 @@
+#include <lua.h>
+
+#include <algorithm>
+#include <doctest/doctest.h>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include "engine/scene/class_registry.h"
+#include "engine/scene/world.h"
+#include "engine/script/remote.h"
+#include "engine/script/services.h"
+#include "script_fixture.h"
+
+namespace core = engine::core;
+namespace scene = engine::scene;
+using engine::script::testing::Fixture;
+
+TEST_CASE("the world boots with game, Workspace and the three script services")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        assert(typeof(game) == "Instance")
+        assert(game.ClassName == "DataModel")
+        assert(game.Parent == nil)
+
+        assert(typeof(workspace) == "Instance")
+        assert(workspace.ClassName == "Workspace")
+        -- Reached through the global as well as through GetService, and it is
+        -- the same instance either way.
+        assert(workspace.Parent == game)
+        assert(game:GetService("Workspace") == workspace)
+
+        -- The mount points exist before anything mounts (ADR 0105), and the
+        -- game's has its three fixed folders.
+        local global = game:FindService("GlobalScriptService")
+        assert(global ~= nil)
+        assert(global:FindFirstChild("Server") ~= nil)
+        assert(global:FindFirstChild("Client") ~= nil)
+        assert(global:FindFirstChild("Shared") ~= nil)
+        assert(game:FindService("ServerScriptService") ~= nil)
+        assert(game:FindService("ClientScriptService") ~= nil)
+
+        -- Retired, and it says where its code lives now.
+        local ok, message = pcall(function()
+            return game:GetService("ScriptService")
+        end)
+        assert(not ok)
+        assert(string.find(tostring(message), "ClientScriptService", 1, true) ~= nil)
+    )") == "");
+}
+
+TEST_CASE("every service exists from boot and GetService is a lookup")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        -- **There before anything asked**, which is what makes the tree the same
+        -- shape before a line of script has run as after -- and what lets an
+        -- editor show it (D099). It was created by its first `GetService` until
+        -- then, so `RunService` and `HotReloadService` appeared in the Explorer
+        -- when you pressed play and vanished when you stopped.
+        assert(game:FindService("RunService") ~= nil)
+
+        local run = game:GetService("RunService")
+        assert(run.ClassName == "RunService")
+        assert(run.Parent == game)
+
+        -- Every later call returns the same instance.
+        assert(game:GetService("RunService") == run)
+        assert(game:FindService("RunService") == run)
+
+        -- And it is an ordinary child of game.
+        local found = false
+        for _, child in game:GetChildren() do
+            if child == run then
+                found = true
+            end
+        end
+        assert(found)
+    )") == "");
+}
+
+TEST_CASE("every service class in the build has an instance under game")
+{
+    // **Counted against the registry rather than named**, because a list written
+    // by hand is a list that goes stale the day somebody adds a service -- and
+    // the failure would be invisible until a person noticed a missing row in the
+    // Explorer, which is exactly how this was found in the first place.
+    Fixture fixture;
+
+    const scene::ClassRegistry& classes = fixture.classes;
+    const scene::World& world = *fixture.world;
+    const core::InstanceId dataModel = fixture.runtime->dataModel();
+
+    core::usize services = 0;
+    core::usize present = 0;
+    for (scene::ClassId id = 1; id < static_cast<scene::ClassId>(classes.classCount()); ++id) {
+        const scene::ClassDescriptor* descriptor = classes.find(id);
+        if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service))
+            continue;
+        ++services;
+        if (world.findFirstChildOfClass(dataModel, id).valid())
+            ++present;
+    }
+
+    CHECK(services > 5);
+    CHECK(present == services);
+}
+
+TEST_CASE("the services read GlobalScriptService, Workspace, Lighting, then alphabetically")
+{
+    // **The order is what a person reads**, so it is asserted as a list rather
+    // than as a rule: a test that recomputed the rule would agree with any
+    // implementation of it, including the wrong one.
+    //
+    // The two at the front are the two a scene IS -- the world and how it is
+    // lit -- and past those a dozen names is a list scanned by name.
+    Fixture fixture;
+
+    const scene::World& world = *fixture.world;
+    std::vector<std::string> names;
+    for (core::InstanceId child = world.firstChild(fixture.runtime->dataModel()); child.valid();
+         child = world.nextSibling(child)) {
+        names.emplace_back(world.atoms().text(world.name(child)));
+    }
+
+    // The game's own service first, set apart from the scene's (ADR 0105).
+    REQUIRE(names.size() >= 4);
+    CHECK(names[0] == "GlobalScriptService");
+    CHECK(names[1] == "Workspace");
+    CHECK(names[2] == "Lighting");
+
+    // Everything after the pinned ones, in name order, checked as a whole --
+    // "is sorted" is the claim, and one out-of-place pair is what it forbids.
+    const std::vector<std::string> rest(names.begin() + 3, names.end());
+    CHECK(std::is_sorted(rest.begin(), rest.end()));
+    CHECK(std::adjacent_find(rest.begin(), rest.end()) == rest.end());
+}
+
+TEST_CASE("GetService raises on an unknown name and FindService does not")
+{
+    Fixture fixture;
+
+    CHECK(fixture.raises(R"(game:GetService("Nonexistent"))", "scene.err.unknown_service"));
+    // A class that exists but is not a service is not a service.
+    CHECK(fixture.raises(R"(game:GetService("Part"))", "scene.err.unknown_service"));
+
+    // Asking whether something exists is not the same as asking for it.
+    CHECK(fixture.failure(R"(
+        assert(game:FindService("Nonexistent") == nil)
+        assert(game:FindService("Part") == nil)
+    )") == "");
+}
+
+TEST_CASE("a service cannot be constructed, only reached")
+{
+    Fixture fixture;
+
+    CHECK(fixture.raises(R"(Instance.new("RunService"))", "scene.err.not_creatable"));
+    CHECK(fixture.raises(R"(Instance.new("DataModel"))", "scene.err.not_creatable"));
+}
+
+// --- RunService --------------------------------------------------------------
+
+TEST_CASE("the phase signals fire once per tick, carrying the timestep")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        local marker = Instance.new("Folder")
+        local beats = 0
+        local seenDelta = 0
+
+        run.Heartbeat:Connect(function(dt)
+            beats += 1
+            seenDelta = dt
+            marker:SetAttribute("beats", beats)
+            marker:SetAttribute("dt", dt)
+        end)
+    )") == "");
+
+    fixture.tick(3);
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        -- Read back through an attribute, because the chunk that connected has
+        -- finished and its locals are gone.
+        assert(run.SimTime > 0, tostring(run.SimTime))
+    )") == "");
+}
+
+TEST_CASE("SimTime advances with the tick and Pause stops it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        assert(run.SimTime == 0)
+        assert(run:IsPaused() == false)
+
+        run:Pause()
+        assert(run:IsPaused() == true)
+        -- Idempotent: pausing a paused world is a no-op, not an error.
+        run:Pause()
+        assert(run:IsPaused() == true)
+
+        run:Resume()
+        assert(run:IsPaused() == false)
+        run:Resume()
+        assert(run:IsPaused() == false)
+    )") == "");
+
+    fixture.tick(30);
+    CHECK(fixture.failure(R"(
+        local run = game:GetService("RunService")
+        -- Constant for the whole tick and advancing by FixedTimestep between
+        -- ticks; 30 ticks at the default 1/60 is half a second.
+        assert(math.abs(run.SimTime - 0.5) < 1e-9, tostring(run.SimTime))
+    )") == "");
+}
+
+TEST_CASE("FixedTimestep is the grid every timing guarantee rests on")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local physics = game:GetService("PhysicsService")
+        assert(math.abs(physics.FixedTimestep - 1 / 60) < 1e-12)
+    )") == "");
+
+    // Writable from M5, and the write round-trips immediately: what it does NOT
+    // do is change the tick this frame is already running on, which is the
+    // whole reason the property has a requested value and an active one.
+    CHECK(fixture.failure(R"(
+        local physics = game:GetService("PhysicsService")
+        physics.FixedTimestep = 1 / 120
+        assert(math.abs(physics.FixedTimestep - 1 / 120) < 1e-12)
+    )") == "");
+
+    // The range architecture.md §3 states, 30 Hz to 240 Hz. Outside it the
+    // guarantees expressed against the tick stop meaning anything, so the write
+    // is refused rather than clamped -- a clamp would read back as a number
+    // nobody wrote.
+    //
+    // The key is the property's own (D021, fixed at M6). A setter still answers
+    // with a bool and the descriptor still carries one key, so the key states
+    // the whole DOMAIN rather than the failure -- which is why the same one
+    // covers a wrong-typed value: "it takes a tick length from 1/240 to 1/30"
+    // is true of `"fast"` as much as of 1/10. What it stopped doing is
+    // answering "it takes a number" about a number.
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 1 / 10)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 1 / 1000)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = 0 / 0)",
+                         "scene.err.number_fixed_timestep"));
+    CHECK(fixture.raises(R"(game:GetService("PhysicsService").FixedTimestep = "fast")",
+                         "scene.err.number_fixed_timestep"));
+}
+
+// --- TagService --------------------------------------------------------------
+
+TEST_CASE("TagService finds instances by tag, wherever they are parented")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local parented = Instance.new("Part")
+        local orphan = Instance.new("Part")
+        parented.Parent = workspace
+
+        parented:AddTag("Pickup")
+        orphan:AddTag("Pickup")
+
+        local found = tags:GetTagged("Pickup")
+        assert(#found == 2, tostring(#found))
+
+        -- Tags are pure instance state with no relationship to the tree, so an
+        -- instance parented to nil is returned like any other.
+        local sawOrphan = false
+        for _, instance in found do
+            if instance == orphan then
+                sawOrphan = true
+            end
+        end
+        assert(sawOrphan)
+
+        assert(#tags:GetTagged("Nothing") == 0)
+    )") == "");
+}
+
+TEST_CASE("GetAllTags is what is carried now, not every name ever seen")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local part = Instance.new("Part")
+
+        assert(#tags:GetAllTags() == 0)
+        part:AddTag("Alpha")
+        part:AddTag("Beta")
+        assert(#tags:GetAllTags() == 2)
+
+        -- A tag leaves the set the moment its last carrier drops it, even
+        -- though the signal reporting the drop is deferred like everything else.
+        part:RemoveTag("Alpha")
+        local remaining = tags:GetAllTags()
+        assert(#remaining == 1, tostring(#remaining))
+        assert(remaining[1] == "Beta")
+    )") == "");
+}
+
+TEST_CASE("the tag signals fire deferred, with the instance that gained or lost it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local part = Instance.new("Part")
+        local marker = Instance.new("Folder")
+
+        tags:GetInstanceAddedSignal("Pickup"):Connect(function(instance)
+            marker:SetAttribute("added", instance == part)
+        end)
+        tags:GetInstanceRemovedSignal("Pickup"):Connect(function(instance)
+            marker:SetAttribute("removed", instance == part)
+        end)
+
+        part:AddTag("Pickup")
+        -- Deferred, so a handler sees it at the next resumption point rather
+        -- than inside the AddTag call that added it.
+        assert(marker:GetAttribute("added") == nil)
+
+        task.wait()
+        assert(marker:GetAttribute("added") == true)
+
+        part:RemoveTag("Pickup")
+        task.wait()
+        assert(marker:GetAttribute("removed") == true)
+
+        -- The same object every time, like every other instance signal.
+        assert(tags:GetInstanceAddedSignal("Pickup") == tags:GetInstanceAddedSignal("Pickup"))
+        assert(tags:GetInstanceAddedSignal("Pickup") ~= tags:GetInstanceRemovedSignal("Pickup"))
+    )") == "");
+
+    fixture.tick(3);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("Destroy strips every tag, so the removed signal reports it")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local tags = game:GetService("TagService")
+        local marker = Instance.new("Folder")
+        local victim = Instance.new("Part")
+        victim:AddTag("Pickup")
+
+        tags:GetInstanceRemovedSignal("Pickup"):Connect(function(instance)
+            -- A destroyed handle still resolves for the drain in which it
+            -- arrives, so a handler can read what it lost before it goes.
+            marker:SetAttribute("lost", instance.ClassName)
+        end)
+
+        victim:Destroy()
+        task.wait()
+        assert(marker:GetAttribute("lost") == "Part", tostring(marker:GetAttribute("lost")))
+        assert(#tags:GetTagged("Pickup") == 0)
+    )") == "");
+
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+}
+
+// --- WaitForChild ------------------------------------------------------------
+
+TEST_CASE("WaitForChild returns immediately when the child is already there")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local child = Instance.new("Part")
+        child.Name = "Target"
+        child.Parent = root
+
+        -- No yield: a matching child already present returns without parking.
+        assert(root:WaitForChild("Target") == child)
+    )") == "");
+
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("WaitForChild parks until the child exists, however it came to")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            local found = root:WaitForChild("Target")
+            marker:SetAttribute("found", found.ClassName)
+        end)
+        assert(marker:GetAttribute("found") == nil)
+
+        task.wait()
+        assert(marker:GetAttribute("found") == nil)
+
+        local child = Instance.new("Part")
+        child.Name = "Target"
+        child.Parent = root
+
+        task.wait()
+        assert(marker:GetAttribute("found") == "Part", tostring(marker:GetAttribute("found")))
+    )") == "");
+
+    fixture.tick(4);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("a sibling renamed into the awaited name satisfies a waiter")
+{
+    Fixture fixture;
+
+    // The contract is about the state, not about the event that produced it.
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+        local sibling = Instance.new("Part")
+        sibling.Name = "Something"
+        sibling.Parent = root
+
+        task.spawn(function()
+            marker:SetAttribute("found", root:WaitForChild("Target") == sibling)
+        end)
+
+        task.wait()
+        assert(marker:GetAttribute("found") == nil)
+
+        sibling.Name = "Target"
+        task.wait()
+        assert(marker:GetAttribute("found") == true)
+    )") == "");
+
+    fixture.tick(4);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("a timeout expires to nil, with no error and no warning")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            local found = root:WaitForChild("Never", 2 / 60)
+            marker:SetAttribute("expired", found == nil)
+        end)
+
+        task.wait()
+        assert(marker:GetAttribute("expired") == nil)
+
+        task.wait(3 / 60)
+        assert(marker:GetAttribute("expired") == true)
+    )") == "");
+
+    fixture.tick(6);
+    CHECK(fixture.errors() == "");
+    // The timeout form never warns, however long its timeout: you said how long
+    // you were prepared to wait.
+    CHECK_FALSE(fixture.logContains("Infinite yield"));
+}
+
+TEST_CASE("an unbounded wait warns after five sim-seconds and keeps waiting")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local root = Instance.new("Folder")
+        root.Name = "Patient"
+        local marker = Instance.new("Folder")
+
+        task.spawn(function()
+            marker:SetAttribute("found", root:WaitForChild("Eventually").ClassName)
+        end)
+    )") == "");
+
+    // Five sim-seconds is 300 ticks; one more to cross it.
+    fixture.tick(299);
+    CHECK_FALSE(fixture.logContains("Infinite yield"));
+
+    fixture.tick(2);
+    CHECK(fixture.logContains("Infinite yield"));
+
+    // Warned ONCE, and still waiting: the warning is a diagnostic, not a poll.
+    CHECK(fixture.logCount("Infinite yield") == 1);
+    fixture.tick(60);
+    CHECK(fixture.logCount("Infinite yield") == 1);
+}
+
+// --- DebugService ------------------------------------------------------------
+
+TEST_CASE("MessageOut carries every print and warn with its level")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        local marker = Instance.new("Folder")
+        local count = 0
+
+        debugService.MessageOut:Connect(function(message, level)
+            count += 1
+            marker:SetAttribute("last", message)
+            marker:SetAttribute("level", level.Name)
+            marker:SetAttribute("count", count)
+        end)
+
+        print("hello", 42)
+        warn("careful")
+
+        task.wait()
+        -- Exactly one fire per call, tab-separated like print itself.
+        assert(marker:GetAttribute("count") == 2, tostring(marker:GetAttribute("count")))
+        assert(marker:GetAttribute("last") == "careful")
+        assert(marker:GetAttribute("level") == "Warning", tostring(marker:GetAttribute("level")))
+    )") == "");
+
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("the gizmos validate their arguments and draw nothing headless")
+{
+    Fixture fixture;
+
+    // A silent no-op rather than an error, so debug drawing left in shared code
+    // cannot fail a headless test.
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        debugService:DrawLine(Vector3.zero, Vector3.new(0, 1, 0))
+        debugService:DrawLine(Vector3.zero, Vector3.new(0, 1, 0), Color3.new(1, 0, 0))
+        debugService:DrawBox(CFrame.new(), Vector3.one)
+        debugService:DrawSphere(Vector3.zero, 2)
+    )") == "");
+
+    // Validated even headless: a no-op that also skipped the checks would make
+    // headless the one place a typo survives.
+    CHECK(fixture.failure(R"(game:GetService("DebugService"):DrawSphere(Vector3.zero, "big"))") != "");
+    CHECK(fixture.failure(R"(game:GetService("DebugService"):DrawLine(1, 2))") != "");
+}
+
+TEST_CASE("a stat nothing published raises rather than answering zero")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        -- Answered from the world, so it is exact at any moment.
+        assert(debugService:GetStat("InstanceCount") > 0)
+
+        debugService:SetCustomStat("Enemies", 7)
+        assert(debugService:GetStat("Enemies") == 7)
+        debugService:SetCustomStat("Enemies", 9)
+        assert(debugService:GetStat("Enemies") == 9)
+    )") == "");
+
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):GetStat("Misspelt"))", "scene.err.unknown_stat"));
+}
+
+TEST_CASE("the panels are a closed set and OverlayVisible starts off")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local debugService = game:GetService("DebugService")
+        -- Off in shipped builds too, so a game offers the overlay deliberately.
+        assert(debugService.OverlayVisible == false)
+        debugService.OverlayVisible = true
+        assert(debugService.OverlayVisible == true)
+
+        debugService:ShowPanel("Stats")
+        debugService:ShowPanel("Stats")
+        debugService:HidePanel("Stats")
+        debugService:HidePanel("Stats")
+    )") == "");
+
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):ShowPanel("Nope"))", "scene.err.unknown_stat"));
+    CHECK(fixture.raises(R"(game:GetService("DebugService"):HidePanel("Nope"))", "scene.err.unknown_stat"));
+}
+
+// --- Shutdown ----------------------------------------------------------------
+
+TEST_CASE("BindToClose runs at shutdown, and Shutdown asks for one")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "CloseMarker"
+        marker.Parent = workspace
+
+        game:BindToClose(function()
+            marker:SetAttribute("first", true)
+        end)
+        game:BindToClose(function()
+            marker:SetAttribute("second", true)
+        end)
+
+        assert(marker:GetAttribute("first") == nil)
+        game:Shutdown()
+    )") == "");
+
+    CHECK(engine::script::shutdownRequested(fixture.runtime->state()));
+    engine::script::runCloseHandlers(fixture.runtime->state());
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        local marker = workspace:FindFirstChild("CloseMarker")
+        assert(marker ~= nil)
+        assert(marker:GetAttribute("first") == true)
+        assert(marker:GetAttribute("second") == true)
+    )") == "");
+}
+
+TEST_CASE("a close handler that errors does not stop the others")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "CloseMarker"
+        marker.Parent = workspace
+
+        game:BindToClose(function()
+            error("deliberate")
+        end)
+        game:BindToClose(function()
+            marker:SetAttribute("ran", true)
+        end)
+    )") == "");
+
+    engine::script::runCloseHandlers(fixture.runtime->state());
+    CHECK(fixture.logContains("deliberate"));
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:FindFirstChild("CloseMarker"):GetAttribute("ran") == true)
+    )") == "");
+}
+
+// --- game.Loaded -------------------------------------------------------------
+
+TEST_CASE("game.Loaded is deferred, so a file-scope connection is in time")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "LoadedMarker"
+        marker.Parent = workspace
+
+        game.Loaded:Connect(function(...)
+            marker:SetAttribute("loaded", true)
+            assert(select("#", ...) == 0)
+        end)
+    )") == "");
+
+    engine::script::fireDataModelLoaded(fixture.runtime->state());
+    fixture.tick();
+    CHECK(fixture.errors() == "");
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:FindFirstChild("LoadedMarker"):GetAttribute("loaded") == true)
+    )") == "");
+}
+
+TEST_CASE("RemoteEvent on a replica: FireServer goes out, and speaking to clients is refused")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Ready"
+        remote.Parent = workspace
+        remote:FireServer("ready", 3)
+    )") == "");
+    // **Out, not in**: a replica's own FireServer is for the authority, and is
+    // never delivered to this machine.
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    CHECK(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK(fixture.world->engineState().remoteInbox.empty());
+
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireAllClients("no"))", "net.err.remote_authority_only"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireClient(workspace, "no"))",
+                         "net.err.remote_authority_only"));
+    // A value that cannot travel is refused before anything is queued.
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Ready"):FireServer(function() end))", "net.err.remote_value"));
+    CHECK(fixture.world->engineState().remoteOutbox.size() == 1);
+}
+
+TEST_CASE("RemoteEvent on a dedicated server: nobody to send as, and every message goes out")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Round"
+        remote.Parent = workspace
+        remote:FireAllClients("starts")
+    )") == "");
+    // No player at this machine, so nothing is delivered here.
+    CHECK(fixture.world->engineState().remoteInbox.empty());
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    CHECK_FALSE(fixture.world->engineState().remoteOutbox[0].toServer);
+    CHECK(fixture.world->engineState().remoteOutbox[0].userId == 0);
+
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Round"):FireServer())", "net.err.remote_no_player"));
+    CHECK(fixture.raises(R"(workspace:FindFirstChild("Round"):FireClient(workspace))", "net.err.remote_not_player"));
+}
+
+TEST_CASE("RemoteFunction on a replica: the question goes out numbered, and the answer resumes the caller")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Replica;
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteFunction")
+        remote.Name = "Shop"
+        remote.Parent = workspace
+        task.spawn(function()
+            workspace:SetAttribute("Price", remote:InvokeServerAsync("sword"))
+        end)
+        task.spawn(function()
+            local ok, message = pcall(function()
+                return remote:InvokeServerAsync("shield")
+            end)
+            workspace:SetAttribute("Refused", if ok then "no" else tostring(message))
+        end)
+    )") == "");
+    std::vector<scene::RemoteMessage>& outbox = fixture.world->engineState().remoteOutbox;
+    REQUIRE(outbox.size() == 2);
+    CHECK(outbox[0].toServer);
+    CHECK(outbox[0].call != 0u);
+    CHECK(outbox[1].call != outbox[0].call);
+    const core::InstanceId remote = outbox[0].remote;
+
+    // What the session delivers when the authority answers: the price for the
+    // first, and a failure -- one string -- for the second.
+    lua_State* L = fixture.runtime->state();
+    scene::RemoteMessage price;
+    price.remote = remote;
+    price.call = outbox[0].call;
+    price.reply = true;
+    lua_pushnumber(L, 150);
+    engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, price.payload, price.refs);
+    lua_pop(L, 1);
+    scene::RemoteMessage refusal;
+    refusal.remote = remote;
+    refusal.call = outbox[1].call;
+    refusal.reply = true;
+    refusal.failed = true;
+    lua_pushstring(L, "sold out");
+    engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, refusal.payload, refusal.refs);
+    lua_pop(L, 1);
+    outbox.clear();
+    fixture.world->engineState().remoteInbox = {price, refusal};
+    engine::script::fireRemoteMessages(L);
+
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Price") == 150, "the answer arrived")
+        local refused = workspace:GetAttribute("Refused") :: string
+        assert(string.find(refused, "sold out", 1, true) ~= nil, "the failure raised at the caller")
+    )") == "");
+}
+
+TEST_CASE("RemoteFunction on a dedicated server: nobody to ask as")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    CHECK(fixture.raises(R"(
+        local remote = Instance.new("RemoteFunction")
+        remote:InvokeServerAsync()
+    )",
+                         "net.err.remote_no_player"));
+    CHECK(fixture.world->engineState().remoteOutbox.empty());
+}
+
+TEST_CASE("Sound:Play starts from the start, Resume carries on, and a seek is where Play starts")
+{
+    // **The owner: "I play a sound, then play again, and nothing plays".** A
+    // `Play` that resumed was a `Play` that did nothing to a sound paused at its
+    // end. `Play` starts again; `Resume` is what carries on.
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        local sound = Instance.new("Sound")
+        sound.Parent = workspace
+
+        sound.TimePosition = 0.5
+        sound:Play()
+        assert(sound.Playing)
+        assert(sound.TimePosition == 0.5, "a seek is where Play starts")
+
+        sound:Pause()
+        assert(not sound.Playing)
+        assert(sound.TimePosition == 0.5)
+        sound:Resume()
+        assert(sound.Playing)
+        assert(sound.TimePosition == 0.5, "Resume carries on")
+
+        sound:Play()
+        assert(sound.TimePosition == 0, "Play starts from the start")
+
+        sound:Stop()
+        assert(not sound.Playing)
+        assert(sound.TimePosition == 0)
+    )") == "");
+}
+
+TEST_CASE("Promise and Collector are globals, and work (ADR 0094)")
+{
+    Fixture fixture;
+
+    CHECK(fixture.failure(R"(
+        assert(type(Promise) == "table" and type(Collector) == "table")
+        assert(Promise.new(function() end):GetStatus() == Enum.PromiseState.Started)
+
+        -- The executor runs at once; a chain resolves through its handlers.
+        local order = {}
+        local p = Promise.new(function(resolve)
+            table.insert(order, "executor")
+            resolve(2)
+        end)
+        table.insert(order, "after new")
+        assert(order[1] == "executor" and order[2] == "after new")
+        local doubled = p:AndThen(function(x) return x * 2 end)
+        local ok, value = doubled:Await()
+        assert(ok and value == 4, "chain resolves")
+
+        -- A handler that errors rejects; Catch recovers.
+        local recovered = Promise.resolve(1):AndThen(function() error("boom") end):Catch(function(e)
+            return "recovered"
+        end)
+        assert(recovered:ExpectAsync() == "recovered")
+
+        -- Adopting a promise; all; race.
+        assert(Promise.resolve(Promise.resolve(7)):ExpectAsync() == 7)
+        local values = Promise.all({ Promise.resolve(1), Promise.resolve(2) }):ExpectAsync()
+        assert(values[1] == 1 and values[2] == 2)
+        assert(Promise.race({ Promise.resolve("first"), Promise.new(function() end) }):ExpectAsync() == "first")
+
+        -- Cancelling runs the hook and settles as Cancelled.
+        local hooked = false
+        local pending = Promise.new(function(_, _, onCancel)
+            onCancel(function() hooked = true end)
+        end)
+        pending:Cancel()
+        assert(hooked and pending:GetStatus() == Enum.PromiseState.Cancelled)
+
+        -- Collector: newest first, keyed, destroyed.
+        local cleaned = {}
+        local c = Collector.new()
+        c:Add(function() table.insert(cleaned, "a") end)
+        c:Add(function() table.insert(cleaned, "b") end)
+        c:Add(function() table.insert(cleaned, "keyed") end, nil, "k")
+        c:Remove("k")
+        assert(cleaned[1] == "keyed")
+        c:Cleanup()
+        assert(cleaned[2] == "b" and cleaned[3] == "a", "reverse order")
+        local part = c:Add(Instance.new("Part"))
+        local signal = c:Add(Signal.new())
+        c:Destroy()
+        assert(part.Parent == nil)
+        assert(not pcall(function() c:Add(function() end) end), "a destroyed Collector refuses")
+    )") == "");
+}

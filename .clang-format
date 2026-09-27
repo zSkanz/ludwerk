@@ -1,0 +1,38 @@
+# LuauG C++ style. THE MAJOR IS PART OF THE STYLE: clang-format 18 (Ubuntu
+# 24.04's, which the Tier-2 image and `ubuntu-latest` both carry). A different
+# major formats this tree differently, so scripts/gates/clang-format.sh refuses
+# to run on one -- see its header. Recorded at M0, enforced from M5.
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 120
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Left
+DerivePointerAlignment: false
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: All
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterEnum: true
+  BeforeElse: true
+  SplitEmptyFunction: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"luaug/'
+    Priority: 1
+  - Regex: '^<(lua|luau|luacode|luacodegen)'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+NamespaceIndentation: None
+FixNamespaceComments: true
+SortIncludes: CaseSensitive
+SpacesBeforeTrailingComments: 1

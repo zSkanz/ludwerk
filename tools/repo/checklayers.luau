@@ -1,0 +1,198 @@
+--!strict
+--[[
+	Module layering gate (architecture.md §2).
+
+	CMake's engine_add_module() already refuses a declared dependency at an
+	equal-or-higher layer, but that only sees LINK edges. This reads the actual
+	`#include "engine/<module>/..."` lines, which is what catches a header
+	sneaking across a seam without a link edge -- the way layering usually rots.
+
+	    lute tools/repo/checklayers.luau
+]]
+
+local fs = require("@std/fs")
+local path = require("@std/path")
+local process = require("@std/process")
+
+local EngineRoot = "engine"
+local ScanSuffixes = { ".cpp", ".h" }
+
+-- The layer matrix, keyed by the names that actually appear in include paths --
+-- `#include "engine/rhi/device.h"` -- which are the directories in
+-- architecture.md §1's tree, not the CMake target names.
+--
+-- The distinction matters for seams. A seam and its backends share one
+-- directory and one include root (`rhi/` holds rhi_api, rhi_sdlgpu,
+-- rhi_capture, rhi_null; ADR 0023) and are separate targets, not separate
+-- layers. What keeps "everything above sees only the interface" true is not
+-- this table: it is that a backend has no public headers at all. Its headers
+-- live under src/, so no other module can reach them whatever the layer says.
+local Layers: { [string]: number } = {
+    core = 0,
+
+    jobs = 1,
+    platform = 1,
+
+    rhi = 2,
+    physics = 2,
+    net = 2,
+    asset = 2,
+
+    scene = 3,
+
+    render = 4,
+    -- architecture.md §2 put `audio` at L2 with the other backend seams, and M6
+    -- moved it: the module that owns `Sound` has to be able to read a
+    -- `SoundComponent` and the listener's transform, and L2 cannot see `scene`.
+    -- The seam ADR 0009 names is unchanged -- it is the module boundary, not the
+    -- layer -- and `render` sits here for exactly the same reason.
+    audio = 4,
+    input = 4,
+    -- **Four rather than two**, and `scene` is the reason. Replication reads a
+    -- world's components and writes them back, so it depends on L3 and has to
+    -- sit above it -- beside `render` and `audio`, which are here for exactly
+    -- the same reason. The transport it uses is L2 and is an ordinary downward
+    -- edge (ADR 0069).
+    replication = 4,
+    nav = 4,
+
+    ui = 5,
+    script = 5,
+
+    app = 6,
+
+    -- **Five, and not the seven a first attempt gave it.** The content compiler
+    -- is a tool, and the instinct is to put a tool above everything -- but this
+    -- table is about DEPENDENCIES, and `assetc` includes `asset` (2), `core`,
+    -- `platform` and `jobs` and nothing else. Seven made `app` including it an
+    -- upward edge, which the gate refused and was right to: the number was
+    -- describing what the module is FOR rather than what it depends on, and the
+    -- two are different questions.
+    --
+    -- At five it sits above every module it includes and below `app`, so the
+    -- editor's import (E9 step 12) is an ordinary downward edge and `scene`,
+    -- `render` and `audio` still may not reach it. That it is absent from a
+    -- shipping build is not this table's job and never was: it is linked only
+    -- under `ENG_DEBUG_UI`, beside ImGui and SDL3, which is what keeps the
+    -- basis encoder and assimp out of a shipped game.
+    assetc = 5,
+}
+
+-- architecture.md §2 gives `script` a dependency on `ui`, which sits at the
+-- same layer. It is the one documented same-layer edge; anything else at equal
+-- layer is a cycle waiting to happen.
+local SameLayerAllowed: { [string]: { [string]: boolean } } = {
+    script = { ui = true },
+}
+
+local function fail(message: string): never
+    print(`checklayers: ERROR: {message}`)
+    return process.exit(1)
+end
+
+local function hasSuffix(text: string, suffix: string): boolean
+    return #text >= #suffix and string.sub(text, -#suffix) == suffix
+end
+
+type Violation = {
+    file: string,
+    from: string,
+    to: string,
+}
+
+local function scanModule(moduleName: string, moduleDir: string, violations: { Violation })
+    local fromLayer = Layers[moduleName]
+
+    local pending: { string } = { moduleDir }
+    while #pending > 0 do
+        local dir = table.remove(pending) :: string
+
+        for _, entry in fs.listDirectory(dir) do
+            local childPath = path.format(path.join(dir, entry.name))
+
+            if entry.type == "dir" then
+                table.insert(pending, childPath)
+                continue
+            end
+            if entry.type ~= "file" then
+                continue
+            end
+
+            local matched = false
+            for _, suffix in ScanSuffixes do
+                if hasSuffix(childPath, suffix) then
+                    matched = true
+                    break
+                end
+            end
+            if not matched then
+                continue
+            end
+
+            local source = fs.readFileToString(childPath)
+            for included in string.gmatch(source, '#include%s*[<"]engine/([%w_]+)/') do
+                if included == moduleName then
+                    continue
+                end
+
+                local toLayer = Layers[included]
+                if not toLayer then
+                    table.insert(violations, { file = childPath, from = moduleName, to = included })
+                    continue
+                end
+
+                local allowed = toLayer < fromLayer
+                if not allowed and toLayer == fromLayer then
+                    local exceptions = SameLayerAllowed[moduleName]
+                    allowed = exceptions ~= nil and exceptions[included] == true
+                end
+
+                if not allowed then
+                    table.insert(violations, { file = childPath, from = moduleName, to = included })
+                end
+            end
+        end
+    end
+end
+
+local function main()
+    if not fs.exists(EngineRoot) then
+        fail(`{EngineRoot}/ not found — run this from the repository root`)
+    end
+
+    local violations: { Violation } = {}
+    local checked = 0
+
+    for _, entry in fs.listDirectory(EngineRoot) do
+        if entry.type ~= "dir" then
+            continue
+        end
+
+        local moduleName = entry.name
+        if not Layers[moduleName] then
+            fail(`engine/{moduleName}/ has no layer in architecture.md §2 — add it to Layers or to the docs`)
+        end
+
+        checked += 1
+        scanModule(moduleName, path.format(path.join(EngineRoot, moduleName)), violations)
+    end
+
+    for _, violation in violations do
+        local toLayer = Layers[violation.to]
+        if toLayer then
+            print(
+                `checklayers: {violation.file}: {violation.from} (L{Layers[violation.from]}) includes {violation.to} (L{toLayer})`
+            )
+        else
+            print(`checklayers: {violation.file}: {violation.from} includes unknown module "{violation.to}"`)
+        end
+    end
+
+    print(`checklayers: {checked} module(s) checked, {#violations} violation(s)`)
+
+    if #violations > 0 then
+        fail(`{#violations} layering violation(s) — see architecture.md §2`)
+    end
+end
+
+main()

@@ -1,0 +1,261 @@
+// `assetc` -- the offline asset compiler (roadmap M7, M7 brief Decision 1).
+//
+// `ludwerk build-assets` is a Luau command that drives this binary. The split is
+// where the two halves belong: the Luau side owns the project model -- where
+// the content directory is, what is stale, what the console says -- and this
+// side owns the codecs, because Lute cannot run a mesh simplifier and a texture
+// encoder is a C++ library this repository already vendors.
+//
+// **Determinism is designed in rather than tested for afterwards**, and it is
+// four rules:
+//
+//   1. Inputs are sorted by relative path before anything is processed. A
+//      directory iterator's order is the filesystem's, and it differs between
+//      machines.
+//   2. Every encoder parameter is pinned in this tool rather than defaulted, so
+//      an upstream default change is a diff here instead of a silent rebuild of
+//      every asset.
+//   3. No timestamps, no absolute paths and no machine names reach the output
+//      bytes. A URN uses forward slashes on every host.
+//   4. Encoding is single-threaded, because meshoptimizer's format-version
+//      setters are process-global and documented as not thread-safe.
+//
+// The gate is a double build: compile the same tree twice and diff the manifest
+// and the pack.
+#pragma once
+
+#include <cstddef>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "engine/asset/chunk.h"
+#include "engine/asset/mesh_format.h"
+#include "engine/asset/pack.h"
+#include "engine/core/content_hash.h"
+#include "engine/core/error.h"
+#include "engine/core/types.h"
+
+namespace engine::assetc {
+
+using core::ContentHash;
+using core::f32;
+using core::u32;
+using core::u64;
+using core::usize;
+
+enum class SourceKind
+{
+    Mesh,
+    Texture,
+    // A `*.chunk.json` cell of the streamed world. Compiled into a `.lchunk`
+    // beside the pack rather than into it: a pack is read whole at mount, and a
+    // world bigger than memory cannot have its instance lists resident
+    // (`asset/chunk.h`).
+    Chunk,
+    // A `*.material.json` (ADR 0090): compiled to `AssetKind::Material`, its
+    // parameter block and the content hashes of the textures it names.
+    Material,
+    // A `*.surface.hlsl` (ADR 0091): compiled to `AssetKind::Surface`, its
+    // source and its bytecode for every target the build has a compiler for.
+    // An include beside it rides through as `Raw`.
+    Surface,
+    // Copied through untouched: a font, a catalog, a shader blob. Copying
+    // rather than refusing is what lets a project put anything it likes in its
+    // content directory.
+    Raw,
+};
+
+[[nodiscard]] const char* sourceKindName(SourceKind kind) noexcept;
+
+struct SourceFile
+{
+    std::filesystem::path path;
+    std::filesystem::path relative;
+    SourceKind kind = SourceKind::Raw;
+};
+
+// One row of the content manifest: the name a script uses, and what it resolves
+// to.
+struct ManifestEntry
+{
+    std::string urn;
+    ContentHash hash;
+    asset::AssetKind kind = asset::AssetKind::Unknown;
+    usize originalBytes = 0;
+    usize storedBytes = 0;
+    // Reported for a mesh, so `ludwerk build-assets` can say what it produced
+    // rather than only that it finished.
+    u32 lodCount = 0;
+    u32 vertexCount = 0;
+    u32 meshletCount = 0;
+};
+
+struct CompileOptions
+{
+    std::filesystem::path inputRoot;
+    asset::MeshCompileOptions mesh;
+
+    // Where compiled blobs are remembered between runs, or empty for no cache.
+    //
+    // **The expensive half of this tool is per-source and pure**: given the same
+    // bytes and the same pinned options, a mesh compiles to the same blob and a
+    // texture encodes to the same one. That is not an optimisation this design
+    // permits, it is a property the content hash already rests on -- so a build
+    // that recompiles an unchanged file is doing work it has already proved it
+    // did not need to do.
+    //
+    // A cache miss is never wrong, only slow. A cache that cannot be read or
+    // written is a warning and the build proceeds.
+    std::filesystem::path cacheRoot;
+
+    // **Compile only these, out of the whole tree** -- absolute paths, and empty
+    // means everything, which is what a full build passes.
+    //
+    // This is what makes `importOne` below the SAME CALL as a full build rather
+    // than a second implementation of it (E9 step 12). Two entry points that
+    // agree by inspection stop agreeing the first time one of them is changed;
+    // two that are one function cannot.
+    //
+    // A companion file is not listed here and does not need to be: a glTF reads
+    // its own `.bin` and its own images, so naming the `.gltf` names all of it.
+    std::vector<std::filesystem::path> only;
+
+    // **What a surface shader is compiled with** (ADR 0091): shadercross, and
+    // the directory `engine/surface.hlsli` is under. With no compiler a surface
+    // goes into the pack as its source alone, and a player draws it as the
+    // error surface and says why -- a build that refused would stop every
+    // project on a machine without one, and one that dropped the file would
+    // hide it.
+    std::filesystem::path shadercross;
+    std::filesystem::path surfaceInclude;
+};
+
+// What one run actually did, as counts rather than as a duration.
+//
+// **Assertions, not thresholds.** "The second build took 200 ms" is a number
+// that drifts with the machine; "the second build encoded zero textures" is the
+// claim incrementality actually makes, and it either holds or it does not.
+struct CompileStats
+{
+    u32 meshesCompiled = 0;
+    u32 texturesEncoded = 0;
+    // Sources answered entirely out of the cache.
+    u32 cacheHits = 0;
+    u32 cacheMisses = 0;
+};
+
+// One compiled cell, written as its own file so the streaming manager can read
+// it one at a time.
+struct ChunkOutput
+{
+    // Relative to the chunk output directory, and the tail of the URN the index
+    // names -- so the two cannot disagree about where a chunk is.
+    std::string relativePath;
+    std::vector<std::byte> bytes;
+};
+
+struct CompileResult
+{
+    bool ok = false;
+    std::string diagnostic;
+
+    std::vector<std::byte> pack;
+    std::string manifest;
+    std::vector<ManifestEntry> entries;
+
+    // Empty for a project with no streamed world, which is every project before
+    // this milestone.
+    std::vector<ChunkOutput> chunks;
+    std::string chunkIndex;
+
+    // Every blob this build produced, by hash, in the order the pack holds
+    // them. **The pack is one file and an object store is one file per blob**,
+    // so a store cannot be written from `pack` without unpacking what was just
+    // packed -- and the editor writes a store rather than a pack, because a
+    // store can be added to one import at a time.
+    //
+    // Deduplicated exactly as the pack is: two sources with the same bytes are
+    // one entry here, which is what makes the store content-addressed rather
+    // than merely content-named.
+    std::vector<std::pair<core::ContentHash, std::vector<std::byte>>> blobs;
+
+    u32 meshCount = 0;
+    u32 textureCount = 0;
+    u32 rawCount = 0;
+    u32 materialCount = 0;
+    u32 surfaceCount = 0;
+    // Surfaces packed as source alone, for want of a compiler.
+    u32 surfacesUncompiled = 0;
+    u32 chunkCount = 0;
+
+    CompileStats stats;
+};
+
+// Every regular file under `root`, sorted by relative path. Empty with a
+// diagnostic when the directory cannot be walked.
+[[nodiscard]] std::vector<SourceFile> collectSources(const std::filesystem::path& root, std::string& diagnostic);
+
+// The same walk, skipping anything under `exclude`. A project may put its cache
+// inside its content directory, and a build that compiled its own cache files
+// would produce a pack that grew every run.
+[[nodiscard]] std::vector<SourceFile> collectSources(const std::filesystem::path& root,
+                                                     const std::filesystem::path& exclude, std::string& diagnostic);
+
+// The whole build, in memory. In memory because the two outputs -- a pack and a
+// manifest -- have to agree with each other, and writing one before the other
+// is known would leave a half-built content directory behind on failure.
+[[nodiscard]] CompileResult compile(const CompileOptions& options);
+
+// One source, compiled exactly as a full build would compile it.
+//
+// **The editor's import and `assetc` produce the same blobs because they are the
+// same call** (E9 step 12), which is a structural claim rather than a promise:
+// this sets `CompileOptions::only` and forwards, so there is no second code path
+// to drift. What comes back is a `CompileResult` carrying that source's blobs
+// and manifest rows and nothing else.
+//
+// `sourcePath` is absolute and must lie under `options.inputRoot`, because a URN
+// is the path relative to that root and a source outside it has no name.
+[[nodiscard]] CompileResult importOne(const CompileOptions& options, const std::filesystem::path& sourcePath);
+
+// Writes a build's blobs into a content-addressed object store and merges its
+// manifest rows into the store's index (E9 step 12, ADR-pending).
+//
+// **A store rather than a pack, because an editor imports one file at a time.**
+// A `.lpack` is one file that holds everything: adding to it means rewriting it,
+// which is the wrong shape for a tool where somebody drops a model into a folder
+// and expects the other forty to still be there. A store is one file per blob
+// plus an index, so an import appends.
+//
+// `objects` is the directory `ContentMounts::mountObjects` reads and `index` is
+// the manifest beside it. Both are created when they do not exist.
+//
+// **The index is merged, not replaced**, and a re-import of the same source
+// overwrites its own rows rather than appending duplicates -- a URN names one
+// blob, and two rows for it would make which one wins depend on read order.
+//
+// **The index is written LAST**, after every blob is on disk. A store whose
+// index names a blob that is not there is a store that fails at first use; one
+// whose blobs are there and unnamed merely wastes disk until the next import.
+[[nodiscard]] std::optional<core::EngineError>
+writeObjectStore(const CompileResult& result, const std::filesystem::path& objects, const std::filesystem::path& index);
+
+// Encodes decoded pixels into the engine's texture container.
+//
+// `srgb` says what KIND of data the pixels are, and it is a property of the slot
+// the texture fills rather than of the file: base colour and emissive are
+// colour, normal and metallic-roughness are numbers. The same PNG can be both,
+// in two materials, and the encoder cannot tell.
+[[nodiscard]] std::optional<core::EngineError> encodeTexture(const asset::Image& image, bool srgb,
+                                                             std::vector<std::byte>& out);
+
+[[nodiscard]] std::string writeManifest(std::span<const ManifestEntry> entries);
+
+[[nodiscard]] bool writeFile(const std::filesystem::path& path, std::span<const std::byte> bytes,
+                             std::string& diagnostic);
+
+} // namespace engine::assetc

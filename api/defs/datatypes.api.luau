@@ -1,0 +1,2123 @@
+--!strict
+--- Value types (api-design.md §2.3).
+---
+--- Constructors and namespace constants are camelCase; members reached through
+--- a value are PascalCase (ADR 0034). The schema's validator enforces both, so
+--- the split is not something a definition can get wrong quietly.
+---
+--- The M2 set (`Vector3`, `CFrame`, `Color3`, `Random`, `Signal`,
+--- `Connection`), M5's `RaycastParams` and `RaycastResult`, and M6's
+--- screen-space four: `Vector2`, `UDim`, `UDim2` and `Rect`. `TweenInfo` lands
+--- with `TweenService`, the only thing that reads one. `Content` is an alias of
+--- `string` and is emitted by the definition generator rather than declared
+--- here.
+---
+--- `Module` is `script` for every entry: a value type is bound in the VM by the
+--- `script` module (m2-kickoff §"module map"), not registered into the scene
+--- like an Instance class -- nothing here has an `InstanceId`.
+---
+--- `Constructors` holds every namespace-level *function*, not only the ones
+--- that construct: `vector.magnitude` and `vector.clamp` sit beside
+--- `Vector3.new` because they are reached the same way, and the casing rule
+--- keys on how a name is reached rather than on what it does.
+
+local Schema = require("../schema")
+
+--- Annotated on its own rather than inline in `Definition`, because the new
+--- solver infers an array literal's element type from the elements it can see
+--- and then holds every later entry to it -- so the first datatype that omits
+--- an optional field makes every other one an error. The annotation is what
+--- lets `Schema.Datatype` flow down into the literal instead.
+---
+--- The same thing happens one level down, and for a specific reason: an
+--- expected type does not propagate through an *optional* field, so
+--- `Constructors: { Method }?` leaves its literal to infer itself while
+--- `Parameters: { Parameter }` inherits fine. The `:: { Schema.Method }` and
+--- `:: { Schema.Property }` assertions on the four member lists supply what the
+--- `?` swallows. They are not casts that hide anything -- a misspelt field or a
+--- wrong value type still fails exactly where it is written; verified against
+--- both a typo and a bad type before being relied on.
+local Datatypes: { Schema.Datatype } = {
+    {
+        Name = "Vector3",
+        Module = "script",
+        Doc = "The 3-component f32 vector, which IS the Luau VM's native `vector` primitive rather than a "
+            .. 'userdata wrapping one (ADR 0013): `typeof` answers `"vector"`, arithmetic allocates nothing, '
+            .. "and the components are the primitive's own lowercase `x`/`y`/`z` -- the single documented "
+            .. "exception to the casing rules (§9). The `Vector3` global is the `vector` library plus `new`, so "
+            .. "every function below is reachable under both names and `Vector3.zero == vector.zero`; it is a "
+            .. "superset table and no table identity is promised. Operators are the primitive's own and all of "
+            .. "them: `+`, `-` (binary and unary), `*` and `/` with a scalar on either side or component-wise "
+            .. "with another vector, `//`, `%`, and `==`. Precision is millimetre-exact to roughly ±8 km and "
+            .. "degrades to ~16 mm at ±131 km where the exponent range ends, which is why open-world math goes "
+            .. "through CFrame's f64 translation and not through a position (ADR 0013 addendum, ADR 0014).",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "x", Type = "number?", Default = "0" },
+                    { Name = "y", Type = "number?", Default = "0" },
+                    { Name = "z", Type = "number?", Default = "0" },
+                },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Constructs a vector; a missing component is 0. Bound as the `vectorCtor` compile option "
+                    .. "so a literal call is constant-folded and a dynamic one is a fastcall -- neither "
+                    .. "allocates.",
+            },
+            {
+                Name = "create",
+                Parameters = {
+                    { Name = "x", Type = "number" },
+                    { Name = "y", Type = "number" },
+                    { Name = "z", Type = "number?", Default = "0" },
+                },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The official vector stdlib's spelling of the constructor, carried so that code written "
+                    .. "against another Luau runtime ports unchanged. Unlike `new` it requires `x` and `y`, "
+                    .. "because "
+                    .. "the stdlib checks argument count rather than accepting `nil` as zero.",
+            },
+            {
+                Name = "magnitude",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The vector's length. Preferred over the `.Magnitude` field, which reaches the same "
+                    .. "number through the metatable and is measurably slower.",
+            },
+            {
+                Name = "normalize",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The vector scaled to unit length. A zero vector has no direction to preserve and "
+                    .. "normalizing one yields NaN components rather than an error.",
+            },
+            {
+                Name = "dot",
+                Parameters = { { Name = "a", Type = "vector" }, { Name = "b", Type = "vector" } },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The dot product of two vectors.",
+            },
+            {
+                Name = "cross",
+                Parameters = { { Name = "a", Type = "vector" }, { Name = "b", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The cross product, right-handed like the world it describes: "
+                    .. "`cross(right, up) == -look` for any frame's basis (§2.3, handedness).",
+            },
+            {
+                Name = "angle",
+                Parameters = {
+                    { Name = "a", Type = "vector" },
+                    { Name = "b", Type = "vector" },
+                    { Name = "axis", Type = "vector?", Default = "nil" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The angle between two vectors in radians, in [0, π]. With `axis`, the result is signed "
+                    .. "about it by the right-hand rule and so spans (-π, π] -- which is the only way to tell "
+                    .. "a rotation from its mirror image.",
+            },
+            {
+                Name = "lerp",
+                Parameters = {
+                    { Name = "a", Type = "vector" },
+                    { Name = "b", Type = "vector" },
+                    { Name = "alpha", Type = "number" },
+                },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Component-wise linear interpolation from `a` to `b`. `alpha` is not clamped, so values "
+                    .. "outside [0, 1] extrapolate.",
+            },
+            {
+                Name = "floor",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Each component rounded toward negative infinity.",
+            },
+            {
+                Name = "ceil",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Each component rounded toward positive infinity.",
+            },
+            {
+                Name = "abs",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Each component's absolute value.",
+            },
+            {
+                Name = "sign",
+                Parameters = { { Name = "v", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Each component reduced to -1, 0 or 1 by its sign.",
+            },
+            {
+                Name = "clamp",
+                Parameters = {
+                    { Name = "v", Type = "vector" },
+                    { Name = "min", Type = "vector" },
+                    { Name = "max", Type = "vector" },
+                },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Each component clamped into the box `min`..`max`. An inverted box is an error rather "
+                    .. "than an empty result, because there is no component value that satisfies it.",
+            },
+            {
+                Name = "min",
+                Parameters = { { Name = "a", Type = "vector" }, { Name = "rest", Type = "...vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The component-wise minimum of every argument -- a corner of the bounding box, not "
+                    .. "whichever argument is shortest.",
+            },
+            {
+                Name = "max",
+                Parameters = { { Name = "a", Type = "vector" }, { Name = "rest", Type = "...vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The component-wise maximum of every argument -- the opposite corner of the bounding box "
+                    .. "`min` returns.",
+            },
+        } :: { Schema.Method },
+        Constants = {
+            {
+                Name = "zero",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`(0, 0, 0)`. Reachable as both `vector.zero` and `Vector3.zero`, and equal either way.",
+            },
+            {
+                Name = "one",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`(1, 1, 1)`, the identity for component-wise multiplication.",
+            },
+        } :: { Schema.Property },
+        Properties = {
+            {
+                Name = "x",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The X component. Lowercase because it is a field of the VM primitive itself, like a "
+                    .. "string's length, and not a member of a type this project defines -- the one documented "
+                    .. "exception to the PascalCase rule (§9, divergence #9). `v.X` reads the same component "
+                    .. "rather than raising, because the interpreter answers a single-character index on a "
+                    .. "vector case-insensitively before any metatable is consulted; lowercase is still the "
+                    .. "only spelling declared, so the uppercase one is a type error.",
+            },
+            {
+                Name = "y",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The Y component, up in the engine's Y-up world. Lowercase for the same reason as `x`.",
+            },
+            {
+                Name = "z",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The Z component. Forward is -Z, so a forward-facing direction has a negative `z`. "
+                    .. "Lowercase for the same reason as `x`.",
+            },
+            {
+                Name = "Magnitude",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The vector's length, reached through the primitive's metatable. It is a convenience for "
+                    .. "readability at the cost of speed: `vector.magnitude(v)` is a fastcall and this is not.",
+            },
+            {
+                Name = "Unit",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The vector scaled to length 1, reached through the metatable. Prefer "
+                    .. "`vector.normalize(v)` in hot code for the same reason as `Magnitude`.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Dot",
+                Parameters = { { Name = "other", Type = "vector" } },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The dot product with `other`; the method form of `vector.dot`.",
+            },
+            {
+                Name = "Cross",
+                Parameters = { { Name = "other", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The cross product with `other`, in that order; the method form of `vector.cross`. The "
+                    .. "operation does not commute, so `a:Cross(b) == -b:Cross(a)`.",
+            },
+            {
+                Name = "Lerp",
+                Parameters = { { Name = "goal", Type = "vector" }, { Name = "alpha", Type = "number" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Linear interpolation toward `goal`; the method form of `vector.lerp`. `alpha` is not "
+                    .. "clamped.",
+            },
+            {
+                Name = "Angle",
+                Parameters = {
+                    { Name = "other", Type = "vector" },
+                    { Name = "axis", Type = "vector?", Default = "nil" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The angle to `other` in radians; the method form of `vector.angle`, `axis` included, so "
+                    .. "the signed form is available without switching spelling.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "CFrame",
+        Module = "script",
+        Doc = "A rigid transform: an orthonormal rotation basis plus a translation. The translation is **f64** "
+            .. "and is the world-precision source of truth the whole engine is built around (ADR 0014) -- "
+            .. "`Position` is its f32 rounding, so gameplay math past a few kilometres from the origin must "
+            .. "stay in CFrame rather than round-tripping through a vector. The world is right-handed, Y-up, "
+            .. "-Z forward, matching glTF, and every sign in this type follows from that. Operators: "
+            .. "`CFrame * CFrame` composes, `CFrame * vector` transforms a **point** (the translation is "
+            .. "applied), and `==` is exact and component-wise -- an identity test, never a tolerance.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "x", Type = "number?", Default = "0" },
+                    { Name = "y", Type = "number?", Default = "0" },
+                    { Name = "z", Type = "number?", Default = "0" },
+                },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A frame with the identity rotation at the given position; a missing component is 0, so "
+                    .. "`CFrame.new()` is the identity. The components are taken as f64 and stored as f64.",
+            },
+            {
+                Name = "new",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A frame with the identity rotation at `position`. The overload exists so a vector does "
+                    .. "not have to be unpacked to be placed, but it enters through f32 -- construct from "
+                    .. "numbers where the extra precision matters.",
+            },
+            {
+                Name = "lookAt",
+                Parameters = {
+                    { Name = "position", Type = "vector" },
+                    { Name = "target", Type = "vector" },
+                    { Name = "up", Type = "vector?", Default = "Vector3.new(0, 1, 0)" },
+                },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A frame at `position` whose `LookVector` points at `target`, with `up` biasing the roll "
+                    .. "and defaulting to `(0, 1, 0)`. Where the direction is degenerate or `up` is parallel "
+                    .. "to it the result is the identity rotation at `position`, not a frame full of NaN: a "
+                    .. "camera pointed at itself should stop moving, not poison every value it touches.",
+            },
+            {
+                Name = "fromEuler",
+                Parameters = {
+                    { Name = "rx", Type = "number" },
+                    { Name = "ry", Type = "number" },
+                    { Name = "rz", Type = "number" },
+                    { Name = "order", Type = "Enum.RotationOrder?", Default = "Enum.RotationOrder.YXZ" },
+                },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "The ONE euler constructor -- there is no `fromEulerAnglesXYZ`/`YXZ` family, because the "
+                    .. "order belongs in an argument and not in a name. Angles are radians, applied as "
+                    .. "**intrinsic** rotations in `order` (each about the axes the previous one produced) and "
+                    .. "signed by the right-hand rule about each axis.",
+            },
+            {
+                Name = "fromAxisAngle",
+                Parameters = { { Name = "axis", Type = "vector" }, { Name = "angle", Type = "number" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A rotation of `angle` radians about `axis` by the right-hand rule, at the origin. The "
+                    .. "axis is normalized on the way in, so its length carries no meaning.",
+            },
+            {
+                Name = "fromQuaternion",
+                Parameters = {
+                    { Name = "position", Type = "vector" },
+                    { Name = "qx", Type = "number" },
+                    { Name = "qy", Type = "number" },
+                    { Name = "qz", Type = "number" },
+                    { Name = "qw", Type = "number" },
+                },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A frame at `position` rotated by the quaternion `(qx, qy, qz, qw)` -- w last, matching "
+                    .. "`ToQuaternion`'s tail, which is the half of the convention people get wrong. The "
+                    .. "quaternion is normalized on the way in.",
+            },
+            {
+                Name = "fromMatrix",
+                Parameters = {
+                    { Name = "position", Type = "vector" },
+                    { Name = "right", Type = "vector" },
+                    { Name = "up", Type = "vector" },
+                    { Name = "back", Type = "vector" },
+                },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "A frame built from an explicit basis. The third axis is **back**, not forward, so "
+                    .. "`LookVector == -back`. Axes that are neither unit length nor mutually perpendicular "
+                    .. "are stored as given: a constructor that silently repaired its input would hide the bug "
+                    .. "that produced it. `Orthonormalize` is the explicit repair.",
+            },
+        } :: { Schema.Method },
+        Constants = {
+            {
+                Name = "identity",
+                Type = "CFrame",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The identity transform: no rotation, at the origin. `cf * CFrame.identity == cf`.",
+            },
+        } :: { Schema.Property },
+        Properties = {
+            {
+                Name = "Position",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The translation, rounded from f64 to f32 at every magnitude -- reading it is lossy far "
+                    .. "from the origin and reading it twice is not (the rounding is a function, not a drift). "
+                    .. "The f64 value never leaves the CFrame, which is what makes composing transforms exact "
+                    .. "where composing positions is not.",
+            },
+            {
+                Name = "Rotation",
+                Type = "CFrame",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The same rotation basis with a zero translation, so a pure translation's `Rotation` is "
+                    .. "the identity. This is what the `VectorTo*Space` pair is defined in terms of.",
+            },
+            {
+                Name = "RightVector",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The basis's +X column.",
+            },
+            {
+                Name = "UpVector",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The basis's +Y column.",
+            },
+            {
+                Name = "LookVector",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The basis's **-Z** column -- forward is -Z in a right-handed Y-up world, which is why "
+                    .. "`RightVector:Cross(UpVector) == -LookVector` rather than `LookVector`.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Inverse",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "The transform that undoes this one: `cf * cf:Inverse() == CFrame.identity` up to "
+                    .. "floating-point rounding.",
+            },
+            {
+                Name = "Lerp",
+                Parameters = { { Name = "goal", Type = "CFrame" }, { Name = "alpha", Type = "number" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "Interpolates the translation linearly and **slerps** the rotation, so the halfway frame "
+                    .. "sits at an equal angle from each end rather than cutting the corner. `alpha` is not "
+                    .. "clamped and values outside [0, 1] extrapolate.",
+            },
+            {
+                Name = "Orthonormalize",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "Repairs a drifted or hand-built basis, preserving the translation and treating "
+                    .. "`LookVector` as authoritative: the look direction is normalized, `UpVector` is made "
+                    .. "perpendicular to it and normalized, and `RightVector` is whatever their cross product "
+                    .. "requires. This is the explicit counterpart to `fromMatrix` storing what it is given.",
+            },
+            {
+                Name = "ToWorldSpace",
+                Parameters = { { Name = "cf", Type = "CFrame" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "Reads `cf` as being expressed relative to this frame and returns it in world space. "
+                    .. "Defined as `self * cf`.",
+            },
+            {
+                Name = "ToObjectSpace",
+                Parameters = { { Name = "cf", Type = "CFrame" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Safe",
+                Doc = "Expresses the world-space frame `cf` relative to this one. Defined as "
+                    .. "`self:Inverse() * cf`.",
+            },
+            {
+                Name = "PointToWorldSpace",
+                Parameters = { { Name = "point", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Moves a **position** out of this frame into world space, translation included. Defined "
+                    .. "as `self * point`.",
+            },
+            {
+                Name = "PointToObjectSpace",
+                Parameters = { { Name = "point", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Moves a world-space **position** into this frame, translation included. Defined as "
+                    .. "`self:Inverse() * point`.",
+            },
+            {
+                Name = "VectorToWorldSpace",
+                Parameters = { { Name = "direction", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Moves a **direction** out of this frame into world space, rotation only. Defined as "
+                    .. "`self.Rotation * direction`. A surface normal run through `PointToWorldSpace` instead "
+                    .. "comes out wrong by exactly the frame's position.",
+            },
+            {
+                Name = "VectorToObjectSpace",
+                Parameters = { { Name = "direction", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "Moves a world-space **direction** into this frame, rotation only. Defined as "
+                    .. "`self.Rotation:Inverse() * direction`.",
+            },
+            {
+                Name = "ToEuler",
+                Parameters = {
+                    { Name = "order", Type = "Enum.RotationOrder?", Default = "Enum.RotationOrder.YXZ" },
+                },
+                Returns = { "number", "number", "number" },
+                ThreadSafety = "Safe",
+                Doc = "Decomposes the rotation into `(rx, ry, rz)` radians in `fromEuler`'s parameter order, "
+                    .. "and is its inverse for the same `order`. Euler angles are not unique, so a round trip "
+                    .. "returns an equivalent rotation rather than necessarily the same three numbers.",
+            },
+            {
+                Name = "ToAxisAngle",
+                Parameters = {},
+                Returns = { "vector", "number" },
+                ThreadSafety = "Safe",
+                Doc = "Decomposes the rotation into `(axis, angle)` with a unit axis and the angle in radians; "
+                    .. "the inverse of `fromAxisAngle`.",
+            },
+            {
+                Name = "ToQuaternion",
+                Parameters = {},
+                Returns = { "number", "number", "number", "number" },
+                ThreadSafety = "Safe",
+                Doc = "Decomposes the rotation into `(qx, qy, qz, qw)` -- w last, matching "
+                    .. "`fromQuaternion`'s tail, whose inverse this is.",
+            },
+        } :: { Schema.Method },
+        Operators = {
+            {
+                Name = "__mul",
+                Parameters = { { Name = "other", Type = "CFrame" } },
+                Returns = { "CFrame" },
+                Doc = 'Composes two transforms: `a * b` reads as "first `b`, then `a`", the column-vector '
+                    .. "convention every matrix in the engine follows.",
+            },
+            {
+                Name = "__mul",
+                Parameters = { { Name = "point", Type = "vector" } },
+                Returns = { "vector" },
+                Doc = "Transforms a **point** -- the translation is applied. `VectorToWorldSpace` is the "
+                    .. "direction form, and a surface normal put through this one comes out wrong by exactly "
+                    .. "the frame's position.",
+            },
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "CFrame" } },
+                Returns = { "boolean" },
+                Doc = "Exact and component-wise: an identity test, never a tolerance. Two frames built by "
+                    .. "different routes to the same place are equal only if every stored number matches.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "Color3",
+        Module = "script",
+        Doc = "An RGB colour in three f32 channels, nominally 0-1 and deliberately **not clamped**: values "
+            .. "outside the range are legal and meaningful for HDR emissives and tint multipliers over 1, so "
+            .. "clamping belongs to the consumer that actually has a range to respect. No BrickColor. `==` is "
+            .. "exact and component-wise.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "r", Type = "number?", Default = "0" },
+                    { Name = "g", Type = "number?", Default = "0" },
+                    { Name = "b", Type = "number?", Default = "0" },
+                },
+                Returns = { "Color3" },
+                ThreadSafety = "Safe",
+                Doc = "A colour from three 0-1 channels, each defaulting to 0, so `Color3.new()` is black. "
+                    .. "Out-of-range values are kept as given.",
+            },
+            {
+                Name = "fromRGB",
+                Parameters = {
+                    { Name = "r", Type = "number" },
+                    { Name = "g", Type = "number" },
+                    { Name = "b", Type = "number" },
+                },
+                Returns = { "Color3" },
+                ThreadSafety = "Safe",
+                Doc = "A colour from three 0-255 channels, which is the range colour pickers and design tools "
+                    .. "speak in. The channels are divided by 255 and stored, not rounded to a byte.",
+            },
+            {
+                Name = "fromHSV",
+                Parameters = {
+                    { Name = "h", Type = "number" },
+                    { Name = "s", Type = "number" },
+                    { Name = "v", Type = "number" },
+                },
+                Returns = { "Color3" },
+                ThreadSafety = "Safe",
+                Doc = "A colour from hue, saturation and value -- **all three** 0-1, hue included, so "
+                    .. "`fromHSV(1/3, 1, 1)` is green and not a hue of one third of a degree.",
+            },
+            {
+                Name = "fromHex",
+                Parameters = { { Name = "hex", Type = "string" } },
+                Returns = { "Color3" },
+                ThreadSafety = "Safe",
+                Doc = "A colour from a hex string, accepting `#rrggbb`, `rrggbb`, `#rgb` and `rgb` "
+                    .. "case-insensitively, so the round trip with `ToHex` is defined in both directions and "
+                    .. "neither call has to guess what the other meant. Anything else raises "
+                    .. "`script.err.color_hex_invalid` rather than returning a silently wrong colour.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "R",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The red channel, nominally 0-1 and not clamped. `c.r` raises "
+                    .. "`script.err.unknown_member`: there is one spelling.",
+            },
+            {
+                Name = "G",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The green channel, nominally 0-1 and not clamped.",
+            },
+            {
+                Name = "B",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The blue channel, nominally 0-1 and not clamped.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Lerp",
+                Parameters = { { Name = "goal", Type = "Color3" }, { Name = "alpha", Type = "number" } },
+                Returns = { "Color3" },
+                ThreadSafety = "Safe",
+                Doc = "Channel-wise linear interpolation toward `goal` in RGB, which is the cheap blend and "
+                    .. "not the perceptually even one. `alpha` is not clamped.",
+            },
+            {
+                Name = "ToHSV",
+                Parameters = {},
+                Returns = { "number", "number", "number" },
+                ThreadSafety = "Safe",
+                Doc = "Decomposes the colour into `(h, s, v)`, all three 0-1; the inverse of `fromHSV`. Hue is "
+                    .. "undefined for a grey and reported as 0.",
+            },
+            {
+                Name = "ToHex",
+                Parameters = {},
+                Returns = { "string" },
+                ThreadSafety = "Safe",
+                Doc = 'Six lowercase hex digits with no leading `#` (`"ff8800"`). The channels are clamped '
+                    .. "into 0-255 on the way out because eight bits cannot represent anything else -- this is "
+                    .. "the one place a Color3 is narrowed, and it is why the round trip through `fromHex` "
+                    .. "does not preserve an HDR value.",
+            },
+        } :: { Schema.Method },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "Color3" } },
+                Returns = { "boolean" },
+                Doc = "Exact and component-wise. Channels are not clamped, so two colours that would render "
+                    .. "identically after clamping are still unequal if their stored values differ.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "Vector2",
+        Module = "script",
+        Doc = "A two-component screen-space vector, in f32. Userdata rather than a primitive, because the "
+            .. "native Luau `vector` is three-wide and IS Vector3 (ADR 0013) -- which is why this is the one "
+            .. "vector type in the surface whose operators are the engine's rather than the language's. It "
+            .. "carries the arithmetic UI code actually writes: `+`, `-`, unary `-`, `*` and `/` with a scalar "
+            .. "on either side or component-wise with another Vector2, and an exact `==`.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "x", Type = "number?", Default = "0" },
+                    { Name = "y", Type = "number?", Default = "0" },
+                },
+                Returns = { "Vector2" },
+                ThreadSafety = "Safe",
+                Doc = "A vector from two components, each defaulting to 0.",
+            },
+        } :: { Schema.Method },
+        Constants = {
+            {
+                Name = "zero",
+                Type = "Vector2",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`Vector2.new(0, 0)`, as a constant rather than a call.",
+            },
+            {
+                Name = "one",
+                Type = "Vector2",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`Vector2.new(1, 1)`, as a constant rather than a call.",
+            },
+        } :: { Schema.Property },
+        Properties = {
+            {
+                Name = "X",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The horizontal component. Uppercase, unlike `Vector3.x`: that one is lowercase because "
+                    .. "it is a field of the Luau primitive itself (divergence #9), and this type is ours.",
+            },
+            {
+                Name = "Y",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The vertical component, growing downward in every screen-space coordinate the UI uses.",
+            },
+            {
+                Name = "Magnitude",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The vector's length.",
+            },
+            {
+                Name = "Unit",
+                Type = "Vector2",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The same direction at length 1. The zero vector normalizes to zero rather than to NaN, "
+                    .. "which matches Vector3 and is what stops a stationary input axis poisoning a frame.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Dot",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "The dot product with another vector.",
+            },
+            {
+                Name = "Lerp",
+                Parameters = {
+                    { Name = "goal", Type = "Vector2" },
+                    { Name = "alpha", Type = "number" },
+                },
+                Returns = { "Vector2" },
+                ThreadSafety = "Safe",
+                Doc = "Linear interpolation toward `goal`. `alpha` is not clamped, so a value outside 0-1 "
+                    .. "extrapolates.",
+            },
+        } :: { Schema.Method },
+        Operators = {
+            {
+                Name = "__add",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "Vector2" },
+                Doc = "Component-wise addition.",
+            },
+            {
+                Name = "__sub",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "Vector2" },
+                Doc = "Component-wise subtraction.",
+            },
+            {
+                Name = "__unm",
+                Parameters = {},
+                Returns = { "Vector2" },
+                Doc = "Negation.",
+            },
+            {
+                Name = "__mul",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "Vector2" },
+                Doc = "Component-wise multiplication.",
+            },
+            {
+                Name = "__mul",
+                Parameters = { { Name = "scalar", Type = "number" } },
+                Returns = { "Vector2" },
+                Doc = "Scaling. The scalar may be on either side, because `__mul` dispatches on either operand.",
+            },
+            {
+                Name = "__div",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "Vector2" },
+                Doc = "Component-wise division.",
+            },
+            {
+                Name = "__div",
+                Parameters = { { Name = "scalar", Type = "number" } },
+                Returns = { "Vector2" },
+                Doc = "Division by a scalar, on either side.",
+            },
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "Vector2" } },
+                Returns = { "boolean" },
+                Doc = "Exact, component-wise equality -- an identity test rather than a tolerance.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "UDim",
+        Module = "script",
+        Doc = "One axis of a UI coordinate: a fraction of the parent (`Scale`) plus a pixel offset (`Offset`). "
+            .. 'The pair is what lets a layout written once be correct at every resolution -- "half the parent, minus '
+            .. 'eight pixels" is one value rather than a formula every caller re-derives when the window '
+            .. "resizes. Adds and subtracts component-wise.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "scale", Type = "number?", Default = "0" },
+                    { Name = "offset", Type = "number?", Default = "0" },
+                },
+                Returns = { "UDim" },
+                ThreadSafety = "Safe",
+                Doc = "A UDim from a scale and an offset, both defaulting to 0.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Scale",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The fraction of the parent's size along this axis. 1 is the whole parent; it is not "
+                    .. "clamped, so a value past 1 or below 0 is legal and means what it says.",
+            },
+            {
+                Name = "Offset",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The pixel offset added after the scale is resolved.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__add",
+                Parameters = { { Name = "other", Type = "UDim" } },
+                Returns = { "UDim" },
+                Doc = "Adds both halves.",
+            },
+            {
+                Name = "__sub",
+                Parameters = { { Name = "other", Type = "UDim" } },
+                Returns = { "UDim" },
+                Doc = "Subtracts both halves.",
+            },
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "UDim" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of both halves.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "UDim2",
+        Module = "script",
+        Doc = "A two-axis UI coordinate: a `UDim` per axis. Every `Position` and `Size` on a UIObject is one, "
+            .. "which is what makes a layout written once correct at every resolution.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "xs", Type = "number?", Default = "0" },
+                    { Name = "xo", Type = "number?", Default = "0" },
+                    { Name = "ys", Type = "number?", Default = "0" },
+                    { Name = "yo", Type = "number?", Default = "0" },
+                },
+                Returns = { "UDim2" },
+                ThreadSafety = "Safe",
+                Doc = "Four numbers in axis order: x scale, x offset, y scale, y offset. There is deliberately "
+                    .. "no second overload taking two UDims -- one constructor with one argument order is what "
+                    .. "a frozen surface is for.",
+            },
+            {
+                Name = "fromScale",
+                Parameters = {
+                    { Name = "xs", Type = "number?", Default = "0" },
+                    { Name = "ys", Type = "number?", Default = "0" },
+                },
+                Returns = { "UDim2" },
+                ThreadSafety = "Safe",
+                Doc = "Scale on both axes, zero offsets -- the spelling for a purely relative layout.",
+            },
+            {
+                Name = "fromOffset",
+                Parameters = {
+                    { Name = "xo", Type = "number?", Default = "0" },
+                    { Name = "yo", Type = "number?", Default = "0" },
+                },
+                Returns = { "UDim2" },
+                ThreadSafety = "Safe",
+                Doc = "Pixels on both axes, zero scales -- the spelling for a fixed-size element.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "X",
+                Type = "UDim",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The horizontal axis.",
+            },
+            {
+                Name = "Y",
+                Type = "UDim",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The vertical axis.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Lerp",
+                Parameters = {
+                    { Name = "goal", Type = "UDim2" },
+                    { Name = "alpha", Type = "number" },
+                },
+                Returns = { "UDim2" },
+                ThreadSafety = "Safe",
+                Doc = "Interpolates all four numbers independently. This is the operation a tween on a "
+                    .. "`Position` performs, and it is on the type so that game code animating by hand and the "
+                    .. "engine animating by tween produce the same intermediate values.",
+            },
+        } :: { Schema.Method },
+        Operators = {
+            {
+                Name = "__add",
+                Parameters = { { Name = "other", Type = "UDim2" } },
+                Returns = { "UDim2" },
+                Doc = "Adds both axes.",
+            },
+            {
+                Name = "__sub",
+                Parameters = { { Name = "other", Type = "UDim2" } },
+                Returns = { "UDim2" },
+                Doc = "Subtracts both axes.",
+            },
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "UDim2" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of all four numbers.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "Rect",
+        Module = "script",
+        Doc = "A screen-space rectangle by two corners, in pixels. The corners are **not** sorted and not "
+            .. "validated: an `ImageLabel.SliceCenter` whose min is past its max is a mistake for its author "
+            .. "to see, not one for a constructor to silently correct.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "min", Type = "Vector2" },
+                    { Name = "max", Type = "Vector2" },
+                },
+                Returns = { "Rect" },
+                ThreadSafety = "Safe",
+                Doc = "A rectangle from its two corners.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Min",
+                Type = "Vector2",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The corner given first.",
+            },
+            {
+                Name = "Max",
+                Type = "Vector2",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The corner given second.",
+            },
+            {
+                Name = "Width",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`Max.X - Min.X`, which is negative for an inverted rectangle rather than zero.",
+            },
+            {
+                Name = "Height",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "`Max.Y - Min.Y`, which is negative for an inverted rectangle rather than zero.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "Rect" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of both corners.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "Random",
+        Module = "script",
+        Doc = "A seeded pseudorandom generator, and the only sanctioned source of randomness in simulation "
+            .. "code. A seeded stream is reproducible: the same seed yields the same sequence for the "
+            .. "same engine build on the same platform, which is the level-B guarantee recorded replays rest "
+            .. "on -- replays store seeds, not draws (ADR 0025).",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = { { Name = "seed", Type = "number?", Default = "nil" } },
+                Returns = { "Random" },
+                ThreadSafety = "Safe",
+                Doc = "A generator seeded with `seed`, truncated toward zero. **Omitting the seed draws one "
+                    .. "from the host and is not legal in simulation code**: it is exactly the unseeded RNG "
+                    .. "determinism forbids, and `ludwerk check` flags it. Use it for cosmetics that never reach "
+                    .. "the "
+                    .. "world hash, or seed it from something the simulation already knows.",
+            },
+        } :: { Schema.Method },
+        Methods = {
+            {
+                Name = "NextNumber",
+                Parameters = {
+                    { Name = "min", Type = "number?", Default = "0" },
+                    { Name = "max", Type = "number?", Default = "1" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Doc = "The next number in [min, max), defaulting to [0, 1) -- half-open, like every other "
+                    .. "range in the engine. `min > max` raises `script.err.random_range`.",
+            },
+            {
+                Name = "NextInteger",
+                Parameters = { { Name = "min", Type = "number" }, { Name = "max", Type = "number" } },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Doc = "The next integer in [min, max], inclusive at **both** ends. This is the one place the "
+                    .. "engine is not half-open, which is why it is spelled out rather than inferred from "
+                    .. "`NextNumber`. `min > max`, or a non-integer bound, raises `script.err.random_range`.",
+            },
+            {
+                Name = "NextUnitVector",
+                Parameters = {},
+                Returns = { "vector" },
+                ThreadSafety = "Unsafe",
+                Doc = "A direction drawn **uniformly over the sphere**, not merely one of unit length -- "
+                    .. "normalizing three independent draws clusters at the cube's corners, and this does not.",
+            },
+            {
+                Name = "Clone",
+                Parameters = {},
+                Returns = { "Random" },
+                ThreadSafety = "ReadParallel",
+                Doc = "A copy positioned at the same point in the stream, continuing the same sequence "
+                    .. "independently of the original. This is how a subsystem takes a deterministic branch "
+                    .. "without consuming draws the rest of the frame is counting on.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "RaycastParams",
+        Module = "script",
+        Doc = "What a cast is allowed to hit. Every query on `Workspace` takes one, and omitting it means "
+            .. "everything queryable. Constructed from a table so that a call site reads as the question it "
+            .. "is asking rather than as four positional arguments (§2.3).",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    {
+                        Name = "options",
+                        Type = "{ Filter: { Instance }?, FilterType: Enum.RaycastFilterType?, CollisionGroup: string? }?",
+                        Default = "nil",
+                    },
+                },
+                Returns = { "RaycastParams" },
+                ThreadSafety = "Safe",
+                Doc = "Filter defaults to empty, FilterType to Exclude and CollisionGroup to the empty string, "
+                    .. "which means every group. An empty Exclude filter therefore hits everything, and an "
+                    .. "empty Include filter hits nothing -- which is what each word means and is worth "
+                    .. "knowing before a query silently returns nil.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Filter",
+                Type = "{ Instance }",
+                ReadOnly = true,
+                Doc = "The instances the filter names, as a fresh array on every read. Descendants of a named "
+                    .. "instance are covered too, so filtering a Model filters its parts.",
+            },
+            {
+                Name = "FilterType",
+                Type = "Enum.RaycastFilterType",
+                ReadOnly = true,
+                Doc = "Whether Filter names what may be hit or what must be ignored.",
+            },
+            {
+                Name = "CollisionGroup",
+                Type = "string",
+                ReadOnly = true,
+                Doc = "The group a hit must be in, or the empty string for any group. A camera ray asking for "
+                    .. '"Terrain" is cheaper than one that hits everything and filters afterwards.',
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "RaycastResult",
+        Module = "script",
+        Doc = "What a cast hit. Returned by `Workspace:Raycast` and `:Spherecast`, and nil when nothing was "
+            .. 'hit -- there is no "empty result" to check a field on, because a result that exists and '
+            .. "means nothing is the shape of every nil-check somebody forgets.",
+        Properties = {
+            {
+                Name = "Instance",
+                Type = "BasePart",
+                ReadOnly = true,
+                Doc = "The part that was hit.",
+            },
+            {
+                Name = "Position",
+                Type = "vector",
+                ReadOnly = true,
+                Doc = "Where on it, in world space.",
+            },
+            {
+                Name = "Normal",
+                Type = "vector",
+                ReadOnly = true,
+                Doc = "The surface normal there, pointing out of the surface.",
+            },
+            {
+                Name = "Distance",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "How far along the cast the hit is, in metres. The direction passed to a cast is not "
+                    .. "normalised -- its length is the range -- so this is a distance rather than a fraction.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "RaycastResult2D",
+        Module = "script",
+        Doc = "What `Workspace:Raycast2D` hit: a `RaycastResult` on the 2D plane. Nil rather than empty when "
+            .. "nothing was hit, for the same reason.",
+        Properties = {
+            {
+                Name = "Instance",
+                Type = "Instance",
+                ReadOnly = true,
+                Doc = "The `Part2D` or `Tilemap2D` that was hit.",
+            },
+            {
+                Name = "Position",
+                Type = "Vector2",
+                ReadOnly = true,
+                Doc = "Where on it, in world units.",
+            },
+            {
+                Name = "Normal",
+                Type = "Vector2",
+                ReadOnly = true,
+                Doc = "The surface normal there, pointing out of the surface.",
+            },
+            {
+                Name = "Distance",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "How far along the ray the hit is, in metres.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "Signal",
+        Module = "script",
+        Doc = "THE signal type, spelled `Signal<T...>` where the pack is what handlers receive and `Wait` "
+            .. "returns. Delivery is **deferred only** (ADR 0015): "
+            .. "a fire enqueues, and handlers run at the next drain in the order they were raised, with "
+            .. "connection order guaranteed within one fire. A script makes its own with `Signal.new`, and there "
+            .. "is no separate event object to parent into the tree. Handler errors are contained: each runs on its own "
+            .. "coroutine, and an error stops neither the other handlers, nor the drain, nor the firing "
+            .. "script.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {},
+                Returns = { "Signal<T...>" },
+                ThreadSafety = "Safe",
+                Doc = "A script-owned signal. The pack is generic and inferred from the `Fire` and `Connect` "
+                    .. "sites; annotate it (`Signal<string>`, `Signal<()>`) where inference has nothing to "
+                    .. "work from, such as an array element type.",
+            },
+        } :: { Schema.Method },
+        Methods = {
+            {
+                Name = "Connect",
+                Parameters = { { Name = "handler", Type = "(T...) -> ()" } },
+                Returns = { "Connection" },
+                ThreadSafety = "Unsafe",
+                Doc = "Registers `handler` and returns the Connection that ends it. Handlers of one fire run "
+                    .. "in the order they were connected; ordering *between* different signals is queue order "
+                    .. "and relying on it is a bug. `ConnectParallel` is a reserved name, absent in v1.",
+            },
+            {
+                Name = "Once",
+                Parameters = { { Name = "handler", Type = "(T...) -> ()" } },
+                Returns = { "Connection" },
+                ThreadSafety = "Unsafe",
+                Doc = "Registers `handler` for a single invocation, disconnecting as it is invoked -- so a "
+                    .. "signal fired twice before a drain still calls it exactly once. A handler that errors "
+                    .. "has still been consumed.",
+            },
+            {
+                Name = "Wait",
+                Parameters = {},
+                Returns = { "T..." },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Parks the calling coroutine as a one-shot registration made at the moment of the call, "
+                    .. "resumed by the next fire it is eligible for and returning that fire's arguments. It "
+                    .. "takes its place among the connections by registration order, so a Wait registered "
+                    .. "between handlers A and B resumes between them.",
+            },
+            {
+                Name = "Fire",
+                Parameters = { { Name = "values", Type = "T..." } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Enqueues an invocation of every current handler. Nothing runs before the next drain. "
+                    .. "Arguments are captured by reference and not copied: mutating a table between the fire "
+                    .. "and the drain is visible to the handlers.",
+            },
+            {
+                Name = "Destroy",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Closes the signal. Already-queued fires find no live connections and invoke nothing, "
+                    .. "and every Connection reports `Connected == false` once the drain ends. Only "
+                    .. "script-created signals are destroyable; an instance's own signals are closed by "
+                    .. "`Instance:Destroy`.",
+            },
+            {
+                Name = "DisconnectAll",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Disconnects every connection and keeps the signal: it can be connected to and fired "
+                    .. "again. A script's own signal only -- on an instance's event it would end other "
+                    .. "scripts' handlers.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "Connection",
+        Module = "script",
+        Doc = "The handle a `Signal:Connect` or `:Once` returns. Its only job is to end the connection it represents; it is not constructible on its own.",
+        Properties = {
+            {
+                Name = "Connected",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                ThreadSafety = "ReadParallel",
+                Doc = "Whether the connection is still live. False after `Disconnect`, after the owning signal "
+                    .. "is destroyed, and after a `:Once` handler has run. No `Is` prefix: boolean properties "
+                    .. "do not carry one, boolean methods do (§9).",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Disconnect",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Ends the connection. **Idempotent**: a second call is a no-op and `Connected` stays "
+                    .. "false, so cleanup code never has to guard it. A fire already on the queue captured its "
+                    .. "connection list before this call, so it may still have invoked the handler.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "Collector",
+        Module = "script",
+        Doc = "A bag of things to clean up together (ADR 0094), on the surface of Janitor. What a thing is "
+            .. "decides how it is cleaned, and `Cleanup` runs newest first. Written in Luau and shipped as "
+            .. "bytecode, like `Promise`.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {},
+                Returns = { "Collector" },
+                ThreadSafety = "Unsafe",
+                Doc = "A new, empty Collector.",
+            },
+        } :: { Schema.Method },
+        Methods = {
+            {
+                Name = "Add",
+                Parameters = {
+                    { Name = "object", Type = "any" },
+                    { Name = "method", Type = "(string | boolean)?", Default = "nil" },
+                    { Name = "key", Type = "any?", Default = "nil" },
+                },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "Takes `object` to clean later and returns it. A function is called, a thread cancelled, a `Connection` disconnected, an `Instance`, a `Signal` or anything with `Destroy` destroyed, a `Promise` cancelled. `method` names the method to call instead, or `true` calls the object; `key` names it for `Remove` and `Get`, and adding under a key already held cleans what was there first.",
+            },
+            {
+                Name = "AddPromise",
+                Parameters = { { Name = "promise", Type = "Promise" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Takes a promise to cancel on cleanup, and returns it. Once it settles on its own it is let go.",
+            },
+            {
+                Name = "Remove",
+                Parameters = { { Name = "key", Type = "any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Cleans the object held under `key` now, and forgets it.",
+            },
+            {
+                Name = "RemoveNoClean",
+                Parameters = { { Name = "key", Type = "any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Forgets the object held under `key` without cleaning it.",
+            },
+            {
+                Name = "Get",
+                Parameters = { { Name = "key", Type = "any" } },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "The object held under `key`, or nil.",
+            },
+            {
+                Name = "Cleanup",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Cleans everything, newest first, and stays usable. Reverse insertion order is the order destructors run in, and it is the same on every run.",
+            },
+            {
+                Name = "Destroy",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Cleans everything; adding to this Collector afterwards is an error.",
+            },
+            {
+                Name = "LinkToInstance",
+                Parameters = {
+                    { Name = "instance", Type = "Instance" },
+                    { Name = "allowMultiple", Type = "boolean?", Default = "nil" },
+                },
+                Returns = { "Connection" },
+                ThreadSafety = "Unsafe",
+                Doc = "Cleans this Collector when `instance` is destroyed, and returns that connection. A new link replaces the last unless `allowMultiple` is true.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "Promise",
+        Module = "script",
+        Doc = "A value that arrives later (ADR 0094), with evaera's semantics: the executor runs at once on "
+            .. "its own thread, resolving with a promise adopts it, a handler that errors rejects, cancelling "
+            .. "reaches every consumer, and a rejection nothing handled is warned about after the drain. "
+            .. "Timing is the simulation's clock, never the wall clock.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    {
+                        Name = "executor",
+                        Type = "(resolve: (...any) -> (), reject: (...any) -> (), onCancel: (hook: (() -> ())?) -> boolean) -> ()",
+                    },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "A promise run by `executor(resolve, reject, onCancel)`, at once and on its own thread.",
+            },
+            {
+                Name = "defer",
+                Parameters = {
+                    {
+                        Name = "executor",
+                        Type = "(resolve: (...any) -> (), reject: (...any) -> (), onCancel: (hook: (() -> ())?) -> boolean) -> ()",
+                    },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "`new`, but the executor runs after the drain rather than at once.",
+            },
+            {
+                Name = "resolve",
+                Parameters = { { Name = "values", Type = "...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolved already, with these values.",
+            },
+            {
+                Name = "reject",
+                Parameters = { { Name = "values", Type = "...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Rejected already, with these values.",
+            },
+            {
+                Name = "try",
+                Parameters = { { Name = "fn", Type = "(...any) -> ...any" }, { Name = "values", Type = "...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "A promise of `fn(...)`: what it returns resolves it, what it raises rejects it.",
+            },
+            {
+                Name = "delay",
+                Parameters = { { Name = "seconds", Type = "number" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves after `seconds` of simulation time, with `seconds`; never the wall clock.",
+            },
+            {
+                Name = "all",
+                Parameters = { { Name = "promises", Type = "{ Promise }" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves with every value, in order, when all resolve; rejects with the first rejection and cancels the rest.",
+            },
+            {
+                Name = "allSettled",
+                Parameters = { { Name = "promises", Type = "{ Promise }" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves when every promise has settled, with each one's final status.",
+            },
+            {
+                Name = "race",
+                Parameters = { { Name = "promises", Type = "{ Promise }" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Settles as the first to settle does, and cancels the rest.",
+            },
+            {
+                Name = "any",
+                Parameters = { { Name = "promises", Type = "{ Promise }" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves with the first value to resolve; rejects if all of them reject.",
+            },
+            {
+                Name = "some",
+                Parameters = { { Name = "promises", Type = "{ Promise }" }, { Name = "count", Type = "number" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves with the first `count` values to resolve; rejects once that cannot happen.",
+            },
+            {
+                Name = "fromEvent",
+                Parameters = {
+                    { Name = "event", Type = "Signal<...any>" },
+                    { Name = "predicate", Type = "((...any) -> boolean)?", Default = "nil" },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Resolves with the arguments of the next fire `predicate` accepts, and disconnects.",
+            },
+            {
+                Name = "retry",
+                Parameters = {
+                    { Name = "fn", Type = "(...any) -> ...any" },
+                    { Name = "times", Type = "number" },
+                    { Name = "values", Type = "...any" },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "`try(fn, ...)`, tried again up to `times` more times while it rejects.",
+            },
+            {
+                Name = "retryWithDelay",
+                Parameters = {
+                    { Name = "fn", Type = "(...any) -> ...any" },
+                    { Name = "times", Type = "number" },
+                    { Name = "seconds", Type = "number" },
+                    { Name = "values", Type = "...any" },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "`retry`, with `seconds` of simulation time before each new try.",
+            },
+            {
+                Name = "is",
+                Parameters = { { Name = "value", Type = "any" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether `value` is a Promise.",
+            },
+            {
+                Name = "promisify",
+                Parameters = { { Name = "fn", Type = "(...any) -> ...any" } },
+                Returns = { "(...any) -> Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "`fn`, made to return a promise of what it returns.",
+            },
+        } :: { Schema.Method },
+        Methods = {
+            {
+                Name = "AndThen",
+                Parameters = {
+                    { Name = "onResolved", Type = "((...any) -> ...any)?", Default = "nil" },
+                    { Name = "onRejected", Type = "((...any) -> ...any)?", Default = "nil" },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "A promise of what `onResolved` returns, or of what `onRejected` returns when this rejects. A handler that errors rejects it; one that returns a promise is waited on.",
+            },
+            {
+                Name = "Catch",
+                Parameters = { { Name = "onRejected", Type = "(...any) -> ...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "`AndThen(nil, onRejected)`.",
+            },
+            {
+                Name = "Finally",
+                Parameters = { { Name = "fn", Type = "(status: EnumPromiseState) -> ...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Calls `fn` with the final status however this settles, and settles as this one did.",
+            },
+            {
+                Name = "Tap",
+                Parameters = { { Name = "fn", Type = "(...any) -> ...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Calls `fn` with the resolved values and passes those values on, whatever it returns.",
+            },
+            {
+                Name = "AndThenCall",
+                Parameters = { { Name = "fn", Type = "(...any) -> ...any" }, { Name = "values", Type = "...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "On resolution calls `fn` with these arguments rather than the values.",
+            },
+            {
+                Name = "AndThenReturn",
+                Parameters = { { Name = "values", Type = "...any" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "On resolution, resolves with these values instead.",
+            },
+            {
+                Name = "Await",
+                Parameters = {},
+                Returns = { "boolean", "...any" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Waits for this to settle: `true` and its values, or `false` and the rejection. Cancelled is `false`.",
+            },
+            {
+                Name = "AwaitStatus",
+                Parameters = {},
+                Returns = { "EnumPromiseState", "...any" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "`Await`, with the status in place of the boolean.",
+            },
+            {
+                Name = "ExpectAsync",
+                Parameters = {},
+                Returns = { "...any" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "The resolved values, or an error raised with the rejection.",
+            },
+            {
+                Name = "Now",
+                Parameters = { { Name = "rejection", Type = "any?", Default = "nil" } },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Passes a resolved promise on; otherwise rejects at once with `rejection`.",
+            },
+            {
+                Name = "Cancel",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Cancels: the executor stops, its cancel hook runs, every consumer is cancelled, and the parent is once no consumer of it is left.",
+            },
+            {
+                Name = "GetStatus",
+                Parameters = {},
+                Returns = { "EnumPromiseState" },
+                ThreadSafety = "Unsafe",
+                Doc = "`Enum.PromiseState.Started`, `Resolved`, `Rejected` or `Cancelled`.",
+            },
+            {
+                Name = "Timeout",
+                Parameters = {
+                    { Name = "seconds", Type = "number" },
+                    { Name = "rejection", Type = "any?", Default = "nil" },
+                },
+                Returns = { "Promise" },
+                ThreadSafety = "Unsafe",
+                Doc = "Rejects with `rejection` unless this settles within `seconds` of simulation time, and is cancelled then.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "TweenInfo",
+        Module = "script",
+        Doc = "How a tween moves: how long, along what curve, how many times, and after what delay (§2.3). "
+            .. "Immutable, like every value type here -- a `TweenInfo` handed to two tweens cannot be changed "
+            .. "under one of them.\n\nThe time is in SimClock seconds, the same seconds `task.wait` counts, so "
+            .. "a tween is a whole number of ticks and a replay reproduces it exactly (ADR 0039's sibling "
+            .. "argument: a system whose whole purpose is writing properties must not read the wall clock to "
+            .. "decide what to write).",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "time", Type = "number?", Default = "1" },
+                    { Name = "easingStyle", Type = "Enum.EasingStyle?", Default = "Enum.EasingStyle.Quad" },
+                    {
+                        Name = "easingDirection",
+                        Type = "Enum.EasingDirection?",
+                        Default = "Enum.EasingDirection.Out",
+                    },
+                    { Name = "repeatCount", Type = "number?", Default = "0" },
+                    { Name = "reverses", Type = "boolean?", Default = "false" },
+                    { Name = "delayTime", Type = "number?", Default = "0" },
+                },
+                Returns = { "TweenInfo" },
+                ThreadSafety = "Safe",
+                Doc = "The defaults are a one-second Quad-Out with no repeat, no reverse and no delay, which is "
+                    .. "the tween most UI wants. A negative `time` or `delayTime` raises; a negative "
+                    .. "`repeatCount` means repeat forever, which is the one negative number here that means "
+                    .. "something.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Time",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Seconds for ONE traversal, not counting delay, repeats or the return half of a reverse.",
+            },
+            {
+                Name = "EasingStyle",
+                Type = "Enum.EasingStyle",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The curve.",
+            },
+            {
+                Name = "EasingDirection",
+                Type = "Enum.EasingDirection",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Which end the curve eases.",
+            },
+            {
+                Name = "RepeatCount",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "How many EXTRA traversals follow the first. 0 plays once; 2 plays three times; a "
+                    .. "negative number repeats until something cancels it.",
+            },
+            {
+                Name = "Reverses",
+                Type = "boolean",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Whether each traversal is followed by the same traversal backwards. A reversing tween "
+                    .. "takes twice `Time` per repeat and ends where it started.",
+            },
+            {
+                Name = "DelayTime",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Seconds before the first traversal begins, and before each repeat. Nothing is written "
+                    .. "during a delay -- the property keeps whatever it had.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "TweenInfo" } },
+                Returns = { "boolean" },
+                Doc = "Exact, field by field.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "Tween",
+        Module = "script",
+        Doc = "A running property animation, returned by `TweenService:Create`. A value type rather than an "
+            .. "Instance, like `AnimationTrack` (§2.2): nothing parents a tween, nothing finds one in the "
+            .. "tree, and a class in the hierarchy that no tree ever holds would be a class every tree walk "
+            .. "has to know is not there.\n\nA tween writes through the SAME property setter a script writes "
+            .. "through, so a tweened value fires `GetPropertyChangedSignal`, is filtered when it does not "
+            .. "change, and is refused when it is out of range -- exactly as an assignment is. It steps on the "
+            .. "sim tick, which is what makes it reproducible.\n\nIt keeps its target alive only as a "
+            .. "reference: a tween on a destroyed instance stops and reports `Cancelled` rather than raising.",
+        Properties = {
+            {
+                Name = "Instance",
+                Type = "Instance?",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "What this tween is animating, or nil once that instance has been destroyed.",
+            },
+            {
+                Name = "TweenInfo",
+                Type = "TweenInfo",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The timing it was created with.",
+            },
+            {
+                Name = "PlaybackState",
+                Type = "Enum.PlaybackState",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where it is in its life.",
+            },
+            {
+                Name = "Completed",
+                Type = "Signal<EnumPlaybackState>",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Fires once, carrying the state that ended the tween -- `Completed` for one that "
+                    .. "reached its end, `Cancelled` for one that was stopped. It is a PROPERTY here rather "
+                    .. "than an event because a `Tween` is a value type and only classes declare events; the "
+                    .. "signal it holds behaves like any other. The distinction between the two end states "
+                    .. "matters more than it looks: code that awards a checkpoint on a finished animation "
+                    .. "must not award it on an interrupted one.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Play",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Starts it, or resumes a paused one from where it stopped. Playing a tween that is "
+                    .. "already playing is a no-op rather than a restart -- restarting is what a fresh "
+                    .. "`Create` is for, and a `Play` that silently rewound would make a hover effect stutter "
+                    .. "every frame the pointer moved.",
+            },
+            {
+                Name = "Pause",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops it where it is, leaving the property at its current value. `Play` resumes.",
+            },
+            {
+                Name = "Cancel",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Ends it before its time. The property keeps whatever value it had reached: cancelling "
+                    .. "is not undoing, and a tween that snapped back would be impossible to interrupt "
+                    .. "gracefully. `Completed` fires with `Cancelled`.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "InputObject",
+        Module = "script",
+        Doc = "One raw input, as `InputService.InputBegan`, `InputChanged` and `InputEnded` carry it (§2.4, "
+            .. "ADR 0041). A read-only SNAPSHOT and not a live object: it describes what happened on one "
+            .. "tick, and a handler that stashes one is holding a fact rather than a handle.\n\n**These "
+            .. "events come from the Input Action System's own dispatch, not from the operating system.** "
+            .. "Same source, same tick, after the UI has consumed what it consumed -- and in a replay they "
+            .. "come from the recorded stream, so a recorded run reproduces every input a game reads.",
+        Properties = {
+            {
+                Name = "UserInputType",
+                Type = "Enum.UserInputType",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "What kind of input this is. The coarse question, for a handler that does not care which "
+                    .. "key.",
+            },
+            {
+                Name = "KeyCode",
+                Type = "Enum.KeyCode",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Which key, button or axis. `Unknown` for pointer motion and the wheel, which are not "
+                    .. "keys -- and `Unknown` is a real item rather than nil precisely so this property never "
+                    .. "has to be checked before it is compared.",
+            },
+            {
+                Name = "Position",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where the pointer is, in window pixels with the origin at the top left, with `z` "
+                    .. "carrying the accumulated wheel. For a gamepad axis it is the deflection instead: `x` "
+                    .. "and `y` for a stick, `x` alone for a trigger.\n\nA three-wide vector rather than a "
+                    .. "`Vector2` because `vector` is this engine's native primitive (ADR 0013) -- it costs "
+                    .. "no userdata and no allocation, which matters on a value produced several times a "
+                    .. "tick.",
+            },
+            {
+                Name = "Delta",
+                Type = "vector",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "How much it moved since the last tick, in the same units as `Position`. `z` is the "
+                    .. "wheel movement, which is where a `MouseWheel` event puts its one number. Zero for "
+                    .. "anything that is not motion.",
+            },
+            {
+                Name = "TouchId",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Which finger, for a `Touch` input: the same number from its `InputBegan` to its "
+                    .. "`InputEnded`, so a handler follows two thumbs at once. Counted from 1, and reused once "
+                    .. "a finger lifts. Zero for anything that is not a touch.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "AnimationTrack",
+        Module = "script",
+        Doc = "One clip playing on one `AnimationPlayer`, returned by `LoadAnimation` (§2.2). A handle rather "
+            .. "than an Instance, like `Tween`: nothing parents a track and nothing finds one in the "
+            .. "tree.\n\nIt is also the one datatype here that is not immutable, and the reason is what a "
+            .. "handle IS: `track.Looped = true` names the one track every holder of that handle can see, "
+            .. "where `cf.Position = v` would write to a copy the caller is about to drop.\n\n**Its clock is "
+            .. "the SimClock's.** `Speed` scales it, sampling happens at `PreAnimation`, and nothing here "
+            .. "reads a wall clock -- so a clip is at the same position on the same tick in a replay as it "
+            .. "was live.",
+        Properties = {
+            {
+                Name = "Playing",
+                Type = "boolean",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Whether the clock is advancing. False for a track that reached the end of a clip that "
+                    .. "is not `Looped` -- which still HOLDS its last frame until it is stopped or replayed, "
+                    .. "because `Ended` is deferred and a character that returned to its rest pose for the "
+                    .. "one tick before the handler ran would be a visible pop.",
+            },
+            {
+                Name = "Looped",
+                Type = "boolean",
+                ThreadSafety = "Safe",
+                Doc = "Whether reaching the end wraps to the start instead of stopping. A looped track never "
+                    .. "fires `Ended`, because it never does. Wrapping keeps the fraction of a tick it "
+                    .. "overshot by, so a loop does not drift against everything else in the scene.",
+            },
+            {
+                Name = "Speed",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How fast the clip's clock runs. 2 is twice the speed and half the duration; 0 holds the "
+                    .. "pose where it is, which is the honest way to freeze a frame.",
+            },
+            {
+                Name = "Weight",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How much this track contributes when several drive one skeleton. Assigning it is "
+                    .. "immediate -- the faded form is `Play`'s and `Stop`'s argument, and a property that "
+                    .. "took a fade time would not be a property.\n\nBlending is a weighted average PER JOINT "
+                    .. "and per component, so a joint no clip drives keeps its rest transform rather than "
+                    .. "being dragged towards the origin by tracks that say nothing about it.",
+            },
+            {
+                Name = "Length",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The clip's duration in seconds, or zero for a track whose clip was not found.",
+            },
+            {
+                Name = "TimePosition",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where the clip's clock is, in seconds. Read-only in v1: seeking a blended pose is a "
+                    .. "different feature from playing one, and a writable seek that ignored the blend would "
+                    .. "be the wrong half of it.",
+            },
+            {
+                Name = "Ended",
+                Type = "Signal<>",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Fires on the tick a track reaches the end of a clip that is not `Looped`. A PROPERTY "
+                    .. "here rather than an event because a track is not a class and only classes declare "
+                    .. "events; the signal it holds behaves like any other.\n\nA `Stop` does not fire it: it "
+                    .. "is a past-tense fact about reaching the end, and code that chains the next animation "
+                    .. "on it must not be fooled by one that was interrupted.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Play",
+                Parameters = { { Name = "fadeTime", Type = "number?" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Starts the clip from the BEGINNING, every time -- the opposite of `Tween:Play`, and "
+                    .. "deliberately: a jump animation triggered twice should play twice.\n\n`fadeTime` fades "
+                    .. "the weight in from zero over that many seconds, which is what makes a walk blend into "
+                    .. "an idle rather than snapping. It fades in to this track's own `Weight`, which is why "
+                    .. "one argument is enough.",
+            },
+            {
+                Name = "Stop",
+                Parameters = { { Name = "fadeTime", Type = "number?" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Ends the track. `fadeTime` fades its weight out over that many seconds and stops it "
+                    .. "when it reaches zero; without one it stops on the spot. `Ended` does not fire either "
+                    .. "way.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "Material",
+        Module = "script",
+        Doc = "A surface: a colour, a set of maps, and how rough and metallic it is (ADR 0090). **Not an "
+            .. "`Instance`** -- nothing parents one, and nothing finds one in a `Workspace`. A project keeps "
+            .. "a material as a `.material.json` asset under `content/`, and a part wears one through "
+            .. "`BasePart.Material`.\n\nThere are two kinds of handle. `Material.load` gives the shared "
+            .. "handle for an asset, and it is **read-only**: writing a property raises, because one write "
+            .. "would change every part wearing that asset, in every scene that uses it. `material:Clone()` "
+            .. "gives a runtime copy -- the same properties, owned by nobody, writable, never saved, and "
+            .. "released when nothing points at it.\n\n**Nothing clones implicitly.** Reading "
+            .. "`part.Material` returns the handle the part wears, and changing a clone changes every part "
+            .. "that wears that clone.",
+        Constructors = {
+            {
+                Name = "load",
+                Parameters = { { Name = "content", Type = "Content" } },
+                Returns = { "Material" },
+                ThreadSafety = "Unsafe",
+                Doc = 'The shared, read-only handle for a material asset: `Material.load("asset://materials/'
+                    .. 'brick.material.json")`. Raises for a `Content` that names no material, because a typo '
+                    .. "that quietly drew the default would be found by looking at the screen.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Source",
+                Type = "Content",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The material asset this handle is, or the asset a clone was copied from -- a clone of a "
+                    .. "clone included. Always an asset's `Content`: a clone has nothing else to be named by.",
+            },
+            {
+                Name = "Color",
+                Type = "Color3",
+                ThreadSafety = "Safe",
+                Doc = "The base tint, multiplied into `ColorMap` if there is one. White with no map is a plain "
+                    .. "white surface.",
+            },
+            {
+                Name = "Transparency",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How see-through the surface is, 0 opaque and 1 invisible.",
+            },
+            {
+                Name = "ColorMap",
+                Type = "Content",
+                ThreadSafety = "Safe",
+                Doc = "The base-colour image, sampled and multiplied by `Color`. Colour data, encoded through "
+                    .. "the sRGB curve -- unlike the maps below, which are numbers.",
+            },
+            {
+                Name = "NormalMap",
+                Type = "Content",
+                ThreadSafety = "Safe",
+                Doc = "A tangent-space normal map. Linear data, not colour.",
+            },
+            {
+                Name = "MetallicRoughnessMap",
+                Type = "Content",
+                ThreadSafety = "Safe",
+                Doc = "Occlusion, roughness and metalness in one image's R, G and B -- glTF's packing, and one "
+                    .. "property because they are one file. Linear data, not colour.",
+            },
+            {
+                Name = "Emissive",
+                Type = "Color3",
+                ThreadSafety = "Safe",
+                Doc = "Light the surface gives off on its own. It lights nothing else -- that is a `PointLight` "
+                    .. "-- it only makes this surface bright.",
+            },
+            {
+                Name = "EmissiveMap",
+                Type = "Content",
+                ThreadSafety = "Safe",
+                Doc = "What the surface glows with, multiplied by `Emissive`. Colour data.",
+            },
+            {
+                Name = "Metalness",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "0 is a dielectric -- plastic, stone, wood -- and 1 is bare metal.",
+            },
+            {
+                Name = "Roughness",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "0 is a mirror and 1 is chalk. The default is 0.7, what an untextured building block looks "
+                    .. "like.",
+            },
+            {
+                Name = "NormalScale",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "Scales the sampled normal's XY. One is the map as authored; zero is a flat surface.",
+            },
+            {
+                Name = "AlphaMode",
+                Type = "Enum.AlphaMode",
+                ThreadSafety = "Safe",
+                Doc = "How alpha is read: `Opaque` ignores it, `Mask` is a coverage test against `AlphaCutoff`, "
+                    .. "and `Blend` blends.",
+            },
+            {
+                Name = "AlphaCutoff",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "What `Mask` tests against. Read only in that mode.",
+            },
+            {
+                Name = "DoubleSided",
+                Type = "boolean",
+                ThreadSafety = "Safe",
+                Doc = "Whether the back faces are drawn. Leaves and cloth want this; anything solid does not.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Clone",
+                Parameters = {},
+                Returns = { "Material" },
+                ThreadSafety = "Unsafe",
+                Doc = "A writable runtime copy: the same properties, the same `Source`, owned by nobody and "
+                    .. "never saved. Put it on a part with `part.Material = copy`, then change it -- every part "
+                    .. "wearing this copy changes with it, and nothing else does.",
+            },
+            {
+                Name = "GetShaderParameter",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = { "(number | Vector2 | vector | { number } | string)?" },
+                ThreadSafety = "Unsafe",
+                Doc = "A parameter of the surface shader this material names (ADR 0091), as the material sets "
+                    .. "it: a number, a `Vector2`, a `vector` (a colour reads as one), four numbers in a table, or "
+                    .. "a texture's URN. `nil` when the material leaves it to the shader's own default.",
+            },
+            {
+                Name = "SetShaderParameter",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "value", Type = "number | boolean | Vector2 | vector | Color3 | { number } | string" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sets a parameter of the surface shader, on a clone -- a loaded material is shared and "
+                    .. "read-only, as it is for the built-in fields. A string is a texture's URN. Every part "
+                    .. "wearing the clone draws with the new value from the next frame. **Not replicated**: a "
+                    .. "clone's shader parameters are this machine's; set them where the part is drawn.",
+            },
+        } :: { Schema.Method },
+    },
+}
+
+local Definition: Schema.Definition = {
+    Datatypes = Datatypes,
+}
+
+return Definition

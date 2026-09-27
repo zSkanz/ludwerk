@@ -1,0 +1,219 @@
+// The game VM and everything that crosses into it (architecture.md §5).
+//
+// One `lua_State` on the main thread for all gameplay. The `VmPool` shape that
+// architecture.md sketches for future actor VMs is deliberately NOT built here:
+// v1 has one VM, and inventing a pool around it now would be inventing the
+// seams M2 is meant to design from a position of having built nothing.
+//
+// `ScriptRuntime` owns the boot order, and the boot order is the part that is
+// easy to get wrong invisibly -- see `binding.h` for the four VM properties
+// that constrain it.
+#pragma once
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "engine/core/error.h"
+#include "engine/core/phase.h"
+#include "engine/scene/world.h"
+#include "engine/script/binding.h"
+#include "engine/script/instance_binding.h"
+#include "engine/script/modules.h"
+#include "engine/script/services.h"
+
+struct lua_State;
+
+namespace engine::script {
+
+class Debugger;
+
+class ScriptRuntime
+{
+public:
+    explicit ScriptRuntime(scene::World& world);
+    ~ScriptRuntime();
+
+    ScriptRuntime(const ScriptRuntime&) = delete;
+    ScriptRuntime& operator=(const ScriptRuntime&) = delete;
+
+    // Opens the VM in the one order that works: allocator, `useratom`, standard
+    // libraries, removals, tag metatables, globals, then `luaL_sandbox`. Every
+    // step after the sandbox is a step that silently does nothing.
+    // `adoptDataModel` binds this VM to a `DataModel` the world already holds
+    // rather than making one, which is what lets a runtime be replaced while the
+    // world stays (ADR 0058). Invalid -- the default, and every boot -- builds
+    // the tree from nothing.
+    [[nodiscard]] std::optional<core::EngineError> boot(core::InstanceId adoptDataModel = {});
+
+    // Compiles and starts `source` on its own sandboxed thread. Returns the
+    // structured error that ended it, or nullopt -- including when the script
+    // merely yielded, which is the normal outcome for anything that calls
+    // `task.wait`.
+    [[nodiscard]] std::optional<core::EngineError> runSource(std::string_view source, std::string_view chunkName);
+
+    // Where `Instance.stamp` reads a prefab from (ADR 0051).
+    //
+    // Set by the host, which knows where `content/` is. `script` is L5 and has
+    // no filesystem, exactly as `scene` has none -- so this is the one question
+    // the binding asks upward, and a VM nobody gave one raises rather than
+    // handing back an empty prefab.
+    void setStampSource(std::function<std::optional<std::string>(std::string_view)> source);
+
+private:
+    // The same thing with the memory category chosen rather than derived. The
+    // public overload assigns one per chunk name from §6's pool; the REPL passes
+    // its own reserved 7.
+    [[nodiscard]] std::optional<core::EngineError> runSource(std::string_view source, std::string_view chunkName,
+                                                             core::u32 category);
+
+public:
+    // Runs the engine phase's deferred work: converts the scene's POD facts
+    // into signal fires, then drains the queue to fixpoint (api-design.md
+    // §3.1). Every resumption point calls this.
+    void drain(core::Phase phase);
+
+    // Advances every playing tween by one tick (api-design.md §2.1). Called
+    // from the sim tick between the `PreAnimation` drain and `PreSimulation`,
+    // so a handler in that phase reads the value this tick produced.
+    void stepTweens(f64 fixedDt);
+
+    // Resumes whatever `task.wait` and `task.delay` are due at the world's
+    // current tick. Between `PostSimulation` and `Heartbeat`, per
+    // architecture.md §3. Takes no time argument: a deadline is a tick index and
+    // the tick lives on `EngineState`, so passing seconds here would be handing
+    // the scheduler a float to re-derive an integer from.
+    void resumeTimers();
+
+    // Fires an engine-raised event on a service instance -- `Heartbeat` and the
+    // other phase signals. Enqueues; the drain is what runs the handlers.
+    void fireEvent(core::InstanceId instance, core::NameAtom event, f64 argument);
+
+    // `RunService`'s phase signal for this resumption point, carrying `delta` in
+    // seconds -- the fixed tick duration for the four sim phases, and the
+    // variable time since the last render for `PreRender`. A phase with no
+    // signal of its own is a no-op, so the scheduler can call this at every
+    // resumption point without a table of which ones have one.
+    void firePhase(core::Phase phase, f64 delta);
+
+    // Fires `game.Loaded`, once, after every entry script has had its first
+    // resumption (api-design.md §3).
+    void fireLoaded();
+
+    // How deep the current drain has gone. Exposed for the tests that pin the
+    // re-entrancy cap, which is otherwise only observable through a log line.
+    [[nodiscard]] u32 deferredDepth() const noexcept;
+
+    // Where `DebugService`'s gizmos go. Null in a headless run, which is why
+    // those calls are documented no-ops there rather than errors.
+    void setGizmoSink(const GizmoSink& sink);
+
+    // Points `HotReloadService`'s bag at storage the host owns -- storage that
+    // outlives this runtime, which is the whole reason the bag is not a Luau
+    // table. Until it is called the runtime's own bag is used, so `SaveState`
+    // works and simply does not survive anything.
+    // The physics mirror the query bindings read (`Workspace:Raycast` and its
+    // siblings). Null in a build with no backend, which those bindings answer
+    // as an empty world rather than as an error.
+    void setPhysics(scene::PhysicsSync* physics);
+    void setPhysics2D(scene::PhysicsSync2D* physics);
+    void setNavigation(nav::INavigation* navigation);
+
+    // The device snapshot `InputService:IsKeyDown` reads, and the source of the
+    // raw events below. Null in a runtime the host has not wired, which those
+    // bindings answer as "nothing is down".
+    void setInput(input::InputSystem* input);
+
+    // Enqueues `InputBegan` / `InputChanged` / `InputEnded` for one tick's raw
+    // events (ADR 0041). Called right after the simulation dispatch, so they
+    // land in the same drain as the `InputAction` signals the same tick raised.
+    void fireInputEvents(std::span<const input::RawInputEvent> events);
+
+    // The animation host the `AnimationTrack` bindings drive. Null in a build
+    // with no render module, which those bindings answer as a track that plays
+    // nothing rather than as an error.
+    void setAnimation(scene::AnimationHost* animation);
+
+    // The joint seam `Ragdoll:Build` reads a rig through. The same object as the
+    // animation host in every build that has one; null in a build with no render
+    // module, where `Build` refuses rather than producing a ragdoll with no
+    // limbs in it.
+    void setSkeleton(scene::SkeletonHost* skeleton);
+
+    // Enqueues `Ended` for each track the host reported finished. Called right
+    // after `AnimationHost::sample`, so the signal lands in the same drain as
+    // everything else that happened on that tick.
+    void fireAnimationEnded(std::span<const scene::TrackId> ended);
+
+    void setReloadState(ReloadState* state);
+
+    // Enqueues `PreReload` on the way out or `PostReload` on the way in
+    // (ADR 0024). The caller drains: the handlers are what a reload waits for.
+    void fireHotReload(bool before);
+
+    // Where `require` gets file-backed module source. Unset means only the
+    // registered `@engine/…` modules resolve, which is what a test wants.
+    void setModuleLoader(const ModuleLoader& loader);
+
+    // One row of the memory table architecture.md §app names and §6 lays out:
+    // 0 engine misc, 1 the module registry, 2 bindings and userdata, 3 signals
+    // and tasks, 4 UI, 5 net buffers, 6 asset sources, 7 the REPL, and one per
+    // entry script from the 32..255 pool.
+    struct MemoryCategory
+    {
+        core::u32 category = 0;
+        // The engine's own name for a reserved category, or the chunk name of
+        // the script the category was assigned to.
+        std::string_view name;
+        core::usize bytes = 0;
+    };
+
+    // The categories that hold anything, in category order. Empty ones are
+    // omitted: a table where seven rows are permanently zero is a table nobody
+    // reads, and the reserved names are in this header for the day something
+    // allocates into them.
+    [[nodiscard]] std::vector<MemoryCategory> memoryByCategory() const;
+
+    // Runs one chunk as the DebugShell's REPL, on its own sandboxed thread and
+    // in the REPL's own memory category, exactly as an entry script runs.
+    //
+    // Dev-only by construction rather than by a flag: nothing calls it but the
+    // shell, and the shell is not built into a shipped game (architecture.md
+    // §app). It is `runSource` with a name and a category, which is the point --
+    // a REPL that took a different path into the VM would be a second path to
+    // keep honest.
+    [[nodiscard]] std::optional<core::EngineError> evaluate(std::string_view source);
+
+    // What the boot-time method cross-check found. Zeroed until `boot` runs.
+    // Exposed rather than logged so that a test can assert the two halves
+    // rather than a human having to read a startup line.
+    [[nodiscard]] MethodCoverage methodCoverage() const noexcept;
+
+    [[nodiscard]] lua_State* state() const noexcept;
+
+    // The debugger against this VM (ADR 0057). Always present and always
+    // installed; whether it does anything is what `ENG_SCRIPT_DEBUG` decides,
+    // and a caller never asks.
+    [[nodiscard]] Debugger& debugger() noexcept;
+    [[nodiscard]] const Debugger& debugger() const noexcept;
+
+    // The DataModel `game` names. Invalid until `boot` runs; the host needs it
+    // to find `Workspace`, which is the root `render::extract` reads from.
+    [[nodiscard]] core::InstanceId dataModel() const noexcept;
+    [[nodiscard]] scene::World& world() noexcept { return m_world; }
+
+private:
+    struct Impl;
+
+    scene::World& m_world;
+    // Pimpl because every member worth having names a Luau type, and
+    // architecture.md §2 rule 2 keeps `lua.h` out of any header a lower module
+    // could include.
+    std::unique_ptr<Impl> m_impl;
+};
+
+} // namespace engine::script

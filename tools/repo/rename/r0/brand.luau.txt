@@ -1,0 +1,68 @@
+--!strict
+--[[
+	The product's name, for the CLI (ADR 0109): `branding/brand.toml`, the one
+	place the brand lives. The engine reads the same file at configure time;
+	this reads it at run time, from the installation this script belongs to.
+
+	Line-based on purpose, like the CMake reader: one `key = "value"` per line,
+	which is all the file ever holds.
+]]
+
+local fs = require("@std/fs")
+
+export type Brand = {
+    Name: string,
+    Short: string,
+    Tagline: string,
+    Domain: string,
+    Previous: { string },
+}
+
+local Cached: Brand? = nil
+
+--- The installation's root: two levels above this file (`tools/cli/brand.luau`).
+local function installRoot(): string
+    local here = string.match(debug.info(1, "s"), "^(.*)[/\\][^/\\]+$") or "tools/cli"
+    return `{here}/../..`
+end
+
+local function read(): Brand
+    if Cached ~= nil then
+        return Cached
+    end
+    local values: { [string]: string } = {}
+    local path = `{installRoot()}/branding/brand.toml`
+    if fs.exists(path) then
+        for line in string.gmatch(fs.readFileToString(path), "[^\n]+") do
+            local key, value = string.match(line, '^([%w_]+)%s*=%s*"([^"]*)"')
+            if key ~= nil and value ~= nil then
+                values[key] = value
+            else
+                -- An array of strings (`previous = ["LuauG"]`): its items, joined.
+                local arrayKey, items = string.match(line, "^([%w_]+)%s*=%s*%[(.*)%]")
+                if arrayKey ~= nil and items ~= nil then
+                    values[arrayKey] = (string.gsub(items, '[%s"]', ""))
+                end
+            end
+        end
+    end
+    local previous: { string } = {}
+    for name in string.gmatch(values.previous or "", "[^,%s]+") do
+        table.insert(previous, name)
+    end
+    -- An installation without the file still names itself: the neutral words,
+    -- rather than a brand this script would have to spell.
+    local brand: Brand = {
+        Name = values.name or "engine",
+        Short = values.short or "engine",
+        Tagline = values.tagline or "",
+        Domain = values.domain or "",
+        Previous = previous,
+    }
+    Cached = brand
+    return brand
+end
+
+return {
+    read = read,
+}

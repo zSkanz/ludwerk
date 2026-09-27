@@ -1,0 +1,56 @@
+# The flagship's project file, and the first one in this repository the ENGINE
+# reads (M8, ADR 0044). Every other example is launched with a path and takes
+# the engine's own defaults; this one names its window, its identity and the
+# quality it was authored at, which is what a game does.
+
+[project]
+name = "Ludwerk Open World"
+# Reverse-DNS, and on Windows the identity the shell groups taskbar buttons by.
+id = "dev.ludwerk.open-world"
+version = "1.0.0"
+engine = "0.1"
+# **The world this project starts with** (ADR 0047), and the reason it is here
+# rather than in `init.luau`: while the script built the world, saving a scene of
+# it and reopening produced two of everything -- the file put a character back
+# and the code made another (D074). A world has one source. The editor writes
+# back to this same file, so what you place is what a run begins with.
+scene = "scenes/main.scene.json"
+# The game's own face, embedded in the artifact by `ludwerk build`. Not the
+# engine's mark: that is the fallback, and a game wearing it is a game that
+# forgot to say who it is.
+icon = "branding/icon.ico"
+
+[window]
+title = "Ludwerk — Open World"
+size = [1600, 900]
+
+[dev]
+port = 4560
+
+[graphics]
+# What this world was AUTHORED against, which is what a project file's graphics
+# section means: the level the content was tuned at, not a demand on the
+# player's machine. `--quality=low` on the command line still wins, because the
+# flags are the outer layer (ADR 0044).
+quality = "high"
+# **Both of these are one decision, and D052 is the measurement behind it.**
+#
+# A cascade's texel is its box divided by its tile, and the far cascade's box is
+# set by the frustum's cross-section at the shadow distance -- so distance is
+# paid for in resolution, everywhere, at once. This file used to ask for 180 m
+# on the preset's 1024 tile and call it "the trade a distant landmark is worth".
+# What that bought was 0.52 m per texel for everything past forty-four metres:
+# a tree's shadow at fifty metres was drawn on a half-metre grid, and a human
+# playing it asked whether shadows losing that much resolution was normal.
+#
+# 140 m on a 2048 tile measures 0.20 m per texel in the same cascade -- two and
+# a half times finer, and the towers still cast. The bill is a 4096-pixel atlas
+# (64 MiB) and four times the shadow rasterisation, which measured as nothing:
+# 2.81 ms median against 2.89 for the old pair over 2,400 frames at 1080p, twice
+# each in alternating order, because the shorter distance hands back in culled
+# casters roughly what the larger tile costs in fill.
+#
+# A player who answers `--quality=low` gets the Low preset and NEITHER of these:
+# a file's per-key entries refine the level it names, and they go with it.
+shadow_resolution = 2048
+shadow_distance = 140.0

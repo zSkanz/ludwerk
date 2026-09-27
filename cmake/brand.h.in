@@ -1,0 +1,27 @@
+// GENERATED FILE -- do not edit, and do not commit.
+// Produced by cmake/engine_provenance.cmake from branding/brand.toml at
+// configure time (ADR 0109). The product's name exists here and nowhere else in
+// C++ source: code says `engine` and reads the brand from this header, so a new
+// brand is a new branding/brand.toml and not a change to the code.
+#pragma once
+
+#include <string_view>
+
+// The two names as string literals, for code that cannot build a string -- a
+// crash handler, which may not allocate -- and for literal concatenation.
+#define ENG_BRAND_NAME "@ENG_BRAND_NAME@"
+#define ENG_BRAND_SHORT "@ENG_BRAND_SHORT@"
+
+namespace engine::core {
+
+// What a person reads as the product's name: "Ludwerk".
+inline constexpr std::string_view kBrandName = "@ENG_BRAND_NAME@";
+// The same, for command, file and folder names: "ludwerk".
+inline constexpr std::string_view kBrandShort = "@ENG_BRAND_SHORT@";
+inline constexpr std::string_view kBrandTagline = "@ENG_BRAND_TAGLINE@";
+inline constexpr std::string_view kBrandDomain = "@ENG_BRAND_DOMAIN@";
+// Earlier names, comma-separated, newest first: a record of what the product
+// was called. Nothing migrates from them.
+inline constexpr std::string_view kBrandPrevious = "@ENG_BRAND_PREVIOUS@";
+
+} // namespace engine::core

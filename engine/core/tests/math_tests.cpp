@@ -1,0 +1,1315 @@
+#include <cmath>
+#include <cstring>
+#include <doctest/doctest.h>
+
+#include "engine/core/math.h"
+
+using namespace engine::core;
+
+namespace {
+
+constexpr f32 kEpsilon = 1e-5f;
+
+// A quarter turn. Written out rather than derived so the sign tests below read
+// as "a +90 degree turn about X takes +Y to +Z" and nothing else.
+constexpr f32 kHalfPi = 1.57079632679f;
+
+bool near(f32 a, f32 b) noexcept
+{
+    return std::fabs(a - b) <= kEpsilon;
+}
+
+bool near(Vec3 a, Vec3 b) noexcept
+{
+    return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z);
+}
+
+bool near(Color3 a, Color3 b) noexcept
+{
+    return near(a.r, b.r) && near(a.g, b.g) && near(a.b, b.b);
+}
+
+bool near(const Mat3& a, const Mat3& b) noexcept
+{
+    for (int c = 0; c < 3; ++c)
+        for (int row = 0; row < 3; ++row)
+            if (!near(a.m[c][row], b.m[c][row]))
+                return false;
+    return true;
+}
+
+// f64 comparisons keep their own helper: promoting an f32 epsilon to compare
+// world coordinates would be both wrong and a -Wdouble-promotion error. The
+// default tolerance is loose enough for a round trip through an f32 rotation,
+// whose entries are only orthonormal to about 1e-7.
+bool nearD(f64 a, f64 b, f64 tolerance = 1e-5) noexcept
+{
+    return std::fabs(a - b) <= tolerance;
+}
+
+bool nearD(DVec3 a, DVec3 b, f64 tolerance = 1e-5) noexcept
+{
+    return nearD(a.x, b.x, tolerance) && nearD(a.y, b.y, tolerance) && nearD(a.z, b.z, tolerance);
+}
+
+Vec3 col(const Mat3& m, int index) noexcept
+{
+    return {m.m[index][0], m.m[index][1], m.m[index][2]};
+}
+
+Vec3 translationOf(const Mat4& m) noexcept
+{
+    return {m.m[3][0], m.m[3][1], m.m[3][2]};
+}
+
+bool anyNan(const Mat3& m) noexcept
+{
+    for (int c = 0; c < 3; ++c)
+        for (int row = 0; row < 3; ++row)
+            if (std::isnan(m.m[c][row]))
+                return true;
+    return false;
+}
+
+bool anyNan(DVec3 v) noexcept
+{
+    return std::isnan(v.x) || std::isnan(v.y) || std::isnan(v.z);
+}
+
+// True when the three columns are unit length, mutually perpendicular and
+// right-handed -- the last of which is the half people forget, and the half
+// that mirrors a scene if it is wrong.
+bool isOrthonormal(const Mat3& m) noexcept
+{
+    const Vec3 right = col(m, 0);
+    const Vec3 up = col(m, 1);
+    const Vec3 back = col(m, 2);
+
+    return near(length(right), 1.0f) && near(length(up), 1.0f) && near(length(back), 1.0f) &&
+           near(dot(right, up), 0.0f) && near(dot(up, back), 0.0f) && near(dot(right, back), 0.0f) &&
+           near(cross(right, up), back);
+}
+
+} // namespace
+
+TEST_CASE("Vec3 has the layout the Luau vector has")
+{
+    // ADR 0013: the script-facing Vector3 IS the native Luau vector, and a
+    // binding reinterprets `lua_tovector`'s `const float*` as this. The
+    // static_asserts in math.h are the real guard; this checks the consequence
+    // they exist for -- that the three components are contiguous in order.
+    const Vec3 v{1.0f, 2.0f, 3.0f};
+    const f32* raw = &v.x;
+
+    CHECK(raw[0] == 1.0f);
+    CHECK(raw[1] == 2.0f);
+    CHECK(raw[2] == 3.0f);
+}
+
+TEST_CASE("vector algebra")
+{
+    const Vec3 a{1.0f, 2.0f, 3.0f};
+    const Vec3 b{4.0f, 5.0f, 6.0f};
+
+    CHECK(a + b == Vec3{5.0f, 7.0f, 9.0f});
+    CHECK(b - a == Vec3{3.0f, 3.0f, 3.0f});
+    CHECK(a * 2.0f == Vec3{2.0f, 4.0f, 6.0f});
+    CHECK(dot(a, b) == 32.0f);
+
+    // Right-handed: X cross Y is +Z. Getting this backwards flips every normal
+    // in the engine, and the symptom is "lighting looks inside out", not an
+    // error.
+    CHECK(cross(Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}) == Vec3{0.0f, 0.0f, 1.0f});
+
+    CHECK(near(length(Vec3{3.0f, 4.0f, 0.0f}), 5.0f));
+    CHECK(near(normalize(Vec3{0.0f, 8.0f, 0.0f}), Vec3{0.0f, 1.0f, 0.0f}));
+}
+
+TEST_CASE("normalizing zero yields zero, not NaN")
+{
+    // A stopped velocity and a degenerate edge are both legitimate zero
+    // vectors. A NaN here would propagate through a transform and be far
+    // harder to trace than a zero.
+    const Vec3 result = normalize(Vec3{});
+
+    CHECK(result == Vec3{});
+    CHECK_FALSE(std::isnan(result.x));
+}
+
+TEST_CASE("matrix composition reads backwards from the order it applies")
+{
+    const Mat4 move = translation({10.0f, 0.0f, 0.0f});
+    const Mat4 grow = scaling({2.0f, 2.0f, 2.0f});
+
+    // Column-vector convention: `move * grow` scales first, then translates.
+    CHECK(near(transformPoint(move * grow, Vec3{1.0f, 0.0f, 0.0f}), Vec3{12.0f, 0.0f, 0.0f}));
+    // The other order translates first, so the scale multiplies the offset too.
+    CHECK(near(transformPoint(grow * move, Vec3{1.0f, 0.0f, 0.0f}), Vec3{22.0f, 0.0f, 0.0f}));
+}
+
+TEST_CASE("a direction ignores translation, a point does not")
+{
+    const Mat4 move = translation({5.0f, 5.0f, 5.0f});
+
+    CHECK(near(transformPoint(move, Vec3{1.0f, 0.0f, 0.0f}), Vec3{6.0f, 5.0f, 5.0f}));
+    CHECK(near(transformDirection(move, Vec3{1.0f, 0.0f, 0.0f}), Vec3{1.0f, 0.0f, 0.0f}));
+}
+
+TEST_CASE("lookAt puts the target down -Z in view space")
+{
+    // The convention that decides whether anything is visible at all: the
+    // camera looks along -Z (api-design.md's LookVector). A target in front of
+    // the eye must land at negative Z after the view transform.
+    const Mat4 view = lookAt({0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    const Vec3 target = transformPoint(view, Vec3{0.0f, 0.0f, 0.0f});
+
+    CHECK(near(target.x, 0.0f));
+    CHECK(near(target.y, 0.0f));
+    CHECK(near(target.z, -10.0f));
+
+    // The eye itself lands at the origin of view space.
+    CHECK(near(transformPoint(view, Vec3{0.0f, 0.0f, 10.0f}), Vec3{}));
+}
+
+TEST_CASE("perspective maps the depth range to [0, 1]")
+{
+    // Vulkan, D3D12 and Metal all want [0, 1], not OpenGL's [-1, 1]. The wrong
+    // one does not error -- it wastes half the depth buffer and makes
+    // z-fighting appear at distances that look arbitrary.
+    constexpr f32 nearZ = 0.1f;
+    constexpr f32 farZ = 100.0f;
+    const Mat4 projection = perspective(1.0472f, 16.0f / 9.0f, nearZ, farZ);
+
+    const auto depthOf = [&projection](f32 viewZ) {
+        // Manual w-divide: transformPoint drops w, and w is the whole point of
+        // a projection matrix.
+        const f32 clipZ = projection.m[2][2] * viewZ + projection.m[3][2];
+        const f32 clipW = projection.m[2][3] * viewZ;
+        return clipZ / clipW;
+    };
+
+    // Looking down -Z, so the near and far planes sit at negative view Z.
+    CHECK(near(depthOf(-nearZ), 0.0f));
+    CHECK(near(depthOf(-farZ), 1.0f));
+}
+
+TEST_CASE("orthographic maps the depth range to [0, 1] and the height to [-1, 1] at every depth")
+{
+    constexpr f32 nearZ = 0.5f;
+    constexpr f32 farZ = 200.0f;
+    const Mat4 projection = orthographic(10.0f, 2.0f, nearZ, farZ);
+    CHECK(isOrthographic(projection));
+    CHECK_FALSE(isOrthographic(perspective(1.0472f, 2.0f, nearZ, farZ)));
+
+    // w is 1, so clip space is NDC.
+    const auto project = [&projection](Vec3 view) {
+        return Vec3{projection.m[0][0] * view.x + projection.m[3][0], projection.m[1][1] * view.y + projection.m[3][1],
+                    projection.m[2][2] * view.z + projection.m[3][2]};
+    };
+    CHECK(near(project(Vec3{0.0f, 0.0f, -nearZ}).z, 0.0f));
+    CHECK(near(project(Vec3{0.0f, 0.0f, -farZ}).z, 1.0f));
+    // Ten metres up and twenty across are the edges, near and far alike.
+    CHECK(near(project(Vec3{20.0f, 10.0f, -1.0f}).x, 1.0f));
+    CHECK(near(project(Vec3{20.0f, 10.0f, -150.0f}).y, 1.0f));
+}
+
+TEST_CASE("the view's spread grows with depth under perspective and not under orthographic")
+{
+    const ViewSpread flat = viewSpread(orthographic(10.0f, 2.0f, 0.5f, 200.0f));
+    CHECK(near(flat.at(1.0f).y, 10.0f));
+    CHECK(near(flat.at(100.0f).x, 20.0f));
+
+    const ViewSpread deep = viewSpread(perspective(1.5707964f, 1.0f, 0.1f, 100.0f));
+    CHECK(near(deep.at(0.0f).x, 0.0f));
+    CHECK(near(deep.at(4.0f).y, 4.0f));
+}
+
+// --- Mat3 --------------------------------------------------------------------
+
+TEST_CASE("the default Mat3 is the identity and behaves like one")
+{
+    const Mat3 identity;
+    const Vec3 v{1.0f, -2.0f, 3.0f};
+
+    CHECK(near(identity * v, v));
+    CHECK(near(identity * identity, identity));
+    CHECK(isOrthonormal(identity));
+
+    // The column meanings the whole file rests on: m[0] right, m[1] up, m[2]
+    // back -- so the look direction is -m[2], not m[2] (api-design.md §2.3).
+    CHECK(near(col(identity, 0), Vec3{1.0f, 0.0f, 0.0f}));
+    CHECK(near(col(identity, 1), Vec3{0.0f, 1.0f, 0.0f}));
+    CHECK(near(col(identity, 2), Vec3{0.0f, 0.0f, 1.0f}));
+}
+
+TEST_CASE("Mat3 composition is associative and reads backwards from the order it applies")
+{
+    const Mat3 yaw = rotationY(kHalfPi);
+    const Mat3 roll = rotationZ(kHalfPi);
+    const Vec3 v{1.0f, 2.0f, 3.0f};
+
+    // The defining property of the product: composing then applying is the same
+    // as applying twice, in the right order.
+    CHECK(near((yaw * roll) * v, yaw * (roll * v)));
+    CHECK(near((roll * yaw) * v, roll * (yaw * v)));
+
+    // And the order matters, which is what makes the check above worth making.
+    // `yaw * roll` rolls first: +X goes to +Y (roll), and +Y is the yaw axis, so
+    // it survives. `roll * yaw` yaws first: +X goes to -Z, which the roll leaves
+    // alone.
+    CHECK(near(yaw * roll * Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}));
+    CHECK(near(roll * yaw * Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.0f, -1.0f}));
+}
+
+TEST_CASE("each rotation turns the axis the right-hand rule says, in the direction it says")
+{
+    // Signs, not magnitudes. A rotation that turns the right pair of axes the
+    // wrong way still has unit columns and passes every orthonormality check --
+    // it just mirrors the game.
+    const Mat3 x = rotationX(kHalfPi);
+    CHECK(near(x * Vec3{0.0f, 1.0f, 0.0f}, Vec3{0.0f, 0.0f, 1.0f}));  // +Y -> +Z
+    CHECK(near(x * Vec3{0.0f, 0.0f, 1.0f}, Vec3{0.0f, -1.0f, 0.0f})); // +Z -> -Y
+    CHECK(near(x * Vec3{1.0f, 0.0f, 0.0f}, Vec3{1.0f, 0.0f, 0.0f}));  // the axis is fixed
+
+    const Mat3 y = rotationY(kHalfPi);
+    CHECK(near(y * Vec3{0.0f, 0.0f, 1.0f}, Vec3{1.0f, 0.0f, 0.0f}));  // +Z -> +X
+    CHECK(near(y * Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.0f, -1.0f})); // +X -> -Z
+    CHECK(near(y * Vec3{0.0f, 1.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}));
+
+    const Mat3 z = rotationZ(kHalfPi);
+    CHECK(near(z * Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}));  // +X -> +Y
+    CHECK(near(z * Vec3{0.0f, 1.0f, 0.0f}, Vec3{-1.0f, 0.0f, 0.0f})); // +Y -> -X
+    CHECK(near(z * Vec3{0.0f, 0.0f, 1.0f}, Vec3{0.0f, 0.0f, 1.0f}));
+
+    // api-design.md §2.3 states this exact consequence: "A +pi/2 rotation about
+    // Y therefore takes LookVector from (0, 0, -1) to (-1, 0, 0)."
+    CHECK(near(y * Vec3{0.0f, 0.0f, -1.0f}, Vec3{-1.0f, 0.0f, 0.0f}));
+
+    // A rotation is orthonormal by construction; if one of these fails the
+    // matrix is not a rotation at all.
+    CHECK(isOrthonormal(x));
+    CHECK(isOrthonormal(y));
+    CHECK(isOrthonormal(z));
+
+    // A negative angle undoes a positive one, which pins the sine's sign a
+    // second way.
+    CHECK(near(rotationX(-0.7f) * rotationX(0.7f), Mat3{}));
+    CHECK(near(rotationY(-0.7f) * rotationY(0.7f), Mat3{}));
+    CHECK(near(rotationZ(-0.7f) * rotationZ(0.7f), Mat3{}));
+}
+
+TEST_CASE("transpose swaps rows and columns, and inverts a rotation")
+{
+    Mat3 m;
+    m.m[0][1] = 5.0f;
+    m.m[2][0] = -3.0f;
+
+    const Mat3 t = transpose(m);
+    CHECK(near(t.m[1][0], 5.0f));
+    CHECK(near(t.m[0][2], -3.0f));
+    CHECK(near(transpose(t), m));
+
+    // The property `inverse` relies on: for an orthonormal basis the transpose
+    // IS the inverse, in both orders.
+    const Mat3 rotation = rotationY(0.9f) * rotationX(-0.4f) * rotationZ(2.1f);
+    CHECK(near(transpose(rotation) * rotation, Mat3{}));
+    CHECK(near(rotation * transpose(rotation), Mat3{}));
+}
+
+TEST_CASE("orthonormalize repairs a skewed basis with the look axis authoritative")
+{
+    // Back is long, up is not perpendicular to it, and right is garbage that
+    // agrees with neither. Only the look axis survives as a direction.
+    Mat3 skewed;
+    skewed.m[0][0] = 4.0f; // right: nonsense on purpose
+    skewed.m[0][1] = 4.0f;
+    skewed.m[0][2] = 4.0f;
+    skewed.m[1][0] = 0.0f; // up: a hint, and not a perpendicular one
+    skewed.m[1][1] = 1.0f;
+    skewed.m[1][2] = 0.0f;
+    skewed.m[2][0] = 2.0f; // back: length 2 sqrt(2), direction (1, 1, 0) normalised
+    skewed.m[2][1] = 2.0f;
+    skewed.m[2][2] = 0.0f;
+
+    const Mat3 fixed = orthonormalize(skewed);
+
+    CHECK(isOrthonormal(fixed));
+
+    // The look axis is authoritative (math.h, api-design.md §2.3 on
+    // `CFrame:Orthonormalize`): its direction comes through untouched.
+    CHECK(near(col(fixed, 2), normalize(col(skewed, 2))));
+
+    // Up was only a hint, so it moved to the perpendicular that the look axis
+    // allows -- it is not the input up, and it is not garbage either.
+    CHECK(near(col(fixed, 1), Vec3{-0.70710678f, 0.70710678f, 0.0f}));
+    CHECK_FALSE(near(col(fixed, 1), normalize(col(skewed, 1))));
+
+    // Right is derived, never preserved. If the input's right column survived in
+    // any form this would be (1, 1, 1) normalised.
+    CHECK(near(col(fixed, 0), Vec3{0.0f, 0.0f, -1.0f}));
+
+    // An already-orthonormal basis is a fixed point.
+    const Mat3 clean = rotationY(0.3f) * rotationX(1.1f);
+    CHECK(near(orthonormalize(clean), clean));
+}
+
+TEST_CASE("orthonormalize does not produce NaN for a degenerate input")
+{
+    // Up parallel to the look axis: the hint carries no roll, so a roll is
+    // chosen. The authoritative axis is what must survive.
+    Mat3 parallel;
+    parallel.m[1][0] = 0.0f;
+    parallel.m[1][1] = 0.0f;
+    parallel.m[1][2] = 3.0f; // up == back, scaled
+    const Mat3 repaired = orthonormalize(parallel);
+
+    CHECK_FALSE(anyNan(repaired));
+    CHECK(isOrthonormal(repaired));
+    CHECK(near(col(repaired, 2), Vec3{0.0f, 0.0f, 1.0f}));
+
+    // Same again with the look axis along +Y, where the fallback hint cannot be
+    // +Y itself. This is the branch that a single hardcoded fallback breaks.
+    Mat3 upward;
+    upward.m[1][0] = 0.0f;
+    upward.m[1][1] = 1.0f;
+    upward.m[1][2] = 0.0f;
+    upward.m[2][0] = 0.0f;
+    upward.m[2][1] = 1.0f;
+    upward.m[2][2] = 0.0f;
+    const Mat3 repairedUpward = orthonormalize(upward);
+
+    CHECK_FALSE(anyNan(repairedUpward));
+    CHECK(isOrthonormal(repairedUpward));
+    CHECK(near(col(repairedUpward, 2), Vec3{0.0f, 1.0f, 0.0f}));
+
+    // A zero look axis leaves nothing authoritative to keep, so the identity is
+    // the only answer that is not a collapsed basis.
+    Mat3 collapsed;
+    collapsed.m[2][2] = 0.0f;
+    CHECK(near(orthonormalize(collapsed), Mat3{}));
+}
+
+// --- CFrameD -----------------------------------------------------------------
+
+TEST_CASE("CFrameD composition applies b first")
+{
+    CFrameD spin;
+    spin.rotation = rotationZ(kHalfPi);
+
+    CFrameD shift;
+    shift.position = {2.0, 0.0, 0.0};
+
+    // "First `shift`, then `spin`": the offset is expressed in spin's basis, so
+    // the quarter turn about Z carries it onto +Y.
+    CHECK(nearD((spin * shift).position, DVec3{0.0, 2.0, 0.0}));
+    // The other order translates in world space, and the rotation never sees it.
+    CHECK(nearD((shift * spin).position, DVec3{2.0, 0.0, 0.0}));
+
+    // The property that makes the order a fact rather than a convention.
+    const DVec3 p{1.0, 0.0, 0.0};
+    CHECK(nearD(transformPoint(spin * shift, p), transformPoint(spin, transformPoint(shift, p))));
+    CHECK(nearD(transformPoint(shift * spin, p), transformPoint(shift, transformPoint(spin, p))));
+    CHECK(nearD(transformPoint(spin * shift, p), DVec3{0.0, 3.0, 0.0}));
+    CHECK(nearD(transformPoint(shift * spin, p), DVec3{2.0, 1.0, 0.0}));
+
+    // The rotations compose the same way the Mat3 product does.
+    CFrameD other;
+    other.rotation = rotationY(0.6f);
+    CHECK(near((spin * other).rotation, spin.rotation * other.rotation));
+}
+
+TEST_CASE("a CFrameD point takes the translation, a direction does not")
+{
+    CFrameD cf;
+    cf.position = {5.0, -2.0, 1.0};
+    cf.rotation = rotationY(kHalfPi);
+
+    // +Z rotates onto +X, then the translation applies.
+    CHECK(nearD(transformPoint(cf, DVec3{0.0, 0.0, 1.0}), DVec3{6.0, -2.0, 1.0}));
+    // The same input as a direction only rotates. A normal run through the point
+    // path comes out wrong by exactly the frame's position (api-design.md §2.3).
+    CHECK(near(transformDirection(cf, Vec3{0.0f, 0.0f, 1.0f}), Vec3{1.0f, 0.0f, 0.0f}));
+}
+
+TEST_CASE("CFrameD inverse round-trips a point")
+{
+    CFrameD cf;
+    cf.position = {12.0, -3.0, 7.5};
+    cf.rotation = rotationY(0.7f) * rotationX(-0.3f);
+
+    const DVec3 p{2.0, 5.0, -1.0};
+    CHECK(nearD(transformPoint(inverse(cf), transformPoint(cf, p)), p));
+    CHECK(nearD(transformPoint(cf, transformPoint(inverse(cf), p)), p));
+
+    // Composing with the inverse is the identity frame, in either order.
+    CHECK(nearD((cf * inverse(cf)).position, DVec3{}));
+    CHECK(near((cf * inverse(cf)).rotation, Mat3{}));
+    CHECK(nearD((inverse(cf) * cf).position, DVec3{}));
+    CHECK(near((inverse(cf) * cf).rotation, Mat3{}));
+
+    // The rotation half is the transpose, not a general inverse -- stated in the
+    // implementation and pinned here.
+    CHECK(near(inverse(cf).rotation, transpose(cf.rotation)));
+
+    // World -> object still round-trips to f64 precision ten million units out,
+    // because the frame's translation is applied and removed by the SAME
+    // rotation: the two 1e7-sized terms cancel in f64 before the f32 basis's
+    // error can scale with them. This is the direction that matters -- bringing
+    // world positions into a distant object's space -- and it is what an f32
+    // CFrame could not do.
+    CFrameD distant = cf;
+    distant.position = {1.0e7, -3.0, 7.5};
+    CHECK(nearD(transformPoint(inverse(distant), transformPoint(distant, p)), p));
+
+    // The opposite direction is deliberately NOT asserted at this magnitude, and
+    // the asymmetry is a property of the type rather than a defect: it puts the
+    // translation through R^T and then through R, and an f32 R * R^T is the
+    // identity only to about 1e-7 -- a metre of residual at 1e7. The answer is
+    // not a looser epsilon, it is not composing inverses at world scale, which
+    // is what the floating origin (ADR 0014, M7) exists to make unnecessary.
+    const DVec3 wrongWay = transformPoint(distant, transformPoint(inverse(distant), p));
+    CHECK_FALSE(anyNan(wrongWay));
+    CHECK(nearD(wrongWay, p, 10.0));
+}
+
+TEST_CASE("lookAtCFrame aims -m[2] at the target")
+{
+    const DVec3 eye{0.0, 0.0, 10.0};
+    const CFrameD cf = lookAtCFrame(eye, DVec3{0.0, 0.0, 0.0}, Vec3{0.0f, 1.0f, 0.0f});
+
+    CHECK(nearD(cf.position, eye));
+    CHECK(isOrthonormal(cf.rotation));
+    // LookVector is -m[2] and points from the eye at the target.
+    CHECK(near(-col(cf.rotation, 2), Vec3{0.0f, 0.0f, -1.0f}));
+    CHECK(near(col(cf.rotation, 0), Vec3{1.0f, 0.0f, 0.0f}));
+    CHECK(near(col(cf.rotation, 1), Vec3{0.0f, 1.0f, 0.0f}));
+
+    // An off-axis target, where the sign is not hidden by an axis-aligned answer.
+    const DVec3 from{3.0, 4.0, 5.0};
+    const DVec3 to{-1.0, 4.0, 2.0};
+    const CFrameD oblique = lookAtCFrame(from, to, Vec3{0.0f, 1.0f, 0.0f});
+    CHECK(near(-col(oblique.rotation, 2), normalize(Vec3{-4.0f, 0.0f, -3.0f})));
+    CHECK(isOrthonormal(oblique.rotation));
+
+    // The frame really is the frame: its own -Z, transformed as a direction,
+    // still points at the target.
+    CHECK(near(transformDirection(oblique, Vec3{0.0f, 0.0f, -1.0f}), normalize(Vec3{-4.0f, 0.0f, -3.0f})));
+}
+
+TEST_CASE("lookAtCFrame degenerates to the identity rotation rather than NaN")
+{
+    // api-design.md §2.3: "a camera pointed at itself should stop moving, not
+    // poison every value it touches for the rest of the run." The degenerate
+    // input lands on the identity rotation AT the eye, not on a zero frame and
+    // not on NaN.
+    //
+    // **There used to be a second case here and it was wrong** (D144). "The up
+    // hint is parallel to the direction" was documented and tested as producing
+    // the identity too, and it conflated two different situations: with
+    // `eye == target` there is no direction at all, and with a parallel up there
+    // is a perfectly well-defined direction and only the ROLL about it is
+    // undetermined. Answering the second with the identity threw away the part
+    // the caller had asked for -- so `CFrame.lookAt` from directly above a
+    // target aimed along -Z instead of down, silently, and every spotlight,
+    // camera and turret pointed at something directly above or below it was
+    // aimed somewhere else.
+    const DVec3 eye{4.0, -7.0, 2.0};
+
+    SUBCASE("target equal to the eye")
+    {
+        const CFrameD cf = lookAtCFrame(eye, eye, Vec3{0.0f, 1.0f, 0.0f});
+        CHECK_FALSE(anyNan(cf.rotation));
+        CHECK_FALSE(anyNan(cf.position));
+        CHECK(near(cf.rotation, Mat3{}));
+        CHECK(cf.position == eye);
+    }
+
+    SUBCASE("up hint parallel to the look direction: the DIRECTION still holds")
+    {
+        // Looking straight down -Y with up = +Y. The hint has no roll to give,
+        // so a roll is chosen; the direction is not negotiable.
+        const CFrameD cf = lookAtCFrame(eye, DVec3{eye.x, eye.y - 5.0, eye.z}, Vec3{0.0f, 1.0f, 0.0f});
+        CHECK_FALSE(anyNan(cf.rotation));
+        CHECK(cf.position == eye);
+        // -Z is the look axis, so the third column is BACK and the look is its
+        // negation.
+        CHECK(cf.rotation.m[2][0] == doctest::Approx(0.0).epsilon(1e-5));
+        CHECK(cf.rotation.m[2][1] == doctest::Approx(1.0).epsilon(1e-5));
+        CHECK(cf.rotation.m[2][2] == doctest::Approx(0.0).epsilon(1e-5));
+        CHECK(isOrthonormal(cf.rotation));
+    }
+
+    SUBCASE("up hint antiparallel to the look direction: likewise")
+    {
+        const CFrameD cf = lookAtCFrame(eye, DVec3{eye.x, eye.y + 5.0, eye.z}, Vec3{0.0f, 1.0f, 0.0f});
+        CHECK_FALSE(anyNan(cf.rotation));
+        CHECK(cf.rotation.m[2][1] == doctest::Approx(-1.0).epsilon(1e-5));
+        CHECK(isOrthonormal(cf.rotation));
+    }
+
+    SUBCASE("a zero up hint is the same situation as a parallel one")
+    {
+        // No roll was specified, so one is chosen -- and the DIRECTION is still
+        // honoured, which is the whole of D144. Treated identically to the
+        // parallel case on purpose: both are "the caller gave a direction and no
+        // usable roll", and a special case here would be a second answer to one
+        // question.
+        const CFrameD cf = lookAtCFrame(eye, DVec3{0.0, 0.0, 0.0}, Vec3{});
+        CHECK_FALSE(anyNan(cf.rotation));
+        CHECK(isOrthonormal(cf.rotation));
+        CHECK(cf.position == eye);
+    }
+
+    SUBCASE("very nearly parallel is still a real frame, not a snap to identity")
+    {
+        // The fallback must not swallow a camera that is merely looking steeply
+        // up: a hundredth of a degree off vertical is a usable basis.
+        const CFrameD cf = lookAtCFrame(eye, DVec3{eye.x + 0.001, eye.y - 5.0, eye.z}, Vec3{0.0f, 1.0f, 0.0f});
+        CHECK_FALSE(anyNan(cf.rotation));
+        CHECK(isOrthonormal(cf.rotation));
+        CHECK_FALSE(near(cf.rotation, Mat3{}));
+    }
+}
+
+TEST_CASE("toRenderMatrix subtracts in f64, which is the whole of ADR 0014")
+{
+    // At 1e7 the gap between neighbouring f32 values is a full unit, so anything
+    // narrowed before the subtraction arrives already quantised to metres.
+    const DVec3 origin{1.0e7, 1.0e7, 1.0e7};
+
+    CFrameD anchor;
+    anchor.position = origin;
+
+    CFrameD neighbour;
+    neighbour.position = DVec3{origin.x + 0.25, origin.y, origin.z};
+
+    CHECK(near(translationOf(toRenderMatrix(anchor, origin)), Vec3{}));
+    CHECK(near(translationOf(toRenderMatrix(neighbour, origin)), Vec3{0.25f, 0.0f, 0.0f}));
+
+    // ...and this is what the narrow-first implementation would have returned.
+    // Not a restatement of the ADR: the quarter metre is provably gone in f32,
+    // so the check above can only pass if the subtraction happened in f64.
+    CHECK(toVec3(neighbour.position).x - toVec3(origin).x == 0.0f);
+
+    // Relative geometry, not just the translation: a rotated frame a quarter
+    // metre from the origin still puts its own local +Z one unit along world +X.
+    CFrameD spun = neighbour;
+    spun.rotation = rotationY(kHalfPi);
+    const Mat4 rendered = toRenderMatrix(spun, origin);
+
+    CHECK(near(transformPoint(rendered, Vec3{0.0f, 0.0f, 1.0f}), Vec3{1.25f, 0.0f, 0.0f}));
+    CHECK(near(transformDirection(rendered, Vec3{0.0f, 0.0f, 1.0f}), Vec3{1.0f, 0.0f, 0.0f}));
+
+    // The rotation is carried through unchanged and the matrix is affine: the
+    // bottom row must stay (0, 0, 0, 1) or the perspective divide eats it.
+    for (int c = 0; c < 3; ++c) {
+        for (int row = 0; row < 3; ++row)
+            CHECK(rendered.m[c][row] == spun.rotation.m[c][row]);
+        CHECK(rendered.m[c][3] == 0.0f);
+    }
+    CHECK(rendered.m[3][3] == 1.0f);
+
+    // An origin at the frame itself rebases to zero however far out it is.
+    CHECK(near(translationOf(toRenderMatrix(spun, spun.position)), Vec3{}));
+}
+
+// --- Color3 ------------------------------------------------------------------
+
+TEST_CASE("Color3 lerp hits both endpoints exactly")
+{
+    const Color3 a{0.1f, 0.2f, 0.3f};
+    const Color3 b{0.9f, 0.4f, 0.5f};
+
+    CHECK(lerp(a, b, 0.0f) == a);
+    CHECK(lerp(a, b, 1.0f) == b);
+    CHECK(near(lerp(a, b, 0.5f), Color3{0.5f, 0.3f, 0.4f}));
+    CHECK(near(lerp(a, b, 0.25f), Color3{0.3f, 0.25f, 0.35f}));
+
+    // Not clamped, in either argument: alpha outside [0, 1] extrapolates.
+    CHECK(near(lerp(a, b, 2.0f), Color3{1.7f, 0.6f, 0.7f}));
+    CHECK(near(lerp(a, b, -1.0f), Color3{-0.7f, 0.0f, 0.1f}));
+}
+
+TEST_CASE("HSV round-trips the saturated colours, with hue as a turn")
+{
+    struct Case
+    {
+        f32 hue;
+        Color3 rgb;
+    };
+
+    // Hue in turns, not degrees -- api-design.md §2.3 spells out that
+    // fromHSV(1/3, 1, 1) is green, which is the row that catches a degree-based
+    // implementation.
+    const Case cases[] = {
+        {0.0f, {1.0f, 0.0f, 0.0f}},         // red
+        {1.0f / 6.0f, {1.0f, 1.0f, 0.0f}},  // yellow
+        {1.0f / 3.0f, {0.0f, 1.0f, 0.0f}},  // green
+        {0.5f, {0.0f, 1.0f, 1.0f}},         // cyan
+        {2.0f / 3.0f, {0.0f, 0.0f, 1.0f}},  // blue
+        {5.0f / 6.0f, {1.0f, 0.0f, 1.0f}},  // magenta
+        {1.0f / 12.0f, {1.0f, 0.5f, 0.0f}}, // orange: not on a sextant boundary
+        {7.0f / 12.0f, {0.0f, 0.5f, 1.0f}}, // azure
+    };
+
+    for (const Case& c : cases) {
+        CHECK(near(fromHsv(c.hue, 1.0f, 1.0f), c.rgb));
+
+        f32 hue = -1.0f;
+        f32 saturation = -1.0f;
+        f32 value = -1.0f;
+        toHsv(c.rgb, hue, saturation, value);
+
+        CHECK(near(hue, c.hue));
+        CHECK(near(saturation, 1.0f));
+        CHECK(near(value, 1.0f));
+        CHECK(near(fromHsv(hue, saturation, value), c.rgb));
+    }
+
+    // Partly saturated and dim, so none of the three components is 0 or 1 and a
+    // swapped p/q/t is visible.
+    const Color3 muted = fromHsv(0.6f, 0.4f, 0.7f);
+    f32 hue = 0.0f;
+    f32 saturation = 0.0f;
+    f32 value = 0.0f;
+    toHsv(muted, hue, saturation, value);
+    CHECK(near(hue, 0.6f));
+    CHECK(near(saturation, 0.4f));
+    CHECK(near(value, 0.7f));
+}
+
+TEST_CASE("hue is a turn, so it wraps")
+{
+    // 1.0 is the same red as 0.0. An animated hue that keeps counting up must
+    // not fall off the end of the wheel.
+    CHECK(fromHsv(1.0f, 1.0f, 1.0f) == fromHsv(0.0f, 1.0f, 1.0f));
+    CHECK(near(fromHsv(2.5f, 1.0f, 1.0f), fromHsv(0.5f, 1.0f, 1.0f)));
+    CHECK(near(fromHsv(-1.0f / 6.0f, 1.0f, 1.0f), fromHsv(5.0f / 6.0f, 1.0f, 1.0f)));
+}
+
+TEST_CASE("an achromatic colour reports hue 0 and round-trips through it")
+{
+    // Every hue names the same grey, so there is no answer to report. 0 is the
+    // one that round-trips, and pinning it is what stops the value drifting to
+    // whatever the last branch happened to compute.
+    const Color3 grey{0.5f, 0.5f, 0.5f};
+
+    f32 hue = 9.0f;
+    f32 saturation = 9.0f;
+    f32 value = 9.0f;
+    toHsv(grey, hue, saturation, value);
+
+    CHECK(hue == 0.0f);
+    CHECK(saturation == 0.0f);
+    CHECK(near(value, 0.5f));
+    CHECK(near(fromHsv(hue, saturation, value), grey));
+
+    // Black: value 0 as well, so the saturation divide has a zero denominator.
+    toHsv(Color3{}, hue, saturation, value);
+    CHECK(hue == 0.0f);
+    CHECK(saturation == 0.0f);
+    CHECK(value == 0.0f);
+    CHECK(near(fromHsv(hue, saturation, value), Color3{}));
+
+    // Saturation is zero at every hue, so the hue is free and the grey survives.
+    CHECK(near(fromHsv(0.42f, 0.0f, 0.5f), grey));
+}
+
+TEST_CASE("Color3 channels are not clamped, because HDR values are legal")
+{
+    // api-design.md §2.3: values outside 0-1 are legal and meaningful (HDR
+    // emissive, tint multipliers over 1), so clamping belongs to the consumer.
+    const Color3 hdr{3.0f, 1.5f, 0.0f};
+
+    f32 hue = 0.0f;
+    f32 saturation = 0.0f;
+    f32 value = 0.0f;
+    toHsv(hdr, hue, saturation, value);
+
+    CHECK(near(value, 3.0f));
+    CHECK(near(saturation, 1.0f));
+    CHECK(near(hue, 1.0f / 12.0f));
+    CHECK(near(fromHsv(hue, saturation, value), hdr));
+
+    // A value above 1 comes straight back out of fromHsv.
+    CHECK(near(fromHsv(0.0f, 0.0f, 4.0f), Color3{4.0f, 4.0f, 4.0f}));
+
+    // Below zero too: an all-negative colour is achromatic with a negative
+    // value, which is the branch a `max > 0` guard exists for.
+    const Color3 negative{-0.25f, -0.25f, -0.25f};
+    toHsv(negative, hue, saturation, value);
+    CHECK(hue == 0.0f);
+    CHECK(saturation == 0.0f);
+    CHECK(near(value, -0.25f));
+    CHECK(near(fromHsv(hue, saturation, value), negative));
+
+    // And a mixed one, where saturation itself exceeds 1. Still a round trip.
+    const Color3 mixed{1.0f, -1.0f, 0.0f};
+    toHsv(mixed, hue, saturation, value);
+    CHECK(near(saturation, 2.0f));
+    CHECK(near(fromHsv(hue, saturation, value), mixed));
+
+    // lerp between HDR endpoints does not clamp on the way through.
+    CHECK(near(lerp(Color3{0.0f, 0.0f, 0.0f}, Color3{4.0f, -2.0f, 0.0f}, 0.5f), Color3{2.0f, -1.0f, 0.0f}));
+}
+
+// --- YXZ euler round trip ----------------------------------------------------
+//
+// `BasePart.Orientation` reads through `toEulerYxz` and writes through
+// `fromEulerYxz`, so the two have to be exact inverses or reading a part's
+// orientation right after setting it would return something else.
+
+TEST_CASE("euler YXZ round-trips through the rotation it builds")
+{
+    const f32 angles[] = {-2.9f, -1.2f, -0.4f, 0.0f, 0.3f, 1.1f, 2.7f};
+    // Pitch stays clear of the poles here; the pole is its own test below,
+    // because there the pair genuinely is not recoverable.
+    const f32 pitches[] = {-1.2f, -0.5f, 0.0f, 0.5f, 1.2f};
+    for (const f32 yaw : angles) {
+        for (const f32 pitch : pitches) {
+            for (const f32 roll : angles) {
+                const Mat3 built = fromEulerYxz(Vec3{pitch, yaw, roll});
+                const Vec3 recovered = toEulerYxz(built);
+                const Mat3 rebuilt = fromEulerYxz(recovered);
+
+                // The angles themselves may differ by a full turn or by the
+                // equivalent mirrored triple; the ROTATION must not.
+                for (int column = 0; column < 3; ++column) {
+                    for (int row = 0; row < 3; ++row)
+                        CHECK(static_cast<f64>(built.m[column][row]) ==
+                              doctest::Approx(static_cast<f64>(rebuilt.m[column][row])).epsilon(1e-4));
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("euler YXZ keeps pitch in the principal range and resolves the poles")
+{
+    // Pitch is the middle rotation, so its branch is the one that has to be
+    // chosen: [-pi/2, pi/2] is the documented half.
+    const Vec3 recovered = toEulerYxz(fromEulerYxz(Vec3{2.0f, 0.3f, 0.4f}));
+    CHECK(static_cast<f64>(recovered.x) <= doctest::Approx(1.5708).epsilon(1e-4));
+    CHECK(static_cast<f64>(recovered.x) >= doctest::Approx(-1.5708).epsilon(1e-4));
+
+    // At the pole, yaw and roll describe the same rotation and the pair is not
+    // recoverable. Roll resolves to zero rather than splitting the angle
+    // arbitrarily, which is what keeps a round trip stable.
+    const Vec3 atPole = toEulerYxz(fromEulerYxz(Vec3{1.5707963f, 0.8f, 0.6f}));
+    CHECK(static_cast<f64>(atPole.z) == doctest::Approx(0.0).epsilon(1e-4));
+
+    const Mat3 built = fromEulerYxz(Vec3{1.5707963f, 0.8f, 0.6f});
+    const Mat3 rebuilt = fromEulerYxz(atPole);
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row)
+            CHECK(static_cast<f64>(built.m[column][row]) ==
+                  doctest::Approx(static_cast<f64>(rebuilt.m[column][row])).epsilon(1e-3));
+    }
+}
+
+// --- The other five orders ---------------------------------------------------
+//
+// `CFrame.fromEuler` takes the order as an argument (api-design.md §2.3), so all
+// six have to work and not merely the one `Orientation` uses. The generalised
+// implementation is two formulas parameterised by a parity factor, which is
+// exactly the kind of code that is right for three orders and silently mirrored
+// for the other three -- hence a round trip over every one.
+
+TEST_CASE("every rotation order round-trips through the rotation it builds")
+{
+    const RotationOrder orders[] = {
+        RotationOrder::XYZ, RotationOrder::XZY, RotationOrder::YXZ,
+        RotationOrder::YZX, RotationOrder::ZXY, RotationOrder::ZYX,
+    };
+    const f32 samples[] = {-2.6f, -1.3f, -0.2f, 0.0f, 0.7f, 1.4f, 2.9f};
+
+    for (const RotationOrder order : orders) {
+        for (const f32 a : samples) {
+            for (const f32 b : samples) {
+                for (const f32 c : samples) {
+                    const Vec3 angles{a, b, c};
+                    const Mat3 built = fromEuler(angles, order);
+                    const Mat3 rebuilt = fromEuler(toEuler(built, order), order);
+                    CHECK(near(built, rebuilt));
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("the order says which axis turns first, and the vector never stops being indexed by axis")
+{
+    // A pure turn about one axis is the same rotation whatever order names it,
+    // because the other two angles are zero. That is the property that catches a
+    // sequence table wired to the wrong letters.
+    const f32 angle = 0.6f;
+    CHECK(near(fromEuler(Vec3{angle, 0.0f, 0.0f}, RotationOrder::ZYX), rotationX(angle)));
+    CHECK(near(fromEuler(Vec3{0.0f, angle, 0.0f}, RotationOrder::XZY), rotationY(angle)));
+    CHECK(near(fromEuler(Vec3{0.0f, 0.0f, angle}, RotationOrder::YXZ), rotationZ(angle)));
+
+    // And the sequence is what distinguishes them: two non-commuting turns come
+    // out different when the order is reversed.
+    const Vec3 angles{0.5f, 0.9f, 0.0f};
+    CHECK_FALSE(near(fromEuler(angles, RotationOrder::XYZ), fromEuler(angles, RotationOrder::YXZ)));
+
+    // Composed left to right in application order, under the column-vector
+    // convention that writes the first turn leftmost.
+    CHECK(near(fromEuler(angles, RotationOrder::XYZ), rotationX(0.5f) * rotationY(0.9f)));
+    CHECK(near(fromEuler(angles, RotationOrder::YXZ), rotationY(0.9f) * rotationX(0.5f)));
+}
+
+// --- Axis-angle and quaternions ----------------------------------------------
+
+TEST_CASE("axis-angle round-trips, and the axis it reports is the one turned about")
+{
+    const Vec3 axis = normalize(Vec3{0.3f, -0.8f, 0.5f});
+    const f32 angle = 1.1f;
+
+    Vec3 recoveredAxis;
+    f32 recoveredAngle = 0.0f;
+    toAxisAngle(fromAxisAngle(axis, angle), recoveredAxis, recoveredAngle);
+
+    CHECK(near(recoveredAxis, axis));
+    CHECK(near(recoveredAngle, angle));
+
+    // The axis itself is fixed by its own rotation -- the definition, and a
+    // check a sign error in the quaternion path cannot survive.
+    CHECK(near(fromAxisAngle(axis, angle) * axis, axis));
+
+    // Length carries no meaning: the axis is normalized on the way in.
+    CHECK(near(fromAxisAngle(axis * 7.5f, angle), fromAxisAngle(axis, angle)));
+}
+
+TEST_CASE("axis-angle agrees with the per-axis rotations, right-hand rule included")
+{
+    const f32 angle = 0.7f;
+    CHECK(near(fromAxisAngle(Vec3{1.0f, 0.0f, 0.0f}, angle), rotationX(angle)));
+    CHECK(near(fromAxisAngle(Vec3{0.0f, 1.0f, 0.0f}, angle), rotationY(angle)));
+    CHECK(near(fromAxisAngle(Vec3{0.0f, 0.0f, 1.0f}, angle), rotationZ(angle)));
+}
+
+TEST_CASE("a half turn round-trips, which is where the naive trace formula fails")
+{
+    // The skew-symmetric part of the matrix vanishes at pi, so an axis read off
+    // it is numerically meaningless there. Shepperd's branch is chosen for this
+    // case and this is the case that proves it was chosen.
+    const f32 pi = 3.14159265f;
+    const Vec3 axes[] = {
+        Vec3{1.0f, 0.0f, 0.0f},
+        Vec3{0.0f, 1.0f, 0.0f},
+        Vec3{0.0f, 0.0f, 1.0f},
+        normalize(Vec3{1.0f, 1.0f, 0.0f}),
+        normalize(Vec3{-0.4f, 0.2f, 0.9f}),
+    };
+    for (const Vec3 axis : axes) {
+        Vec3 recoveredAxis;
+        f32 recoveredAngle = 0.0f;
+        toAxisAngle(fromAxisAngle(axis, pi), recoveredAxis, recoveredAngle);
+
+        CHECK(near(recoveredAngle, pi));
+        // q and -q are the same rotation, so the axis may come back negated with
+        // the same angle; both describe the identical half turn.
+        CHECK((near(recoveredAxis, axis) || near(recoveredAxis, -axis)));
+        CHECK(near(fromAxisAngle(recoveredAxis, recoveredAngle), fromAxisAngle(axis, pi)));
+    }
+}
+
+TEST_CASE("the identity has no axis to report and says so rather than dividing by zero")
+{
+    Vec3 axis;
+    f32 angle = 99.0f;
+    toAxisAngle(Mat3{}, axis, angle);
+
+    CHECK(near(angle, 0.0f));
+    CHECK(near(axis, Vec3{1.0f, 0.0f, 0.0f}));
+
+    // A zero axis has no direction to turn about; the identity beats NaN.
+    CHECK(near(fromAxisAngle(Vec3{}, 1.0f), Mat3{}));
+}
+
+TEST_CASE("quaternions round-trip with w last, and both signs mean the same rotation")
+{
+    const Mat3 rotation = fromEuler(Vec3{0.4f, -1.1f, 2.2f}, RotationOrder::YXZ);
+
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 z = 0.0f;
+    f32 w = 0.0f;
+    toQuaternion(rotation, x, y, z, w);
+    CHECK(near(fromQuaternion(x, y, z, w), rotation));
+    CHECK(near(fromQuaternion(-x, -y, -z, -w), rotation));
+
+    // Unit length, since a rotation quaternion is one.
+    CHECK(near(std::sqrt(x * x + y * y + z * z + w * w), 1.0f));
+
+    // Normalized on the way in, so an unnormalized quaternion is not a scaled
+    // rotation -- it is the same rotation.
+    CHECK(near(fromQuaternion(x * 3.0f, y * 3.0f, z * 3.0f, w * 3.0f), rotation));
+    CHECK(near(fromQuaternion(0.0f, 0.0f, 0.0f, 0.0f), Mat3{}));
+}
+
+TEST_CASE("every quaternion branch is exercised, because each is a separate formula")
+{
+    // Shepperd picks whichever component is largest; the four branches are four
+    // pieces of code and a test that only ever hits the trace one proves nothing
+    // about the other three.
+    const Mat3 rotations[] = {
+        Mat3{},                                                 // w largest
+        fromAxisAngle(Vec3{1.0f, 0.0f, 0.0f}, 3.14159265f),     // x largest
+        fromAxisAngle(Vec3{0.0f, 1.0f, 0.0f}, 3.14159265f),     // y largest
+        fromAxisAngle(Vec3{0.0f, 0.0f, 1.0f}, 3.14159265f),     // z largest
+        fromEuler(Vec3{2.9f, 1.4f, -2.3f}, RotationOrder::ZXY), // an awkward one
+    };
+
+    for (const Mat3& rotation : rotations) {
+        f32 x = 0.0f;
+        f32 y = 0.0f;
+        f32 z = 0.0f;
+        f32 w = 0.0f;
+        toQuaternion(rotation, x, y, z, w);
+        CHECK(near(std::sqrt(x * x + y * y + z * z + w * w), 1.0f));
+        CHECK(near(fromQuaternion(x, y, z, w), rotation));
+    }
+}
+
+// --- Interpolation -----------------------------------------------------------
+
+TEST_CASE("slerp hits both ends and turns at a constant rate between them")
+{
+    const Vec3 axis = normalize(Vec3{0.2f, 0.9f, -0.3f});
+    const Mat3 start = fromAxisAngle(axis, 0.3f);
+    const Mat3 end = fromAxisAngle(axis, 2.1f);
+
+    CHECK(near(slerp(start, end, 0.0f), start));
+    CHECK(near(slerp(start, end, 1.0f), end));
+
+    // Constant angular rate is what distinguishes slerp from interpolating the
+    // basis component-wise: halfway is half the angle, not the chord's midpoint.
+    Vec3 midAxis;
+    f32 midAngle = 0.0f;
+    toAxisAngle(slerp(start, end, 0.5f), midAxis, midAngle);
+    CHECK(near(midAngle, 1.2f));
+    CHECK(near(midAxis, axis));
+
+    // And it stays a rotation throughout, which a component-wise blend does not.
+    const Mat3 quarter = slerp(start, end, 0.25f);
+    CHECK(near(quarter * transpose(quarter), Mat3{}));
+}
+
+TEST_CASE("slerp takes the short way round")
+{
+    // 350 degrees one way is 10 degrees the other, and the two quaternions that
+    // describe the ends sit on opposite hemispheres. Without the sign flip the
+    // midpoint lands on the far side.
+    const Vec3 axis{0.0f, 1.0f, 0.0f};
+    const Mat3 start = fromAxisAngle(axis, 0.0f);
+    const Mat3 end = fromAxisAngle(axis, 6.1f); // just short of a full turn
+
+    Vec3 midAxis;
+    f32 midAngle = 0.0f;
+    toAxisAngle(slerp(start, end, 0.5f), midAxis, midAngle);
+
+    // Half of the SHORT arc, which is about 0.0916 rad -- not half of 6.1.
+    CHECK(midAngle < 0.2f);
+}
+
+TEST_CASE("slerp of two nearly identical rotations does not divide by zero")
+{
+    const Mat3 start = fromAxisAngle(Vec3{0.0f, 0.0f, 1.0f}, 0.5f);
+    const Mat3 end = fromAxisAngle(Vec3{0.0f, 0.0f, 1.0f}, 0.5f + 1e-7f);
+
+    const Mat3 middle = slerp(start, end, 0.5f);
+    CHECK(near(middle, start));
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row)
+            CHECK(std::isfinite(middle.m[column][row]));
+    }
+}
+
+TEST_CASE("CFrameD lerp interpolates the translation in f64")
+{
+    // Two positions ten million metres out, one metre apart. In f32 the
+    // difference does not survive the subtraction, so a midpoint that lands
+    // anywhere but halfway is the whole of ADR 0014 failing.
+    CFrameD start;
+    start.position = DVec3{10'000'000.0, 0.0, 0.0};
+    CFrameD end;
+    end.position = DVec3{10'000'001.0, 0.0, 0.0};
+    end.rotation = rotationY(1.0f);
+
+    const CFrameD middle = lerp(start, end, 0.5);
+    CHECK(middle.position.x == doctest::Approx(10'000'000.5).epsilon(1e-12));
+
+    // The rotation slerps, so halfway is half the angle.
+    Vec3 axis;
+    f32 angle = 0.0f;
+    toAxisAngle(middle.rotation, axis, angle);
+    CHECK(near(angle, 0.5f));
+
+    CHECK(lerp(start, end, 0.0).position == start.position);
+    CHECK(lerp(start, end, 1.0).position == end.position);
+}
+TEST_CASE("AABB: a default box is empty, and empty is not a point at the origin")
+{
+    const AABB fresh;
+    CHECK(isEmpty(fresh));
+
+    // The distinction that matters: an unfilled box must not pass a frustum
+    // test, or every drawable whose bounds nobody computed gets drawn.
+    CHECK_FALSE(contains(fresh, Vec3{0.0f, 0.0f, 0.0f}));
+    CHECK_FALSE(intersects(fresh, AABB::fromCenterSize(Vec3{}, Vec3{10.0f, 10.0f, 10.0f})));
+
+    AABB grown;
+    expand(grown, Vec3{1.0f, 2.0f, 3.0f});
+    CHECK_FALSE(isEmpty(grown));
+    CHECK(near(grown.min, Vec3{1.0f, 2.0f, 3.0f}));
+    CHECK(near(grown.max, Vec3{1.0f, 2.0f, 3.0f}));
+    CHECK(contains(grown, Vec3{1.0f, 2.0f, 3.0f}));
+}
+
+TEST_CASE("AABB: fromCenterSize takes a full extent, not a half extent")
+{
+    const AABB box = AABB::fromCenterSize(Vec3{10.0f, 0.0f, 0.0f}, Vec3{2.0f, 4.0f, 6.0f});
+    CHECK(near(box.min, Vec3{9.0f, -2.0f, -3.0f}));
+    CHECK(near(box.max, Vec3{11.0f, 2.0f, 3.0f}));
+    CHECK(near(size(box), Vec3{2.0f, 4.0f, 6.0f}));
+    CHECK(near(center(box), Vec3{10.0f, 0.0f, 0.0f}));
+
+    // Both bounds are inside: a point exactly on a face is contained.
+    CHECK(contains(box, Vec3{11.0f, 2.0f, 3.0f}));
+    CHECK_FALSE(contains(box, Vec3{11.001f, 0.0f, 0.0f}));
+}
+
+TEST_CASE("AABB: merging with an empty box changes nothing")
+{
+    AABB box = AABB::fromCenterSize(Vec3{}, Vec3{2.0f, 2.0f, 2.0f});
+    const AABB before = box;
+
+    expand(box, AABB{});
+    CHECK(box == before);
+
+    expand(box, AABB::fromMinMax(Vec3{5.0f, 0.0f, 0.0f}, Vec3{6.0f, 0.0f, 0.0f}));
+    CHECK(near(box.min, Vec3{-1.0f, -1.0f, -1.0f}));
+    CHECK(near(box.max, Vec3{6.0f, 1.0f, 1.0f}));
+}
+
+TEST_CASE("AABB: touching boxes intersect, separated ones do not")
+{
+    const AABB a = AABB::fromMinMax(Vec3{0.0f, 0.0f, 0.0f}, Vec3{1.0f, 1.0f, 1.0f});
+    CHECK(intersects(a, AABB::fromMinMax(Vec3{1.0f, 0.0f, 0.0f}, Vec3{2.0f, 1.0f, 1.0f})));
+    CHECK_FALSE(intersects(a, AABB::fromMinMax(Vec3{1.001f, 0.0f, 0.0f}, Vec3{2.0f, 1.0f, 1.0f})));
+
+    // Separated on one axis only is still separated.
+    CHECK_FALSE(intersects(a, AABB::fromMinMax(Vec3{0.0f, 5.0f, 0.0f}, Vec3{1.0f, 6.0f, 1.0f})));
+}
+
+TEST_CASE("AABB: a rotated box grows, and translation moves it exactly")
+{
+    const AABB unit = AABB::fromCenterSize(Vec3{}, Vec3{2.0f, 2.0f, 2.0f});
+
+    const AABB moved = transformed(translation(Vec3{5.0f, 0.0f, 0.0f}), unit);
+    CHECK(near(moved.min, Vec3{4.0f, -1.0f, -1.0f}));
+    CHECK(near(moved.max, Vec3{6.0f, 1.0f, 1.0f}));
+
+    // A 45-degree turn about Y makes the axis-aligned bound of a unit cube
+    // sqrt(2) wide on X and Z, and leaves Y alone. That is the bound of the
+    // rotated box, not the rotated box -- which is the contract.
+    Mat4 spin;
+    const f32 c = std::cos(kHalfPi * 0.5f);
+    const f32 sn = std::sin(kHalfPi * 0.5f);
+    spin.m[0][0] = c;
+    spin.m[0][2] = -sn;
+    spin.m[2][0] = sn;
+    spin.m[2][2] = c;
+
+    const AABB turned = transformed(spin, unit);
+    CHECK(near(size(turned).x, 2.0f * std::sqrt(2.0f)));
+    CHECK(near(size(turned).y, 2.0f));
+    CHECK(near(size(turned).z, 2.0f * std::sqrt(2.0f)));
+
+    CHECK(isEmpty(transformed(translation(Vec3{5.0f, 0.0f, 0.0f}), AABB{})));
+}
+
+TEST_CASE("Frustum: the planes point inward, and the camera looks down -Z")
+{
+    // A camera at the origin looking at -Z, 90 degrees vertical, square aspect:
+    // the side planes are then at 45 degrees, which makes every expectation
+    // below arithmetic rather than a number read off a run.
+    const Mat4 view = lookAt(Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.0f, -1.0f}, Vec3{0.0f, 1.0f, 0.0f});
+    const Mat4 projection = perspective(kHalfPi, 1.0f, 1.0f, 100.0f);
+    const Frustum frustum = frustumFromViewProjection(projection * view);
+
+    // Inward: a point well inside is on the positive side of all six.
+    const Vec3 inside{0.0f, 0.0f, -10.0f};
+    for (const Plane& plane : frustum.planes) {
+        CHECK(signedDistance(plane, inside) > 0.0f);
+    }
+
+    // The near plane sits at z = -1 and faces -Z, so its distance is metric:
+    // a point ten units in front of the camera is nine units past near.
+    CHECK(near(signedDistance(frustum.planes[Frustum::Near], inside), 9.0f));
+    // Relative, and the far plane is the reason. Its coefficients are `row3 -
+    // row2`, a difference of two nearly equal numbers whose magnitude shrinks as
+    // far/near grows -- here to about 0.01 before normalization, which divides
+    // the f32 error back up by a hundred. The measured value is 90.0005, so the
+    // plane is metric to roughly 1e-5 relative and not to 1e-5 absolute.
+    const f32 farDistance = signedDistance(frustum.planes[Frustum::Far], inside);
+    CHECK(std::fabs(farDistance - 90.0f) <= 90.0f * 1e-4f);
+
+    // Behind the camera fails the near plane and nothing else is needed.
+    CHECK(signedDistance(frustum.planes[Frustum::Near], Vec3{0.0f, 0.0f, 1.0f}) < 0.0f);
+}
+
+TEST_CASE("Frustum: culling accepts what is in front and rejects what is not")
+{
+    const Mat4 view = lookAt(Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.0f, -1.0f}, Vec3{0.0f, 1.0f, 0.0f});
+    const Mat4 projection = perspective(kHalfPi, 1.0f, 1.0f, 100.0f);
+    const Frustum frustum = frustumFromViewProjection(projection * view);
+
+    const Vec3 unit{1.0f, 1.0f, 1.0f};
+    CHECK(intersects(frustum, AABB::fromCenterSize(Vec3{0.0f, 0.0f, -10.0f}, unit)));
+
+    // Behind the camera.
+    CHECK_FALSE(intersects(frustum, AABB::fromCenterSize(Vec3{0.0f, 0.0f, 10.0f}, unit)));
+    // Past the far plane.
+    CHECK_FALSE(intersects(frustum, AABB::fromCenterSize(Vec3{0.0f, 0.0f, -200.0f}, unit)));
+    // Nearer than the near plane.
+    CHECK_FALSE(intersects(frustum, AABB::fromCenterSize(Vec3{0.0f, 0.0f, -0.4f}, unit)));
+    // Off to the side: at 45 degrees the frustum's half-width at z = -10 is 10,
+    // so a small box centred at x = 40 is well clear of it.
+    CHECK_FALSE(intersects(frustum, AABB::fromCenterSize(Vec3{40.0f, 0.0f, -10.0f}, unit)));
+
+    // A box that straddles the near plane is inside: culling is conservative in
+    // the direction that never drops geometry.
+    CHECK(intersects(frustum, AABB::fromCenterSize(Vec3{0.0f, 0.0f, -1.0f}, Vec3{1.0f, 1.0f, 4.0f})));
+
+    // A box far larger than the frustum, containing it entirely, must not be
+    // culled -- the positive-vertex test is what gets this right, and a
+    // centre-point test would get it wrong.
+    CHECK(intersects(frustum, AABB::fromCenterSize(Vec3{}, Vec3{1000.0f, 1000.0f, 1000.0f})));
+
+    CHECK_FALSE(intersects(frustum, AABB{}));
+}
+
+TEST_CASE("Mat4 inverse: M times its inverse is the identity, for the matrices the renderer builds")
+{
+    const auto isIdentity = [](const Mat4& m) {
+        for (int column = 0; column < 4; ++column) {
+            for (int row = 0; row < 4; ++row) {
+                const f32 expected = column == row ? 1.0f : 0.0f;
+                if (!near(m.m[column][row], expected))
+                    return false;
+            }
+        }
+        return true;
+    };
+
+    // A perspective projection and a view matrix are what the sky pass actually
+    // inverts, so those are what this asserts on rather than a random matrix.
+    const Mat4 projection = perspective(kHalfPi, 16.0f / 9.0f, 0.5f, 500.0f);
+    CHECK(isIdentity(projection * inverse(projection)));
+    CHECK(isIdentity(inverse(projection) * projection));
+
+    const Mat4 view = lookAt(Vec3{3.0f, 4.0f, 5.0f}, Vec3{0.0f, 1.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f});
+    CHECK(isIdentity(view * inverse(view)));
+
+    const Mat4 viewProjection = projection * view;
+    CHECK(isIdentity(viewProjection * inverse(viewProjection)));
+
+    // A non-uniform scale composed with a translation, which is what a model
+    // transform is.
+    const Mat4 model = translation(Vec3{10.0f, -2.0f, 3.0f}) * scaling(Vec3{2.0f, 0.5f, 4.0f});
+    CHECK(isIdentity(model * inverse(model)));
+
+    // Singular: the identity back, not a matrix of infinities. The caller is
+    // undoing a projection, and a camera nobody configured should render badly
+    // rather than poison every later multiply with NaN.
+    const Mat4 flattened = scaling(Vec3{1.0f, 1.0f, 0.0f});
+    const Mat4 result = inverse(flattened);
+    CHECK(isIdentity(result));
+}
+
+TEST_CASE("cframeFromMatrix reads back what toRenderMatrix wrote")
+{
+    const CFrameD frame{DVec3{3.0, -4.0, 5.0}, rotationY(0.7f) * rotationX(-0.3f)};
+    const DVec3 origin{1000.0, 0.0, -2000.0};
+
+    const CFrameD back = cframeFromMatrix(toRenderMatrix(frame, origin), origin);
+
+    CHECK(nearD(back.position, frame.position));
+    CHECK(near(back.rotation, frame.rotation));
+}
+
+TEST_CASE("cframeFromMatrix drops the scale an exporter baked in")
+{
+    // **This is the reason it orthonormalises rather than copying nine floats.**
+    // A skinning palette's joint matrix is whatever an exporter wrote, and
+    // exporters bake unit conversions into a bind pose constantly -- the horse
+    // that prompted this carried a 0.01. A socket welded to a joint has to be
+    // rigid, or every part hanging off it inherits that scale.
+    Mat4 scaled;
+    for (int axis = 0; axis < 3; ++axis)
+        scaled.m[axis][axis] = 0.01f;
+    scaled.m[3][0] = 2.0f;
+    scaled.m[3][1] = 3.0f;
+
+    const CFrameD out = cframeFromMatrix(scaled);
+
+    // The basis is unit length on every axis, whatever went in.
+    for (int c = 0; c < 3; ++c) {
+        const Vec3 axis{out.rotation.m[c][0], out.rotation.m[c][1], out.rotation.m[c][2]};
+        CHECK(near(length(axis), 1.0f));
+    }
+    // And the translation is untouched: it is a position, not a direction.
+    CHECK(nearD(out.position, DVec3{2.0, 3.0, 0.0}));
+}
+
+TEST_CASE("cframeFromMatrix answers with a usable frame for a collapsed basis")
+{
+    // A joint whose matrix has collapsed is a broken file, and the answer is the
+    // identity rather than a NaN that poisons every transform downstream of it
+    // -- the same rule `orthonormalize` already states for its own degenerate
+    // input.
+    Mat4 collapsed;
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+            collapsed.m[c][r] = 0.0f;
+    collapsed.m[3][1] = 9.0f;
+
+    const CFrameD out = cframeFromMatrix(collapsed);
+
+    CHECK(out.rotation == Mat3{});
+    CHECK(nearD(out.position, DVec3{0.0, 9.0, 0.0}));
+}
+
+TEST_CASE("toRenderMatrixScaled is toRenderMatrix times scaling, bit for bit")
+{
+    // The render path draws every part from this, and a capture golden hashes
+    // the bytes, so "close" is not the bar: the two must be the same bits,
+    // negative zeros included -- which is why the scales below include 0 and
+    // negatives, and the rotations include axis-aligned ones full of exact zeros.
+    const Vec3 axes[] = {{0.0f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.3f, -0.8f, 0.52f}};
+    const float angles[] = {0.0f, 1.5707964f, 3.1415927f, -0.7f, 2.2f};
+    const Vec3 scales[] = {
+        {1.0f, 1.0f, 1.0f}, {2.0f, 0.5f, 4.0f}, {-1.0f, 3.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {-0.25f, -2.0f, 7.5f}};
+    const DVec3 positions[] = {{0.0, 0.0, 0.0}, {-0.0, 12.5, -3.25}, {1.0e7, -250.0, 8.0e6}};
+    const DVec3 origins[] = {{0.0, 0.0, 0.0}, {1.0e7, -250.0, 8.0e6}, {-3.0, 0.0, 17.0}};
+
+    int compared = 0;
+    for (const Vec3& axis : axes) {
+        for (const float angle : angles) {
+            for (const Vec3& scale : scales) {
+                for (const DVec3& position : positions) {
+                    for (const DVec3& origin : origins) {
+                        const CFrameD cf{position, fromAxisAngle(normalize(axis), angle)};
+                        const Mat4 longForm = toRenderMatrix(cf, origin) * scaling(scale);
+                        const Mat4 fused = toRenderMatrixScaled(cf, origin, scale);
+                        CHECK(std::memcmp(&longForm, &fused, sizeof(Mat4)) == 0);
+                        ++compared;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared == 4 * 5 * 5 * 3 * 3);
+}

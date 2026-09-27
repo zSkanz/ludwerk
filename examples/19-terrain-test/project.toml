@@ -1,0 +1,15 @@
+# A cave dug into a mountain from the side (F1): Terrain as a volume.
+#
+# No scene file: the script sculpts the mountain, digs the tunnel and flies the
+# camera through it, because the order of those calls is the subject.
+
+[project]
+name = "Ludwerk Terrain Test"
+id = "dev.ludwerk.terraintest"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Test"
+width = 1280
+height = 720

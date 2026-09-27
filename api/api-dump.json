@@ -1,0 +1,8184 @@
+{
+  "Version": "0.0.1",
+  "Classes": [
+    {
+      "Name": "AnimationPlayer",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "LoadAnimation",
+          "Parameters": [
+            {
+              "Name": "content",
+              "Type": "Content"
+            }
+          ],
+          "Returns": ["AnimationTrack"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Atmosphere",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.fromRGB(196, 210, 230)"
+        },
+        {
+          "Name": "Decay",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Density",
+          "Type": "number",
+          "Default": "0.35"
+        },
+        {
+          "Name": "Glare",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Haze",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Offset",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Attachment",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "WorldCFrame",
+          "Type": "CFrame",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "AudioGroup",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Volume",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "AudioService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "MasterVolume",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "PlayLocal",
+          "Parameters": [
+            {
+              "Name": "content",
+              "Type": "Content"
+            }
+          ],
+          "Returns": ["Sound"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "BallSocketConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LimitsEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "TwistLimit",
+          "Type": "number",
+          "Default": "180"
+        },
+        {
+          "Name": "UpperAngle",
+          "Type": "number",
+          "Default": "180"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "BasePart",
+      "Extends": "PVInstance",
+      "Tags": ["Abstract"],
+      "Properties": [
+        {
+          "Name": "Anchored",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "AngularVelocity",
+          "Type": "vector",
+          "ReadOnly": true
+        },
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "CanCollide",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CanQuery",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CanTouch",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CollisionGroup",
+          "Type": "string",
+          "Default": "\"Default\""
+        },
+        {
+          "Name": "Density",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Friction",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "LinearVelocity",
+          "Type": "vector",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Material",
+          "Type": "Material?"
+        },
+        {
+          "Name": "MaterialParameters",
+          "Type": "MaterialParameters"
+        },
+        {
+          "Name": "Orientation",
+          "Type": "vector"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector"
+        },
+        {
+          "Name": "Restitution",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Size",
+          "Type": "vector"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "ApplyImpulse",
+          "Parameters": [
+            {
+              "Name": "impulse",
+              "Type": "vector"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ClearMaterialParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetMaterialParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["(Color3 | number | Vector2 | vector | { number })?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetNetworkOwner",
+          "Parameters": [],
+          "Returns": ["Player?"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "SetMaterialParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "Color3 | number | boolean | Vector2 | vector | { number }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetNetworkOwner",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "TouchEnded",
+          "Parameters": [
+            {
+              "Name": "otherPart",
+              "Type": "BasePart"
+            }
+          ]
+        },
+        {
+          "Name": "Touched",
+          "Parameters": [
+            {
+              "Name": "otherPart",
+              "Type": "BasePart"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "BaseScript",
+      "Extends": "Instance",
+      "Tags": ["Abstract"],
+      "Properties": [
+        {
+          "Name": "Source",
+          "Type": "string",
+          "Default": "\"\""
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "BillboardGui",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Adornee",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "AlwaysOnTop",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "MaxDistance",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Size",
+          "Type": "UDim2",
+          "Default": "UDim2.new(0, 200, 0, 50)"
+        },
+        {
+          "Name": "WorldOffset",
+          "Type": "vector",
+          "Default": "vector.zero"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "BloomEffect",
+      "Extends": "PostEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Intensity",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Size",
+          "Type": "number",
+          "Default": "24"
+        },
+        {
+          "Name": "Threshold",
+          "Type": "number",
+          "Default": "1.1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "BlurEffect",
+      "Extends": "PostEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Size",
+          "Type": "number",
+          "Default": "24"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Bone",
+      "Extends": "Attachment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "JointIndex",
+          "Type": "number",
+          "ReadOnly": true,
+          "Default": "-1"
+        },
+        {
+          "Name": "JointName",
+          "Type": "string"
+        },
+        {
+          "Name": "Transform",
+          "Type": "CFrame"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Camera",
+      "Extends": "PVInstance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "FarPlane",
+          "Type": "number"
+        },
+        {
+          "Name": "FieldOfView",
+          "Type": "number"
+        },
+        {
+          "Name": "NearPlane",
+          "Type": "number"
+        },
+        {
+          "Name": "OrthographicSize",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "Projection",
+          "Type": "Enum.CameraProjection"
+        },
+        {
+          "Name": "ViewportSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "CharacterBody",
+      "Extends": "BasePart",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AutoStepHeight",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Grounded",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "JumpSpeed",
+          "Type": "number",
+          "Default": "8"
+        },
+        {
+          "Name": "MaxSlopeAngle",
+          "Type": "number",
+          "Default": "46"
+        },
+        {
+          "Name": "State",
+          "Type": "Enum.CharacterState",
+          "ReadOnly": true
+        },
+        {
+          "Name": "WalkSpeed",
+          "Type": "number",
+          "Default": "16"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Jump",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Move",
+          "Parameters": [
+            {
+              "Name": "direction",
+              "Type": "vector"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Landed",
+          "Parameters": [
+            {
+              "Name": "groundPart",
+              "Type": "BasePart?"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "ClientScriptService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ColorCorrectionEffect",
+      "Extends": "PostEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Brightness",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Contrast",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Saturation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TintColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Constraint",
+      "Extends": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "Attachment0",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Attachment1",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "CollideConnected",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Constraint2D",
+      "Extends": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "Anchor0",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "Anchor1",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "CollideConnected",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Part0",
+          "Type": "Part2D?"
+        },
+        {
+          "Name": "Part1",
+          "Type": "Part2D?"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "DataModel",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable"],
+      "Properties": [
+        {
+          "Name": "EngineVersion",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "LuauVersion",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "BindToClose",
+          "Parameters": [
+            {
+              "Name": "callback",
+              "Type": "() -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FindService",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "GetService",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Shutdown",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Loaded",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "DebugService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "OverlayVisible",
+          "Type": "boolean",
+          "Default": "false",
+          "ThreadSafety": "Unsafe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "DrawBox",
+          "Parameters": [
+            {
+              "Name": "cframe",
+              "Type": "CFrame"
+            },
+            {
+              "Name": "size",
+              "Type": "vector"
+            },
+            {
+              "Name": "color",
+              "Type": "Color3?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DrawLine",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "b",
+              "Type": "vector"
+            },
+            {
+              "Name": "color",
+              "Type": "Color3?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DrawSphere",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "color",
+              "Type": "Color3?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetStat",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "HidePanel",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetCustomStat",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ShowPanel",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "MessageOut",
+          "Parameters": [
+            {
+              "Name": "message",
+              "Type": "string"
+            },
+            {
+              "Name": "level",
+              "Type": "Enum.LogLevel"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "Decal",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Size",
+          "Type": "vector",
+          "Default": "vector.create(2, 2, 1)"
+        },
+        {
+          "Name": "Texture",
+          "Type": "Content"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "DepthOfFieldEffect",
+      "Extends": "PostEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "FarIntensity",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "FocusDistance",
+          "Type": "number",
+          "Default": "25"
+        },
+        {
+          "Name": "InFocusRadius",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "NearIntensity",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "FixedConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Folder",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Frame",
+      "Extends": "UIObject",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "GlobalScriptService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "HingeConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LimitsEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "LowerAngle",
+          "Type": "number",
+          "Default": "-180"
+        },
+        {
+          "Name": "UpperAngle",
+          "Type": "number",
+          "Default": "180"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "HingeConstraint2D",
+      "Extends": "Constraint2D",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LimitsEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "LowerAngle",
+          "Type": "number",
+          "Default": "-90"
+        },
+        {
+          "Name": "MotorEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "MotorMaxTorque",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MotorSpeed",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "UpperAngle",
+          "Type": "number",
+          "Default": "90"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "HotReloadService",
+      "Extends": "Instance",
+      "Tags": ["DevOnly", "NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "IsReload",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "LoadState",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SaveState",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "PostReload",
+          "Parameters": []
+        },
+        {
+          "Name": "PreReload",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "ImageButton",
+      "Extends": "ImageLabel",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ImageLabel",
+      "Extends": "UIObject",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Image",
+          "Type": "Content",
+          "Default": "\"\""
+        },
+        {
+          "Name": "ImageColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "ScaleType",
+          "Type": "Enum.ScaleType",
+          "Default": "Enum.ScaleType.Stretch"
+        },
+        {
+          "Name": "SliceCenter",
+          "Type": "Rect",
+          "Default": "Rect.new(Vector2.zero, Vector2.zero)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "InputAction",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Type",
+          "Type": "Enum.InputActionType",
+          "Default": "Enum.InputActionType.Bool"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetPreferredBinding",
+          "Parameters": [
+            {
+              "Name": "deviceType",
+              "Type": "Enum.InputDeviceType?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["InputBinding?"]
+        },
+        {
+          "Name": "GetState",
+          "Parameters": [],
+          "Returns": ["boolean | number | Vector2 | vector"]
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Pressed",
+          "Parameters": []
+        },
+        {
+          "Name": "Released",
+          "Parameters": []
+        },
+        {
+          "Name": "StateChanged",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "InputBinding",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "DeviceType",
+          "Type": "Enum.InputDeviceType",
+          "ReadOnly": true
+        },
+        {
+          "Name": "DisplayName",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "Down",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.Unknown"
+        },
+        {
+          "Name": "Image",
+          "Type": "Content",
+          "Default": "\"\""
+        },
+        {
+          "Name": "KeyCode",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.Unknown"
+        },
+        {
+          "Name": "Left",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.Unknown"
+        },
+        {
+          "Name": "Right",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.Unknown"
+        },
+        {
+          "Name": "Scale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Up",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.Unknown"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "InputContext",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Priority",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Rate",
+          "Type": "Enum.InputRate",
+          "Default": "Enum.InputRate.Simulation"
+        },
+        {
+          "Name": "Sink",
+          "Type": "boolean",
+          "Default": "false"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "InputService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "LastInputDeviceType",
+          "Type": "Enum.InputDeviceType",
+          "ReadOnly": true
+        },
+        {
+          "Name": "PointerLocked",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
+          "Name": "PointerVisible",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetPointerPosition",
+          "Parameters": [],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "IsKeyDown",
+          "Parameters": [
+            {
+              "Name": "keyCode",
+              "Type": "Enum.KeyCode"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "SetVirtualState",
+          "Parameters": [
+            {
+              "Name": "keyCode",
+              "Type": "Enum.KeyCode"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "InputBegan",
+          "Parameters": [
+            {
+              "Name": "input",
+              "Type": "InputObject"
+            },
+            {
+              "Name": "uiConsumed",
+              "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "InputChanged",
+          "Parameters": [
+            {
+              "Name": "input",
+              "Type": "InputObject"
+            },
+            {
+              "Name": "uiConsumed",
+              "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "InputDeviceChanged",
+          "Parameters": [
+            {
+              "Name": "deviceType",
+              "Type": "Enum.InputDeviceType"
+            }
+          ]
+        },
+        {
+          "Name": "InputEnded",
+          "Parameters": [
+            {
+              "Name": "input",
+              "Type": "InputObject"
+            },
+            {
+              "Name": "uiConsumed",
+              "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "WindowFocusChanged",
+          "Parameters": [
+            {
+              "Name": "focused",
+              "Type": "boolean"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "ClassName",
+          "Type": "string",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Name",
+          "Type": "string"
+        },
+        {
+          "Name": "Parent",
+          "Type": "Instance?"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "AddTag",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "Clone",
+          "Parameters": [],
+          "Returns": ["Instance"]
+        },
+        {
+          "Name": "Destroy",
+          "Parameters": [],
+          "Returns": []
+        },
+        {
+          "Name": "FindFirstAncestor",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"]
+        },
+        {
+          "Name": "FindFirstAncestorOfClass",
+          "Parameters": [
+            {
+              "Name": "className",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"]
+        },
+        {
+          "Name": "FindFirstChild",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"]
+        },
+        {
+          "Name": "FindFirstChildOfClass",
+          "Parameters": [
+            {
+              "Name": "className",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"]
+        },
+        {
+          "Name": "FindFirstChildWhichIsA",
+          "Parameters": [
+            {
+              "Name": "className",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Instance?"]
+        },
+        {
+          "Name": "GetAttribute",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?"]
+        },
+        {
+          "Name": "GetAttributeChangedSignal",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Signal<()>"]
+        },
+        {
+          "Name": "GetAttributes",
+          "Parameters": [],
+          "Returns": ["{ [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect }"]
+        },
+        {
+          "Name": "GetChildren",
+          "Parameters": [],
+          "Returns": ["{Instance}"]
+        },
+        {
+          "Name": "GetDescendants",
+          "Parameters": [],
+          "Returns": ["{Instance}"]
+        },
+        {
+          "Name": "GetPropertyChangedSignal",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Signal<()>"]
+        },
+        {
+          "Name": "GetTags",
+          "Parameters": [],
+          "Returns": ["{string}"]
+        },
+        {
+          "Name": "HasTag",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "IsA",
+          "Parameters": [
+            {
+              "Name": "className",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "IsAncestorOf",
+          "Parameters": [
+            {
+              "Name": "descendant",
+              "Type": "Instance"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "IsDescendantOf",
+          "Parameters": [
+            {
+              "Name": "ancestor",
+              "Type": "Instance"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "RemoveTag",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "SetAttribute",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "WaitForChild",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "timeout",
+              "Type": "number?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Instance?"],
+          "Yields": true
+        }
+      ],
+      "Events": [
+        {
+          "Name": "AncestryChanged",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            },
+            {
+              "Name": "newParent",
+              "Type": "Instance?"
+            }
+          ]
+        },
+        {
+          "Name": "AttributeChanged",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "ChildAdded",
+          "Parameters": [
+            {
+              "Name": "child",
+              "Type": "Instance"
+            }
+          ]
+        },
+        {
+          "Name": "ChildRemoved",
+          "Parameters": [
+            {
+              "Name": "child",
+              "Type": "Instance"
+            }
+          ]
+        },
+        {
+          "Name": "DescendantAdded",
+          "Parameters": [
+            {
+              "Name": "descendant",
+              "Type": "Instance"
+            }
+          ]
+        },
+        {
+          "Name": "DescendantRemoving",
+          "Parameters": [
+            {
+              "Name": "descendant",
+              "Type": "Instance"
+            }
+          ]
+        },
+        {
+          "Name": "Destroying",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "Lighting",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Ambient",
+          "Type": "Color3"
+        },
+        {
+          "Name": "AutoExposure",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number"
+        },
+        {
+          "Name": "ClockTime",
+          "Type": "number"
+        },
+        {
+          "Name": "EnvironmentDiffuseScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "EnvironmentSpecularScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ExposureCompensation",
+          "Type": "number"
+        },
+        {
+          "Name": "FogColor",
+          "Type": "Color3"
+        },
+        {
+          "Name": "FogEnd",
+          "Type": "number"
+        },
+        {
+          "Name": "FogStart",
+          "Type": "number"
+        },
+        {
+          "Name": "GeographicLatitude",
+          "Type": "number"
+        },
+        {
+          "Name": "GlobalShadows",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "OutdoorAmbient",
+          "Type": "Color3"
+        },
+        {
+          "Name": "ShadowSoftness",
+          "Type": "number",
+          "Default": "0.2"
+        },
+        {
+          "Name": "SunDirection",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "MeshPart",
+      "Extends": "BasePart",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CollisionFidelity",
+          "Type": "Enum.CollisionFidelity"
+        },
+        {
+          "Name": "MeshContent",
+          "Type": "Content"
+        },
+        {
+          "Name": "MeshSize",
+          "Type": "vector",
+          "Default": "vector.create(1, 1, 1)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Model",
+      "Extends": "PVInstance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "PrimaryPart",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "Scale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "StreamingMode",
+          "Type": "Enum.StreamingMode",
+          "Default": "Enum.StreamingMode.Nonatomic"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetExtentsSize",
+          "Parameters": [],
+          "Returns": ["vector"]
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "ModuleScript",
+      "Extends": "BaseScript",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "NavigationAgent",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Active",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "AgentType",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "MaxSpeed",
+          "Type": "number",
+          "Default": "8"
+        },
+        {
+          "Name": "Target",
+          "Type": "vector"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "Reached",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "NavigationArea",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Label",
+          "Type": "string",
+          "Default": "\"Area\""
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "NavigationLink",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Bidirectional",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "From",
+          "Type": "vector"
+        },
+        {
+          "Name": "Label",
+          "Type": "string",
+          "Default": "\"Jump\""
+        },
+        {
+          "Name": "To",
+          "Type": "vector"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "NavigationService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "AgentHeight",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "AgentMaxClimb",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "AgentMaxSlope",
+          "Type": "number",
+          "Default": "45"
+        },
+        {
+          "Name": "AgentRadius",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "BuildRegion",
+          "Parameters": [
+            {
+              "Name": "minimum",
+              "Type": "vector"
+            },
+            {
+              "Name": "maximum",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DefineAgent",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "height",
+              "Type": "number"
+            },
+            {
+              "Name": "maxClimb",
+              "Type": "number?",
+              "Default": "0.5"
+            },
+            {
+              "Name": "maxSlope",
+              "Type": "number?",
+              "Default": "45"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FindPath",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "vector"
+            },
+            {
+              "Name": "to",
+              "Type": "vector"
+            },
+            {
+              "Name": "agent",
+              "Type": "string?",
+              "Default": "\"\""
+            }
+          ],
+          "Returns": ["{ vector }?", "boolean", "{ string }"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FindPath2D",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "to",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["{ Vector2 }?", "boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "NearestPoint",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "vector"
+            },
+            {
+              "Name": "maxDistance",
+              "Type": "number?",
+              "Default": "4"
+            }
+          ],
+          "Returns": ["vector?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Raycast",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "vector"
+            },
+            {
+              "Name": "to",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetAreaCost",
+          "Parameters": [
+            {
+              "Name": "label",
+              "Type": "string"
+            },
+            {
+              "Name": "cost",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "NetworkService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Authority",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "LocalPlayer",
+          "Type": "Player?",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "PeerCount",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "ServerTick",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "State",
+          "Type": "Enum.NetworkState",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        },
+        {
+          "Name": "Topology",
+          "Type": "Enum.NetworkTopology",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Disconnect",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetPlayers",
+          "Parameters": [],
+          "Returns": ["{Player}"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Host",
+          "Parameters": [
+            {
+              "Name": "port",
+              "Type": "number?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Join",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Connected",
+          "Parameters": []
+        },
+        {
+          "Name": "Disconnected",
+          "Parameters": [
+            {
+              "Name": "reason",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "JoinFailed",
+          "Parameters": [
+            {
+              "Name": "reason",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "PlayerAdded",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "PlayerRemoving",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "PVInstance",
+      "Extends": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "PivotOffset",
+          "Type": "CFrame"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetPivot",
+          "Parameters": [],
+          "Returns": ["CFrame"]
+        },
+        {
+          "Name": "PivotTo",
+          "Parameters": [
+            {
+              "Name": "target",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": []
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Part",
+      "Extends": "BasePart",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Shape",
+          "Type": "Enum.PartShape"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Part2D",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Anchored",
+          "Type": "boolean"
+        },
+        {
+          "Name": "AngularVelocity",
+          "Type": "number"
+        },
+        {
+          "Name": "CanCollide",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CollisionGroup",
+          "Type": "string",
+          "Default": "\"Default\""
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Density",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Elasticity",
+          "Type": "number"
+        },
+        {
+          "Name": "Filter",
+          "Type": "Enum.TextureFilter"
+        },
+        {
+          "Name": "FixedRotation",
+          "Type": "boolean"
+        },
+        {
+          "Name": "FlipX",
+          "Type": "boolean"
+        },
+        {
+          "Name": "FlipY",
+          "Type": "boolean"
+        },
+        {
+          "Name": "Friction",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "GravityScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Image",
+          "Type": "Content"
+        },
+        {
+          "Name": "ImageRectOffset",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "ImageRectSize",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "Position",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "Rotation",
+          "Type": "number"
+        },
+        {
+          "Name": "Sensor",
+          "Type": "boolean"
+        },
+        {
+          "Name": "Shape",
+          "Type": "Enum.Shape2D"
+        },
+        {
+          "Name": "Size",
+          "Type": "Vector2",
+          "Default": "Vector2.new(1, 1)"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number"
+        },
+        {
+          "Name": "Velocity",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "ZIndex",
+          "Type": "number"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "ApplyImpulse",
+          "Parameters": [
+            {
+              "Name": "impulse",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "TouchEnded",
+          "Parameters": [
+            {
+              "Name": "otherPart",
+              "Type": "Instance"
+            }
+          ]
+        },
+        {
+          "Name": "Touched",
+          "Parameters": [
+            {
+              "Name": "otherPart",
+              "Type": "Instance"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "ParticleEmitter",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Acceleration",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "ColorEnd",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Drag",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Lifetime",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "LightEmission",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Rate",
+          "Type": "number",
+          "Default": "20"
+        },
+        {
+          "Name": "Shape",
+          "Type": "Enum.ParticleShape",
+          "Default": "Enum.ParticleShape.Soft"
+        },
+        {
+          "Name": "Size",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "SizeEnd",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Speed",
+          "Type": "number",
+          "Default": "4"
+        },
+        {
+          "Name": "SpreadAngle",
+          "Type": "number",
+          "Default": "15"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TransparencyEnd",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Emit",
+          "Parameters": [
+            {
+              "Name": "count",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "PhysicsService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "FixedTimestep",
+          "Type": "number",
+          "Default": "1/60",
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "CollisionGroupSetCollidable",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "string"
+            },
+            {
+              "Name": "b",
+              "Type": "string"
+            },
+            {
+              "Name": "collidable",
+              "Type": "boolean"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetRegisteredCollisionGroups",
+          "Parameters": [],
+          "Returns": ["{string}"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RegisterCollisionGroup",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Player",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable"],
+      "Properties": [
+        {
+          "Name": "Character",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "Team",
+          "Type": "Team?"
+        },
+        {
+          "Name": "UserId",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetIntent",
+          "Parameters": [
+            {
+              "Name": "action",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean | number | Vector2 | vector"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "PointLight",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Brightness",
+          "Type": "number"
+        },
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Range",
+          "Type": "number"
+        },
+        {
+          "Name": "Shadows",
+          "Type": "boolean"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "PostEffect",
+      "Extends": "Instance",
+      "Tags": ["Abstract"],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Ragdoll",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Blend",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "false"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Build",
+          "Parameters": [
+            {
+              "Name": "profile",
+              "Type": "{ any }"
+            }
+          ],
+          "Returns": ["number"]
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "RemoteEvent",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "FireAllClients",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireClient",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FireServer",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "ClientReceived",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        },
+        {
+          "Name": "ServerReceived",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "RemoteFunction",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "InvokeServerAsync",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["...any"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [],
+      "Callbacks": [
+        {
+          "Name": "OnServerInvoke",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["...any"]
+        }
+      ]
+    },
+    {
+      "Name": "ReplicatedStorage",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "RunService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "SimTime",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "IsPaused",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "Pause",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RestoreSimulation",
+          "Parameters": [
+            {
+              "Name": "state",
+              "Type": "buffer"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Resume",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SaveSimulation",
+          "Parameters": [],
+          "Returns": ["buffer"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "StepSimulation",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Heartbeat",
+          "Parameters": [
+            {
+              "Name": "dt",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "PostSimulation",
+          "Parameters": [
+            {
+              "Name": "dt",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "PreAnimation",
+          "Parameters": [
+            {
+              "Name": "dt",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "PreRender",
+          "Parameters": [
+            {
+              "Name": "dt",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "PreSimulation",
+          "Parameters": [
+            {
+              "Name": "dt",
+              "Type": "number"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "SceneService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "CurrentScene",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetLoadData",
+          "Parameters": [],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LoadScene",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "string"
+            },
+            {
+              "Name": "data",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "SceneLoaded",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "SceneLoading",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "ScreenGui",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "DisplayOrder",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "KeepOnSceneLoad",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "ScreenInsets",
+          "Type": "boolean",
+          "Default": "true"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Script",
+      "Extends": "BaseScript",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ScrollFrame",
+      "Extends": "UIObject",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CanvasPosition",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        },
+        {
+          "Name": "CanvasSize",
+          "Type": "UDim2",
+          "Default": "UDim2.new()"
+        },
+        {
+          "Name": "ScrollBarThickness",
+          "Type": "number",
+          "Default": "12"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ServerScriptService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ServerStorage",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Sky",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CelestialBodiesShown",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CloudColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "CloudCover",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "CloudDensity",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "MoonAngularSize",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "MoonTexture",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxBack",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxDown",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxFront",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxLeft",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxOrientation",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "SkyboxRight",
+          "Type": "Content"
+        },
+        {
+          "Name": "SkyboxUp",
+          "Type": "Content"
+        },
+        {
+          "Name": "StarCount",
+          "Type": "number",
+          "Default": "3000"
+        },
+        {
+          "Name": "SunAngularSize",
+          "Type": "number",
+          "Default": "2.3"
+        },
+        {
+          "Name": "SunTexture",
+          "Type": "Content"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Sound",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Content",
+          "Type": "Content",
+          "Default": "\"\""
+        },
+        {
+          "Name": "Group",
+          "Type": "AudioGroup?",
+          "Default": "nil"
+        },
+        {
+          "Name": "Looped",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "PlaybackSpeed",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Playing",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "RollOffMaxDistance",
+          "Type": "number",
+          "Default": "80"
+        },
+        {
+          "Name": "RollOffMinDistance",
+          "Type": "number",
+          "Default": "8"
+        },
+        {
+          "Name": "TimeLength",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "TimePosition",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "Volume",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Pause",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Play",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Resume",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Stop",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Ended",
+          "Parameters": []
+        },
+        {
+          "Name": "Loaded",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "SpotLight",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Angle",
+          "Type": "number"
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number"
+        },
+        {
+          "Name": "CFrame",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Range",
+          "Type": "number"
+        },
+        {
+          "Name": "Shadows",
+          "Type": "boolean"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SpringConstraint2D",
+      "Extends": "Constraint2D",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Length",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "MaxLength",
+          "Type": "number",
+          "Default": "1000"
+        },
+        {
+          "Name": "MinLength",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "4"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SpriteAnimator",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Columns",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "FirstFrame",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Frame",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "FrameCount",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "FrameSize",
+          "Type": "Vector2",
+          "Default": "Vector2.new(16, 16)"
+        },
+        {
+          "Name": "FramesPerSecond",
+          "Type": "number",
+          "Default": "8"
+        },
+        {
+          "Name": "Looped",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Playing",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "SheetOffset",
+          "Type": "Vector2"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "StreamingService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "LoadRadius",
+          "Type": "number",
+          "Default": "1024",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "MinRadius",
+          "Type": "number",
+          "Default": "512",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "PauseOutsideLoadedArea",
+          "Type": "boolean",
+          "Default": "false",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "StructureLoadRadius",
+          "Type": "number",
+          "Default": "0",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "StructureMinRadius",
+          "Type": "number",
+          "Default": "0",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "TerrainLoadRadius",
+          "Type": "number",
+          "Default": "0",
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "TerrainMinRadius",
+          "Type": "number",
+          "Default": "0",
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "AddFocus",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LoadAreaAsync",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RemoveFocus",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "AreaLoaded",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "InstanceStreamedOut",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "SunRaysEffect",
+      "Extends": "PostEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Intensity",
+          "Type": "number",
+          "Default": "0.25"
+        },
+        {
+          "Name": "Spread",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SurfaceGui",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Adornee",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "AlwaysOnTop",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Face",
+          "Type": "Enum.Face",
+          "Default": "Enum.Face.Front"
+        },
+        {
+          "Name": "PixelsPerMetre",
+          "Type": "number",
+          "Default": "50"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "TagService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetAllTags",
+          "Parameters": [],
+          "Returns": ["{string}"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "GetInstanceAddedSignal",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Signal<Instance>"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetInstanceRemovedSignal",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Signal<Instance>"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetTagged",
+          "Parameters": [
+            {
+              "Name": "tag",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{Instance}"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Team",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AutoAssign",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetPlayers",
+          "Parameters": [],
+          "Returns": ["{ Player }"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "TeamService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "GetTeams",
+          "Parameters": [],
+          "Returns": ["{ Team }"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Terrain",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CellCount",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "CellSize",
+          "Type": "number",
+          "ReadOnly": true,
+          "Default": "64",
+          "Inert": true
+        },
+        {
+          "Name": "MaxHeight",
+          "Type": "number",
+          "Default": "256"
+        },
+        {
+          "Name": "MinHeight",
+          "Type": "number",
+          "Default": "-256"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "Default": "vector.zero"
+        },
+        {
+          "Name": "VoxelSize",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "CellCenterToWorld",
+          "Parameters": [
+            {
+              "Name": "cell",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Clear",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Compact",
+          "Parameters": [],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FillBall",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "material",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FillBlock",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "size",
+              "Type": "vector"
+            },
+            {
+              "Name": "material",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FillCylinder",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "height",
+              "Type": "number"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "material",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FlattenBall",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "height",
+              "Type": "number"
+            },
+            {
+              "Name": "strength",
+              "Type": "number?"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "HeightAt",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number"
+            },
+            {
+              "Name": "z",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "PaintBall",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "material",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RaiseBall",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "amount",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ReadVoxels",
+          "Parameters": [
+            {
+              "Name": "minCorner",
+              "Type": "vector"
+            },
+            {
+              "Name": "maxCorner",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["{ number }", "{ number }", "vector"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ReplaceMaterial",
+          "Parameters": [
+            {
+              "Name": "minCorner",
+              "Type": "vector"
+            },
+            {
+              "Name": "maxCorner",
+              "Type": "vector"
+            },
+            {
+              "Name": "from",
+              "Type": "number"
+            },
+            {
+              "Name": "to",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SmoothBall",
+          "Parameters": [
+            {
+              "Name": "center",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "strength",
+              "Type": "number?"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "WorldToCell",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "WriteHeights",
+          "Parameters": [
+            {
+              "Name": "corner",
+              "Type": "vector"
+            },
+            {
+              "Name": "columns",
+              "Type": "number"
+            },
+            {
+              "Name": "heights",
+              "Type": "{ number }"
+            },
+            {
+              "Name": "material",
+              "Type": "number?"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "WriteVoxels",
+          "Parameters": [
+            {
+              "Name": "corner",
+              "Type": "vector"
+            },
+            {
+              "Name": "size",
+              "Type": "vector"
+            },
+            {
+              "Name": "materials",
+              "Type": "{ number }"
+            },
+            {
+              "Name": "occupancies",
+              "Type": "{ number }"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "TextButton",
+      "Extends": "TextLabel",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "TextInput",
+      "Extends": "TextLabel",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "PlaceholderText",
+          "Type": "string",
+          "Default": "\"\""
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "FocusLost",
+          "Parameters": [
+            {
+              "Name": "submitted",
+              "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "Focused",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "TextLabel",
+      "Extends": "UIObject",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Font",
+          "Type": "Content",
+          "Default": "\"\""
+        },
+        {
+          "Name": "RichText",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Text",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "TextColor",
+          "Type": "Color3",
+          "Default": "Color3.new(0, 0, 0)"
+        },
+        {
+          "Name": "TextScaled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "TextSize",
+          "Type": "number",
+          "Default": "14"
+        },
+        {
+          "Name": "TextTransparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TextWrapped",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "TextXAlignment",
+          "Type": "Enum.HorizontalAlignment",
+          "Default": "Enum.HorizontalAlignment.Center"
+        },
+        {
+          "Name": "TextYAlignment",
+          "Type": "Enum.VerticalAlignment",
+          "Default": "Enum.VerticalAlignment.Center"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Tilemap2D",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CellSize",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Collides",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "CollisionGroup",
+          "Type": "string",
+          "Default": "\"Default\""
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "Filter",
+          "Type": "Enum.TextureFilter",
+          "Default": "Enum.TextureFilter.Nearest"
+        },
+        {
+          "Name": "Friction",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "Position",
+          "Type": "Vector2"
+        },
+        {
+          "Name": "TileSize",
+          "Type": "Vector2",
+          "Default": "Vector2.new(16, 16)"
+        },
+        {
+          "Name": "Tileset",
+          "Type": "Content"
+        },
+        {
+          "Name": "ZIndex",
+          "Type": "number"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Clear",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FillRect",
+          "Parameters": [
+            {
+              "Name": "x0",
+              "Type": "number"
+            },
+            {
+              "Name": "y0",
+              "Type": "number"
+            },
+            {
+              "Name": "x1",
+              "Type": "number"
+            },
+            {
+              "Name": "y1",
+              "Type": "number"
+            },
+            {
+              "Name": "tile",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetCell",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number"
+            },
+            {
+              "Name": "y",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "SetCell",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number"
+            },
+            {
+              "Name": "y",
+              "Type": "number"
+            },
+            {
+              "Name": "tile",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "TweenService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Create",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            },
+            {
+              "Name": "tweenInfo",
+              "Type": "TweenInfo"
+            },
+            {
+              "Name": "goals",
+              "Type": "{ [string]: any }"
+            }
+          ],
+          "Returns": ["Tween"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetValue",
+          "Parameters": [
+            {
+              "Name": "alpha",
+              "Type": "number"
+            },
+            {
+              "Name": "easingStyle",
+              "Type": "Enum.EasingStyle"
+            },
+            {
+              "Name": "easingDirection",
+              "Type": "Enum.EasingDirection"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "UICorner",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CornerRadius",
+          "Type": "UDim",
+          "Default": "UDim.new(0, 8)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UIListLayout",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "FillDirection",
+          "Type": "Enum.FillDirection",
+          "Default": "Enum.FillDirection.Vertical"
+        },
+        {
+          "Name": "HorizontalAlignment",
+          "Type": "Enum.HorizontalAlignment",
+          "Default": "Enum.HorizontalAlignment.Left"
+        },
+        {
+          "Name": "Padding",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        },
+        {
+          "Name": "SortOrder",
+          "Type": "Enum.SortOrder",
+          "Default": "Enum.SortOrder.LayoutOrder"
+        },
+        {
+          "Name": "VerticalAlignment",
+          "Type": "Enum.VerticalAlignment",
+          "Default": "Enum.VerticalAlignment.Top"
+        },
+        {
+          "Name": "Wraps",
+          "Type": "boolean",
+          "Default": "false"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UIObject",
+      "Extends": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "AbsolutePosition",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "AbsoluteSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "AnchorPoint",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        },
+        {
+          "Name": "AutomaticSize",
+          "Type": "Enum.AutomaticSize",
+          "Default": "Enum.AutomaticSize.None"
+        },
+        {
+          "Name": "BackgroundColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "BackgroundTransparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "ClipsDescendants",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "LayoutOrder",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Position",
+          "Type": "UDim2",
+          "Default": "UDim2.new()"
+        },
+        {
+          "Name": "Rotation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Size",
+          "Type": "UDim2",
+          "Default": "UDim2.new()"
+        },
+        {
+          "Name": "Visible",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "ZIndex",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "Activated",
+          "Parameters": []
+        },
+        {
+          "Name": "PointerEntered",
+          "Parameters": []
+        },
+        {
+          "Name": "PointerExited",
+          "Parameters": []
+        }
+      ]
+    },
+    {
+      "Name": "UIPadding",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "PaddingBottom",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        },
+        {
+          "Name": "PaddingLeft",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        },
+        {
+          "Name": "PaddingRight",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        },
+        {
+          "Name": "PaddingTop",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UIService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "DisplayScale",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "SafeAreaInsets",
+          "Type": "Rect",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "ScreenOrientation",
+          "Type": "Enum.ScreenOrientation",
+          "Default": "Enum.ScreenOrientation.LandscapeSensor"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "VoxelService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "BlockSize",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "BlockTypeCount",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "ChunkCount",
+          "Type": "number",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "BlockToWorld",
+          "Parameters": [
+            {
+              "Name": "block",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Clear",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "FillBlocks",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "vector"
+            },
+            {
+              "Name": "to",
+              "Type": "vector"
+            },
+            {
+              "Name": "id",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetBlock",
+          "Parameters": [
+            {
+              "Name": "block",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "GetBlockId",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number?"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "GetFluidDepth",
+          "Parameters": [
+            {
+              "Name": "block",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Raycast",
+          "Parameters": [
+            {
+              "Name": "origin",
+              "Type": "vector"
+            },
+            {
+              "Name": "direction",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector?", "vector?"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "RegisterBlock",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "color",
+              "Type": "Color3"
+            },
+            {
+              "Name": "sideColor",
+              "Type": "Color3?"
+            },
+            {
+              "Name": "bottomColor",
+              "Type": "Color3?"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetBlock",
+          "Parameters": [
+            {
+              "Name": "block",
+              "Type": "vector"
+            },
+            {
+              "Name": "id",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetBlockFluid",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "number"
+            },
+            {
+              "Name": "reach",
+              "Type": "number"
+            },
+            {
+              "Name": "ticksPerStep",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetBlockOpacity",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "number"
+            },
+            {
+              "Name": "opacity",
+              "Type": "Enum.BlockOpacity"
+            },
+            {
+              "Name": "transparency",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetBlockTextures",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "number"
+            },
+            {
+              "Name": "texture",
+              "Type": "string"
+            },
+            {
+              "Name": "sideTexture",
+              "Type": "string?"
+            },
+            {
+              "Name": "bottomTexture",
+              "Type": "string?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetFluidReaction",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "number"
+            },
+            {
+              "Name": "touching",
+              "Type": "number"
+            },
+            {
+              "Name": "result",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "WorldToBlock",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "Weld",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "C0",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "C1",
+          "Type": "CFrame"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Part0",
+          "Type": "Instance?"
+        },
+        {
+          "Name": "Part1",
+          "Type": "BasePart?"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "WeldConstraint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Active",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Part0",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "Part1",
+          "Type": "BasePart?"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "WeldConstraint2D",
+      "Extends": "Constraint2D",
+      "Tags": [],
+      "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Workspace",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "CurrentCamera",
+          "Type": "Camera?"
+        },
+        {
+          "Name": "Gravity",
+          "Type": "vector",
+          "Default": "vector.create(0, -9.81, 0)"
+        },
+        {
+          "Name": "Terrain",
+          "Type": "Terrain?",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetBodiesInBox",
+          "Parameters": [
+            {
+              "Name": "cframe",
+              "Type": "CFrame"
+            },
+            {
+              "Name": "size",
+              "Type": "vector"
+            },
+            {
+              "Name": "params",
+              "Type": "RaycastParams?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["{BasePart}"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Raycast",
+          "Parameters": [
+            {
+              "Name": "origin",
+              "Type": "vector"
+            },
+            {
+              "Name": "direction",
+              "Type": "vector"
+            },
+            {
+              "Name": "params",
+              "Type": "RaycastParams?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["RaycastResult?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Raycast2D",
+          "Parameters": [
+            {
+              "Name": "origin",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "direction",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "params",
+              "Type": "RaycastParams?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["RaycastResult2D?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Spherecast",
+          "Parameters": [
+            {
+              "Name": "origin",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
+            },
+            {
+              "Name": "direction",
+              "Type": "vector"
+            },
+            {
+              "Name": "params",
+              "Type": "RaycastParams?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["RaycastResult?"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    }
+  ],
+  "Datatypes": [
+    {
+      "Name": "AnimationTrack",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Ended",
+          "Type": "Signal<>",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Length",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Looped",
+          "Type": "boolean",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Playing",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Speed",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "TimePosition",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Weight",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Play",
+          "Parameters": [
+            {
+              "Name": "fadeTime",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Stop",
+          "Parameters": [
+            {
+              "Name": "fadeTime",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "CFrame",
+      "Constructors": [
+        {
+          "Name": "fromAxisAngle",
+          "Parameters": [
+            {
+              "Name": "axis",
+              "Type": "vector"
+            },
+            {
+              "Name": "angle",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromEuler",
+          "Parameters": [
+            {
+              "Name": "rx",
+              "Type": "number"
+            },
+            {
+              "Name": "ry",
+              "Type": "number"
+            },
+            {
+              "Name": "rz",
+              "Type": "number"
+            },
+            {
+              "Name": "order",
+              "Type": "Enum.RotationOrder?",
+              "Default": "Enum.RotationOrder.YXZ"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromMatrix",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "right",
+              "Type": "vector"
+            },
+            {
+              "Name": "up",
+              "Type": "vector"
+            },
+            {
+              "Name": "back",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromQuaternion",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "qx",
+              "Type": "number"
+            },
+            {
+              "Name": "qy",
+              "Type": "number"
+            },
+            {
+              "Name": "qz",
+              "Type": "number"
+            },
+            {
+              "Name": "qw",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "lookAt",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "target",
+              "Type": "vector"
+            },
+            {
+              "Name": "up",
+              "Type": "vector?",
+              "Default": "Vector3.new(0, 1, 0)"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "y",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "z",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [
+        {
+          "Name": "identity",
+          "Type": "CFrame",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Properties": [
+        {
+          "Name": "LookVector",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "RightVector",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Rotation",
+          "Type": "CFrame",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "UpVector",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Inverse",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Lerp",
+          "Parameters": [
+            {
+              "Name": "goal",
+              "Type": "CFrame"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Orthonormalize",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "PointToObjectSpace",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "PointToWorldSpace",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToAxisAngle",
+          "Parameters": [],
+          "Returns": ["vector", "number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToEuler",
+          "Parameters": [
+            {
+              "Name": "order",
+              "Type": "Enum.RotationOrder?",
+              "Default": "Enum.RotationOrder.YXZ"
+            }
+          ],
+          "Returns": ["number", "number", "number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToObjectSpace",
+          "Parameters": [
+            {
+              "Name": "cf",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToQuaternion",
+          "Parameters": [],
+          "Returns": ["number", "number", "number", "number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToWorldSpace",
+          "Parameters": [
+            {
+              "Name": "cf",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "VectorToObjectSpace",
+          "Parameters": [
+            {
+              "Name": "direction",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "VectorToWorldSpace",
+          "Parameters": [
+            {
+              "Name": "direction",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "__mul",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": ["CFrame"]
+        },
+        {
+          "Name": "__mul",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"]
+        }
+      ]
+    },
+    {
+      "Name": "Collector",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [],
+          "Returns": ["Collector"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Add",
+          "Parameters": [
+            {
+              "Name": "object",
+              "Type": "any"
+            },
+            {
+              "Name": "method",
+              "Type": "(string | boolean)?",
+              "Default": "nil"
+            },
+            {
+              "Name": "key",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "AddPromise",
+          "Parameters": [
+            {
+              "Name": "promise",
+              "Type": "Promise"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Cleanup",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Destroy",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Get",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "any"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LinkToInstance",
+          "Parameters": [
+            {
+              "Name": "instance",
+              "Type": "Instance"
+            },
+            {
+              "Name": "allowMultiple",
+              "Type": "boolean?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Connection"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Remove",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "RemoveNoClean",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "Color3",
+      "Constructors": [
+        {
+          "Name": "fromHSV",
+          "Parameters": [
+            {
+              "Name": "h",
+              "Type": "number"
+            },
+            {
+              "Name": "s",
+              "Type": "number"
+            },
+            {
+              "Name": "v",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Color3"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromHex",
+          "Parameters": [
+            {
+              "Name": "hex",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Color3"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromRGB",
+          "Parameters": [
+            {
+              "Name": "r",
+              "Type": "number"
+            },
+            {
+              "Name": "g",
+              "Type": "number"
+            },
+            {
+              "Name": "b",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Color3"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "r",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "g",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "b",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["Color3"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "B",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "G",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "R",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Lerp",
+          "Parameters": [
+            {
+              "Name": "goal",
+              "Type": "Color3"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Color3"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToHSV",
+          "Parameters": [],
+          "Returns": ["number", "number", "number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ToHex",
+          "Parameters": [],
+          "Returns": ["string"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Color3"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
+      "Name": "Connection",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Connected",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "ThreadSafety": "ReadParallel",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Disconnect",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "InputObject",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Delta",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "KeyCode",
+          "Type": "Enum.KeyCode",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "TouchId",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "UserInputType",
+          "Type": "Enum.UserInputType",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": []
+    },
+    {
+      "Name": "Material",
+      "Constructors": [
+        {
+          "Name": "load",
+          "Parameters": [
+            {
+              "Name": "content",
+              "Type": "Content"
+            }
+          ],
+          "Returns": ["Material"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "AlphaCutoff",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "AlphaMode",
+          "Type": "Enum.AlphaMode",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ColorMap",
+          "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "DoubleSided",
+          "Type": "boolean",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Emissive",
+          "Type": "Color3",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "EmissiveMap",
+          "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "MetallicRoughnessMap",
+          "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Metalness",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "NormalMap",
+          "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "NormalScale",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Roughness",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Source",
+          "Type": "Content",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Clone",
+          "Parameters": [],
+          "Returns": ["Material"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetShaderParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["(number | Vector2 | vector | { number } | string)?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetShaderParameter",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "number | boolean | Vector2 | vector | Color3 | { number } | string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "Promise",
+      "Constructors": [
+        {
+          "Name": "all",
+          "Parameters": [
+            {
+              "Name": "promises",
+              "Type": "{ Promise }"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "allSettled",
+          "Parameters": [
+            {
+              "Name": "promises",
+              "Type": "{ Promise }"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "any",
+          "Parameters": [
+            {
+              "Name": "promises",
+              "Type": "{ Promise }"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "defer",
+          "Parameters": [
+            {
+              "Name": "executor",
+              "Type": "(resolve: (...any) -> (), reject: (...any) -> (), onCancel: (hook: (() -> ())?) -> boolean) -> ()"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "delay",
+          "Parameters": [
+            {
+              "Name": "seconds",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "fromEvent",
+          "Parameters": [
+            {
+              "Name": "event",
+              "Type": "Signal<...any>"
+            },
+            {
+              "Name": "predicate",
+              "Type": "((...any) -> boolean)?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "is",
+          "Parameters": [
+            {
+              "Name": "value",
+              "Type": "any"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "executor",
+              "Type": "(resolve: (...any) -> (), reject: (...any) -> (), onCancel: (hook: (() -> ())?) -> boolean) -> ()"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "promisify",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            }
+          ],
+          "Returns": ["(...any) -> Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "race",
+          "Parameters": [
+            {
+              "Name": "promises",
+              "Type": "{ Promise }"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "reject",
+          "Parameters": [
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "resolve",
+          "Parameters": [
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "retry",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            },
+            {
+              "Name": "times",
+              "Type": "number"
+            },
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "retryWithDelay",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            },
+            {
+              "Name": "times",
+              "Type": "number"
+            },
+            {
+              "Name": "seconds",
+              "Type": "number"
+            },
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "some",
+          "Parameters": [
+            {
+              "Name": "promises",
+              "Type": "{ Promise }"
+            },
+            {
+              "Name": "count",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "try",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            },
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "AndThen",
+          "Parameters": [
+            {
+              "Name": "onResolved",
+              "Type": "((...any) -> ...any)?",
+              "Default": "nil"
+            },
+            {
+              "Name": "onRejected",
+              "Type": "((...any) -> ...any)?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "AndThenCall",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            },
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "AndThenReturn",
+          "Parameters": [
+            {
+              "Name": "values",
+              "Type": "...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Await",
+          "Parameters": [],
+          "Returns": ["boolean", "...any"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "AwaitStatus",
+          "Parameters": [],
+          "Returns": ["EnumPromiseState", "...any"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Cancel",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Catch",
+          "Parameters": [
+            {
+              "Name": "onRejected",
+              "Type": "(...any) -> ...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ExpectAsync",
+          "Parameters": [],
+          "Returns": ["...any"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Finally",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(status: EnumPromiseState) -> ...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetStatus",
+          "Parameters": [],
+          "Returns": ["EnumPromiseState"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Now",
+          "Parameters": [
+            {
+              "Name": "rejection",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Tap",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(...any) -> ...any"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Timeout",
+          "Parameters": [
+            {
+              "Name": "seconds",
+              "Type": "number"
+            },
+            {
+              "Name": "rejection",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Promise"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "Random",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "seed",
+              "Type": "number?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["Random"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Clone",
+          "Parameters": [],
+          "Returns": ["Random"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "NextInteger",
+          "Parameters": [
+            {
+              "Name": "min",
+              "Type": "number"
+            },
+            {
+              "Name": "max",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "NextNumber",
+          "Parameters": [
+            {
+              "Name": "min",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "max",
+              "Type": "number?",
+              "Default": "1"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "NextUnitVector",
+          "Parameters": [],
+          "Returns": ["vector"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "RaycastParams",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "options",
+              "Type": "{ Filter: { Instance }?, FilterType: Enum.RaycastFilterType?, CollisionGroup: string? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["RaycastParams"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "CollisionGroup",
+          "Type": "string",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Filter",
+          "Type": "{ Instance }",
+          "ReadOnly": true
+        },
+        {
+          "Name": "FilterType",
+          "Type": "Enum.RaycastFilterType",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [],
+      "Operators": []
+    },
+    {
+      "Name": "RaycastResult",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Distance",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Instance",
+          "Type": "BasePart",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Normal",
+          "Type": "vector",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [],
+      "Operators": []
+    },
+    {
+      "Name": "RaycastResult2D",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Distance",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Instance",
+          "Type": "Instance",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Normal",
+          "Type": "Vector2",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Position",
+          "Type": "Vector2",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [],
+      "Operators": []
+    },
+    {
+      "Name": "Rect",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "min",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "max",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Rect"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Height",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Max",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Min",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Width",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Rect"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
+      "Name": "Signal",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [],
+          "Returns": ["Signal<T...>"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Connect",
+          "Parameters": [
+            {
+              "Name": "handler",
+              "Type": "(T...) -> ()"
+            }
+          ],
+          "Returns": ["Connection"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Destroy",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DisconnectAll",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Fire",
+          "Parameters": [
+            {
+              "Name": "values",
+              "Type": "T..."
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Once",
+          "Parameters": [
+            {
+              "Name": "handler",
+              "Type": "(T...) -> ()"
+            }
+          ],
+          "Returns": ["Connection"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Wait",
+          "Parameters": [],
+          "Returns": ["T..."],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "Tween",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Completed",
+          "Type": "Signal<EnumPlaybackState>",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Instance",
+          "Type": "Instance?",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "PlaybackState",
+          "Type": "Enum.PlaybackState",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "TweenInfo",
+          "Type": "TweenInfo",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Cancel",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Pause",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Play",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "TweenInfo",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "time",
+              "Type": "number?",
+              "Default": "1"
+            },
+            {
+              "Name": "easingStyle",
+              "Type": "Enum.EasingStyle?",
+              "Default": "Enum.EasingStyle.Quad"
+            },
+            {
+              "Name": "easingDirection",
+              "Type": "Enum.EasingDirection?",
+              "Default": "Enum.EasingDirection.Out"
+            },
+            {
+              "Name": "repeatCount",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "reverses",
+              "Type": "boolean?",
+              "Default": "false"
+            },
+            {
+              "Name": "delayTime",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["TweenInfo"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "DelayTime",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "EasingDirection",
+          "Type": "Enum.EasingDirection",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "EasingStyle",
+          "Type": "Enum.EasingStyle",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "RepeatCount",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Reverses",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Time",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "TweenInfo"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
+      "Name": "UDim",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "scale",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "offset",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["UDim"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Offset",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Scale",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__add",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim"
+            }
+          ],
+          "Returns": ["UDim"]
+        },
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "__sub",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim"
+            }
+          ],
+          "Returns": ["UDim"]
+        }
+      ]
+    },
+    {
+      "Name": "UDim2",
+      "Constructors": [
+        {
+          "Name": "fromOffset",
+          "Parameters": [
+            {
+              "Name": "xo",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "yo",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["UDim2"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "fromScale",
+          "Parameters": [
+            {
+              "Name": "xs",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "ys",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["UDim2"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "xs",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "xo",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "ys",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "yo",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["UDim2"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "X",
+          "Type": "UDim",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Y",
+          "Type": "UDim",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Lerp",
+          "Parameters": [
+            {
+              "Name": "goal",
+              "Type": "UDim2"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["UDim2"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Operators": [
+        {
+          "Name": "__add",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim2"
+            }
+          ],
+          "Returns": ["UDim2"]
+        },
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim2"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "__sub",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "UDim2"
+            }
+          ],
+          "Returns": ["UDim2"]
+        }
+      ]
+    },
+    {
+      "Name": "Vector2",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "y",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["Vector2"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [
+        {
+          "Name": "one",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "zero",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Properties": [
+        {
+          "Name": "Magnitude",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Unit",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "X",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Y",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Dot",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Lerp",
+          "Parameters": [
+            {
+              "Name": "goal",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Vector2"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Operators": [
+        {
+          "Name": "__add",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__div",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__div",
+          "Parameters": [
+            {
+              "Name": "scalar",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "__mul",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__mul",
+          "Parameters": [
+            {
+              "Name": "scalar",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__sub",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Vector2"]
+        },
+        {
+          "Name": "__unm",
+          "Parameters": [],
+          "Returns": ["Vector2"]
+        }
+      ]
+    },
+    {
+      "Name": "Vector3",
+      "Constructors": [
+        {
+          "Name": "abs",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "angle",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "b",
+              "Type": "vector"
+            },
+            {
+              "Name": "axis",
+              "Type": "vector?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "ceil",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "clamp",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            },
+            {
+              "Name": "min",
+              "Type": "vector"
+            },
+            {
+              "Name": "max",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "create",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number"
+            },
+            {
+              "Name": "y",
+              "Type": "number"
+            },
+            {
+              "Name": "z",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "cross",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "b",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "dot",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "b",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "floor",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "lerp",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "b",
+              "Type": "vector"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "magnitude",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "max",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "rest",
+              "Type": "...vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "min",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "vector"
+            },
+            {
+              "Name": "rest",
+              "Type": "...vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "x",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "y",
+              "Type": "number?",
+              "Default": "0"
+            },
+            {
+              "Name": "z",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "normalize",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "sign",
+          "Parameters": [
+            {
+              "Name": "v",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [
+        {
+          "Name": "one",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "zero",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Properties": [
+        {
+          "Name": "Magnitude",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Unit",
+          "Type": "vector",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "x",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "y",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "z",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Angle",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "vector"
+            },
+            {
+              "Name": "axis",
+              "Type": "vector?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Cross",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Dot",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Lerp",
+          "Parameters": [
+            {
+              "Name": "goal",
+              "Type": "vector"
+            },
+            {
+              "Name": "alpha",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Operators": []
+    }
+  ],
+  "Enums": [
+    {
+      "Name": "AlphaMode",
+      "Items": [
+        {
+          "Name": "Blend",
+          "Value": 2
+        },
+        {
+          "Name": "Mask",
+          "Value": 1
+        },
+        {
+          "Name": "Opaque",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "AutomaticSize",
+      "Items": [
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "X",
+          "Value": 1
+        },
+        {
+          "Name": "XY",
+          "Value": 3
+        },
+        {
+          "Name": "Y",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "BlockOpacity",
+      "Items": [
+        {
+          "Name": "Cutout",
+          "Value": 1
+        },
+        {
+          "Name": "Opaque",
+          "Value": 0
+        },
+        {
+          "Name": "Translucent",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "CameraProjection",
+      "Items": [
+        {
+          "Name": "Orthographic",
+          "Value": 1
+        },
+        {
+          "Name": "Perspective",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "CharacterState",
+      "Items": [
+        {
+          "Name": "Airborne",
+          "Value": 1
+        },
+        {
+          "Name": "Grounded",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "CollisionFidelity",
+      "Items": [
+        {
+          "Name": "Box",
+          "Value": 2
+        },
+        {
+          "Name": "Default",
+          "Value": 0
+        },
+        {
+          "Name": "Hull",
+          "Value": 1
+        },
+        {
+          "Name": "Precise",
+          "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "EasingDirection",
+      "Items": [
+        {
+          "Name": "In",
+          "Value": 0
+        },
+        {
+          "Name": "InOut",
+          "Value": 2
+        },
+        {
+          "Name": "Out",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "EasingStyle",
+      "Items": [
+        {
+          "Name": "Back",
+          "Value": 8
+        },
+        {
+          "Name": "Bounce",
+          "Value": 9
+        },
+        {
+          "Name": "Circular",
+          "Value": 7
+        },
+        {
+          "Name": "Cubic",
+          "Value": 3
+        },
+        {
+          "Name": "Elastic",
+          "Value": 10
+        },
+        {
+          "Name": "Exponential",
+          "Value": 6
+        },
+        {
+          "Name": "Linear",
+          "Value": 0
+        },
+        {
+          "Name": "Quad",
+          "Value": 2
+        },
+        {
+          "Name": "Quart",
+          "Value": 4
+        },
+        {
+          "Name": "Quint",
+          "Value": 5
+        },
+        {
+          "Name": "Sine",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "Face",
+      "Items": [
+        {
+          "Name": "Back",
+          "Value": 1
+        },
+        {
+          "Name": "Bottom",
+          "Value": 3
+        },
+        {
+          "Name": "Front",
+          "Value": 0
+        },
+        {
+          "Name": "Left",
+          "Value": 5
+        },
+        {
+          "Name": "Right",
+          "Value": 4
+        },
+        {
+          "Name": "Top",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "FillDirection",
+      "Items": [
+        {
+          "Name": "Horizontal",
+          "Value": 0
+        },
+        {
+          "Name": "Vertical",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "HorizontalAlignment",
+      "Items": [
+        {
+          "Name": "Center",
+          "Value": 1
+        },
+        {
+          "Name": "Left",
+          "Value": 0
+        },
+        {
+          "Name": "Right",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "InputActionType",
+      "Items": [
+        {
+          "Name": "Bool",
+          "Value": 0
+        },
+        {
+          "Name": "Direction1D",
+          "Value": 1
+        },
+        {
+          "Name": "Direction2D",
+          "Value": 2
+        },
+        {
+          "Name": "Direction3D",
+          "Value": 3
+        },
+        {
+          "Name": "ViewportPosition",
+          "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "InputDeviceType",
+      "Items": [
+        {
+          "Name": "Gamepad",
+          "Value": 1
+        },
+        {
+          "Name": "KeyboardMouse",
+          "Value": 0
+        },
+        {
+          "Name": "Touch",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "InputRate",
+      "Items": [
+        {
+          "Name": "Render",
+          "Value": 1
+        },
+        {
+          "Name": "Simulation",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "KeyCode",
+      "Items": [
+        {
+          "Name": "A",
+          "Value": 14
+        },
+        {
+          "Name": "B",
+          "Value": 15
+        },
+        {
+          "Name": "Backspace",
+          "Value": 53
+        },
+        {
+          "Name": "ButtonBack",
+          "Value": 78
+        },
+        {
+          "Name": "ButtonEast",
+          "Value": 75
+        },
+        {
+          "Name": "ButtonGuide",
+          "Value": 79
+        },
+        {
+          "Name": "ButtonLeftShoulder",
+          "Value": 83
+        },
+        {
+          "Name": "ButtonLeftStick",
+          "Value": 81
+        },
+        {
+          "Name": "ButtonNorth",
+          "Value": 77
+        },
+        {
+          "Name": "ButtonRightShoulder",
+          "Value": 84
+        },
+        {
+          "Name": "ButtonRightStick",
+          "Value": 82
+        },
+        {
+          "Name": "ButtonSouth",
+          "Value": 74
+        },
+        {
+          "Name": "ButtonStart",
+          "Value": 80
+        },
+        {
+          "Name": "ButtonWest",
+          "Value": 76
+        },
+        {
+          "Name": "C",
+          "Value": 16
+        },
+        {
+          "Name": "D",
+          "Value": 17
+        },
+        {
+          "Name": "Delete",
+          "Value": 66
+        },
+        {
+          "Name": "Digit0",
+          "Value": 40
+        },
+        {
+          "Name": "Digit1",
+          "Value": 41
+        },
+        {
+          "Name": "Digit2",
+          "Value": 42
+        },
+        {
+          "Name": "Digit3",
+          "Value": 43
+        },
+        {
+          "Name": "Digit4",
+          "Value": 44
+        },
+        {
+          "Name": "Digit5",
+          "Value": 45
+        },
+        {
+          "Name": "Digit6",
+          "Value": 46
+        },
+        {
+          "Name": "Digit7",
+          "Value": 47
+        },
+        {
+          "Name": "Digit8",
+          "Value": 48
+        },
+        {
+          "Name": "Digit9",
+          "Value": 49
+        },
+        {
+          "Name": "Down",
+          "Value": 63
+        },
+        {
+          "Name": "DpadDown",
+          "Value": 86
+        },
+        {
+          "Name": "DpadLeft",
+          "Value": 87
+        },
+        {
+          "Name": "DpadRight",
+          "Value": 88
+        },
+        {
+          "Name": "DpadUp",
+          "Value": 85
+        },
+        {
+          "Name": "E",
+          "Value": 18
+        },
+        {
+          "Name": "End",
+          "Value": 65
+        },
+        {
+          "Name": "Escape",
+          "Value": 1
+        },
+        {
+          "Name": "F",
+          "Value": 19
+        },
+        {
+          "Name": "F1",
+          "Value": 2
+        },
+        {
+          "Name": "F10",
+          "Value": 11
+        },
+        {
+          "Name": "F11",
+          "Value": 12
+        },
+        {
+          "Name": "F12",
+          "Value": 13
+        },
+        {
+          "Name": "F2",
+          "Value": 3
+        },
+        {
+          "Name": "F3",
+          "Value": 4
+        },
+        {
+          "Name": "F4",
+          "Value": 5
+        },
+        {
+          "Name": "F5",
+          "Value": 6
+        },
+        {
+          "Name": "F6",
+          "Value": 7
+        },
+        {
+          "Name": "F7",
+          "Value": 8
+        },
+        {
+          "Name": "F8",
+          "Value": 9
+        },
+        {
+          "Name": "F9",
+          "Value": 10
+        },
+        {
+          "Name": "G",
+          "Value": 20
+        },
+        {
+          "Name": "H",
+          "Value": 21
+        },
+        {
+          "Name": "Home",
+          "Value": 64
+        },
+        {
+          "Name": "I",
+          "Value": 22
+        },
+        {
+          "Name": "J",
+          "Value": 23
+        },
+        {
+          "Name": "K",
+          "Value": 24
+        },
+        {
+          "Name": "L",
+          "Value": 25
+        },
+        {
+          "Name": "Left",
+          "Value": 60
+        },
+        {
+          "Name": "LeftAlt",
+          "Value": 58
+        },
+        {
+          "Name": "LeftControl",
+          "Value": 56
+        },
+        {
+          "Name": "LeftShift",
+          "Value": 54
+        },
+        {
+          "Name": "LeftStickX",
+          "Value": 89
+        },
+        {
+          "Name": "LeftStickY",
+          "Value": 90
+        },
+        {
+          "Name": "LeftThumbstick",
+          "Value": 95
+        },
+        {
+          "Name": "LeftTrigger",
+          "Value": 93
+        },
+        {
+          "Name": "M",
+          "Value": 26
+        },
+        {
+          "Name": "MouseLeft",
+          "Value": 67
+        },
+        {
+          "Name": "MouseMiddle",
+          "Value": 68
+        },
+        {
+          "Name": "MouseMovement",
+          "Value": 72
+        },
+        {
+          "Name": "MouseRight",
+          "Value": 69
+        },
+        {
+          "Name": "MouseWheel",
+          "Value": 73
+        },
+        {
+          "Name": "MouseX1",
+          "Value": 70
+        },
+        {
+          "Name": "MouseX2",
+          "Value": 71
+        },
+        {
+          "Name": "N",
+          "Value": 27
+        },
+        {
+          "Name": "O",
+          "Value": 28
+        },
+        {
+          "Name": "P",
+          "Value": 29
+        },
+        {
+          "Name": "Q",
+          "Value": 30
+        },
+        {
+          "Name": "R",
+          "Value": 31
+        },
+        {
+          "Name": "Return",
+          "Value": 51
+        },
+        {
+          "Name": "Right",
+          "Value": 61
+        },
+        {
+          "Name": "RightAlt",
+          "Value": 59
+        },
+        {
+          "Name": "RightControl",
+          "Value": 57
+        },
+        {
+          "Name": "RightShift",
+          "Value": 55
+        },
+        {
+          "Name": "RightStickX",
+          "Value": 91
+        },
+        {
+          "Name": "RightStickY",
+          "Value": 92
+        },
+        {
+          "Name": "RightThumbstick",
+          "Value": 96
+        },
+        {
+          "Name": "RightTrigger",
+          "Value": 94
+        },
+        {
+          "Name": "S",
+          "Value": 32
+        },
+        {
+          "Name": "Space",
+          "Value": 50
+        },
+        {
+          "Name": "T",
+          "Value": 33
+        },
+        {
+          "Name": "Tab",
+          "Value": 52
+        },
+        {
+          "Name": "U",
+          "Value": 34
+        },
+        {
+          "Name": "Unknown",
+          "Value": 0
+        },
+        {
+          "Name": "Up",
+          "Value": 62
+        },
+        {
+          "Name": "V",
+          "Value": 35
+        },
+        {
+          "Name": "Virtual1",
+          "Value": 97
+        },
+        {
+          "Name": "Virtual2",
+          "Value": 98
+        },
+        {
+          "Name": "Virtual3",
+          "Value": 99
+        },
+        {
+          "Name": "Virtual4",
+          "Value": 100
+        },
+        {
+          "Name": "VirtualStick1",
+          "Value": 101
+        },
+        {
+          "Name": "VirtualStick2",
+          "Value": 102
+        },
+        {
+          "Name": "W",
+          "Value": 36
+        },
+        {
+          "Name": "X",
+          "Value": 37
+        },
+        {
+          "Name": "Y",
+          "Value": 38
+        },
+        {
+          "Name": "Z",
+          "Value": 39
+        }
+      ]
+    },
+    {
+      "Name": "LogLevel",
+      "Items": [
+        {
+          "Name": "Debug",
+          "Value": 1
+        },
+        {
+          "Name": "Error",
+          "Value": 4
+        },
+        {
+          "Name": "Info",
+          "Value": 2
+        },
+        {
+          "Name": "Trace",
+          "Value": 0
+        },
+        {
+          "Name": "Warning",
+          "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "NetworkState",
+      "Items": [
+        {
+          "Name": "Connected",
+          "Value": 2
+        },
+        {
+          "Name": "Connecting",
+          "Value": 1
+        },
+        {
+          "Name": "Hosting",
+          "Value": 3
+        },
+        {
+          "Name": "Offline",
+          "Value": 0
+        },
+        {
+          "Name": "Serving",
+          "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "NetworkTopology",
+      "Items": [
+        {
+          "Name": "Dedicated",
+          "Value": 2
+        },
+        {
+          "Name": "Host",
+          "Value": 1
+        },
+        {
+          "Name": "Replica",
+          "Value": 3
+        },
+        {
+          "Name": "Solo",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "PartShape",
+      "Items": [
+        {
+          "Name": "Ball",
+          "Value": 1
+        },
+        {
+          "Name": "Block",
+          "Value": 0
+        },
+        {
+          "Name": "Capsule",
+          "Value": 3
+        },
+        {
+          "Name": "Cylinder",
+          "Value": 2
+        },
+        {
+          "Name": "Wedge",
+          "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "ParticleShape",
+      "Items": [
+        {
+          "Name": "Disc",
+          "Value": 1
+        },
+        {
+          "Name": "Soft",
+          "Value": 0
+        },
+        {
+          "Name": "Square",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "PlaybackState",
+      "Items": [
+        {
+          "Name": "Begin",
+          "Value": 0
+        },
+        {
+          "Name": "Cancelled",
+          "Value": 5
+        },
+        {
+          "Name": "Completed",
+          "Value": 4
+        },
+        {
+          "Name": "Delayed",
+          "Value": 1
+        },
+        {
+          "Name": "Paused",
+          "Value": 3
+        },
+        {
+          "Name": "Playing",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "PromiseState",
+      "Items": [
+        {
+          "Name": "Cancelled",
+          "Value": 3
+        },
+        {
+          "Name": "Rejected",
+          "Value": 2
+        },
+        {
+          "Name": "Resolved",
+          "Value": 1
+        },
+        {
+          "Name": "Started",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "RaycastFilterType",
+      "Items": [
+        {
+          "Name": "Exclude",
+          "Value": 0
+        },
+        {
+          "Name": "Include",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "RotationOrder",
+      "Items": [
+        {
+          "Name": "XYZ",
+          "Value": 0
+        },
+        {
+          "Name": "XZY",
+          "Value": 1
+        },
+        {
+          "Name": "YXZ",
+          "Value": 2
+        },
+        {
+          "Name": "YZX",
+          "Value": 3
+        },
+        {
+          "Name": "ZXY",
+          "Value": 4
+        },
+        {
+          "Name": "ZYX",
+          "Value": 5
+        }
+      ]
+    },
+    {
+      "Name": "RunContext",
+      "Items": [
+        {
+          "Name": "Client",
+          "Value": 0
+        },
+        {
+          "Name": "Server",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "ScaleType",
+      "Items": [
+        {
+          "Name": "Slice",
+          "Value": 1
+        },
+        {
+          "Name": "Stretch",
+          "Value": 0
+        },
+        {
+          "Name": "Tile",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ScreenOrientation",
+      "Items": [
+        {
+          "Name": "LandscapeLeft",
+          "Value": 0
+        },
+        {
+          "Name": "LandscapeRight",
+          "Value": 1
+        },
+        {
+          "Name": "LandscapeSensor",
+          "Value": 2
+        },
+        {
+          "Name": "Portrait",
+          "Value": 3
+        },
+        {
+          "Name": "Sensor",
+          "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "Shape2D",
+      "Items": [
+        {
+          "Name": "Box",
+          "Value": 0
+        },
+        {
+          "Name": "Capsule",
+          "Value": 2
+        },
+        {
+          "Name": "Circle",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "SortOrder",
+      "Items": [
+        {
+          "Name": "LayoutOrder",
+          "Value": 1
+        },
+        {
+          "Name": "Name",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "StreamingMode",
+      "Items": [
+        {
+          "Name": "Atomic",
+          "Value": 1
+        },
+        {
+          "Name": "Nonatomic",
+          "Value": 0
+        },
+        {
+          "Name": "Persistent",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "TextureFilter",
+      "Items": [
+        {
+          "Name": "Linear",
+          "Value": 0
+        },
+        {
+          "Name": "Nearest",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "UserInputType",
+      "Items": [
+        {
+          "Name": "Gamepad",
+          "Value": 7
+        },
+        {
+          "Name": "Keyboard",
+          "Value": 1
+        },
+        {
+          "Name": "MouseButton1",
+          "Value": 2
+        },
+        {
+          "Name": "MouseButton2",
+          "Value": 3
+        },
+        {
+          "Name": "MouseButton3",
+          "Value": 4
+        },
+        {
+          "Name": "MouseMovement",
+          "Value": 5
+        },
+        {
+          "Name": "MouseWheel",
+          "Value": 6
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Touch",
+          "Value": 8
+        }
+      ]
+    },
+    {
+      "Name": "VerticalAlignment",
+      "Items": [
+        {
+          "Name": "Bottom",
+          "Value": 2
+        },
+        {
+          "Name": "Center",
+          "Value": 1
+        },
+        {
+          "Name": "Top",
+          "Value": 0
+        }
+      ]
+    }
+  ],
+  "Globals": [
+    {
+      "Name": "warn",
+      "Parameters": [
+        {
+          "Name": "values",
+          "Type": "...any"
+        }
+      ],
+      "Returns": [],
+      "ThreadSafety": "Unsafe"
+    }
+  ],
+  "Libraries": [
+    {
+      "Name": "task",
+      "Functions": [
+        {
+          "Name": "cancel",
+          "Parameters": [
+            {
+              "Name": "thread",
+              "Type": "thread"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "defer",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(T...) -> ()"
+            },
+            {
+              "Name": "arguments",
+              "Type": "T..."
+            }
+          ],
+          "Returns": ["thread"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "delay",
+          "Parameters": [
+            {
+              "Name": "duration",
+              "Type": "number"
+            },
+            {
+              "Name": "fn",
+              "Type": "(T...) -> ()"
+            },
+            {
+              "Name": "arguments",
+              "Type": "T..."
+            }
+          ],
+          "Returns": ["thread"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "spawn",
+          "Parameters": [
+            {
+              "Name": "fn",
+              "Type": "(T...) -> ()"
+            },
+            {
+              "Name": "arguments",
+              "Type": "T..."
+            }
+          ],
+          "Returns": ["thread"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "wait",
+          "Parameters": [
+            {
+              "Name": "duration",
+              "Type": "number?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["number"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ]
+    }
+  ]
+}

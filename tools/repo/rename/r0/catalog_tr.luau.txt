@@ -1,0 +1,22 @@
+---
+--- **`{brand}` and `{tool}` are the product's own** (ADR 0109): no caller
+--- supplies them, and they come from `branding/brand.toml`, so a message that
+--- names the product or its command survives a rebrand untouched.
+local function tr(key: string, params: { [string]: any }?): string
+    local template = load()[key]
+    if template == nil then
+        return `[{key}]`
+    end
+    local brand = Brand.read()
+    return (
+        string.gsub(template, "{(%w+)}", function(name: string): string
+            local value = if params ~= nil then params[name] else nil
+            if value == nil and name == "brand" then
+                return brand.Name
+            elseif value == nil and name == "tool" then
+                return brand.Short
+            end
+            return if value == nil then `\{{name}}` else tostring(value)
+        end)
+    )
+end

@@ -1,0 +1,1028 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # A milestone tag runs the static gates -- documentation, Luau, formatting --
+    # and nothing else. Every compile job skips a tag deliberately, because the
+    # tag points at a commit those jobs already built when it landed on `main`,
+    # and Tier-3 is carried by the push rather than by the tag: `build-macos`
+    # below is blocking on every code push, which is M4's own gate item.
+    # **And a release tag**, which is a different thing from a milestone one and
+    # is here for one job: `luau-check` compares the tag against the version the
+    # repository declares (S7.12). Everything a release stamps comes from that
+    # declaration -- the archive's name, `ludwerk --version`, the version in every
+    # packaged artifact -- so a tag that disagrees with it publishes a release
+    # page saying one number and a binary saying another.
+    tags: ["milestone/*", "v*"]
+  pull_request:
+  # The "run everything" button, for a full matrix on a branch without having to
+  # push to it. A dispatch carries no base commit, so `changes` cannot call it
+  # documentation-only and every build job runs.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned here so the version is visible in this file rather than buried in a
+  # third-party action (R5).
+  ROKIT_VERSION: "1.2.0"
+  SCCACHE_VERSION: "0.17.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Whether this push is worth building at all.
+  #
+  # This repository is private, so Actions minutes carry the platform
+  # multipliers (Linux 1x, Windows 2x, macOS 10x) and a full run cost about 68
+  # charged minutes once GitHub's per-job round-up to whole minutes is applied.
+  # 13 of this repository's first 41 commits -- just under a third -- changed
+  # nothing but `docs/`, `PROGRESS.md` and other `*.md`, work that cannot change
+  # a single object file, and every one of them paid that bill in full.
+  #
+  # GitHub has no per-job path filter, and this repo takes no third-party
+  # actions, so the decision is made once here with `git` and consumed by the
+  # build jobs through `needs:`.
+  #
+  # The bias is one-directional and deliberate: ONLY an explicit documentation
+  # allowlist counts as "do not build". Everything else builds -- an unrecognised
+  # path, a base commit that no longer resolves after a force-push, the first
+  # push on a branch, an event with no base at all, or this job failing outright
+  # (the build jobs' `if:` treats anything other than a literal `false` as
+  # "build"). A build wrongly skipped is a red `main` nobody noticed (R11); a
+  # build wrongly run costs a few minutes.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Decide whether the build jobs run
+    # A tag push is a milestone gate, not a change: the commit it points at was
+    # already built by the run that landed it (see build-test).
+    #
+    # Tested against `github.ref` rather than `github.ref_type`, because a
+    # pull_request run's ref is `refs/pull/<n>/merge`, which is neither a branch
+    # nor a tag -- and a `ref_type` that came back as anything but `branch`
+    # there would silently skip the build on every pull request.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Both endpoints of the diff have to be present, so the shallow
+          # default will not do. `blob:none` is what keeps that affordable:
+          # `git diff --name-only` compares tree entries and never reads file
+          # contents, and this repo vendors whole upstream source trees
+          # (ADR 0021) -- a full-content clone to answer "which paths changed"
+          # would cost more than the build it is trying to skip.
+          fetch-depth: 0
+          filter: blob:none
+
+      # The two SHAs arrive through `env:` rather than being interpolated into
+      # the script body. They are GitHub-supplied and safe today, but the shape
+      # of the step is what stops the next person from adding a branch name --
+      # which is attacker-controlled text -- the same way.
+      - name: Diff against the base commit
+        id: decide
+        shell: bash
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -uo pipefail
+
+          decide() { # code, markdown reason
+            echo "code=$1" >> "$GITHUB_OUTPUT"
+            if [[ "$1" == "true" ]]; then
+              headline="### Build jobs: **running**"
+            else
+              headline="### Build jobs: **skipped** — documentation-only push"
+            fi
+            { echo "$headline"; echo; echo "$2"; } >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n%s\n' "$headline" "$2"
+            exit 0
+          }
+          build() { decide true "$1"; }
+
+          [[ -n "$BASE" ]] \
+            || build "This event carries no base commit, so there is nothing to diff against."
+          [[ "$BASE" != "0000000000000000000000000000000000000000" ]] \
+            || build "Branch created in this push — there is no previous state to compare against."
+          git cat-file -e "${BASE}^{commit}" 2>/dev/null \
+            || build "Base commit \`$BASE\` is not in this clone (force-push or rewritten history)."
+          git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null \
+            || build "Head commit \`$HEAD_SHA\` is not in this clone."
+
+          files="$(git diff --name-only "$BASE" "$HEAD_SHA" --)" \
+            || build "\`git diff\` failed; the change set is unknown."
+          [[ -n "$files" ]] \
+            || build "Empty diff — treated as unknown rather than as nothing to do."
+
+          # The allowlist is short on purpose: an entry belongs here only if the
+          # path provably cannot reach a compiler. `.github/workflows/**` is
+          # deliberately absent, so an edit to this file is always proved by a
+          # real build rather than by reading it.
+          relevant=""
+          while IFS= read -r f; do
+            case "$f" in
+              docs/*|*.md|.vscode/*|LICENSE|NOTICE) ;;
+              *) relevant="${relevant}${f}"$'\n' ;;
+            esac
+          done <<< "$files"
+
+          # Truncated because a vendoring commit changes tens of thousands of
+          # paths and the step summary has a size limit; the decision is already
+          # made by this point, so the list is evidence, not input.
+          listing() { printf '```\n%s\n```\n' "$(head -n 20 <<< "$1")"; }
+
+          if [[ -n "$relevant" ]]; then
+            build "$(printf 'Changed outside the documentation allowlist:\n\n%s' "$(listing "$relevant")")"
+          fi
+
+          decide false "$(printf 'Every changed path is documentation:\n\n%s' "$(listing "$files")")"
+
+  # ---------------------------------------------------------------------------
+  # Keeps the documentation package itself verifiable: every relative link
+  # resolves, pinned versions are named consistently, and the R7 sweep finds
+  # no reference to the platform it keeps us clear of outside the allowed
+  # documentation.
+  #
+  # Runs on every event, including a milestone tag: it costs one charged minute
+  # and it is the check a documentation-only push most needs.
+  #
+  # NOTE ON `--exclude-dir=third_party` BELOW: every step in this job checks
+  # documentation *we* authored. Vendored upstream trees are governed by
+  # ADR 0021 (pinned + never edited in place, R13), carry their own licenses,
+  # and legitimately contain both broken relative links and the name the R7
+  # sweep looks for (Luau's upstream). Linting them would be meaningless and a
+  # permanent source of false failures.
+  # ---------------------------------------------------------------------------
+  docs-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Documentation gate
+        run: scripts/gates/docs-lint.sh
+
+  # ---------------------------------------------------------------------------
+  # Tier-1 (Windows) and Tier-2 (Linux) build + test. third_party is vendored
+  # in-tree (ADR 0021), so there is no dependency-fetch step: the checkout plus
+  # the one hash-pinned DirectXShaderCompiler archive (ADR 0032) is the whole
+  # input.
+  #
+  # Linux stays on every push and earns it: it is the cheapest tier at 1x, and it
+  # is the tier least redundant with a local run. It caught SDL refusing to
+  # configure with neither X11 nor Wayland, and it caught the missing
+  # `<algorithm>` include in 758b322c that neither local tier could -- a
+  # transitive header graph is a property of the runner's libstdc++ rather than
+  # of the code. If that duty ever moves to the local Docker-based Linux gate,
+  # the change is to lift the `ubuntu-latest` row out of the matrix into its own
+  # job with its own `if:` -- a matrix leg cannot carry a condition of its own,
+  # and building the machinery that would let it (a matrix computed in `changes`
+  # and passed through `fromJSON`) before there is a second trigger to justify it
+  # would cost more in legibility than it saves in that future edit.
+  # ---------------------------------------------------------------------------
+  build-test:
+    needs: changes
+    # Reads as "build unless something said not to". `!cancelled()` is what
+    # keeps a failed or errored `changes` job from silently skipping the build:
+    # only a literal `false` -- which that job writes on one path and one path
+    # only -- stops it. Tag pushes are excluded because a milestone tag points
+    # at a commit this job already built when it landed on `main`, and are
+    # matched on `github.ref` for the reason given on the `changes` job.
+    if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.code != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, preset: win-msvc-dev }
+          - { os: ubuntu-latest, preset: linux-clang-dev }
+    runs-on: ${{ matrix.os }}
+    # Was 45. The last cold run before this change measured 708 s (Windows) /
+    # 688 s (Linux), so 45 was never a schedule -- it is the hang guard, and on
+    # a private repo a hung Windows job burns 2x its wall time. 30 keeps around
+    # 1.7x headroom over the worst case this job now has, which is the very
+    # first run: every cache cold, plus the upload of both.
+    timeout-minutes: 30
+    env:
+      # Bounded well under the 10 GiB default: this directory is uploaded to and
+      # downloaded from actions/cache on every run, and GitHub evicts the whole
+      # repository's caches past 10 GB. A complete Windows build measured 90 MiB
+      # of cache locally, so this is roughly 10x headroom rather than a guess.
+      SCCACHE_CACHE_SIZE: "1G"
+      # sccache's statistics live in the server process and die with it, and the
+      # server exits after 600 s idle by default -- which a long configure can
+      # reach. The stats step below stops it explicitly instead.
+      SCCACHE_IDLE_TIMEOUT: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set the out-of-tree build root (R14) and the compiler-cache location
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+          # Set rather than left to sccache's per-platform default, so that the
+          # actions/cache step below has one path it can name on every OS.
+          echo "SCCACHE_DIR=${RUNNER_TEMP}/sccache" >> "$GITHUB_ENV"
+
+      # Installed by pinned URL rather than a third-party action, for the same
+      # two reasons as the rokit step in `luau-check` below: one fewer
+      # supply-chain surface, and the version is visible in this file (R5).
+      - name: Install sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Windows) triple="x86_64-pc-windows-msvc";     ext="zip";    exe="sccache.exe" ;;
+            Linux)   triple="x86_64-unknown-linux-musl";  ext="tar.gz"; exe="sccache" ;;
+            *) echo "::error::no pinned sccache artifact for ${RUNNER_OS}"; exit 1 ;;
+          esac
+          # The release names its assets with the leading "v" twice: once in the
+          # tag, once in the file name.
+          name="sccache-v${SCCACHE_VERSION}-${triple}"
+          archive="${RUNNER_TEMP}/${name}.${ext}"
+          curl -fsSL -o "$archive" \
+            "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${name}.${ext}"
+          mkdir -p "${RUNNER_TEMP}/sccache-bin"
+          if [[ "$ext" == "zip" ]]; then
+            unzip -q "$archive" -d "${RUNNER_TEMP}/sccache-bin"
+          else
+            tar -xzf "$archive" -C "${RUNNER_TEMP}/sccache-bin"
+          fi
+          # The archive holds one top-level directory named after the asset.
+          #
+          # Proved by absolute path rather than by prepending to PATH and
+          # running `sccache`: on Windows $RUNNER_TEMP is `D:\a\_temp`, and a
+          # drive letter inside bash's colon-separated PATH splits into two
+          # useless entries at the colon. $GITHUB_PATH does not have that
+          # problem -- the runner appends it with the platform's own separator,
+          # which is also what the `cmd` build step below needs.
+          "${RUNNER_TEMP}/sccache-bin/${name}/${exe}" --version
+          echo "${RUNNER_TEMP}/sccache-bin/${name}" >> "$GITHUB_PATH"
+
+      # The runner images already ship Ninja, so this is a fallback rather than
+      # an install step. The first CI run hung here for 10+ minutes on
+      # `apt-get update` (a known runner failure mode: a mirror stall or a lock
+      # held by unattended-upgrades), which is pure waste when the tool is
+      # already present. Checking first skips apt entirely in the normal case.
+      - name: Ensure Ninja (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ninja >/dev/null 2>&1; then
+            echo "ninja already present: $(ninja --version)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ninja-build
+          fi
+
+      # SDL refuses to configure on Linux with neither X11 nor Wayland present,
+      # and it is right to: without them it cannot open a window on a normal
+      # desktop. SDL offers a flag to skip that check, and taking it would have
+      # been the fast way to a green run -- at the price of a Linux port that
+      # silently cannot display anything, discovered at M4 when the golden-image
+      # job needs a surface.
+      #
+      # So the packages go in instead, and the Linux build CI tests is the Linux
+      # build we would ship. The list is the X11 and Wayland halves of SDL's
+      # own README-linux build dependencies, minus the parts belonging to
+      # subsystems we disable (audio, camera, joystick/hidapi).
+      #
+      # Taken from third_party/sdl3/docs/README-linux.md rather than assembled
+      # by hand: SDL's X11 check is all-or-nothing per feature, so a list built
+      # from what the last failure named costs one CI round trip per missing
+      # package. Everything video, input-method or DRM related is here; only the
+      # audio and joystick packages are dropped, and those match subsystems this
+      # repo turns off by decision (ADR 0009 for audio, ADR 0029 for input).
+      #
+      # This apt step is a fixed ~40 s that the caches below do not touch, and
+      # caching /var/cache/apt across runs is its own can of worms (partial
+      # dependency closures, mirror drift). Left alone deliberately.
+      - name: Install SDL video dependencies (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libthai-dev libfribidi-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev
+
+      # DirectXShaderCompiler is a 27 MB (Windows) / 13 MB (Linux) release
+      # archive that cmake/engine_dxc.cmake downloaded on every single configure.
+      # `third_party/manifest.json` is the sole pin authority (ADR 0032, R5) --
+      # the URL, the SHA256 and the version all live there and nowhere else --
+      # so hashing that one file is the honest key: any change to the pin
+      # changes the key, and a pin change is exactly the case that must miss.
+      #
+      # Only the archive is cached, not the tree the module extracts from it.
+      # engine_dxc.cmake re-hashes the archive against the manifest on every
+      # configure and treats a mismatch as a supply-chain event, so a restored
+      # archive is verified rather than trusted. Nothing verifies the extracted
+      # tree, and caching unverified bytes on the path to the compiler we run is
+      # not worth the few seconds re-extraction costs.
+      #
+      # No restore-keys: a near-miss here is not a partial win, it is the wrong
+      # archive for the pin. Missing and re-downloading is the correct outcome.
+      - name: Cache the pinned DirectXShaderCompiler archive
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.tar.gz
+          key: dxc-${{ runner.os }}-${{ hashFiles('third_party/manifest.json') }}
+
+      # The compiler cache. Unlike the DXC archive above, nothing in here is
+      # trusted as an artifact: sccache addresses every entry by a digest of the
+      # preprocessed source, the full command line and the compiler binary
+      # itself, so a stale or foreign entry cannot be served for a different
+      # input -- it can only fail to be found. That is why this key is a
+      # hit-rate heuristic with deliberately loose restore-keys, where the DXC
+      # key is exact and has none.
+      #
+      # The prefix names what invalidates the whole cache at once: the
+      # dependency pins, the preset flags, and the CMake modules that assemble
+      # the command lines. `engine/**` is deliberately absent -- sccache already
+      # works per translation unit, and keying on our own sources would throw
+      # the cache away on precisely the commits it exists to speed up.
+      #
+      # The run id makes every key unique because actions/cache never overwrites
+      # an existing entry: without it, the first run after a pin change would be
+      # the only one that ever saved.
+      - name: Cache the compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-
+            sccache-${{ runner.os }}-${{ matrix.preset }}-
+
+      # The presets use the Ninja generator with `strategy: external`, so the
+      # MSVC environment must be established first. vswhere avoids hardcoding
+      # an edition/year that changes with the runner image.
+      #
+      # `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` is not a tuning knob,
+      # it is what makes the compiler cache above do anything at all on this
+      # tier. sccache refuses any MSVC compilation whose PDB is shared with
+      # another compilation (src/compiler/msvc.rs, "shared pdb"), and CMake
+      # hands every object in a target the same `/Fd<target>.pdb`, so under the
+      # default `/Zi` the Windows hit rate is exactly zero -- silently, since
+      # those land in `Non-cacheable compilations` with no reason recorded.
+      # `Embedded` is `/Z7`: the same debug information, carried in the object
+      # files, with the executable's PDB still produced by the linker.
+      #
+      # Passed here rather than written into CMakePresets.json on purpose. It is
+      # a property of *this* environment, not of the dev profile: locally, `/Zi`
+      # is the better default (smaller objects, faster incremental links) and
+      # nobody is sharing a compiler cache.
+      # **Before the build, not after it.**
+      #
+      # This step used to sit below the build and the tests, which was fine while
+      # its only consumers were `ludwerk test` and the hot-reload gate further
+      # down. It stopped being fine when `asset_determinism` and
+      # `streaming_soak` started needing `lute`: they run against
+      # `examples/05-streaming/content/world`, which is GENERATED rather than
+      # committed, and `tests/support/ensure_generated_world.cmake` says in as
+      # many words that it needs `lute` on PATH or the bootstrap to have run.
+      # Both failed in 0.03 s with a CMake error rather than a test result.
+      #
+      # Nothing showed it while CI was dark for the billing block; the first run
+      # after the repository went public reported it immediately.
+      - name: Install the pinned Luau toolchain
+        if: runner.os != 'macOS'
+        shell: bash
+        env:
+          # Rokit resolves every pinned tool through api.github.com, and
+          # unauthenticated that is sixty requests an hour shared across the
+          # runner's whole IP -- so it returns 403 on a busy afternoon and the
+          # step dies with "GitHub error: 403 Forbidden" for a release that is
+          # public and present. It happened once, on the push that closed M4.5,
+          # and the job it killed had already built and passed all 25 tests.
+          #
+          # `GITHUB_TOKEN` is the workflow's own automatic token: nothing to
+          # create, nothing to store, and read-only on a fork's pull request,
+          # which is all this needs.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) archive="rokit-${ROKIT_VERSION}-windows-x86_64.zip" ;;
+            *)       archive="rokit-${ROKIT_VERSION}-linux-x86_64.zip" ;;
+          esac
+          curl -fsSL -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
+          unzip -q /tmp/rokit.zip -d /tmp/rokit
+          /tmp/rokit/rokit self-install
+          # **A Windows path on Windows.** `$HOME` in the runner's bash is
+          # `/c/Users/runneradmin`, and `$GITHUB_PATH` is read by every later
+          # step -- including the ctest one, which runs under `cmd` where a POSIX
+          # path means nothing. The Linux tier found `lute` and the Windows tier
+          # did not, on the same step, which is what gave this away.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cygpath -w "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          else
+            echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          fi
+          # Before `install`, so every release lookup it makes is authenticated.
+          # The subcommand and its flag are read off the pinned binary's own
+          # `--help` at 1.2.0 rather than from documentation for some other
+          # version (MASTER_PROMPT §9).
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
+          # rokit.toml (R5); the interactive trust prompt has no answer in CI.
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+
+      - name: Configure, build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSPATH=%%i
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake --preset ${{ matrix.preset }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} || exit /b 1
+          ctest --preset ${{ matrix.preset }} -LE gpu-golden > ctest.log 2>&1 || (type ctest.log & exit /b 1)
+          type ctest.log
+
+      # **What a runner is allowed to skip, named** (S7.2). CTest counts a skip
+      # as a pass, so six gates that need a graphics device or a display have
+      # reported green on every push without executing: `editor_seam` and
+      # `editor_shell` open a window, and the four differentials render two
+      # frames and compare them. Nothing said so, in the summary or anywhere
+      # else, which is the whole complaint -- the local gate has failed on an
+      # unexpected skip since S7.3 and this half was owed. `replica_seam` (N1)
+      # joined them: it renders a host and its replica side by side, and a
+      # runner with no device skips it for the reason `editor_seam` skips.
+      #
+      # The list is a CEILING and not a prediction: a runner that HAS a device
+      # runs them and passes, and needs no edit here. What fails is anything
+      # ELSE skipping, which is the regression worth catching -- a test that
+      # quietly stops finding its fixture skips exactly like a test that cannot
+      # find a GPU, and until now both were green.
+      #
+      # The three `screenshot_gate*` are absent because `-LE gpu-golden`
+      # excludes them outright rather than skipping them: a pixel golden is tied
+      # to the GPU that recorded it, which architecture.md §9 says is why the
+      # capture gate and not the image comparison is the blocking render gate.
+      - name: No test skipped that was not expected to (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          scripts/gates/assert-no-skips.sh ctest.log             editor_seam replica_seam editor_shell rhi_sdlgpu chunk_grid_differential             graphics_settings_differential local_shadow_differential             example_ragdoll_builds triangle_sample descriptor_heap_overflow             surface_contract_proof_specular surface_contract_proof_meshes user_surface_proof device_loss_survived
+
+      - name: Configure, build and test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset ${{ matrix.preset }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          cmake --build --preset ${{ matrix.preset }}
+          # `tee` so the step still shows the run, and PIPESTATUS so a red ctest
+          # is still a red step: a pipeline reports the LAST command's status,
+          # which here is always `tee` succeeding.
+          set +e
+          ctest --preset ${{ matrix.preset }} -LE gpu-golden 2>&1 | tee ctest.log
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      # **What a runner is allowed to skip, named** (S7.2). CTest counts a skip
+      # as a pass, so six gates that need a graphics device or a display have
+      # reported green on every push without executing: `editor_seam` and
+      # `editor_shell` open a window, and the four differentials render two
+      # frames and compare them. Nothing said so, in the summary or anywhere
+      # else, which is the whole complaint -- the local gate has failed on an
+      # unexpected skip since S7.3 and this half was owed.
+      #
+      # The list is a CEILING and not a prediction: a runner that HAS a device
+      # runs them and passes, and needs no edit here. What fails is anything
+      # ELSE skipping, which is the regression worth catching -- a test that
+      # quietly stops finding its fixture skips exactly like a test that cannot
+      # find a GPU, and until now both were green.
+      #
+      # The three `screenshot_gate*` are absent because `-LE gpu-golden`
+      # excludes them outright rather than skipping them: a pixel golden is tied
+      # to the GPU that recorded it, which architecture.md §9 says is why the
+      # capture gate and not the image comparison is the blocking render gate.
+      # **The macOS job's shaders come from here** (D167). There is no
+      # DirectXShaderCompiler for macOS, and ADR 0032 says what follows: a Mac's
+      # blobs are compiled on a Tier-1 or Tier-2 host. This build already emits
+      # MSL beside SPIR-V and DXIL, so the whole directory is handed over, and
+      # the macOS job's capture gates run with the pipelines they record rather
+      # than with none. Kept for a day: it is a hand-off, not a release.
+      - name: Hand the compiled shaders to the macOS job
+        if: runner.os == 'Linux' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shaders-for-macos
+          path: ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/content/shaders
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: No test skipped that was not expected to (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          scripts/gates/assert-no-skips.sh ctest.log             editor_seam replica_seam editor_shell rhi_sdlgpu chunk_grid_differential             graphics_settings_differential local_shadow_differential             example_ragdoll_builds triangle_sample descriptor_heap_overflow             surface_contract_proof_specular surface_contract_proof_meshes user_surface_proof device_loss_survived
+
+      # The M3 gate wants two things green "on both tiers" that ctest cannot
+      # give: `ludwerk test`, which is the CLI's own path to the same suite, and
+      # the end-to-end hot-reload test, which starts a dev server, launches this
+      # build headless against it and waits for a reload to be confirmed over
+      # the WebSocket. Both need the pinned Luau toolchain, which only the
+      # `luau-check` job installed before M3.
+      - name: ludwerk test (the CLI's path to the conformance suite)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/ludwerk.sh test tests/conformance | tail -n 3
+
+      - name: Hot reload, end to end (M3 gate)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: lute test tests/hotreload
+
+      # A compiler cache that never hits is indistinguishable, from the outside,
+      # from one that works: the build is green either way and the only symptom
+      # is a bill. So the numbers go on the run's summary page, where they can be
+      # read without opening a log.
+      #
+      # sccache declines work in two different places and they mean opposite
+      # things here, so the summary keeps them apart:
+      #
+      #   Non-cacheable calls        -- refused while parsing the arguments, and
+      #                                 the reason is recorded. Expected to sit
+      #                                 at 226 of 466 on Windows, reported as
+      #                                 `/Fp` and `/Yc`: SDL3 builds with
+      #                                 precompiled headers, `/Fp` is
+      #                                 `TooHardPath` in sccache's MSVC argument
+      #                                 table, and each of those is handed
+      #                                 straight back to cl.exe with its argv
+      #                                 untouched. A fact about upstream SDL,
+      #                                 not a fault to chase -- and a cheap one,
+      #                                 since those are small C files while the
+      #                                 240 that DO cache are Luau's C++.
+      #   Non-cacheable compilations -- refused after parsing, with NO reason
+      #                                 recorded. This is where a `/Zi`
+      #                                 regression would land, silently, so it
+      #                                 is the number worth an annotation.
+      #
+      # The headline rate is therefore taken over hits + misses -- what sccache
+      # was ever allowed to cache -- because counting the PCH units as misses
+      # would report a permanently broken-looking cache and train everyone to
+      # ignore it.
+      #
+      # Warns rather than fails: this step reports on the build, it does not
+      # judge it, and a cache that got worse is not a reason to reject a commit.
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          command -v sccache >/dev/null 2>&1 || exit 0
+
+          stats="$(sccache --show-stats 2>&1)"
+          # Matched on the label as a line prefix and read as the last field, so
+          # that sccache's runtime-computed column widths cannot break this.
+          field() { awk -v k="$1" 'index($0, k) == 1 { print $NF; exit }' <<< "$stats"; }
+
+          hits="$(field 'Cache hits')"
+          misses="$(field 'Cache misses')"
+          declined_calls="$(field 'Non-cacheable calls')"
+          declined_compilations="$(field 'Non-cacheable compilations')"
+
+          headline="$(awk -v h="$hits" -v m="$misses" 'BEGIN {
+            n = h + m
+            if (n > 0) printf "**%d of %d cacheable compilations hit (%d%%)**", h, n, 100 * h / n
+            else printf "**no cacheable compilations recorded**"
+          }')"
+
+          {
+            echo "### sccache — ${{ matrix.preset }}"
+            echo
+            echo "$headline"
+            echo
+            echo "\`${declined_calls:-?}\` calls declined before compiling (expected — SDL3's precompiled headers) · \`${declined_compilations:-?}\` compilations declined (expected 0)"
+            echo
+            echo '```'
+            printf '%s\n' "$stats"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf '%s\n' "$stats"
+
+          if [[ "$declined_compilations" =~ ^[0-9]+$ ]] && (( declined_compilations > 0 )); then
+            echo "::warning::sccache declined ${declined_compilations} compilation(s) on ${{ matrix.preset }} with no reason recorded — the usual cause is MSVC debug information reverting to a shared PDB, which makes this cache do nothing"
+          fi
+
+          # Stopped explicitly because SCCACHE_IDLE_TIMEOUT=0 means it never
+          # stops on its own, and actions/cache's save runs after this step.
+          sccache --stop-server > /dev/null 2>&1 || true
+
+  # ---------------------------------------------------------------------------
+  # Tier-3 (macOS). Compile only, by decision rather than by omission.
+  #
+  # The roadmap's tier table makes macOS a "must compile" tier and puts runtime
+  # verification post-v1; the M1 gate says "Tier-2/Tier-3 compile". Nobody on
+  # this project has a Mac to reproduce a runtime failure on, so a red macOS
+  # test would be a check that cannot be acted on -- worse than no check, since
+  # the only available responses are to disable it or to guess. Compiling is a
+  # claim this job can actually stand behind.
+  #
+  # Everything is built, including the test executables: compiling them is free
+  # coverage over the headers they exercise. Nothing is run, so the absence of a
+  # `ctest` step below is the point of the job, not an oversight.
+  #
+  # BLOCKING ON EVERY CODE PUSH. The paragraphs above say what this job can
+  # honestly claim; this one says why it has to claim it at every commit. No
+  # machine this project develops on can build or run macOS, so this job is the
+  # only instrument that exists for an entire supported platform -- and a
+  # platform with no instrument is one that breaks without anybody knowing.
+  #
+  # It was narrowed to a milestone tag on 2026-08-20 (db091da5) and restored here
+  # on 2026-08-26. **The narrowing was a cost decision and never a technical
+  # one**, and the cost is worth writing down because it is the only thing that
+  # ever argued against this job: macOS minutes bill at 10x on a PRIVATE
+  # repository, which made this the most expensive job in the file at roughly 30
+  # charged minutes despite being the fastest to finish, and GitHub had reported
+  # 80% of the month's quota consumed. That constraint is being removed rather
+  # than ignored -- the repository is going public, and a public repository is
+  # not billed for standard GitHub-hosted runners at all. The 10x multiplier
+  # survives; it now multiplies nothing.
+  #
+  # So that nobody narrows it again without knowing what they are giving up:
+  # while this job sat on a tag, a macOS-only break was discoverable only at the
+  # milestone gate rather than at the commit that caused it -- on the one tier
+  # where whoever finds it cannot bisect locally, because the machine to bisect
+  # on does not exist here. If minutes ever bind again, the narrowings that keep
+  # that property are the ones that still name a commit, a nightly schedule or a
+  # merge queue; a tag names a milestone.
+  #
+  # There is still no compiler cache here, and the reason changed with the
+  # trigger. It used to be that two runs sat a milestone apart, so a restored
+  # cache would mostly miss. Now it is that a cold build of this tier is 168 s of
+  # observed wall time, small enough that saving and restoring a cache is a real
+  # fraction of it -- and this job has no test step for a cache to shorten.
+  # ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # **The compiler the editor ships, built from source** (ADR 0091).
+  #
+  # Once per pinned DXC commit and desktop platform: the result is cached under
+  # a key that IS the commit, so every later run restores it in seconds and no
+  # ordinary build compiles LLVM. `tools/repo/toolchain.luau` is the same
+  # command a developer runs, and it refuses a checkout whose commit or
+  # submodules do not match the manifest. What is cached is what ships -- the
+  # compiler, its library, its licence texts and the stamp -- never the 4 GB
+  # build tree.
+  # ---------------------------------------------------------------------------
+  dxc-source:
+    needs: changes
+    if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.code != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x64 }
+          - { os: ubuntu-latest, platform: linux-x64 }
+          # arm64 only, as `build-macos` is: GitHub's last Intel image is gone,
+          # and a matrix row naming it waits in the queue for ever.
+          - { os: macos-latest, platform: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    # A cold build on a four-core runner is the whole of LLVM's HLSL front end;
+    # measured locally at 5 to 6 minutes on 14 threads, so a quarter of that
+    # rate plus headroom. A warm run is a cache restore.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set the out-of-tree build root (R14) and the cache key
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+          commit="$(python3 -c "import json;print(next(r['commit'] for r in json.load(open('third_party/manifest.json'))['toolchains'] if r['name']=='dxc'))")"
+          version="$(python3 -c "import json;print(next(r['version'] for r in json.load(open('third_party/manifest.json'))['toolchains'] if r['name']=='dxc'))")"
+          echo "DXC_COMMIT=${commit}" >> "$GITHUB_ENV"
+          echo "DXC_HOME=${RUNNER_TEMP}/engine-build/toolchains/dxc-source/${version}/${{ matrix.platform }}" >> "$GITHUB_ENV"
+
+      - name: Restore the built compiler
+        id: cache
+        uses: actions/cache@v4
+        with:
+          key: dxc-source-${{ matrix.platform }}-${{ env.DXC_COMMIT }}
+          path: |
+            ${{ env.DXC_HOME }}/bin
+            ${{ env.DXC_HOME }}/licenses
+            ${{ env.DXC_HOME }}/STAMP
+
+      - name: Install rokit and the pinned toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-$(uname -m)" in
+            Windows-*) asset="windows-x86_64" ;;
+            Linux-*)   asset="linux-x86_64" ;;
+            macOS-arm64) asset="macos-aarch64" ;;
+            macOS-*)   asset="macos-x86_64" ;;
+          esac
+          curl -fsSL -o "${RUNNER_TEMP}/rokit.zip" \
+            "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-${asset}.zip"
+          unzip -q "${RUNNER_TEMP}/rokit.zip" -d "${RUNNER_TEMP}/rokit"
+          "${RUNNER_TEMP}/rokit/rokit" self-install
+          echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+
+      - name: Ensure Ninja
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ninja >/dev/null 2>&1; then
+            if [[ "${RUNNER_OS}" == "macOS" ]]; then brew install ninja; else sudo apt-get install -y ninja-build; fi
+          fi
+
+      - name: Build DXC from source (Windows)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSPATH=%%i
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          rem `lute` by path: the bash step above put rokit's directory on PATH in
+          rem bash's spelling, which cmd does not read.
+          "%USERPROFILE%\.rokit\bin\lute.exe" tools/repo/toolchain.luau build dxc --jobs=4 --platform=${{ matrix.platform }} || exit /b 1
+
+      - name: Build DXC from source
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        shell: bash
+        run: lute tools/repo/toolchain.luau build dxc --jobs=4 --platform=${{ matrix.platform }}
+
+      - name: Upload the built compiler
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxc-${{ matrix.platform }}
+          path: |
+            ${{ env.DXC_HOME }}/bin
+            ${{ env.DXC_HOME }}/licenses
+            ${{ env.DXC_HOME }}/STAMP
+          retention-days: 30
+
+  build-macos:
+    # Gated exactly as `build-test` is, and for the reasons stated there: only a
+    # literal `false` from `changes` stops it, so a `changes` job that fails or
+    # errors still builds; a documentation-only push does not build at all; and a
+    # tag push is skipped because the tag points at a commit this job already
+    # built when it landed.
+    # And after `build-test`, whose Linux leg compiles this job's shaders
+    # (D167, ADR 0032). That costs the wall time of the other build before this
+    # one starts; the alternative is capture gates that compare a stream
+    # recorded with no pipelines against one recorded with them.
+    needs: [changes, build-test]
+    if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-latest
+    # Was 45, which at 10x is 450 charged minutes for a job whose observed wall
+    # time was 168 s compile-only. This is the largest single tail risk in the
+    # file. It runs the suite now (S7.1), which on the other tiers is about a
+    # minute of ctest on a build that already happened -- so call it ~230 s and
+    # 20 minutes still leaves 5x headroom. Raising it is a decision about
+    # charged minutes, not a formality.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      # Same shape as the Linux fallback above: the image ships Ninja, so brew
+      # is the unlucky path rather than the expected one.
+      - name: Ensure Ninja (macOS)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ninja >/dev/null 2>&1; then
+            echo "ninja already present: $(ninja --version)"
+          else
+            brew install ninja
+          fi
+
+      # There is no macOS equivalent of the Linux SDL dependency step, and that
+      # is not an omission either: Cocoa, Metal and QuartzCore are SDK
+      # frameworks that arrive with Xcode. SDL's Objective-C sources compile
+      # through the C compiler with `-x objective-c` forced per source file
+      # (third_party/sdl3/CMakeLists.txt), so the root project's
+      # `LANGUAGES CXX C` needs no OBJC addition for this tier.
+      #
+      # Nor is there a DXC cache step: ENG_SHADER_TOOLCHAIN defaults OFF on
+      # Apple platforms (cmake/engine_options.cmake) because Microsoft publishes
+      # no macOS DirectXShaderCompiler, so this configure fetches nothing.
+      # The same two tests need `lute` here as on the other tiers -- the
+      # generated streaming world is not committed. `macos-aarch64` because the
+      # hosted macOS runners are Apple silicon; the asset names were read off
+      # the pinned release rather than assumed.
+      - name: Install rokit and the pinned tools (for the generated world)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/rokit.zip" \
+            "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-macos-aarch64.zip"
+          unzip -q "${RUNNER_TEMP}/rokit.zip" -d "${RUNNER_TEMP}/rokit"
+          "${RUNNER_TEMP}/rokit/rokit" self-install
+          echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
+          # rokit.toml (R5); the interactive trust prompt has no answer in CI.
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+          "$HOME/.rokit/bin/lute" setup
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset macos-clang-dev
+          cmake --build --preset macos-clang-dev
+
+      # **This job built every test binary and ran none of them** (S7.1). The
+      # dev profile has `ENG_BUILD_TESTS` ON and `CMakePresets.json` has
+      # carried a `macos-clang-dev` TEST preset all along, so the compile was
+      # already paid for -- at 10x -- and the result thrown away. Running them is
+      # the cheapest coverage available anywhere in this file: the marginal cost
+      # is the test runtime, not another build.
+      #
+      # **Blocking since its first clean run** (run 35929395297, 55 of 55, on
+      # 2026-09-23). It was non-blocking until then, the shape S7.5 used for the
+      # sanitizers: the first time any test here executed on macOS, nothing
+      # local could predict a different libc++ and a Metal SDL_GPU backend, and
+      # it found D166 and D167 -- failures nobody had read, which is the cost
+      # of a step allowed to fail. `--output-on-failure`, because the one run
+      # that failed after those were fixed (`streaming_soak`, once) left only a
+      # status line to learn from.
+      #
+      # `-LE gpu-golden` for the reason every other tier excludes them: a pixel
+      # golden is tied to the GPU that recorded it, and this is not it.
+      # Where the engine looks for them: `content/shaders` beside the host.
+      - name: The shaders a Tier-2 host compiled (D167)
+        uses: actions/download-artifact@v4
+        with:
+          name: shaders-for-macos
+          path: ${{ env.ENG_BUILD_ROOT }}/macos-clang-dev/engine/app/content/shaders
+
+      - name: Test
+        shell: bash
+        run: |
+          set +e
+          ctest --preset macos-clang-dev -LE gpu-golden --no-tests=error --output-on-failure 2>&1 | tee ctest.log
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      # What a soak saw, frame by frame, kept when the macOS run fails: a
+      # timing gate on a shared runner is the test most likely to fail there
+      # for a reason no local machine reproduces.
+      - name: The soak reports, on failure (macOS)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-soak-reports
+          path: ${{ env.ENG_BUILD_ROOT }}/macos-clang-dev/engine/app/*soak*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Skips are named here too. A macOS runner has no Vulkan and may have no
+      # window server session, so the device and display tests are expected to
+      # skip -- and anything ELSE skipping is the regression this check exists
+      # for.
+      - name: No test skipped that was not expected to (macOS)
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f ctest.log ]; then
+            echo "no ctest log; the test step did not get that far"
+            exit 0
+          fi
+          scripts/gates/assert-no-skips.sh ctest.log             editor_seam replica_seam editor_shell rhi_sdlgpu chunk_grid_differential             graphics_settings_differential local_shadow_differential             example_ragdoll_builds triangle_sample descriptor_heap_overflow             surface_contract_proof_specular surface_contract_proof_meshes user_surface_proof device_loss_survived
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## macOS (Tier 3)"
+            echo
+            echo "The C++ suite runs here and **blocks**, since its first clean run"
+            echo "(35929395297, 55 of 55). A failure prints its output, and a failed soak"
+            echo "leaves its report as the \`macos-soak-reports\` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Luau-side static gates: strict analysis under the new solver (R2), StyLua
+  # formatting, the i18n key check (R3), and the module layering rule.
+  #
+  # Unconditional, like docs-lint: eight seconds on the cheapest runner, and
+  # gating it on a path filter would risk more than it could ever save.
+  # ---------------------------------------------------------------------------
+  luau-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installed by pinned URL rather than a third-party action: one fewer
+      # supply-chain surface, and the version is visible in this file.
+      - name: Install rokit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/rokit.zip \
+            "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-linux-x86_64.zip"
+          unzip -q /tmp/rokit.zip -d /tmp/rokit
+          /tmp/rokit/rokit self-install
+          echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+
+      - name: Install the pinned toolchain
+        shell: bash
+        env:
+          # Authenticated for the reason the build jobs' install step gives:
+          # unauthenticated, api.github.com allows sixty requests an hour per
+          # runner IP, and this job died on a 403 for a public release on
+          # 2026-09-23 while the build jobs, which authenticate, passed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rokit authenticate github --token "$GH_TOKEN"
+          # --no-trust-check: tools are pinned in the in-repo, ADR-gated
+          # rokit.toml (R5); the interactive trust prompt has no answer in CI.
+          rokit install --no-trust-check
+          lute --version
+          stylua --version
+          luau-lsp --version
+
+      # tools/.luaurc resolves @std / @lute through ~/.lute/typedefs/<version>/,
+      # so analysis cannot resolve a single tooling require without this.
+      - name: Generate Lute type definitions
+        run: lute setup
+
+      # One step, running the same file scripts/localgate.ps1 runs. The steps
+      # used to be spelled out here, and the two copies drifted: the local gate
+      # learned to exclude `.d.luau` from analysis and to allow scripts/gates/
+      # in the R7 sweep, and CI did not -- so a change that was green locally
+      # went red here for reasons that had nothing to do with it.
+      - name: Luau gates
+        run: scripts/gates/luau-check.sh
+
+      # **On a release tag, and it is the only job that looks at one** (S7.12).
+      # A release names itself twice -- in the tag somebody pushes and in
+      # `project(Engine VERSION ...)`, which ADR 0031 makes authoritative -- and
+      # nothing checked that the two said the same thing.
+      #
+      # Unconditional rather than gated on the ref: the tool itself decides
+      # whether a tag is a release, and it says so either way. A step that ran
+      # only on a pattern would be a check nobody sees not running.
+      - name: The tag and the declared version agree
+        run: lute tools/repo/versioncheck.luau
+
+  # ---------------------------------------------------------------------------
+  # The C++ formatting gate (architecture.md §9), turned on at the start of M5
+  # on a quiet tree. Unconditional and cheap, like the two static jobs above.
+  #
+  # `clang-format-18` is installed by name rather than taken from whatever the
+  # runner image happens to preinstall: the tool's output changes between major
+  # versions, so an unpinned binary would make this job's verdict depend on when
+  # GitHub last rebuilt its image. scripts/gates/clang-format.sh refuses any
+  # other major, which turns that drift into a clear failure instead of a
+  # thousand-file diff.
+  # ---------------------------------------------------------------------------
+  clang-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned clang-format
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-format-18
+
+      - name: C++ formatting gate
+        run: scripts/gates/clang-format.sh

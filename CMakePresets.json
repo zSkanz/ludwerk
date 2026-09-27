@@ -1,0 +1,74 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "$env{ENG_BUILD_ROOT}/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "win-msvc",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "host=x64", "strategy": "external" },
+      "environment": {
+        "VSLANG": "1033"
+      }
+    },
+    {
+      "name": "linux-clang",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++" }
+    },
+    {
+      "name": "macos-clang",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+
+    { "name": "win-msvc-debug",    "inherits": "win-msvc",    "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",          "ENG_PROFILE": "debug", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "win-msvc-dev",      "inherits": "win-msvc",    "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "win-msvc-shipping", "inherits": "win-msvc",    "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",        "ENG_PROFILE": "shipping" } },
+    { "name": "win-msvc-player",   "inherits": "win-msvc",    "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",        "ENG_PROFILE": "player", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "win-msvc-editor",   "inherits": "win-msvc",    "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",        "ENG_PROFILE": "editor", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-debug", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",          "ENG_PROFILE": "debug", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-dev",   "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-shipping", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",     "ENG_PROFILE": "shipping" } },
+    { "name": "linux-clang-player", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",       "ENG_PROFILE": "player", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-editor", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",       "ENG_PROFILE": "editor", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-asan",  "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_SANITIZE": "address,undefined", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "macos-clang-dev",   "inherits": "macos-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_ENABLE_REPLICATION": "ON" } }
+  ],
+  "buildPresets": [
+    { "name": "win-msvc-debug",    "configurePreset": "win-msvc-debug" },
+    { "name": "win-msvc-dev",      "configurePreset": "win-msvc-dev",      "environment": { "VSLANG": "1033" } },
+    { "name": "win-msvc-shipping", "configurePreset": "win-msvc-shipping", "environment": { "VSLANG": "1033" } },
+    { "name": "win-msvc-player",   "configurePreset": "win-msvc-player",   "environment": { "VSLANG": "1033" } },
+    { "name": "win-msvc-editor",   "configurePreset": "win-msvc-editor",   "environment": { "VSLANG": "1033" } },
+    { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug" },
+    { "name": "linux-clang-dev",   "configurePreset": "linux-clang-dev" },
+    { "name": "linux-clang-shipping", "configurePreset": "linux-clang-shipping" },
+    { "name": "linux-clang-player", "configurePreset": "linux-clang-player" },
+    { "name": "linux-clang-editor", "configurePreset": "linux-clang-editor" },
+    { "name": "linux-clang-asan",  "configurePreset": "linux-clang-asan" },
+    { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev" }
+  ],
+  "testPresets": [
+    { "name": "win-msvc-debug",    "configurePreset": "win-msvc-debug",    "output": { "outputOnFailure": true } },
+    { "name": "win-msvc-dev",      "configurePreset": "win-msvc-dev",      "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-dev",   "configurePreset": "linux-clang-dev",   "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-asan",  "configurePreset": "linux-clang-asan",  "output": { "outputOnFailure": true } },
+    { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev",   "output": { "outputOnFailure": true } }
+  ]
+}

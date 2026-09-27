@@ -1,0 +1,63 @@
+{
+    "$comment": [
+        "Editor settings that make luau-lsp in the editor agree with luau-lsp in CI.",
+        "Without this file the extension runs on its own defaults, and the two disagree --",
+        "which shows up as type errors on files that pass the gate, or the reverse, which is",
+        "worse. The CI invocation these mirror is in .github/workflows/ci.yml, job luau-check.",
+        "If you change one, change the other."
+    ],
+
+    "luau-lsp.platform.type": "standard",
+
+    "$comment.platform": [
+        "CI passes --platform=standard. The extension's default platform mode downloads and",
+        "loads a third-party API dump. That is both a source of divergence and something",
+        "ADR 0020 (clean room, rule R7) has us stay away from: this engine is written from",
+        "docs/api-design.md, never from probing another platform."
+    ],
+
+    "luau-lsp.sourcemap.enabled": false,
+
+    "luau-lsp.fflags.enableByDefault": true,
+    "luau-lsp.fflags.sync": false,
+
+    "$comment.fflags": [
+        "`luau-lsp analyze` enables every Luau FFlag unless told otherwise (--no-flags-enabled),",
+        "and that is what turns the new type solver on -- which rule R2 requires. Syncing flag",
+        "values from a third-party production endpoint instead would make the editor's solver",
+        "depend on what somebody else shipped this week, so it is off."
+    ],
+
+    "luau-lsp.types.definitionFiles": [
+        "runtime/types/engine.d.luau"
+    ],
+
+    "$comment.definitions": [
+        "Declaration files describe globals; they are not sources. Without this the",
+        "extension analyses `declare luaug: { ... }` as ordinary Luau and reports a",
+        "syntax error on a file that is perfectly valid -- while the scripts that",
+        "depend on it report unknown-global errors. scripts/gates/luau-check.sh",
+        "passes the same files with --definitions. From M3 these are generated from",
+        "the IDL into runtime/types/ and this list becomes a glob."
+    ],
+
+    "luau-lsp.ignoreGlobs": [
+        "**/.lute/**",
+        "**/third_party/**"
+    ],
+
+    "$comment.ignore": [
+        "Lute 1.0.0's own generated typedefs do not typecheck under the pinned luau-lsp 1.69.0",
+        "(M0 finding 2), so CI ignores them and so must the editor. third_party is vendored",
+        "upstream code governed by ADR 0021 and is never ours to fix."
+    ],
+
+    "[luau]": {
+        "editor.defaultFormatter": "JohnnyMorganz.stylua",
+        "editor.formatOnSave": true
+    },
+
+    "files.encoding": "utf8",
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true
+}

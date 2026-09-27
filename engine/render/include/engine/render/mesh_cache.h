@@ -1,0 +1,267 @@
+// Geometry on the GPU (roadmap M4, "Design constraints (not scope)").
+//
+// The roadmap requires two seams stay open here, and both are shapes rather
+// than features: engine-generated geometry must be able to reach the renderer,
+// and geometry that changes every frame must have an upload path that does not
+// allocate every frame. Neither is built *for* a future caller -- both cost a
+// parameter now and a refactor later, which is the same argument ADR 0014 made
+// for `CFrame` carrying f64 from its first commit.
+//
+// So this takes **data, never a path**. `create` is handed vertices and indices
+// that a caller already holds; where they came from -- a glTF file, a procedural
+// generator, a voxel mesher -- is not this module's business and cannot become
+// its business. A `RenderWorld` names geometry by `MeshHandle`, so nothing
+// downstream can resolve an asset, and nothing downstream needs to.
+#pragma once
+
+#include <optional>
+#include <span>
+#include <vector>
+
+#include "engine/asset/model.h"
+#include "engine/core/error.h"
+#include "engine/core/math.h"
+#include "engine/rhi/device.h"
+
+namespace engine::render {
+
+using core::AABB;
+using core::u32;
+using core::usize;
+
+// Opaque to everything above: an index plus a generation, so a handle to a mesh
+// that has been released cannot be mistaken for a handle to whatever took its
+// slot. The same reasoning as `core::InstanceId`, for the same failure.
+struct MeshHandle
+{
+    u32 index = 0;
+    u32 generation = 0;
+
+    [[nodiscard]] constexpr bool valid() const noexcept { return generation != 0; }
+    [[nodiscard]] constexpr bool operator==(const MeshHandle&) const noexcept = default;
+};
+
+// How long the geometry has to live, which decides where it is stored.
+enum class MeshUsage : core::u8
+{
+    // An immutable device buffer, uploaded once. What an imported mesh is.
+    Static,
+    // A slice of a per-frame ring, valid until the frame it was written in ends.
+    // What geometry rebuilt every frame is -- debug draw today, procedural and
+    // voxel meshing later.
+    Dynamic,
+};
+
+// One drawable range, mirroring `asset::Submesh` but in GPU terms. Kept
+// separately rather than by pointing back at the `asset::Mesh`, because the CPU
+// copy is free to be dropped the moment the upload is done.
+struct MeshSection
+{
+    u32 firstIndex = 0;
+    u32 indexCount = 0;
+    u32 material = 0;
+    AABB bounds;
+};
+
+// One level of detail, as a slice of the entry's section list.
+//
+// Every level of a mesh has the SAME submeshes in the same order -- the
+// simplifier works per submesh precisely so a material boundary survives
+// (`asset/mesh_format.h`) -- so `sectionCount` is the same for every level and
+// a draw that named section 3 of level 0 means section 3 of level 2 as well.
+// That is what lets the selector change a level without the extractor knowing
+// anything happened.
+struct MeshLodRange
+{
+    u32 firstSection = 0;
+    u32 sectionCount = 0;
+    // The level's absolute geometric error, in the mesh's own units. Zero for
+    // level 0. See `asset::MeshLod::error`.
+    core::f32 error = 0.0f;
+};
+
+// How wrong a level is allowed to look, in PIXELS of on-screen deviation.
+//
+// One pixel, and one is the honest number rather than a cautious one: below a
+// pixel a difference cannot be displayed at all, and above it somebody can point
+// at the silhouette that changed. A tighter threshold is a promise the display
+// cannot keep; a looser one is a quality decision, and this milestone has no
+// quality dial to hang it on (M7.5 is where rendering gets one).
+inline constexpr core::f32 LodPixelError = 1.0f;
+
+// Owns every vertex and index buffer the renderer draws from.
+//
+// Not a general resource manager and deliberately not reference counted: a mesh
+// is released when its owner says so, and there is exactly one owner. Reference
+// counting arrives with `asset`'s streaming policy at M7, above this, not here.
+class MeshCache
+{
+public:
+    MeshCache() = default;
+    ~MeshCache();
+
+    MeshCache(const MeshCache&) = delete;
+    MeshCache& operator=(const MeshCache&) = delete;
+
+    // `ringVertexCapacity` and `ringIndexCapacity` size the dynamic ring's
+    // first allocation. It grows when a frame asks for more than it holds and
+    // is never shrunk, because a frame's dynamic geometry swings wildly and
+    // reallocating to match costs far more than the high-water mark does.
+    [[nodiscard]] std::optional<core::EngineError> create(rhi::IDevice& device, u32 ringVertexCapacity = 4096,
+                                                          u32 ringIndexCapacity = 8192);
+
+    void destroy(rhi::IDevice& device);
+
+    // Uploads a mesh and returns a handle to it.
+    //
+    // Takes `asset::Mesh` by const reference and copies nothing back: the
+    // caller may drop its CPU copy as soon as this returns. Sections are
+    // derived from the mesh's submeshes, so a mesh with no submeshes at all
+    // produces a handle that draws nothing rather than an error -- an empty
+    // mesh is a legal thing for a generator to produce.
+    //
+    // `Dynamic` meshes must be created after `beginFrame` and are invalidated
+    // by the next one: `beginFrame` retires every dynamic entry, so its handle
+    // stops resolving, and a slot recycled into a new mesh carries a new
+    // generation. Holding a dynamic handle across frames yields nothing rather
+    // than geometry from another frame -- which is the mistake this enum exists
+    // to make nameable.
+    // `lods` names slices of `mesh.submeshes`, one per level, when the caller
+    // has flattened a LOD chain into this mesh. Empty -- the common case, and
+    // every dynamic mesh -- publishes ONE level covering every section with an
+    // error of zero, so a caller that never heard of LODs draws exactly what it
+    // used to and the selector has nothing to choose between.
+    [[nodiscard]] MeshHandle create(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Mesh& mesh, MeshUsage usage,
+                                    core::EngineError* outError = nullptr, std::span<const MeshLodRange> lods = {});
+
+    // The skinned form: the same mesh plus its parallel joint/weight stream,
+    // uploaded to a SECOND buffer. A separate overload rather than a defaulted
+    // parameter, because the two produce different draws and a caller should
+    // have to say which it means.
+    //
+    // `skin` must have one entry per vertex; a mismatched length is refused
+    // rather than clamped, since a skin stream half as long as the mesh is a
+    // file the importer should have rejected. `Static` only: a skinned mesh is
+    // an imported asset, and the ring is for geometry rebuilt every frame.
+    [[nodiscard]] MeshHandle createSkinned(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Mesh& mesh,
+                                           std::span<const asset::SkinVertex> skin,
+                                           core::EngineError* outError = nullptr);
+
+    // Releases a static mesh's buffers. A dynamic handle is not released here;
+    // the ring reclaims it at the next `beginFrame`.
+    void release(rhi::IDevice& device, MeshHandle handle);
+
+    // Retires every dynamic handle issued last frame and rewinds the ring.
+    // Must be called once per frame, before any dynamic `create`.
+    //
+    // Takes the device because this is also where rings retired by a mid-frame
+    // grow are finally destroyed, two frames after they stopped being written
+    // to. Two rather than one: a handle issued before the grow is legal to draw
+    // for the rest of that frame, and the GPU may still be executing that
+    // frame's commands when the next one starts.
+    void beginFrame(rhi::IDevice& device);
+
+    struct Resolved
+    {
+        rhi::BufferHandle vertices{};
+        rhi::BufferHandle indices{};
+        // The joint/weight stream, bound at vertex slot 1 by the skinned
+        // pipelines. Invalid for a static mesh, which is most of them -- and an
+        // unskinned draw is byte-identical to M4's because of it.
+        rhi::BufferHandle skin{};
+        // Added to every section's `firstIndex`, and to the vertex offset of
+        // every draw. Zero for a static mesh, which owns its buffers outright;
+        // non-zero for a dynamic one, which is a slice of a shared ring.
+        u32 firstIndex = 0;
+        core::i32 vertexOffset = 0;
+        std::span<const MeshSection> sections;
+
+        // The LOD chain, or one entry for a mesh that has none. `sections` is
+        // every level's sections CONCATENATED, and a level names its own slice
+        // of them -- one index buffer, one upload, one bind, and the level is a
+        // choice of range rather than a choice of resource.
+        //
+        // Empty is impossible: `create` always publishes at least the level it
+        // uploaded, so a caller never has to handle "no levels".
+        std::span<const MeshLodRange> lods;
+
+        AABB bounds;
+    };
+
+    // Null for a handle that was released, or for a dynamic handle from an
+    // earlier frame. Callers draw only what resolves.
+    [[nodiscard]] const Resolved* resolve(MeshHandle handle) const noexcept;
+
+    [[nodiscard]] usize staticMeshCount() const noexcept;
+    // The ring's high-water mark, in vertices and indices. The number worth
+    // watching in a profile: if it climbs every frame, something is treating a
+    // per-frame buffer as storage.
+    [[nodiscard]] u32 ringVertexHighWater() const noexcept { return ringVertexHighWater_; }
+    [[nodiscard]] u32 ringIndexHighWater() const noexcept { return ringIndexHighWater_; }
+
+    // Rings replaced by a mid-frame grow and not yet destroyed. Worth watching
+    // for the same reason as the high-water marks -- a number that does not
+    // return to zero is GPU memory nobody is releasing -- and it is what makes
+    // the deferred-destruction rule assertable at all, since a buffer handle
+    // reveals nothing about whether it has been destroyed.
+    [[nodiscard]] usize pendingRingReleases() const noexcept { return retiring_.size() + retired_.size(); }
+
+private:
+    struct Entry
+    {
+        Resolved resolved;
+        std::vector<MeshSection> sections;
+        std::vector<MeshLodRange> lods;
+        u32 generation = 0;
+        bool dynamic = false;
+        bool live = false;
+    };
+
+    [[nodiscard]] std::optional<core::EngineError> growRing(rhi::IDevice& device, u32 vertices, u32 indices);
+
+    std::vector<Entry> entries_;
+    std::vector<u32> freeSlots_;
+
+    // A ring replaced mid-frame, kept alive until nothing can be drawing from
+    // it. `retiring_` collects this frame's; `retired_` holds last frame's and
+    // is what `beginFrame` destroys.
+    struct RetiredRing
+    {
+        rhi::BufferHandle vertices{};
+        rhi::BufferHandle indices{};
+    };
+
+    std::vector<RetiredRing> retiring_;
+    std::vector<RetiredRing> retired_;
+
+    rhi::BufferHandle ringVertices_{};
+    rhi::BufferHandle ringIndices_{};
+    u32 ringVertexCapacity_ = 0;
+    u32 ringIndexCapacity_ = 0;
+    u32 ringVertexUsed_ = 0;
+    u32 ringIndexUsed_ = 0;
+    u32 ringVertexHighWater_ = 0;
+    u32 ringIndexHighWater_ = 0;
+};
+
+// Which level of `resolved` to draw, given where the instance is and how many
+// pixels a world unit covers at one metre from the camera.
+//
+// **Screen-space error, not distance bands.** A distance threshold has to be
+// re-tuned for every mesh and every field of view -- a boulder and a mountain at
+// the same distance are not the same problem -- and it is the number people end
+// up tuning forever. A level's error is stored in the mesh's own units
+// (`asset::MeshLod::error`), so scaling it by the instance and projecting it
+// yields an error in PIXELS: comparable across every mesh in a world, and
+// unchanged when the field of view is.
+//
+// `transform` is camera-relative, which is the space `RenderWorld` works in, so
+// its translation IS the offset to the camera.
+//
+// R10 is not in the way: nothing here reaches the simulation. Two machines may
+// legitimately draw one frame at different levels if their windows differ, which
+// is why the render-capture gate runs at a fixed size.
+[[nodiscard]] u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transform,
+                                core::f32 pixelsPerUnit, core::f32 pixelError = LodPixelError) noexcept;
+
+} // namespace engine::render

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# The three profiles nothing else in this repository builds, compiled and
+# linked.
+#
+# `shipping` is here because that is how it came to be broken for an unknown
+# length of time (D056): `ENG_LUAU_COMPILER=OFF` and `ENG_DEBUG_UI=OFF` are
+# set for it alone, so every `#if` around them is code no other gate ever reads.
+#
+# **`player` is here for the same reason and it is newer** (D057). It is the
+# profile `ludwerk build` packages -- the Luau compiler ON, the debug overlay OFF,
+# a combination no other profile has -- so it is a SHIPPED artifact that,
+# without this, no gate would ever compile. That was precisely the objection
+# that ruled out "just ship the shipping profile": a profile nothing builds is a
+# profile nobody knows is broken.
+#
+# **`editor` is the third, and it is the same argument a third time** (ADR
+# 0054). It is what `tools/repo/package.luau` copies into the archive somebody
+# downloads: Release, the debug UI ON and the C++ suite OFF, which is again a
+# combination no other profile has. Nothing else would ever configure it, so
+# without this the thing people install would be the one build nothing checks.
+#
+# WHAT THIS BUILDS, AND WHY IT IS NOT THE WHOLE TREE.
+#
+# `engine_host` -- the shipping binary itself, compiled and linked, and nothing
+# else. A whole second profile at full breadth is not free: the dev build is
+# already ~700 s cold, and the parts this leaves out (the C++ test suite, which
+# the shipping profile does not build at all because it drives the engine
+# through Luau source; `assetc`, whose assimp dependency is the largest single
+# compile in the tree; the shader toolchain) are proved by the dev stage on
+# every run and cannot rot differently here -- they compile with the same flags
+# in both. What CAN rot differently is exactly what the two profile options
+# gate, and all of it is reachable from this one executable. Linking rather
+# than compiling only, because half of ADR 0011's claim is a link-time one: a
+# shipping binary contains no ImGui because no ImGui target was declared, and a
+# call site that survived an `#ifdef` sweep shows up as an unresolved symbol
+# rather than as an error in a translation unit.
+#
+# Warm this is a few seconds. Cold -- the first run, or after a `third_party`
+# change -- it is a full Release build of the vendored tree, once.
+#
+# Tier-2 (Linux/Clang) rather than Tier-1 by default: warnings are errors on
+# both, Clang diagnoses more than MSVC, and it is the 1x platform if this is
+# ever wired into CI. Override with ENG_SHIPPING_PRESET to check another one.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+
+preset="${ENG_SHIPPING_PRESET:-linux-clang-shipping}"
+playerPreset="${ENG_PLAYER_PRESET:-linux-clang-player}"
+editorPreset="${ENG_EDITOR_PRESET:-linux-clang-editor}"
+
+if [[ -z "${ENG_BUILD_ROOT:-}" ]]; then
+    echo "shipping-build: ENG_BUILD_ROOT is not set (rule R14: builds are out-of-tree)" >&2
+    exit 1
+fi
+
+case "$ENG_BUILD_ROOT" in
+"$PWD"*)
+    echo "shipping-build: ENG_BUILD_ROOT must be OUTSIDE the repository tree (rule R14)" >&2
+    exit 1
+    ;;
+esac
+
+echo "== configure ($preset) =="
+cmake --preset "$preset"
+
+echo "== build (engine_host) =="
+cmake --build --preset "$preset" --target engine_host
+
+echo "== configure ($playerPreset) =="
+cmake --preset "$playerPreset"
+
+echo "== build (engine_host) =="
+cmake --build --preset "$playerPreset" --target engine_host
+
+echo "== configure ($editorPreset) =="
+cmake --preset "$editorPreset"
+
+echo "== build (engine_host) =="
+cmake --build --preset "$editorPreset" --target engine_host
+
+# **The Linux export, played from its archive** (ADR 0104 stage 2). Here
+# rather than in the Linux stage because this is where `linux-clang-player` --
+# what `ludwerk build --target=linux` packages -- has just been built. The
+# packaging suite's Windows cases skip themselves; `linux.test.luau` unpacks
+# the `.tar.gz` with the system's tar and runs it, and `sides.test.luau`
+# searches a dedicated game's two packages for each other's code.
+if [[ "$(uname -s)" == "Linux" ]]; then
+    if [[ -d "$HOME/.rokit/bin" ]]; then
+        PATH="$HOME/.rokit/bin:$PATH"
+        export PATH
+    fi
+    echo "== packaging (the Linux export) =="
+    ENG_PLAYER_HOST_LINUX="$ENG_BUILD_ROOT/$playerPreset/engine/app/engine-host" lute test tests/packaging
+fi

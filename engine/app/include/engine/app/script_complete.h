@@ -1,0 +1,292 @@
+// Autocomplete, from the engine's own reflection (ADR 0057).
+//
+// **Not from `Luau.Analysis`, and that is a decision rather than a shortcut.**
+// `cmake/engine_luau.cmake` records that Analysis was 35% of a cold build's
+// compile time and excludes it, and ADR 0018 makes type checking `luau-analyze`
+// -- a tool, never a runtime dependency. Linking it here would reverse both for
+// a feature that does not need it.
+//
+// What it needs is already in the binary. `ClassRegistry` holds every class,
+// property, method and event with the doc string the IDL wrote, generated from
+// `api/defs/*.api.luau` -- the same tables the property grid already walks with
+// no switch on any class name. Completion resolves the token before `.` or `:`
+// to a class and lists its members through the hierarchy, plus the identifiers
+// the file already contains and the keywords.
+//
+// **And Luau's own surface is offered too**, from `script::stdGlobals` and
+// `script::stdLibraries` -- `typeof`, `pcall`, `math.floor`, `string.format`,
+// `table.create`, `buffer.readf32`, all of it. That list lives beside the
+// sandbox rather than here because it is a fact about the VM, and it is checked
+// against a real sandboxed VM in both directions so that bumping the Luau pin
+// fails a test instead of quietly leaving this a version behind.
+//
+// **It is this engine's surface, not stock Luau's**: `os` carries three names
+// because `removeUnsafeGlobals` takes `difftime` off, and `getfenv`, `setfenv`
+// and `newproxy` are not offered because they are not there.
+//
+// **And the WORLD is the other half of it**, which is the half a type checker
+// would not have. `Workspace.MainCamera` is not a fact about the `Workspace`
+// class -- it is a fact about this project's tree, sitting in memory two panels
+// away from the tab being typed into. So a dotted path is walked instance by
+// instance from the DataModel, and what it resolves to offers its CHILDREN
+// beside its members: the names somebody is reaching for are the names in their
+// own Explorer. The same walk answers inside `WaitForChild("` and
+// `FindFirstChild("`, where the thing being typed is a child's name in quotes
+// and nothing about the class could ever say what it is.
+//
+// **What it does NOT do, stated so nobody reads the absence as a bug**: infer a
+// type across an expression. `local p = workspace.Baseplate` followed by `p.` is
+// not resolved, because knowing that would be type inference and type inference
+// is `luau-analyze`. What IS resolved is the vocabulary somebody actually forgets
+// -- which service has which member, and how each one is spelled.
+#pragma once
+
+#include <filesystem>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "engine/app/script_document.h"
+#include "engine/core/id.h"
+#include "engine/core/types.h"
+
+namespace engine::core {
+class AtomTable;
+}
+
+namespace engine::scene {
+class ClassRegistry;
+class World;
+} // namespace engine::scene
+
+namespace engine::app {
+
+// What kind of thing a row is, which is what the icon and the ordering use.
+enum class CompletionKind : core::u8
+{
+    Keyword,
+    // A name already written somewhere in this file. The cheapest useful
+    // completion there is, and the one a type checker would not improve.
+    Identifier,
+    Property,
+    Method,
+    Event,
+    Class,
+    Service,
+    Global,
+    // A member of one of Luau's own libraries, or of the library table itself.
+    // Its own kind rather than `Method`, because `math.floor` is not reached
+    // off an object and the casing rule (ADR 0034) is what says so.
+    Library,
+    // A name a required module hands back, read from that module's own source.
+    Module,
+    // **A child of the resolved instance**, by the name it has in the tree
+    // right now. The one kind of row nothing but a live world can produce.
+    Instance,
+};
+
+// **Where a name is from, which is the first thing the list is ordered by**
+// (the owner: "scope, then out of scope, then global"). A name the caret can
+// see comes first, a name the file declares somewhere the caret cannot see
+// next -- still offered, because it may be what somebody is about to move --
+// and everything the language and the engine provide last.
+enum class CompletionScope : core::u8
+{
+    Visible,
+    Elsewhere,
+    Global,
+};
+
+struct Completion
+{
+    std::string label;
+    // The type, the signature, or the class a service is -- whatever fits on the
+    // right of the row.
+    std::string detail;
+    // The IDL's own prose, shown for the highlighted row. Empty for anything
+    // that is not a reflected member.
+    std::string doc;
+    CompletionKind kind = CompletionKind::Identifier;
+    CompletionScope scope = CompletionScope::Global;
+};
+
+// Where the caret is, when it is inside a string that names something.
+enum class CompletionQuoted : core::u8
+{
+    // The ordinary case: the caret is in code.
+    No,
+    // Inside the quotes of `WaitForChild(` or `FindFirstChild(`, so what is
+    // being typed is the name of a CHILD of whatever the call hangs off.
+    Child,
+    // Inside the quotes of `GetService(`, so what is being typed is a service.
+    Service,
+    // **Every other string whose argument is a NAME the engine knows** (the
+    // owner: "Instance.new(\"AASS\") should be completed, in the string, and
+    // the same for other things").
+    //
+    // `Instance.new(`: a class a person may create.
+    NewClass,
+    // `IsA(`, `FindFirstChildOfClass(`, `FindFirstChildWhichIsA(`,
+    // `FindFirstAncestorOfClass(`: any class, abstract ones included --
+    // `IsA("BasePart")` is the commonest question there is.
+    Class,
+    // `GetPropertyChangedSignal(`: a property of what the call hangs off.
+    Property,
+    // `GetAttribute(`, `SetAttribute(`, `GetAttributeChangedSignal(`: an
+    // attribute the instance has in the tree.
+    Attribute,
+    // `HasTag(`, `AddTag(`, `RemoveTag(` and `TagService`'s three: a tag
+    // something in the world already carries.
+    Tag,
+    // `FindFirstAncestor(`: the name of one of the instance's ancestors.
+    Ancestor,
+    // **A path into the project's `content/`** (the owner: "autocomplete for
+    // asset paths"): any string that begins `asset:` -- or is on its way to it
+    // -- where nothing else claimed the string.
+    Asset,
+    // Inside quotes that are nobody's argument -- a message, a path, a name
+    // being built by hand. **Offers nothing**, which is a state of its own
+    // rather than a fall-through: the alternative is a list of every keyword
+    // in the language popping up over every string anybody types.
+    Other,
+};
+
+// What is being completed: the word under the caret and what it hangs off.
+struct CompletionRequest
+{
+    // The partial word before the caret, which is what the list is filtered by.
+    std::string prefix;
+    // The range `prefix` occupies, so accepting a row replaces it.
+    Range replace;
+    // The token before the `.` or `:`, empty when there is none. The last
+    // element of `path`, kept as its own field because most of what reads this
+    // only ever wanted the one name.
+    std::string subject;
+    // Whether it was a colon, which is what tells a method from a property.
+    bool method = false;
+
+    // **The caret hangs off a `.` or a `:`.**
+    //
+    // Separate from `subject` being non-empty, and that is the point: a chain
+    // this cannot read -- `game:GetService(name).`, `t:GetChildren().` -- leaves
+    // `subject` empty while somebody is plainly reaching into SOMETHING. Offering
+    // the keywords there would put the whole language under a dot.
+    bool joined = false;
+
+    // **The whole chain, outermost first**: `game.Workspace.Camera.` reads as
+    // `{"game", "Workspace", "Camera"}`. Empty when there is no `.` or `:` in
+    // front of the caret at all.
+    //
+    // A chain and not just `subject`, because an instance path is only
+    // resolvable from its start: `Camera` alone names nothing, and the same
+    // name under two parents is two different instances.
+    std::vector<std::string> path;
+
+    // Whether the caret is inside a string that names a child or a service, and
+    // which. `path` is then the chain the CALL hangs off, and `replace` covers
+    // what is between the quote and the caret.
+    CompletionQuoted quoted = CompletionQuoted::No;
+};
+
+// The live tree, when the caller has one. Everything here is optional in the
+// sense that a null `world` still completes keywords, classes and members --
+// which is what a unit test with no world gets, and what an editor with no
+// project open would get.
+struct CompletionWorld
+{
+    const scene::World* world = nullptr;
+    // What `game` names: the one instance whose own parent is nil. Services are
+    // its children, which is what makes `Workspace.` and `Lighting.` resolve
+    // without a table of service names anywhere in this file.
+    core::InstanceId root;
+    // What `script` names: the instance whose `Source` is in the tab. `nil` in
+    // a context that is not editing one.
+    core::InstanceId self;
+    // The files under the project's `content/`, relative and with forward
+    // slashes -- what an `asset://` path names (see `completionAssets`).
+    std::span<const std::string> assets{};
+};
+
+// **The project's content, for completing `asset://` paths.** The shell names
+// the folder once; the list is read from disk when asked, and again at most
+// every two seconds, so a file imported a moment ago is offered without a
+// directory walk per keystroke.
+void setCompletionAssetRoot(std::filesystem::path root);
+[[nodiscard]] std::span<const std::string> completionAssets();
+
+// Reads the document backwards from `caret`. Never fails: a caret in the middle
+// of nothing answers an empty prefix and an empty subject, which is the state
+// that offers keywords and the file's own identifiers.
+[[nodiscard]] CompletionRequest completionAt(const ScriptDocument& document, Position caret);
+
+// Fills `out`, sorted and filtered by `request.prefix`.
+//
+// `tree` is what turns a dotted path into an instance and its children into
+// rows. A default-constructed one is legal and answers what the registry alone
+// can: keywords, identifiers, class names and a class's members.
+void collectCompletions(const ScriptDocument& document, const CompletionRequest& request,
+                        const scene::ClassRegistry& classes, const core::AtomTable& atoms, const CompletionWorld& tree,
+                        std::vector<Completion>& out);
+
+// **A word already whole closes the list** (the owner: with `Part` and
+// `Part2D` both offered, typing `Part` is done, and `Part2D` is only worth
+// offering once `Part2` is typed). True when a row IS `prefix`, exactly --
+// case included, because `part` is not yet `Part` and the list is how it gets
+// there. The caller then shows nothing rather than every longer name.
+[[nodiscard]] bool completesExactly(std::span<const Completion> rows, std::string_view prefix) noexcept;
+
+// **What the ENGINE puts in front of a script**, as opposed to what Luau does:
+// the world globals, the datatype namespaces, and the functions the runtime
+// installs. Luau's own are `script::stdGlobals()`.
+//
+// One list with two readers, and the second is the reason it is exported: the
+// unknown-global lint has to know exactly the same set the completion offers,
+// or it underlines names the editor itself just suggested.
+// **Assigning to a live child's name, named at edit time** (ADR 0078).
+//
+// A dot READS a child -- `workspace.Baseplate` reaches it -- and the completion
+// offers children after a dot for that reason. What does not work is writing
+// to a child's name: `workspace.Baseplate = other` would be setting a property
+// the class does not have, and a child is replaced by parenting another
+// instance. The runtime says so; this underlines it while somebody is typing.
+//
+// **It lives here rather than in `parseDiagnostics` because it needs the
+// TREE.** Without one, `t.foo = 1` on a plain table is indistinguishable from
+// `script.Nested = x`, and a lint with false positives is a lint people turn
+// off. Resolving the path first means every report is a fact: that instance
+// exists, it has that child, and its class has no such member.
+void lintInstanceAccess(const ScriptDocument& document, const scene::ClassRegistry& classes,
+                        const core::AtomTable& atoms, const CompletionWorld& tree, std::vector<Diagnostic>& out);
+
+// The signature of the function being called at the caret (ADR 0093).
+struct SignatureHelp
+{
+    // `Name(first: type, second: type): result`.
+    std::string label;
+    // Each parameter's span in `label`, in bytes.
+    std::vector<std::pair<core::u32, core::u32>> parameters;
+    core::u32 active = 0;
+    std::string doc;
+};
+
+[[nodiscard]] std::span<const std::string_view> engineGlobals() noexcept;
+
+// **What the type checker found, over what the tree and the file found**
+// (ADR 0093). The checker's rows are the answer wherever it has one; the rows
+// `collectCompletions` found that it does not have -- a live child of an
+// instance, which only the tree knows -- are kept beside them. Where a TYPE is
+// written (`inType`) the checker's rows are the whole answer, empty or not: a
+// value's members are wrong there. Filtered by `prefix` as `collectCompletions`
+// filters -- and when a checker's row IS the prefix, the word is whole and
+// `shown` is emptied (`completesExactly`).
+void mergeCompletions(std::vector<Completion>& shown, const std::vector<Completion>& analyzed, bool inType,
+                      std::string_view prefix);
+
+// How many rows the popup shows before it scrolls. A list somebody has to scan
+// is a list they stop reading, and eight is what fits under a line of code
+// without covering the next paragraph.
+inline constexpr core::usize kMaxCompletionRows = 8;
+
+} // namespace engine::app

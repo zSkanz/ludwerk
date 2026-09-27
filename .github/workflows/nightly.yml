@@ -1,0 +1,666 @@
+name: Nightly
+
+# Nothing in this file gates a merge, and that is structural rather than a
+# promise: there is no `pull_request` and no `push` trigger, so these jobs never
+# appear as checks on a pull request and branch protection cannot select them as
+# required. Failure is therefore left to fail honestly -- a red run in the
+# Actions tab plus the scheduled-run notification -- instead of being swallowed
+# with `continue-on-error`, which would keep the tab green and make the job
+# worth exactly nothing.
+on:
+  # Deliberately not on the hour: GitHub queues everybody's `0 * * * *` crons at
+  # once and delays scheduled runs under that load. Also worth knowing when the
+  # nightly appears to have stopped for no reason -- GitHub disables scheduled
+  # workflows in a repository after 60 days without commits.
+  schedule:
+    - cron: "37 4 * * *"
+  # An edit to this file is otherwise only testable by waiting a day.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The same pin as ci.yml's (R5). This file used to fetch the installer from
+  # rokit's `main`, which is an unpinned tool by another name.
+  ROKIT_VERSION: "1.2.0"
+
+concurrency:
+  # The opposite of ci.yml's choice on purpose: CI cancels superseded runs
+  # because a newer commit answers the same question, while a nightly gets one
+  # run per day and cancelling it loses the answer entirely.
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # AddressSanitizer and UndefinedBehaviorSanitizer over the whole suite.
+  #
+  # **The preset had been fully wired and run by nothing.** `linux-clang-asan`
+  # has had configure, build and test entries in `CMakePresets.json` for a long
+  # time, with `ENG_SANITIZE=address,undefined`, and no gate on any machine
+  # ever invoked it. A preset nobody executes is the same shape of hole as a test
+  # that passes by skipping: it looks like coverage in the file and is none in
+  # fact.
+  #
+  # It is HERE rather than in `ci.yml` because an instrumented build is two to
+  # three times slower to compile and to run, and `ci.yml` gates a push. Nightly
+  # is where a slow gate belongs. `scripts/localgate.ps1 -Only asan` is the same
+  # run on a developer's machine, through the same script, for the afternoon
+  # somebody is chasing a lifetime bug.
+  #
+  # **It has been green once, so it blocks.** That was written here as a promise
+  # while it had never passed, and it is being kept: on 2026-08-26 the first
+  # complete run finished clean -- 41 of 41 ctest entries, 1,158 conformance
+  # cases and the hot-reload gate, under AddressSanitizer and
+  # UndefinedBehaviorSanitizer together.
+  #
+  # Getting there found four things and only one of them was in our code, which
+  # is the argument for the whole stage: a heap-use-after-free in `World::clone`
+  # holding a pointer into a slot map across an insert that grew it; a missing
+  # sanitizer runtime in the image; a vendored downcast that aborted the shader
+  # compiler at build time; and a CLI that did not know the instrumented preset
+  # existed, so the suite ran green and then failed with no output at all.
+  # ---------------------------------------------------------------------------
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      # The same list ci.yml installs, plus the one package that is only needed
+      # here: the sanitizer runtime and its headers ship separately from the
+      # compiler that emits calls into them, and without it Luau's `lmem.cpp`
+      # fails to COMPILE on `<sanitizer/asan_interface.h>` rather than failing to
+      # link, which reads as a source error in a vendored file.
+      - name: Install build and SDL video dependencies
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libclang-rt-18-dev llvm-18 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libthai-dev libfribidi-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            mesa-vulkan-drivers xvfb
+      # **lavapipe and a virtual display**, as the tier-2 container has. The
+      # gate asserts that nothing skips, because this tier is supposed to have
+      # a device. Without the ICD the eight device and display tests answered
+      # `ENG_TEST_SKIP` and failed the run -- and they are exactly the tests
+      # worth running under a sanitizer, since they drive the renderer.
+
+      - name: Install the Luau toolchain (rokit)
+        shell: bash
+        env:
+          # Authenticated for the reason ci.yml gives: rokit resolves every
+          # pinned tool through api.github.com, and unauthenticated that limit
+          # is shared across the runner's IP. The nightly of 2026-09-20 died
+          # here with a 403 before building anything.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-linux-x86_64.zip"
+          unzip -q /tmp/rokit.zip -d /tmp/rokit
+          /tmp/rokit/rokit self-install
+          echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+
+      # The same script the local gate runs, which is the whole point: when the
+      # two diverge, "it passes locally" stops meaning anything.
+      #
+      # `detect_leaks=0` is deliberate. The engine holds process-lifetime
+      # singletons -- the message catalog, the job pool, SDL's own state -- and
+      # reporting those on every run would bury the reports that matter. What is
+      # wanted is the memory-error half.
+      - name: Build and test under the sanitizers
+        timeout-minutes: 75
+        shell: bash
+        env:
+          ENG_LINUX_PRESET: linux-clang-asan
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
+          # Without a symbolizer every report is a column of addresses, and the
+          # failure is a warning rather than an error -- so it looks like it worked.
+          ASAN_SYMBOLIZER_PATH: /usr/lib/llvm-18/bin/llvm-symbolizer
+          UBSAN_SYMBOLIZER_PATH: /usr/lib/llvm-18/bin/llvm-symbolizer
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: bash scripts/gates/linux-build.sh
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Sanitizers"
+            echo
+            echo "\`linux-clang-asan\`: AddressSanitizer and UndefinedBehaviorSanitizer over"
+            echo "the whole ctest suite, the conformance run and the hot-reload gate."
+            echo
+            echo "A report here is a real defect in code no other gate in this repository"
+            echo "can see: the first green run had to fix a heap-use-after-free in"
+            echo "\`World::clone\` to get there."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # The real-image golden suite, on Mesa's software rasterizer (S7.6).
+  #
+  # **Both `docs/architecture.md` §9 and `docs/roadmap.md` promise this job by
+  # name** -- "a small real-image golden suite (lavapipe on Linux, WARP/D3D12 on
+  # Windows) runs nightly, non-blocking" -- and neither had it. What existed was
+  # a single recorded PNG that nothing compared, with a README saying why: a
+  # golden asked to span a discrete GPU and a software rasterizer has to widen
+  # its tolerance until it can no longer see a real change.
+  #
+  # These span neither. lavapipe renders a scene to the same bytes twice, so
+  # the comparison is EXACT -- tolerance 0, zero pixels allowed -- and a single
+  # changed pixel is a real change. That is a far sharper instrument than the
+  # tolerance-2 gate on the dev machine, and it is why this is worth having even
+  # though it cannot block.
+  #
+  # **Non-blocking, and it has to be.** A Mesa upgrade on `ubuntu-latest` will
+  # move every pixel of every one of these, and that is not a defect in this
+  # repository. `continue-on-error` says so, and the images are uploaded so a
+  # difference can be looked at rather than guessed about.
+  #
+  # It is also the only gate anywhere that would catch D043: the instanced path
+  # shipped drawing NOTHING while every gate it had was satisfied -- the draw
+  # count fell, the command stream matched its capture, the frame got faster,
+  # because the geometry was being transformed off-screen. A command stream and
+  # a counter can both be right about a frame that is empty.
+  # ---------------------------------------------------------------------------
+  lavapipe-goldens:
+    name: Real-image goldens on lavapipe (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      # The same list ci.yml installs, plus the two this job exists for:
+      # `mesa-vulkan-drivers` is the ICD -- the runner carries the Vulkan LOADER
+      # and no driver, and without one `SDL_CreateGPUDevice` reports "No
+      # supported SDL_GPU backend found" and every pixel test skips -- and
+      # `vulkan-tools` for `vulkaninfo`, which the gate prints so a run against
+      # an unexpected driver says so rather than producing a wall of differing
+      # pixels with no explanation.
+      - name: Install build, SDL video and software-Vulkan dependencies
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends             ninja-build             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev             libxi-dev libxss-dev libxtst-dev libxkbcommon-dev             libthai-dev libfribidi-dev             libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev             libdbus-1-dev libibus-1.0-dev libudev-dev             libwayland-dev wayland-protocols libdecor-0-dev             mesa-vulkan-drivers vulkan-tools
+
+      # The same script `scripts/localgate.ps1 -Only lavapipe` runs, which is
+      # the point: when the two diverge, "it passes locally" stops meaning
+      # anything.
+      - name: Compare the goldens
+        shell: bash
+        run: bash scripts/gates/lavapipe-goldens.sh
+
+      # **Whether it passed or not.** A mismatch is the case somebody needs the
+      # pictures for, and `run_screenshot_gate.cmake` writes a `.diff.png`
+      # beside each output showing which pixels moved.
+      - name: The images this run produced
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lavapipe-goldens
+          path: |
+            ${{ runner.temp }}/engine-build/linux-clang-dev/engine/app/lavapipe-*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-image goldens (lavapipe)"
+            echo
+            echo "\`examples/02-meshes\` and the instanced specular scene, compared EXACTLY"
+            echo "against images recorded on Mesa's software rasterizer -- tolerance 0, zero"
+            echo "pixels allowed to differ. lavapipe is bit-identical to itself, so there is"
+            echo "nothing for a tolerance to absorb except a real change."
+            echo
+            echo "Non-blocking: a Mesa upgrade on the runner moves every pixel of both, and"
+            echo "that is not a defect here. Re-record with"
+            echo "\`scripts/localgate.ps1 -Only lavapipe -Record\` when it is."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Android NDK cross-compile (roadmap: "Early Android portability check").
+  #
+  # Compile-only, and there is no device anywhere in this project -- the point is
+  # to catch API and toolchain breaks in the platform/RHI layers early, while
+  # they are one commit old, rather than at the human device checkpoint before
+  # the RHI freeze at the end of M4. Mobile itself stays post-v1 (R15).
+  # ---------------------------------------------------------------------------
+  android-ndk:
+    name: Android NDK cross-compile (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      # Same reasoning as ci.yml's copy of this step: the runner image already
+      # ships Ninja, so this is a fallback, and checking first avoids an
+      # `apt-get update` that has been observed to stall for ten minutes.
+      - name: Ensure Ninja
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ninja >/dev/null 2>&1; then
+            echo "ninja already present: $(ninja --version)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ninja-build
+          fi
+
+      # The pin lives in cmake/toolchains/android.cmake so that a local
+      # cross-build uses the same NDK as CI. Reading it back here rather than
+      # repeating the number keeps one version literal in the repo; the
+      # toolchain additionally asserts that the NDK it resolves reports this
+      # revision, so a mismatch is a configure error rather than a quiet build
+      # against a different compiler.
+      - name: Resolve the pinned NDK version (R5)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^set(ENG_ANDROID_NDK_VERSION "\([^"]*\)".*/\1/p' \
+                     cmake/toolchains/android.cmake | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo "::error file=cmake/toolchains/android.cmake::ENG_ANDROID_NDK_VERSION not found -- the pin moved or changed shape"
+            exit 1
+          fi
+          echo "ANDROID_NDK_VERSION=$version" >> "$GITHUB_ENV"
+          echo "pinned NDK: $version"
+
+      # Installed by exact package revision rather than taken from
+      # ANDROID_NDK_LATEST_HOME: "latest" is precisely what R5 forbids, and the
+      # runner image's preinstalled set changes without notice. Skipped when the
+      # image already carries the pinned revision, which costs one directory
+      # test instead of a ~1 GB download.
+      - name: Install the pinned Android NDK
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "::error::no Android SDK on this runner (ANDROID_SDK_ROOT and ANDROID_HOME are both unset)"
+            exit 1
+          fi
+          ndk_root="$sdk_root/ndk/$ANDROID_NDK_VERSION"
+          if [[ -d "$ndk_root" ]]; then
+            echo "NDK $ANDROID_NDK_VERSION already installed at $ndk_root"
+          else
+            sdkmanager="$(command -v sdkmanager || echo "$sdk_root/cmdline-tools/latest/bin/sdkmanager")"
+            if [[ ! -x "$sdkmanager" ]]; then
+              echo "::error::sdkmanager not found (looked for it on PATH and under $sdk_root/cmdline-tools/latest/bin)"
+              exit 1
+            fi
+            # `yes` answers the licence prompt. The hosted images pre-accept the
+            # SDK licences, so this only matters on a fresh or self-hosted
+            # runner -- where the alternative is a job that hangs until timeout.
+            #
+            # pipefail is off for exactly this pipeline: `yes` is killed by
+            # SIGPIPE the instant sdkmanager stops reading, so it exits 141, and
+            # under pipefail that turns every *successful* install into a failed
+            # step. With pipefail off and `set -e` still on, the pipeline's
+            # status is sdkmanager's, which is the status that means anything.
+            set +o pipefail
+            yes | "$sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" > /dev/null
+            set -o pipefail
+          fi
+          echo "ANDROID_NDK_ROOT=$ndk_root" >> "$GITHUB_ENV"
+
+      # No preset: CMakePresets.json has no android-clang entry yet
+      # (architecture.md §8 lists it as "later"). The flags therefore spell out
+      # what the dev presets spell out -- same profile, same config -- so that
+      # what compiles here is compiled the way Tier-1 compiles it, optimizer
+      # warnings included. Tests are off because nothing here can run one, and
+      # building doctest would buy only wall time.
+      - name: Configure (Android arm64, compile-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B "$ENG_BUILD_ROOT/android-arm64" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchains/android.cmake" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENG_PROFILE=dev \
+            -DENG_BUILD_TESTS=OFF
+
+      # Named targets, not the default target. `engine/app` links the Luau VM
+      # and produces the host executable; cross-compiling that would answer a
+      # much larger question than "does the render seam still build for arm64",
+      # take several times as long, and fail for reasons that have nothing to do
+      # with Android graphics. The roadmap's list for this job is `platform` +
+      # `rhi_api` + `rhi_sdlgpu`; SDL3 comes along as rhi_sdlgpu's dependency,
+      # which is most of the value -- it proves the vendored subsystem set
+      # configures and compiles against the NDK.
+      #
+      # rhi_api is absent from the list because it is an INTERFACE library: it
+      # has no translation unit of its own and the Ninja generator emits no rule
+      # for it. It is covered all the same, since rhi_sdlgpu's source includes
+      # its headers (engine/rhi/src/sdlgpu/sdlgpu_device.cpp).
+      - name: Build platform + rhi_sdlgpu (and SDL3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "$ENG_BUILD_ROOT/android-arm64" \
+            --target engine_platform engine_rhi_sdlgpu
+
+      # A nightly nobody reads is a nightly that does not exist. Written on
+      # failure too, so the run page states what was attempted instead of
+      # leaving it to be reconstructed from log scrollback.
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Android NDK cross-compile"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| NDK | \`${ANDROID_NDK_VERSION:-unresolved}\` |"
+            echo "| ABI / API | \`arm64-v8a\` / 21 |"
+            echo "| targets | \`engine_platform\`, \`engine_rhi_sdlgpu\`, SDL3 |"
+            echo "| result | **${{ job.status }}** |"
+            echo
+            echo "Compile-only: no device, no tests, no runtime claim."
+            echo "Non-blocking by construction -- this workflow has no pull-request trigger."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # The triangle APK (roadmap M4, "The triangle sample and its Android package").
+  #
+  # A separate job from the compile check above, not an extension of it, because
+  # the two answer different questions and one must not be able to hide the
+  # other: `android-ndk` asks whether the platform/RHI seam still compiles for
+  # arm64 and is meaningful on its own, while this one produces the artifact the
+  # human device checkpoint before the end-of-M4 RHI freeze is passed with.
+  #
+  # It packages and does not test. There is no device in CI and there is not
+  # going to be one; what a green run here proves is that an installable APK
+  # exists for this commit, containing a library that links and shaders that
+  # were actually compiled. Whether SDL3 GPU rasterizes on a phone -- ADR 0005
+  # calls its Android support "limited" -- is the question the human answers
+  # with the artifact this job uploads.
+  # ---------------------------------------------------------------------------
+  android-apk:
+    name: Triangle APK (checkpoint artifact)
+    runs-on: ubuntu-latest
+    # Two builds of the vendored subsystem set -- one host, for the shader
+    # toolchain, one cross-compiled -- plus Gradle. A hang guard, not a
+    # schedule.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      - name: Ensure Ninja
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ninja >/dev/null 2>&1; then
+            echo "ninja already present: $(ninja --version)"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ninja-build
+          fi
+
+      # The host half of this job configures the whole tree, and SDL refuses to
+      # configure on Linux with neither X11 nor Wayland present. Same list and
+      # same reasoning as ci.yml's copy of this step -- taken from SDL's own
+      # README-linux rather than assembled from whatever the last failure named.
+      - name: Install SDL video dependencies
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libthai-dev libfribidi-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev
+
+      # Same key as ci.yml's step, so this job restores the archive that
+      # workflow already verified and saved instead of fetching it again.
+      # engine_dxc.cmake re-hashes it against third_party/manifest.json on every
+      # configure, so a restored archive is checked rather than trusted.
+      - name: Cache the pinned DirectXShaderCompiler archive
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.tar.gz
+          key: dxc-${{ runner.os }}-${{ hashFiles('third_party/manifest.json') }}
+
+      # Read back rather than repeated, exactly as the compile job above does:
+      # cmake/toolchains/android.cmake is the one place the NDK revision is
+      # written, and the toolchain asserts that the NDK it resolves reports it.
+      - name: Resolve the pinned NDK version (R5)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^set(ENG_ANDROID_NDK_VERSION "\([^"]*\)".*/\1/p' \
+                     cmake/toolchains/android.cmake | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo "::error file=cmake/toolchains/android.cmake::ENG_ANDROID_NDK_VERSION not found -- the pin moved or changed shape"
+            exit 1
+          fi
+          echo "ANDROID_NDK_VERSION=$version" >> "$GITHUB_ENV"
+          echo "pinned NDK: $version"
+
+      - name: Install the pinned Android NDK and SDK packages
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo "::error::no Android SDK on this runner (ANDROID_SDK_ROOT and ANDROID_HOME are both unset)"
+            exit 1
+          fi
+          sdkmanager="$(command -v sdkmanager || echo "$sdk_root/cmdline-tools/latest/bin/sdkmanager")"
+          if [[ ! -x "$sdkmanager" ]]; then
+            echo "::error::sdkmanager not found (looked for it on PATH and under $sdk_root/cmdline-tools/latest/bin)"
+            exit 1
+          fi
+
+          # Every package named by exact revision. AGP would otherwise download
+          # a missing platform or build-tools itself, at whatever version it
+          # chose -- which is the "latest" R5 exists to forbid, arriving through
+          # a side door. The two SDK numbers are the ones
+          # samples/triangle/android/app/build.gradle declares.
+          #
+          # pipefail is off for the same reason as the compile job's copy: `yes`
+          # dies of SIGPIPE the moment sdkmanager stops reading, so it exits 141
+          # and would turn every successful install into a failed step.
+          set +o pipefail
+          yes | "$sdkmanager" --install \
+            "ndk;$ANDROID_NDK_VERSION" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" > /dev/null
+          set -o pipefail
+
+          echo "ANDROID_NDK_ROOT=$sdk_root/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
+      # AGP 8.7 needs a JDK 17 toolchain. Pinned here rather than taken from
+      # whatever the image default happens to be that week.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Gradle by pinned URL, from the wrapper's own distributionUrl. This
+      # repository takes no third-party actions (ci.yml's sccache step gives the
+      # reasons: one fewer supply-chain surface, and the version stays visible
+      # in the file), and reading the URL out of gradle-wrapper.properties means
+      # the Gradle a human uses and the Gradle CI uses cannot drift apart.
+      #
+      # The wrapper JAR itself is not committed -- see that file's comment --
+      # which is why this step exists instead of `./gradlew`.
+      - name: Install the pinned Gradle
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          props="samples/triangle/android/gradle/wrapper/gradle-wrapper.properties"
+          url="$(sed -n 's/^distributionUrl=//p' "$props" | head -n 1)"
+          # A Java .properties file escapes the colon as `\:`; the URL itself
+          # contains no backslashes, so stripping every one is exact. The
+          # backslash goes through a variable rather than being written inline:
+          # it would otherwise have to survive YAML, then bash's quoting, then
+          # whichever tool did the stripping, and two of those three eat it.
+          backslash='\'
+          url="${url//"$backslash"/}"
+          if [[ -z "$url" ]]; then
+            echo "::error file=$props::distributionUrl not found -- the Gradle pin moved or changed shape"
+            exit 1
+          fi
+          echo "pinned Gradle: $url"
+          curl -fsSL -o "${RUNNER_TEMP}/gradle.zip" "$url"
+          unzip -q "${RUNNER_TEMP}/gradle.zip" -d "${RUNNER_TEMP}/gradle"
+          dir="$(find "${RUNNER_TEMP}/gradle" -maxdepth 1 -mindepth 1 -type d | head -n 1)"
+          "$dir/bin/gradle" --version
+          echo "$dir/bin" >> "$GITHUB_PATH"
+
+      # -----------------------------------------------------------------------
+      # 1. The shaders, on the HOST.
+      #
+      # ENG_SHADER_TOOLCHAIN defaults OFF when cross-compiling
+      # (cmake/engine_options.cmake): shadercross is a host tool and Microsoft
+      # publishes no Android DirectXShaderCompiler, so the Android build
+      # produces a library and no blobs. Only the `_shaders` custom target is
+      # built here -- that is what engine_add_shaders() hangs the compiles on, so
+      # this compiles shadercross and the two shaders and never links a sample.
+      # -----------------------------------------------------------------------
+      - name: Configure the host build (shaders only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B "$ENG_BUILD_ROOT/host-shaders" -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENG_PROFILE=dev \
+            -DENG_BUILD_TESTS=OFF
+
+      - name: Compile the triangle's shaders
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "$ENG_BUILD_ROOT/host-shaders" --target engine_triangle_sample_shaders
+
+      # -----------------------------------------------------------------------
+      # 2. The library, cross-compiled.
+      #
+      # Same toolchain file, flags and profile as the compile job above, so what
+      # ships is built the way the nightly already proves compiles. Our
+      # toolchain file rather than AGP's, because it is what asserts that the
+      # NDK actually in use reports the pinned revision.
+      # -----------------------------------------------------------------------
+      - name: Configure (Android arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B "$ENG_BUILD_ROOT/android-arm64-apk" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchains/android.cmake" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENG_PROFILE=dev \
+            -DENG_BUILD_TESTS=OFF
+
+      - name: Build libmain.so
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "$ENG_BUILD_ROOT/android-arm64-apk" --target engine_triangle_sample
+
+      # -----------------------------------------------------------------------
+      # 3. Bring the two halves together, then package.
+      # -----------------------------------------------------------------------
+      - name: Stage the APK payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -DLIBRARY="$ENG_BUILD_ROOT/android-arm64-apk/samples/triangle/libmain.so" \
+            -DSHADER_DIR="$ENG_BUILD_ROOT/host-shaders/samples/triangle/content/shaders" \
+            -DCATALOG="$PWD/i18n/en.json" \
+            -DABI="arm64-v8a" \
+            -DSTAGE="$ENG_BUILD_ROOT/android-triangle-stage" \
+            -P cmake/stage_android_apk.cmake
+
+      # `--project-cache-dir` for the same reason the project's root
+      # build.gradle moves the build directory: R14, and `.gitignore`'s build
+      # patterns are root-anchored, so anything Gradle left under `samples/`
+      # would show up as untracked rather than being ignored.
+      - name: Assemble the debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --project-dir samples/triangle/android \
+                 --project-cache-dir "$ENG_BUILD_ROOT/android-triangle-gradle/cache" \
+                 --no-daemon \
+                 assembleDebug
+
+      # Debug-signed, which is exactly what makes it side-loadable with
+      # `adb install` and nothing more: it is not a release artifact and carries
+      # no release key. Retained 30 days -- long enough for a checkpoint to be
+      # scheduled, short enough that a stale APK is not lying around to be
+      # tested by mistake.
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-triangle-apk-${{ github.sha }}
+          path: ${{ env.ENG_BUILD_ROOT }}/android-triangle-gradle/app/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Triangle APK"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| NDK | \`${ANDROID_NDK_VERSION:-unresolved}\` |"
+            echo "| ABI / minSdk | \`arm64-v8a\` / 21 |"
+            echo "| shaders | SPIR-V, compiled on the Linux host -- the cross build has no shader toolchain |"
+            echo "| result | **${{ job.status }}** |"
+            echo
+            echo "Packaging only: no device runs this. Download the artifact, \`adb install -r\` it,"
+            echo "launch **Ludwerk Triangle**, and expect a pink triangle on a dark blue field."
+            echo "A black screen or an immediate exit is the answer ADR 0005 asks for; capture"
+            echo "\`adb logcat -s SDL:V engine:V\` before uninstalling."
+          } >> "$GITHUB_STEP_SUMMARY"

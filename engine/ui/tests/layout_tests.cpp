@@ -1,0 +1,1011 @@
+#include <doctest/doctest.h>
+#include <optional>
+
+#include "class_descriptors.gen.h"
+#include "engine/scene/world.h"
+#include "engine/ui/scene_types.h"
+#include "engine/ui/ui.h"
+
+namespace {
+
+namespace core = engine::core;
+namespace scene = engine::scene;
+namespace ui = engine::ui;
+
+using core::InstanceId;
+using core::Vec2;
+
+struct Fixture
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    std::optional<scene::World> world;
+    InstanceId service;
+
+    Fixture()
+    {
+        scene::generated::registerClasses(classes, atoms);
+        ui::registerSceneTypes(classes, atoms);
+        scene::generated::registerEnums(enums, atoms);
+        world.emplace(classes, enums, atoms, 1u);
+        service = make("UIService");
+        ui::resetLayoutStats();
+    }
+
+    InstanceId make(const char* className)
+    {
+        const scene::ClassId id = classes.findId(atoms.intern(className));
+        REQUIRE(id != scene::InvalidClass);
+        return world->create(id);
+    }
+
+    InstanceId child(const char* className, InstanceId parent)
+    {
+        const InstanceId id = make(className);
+        REQUIRE_FALSE(world->setParent(id, parent).has_value());
+        return id;
+    }
+
+    [[nodiscard]] scene::UIObjectComponent& object(InstanceId id)
+    {
+        scene::UIObjectComponent* component = world->uiObjects().find(id);
+        REQUIRE(component != nullptr);
+        return *component;
+    }
+
+    void dirty(InstanceId screen) { world->screenGuis().find(screen)->layoutDirty = true; }
+
+    void run(Vec2 windowSize = Vec2{1280.0f, 720.0f}) { ui::layout(*world, service, windowSize); }
+};
+
+} // namespace
+
+TEST_CASE("a UDim2 rectangle is arithmetic, and this is the arithmetic")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+
+    // Half the window across, 200 pixels down, offset in by 10 and 20.
+    fixture.object(frame).size = core::UDim2{core::UDim{0.5f, 0.0f}, core::UDim{0.0f, 200.0f}};
+    fixture.object(frame).position = core::UDim2{core::UDim{0.0f, 10.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(frame).absoluteSize.x == doctest::Approx(640.0));
+    CHECK(fixture.object(frame).absoluteSize.y == doctest::Approx(200.0));
+    CHECK(fixture.object(frame).absolutePosition.x == doctest::Approx(10.0));
+    CHECK(fixture.object(frame).absolutePosition.y == doctest::Approx(20.0));
+}
+
+TEST_CASE("AnchorPoint places a fraction of the element itself")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 50.0f}};
+    fixture.object(frame).position = core::UDim2{core::UDim{0.5f, 0.0f}, core::UDim{0.5f, 0.0f}};
+    fixture.object(frame).anchorPoint = Vec2{0.5f, 0.5f};
+    fixture.run();
+
+    // Centred: the middle of the element on the middle of the window. This is
+    // one of the two cases ADR 0040 says Clay could not express -- its floating
+    // attachment takes corner and centre enumerators, and (0.5, 0.5) is the one
+    // fraction they happen to have a name for.
+    CHECK(fixture.object(frame).absolutePosition.x == doctest::Approx(640.0 - 50.0));
+    CHECK(fixture.object(frame).absolutePosition.y == doctest::Approx(360.0 - 25.0));
+
+    // And a fraction with no name works the same way, which is the rest of it.
+    fixture.object(frame).anchorPoint = Vec2{0.3f, 0.7f};
+    fixture.dirty(screen);
+    fixture.run();
+    CHECK(fixture.object(frame).absolutePosition.x == doctest::Approx(640.0 - 30.0));
+    CHECK(fixture.object(frame).absolutePosition.y == doctest::Approx(360.0 - 35.0));
+}
+
+TEST_CASE("a scale past 1 is legal, which is the other thing Clay could not do")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+
+    fixture.object(frame).size = core::UDim2{core::UDim{1.5f, 0.0f}, core::UDim{2.0f, 0.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(frame).absoluteSize.x == doctest::Approx(1920.0));
+    CHECK(fixture.object(frame).absoluteSize.y == doctest::Approx(1440.0));
+}
+
+TEST_CASE("the same layout scales with the window, which is what UDim2 is for")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.5f, 0.0f}, core::UDim{0.25f, 0.0f}};
+
+    fixture.run(Vec2{1280.0f, 720.0f});
+    CHECK(fixture.object(frame).absoluteSize.x == doctest::Approx(640.0));
+
+    fixture.dirty(screen);
+    fixture.run(Vec2{640.0f, 360.0f});
+    CHECK(fixture.object(frame).absoluteSize.x == doctest::Approx(320.0));
+    CHECK(fixture.object(frame).absoluteSize.y == doctest::Approx(90.0));
+}
+
+TEST_CASE("a screen nothing changed runs no solver")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    fixture.child("Frame", screen);
+
+    fixture.run();
+    const core::u64 first = ui::layoutStats().solverRuns;
+    CHECK(first == 1);
+
+    // The claim the milestone's benchmark makes, as a COUNTER rather than a
+    // duration: at this scale a timing assertion measures the clock, and
+    // "about zero microseconds" is the shape of gate that passes while doing
+    // nothing.
+    fixture.run();
+    fixture.run();
+    CHECK(ui::layoutStats().solverRuns == first);
+}
+
+TEST_CASE("a frame moved into another is laid out against its new parent, with nothing else written")
+{
+    // **The owner**: a frame reparented into another kept its old place and
+    // size until one of its properties was touched. A move is not a write, so
+    // it marked nothing; `World::setParent` marks both screens now.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId wide = fixture.child("Frame", screen);
+    const InstanceId narrow = fixture.child("Frame", screen);
+    fixture.object(wide).size = core::UDim2{core::UDim{0.0f, 800.0f}, core::UDim{0.0f, 400.0f}};
+    fixture.object(narrow).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(narrow).position = core::UDim2{core::UDim{0.0f, 900.0f}, core::UDim{0.0f, 0.0f}};
+    const InstanceId half = fixture.child("Frame", wide);
+    fixture.object(half).size = core::UDim2{core::UDim{0.5f, 0.0f}, core::UDim{0.5f, 0.0f}};
+    fixture.run();
+    CHECK(fixture.object(half).absoluteSize.x == doctest::Approx(400.0));
+
+    // Moved, and only moved.
+    REQUIRE_FALSE(fixture.world->setParent(half, narrow).has_value());
+    fixture.run();
+    CHECK(fixture.object(half).absoluteSize.x == doctest::Approx(100.0));
+    CHECK(fixture.object(half).absoluteSize.y == doctest::Approx(50.0));
+    CHECK(fixture.object(half).absolutePosition.x == doctest::Approx(900.0));
+}
+
+TEST_CASE("a vertical list stacks its children with the padding between them")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 400.0f}};
+
+    const InstanceId list = fixture.child("UIListLayout", panel);
+    fixture.world->listLayouts().find(list)->padding = core::UDim{0.0f, 8.0f};
+
+    const InstanceId a = fixture.child("Frame", panel);
+    const InstanceId b = fixture.child("Frame", panel);
+    fixture.object(a).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 30.0f}};
+    fixture.object(b).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 40.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(a).absolutePosition.y == doctest::Approx(0.0));
+    // 30 tall plus 8 of padding. The gap is BETWEEN children and not around
+    // them, which is what `UIPadding` is for instead.
+    CHECK(fixture.object(b).absolutePosition.y == doctest::Approx(38.0));
+    // And a laid-out child does not place itself: its own `Position` is not
+    // consulted, which is what a layout IS.
+    CHECK(fixture.object(b).absolutePosition.x == doctest::Approx(0.0));
+}
+
+TEST_CASE("UIPadding insets the content")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 200.0f}};
+
+    const InstanceId padding = fixture.child("UIPadding", panel);
+    scene::UIPaddingComponent* pad = fixture.world->uiPaddings().find(padding);
+    pad->paddingLeft = core::UDim{0.0f, 12.0f};
+    pad->paddingTop = core::UDim{0.0f, 6.0f};
+
+    const InstanceId inner = fixture.child("Frame", panel);
+    fixture.object(inner).size = core::UDim2{core::UDim{0.0f, 50.0f}, core::UDim{0.0f, 50.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(inner).absolutePosition.x == doctest::Approx(12.0));
+    CHECK(fixture.object(inner).absolutePosition.y == doctest::Approx(6.0));
+}
+
+TEST_CASE("an invisible element is not laid out at all")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).visible = false;
+    fixture.run();
+
+    // Not "laid out and then skipped when drawing": a hidden subtree costs
+    // nothing, which is what makes hiding a menu the way to close it.
+    CHECK(fixture.object(frame).absoluteSize.x == doctest::Approx(0.0));
+}
+
+TEST_CASE("the draw list is one flat ordering, ZIndex then document order")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+
+    const InstanceId back = fixture.child("Frame", screen);
+    const InstanceId front = fixture.child("Frame", screen);
+    fixture.object(back).size = core::UDim2{core::UDim{0.0f, 10.0f}, core::UDim{0.0f, 10.0f}};
+    fixture.object(front).size = core::UDim2{core::UDim{0.0f, 20.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.object(back).zIndex = 5.0f;
+    fixture.object(front).zIndex = 1.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 2);
+    // The lower ZIndex draws first, whatever the tree order was.
+    CHECK(list.quads[0].max.x == doctest::Approx(20.0));
+    CHECK(list.quads[1].max.x == doctest::Approx(10.0));
+}
+
+TEST_CASE("a clip narrows rather than replacing the one already in force")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+
+    const InstanceId outer = fixture.child("Frame", screen);
+    fixture.object(outer).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(outer).clipsDescendants = true;
+
+    const InstanceId inner = fixture.child("Frame", outer);
+    fixture.object(inner).position = core::UDim2{core::UDim{0.0f, 50.0f}, core::UDim{0.0f, 0.0f}};
+    fixture.object(inner).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 200.0f}};
+    fixture.object(inner).clipsDescendants = true;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    // Three: the whole window, the outer clip, and the inner clip intersected
+    // with it. A child that escaped its grandparent's clip is the classic
+    // scrolling-list defect, and this is the case that rules it out.
+    REQUIRE(list.scissors.size() == 3);
+    CHECK(list.scissors[2].min.x == doctest::Approx(50.0));
+    CHECK(list.scissors[2].max.x == doctest::Approx(100.0));
+}
+
+TEST_CASE("text measures wider as it gets bigger and taller as it wraps")
+{
+    // The built-in face is a fixed-shape vector one, so its metrics are exact
+    // arithmetic rather than a rasterizer's opinion -- which is what lets a
+    // headless layout be identical to a rendered one.
+    const ui::TextRunMetrics small = ui::measureText("Hello", {}, 12.0f, 0.0f);
+    const ui::TextRunMetrics large = ui::measureText("Hello", {}, 24.0f, 0.0f);
+    CHECK(large.size.x == doctest::Approx(static_cast<double>(small.size.x) * 2.0));
+    CHECK(large.size.y == doctest::Approx(static_cast<double>(small.size.y) * 2.0));
+    CHECK(small.lineCount == 1);
+
+    const ui::TextRunMetrics wrapped = ui::measureText("Hello there world", {}, 12.0f, 40.0f);
+    CHECK(wrapped.lineCount > 1);
+    CHECK(wrapped.size.x <= doctest::Approx(40.0));
+}
+
+// --- Cross-axis alignment (D029) ----------------------------------------------
+
+TEST_CASE("a centred column centres against the CONTAINER, not against its widest child")
+{
+    // The defect a person found in the obby's menu: every child sat sixteen
+    // pixels left of centre, which is half the thirty-two the children were
+    // inset by. The cross-axis metric was the widest child in the line, so a
+    // column of equal-width children got an offset of zero and landed on the
+    // left edge -- "centred" and "flush left" were the same code path whenever
+    // the children agreed about their width.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 400.0f}};
+
+    const InstanceId list = fixture.child("UIListLayout", panel);
+    scene::UIListLayoutComponent* layout = fixture.world->listLayouts().find(list);
+    layout->horizontalAlignment = 1; // Center
+    layout->verticalAlignment = 1;   // Center
+
+    // Both the same width, and both narrower than the panel -- the exact shape
+    // that produced the bug.
+    const InstanceId a = fixture.child("Frame", panel);
+    const InstanceId b = fixture.child("Frame", panel);
+    for (const InstanceId child : {a, b})
+        fixture.object(child).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 50.0f}};
+    fixture.run();
+
+    // A 200-wide child in a 400-wide panel starts at 100 and its centre is the
+    // panel's. Put `lineCross` back to the widest child and this reads 0.
+    CHECK(fixture.object(a).absolutePosition.x == doctest::Approx(100.0));
+    CHECK(fixture.object(b).absolutePosition.x == doctest::Approx(100.0));
+
+    const auto childCentre = fixture.object(a).absolutePosition.x + fixture.object(a).absoluteSize.x * 0.5f;
+    CHECK(static_cast<double>(childCentre) == doctest::Approx(200.0));
+}
+
+TEST_CASE("an End cross alignment reaches the container's far edge")
+{
+    // The same metric, from the other end: with the widest child as the extent,
+    // "flush right" was also "flush left".
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 400.0f}};
+
+    const InstanceId list = fixture.child("UIListLayout", panel);
+    fixture.world->listLayouts().find(list)->horizontalAlignment = 2; // End
+
+    const InstanceId child = fixture.child("Frame", panel);
+    fixture.object(child).size = core::UDim2{core::UDim{0.0f, 120.0f}, core::UDim{0.0f, 30.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(child).absolutePosition.x == doctest::Approx(280.0));
+}
+
+TEST_CASE("a horizontal row centres its children vertically against the container")
+{
+    // The cross axis is the OTHER one for a horizontal list, and a fix that
+    // only worked for columns would be half a fix.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 200.0f}};
+
+    const InstanceId list = fixture.child("UIListLayout", panel);
+    scene::UIListLayoutComponent* layout = fixture.world->listLayouts().find(list);
+    layout->fillDirection = 0; // Horizontal
+    layout->verticalAlignment = 1;
+
+    const InstanceId child = fixture.child("Frame", panel);
+    fixture.object(child).size = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 60.0f}};
+    fixture.run();
+
+    CHECK(fixture.object(child).absolutePosition.y == doctest::Approx(70.0));
+}
+
+TEST_CASE("a wrapped line centres within its own band, which is a decision")
+{
+    // **Written rather than discovered.** With wrap, lines stack along the cross
+    // axis and each occupies its own band; centring one against the whole
+    // container would put every line on top of every other. Within the band is
+    // the only arrangement that is still a stack -- and the case that says so is
+    // here, because "what does a wrapped line centre against" is a real choice
+    // and the answer must not be whatever the code happened to do.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 400.0f}};
+
+    const InstanceId list = fixture.child("UIListLayout", panel);
+    scene::UIListLayoutComponent* layout = fixture.world->listLayouts().find(list);
+    layout->fillDirection = 0; // Horizontal
+    layout->wraps = true;
+    layout->verticalAlignment = 1; // Center, on the cross axis
+
+    // Three 80-wide children in a 200-wide panel: two on the first line, one on
+    // the second. The first line's band is as tall as its tallest child.
+    const InstanceId a = fixture.child("Frame", panel);
+    const InstanceId b = fixture.child("Frame", panel);
+    const InstanceId c = fixture.child("Frame", panel);
+    fixture.object(a).size = core::UDim2{core::UDim{0.0f, 80.0f}, core::UDim{0.0f, 60.0f}};
+    fixture.object(b).size = core::UDim2{core::UDim{0.0f, 80.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.object(c).size = core::UDim2{core::UDim{0.0f, 80.0f}, core::UDim{0.0f, 30.0f}};
+    fixture.run();
+
+    // The band is 60 tall. `a` fills it, so it sits at the top; `b` is 20 tall
+    // and centres within the band at 20 -- not at 190, which is where centring
+    // against the 400-tall panel would put it.
+    CHECK(fixture.object(a).absolutePosition.y == doctest::Approx(0.0));
+    CHECK(fixture.object(b).absolutePosition.y == doctest::Approx(20.0));
+    // And the second line is below the first rather than on top of it. Exactly
+    // 60 here, because this list sets no `Padding` -- a band's height is its
+    // tallest child and lines meet.
+    CHECK(fixture.object(c).absolutePosition.y == doctest::Approx(60.0));
+}
+
+// --- UICorner (D030) ----------------------------------------------------------
+
+TEST_CASE("a UICorner reaches the draw list, which is where a rounded corner is")
+{
+    // `CornerRadius` was declared, stored, read back and consumed by NOTHING for
+    // a whole milestone -- neither the UI module nor the shader mentioned a
+    // radius -- and a person found it by looking at a square button. This is the
+    // consumer, and `inertcheck` is the lint that would have found the absence.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 100.0f}};
+
+    const InstanceId corner = fixture.child("UICorner", panel);
+    fixture.world->uiCorners().find(corner)->cornerRadius = core::UDim{0.0f, 12.0f};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE_FALSE(list.quads.empty());
+    CHECK(list.quads[0].cornerRadius == doctest::Approx(12.0));
+}
+
+TEST_CASE("a radius is clamped to half the shorter side, and a Scale is a fraction of it")
+{
+    // Past half the shorter side a rounded rectangle IS a stadium, and beyond
+    // that the arithmetic has no meaning -- so it is clamped here rather than in
+    // the shader, which keeps the fragment stage a distance function with no
+    // special cases.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 40.0f}};
+
+    const InstanceId corner = fixture.child("UICorner", panel);
+    fixture.world->uiCorners().find(corner)->cornerRadius = core::UDim{0.0f, 500.0f};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE_FALSE(list.quads.empty());
+    CHECK(list.quads[0].cornerRadius == doctest::Approx(20.0));
+
+    // A `Scale` is a fraction of the SHORTER side: half of a 200x40 panel is 20,
+    // and a radius that meant a fraction of the WIDTH would make a wide button's
+    // corners taller than the button.
+    fixture.world->uiCorners().find(corner)->cornerRadius = core::UDim{0.25f, 0.0f};
+    list.clear();
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    CHECK(list.quads[0].cornerRadius == doctest::Approx(10.0));
+}
+
+TEST_CASE("a UICorner changes the drawing and not the hit test")
+{
+    // `UICorner`'s own doc promises it: a button whose corner you could see
+    // through but not click through would be worse than a square one.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+
+    const InstanceId corner = fixture.child("UICorner", panel);
+    fixture.world->uiCorners().find(corner)->cornerRadius = core::UDim{0.0f, 50.0f};
+    fixture.run();
+
+    // The very corner pixel, which a 50-radius round would have cut away.
+    CHECK(ui::hitTest(*fixture.world, fixture.service, core::Vec2{1.0f, 1.0f}) == panel);
+    // And the layout is untouched: the box is still the box.
+    CHECK(fixture.object(panel).absoluteSize.x == doctest::Approx(100.0));
+}
+
+TEST_CASE("no UICorner means a radius of zero, which costs the shader one compare")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId panel = fixture.child("Frame", screen);
+    fixture.object(panel).size = core::UDim2{core::UDim{0.0f, 80.0f}, core::UDim{0.0f, 80.0f}};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE_FALSE(list.quads.empty());
+    CHECK(list.quads[0].cornerRadius == doctest::Approx(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// Images (roadmap M7: `Image`, `ScaleType` and `SliceCenter` stop being `Inert`).
+//
+// Against the GEOMETRY rather than through a frame, for the same reason the LOD
+// tests are: a nine-slice is nine rectangles and a tile is a division, and every
+// one of those is a place to get an edge wrong by a pixel. A screenshot would
+// prove the wiring and say nothing about whether the cuts are where the caller
+// asked for them.
+
+namespace {
+
+// A 64x32 picture, always available. The provider is the seam the app fills; a
+// test fills it with a constant, which is enough to make every rule below
+// checkable without a GPU.
+constexpr engine::core::u32 ImageWidth = 64;
+constexpr engine::core::u32 ImageHeight = 32;
+
+bool provideTestImage(void* user, std::string_view urn, engine::ui::ResolvedImage& out)
+{
+    (void)user;
+    if (urn != "asset://ui/panel.png") {
+        return false;
+    }
+    out.texture = 2;
+    out.width = ImageWidth;
+    out.height = ImageHeight;
+    return true;
+}
+
+struct ImageGuard
+{
+    ImageGuard() { engine::ui::setImageProvider(&provideTestImage, nullptr); }
+    ~ImageGuard() { engine::ui::setImageProvider(nullptr, nullptr); }
+};
+
+} // namespace
+
+TEST_CASE("a stretched image is one quad covering the whole source")
+{
+    ImageGuard guard;
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 100.0f}};
+    // No background, so the list is the IMAGE's quads and nothing else. An
+    // `ImageLabel` draws its background first like every other `UIObject`, and
+    // counting that here would be counting a different feature.
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/panel.png";
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+    CHECK(list.quads[0].texture == 2);
+    CHECK(list.quads[0].uvMin.x == doctest::Approx(0.0));
+    CHECK(list.quads[0].uvMin.y == doctest::Approx(0.0));
+    CHECK(list.quads[0].uvMax.x == doctest::Approx(1.0));
+    CHECK(list.quads[0].uvMax.y == doctest::Approx(1.0));
+    CHECK(list.quads[0].max.x == doctest::Approx(200.0));
+}
+
+TEST_CASE("an image nothing can resolve draws as its tint rather than as a hole")
+{
+    // No provider installed, so nothing resolves. This is also what a picture
+    // still being loaded looks like -- the app records the request on the first
+    // frame and the texture exists on the next.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 40.0f}};
+    // No background, so the list is the IMAGE's quads and nothing else. An
+    // `ImageLabel` draws its background first like every other `UIObject`, and
+    // counting that here would be counting a different feature.
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/nothing.png";
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+    CHECK(list.quads[0].texture == 0);
+}
+
+TEST_CASE("a nine-slice keeps its corners at their own size")
+{
+    ImageGuard guard;
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 100.0f}};
+
+    // No background, so the list is the IMAGE's quads and nothing else. An
+    // `ImageLabel` draws its background first like every other `UIObject`, and
+    // counting that here would be counting a different feature.
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/panel.png";
+    image->scaleType = 1;
+    // Eight pixels in from every edge of a 64x32 picture.
+    image->sliceCenter = core::Rect{{8.0f, 8.0f}, {56.0f, 24.0f}};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    // Nine: four corners, four edges and a middle, all of them with something
+    // in them at this size.
+    REQUIRE(list.quads.size() == 9);
+
+    // The top-left corner is EIGHT pixels on screen, whatever the box is. That
+    // is the whole promise of a nine-slice: a panel keeps its rounded corners at
+    // any size.
+    CHECK(list.quads[0].min.x == doctest::Approx(0.0));
+    CHECK(list.quads[0].min.y == doctest::Approx(0.0));
+    CHECK(list.quads[0].max.x == doctest::Approx(8.0));
+    CHECK(list.quads[0].max.y == doctest::Approx(8.0));
+    CHECK(list.quads[0].uvMax.x == doctest::Approx(8.0 / 64.0));
+
+    // The bottom-right corner is eight pixels in from the far edge.
+    CHECK(list.quads[8].min.x == doctest::Approx(200.0 - 8.0));
+    CHECK(list.quads[8].max.x == doctest::Approx(200.0));
+    CHECK(list.quads[8].uvMin.x == doctest::Approx(56.0 / 64.0));
+
+    // The middle takes everything the corners did not.
+    CHECK(list.quads[4].min.x == doctest::Approx(8.0));
+    CHECK(list.quads[4].max.x == doctest::Approx(192.0));
+}
+
+TEST_CASE("a nine-slice in a box narrower than its own corners collapses the middle")
+{
+    // The case that produces overlapping corners in every implementation that
+    // does not think about it: 12 pixels of box and 16 pixels of corner.
+    ImageGuard guard;
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 12.0f}, core::UDim{0.0f, 12.0f}};
+
+    // No background, so the list is the IMAGE's quads and nothing else. An
+    // `ImageLabel` draws its background first like every other `UIObject`, and
+    // counting that here would be counting a different feature.
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/panel.png";
+    image->scaleType = 1;
+    image->sliceCenter = core::Rect{{8.0f, 8.0f}, {56.0f, 24.0f}};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    // FEWER than nine: a cell that collapsed to nothing is not emitted at all,
+    // which is one draw saved rather than one draw of zero pixels.
+    REQUIRE_FALSE(list.quads.empty());
+    CHECK(list.quads.size() < 9);
+    // No quad reaches past the box, and none is inside out -- overlapping
+    // corners are what a box narrower than its own corners produces in an
+    // implementation that does not think about it.
+    for (const ui::DrawQuad& quad : list.quads) {
+        CHECK(quad.min.x <= quad.max.x);
+        CHECK(quad.min.y <= quad.max.y);
+        CHECK(quad.max.x <= doctest::Approx(12.0));
+    }
+}
+
+TEST_CASE("a tiled image repeats at its own size and is cut at the far edge")
+{
+    ImageGuard guard;
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("ImageLabel", screen);
+    // 150 x 40 of a 64 x 32 picture: three columns, the last one 22 wide, and
+    // two rows, the last one 8 tall.
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 150.0f}, core::UDim{0.0f, 40.0f}};
+
+    // No background, so the list is the IMAGE's quads and nothing else. An
+    // `ImageLabel` draws its background first like every other `UIObject`, and
+    // counting that here would be counting a different feature.
+    fixture.object(label).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(label);
+    REQUIRE(image != nullptr);
+    image->image = "asset://ui/panel.png";
+    image->scaleType = 2;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 6);
+
+    // The first tile is whole.
+    CHECK(list.quads[0].max.x == doctest::Approx(64.0));
+    CHECK(list.quads[0].uvMax.x == doctest::Approx(1.0));
+
+    // The last tile in the row is CUT rather than squashed: its source shrinks
+    // with its destination, so the picture keeps its own resolution.
+    CHECK(list.quads[2].max.x == doctest::Approx(150.0));
+    CHECK(list.quads[2].uvMax.x == doctest::Approx(22.0 / 64.0));
+    CHECK(list.quads[5].uvMax.y == doctest::Approx(8.0 / 32.0));
+}
+
+// ---------------------------------------------------------------------------
+// Scroll bars (roadmap M7: `ScrollBarThickness` stops being `Inert`).
+
+TEST_CASE("a scrollable region draws a track and a thumb")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    // Four times as tall as the view, so a quarter of the track is thumb.
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 400.0f}};
+    scroll->scrollBarThickness = 10.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    // Two: the vertical track and its thumb. There is no horizontal bar because
+    // the canvas is exactly as wide as the view -- a bar for an axis that
+    // cannot move is a bar that lies.
+    REQUIRE(list.quads.size() == 2);
+
+    // Along the far edge, ten pixels wide.
+    CHECK(list.quads[0].min.x == doctest::Approx(90.0));
+    CHECK(list.quads[0].max.x == doctest::Approx(100.0));
+    CHECK(list.quads[0].max.y == doctest::Approx(100.0));
+
+    // The thumb is as long a fraction of the track as the view is of the
+    // canvas: a quarter of a hundred pixels.
+    CHECK(list.quads[1].max.y - list.quads[1].min.y == doctest::Approx(25.0));
+    CHECK(list.quads[1].min.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("the thumb travels with the scroll and reaches the end at the end")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 400.0f}};
+    scroll->scrollBarThickness = 10.0f;
+    // Scrolled to the very bottom: 400 of canvas less 100 of view.
+    scroll->canvasPosition = core::Vec2{0.0f, 300.0f};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 2);
+    // Flush with the bottom of the track, and no further. A thumb that ran past
+    // the end is the classic off-by-one of this arithmetic.
+    CHECK(list.quads[1].max.y == doctest::Approx(100.0));
+    CHECK(list.quads[1].min.y == doctest::Approx(75.0));
+}
+
+TEST_CASE("a thickness of zero scrolls and draws no bar")
+{
+    // What a touch surface wants, and what the property's own doc promises.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 400.0f}};
+    scroll->scrollBarThickness = 0.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    CHECK(list.quads.empty());
+    // The scrolling itself is untouched: the canvas still clamps.
+    CHECK(scroll->canvasPosition.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("a canvas that fits gets no bar at all")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).backgroundTransparency = 1.0f;
+
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 50.0f}, core::UDim{0.0f, 50.0f}};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    CHECK(list.quads.empty());
+}
+
+// --- `GuiObject.Rotation` (S7.13) --------------------------------------------
+//
+// **The property was stored, settable and drawn by nothing for the whole of
+// v1.** `inertcheck` could not see it: `rotation` is also a field of
+// `CFrame`, and the editor's camera code mentions that one on nearly every
+// line, so the by-name sweep counted a reader and reported nothing.
+//
+// The turn is an affine on the quad, so what these check is where a corner
+// lands -- and the corners are the only thing that moves. A quad's own frame,
+// which is what rounds its corners, is deliberately left upright.
+
+namespace {
+
+// Where the quad's four corners actually land, which is `min`/`max` put through
+// the quad's own transform. There is no other way to ask: after a turn the box
+// is not axis-aligned any more, and `min`/`max` still describe the upright one.
+[[nodiscard]] core::Vec2 turnedCorner(const ui::DrawQuad& quad, core::Vec2 point)
+{
+    return core::Vec2{quad.turn.x * point.x - quad.turn.y * point.y + quad.turnOffset.x,
+                      quad.turn.y * point.x + quad.turn.x * point.y + quad.turnOffset.y};
+}
+
+} // namespace
+
+TEST_CASE("a quarter turn about the centre swaps a rectangle's corners")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+    fixture.object(frame).position = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 20.0f}};
+    // Anchored at the middle. `absolutePosition` already has the anchor taken
+    // off it -- the box is (80, 90) to (120, 110) -- so the anchor point lands
+    // back on `Position`, and (100, 100) is the pivot.
+    fixture.object(frame).anchorPoint = core::Vec2{0.5f, 0.5f};
+    fixture.object(frame).rotation = 90.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+    const ui::DrawQuad& quad = list.quads[0];
+
+    // Clockwise on a screen whose Y points down: the top-left corner (80, 90)
+    // swings up and to the RIGHT. Getting the sign wrong here draws every
+    // rotation backwards and looks entirely plausible until two of them meet.
+    const core::Vec2 topLeft = turnedCorner(quad, quad.min);
+    CHECK(topLeft.x == doctest::Approx(110.0).epsilon(0.001));
+    CHECK(topLeft.y == doctest::Approx(80.0).epsilon(0.001));
+
+    const core::Vec2 bottomRight = turnedCorner(quad, quad.max);
+    CHECK(bottomRight.x == doctest::Approx(90.0).epsilon(0.001));
+    CHECK(bottomRight.y == doctest::Approx(120.0).epsilon(0.001));
+
+    // The pivot is the one point a rotation leaves alone.
+    const core::Vec2 pivot = turnedCorner(quad, core::Vec2{100.0f, 100.0f});
+    CHECK(pivot.x == doctest::Approx(100.0).epsilon(0.001));
+    CHECK(pivot.y == doctest::Approx(100.0).epsilon(0.001));
+}
+
+TEST_CASE("the quad's own frame stays upright so a rounded corner stays round")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("Frame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.object(frame).rotation = 37.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 1);
+
+    // `min`/`max` are the UNROTATED box, and they have to stay that way: they
+    // are what the vertex builder measures the corner radius against, and a
+    // radius measured in a turned frame is an ellipse.
+    CHECK(list.quads[0].min.x == doctest::Approx(0.0));
+    CHECK(list.quads[0].min.y == doctest::Approx(0.0));
+    CHECK(list.quads[0].max.x == doctest::Approx(40.0));
+    CHECK(list.quads[0].max.y == doctest::Approx(20.0));
+}
+
+TEST_CASE("a child turns with its parent and then by its own")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId parent = fixture.child("Frame", screen);
+    fixture.object(parent).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(parent).rotation = 90.0f;
+
+    // Offset from the parent's own corner ON PURPOSE, so the two turns are
+    // about DIFFERENT points -- the parent's pivot is (0, 0) and the child's is
+    // (40, 0). Two turns about one point is the case that works under any
+    // representation and proves nothing.
+    const InstanceId child = fixture.child("Frame", parent);
+    fixture.object(child).position = core::UDim2{core::UDim{0.0f, 40.0f}, core::UDim{0.0f, 0.0f}};
+    fixture.object(child).size = core::UDim2{core::UDim{0.0f, 10.0f}, core::UDim{0.0f, 10.0f}};
+    fixture.object(child).rotation = 90.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 2);
+    const ui::DrawQuad& inner = list.quads[1];
+
+    // The two 90s add to a half turn.
+    CHECK(inner.turn.x == doctest::Approx(-1.0).epsilon(0.001));
+    CHECK(inner.turn.y == doctest::Approx(0.0).epsilon(0.001));
+
+    // **And it is a half turn about NEITHER pivot.** Turned about (40, 0) the
+    // child's own corner would not move at all; it lands on (0, 40) instead,
+    // which is a rotation plus a translation and is exactly what an angle and a
+    // point cannot say.
+    const core::Vec2 topLeft = turnedCorner(inner, inner.min);
+    CHECK(topLeft.x == doctest::Approx(0.0).epsilon(0.001));
+    CHECK(topLeft.y == doctest::Approx(40.0).epsilon(0.001));
+    const core::Vec2 bottomRight = turnedCorner(inner, inner.max);
+    CHECK(bottomRight.x == doctest::Approx(-10.0).epsilon(0.001));
+    CHECK(bottomRight.y == doctest::Approx(30.0).epsilon(0.001));
+}
+
+TEST_CASE("an unrotated element carries the identity, and so does a rotated one's sibling")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId turned = fixture.child("Frame", screen);
+    fixture.object(turned).size = core::UDim2{core::UDim{0.0f, 10.0f}, core::UDim{0.0f, 10.0f}};
+    fixture.object(turned).rotation = 45.0f;
+
+    const InstanceId upright = fixture.child("Frame", screen);
+    fixture.object(upright).size = core::UDim2{core::UDim{0.0f, 20.0f}, core::UDim{0.0f, 20.0f}};
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() == 2);
+
+    // A turn reaches descendants and nothing else. The sibling is the case that
+    // would break if the walk carried the rotation in a variable it forgot to
+    // restore -- which is exactly how the scissor index would break too.
+    CHECK(list.quads[1].turn.x == doctest::Approx(1.0));
+    CHECK(list.quads[1].turn.y == doctest::Approx(0.0));
+    CHECK(list.quads[1].turnOffset.x == doctest::Approx(0.0));
+    CHECK(list.quads[1].turnOffset.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("a turn reaches every quad the element draws, not only its background")
+{
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId frame = fixture.child("ScrollFrame", screen);
+    fixture.object(frame).size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    fixture.object(frame).rotation = 90.0f;
+
+    scene::ScrollFrameComponent* scroll = fixture.world->scrollFrames().find(frame);
+    REQUIRE(scroll != nullptr);
+    scroll->canvasSize = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 400.0f}};
+    scroll->scrollBarThickness = 10.0f;
+    fixture.run();
+
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    // A background, a track and a thumb: three quads from one element, pushed
+    // by two different functions. Bars drawn upright inside a turned region is
+    // the failure that stamping the whole range instead of each push site is
+    // built to make impossible.
+    REQUIRE(list.quads.size() == 3);
+    for (const ui::DrawQuad& quad : list.quads) {
+        CHECK(quad.turn.x == doctest::Approx(0.0).epsilon(0.001));
+        CHECK(quad.turn.y == doctest::Approx(1.0).epsilon(0.001));
+    }
+}
+
+TEST_CASE("TextTransparency fades the words and not the box")
+{
+    // **The owner's report**: text had no transparency of its own, so fading a
+    // label's words meant fading its box with them.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId label = fixture.child("TextLabel", screen);
+    fixture.object(label).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 40.0f}};
+    fixture.world->textLabels().find(label)->text = "hello";
+    fixture.world->textLabels().find(label)->textTransparency = 0.75f;
+    fixture.run();
+
+    // The box is the first quad and keeps its own alpha; everything after it
+    // is the words, whichever face drew them.
+    ui::DrawList list;
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE(list.quads.size() > 1);
+    CHECK(static_cast<double>(list.quads[0].alpha) == doctest::Approx(1.0));
+    for (std::size_t index = 1; index < list.quads.size(); ++index)
+        CHECK(static_cast<double>(list.quads[index].alpha) == doctest::Approx(0.25));
+
+    // Past 1 is drawn as 1: the words are gone and the box is not.
+    fixture.world->textLabels().find(label)->textTransparency = 3.0f;
+    list.clear();
+    ui::buildDrawList(*fixture.world, fixture.service, list);
+    REQUIRE_FALSE(list.quads.empty());
+    CHECK(static_cast<double>(list.quads[0].alpha) == doctest::Approx(1.0));
+    for (std::size_t index = 1; index < list.quads.size(); ++index)
+        CHECK(static_cast<double>(list.quads[index].alpha) == doctest::Approx(0.0));
+}

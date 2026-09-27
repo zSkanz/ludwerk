@@ -1,0 +1,270 @@
+// Subsystem bring-up and the frame loop (architecture.md §2 "app", §3).
+#pragma once
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+
+#include "engine/core/error.h"
+#include "engine/core/types.h"
+#include "engine/platform/window.h"
+#include "engine/render/settings.h"
+#include "engine/replication/types.h"
+#include "engine/rhi/types.h"
+
+namespace engine::app {
+
+using core::i32;
+using core::u64;
+
+struct EngineOptions
+{
+    // A directory is a project root and gets the full mount; a file is mounted
+    // as a single entry `Script` (M2 brief, Decision 9). The scripts do not run
+    // before the loop any more -- they are deferred, and their first resumption
+    // is the first drain of the first tick.
+    std::filesystem::path scriptPath;
+
+    // The world's deterministic stream. Fixed rather than drawn from a clock,
+    // because a replay stores the seed and nothing else (ADR 0025) -- and
+    // because two runs of the same script must produce the same world hash,
+    // which is the M2 gate.
+    u64 worldSeed = 1;
+
+    // The project browser rather than a session (ADR 0055). Set by `--launcher`,
+    // and set for a host started with no project at all -- which used to be a
+    // usage error and is now the commonest way somebody meets this engine.
+    bool launcher = false;
+
+    // No window. The frame loop, the device and the render target all still
+    // exist -- this is the CI harness and the shape a dedicated server would
+    // take, not a mode where rendering is skipped.
+    bool headless = false;
+
+    // Zero means run until the window is closed. Any other value is a frame
+    // budget, which is the only thing that makes a headless run terminate.
+    u64 frames = 0;
+
+    // What this process was started with, less the executable: what an editor
+    // restarts itself with after its graphics device is lost.
+    std::vector<std::string> arguments;
+
+    // Loses the graphics device on this frame, as a driver reset would --
+    // `--simulate-device-loss=N`, for the test that the engine survives one.
+    // Zero never does.
+    u64 simulateDeviceLossAt = 0;
+
+    // Where compiled surface shaders -- and the ones held back after a lost
+    // device -- are kept; empty is `surface-cache` in the user directory.
+    // `--surface-cache=DIR`, so a test never touches a person's own.
+    std::filesystem::path surfaceCache;
+
+    // Exit when the frame budget is spent instead of continuing to run.
+    bool exitAfterFrames = false;
+
+    // Empty means take no screenshot. Requires `headless`: a windowed frame
+    // renders into the swapchain, which has been presented and is gone by the
+    // time anyone could read it.
+    std::filesystem::path screenshotPath;
+
+    // Where to write the recorded command stream. Only the capture backend
+    // records one; asking any other backend for it is a usage error rather
+    // than an empty file, because an empty golden would pass forever.
+    std::filesystem::path capturePath;
+
+    // Runs the conformance suite from this directory instead of a normal
+    // session: every `*.spec.luau` under it is mounted as an entry `Script` and
+    // the run ends by itself once the suite reports (api-design.md §3).
+    std::filesystem::path conformanceRoot;
+
+    // Runs the record/replay determinism gate over this directory instead of a
+    // session. A replay creates no device and no window (see `replay.h`), so it
+    // is a mode rather than a flag on a normal run.
+    std::filesystem::path replayRoot;
+
+    // Rewrites each scenario's `trace.txt` from this build instead of comparing
+    // against it. The only way a legitimate semantic change gets a new golden.
+    bool replayRecord = false;
+
+    // Runs the editor-seam proof over this directory, which holds two projects
+    // `a/` and `b/` (see `two_worlds.h`). A mode rather than a flag on a normal
+    // run: what it compares is three sessions against each other, so there is
+    // no single session for the frame budget or the screenshot path to describe.
+    std::filesystem::path twoWorldsRoot;
+
+    // Where that proof leaves its four PNGs, or empty to write none. The
+    // assertions compare pixels in memory, so the files are evidence for a
+    // human and never an input to the result.
+    std::filesystem::path twoWorldsOutDir;
+
+    // N1's acceptance gate: this project booted as an authority and as its
+    // replica in one process, rendered side by side (`runReplicaGate`). Its
+    // evidence goes to `twoWorldsOutDir`.
+    std::filesystem::path replicaGateProject;
+
+    // Runs the simulation benchmarks over this directory. Like a replay it
+    // opens no device: what it measures is the tick, and a tick that depended
+    // on a swapchain would be the finding rather than the measurement.
+    std::filesystem::path benchRoot;
+    u64 benchRepeats = 3;
+
+    // Where a conformance run writes its machine-readable per-case report.
+    // Empty writes none. `ludwerk test` reads this rather than the console,
+    // because every console line is catalog-resolved (M3 brief, Decision 6).
+    std::filesystem::path testReportPath;
+
+    // `ws://127.0.0.1:<port>/<path>` -- the dev server this engine dials out to
+    // (ADR 0035). Empty means no watcher is attached and no control code runs
+    // at all. The engine never listens, in any profile.
+    std::string devControlUrl;
+    // Proves this connection is the engine `ludwerk dev` launched: a loopback
+    // listener is reachable by every process on the machine.
+    std::string devControlToken;
+
+    rhi::BackendId backend = rhi::BackendId::SdlGpu;
+
+    // Print a frame-time summary at exit. Off by default because the numbers
+    // are wall-clock and a run that is not being measured should not pay for
+    // keeping them (R10 forbids simulation reading them at all).
+    // The visual editor rather than a game (ADR 0046, post-v1 phase 1). A normal
+    // windowed session in every other respect: the same world, the same tick,
+    // the same renderer -- what changes is that the world is drawn into a panel
+    // and the shell around it can select and edit what it draws.
+    //
+    // Not a mode that hijacks the loop the way `--replay` and `--two-worlds`
+    // do, and deliberately so: an editor that ran a different loop from the game
+    // would be an editor that shows you something other than your game.
+    bool editor = false;
+
+    // `[project] scene` -- the scene a run of this project starts with,
+    // content-relative. Empty means the project starts with whatever its scripts
+    // build, which is every example before `06-scene`.
+    //
+    // The EDITOR may open a different one: it remembers what the person had open
+    // and falls back to this. Which scene a run starts with is the project's
+    // decision; which scene an editor opens is the person's.
+    std::string startupScene;
+    // `[network] server` (ADR 0106): where `NetworkService:Join()` goes with no
+    // address.
+    std::string defaultServer;
+
+    // The returning-focus soak check (D066's successor). Zero asserts nothing,
+    // like every other soak threshold: only the caller running a particular
+    // fly-through knows whether its path comes back.
+    core::f32 soakReturnRadiusMetres = 0.0f;
+
+    // **Write the world the scripts just built to a scene, then exit.**
+    //
+    // The one thing ADR 0047's migration needs and cannot do without: a project
+    // whose world is in its code has no way to get that world into a file, and
+    // retyping it by hand into JSON is not a migration anybody performs. This
+    // boots the project, lets the entry scripts build whatever they build, and
+    // writes it -- the same `writeScene` the editor's Save calls, so what comes
+    // out is what the editor would have written.
+    //
+    // Headless and one frame. It is a capture, not a run.
+    std::filesystem::path saveScenePath;
+
+    // **Write the scene's tree as types and exit** (ADR 0078): the project's
+    // `.engine/types/scene.d.luau`, from its scene as the editor holds it --
+    // whole, with no script run and nothing partitioned away. What `ludwerk setup`
+    // and `ludwerk check` run so a project that never opened the editor is typed.
+    bool writeTypesOnly = false;
+
+    // **Partition the project's scene and exit** (ADR 0053).
+    //
+    // The same work a run does on the way to its first frame, done on its own
+    // so that `ludwerk build` can pre-warm the cache -- and it is the same code,
+    // not a second path, which is the whole reason the ADR asked for it here
+    // rather than in the asset compiler. The artifact carries `.engine/`, so a
+    // cache warmed by this travels with the game and the player's first launch
+    // pays nothing.
+    bool partitionOnly = false;
+
+    bool frameStats = false;
+
+    // **`--gpu-debug`: the GPU debug layer, asked for by name** (D183). Off
+    // means whatever the profile decides -- see `gpuValidationWanted`.
+    bool gpuDebug = false;
+
+    // **The posture, from the command line and from nowhere else** (ADR 0070):
+    // `--host`, `--serve` or `--join`. Solo when none was given, which builds no
+    // replication object at all.
+    replication::Config network;
+
+    // M7's gate, as a flag. Empty writes no report and asserts nothing.
+    //
+    // The HOST enforces it rather than a script or a separate checker, the
+    // same way `--replay` compares against its own golden: the numbers exist
+    // only inside the frame loop, and a gate that has to be re-derived from a
+    // log line is a gate that rots the first time the line is reworded.
+    // A failed soak is a non-zero exit; `soak.h` holds the arithmetic.
+    std::filesystem::path soakReportPath;
+
+    // The DECLARED ceiling. Zero asserts no ceiling -- a number only whoever
+    // is running a particular fly-through can supply, and one this code has
+    // no business inventing a default for.
+    u64 soakCeilingBytes = 0;
+
+    // What "the world loaded" means for this particular scene. Zero asserts
+    // nothing; see `soak.h` for why a soak needs to be told.
+    u64 soakMinimumInstances = 0;
+
+    // The quality family, already resolved through its three layers by the time
+    // it gets here (project_config.h): a preset, the project file, the flags.
+    // The host applies it to the renderer and never re-derives it.
+    render::GraphicsSettings graphics;
+
+    // The game's own window title, passed through rather than translated -- it
+    // is the game's string and not the engine's (R3, and the split
+    // `log()`/`logText()` draws). Empty uses the engine's titled window.
+    std::string windowTitle;
+    // **One of a match's windows** (ADR 0106 §5): where the editor put it
+    // (`--window=x,y,w,h`), and which it is (`--label=Client 1`), which the
+    // title carries so four windows can be told apart.
+    std::optional<platform::WindowPlacement> windowPlacement;
+    std::string windowLabel;
+    // `--log-file=`: where this process's log goes, when the editor runs
+    // several and one `engine.log` would be four processes writing one file.
+    std::filesystem::path logFile;
+    // `[project] icon`, resolved: a PNG here is what the window wears, over
+    // whatever icon the executable carries (ADR 0104, stage 0).
+    std::filesystem::path projectIcon;
+    // `[window] fullscreen` and `resizable` (ADR 0104 §1).
+    bool fullscreen = false;
+    bool resizable = true;
+
+    i32 width = 1280;
+    i32 height = 720;
+};
+
+// **Whether the GPU device is created with its debug layer** (D183). The
+// `debug` and `dev` profiles are where engine work happens, so they validate;
+// `player`, `shipping` and `editor` are what somebody downloads, and there the
+// layer only costs frame time and turns any message it has into a crash. An
+// explicit `--gpu-debug` asks for it in any profile.
+[[nodiscard]] bool gpuValidationWanted(std::string_view profile, bool optIn) noexcept;
+
+// Runs to completion. Returns the first error that stopped it, or nothing on a
+// clean exit.
+[[nodiscard]] std::optional<core::EngineError> run(const EngineOptions& options);
+
+// The project browser (ADR 0055): what the host does when it is started with no
+// project at all, which used to be a usage error.
+//
+// **A loop of its own, and that is the decision rather than a shortcut.** There
+// is no world here, no Luau VM, no physics and no scheduler -- a launcher that
+// booted a simulation to show a list of folders would be absurd. What it shares
+// with `run` is the window, the device and the overlay, which is exactly the
+// part that draws.
+//
+// Choosing a project starts the editor as a NEW PROCESS and returns; everything
+// a project decides is resolved at boot, so swapping it inside a running host
+// would touch every seam for a screen that runs once.
+//
+// Only `width` and `height` are read from `options`. A headless launcher is not
+// a thing that can exist, and the caller is expected not to ask for one.
+[[nodiscard]] std::optional<core::EngineError> runLauncher(const EngineOptions& options);
+
+} // namespace engine::app

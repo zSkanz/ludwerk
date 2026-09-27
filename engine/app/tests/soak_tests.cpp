@@ -1,0 +1,497 @@
+#include <cmath>
+#include <doctest/doctest.h>
+#include <string>
+#include <string_view>
+
+#include "engine/app/soak.h"
+#include "engine/core/i18n.h"
+
+using namespace engine;
+using namespace engine::app;
+using engine::core::u64;
+
+namespace {
+
+// The real catalog, so these also prove every key `soak.cpp` raises exists in
+// `i18n/en.json` -- a gate whose failure message is a bare key is a gate nobody
+// reads twice.
+void seedRealCatalog()
+{
+    const auto result = engine::core::engineCatalog().loadFromFile(ENG_TEST_CATALOG);
+    REQUIRE_MESSAGE(result.ok, result.diagnostic);
+}
+
+// One frame of a healthy world: fast, flat memory, flat instance count.
+void steady(SoakRecorder& recorder, int frames, f64 ms = 8.0, u64 instances = 4000, f64 streamingMs = 0.5)
+{
+    for (int i = 0; i < frames; ++i) {
+        recorder.sample({.frameMs = ms,
+                         .streamingMs = streamingMs,
+                         .residentBytes = 512u * 1024u * 1024u,
+                         .instanceCount = instances});
+    }
+}
+
+[[nodiscard]] bool mentions(const SoakVerdict& verdict, std::string_view fragment)
+{
+    for (const core::EngineError& failure : verdict.failures) {
+        if (failure.message.find(fragment) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool mentionsQuarantined(const SoakVerdict& verdict, std::string_view fragment)
+{
+    for (const core::EngineError& note : verdict.quarantined) {
+        if (note.message.find(fragment) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("a flat world passes")
+{
+    seedRealCatalog();
+
+    SoakRecorder recorder(60);
+    steady(recorder, 1060);
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK(verdict.ok);
+    CHECK(verdict.frames == 1000);
+    CHECK(verdict.hitches == 0);
+    CHECK(verdict.earlyInstances == 4000);
+    CHECK(verdict.lateInstances == 4000);
+}
+
+TEST_CASE("warm-up frames are not measured")
+{
+    SoakRecorder recorder(60);
+    // The startup burst: sixty frames that would each be a hitch and would each
+    // drag the median. They are exactly what a soak must not describe.
+    for (int i = 0; i < 60; ++i) {
+        recorder.sample({.frameMs = 200.0, .streamingMs = 150.0, .residentBytes = 0, .instanceCount = 0});
+    }
+    steady(recorder, 400);
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK(verdict.frames == 400);
+    CHECK(verdict.hitches == 0);
+    CHECK(verdict.worstMs == doctest::Approx(8.0));
+}
+
+TEST_CASE("a run shorter than its warm-up fails rather than passes vacuously")
+{
+    seedRealCatalog();
+
+    SoakRecorder recorder(60);
+    steady(recorder, 10);
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK_FALSE(verdict.ok);
+    CHECK(verdict.frames == 0);
+}
+
+TEST_CASE("one frame that spent too long INSIDE STREAMING fails the gate")
+{
+    seedRealCatalog();
+
+    SoakRecorder recorder(0);
+    steady(recorder, 500);
+    recorder.sample({.frameMs = 41.0, .streamingMs = 38.0, .residentBytes = 0, .instanceCount = 4000});
+    steady(recorder, 500);
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK_FALSE(verdict.ok);
+    CHECK(verdict.hitches == 1);
+    CHECK(verdict.worstStreamingMs == doctest::Approx(38.0));
+    CHECK(mentions(verdict, "engine.soak.err.hitches"));
+}
+
+TEST_CASE("a long frame that streaming did not cause is not a hitch")
+{
+    seedRealCatalog();
+
+    // The distinction the whole check exists for. This is the Tier-2 container
+    // on a busy host: eighteen slow frames out of eighteen thousand, none of
+    // them inside streaming. The first version of this gate failed on exactly
+    // this and was measuring the runner rather than the engine.
+    // Eighteen in EIGHTEEN THOUSAND, which is the ratio the container actually
+    // produced. The ratio is the test: at that rate the p99 backstop below does
+    // not notice, and at a rate a hundred times higher it should.
+    SoakRecorder recorder(0);
+    steady(recorder, 18000);
+    for (int i = 0; i < 18; ++i) {
+        recorder.sample({.frameMs = 83.0, .streamingMs = 0.4, .residentBytes = 0, .instanceCount = 4000});
+    }
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK(verdict.hitches == 0);
+    CHECK(verdict.worstMs == doctest::Approx(83.0));
+    CHECK(verdict.ok);
+}
+
+TEST_CASE("frames that are ALL slow fail the backstop, whatever the cause")
+{
+    seedRealCatalog();
+
+    // The other half: a percentile tolerates noise and does not tolerate a
+    // machine that is uniformly slow, which is worth failing even unattributed.
+    SoakRecorder recorder(0);
+    steady(recorder, 1000, 90.0);
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK_FALSE(verdict.ok);
+    CHECK(verdict.hitches == 0);
+    CHECK(mentions(verdict, "engine.soak.err.slow_frames"));
+}
+
+TEST_CASE("the declared ceiling is only asserted when it is declared")
+{
+    seedRealCatalog();
+
+    SoakRecorder recorder(0);
+    for (int i = 0; i < 400; ++i) {
+        recorder.sample({.frameMs = 8.0, .residentBytes = 900u * 1024u * 1024u, .instanceCount = 4000});
+    }
+
+    CHECK(recorder.evaluate({}).ok);
+    CHECK(recorder.evaluate({.memoryCeilingBytes = 1024u * 1024u * 1024u}).ok);
+
+    // **A breach is REPORTED in either build, and gates in only one of them.**
+    // An instrumented build spends two to three times the memory on shadow
+    // pages and redzones before the engine allocates a byte, so under a
+    // sanitizer this check measures the tool -- the first sanitizer run this
+    // repository ever performed failed here at 410 MiB against a 192 MiB
+    // ceiling while reporting a median frame of 1.03 ms.
+    //
+    // Asserted as two shapes rather than compiled away, because "this assertion
+    // does not exist in that configuration" is how a check quietly stops
+    // existing in every configuration.
+    const SoakVerdict breached = recorder.evaluate({.memoryCeilingBytes = 512u * 1024u * 1024u});
+#ifdef ENG_SANITIZERS_ENABLED
+    CHECK(mentionsQuarantined(breached, "engine.soak.err.over_ceiling"));
+    CHECK(breached.ok);
+    CHECK(breached.failures.empty());
+#else
+    CHECK(mentions(breached, "engine.soak.err.over_ceiling"));
+    CHECK_FALSE(breached.ok);
+    CHECK_FALSE(breached.failures.empty());
+#endif
+}
+
+TEST_CASE("a world that grows and never shrinks fails, with no hitch anywhere")
+{
+    seedRealCatalog();
+
+    // D032 in miniature, and the numbers are the ones the defect actually
+    // produced: a thousand instances every fifteen seconds, every frame inside
+    // budget. A gate watching only for hitches passes this.
+    SoakRecorder recorder(0);
+    for (int i = 0; i < 1000; ++i) {
+        recorder.sample({.frameMs = 12.0,
+                         .streamingMs = 0.5,
+                         .residentBytes = 512u * 1024u * 1024u,
+                         .instanceCount = 2000 + static_cast<u64>(i) * 10});
+    }
+
+    const SoakVerdict verdict = recorder.evaluate({});
+    CHECK(verdict.hitches == 0);
+    CHECK(verdict.earlyInstances < verdict.lateInstances);
+
+    // **The check still fires; it no longer gates** (D066, MASTER_PROMPT.md
+    // §12: two flakes). It flaked twice on the flagship -- the same binary over
+    // the same 5,939 frames reporting resident sets a quarter apart, failing
+    // and then passing on the next run with the machine to itself -- and the
+    // cause is understood: streaming's materialisation budget is denominated in
+    // milliseconds, so under load the resident set lags the focus and the
+    // balance this reads across quarters shifts with the machine.
+    //
+    // Widening the tolerance until it stopped complaining would have removed
+    // the only instrument watching a streamed world for a leak, which is what
+    // D032 cost to find. So it keeps measuring and keeps saying what it saw,
+    // and this case holds the distinction: the complaint is present, and the
+    // run is a pass.
+    CHECK(verdict.ok);
+    CHECK_FALSE(mentions(verdict, "engine.soak.err.growing"));
+    CHECK(mentionsQuarantined(verdict, "engine.soak.err.growing"));
+}
+
+TEST_CASE("a world that breathes is not a world that leaks")
+{
+    seedRealCatalog();
+
+    // A circuit whose chunk residency rises and falls. The fourth quarter is
+    // higher than the second here, and legitimately: the gate's tolerance is
+    // what separates this from the case above.
+    SoakRecorder recorder(0);
+    for (int i = 0; i < 1000; ++i) {
+        const auto wobble = static_cast<u64>((i % 100) * 3);
+        recorder.sample({.frameMs = 12.0, .residentBytes = 0, .instanceCount = 4000 + wobble});
+    }
+
+    CHECK(recorder.evaluate({}).ok);
+}
+
+TEST_CASE("a small world is not called a leak by a proportional test")
+{
+    seedRealCatalog();
+
+    // Thirty instances that become forty is a sixty-seven per cent rise and
+    // ten things. The floor is what stops the gate reporting it.
+    SoakRecorder recorder(0);
+    for (int i = 0; i < 1000; ++i) {
+        recorder.sample({.frameMs = 8.0, .residentBytes = 0, .instanceCount = 30 + static_cast<u64>(i) / 100});
+    }
+
+    CHECK(recorder.evaluate({}).ok);
+}
+
+TEST_CASE("the report carries the histogram the gate is required to assert")
+{
+    seedRealCatalog();
+
+    SoakRecorder recorder(0);
+    steady(recorder, 100, 5.0);
+    steady(recorder, 10, 40.0, 4000, 40.0);
+
+    const std::string report = recorder.report({});
+    CHECK(report.find("\"histogram\"") != std::string::npos);
+    CHECK(report.find("\"ok\": false") != std::string::npos);
+    CHECK(report.find("\"hitches\": 10") != std::string::npos);
+    // The histogram is of WHOLE frames even though the hitch check is not: it is
+    // the evidence a human reads, and "the frames were slow" is what they are
+    // looking at when they open it.
+    CHECK(report.find("\"worstStreamingMs\": 40.000") != std::string::npos);
+    // Every bucket edge is named, so a reader does not have to have this header.
+    CHECK(report.find("\"upperMs\": 33.0") != std::string::npos);
+    CHECK(report.find("\"upperMs\": null") != std::string::npos);
+}
+
+// --- A place visited twice: D066's named successor ---------------------------
+//
+// **What it replaces and why it is not the same check.** The quarantined growth
+// check compares the second quarter of a run against the fourth, so it reads how
+// far materialisation fell behind in each window -- a fact about the machine as
+// much as about the engine, which is why the same binary over the same 5,939
+// frames failed it once and passed it twice minutes later. This reads the SAME
+// PLACE twice instead. Whatever the millisecond budget did in between, one
+// position holds one set of chunks; a resident set that does not come back to
+// what it was is a leak and cannot be anything else.
+
+namespace {
+
+// A soak that walks out along +X and comes back the same way, with a fixed
+// instance count -- the shape of a healthy circuit.
+[[nodiscard]] SoakRecorder outAndBack(core::u64 there, core::u64 back, int steps = 400)
+{
+    SoakRecorder recorder(0);
+    for (int index = 0; index < steps; ++index) {
+        // A triangle wave: out to `steps/2` metres and back to zero.
+        const int half = steps / 2;
+        const int along = index <= half ? index : steps - index;
+        recorder.sample({.frameMs = 8.0,
+                         .residentBytes = 64u * 1024u * 1024u,
+                         .instanceCount = index <= half ? there : back,
+                         .focus = core::Vec3{static_cast<core::f32>(along), 0.0f, 0.0f}});
+    }
+    return recorder;
+}
+
+constexpr SoakThresholds kRevisit{.growthFloor = 100, .returnRadiusMetres = 4.0f, .departureMetres = 40.0f};
+
+} // namespace
+
+TEST_CASE("a path that comes back to a place it has been, with the world it left there, passes")
+{
+    seedRealCatalog();
+    const SoakVerdict verdict = outAndBack(4000, 4000).evaluate(kRevisit);
+
+    CHECK(verdict.ok);
+    CHECK(verdict.focusReturned);
+    CHECK(verdict.departureInstances == 4000);
+    CHECK(verdict.returnInstances == 4000);
+    // Far apart in time, which is the half that makes a leak have somewhere to
+    // accumulate. A pair that is technically early-and-late but adjacent would
+    // prove nothing.
+    CHECK(verdict.revisitFrameGap > 100);
+}
+
+TEST_CASE("the same path with more world at the end of it does not")
+{
+    seedRealCatalog();
+    // Twenty per cent more, against a fifteen per cent tolerance.
+    const SoakVerdict verdict = outAndBack(4000, 4800).evaluate(kRevisit);
+
+    CHECK_FALSE(verdict.ok);
+    CHECK(verdict.focusReturned);
+    CHECK(mentions(verdict, "engine.soak.err.return_grew"));
+    CHECK(verdict.returnInstances == 4800);
+}
+
+TEST_CASE("a little more world is inside the tolerance, because streaming is not exact")
+{
+    seedRealCatalog();
+    // Two per cent. A chunk boundary crossed a frame earlier on the way back is
+    // a real difference and not a leak, and a check with no tolerance at all
+    // would be one nobody could keep green.
+    const SoakVerdict verdict = outAndBack(4000, 4080).evaluate(kRevisit);
+    CHECK(verdict.ok);
+}
+
+namespace {
+
+// `05-streaming`'s shape: a circuit that comes back to every place exactly,
+// every period. `held` says what is resident at each frame.
+template <typename Held>
+[[nodiscard]] SoakRecorder circuit(Held held)
+{
+    SoakRecorder recorder(0);
+    constexpr int period = 100;
+    for (int index = 0; index < 800; ++index) {
+        const double angle = 6.283185307179586 * static_cast<double>(index % period) / period;
+        recorder.sample({.frameMs = 8.0,
+                         .residentBytes = 64u * 1024u * 1024u,
+                         .instanceCount = held(index),
+                         .focus = core::Vec3{static_cast<core::f32>(std::cos(angle) * 300.0), 0.0f,
+                                             static_cast<core::f32>(std::sin(angle) * 300.0)}});
+    }
+    return recorder;
+}
+
+// What a streaming focus leaves behind it at one place on one lap: up to a
+// third fewer instances, as the budget fell behind, on a pattern that repeats
+// on no period the circuit has. Deterministic, so the test is.
+[[nodiscard]] core::u64 lagging(int index, core::u64 settled)
+{
+    const auto scramble = static_cast<core::u64>(index) * 2654435761u;
+    return settled - settled * ((scramble >> 7) % 34) / 100;
+}
+
+} // namespace
+
+TEST_CASE("a circuit is not compared while the world was arriving (D186)")
+{
+    // Every phase of an exact circuit ties at a distance of nothing, and the
+    // check first took the FIRST tie -- frame zero, the world half there. Then
+    // a loaded machine was still filling the world in across its whole first
+    // lap, so here the world arrives over the entire first quarter.
+    seedRealCatalog();
+    const SoakVerdict verdict = circuit([](int index) {
+                                    return index < 200 ? 2000u + static_cast<core::u64>(index) * 10u : 4000u;
+                                }).evaluate(kRevisit);
+    CHECK(verdict.ok);
+    CHECK(verdict.focusReturned);
+    CHECK(verdict.departureInstances == 4000);
+}
+
+TEST_CASE("a place that lagged on one lap is not a leak, because the verdict is every place's median (D186)")
+{
+    // The flake the first fix still had: 1194 instances at a place on one lap
+    // and 1689 on another, in a run whose quarters both averaged 1938.
+    seedRealCatalog();
+    const SoakVerdict verdict = circuit([](int index) { return lagging(index, 4000); }).evaluate(kRevisit);
+    CHECK(verdict.ok);
+    CHECK(verdict.focusReturned);
+}
+
+TEST_CASE("the same lag with a leak under it still fails")
+{
+    // Twenty per cent more by the late quarter, under the same noise: the
+    // median is what moves, which is the point of reading it.
+    seedRealCatalog();
+    const SoakVerdict verdict = circuit([](int index) {
+                                    const core::u64 settled = index < 600 ? 4000u : 4800u;
+                                    return lagging(index, settled);
+                                }).evaluate(kRevisit);
+    CHECK_FALSE(verdict.ok);
+    CHECK(mentions(verdict, "engine.soak.err.return_grew"));
+}
+
+TEST_CASE("a path that never doubles back FAILS rather than passing quietly")
+{
+    // **The vacuous pass, refused.** A caller that declares a radius is saying
+    // its fly-through revisits somewhere; if it does not, this check measured
+    // nothing -- and this file already caught one gate passing over eleven
+    // instances in 0.17 seconds with a clean bill of health.
+    //
+    // This is the case the flagship's soak actually produced: 232 m was the
+    // nearest an early frame came to a late one, across a path spanning 835 m.
+    seedRealCatalog();
+    SoakRecorder recorder(0);
+    for (int index = 0; index < 400; ++index) {
+        recorder.sample({.frameMs = 8.0,
+                         .residentBytes = 64u * 1024u * 1024u,
+                         .instanceCount = 4000,
+                         .focus = core::Vec3{static_cast<core::f32>(index) * 3.0f, 0.0f, 0.0f}});
+    }
+
+    const SoakVerdict verdict = recorder.evaluate(kRevisit);
+    CHECK_FALSE(verdict.ok);
+    CHECK_FALSE(verdict.focusReturned);
+    CHECK(mentions(verdict, "engine.soak.err.never_returned"));
+    // And it says how near it came, because "it did not double back" is only
+    // actionable with a number beside it.
+    CHECK(verdict.closestReturnMetres > 0.0);
+    CHECK(verdict.furthestMetres > verdict.closestReturnMetres);
+}
+
+TEST_CASE("a focus that barely moves does not revisit its way to a pass")
+{
+    // Every frame is within the radius of every other, which would satisfy a
+    // naive revisit test on frame one. The path has to actually GO somewhere.
+    seedRealCatalog();
+    SoakRecorder recorder(0);
+    for (int index = 0; index < 400; ++index) {
+        recorder.sample({.frameMs = 8.0,
+                         .residentBytes = 64u * 1024u * 1024u,
+                         .instanceCount = 4000,
+                         .focus = core::Vec3{static_cast<core::f32>(index % 3), 0.0f, 0.0f}});
+    }
+
+    const SoakVerdict verdict = recorder.evaluate(kRevisit);
+    CHECK_FALSE(verdict.ok);
+    CHECK_FALSE(verdict.focusReturned);
+    CHECK(mentions(verdict, "engine.soak.err.never_returned"));
+}
+
+TEST_CASE("no radius declared asserts nothing at all")
+{
+    // Zero asserts nothing, like every other threshold in this file: only the
+    // caller running a particular fly-through knows whether its path doubles
+    // back, and a soak whose path does not must not fail for it.
+    seedRealCatalog();
+    const SoakVerdict verdict = outAndBack(4000, 9000).evaluate({.growthFloor = 100});
+    CHECK_FALSE(verdict.focusReturned);
+    CHECK_FALSE(mentions(verdict, "engine.soak.err.return_grew"));
+    CHECK_FALSE(mentions(verdict, "engine.soak.err.never_returned"));
+}
+
+TEST_CASE("a runner pausing the process inside streaming is not a streaming hitch (D176, D194)")
+{
+    // What macOS CI recorded: one frame whose streaming took 40 ms by the wall
+    // clock, in a run where frames with no streaming at all reached 79 ms. The
+    // CPU the pump used is the attributable part.
+    SoakRecorder paused(0);
+    steady(paused, 100);
+    paused.sample(
+        {.frameMs = 79.0, .streamingMs = 40.4, .streamingCpuMs = 0.9, .residentBytes = 0, .instanceCount = 4000});
+    steady(paused, 100);
+    const SoakVerdict verdict = paused.evaluate(SoakThresholds{});
+    CHECK(verdict.hitches == 0);
+    CHECK(verdict.worstStreamingMs == doctest::Approx(40.4));
+    CHECK(verdict.worstStreamingCpuMs == doctest::Approx(0.9));
+
+    // Streaming that really works that long is still one.
+    SoakRecorder working(0);
+    steady(working, 100);
+    working.sample(
+        {.frameMs = 45.0, .streamingMs = 41.0, .streamingCpuMs = 39.0, .residentBytes = 0, .instanceCount = 4000});
+    steady(working, 100);
+    CHECK(working.evaluate(SoakThresholds{}).hitches == 1);
+}

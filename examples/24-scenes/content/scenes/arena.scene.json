@@ -1,0 +1,17 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace"
+ },
+ "storage": {
+  "Lighting": {
+   "class": "Lighting",
+   "name": "Lighting",
+   "properties": {
+    "ClockTime": 13
+   }
+  }
+ }
+}

@@ -1,0 +1,177 @@
+// The code pane's seam (ADR 0057).
+//
+// The panel draws and decides nothing, exactly as `EditorCommands` established:
+// saving walks a file, reloading replaces the world, and neither may happen
+// inside an ImGui callback while a panel behind this one is drawing from the
+// same world. So the pane records intent here and the frame loop acts on it at
+// the safe point.
+//
+// Declared unconditionally and inert in a shipping build, the shape ADR 0011
+// asks for -- the caller carries no `#ifdef`.
+#pragma once
+
+#include <cstddef>
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "engine/core/id.h"
+#include "engine/core/types.h"
+
+namespace engine::scene {
+class World;
+}
+
+namespace engine::app {
+
+class ScriptEditor;
+
+// What the debugger looks like to the panel: enough to draw, and nothing that
+// has to be kept alive.
+//
+// A copy rather than a reference into `engine/script`, and the reason is the
+// layering: `app` may see everything, but a panel holding a pointer into the VM
+// would be a panel holding something a reload destroys. The frame loop fills
+// this at the safe point from `Debugger::snapshot()`.
+struct DebugValueView
+{
+    std::string name;
+    std::string type;
+    std::string preview;
+};
+
+struct DebugFrameView
+{
+    std::string function;
+    std::string chunk;
+    core::u32 line = 0;
+    std::vector<DebugValueView> locals;
+    std::vector<DebugValueView> upvalues;
+};
+
+struct DebugView
+{
+    bool parked = false;
+    // Where execution is stopped. The pane marks this line in the gutter when
+    // the chunk matches its own.
+    std::string chunk;
+    core::u32 line = 0;
+    std::vector<DebugFrameView> frames;
+    // Which frame the panel is looking at. Read and written by the panel.
+    std::size_t selectedFrame = 0;
+};
+
+// What the transport asked for.
+enum class DebugStep : core::u8
+{
+    None,
+    Continue,
+    Over,
+    Into,
+    Out,
+};
+
+// What the pane decided while it drew.
+// A `chunk.luau:123` in a log line, and where it points (S5.11).
+//
+// **An error in the console names a line and nothing takes you to it**, which is
+// the difference between a console and a log file. Every editor with both panes
+// makes the error clickable, and the reason is that the alternative is reading a
+// number, switching panes, and scrolling.
+//
+// The FIRST location in the message, not the last: Luau puts the raise site at
+// the front and appends the traceback behind it, so the first is where the
+// problem is and the rest is how it got there.
+struct SourceLocation
+{
+    std::string chunk;
+    core::u32 line = 0;
+};
+
+// Finds one in `text`, or nothing.
+//
+// Recognises `<anything>.luau:<digits>`, which is what both the runtime's errors
+// and Luau's own tracebacks emit. Deliberately narrow: a log line that happens
+// to contain a colon and a number is not a location, and turning ordinary output
+// into a link that goes somewhere wrong is worse than not linking it.
+[[nodiscard]] std::optional<SourceLocation> parseSourceLocation(std::string_view text);
+
+struct ScriptEditorCommands
+{
+    // A console line somebody clicked: open this chunk and put the caret on this
+    // line. Drained by the frame loop, which is the only thing that may open a
+    // tab -- the panel is drawn from a snapshot and cannot reach the world.
+    std::optional<SourceLocation> jumpTo;
+
+    // A tab to write out: its index. Where it goes is the tab's own business --
+    // its file when it has one, the scene otherwise.
+    std::optional<std::size_t> save;
+    std::optional<std::size_t> close;
+    bool saveAll = false;
+
+    // Tabs whose text moved this frame, so the loop can put it into the
+    // instance's `Source` at the safe point. Indices rather than pointers,
+    // because a tab can close between the draw and the drain.
+    std::vector<std::size_t> edited;
+
+    // Somebody clicked the gutter. Acted on by the loop so the debugger and the
+    // panel cannot disagree about which lines are armed.
+    std::optional<core::u32> toggleBreakpointLine;
+
+    // Continue, or a step. The loop hands it to the debugger, which is the only
+    // thing that may resume a parked coroutine.
+    DebugStep step = DebugStep::None;
+
+    [[nodiscard]] bool any() const noexcept
+    {
+        return save.has_value() || close.has_value() || saveAll || !edited.empty() ||
+               toggleBreakpointLine.has_value() || step != DebugStep::None || jumpTo.has_value();
+    }
+};
+
+// Draws every open script as a sibling of the Viewport in the central dock node.
+//
+// A window per tab rather than a tab bar of our own: the dockspace already makes
+// siblings in one node into a tab strip, and it also lets somebody drag one out
+// to sit beside the world instead of over it -- which is the arrangement asked
+// for and which a hand-rolled tab bar would have refused.
+// `dockNode` is the dockspace's central node -- where the Viewport lives -- so a
+// script opened for the first time appears beside it rather than floating in the
+// middle of the screen. Zero docks nothing, which is what a shell with no
+// dockspace wants. `ImGuiID` is an unsigned int; taking it as one is what keeps
+// this header free of ImGui.
+// `root` is the DataModel -- what `game` names -- and it is here because
+// autocomplete walks a dotted path through the real tree: `Workspace.MainCamera`
+// is a fact about this project, not about the `Workspace` class.
+// The shell supplies themed buttons; an empty callback keeps text-only controls.
+using ScriptActionButton = std::function<bool(std::string_view, const char*, bool)>;
+
+void drawScriptEditor(ScriptEditor& editor, core::u32 dockNode, DebugView& debug, const scene::World* world,
+                      core::InstanceId root, ScriptEditorCommands& out, const ScriptActionButton& actionButton = {});
+
+// **Gives the caret up when the mouse goes somewhere else, and it has to run
+// before any panel is submitted.**
+//
+// The code pane holds ImGui's active id for as long as somebody is typing in it
+// -- that is what a caret is, and what makes the shell's `!IsAnyItemActive()`
+// guards keep their shortcuts off the letters being typed. The cost is that
+// ImGui refuses to hover any other item while an item is active, so the first
+// click on the Explorer, the Viewport, the Properties grid or another tab did
+// nothing at all and only the second one landed.
+//
+// Releasing it inside the pane's own draw would be too late: whichever panel
+// was submitted earlier in the frame has already been asked whether it was
+// clicked, and answered no. So the release happens at the top of the frame,
+// where it is true for everybody -- which is the same reason ImGui itself
+// resolves the hovered window before the first `Begin`.
+void releaseScriptPaneFocus();
+
+// The stack, the variables and the transport. A panel of its own rather than a
+// strip inside the code pane, because it is worth looking at while looking at
+// the code -- which is what a dock node is for.
+void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands& out, bool& open,
+                    const ScriptActionButton& actionButton = {});
+
+} // namespace engine::app

@@ -1,0 +1,252 @@
+// The M7 gate's instrument: what a five-minute fly-through has to prove.
+//
+// The roadmap states the gate as "peak memory under the declared ceiling, zero
+// frame hitches >33 ms attributable to streaming (frame-time histogram
+// asserted)". This is that assertion, and it exists as a class rather than as
+// twenty lines inside the frame loop for one reason: the gate's arithmetic is
+// the part most likely to be wrong, and arithmetic inside a frame loop is
+// arithmetic nobody can test.
+//
+// **A third check is here that the roadmap does not name**, and it is the one
+// that earned its place. D032 was a streaming world that grew by a thousand
+// instances every fifteen seconds and never shrank -- the frame times degraded
+// smoothly from 100 fps to 35 over five minutes with no hitch anywhere, so a
+// gate watching only for hitches would have shipped it. Peak memory would have
+// caught it eventually, but only with a ceiling tight enough to be a nuisance.
+// What actually distinguishes a streaming world from a growing one is that the
+// instance count FLATTENS, and that is a thing to measure directly.
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "engine/core/error.h"
+#include "engine/core/math.h"
+#include "engine/core/types.h"
+
+namespace engine::app {
+
+using core::f32;
+using core::f64;
+using core::u64;
+using core::usize;
+
+struct SoakThresholds
+{
+    // A hitch. 33 ms is the roadmap's number: two frames at 60 Hz, the point at
+    // which a person sees a stutter rather than a slow frame.
+    //
+    // **Measured against the time a frame spent INSIDE STREAMING**, not against
+    // the whole frame, and the roadmap asks for exactly that: it states the gate
+    // as "hitches attributable to streaming" and adds, about the budget, that
+    // "budget and gate should measure the same thing". The budget is two
+    // milliseconds of materialisation per frame. This is that same number.
+    //
+    // The first version asserted on whole frames and it was wrong twice over. It
+    // could not support the claim -- a long frame on a shared runner is mostly
+    // the runner -- and it went red in the Tier-2 container on eighteen frames
+    // out of eighteen thousand, none of which had anything to do with streaming.
+    // A gate that fails when the host machine is busy is a gate everybody learns
+    // to re-run.
+    //
+    // Whole-frame times are still recorded and still reported, and `p99Ms` is
+    // still asserted below: a catastrophic stall should fail something.
+    f64 hitchMs = 33.0;
+
+    // The whole-frame backstop, asserted at the 99th percentile rather than at
+    // the maximum. A percentile is what survives a scheduler: one frame in a
+    // hundred being slow on a shared runner is normal, and every frame being
+    // slow is not. Zero asserts nothing.
+    f64 wholeFrameP99Ms = 33.0;
+
+    // Zero asserts nothing. A ceiling is a per-scene number and only the caller
+    // running a particular fly-through knows what it declared.
+    u64 memoryCeilingBytes = 0;
+
+    // How much the last quarter of the run may exceed the second quarter.
+    // Not zero: a world whose chunk residency varies with where the circuit
+    // happens to end legitimately differs by a few per cent between windows.
+    f64 growthTolerance = 0.15;
+
+    // Below this many instances a proportional test is noise -- a world with
+    // thirty instances that ends with thirty-five has grown by seventeen per
+    // cent and by five things.
+    u64 growthFloor = 256;
+
+    // The world the soak claims to be soaking has to be THERE. Zero asserts
+    // nothing; a scene-specific number is the caller's to declare.
+    //
+    // This exists because the gate passed vacuously once and would have gone on
+    // passing: `--rhi=null` skipped the content mount entirely, so a five-minute
+    // fly-through over a 289-chunk world ran in 0.17 s over eleven instances and
+    // reported a clean bill of health. Flat frame times over an empty world are
+    // exactly what a leak-detector should see, which is why it cannot be the
+    // only thing it looks at.
+    u64 minimumInstances = 0;
+
+    // --- The revisited-place check (D066's named successor) ------------------
+    //
+    // **It is a place visited twice, not a return to the start**, and that
+    // distinction came from running it rather than from designing it. The first
+    // version asked whether the focus came back to where the soak began, which
+    // the flagship's fly-through never does: it reported a nearest approach of
+    // 797 metres, because a walk leg followed by a flight leg goes onward rather
+    // than round. Asking instead whether ANY place is visited early and again
+    // late makes the same claim and covers that path, a patrol, a figure-eight
+    // and a circuit alike.
+    //
+    // Places are searched between the second quarter of the run and the last,
+    // so the visits are far apart in time and a leak has half the soak to
+    // accumulate in -- and not the first quarter, which is the world arriving
+    // from nothing at whatever speed the machine has (D186). Every revisited
+    // place counts, and the verdict is the median of each side: what a moving
+    // focus finds at one place is how far streaming trails it, which moves
+    // single places either way; a leak lifts all of them.
+    //
+    // **Zero asserts nothing**, like every other threshold here: only the caller
+    // running a particular fly-through knows whether its path doubles back. When
+    // it IS declared and no place is revisited, that is a FAILURE and not a
+    // skip -- a check that quietly does not run is the shape of gate this
+    // repository keeps finding, and `streaming_soak` once passed over eleven
+    // instances in 0.17 seconds with a clean bill of health.
+    f32 returnRadiusMetres = 0.0f;
+
+    // How far the path has to span for a revisit to mean anything: a focus that
+    // barely moves revisits every place it is in, on every frame.
+    f32 departureMetres = 40.0f;
+
+    // How much larger the resident set may be on the second visit than on the
+    // first. Tighter than `growthTolerance` on purpose: that one has to absorb
+    // two windows of a run that may hold genuinely different amounts of world,
+    // and this one compares the same place with itself.
+    //
+    // **Fifteen per cent, not eight** (D186, measured): with the machine
+    // loaded, how far streaming trails a focus moving at 157 m/s moved even the
+    // MEDIAN over every revisited place by 9.4% (1464 against 1601, in a run
+    // whose late quarter held FEWER instances than its early one). The leak
+    // this watches for -- instances never freed -- grows by the world's whole
+    // population every lap, which no fifteen per cent hides.
+    f64 returnTolerance = 0.15;
+};
+
+struct SoakSample
+{
+    f64 frameMs = 0.0;
+
+    // What this frame spent inside streaming, by the wall clock.
+    f64 streamingMs = 0.0;
+    // **The same span in the thread's CPU time**, and the one the hitch check
+    // reads when it is known (not negative). The wall clock counts the time a
+    // shared runner kept the process off a CPU as streaming: macOS CI failed
+    // twice on one 40 ms "streaming" frame in a run whose frames WITHOUT
+    // streaming reached 79 ms, against a local worst of 1.1 ms (D176, D194).
+    // Streaming never waits -- its reads are polled -- so what it costs is
+    // exactly the CPU it used.
+    f64 streamingCpuMs = -1.0;
+    u64 residentBytes = 0;
+    u64 instanceCount = 0;
+
+    // Where the streaming focus was, in world metres.
+    //
+    // **This is what makes D066's successor possible.** The growth check
+    // compares the last quarter of a run against the second, and that measures
+    // how far materialisation fell behind as much as it measures the engine --
+    // it flaked twice on exactly that, and was quarantined rather than widened
+    // because widening it would have removed the only thing watching a streamed
+    // world for a leak. A focus that RETURNS to where it started is a
+    // comparison load cannot move: the same place, the same chunks, the same
+    // resident set, whatever the millisecond budget did in between.
+    // **Braced, and that is not cosmetic.** Every other field here carries a
+    // default member initialiser, and Clang's `-Wmissing-field-initializers`
+    // -- an error under `-Werror` on this tier and silent under MSVC -- fires
+    // for a designated-initialiser list that omits a field which has none. Eight
+    // existing call sites construct a sample without naming a focus, and they
+    // are right to: a soak that does not declare a return radius has no use for
+    // one.
+    core::Vec3 focus{};
+};
+
+struct SoakVerdict
+{
+    bool ok = true;
+
+    // Populated whatever the verdict, because a passing soak's numbers are the
+    // baseline the next one is read against.
+    usize frames = 0;
+    f64 medianMs = 0.0;
+    f64 p99Ms = 0.0;
+    f64 worstMs = 0.0;
+    usize hitches = 0;
+    f64 worstStreamingMs = 0.0;
+    // The worst in CPU time, or negative when no frame could say.
+    f64 worstStreamingCpuMs = -1.0;
+    u64 peakResidentBytes = 0;
+    u64 finalResidentBytes = 0;
+    u64 earlyInstances = 0;
+    u64 lateInstances = 0;
+    u64 peakInstances = 0;
+
+    // The returning-focus check's own two numbers -- the median instance count
+    // over every revisited place, early and late -- and whether it ran at all.
+    // Populated whatever the verdict, because a passing run's numbers are the
+    // baseline the next one is read against.
+    bool focusReturned = false;
+    u64 departureInstances = 0;
+    u64 returnInstances = 0;
+    // How many frames apart the visits were (the median), so a pair that is technically
+    // early-and-late but only seconds apart is visible rather than trusted.
+    usize revisitFrameGap = 0;
+    // The nearest any early frame came to any late one. Reported whatever the
+    // verdict, and it is what makes a failure actionable: "no place was
+    // revisited" is a sentence somebody can only act on if it also says how near
+    // the path came to revisiting one. It is also how the radius was CHOSEN
+    // rather than guessed.
+    f64 closestReturnMetres = 0.0;
+    // How far the path spans, so a fly-through that barely moves is
+    // distinguishable from one that moves and never doubles back.
+    f64 furthestMetres = 0.0;
+
+    // Keyed rather than prose (R3), in the order they were found, and empty
+    // when `ok`. A gate's failure message is the most-read string it has, and
+    // it is exactly the kind that gets written in English because "it is only
+    // a diagnostic" -- which is the sentence R3 exists to refuse.
+    std::vector<core::EngineError> failures;
+    // **Quarantined checks: measured, reported, and not gating** (§12).
+    // A check lands here rather than in `failures` when it has flaked twice and
+    // the cause is understood but the instrument is wrong -- widening its
+    // threshold until it stops complaining would remove the only thing watching
+    // for the failure it exists to catch, so it keeps running and keeps saying
+    // what it saw. D066 is the one that put this here.
+    std::vector<core::EngineError> quarantined;
+};
+
+class SoakRecorder
+{
+public:
+    // Warm-up frames are dropped from every statistic here, for the reason
+    // `--frame-stats` drops them: the first frames are shader creation and the
+    // first mesh upload, and a gate that counts them is a gate on startup.
+    explicit SoakRecorder(usize warmupFrames = 60) : m_warmup(warmupFrames) {}
+
+    void sample(SoakSample sample);
+
+    [[nodiscard]] SoakVerdict evaluate(const SoakThresholds& thresholds) const;
+
+    // The histogram the gate is required to assert, as JSON, alongside the
+    // verdict. Buckets are fixed rather than derived from the data so that two
+    // runs' reports can be diffed.
+    [[nodiscard]] std::string report(const SoakThresholds& thresholds) const;
+
+    [[nodiscard]] usize size() const noexcept { return m_samples.size(); }
+
+private:
+    usize m_warmup;
+    usize m_seen = 0;
+    std::vector<SoakSample> m_samples;
+};
+
+// Upper edges in milliseconds; the last bucket is everything above the last
+// edge. Named here because the report writes them and a reader needs them.
+inline constexpr f64 SoakHistogramEdges[] = {8.0, 16.7, 20.0, 25.0, 33.0, 50.0, 100.0};
+
+} // namespace engine::app

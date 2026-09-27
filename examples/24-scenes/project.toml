@@ -1,0 +1,13 @@
+# Scenes at run time (ADR 0106): a menu and an arena, two complete places --
+# each with its own lighting, its own UI and its own code -- and a game that
+# goes between them without restarting.
+
+[project]
+name = "Ludwerk Scenes"
+id = "dev.ludwerk.scenes"
+version = "1.0.0"
+scene = "scenes/menu.scene.json"
+
+[window]
+title = "Ludwerk — Scenes"
+size = [1280, 720]

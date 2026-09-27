@@ -1,0 +1,2461 @@
+#include "engine/replication/session.h"
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <functional>
+#include <iterator>
+#include <optional>
+#include <random>
+#include <string>
+#include <string_view>
+
+#include "engine/scene/class_registry.h"
+#include "engine/scene/components.h"
+#include "engine/scene/players.h"
+#include "engine/scene/world.h"
+#include "wire_schema.gen.h"
+
+namespace engine::replication {
+namespace {
+
+// **Where an instance is, for interest**: a part's position, or a sprite's on
+// the 2D plane (ADR 0088). Anything else has no place of its own and is sent
+// or not with what it hangs from.
+[[nodiscard]] std::optional<core::DVec3> placeOf(const scene::World& world, core::InstanceId id)
+{
+    if (const scene::PartComponent* part = world.parts().find(id); part != nullptr)
+        return part->cframe.position;
+    if (const scene::Part2DComponent* sprite = world.parts2d().find(id); sprite != nullptr)
+        return core::DVec3{static_cast<double>(sprite->position.x), static_cast<double>(sprite->position.y), 0.0};
+    return std::nullopt;
+}
+
+// **A token nobody can guess** (ADR 0085), from the operating system's
+// entropy. Not simulation state -- it never reaches the world or its hash --
+// so this is not the unseeded randomness R10 forbids; the `UserId` it maps to
+// is assigned in welcome order, as it always was.
+[[nodiscard]] PlayerToken freshToken()
+{
+    std::random_device device;
+    const auto word = [&device] { return (static_cast<u64>(device()) << 32) | static_cast<u64>(device()); };
+    PlayerToken token;
+    while (!token.valid()) {
+        token.high = word();
+        token.low = word();
+    }
+    return token;
+}
+
+using core::f32;
+using core::f64;
+using core::i32;
+using core::InstanceId;
+using generated::MessageType;
+
+// Channels by the schema's numbering. Named here once so a send cannot pick one
+// by a bare digit.
+constexpr u8 ControlChannel = 0;
+constexpr u8 StateChannel = 1;
+constexpr u8 IntentChannel = 2;
+constexpr u8 OwnershipChannel = 3;
+
+// A snapshot record whose fields are the whole set rather than a diff.
+constexpr u8 FullRecord = 1;
+
+// **The value a written-field record holds when the write could not happen yet**
+// -- a parent the replica has not been told about. No real field is all ones,
+// so the next apply sees a difference and tries again.
+[[nodiscard]] FieldValue pendingValue() noexcept
+{
+    FieldValue value;
+    value.raw.fill(0xFF);
+    return value;
+}
+
+[[nodiscard]] u64 packed(InstanceId id) noexcept
+{
+    return (static_cast<u64>(id.generation) << 32) | id.index;
+}
+
+// --- Little-endian bytes ----------------------------------------------------
+
+class Writer
+{
+public:
+    std::vector<u8> bytes;
+
+    void u8v(u8 value) { bytes.push_back(value); }
+    void u16v(u16 value)
+    {
+        for (int at = 0; at < 2; ++at)
+            bytes.push_back(static_cast<u8>(value >> (8 * at)));
+    }
+    void u32v(u32 value)
+    {
+        for (int at = 0; at < 4; ++at)
+            bytes.push_back(static_cast<u8>(value >> (8 * at)));
+    }
+    void u64v(u64 value)
+    {
+        for (int at = 0; at < 8; ++at)
+            bytes.push_back(static_cast<u8>(value >> (8 * at)));
+    }
+    void text(std::string_view value)
+    {
+        u16v(static_cast<u16>(std::min<usize>(value.size(), 0xFFFF)));
+        bytes.insert(bytes.end(), value.begin(), value.begin() + std::min<usize>(value.size(), 0xFFFF));
+    }
+};
+
+// Every read is bounds-checked and a failed one poisons the reader, so a
+// decoder can read a whole message and ask once at the end whether it was all
+// there -- rather than checking after every field and forgetting one.
+class Reader
+{
+public:
+    explicit Reader(std::span<const u8> bytes) noexcept : m_bytes(bytes) {}
+
+    [[nodiscard]] bool ok() const noexcept { return m_ok; }
+    [[nodiscard]] bool done() const noexcept { return m_at == m_bytes.size(); }
+    [[nodiscard]] std::span<const u8> bytes() const noexcept { return m_bytes; }
+    [[nodiscard]] usize& at() noexcept { return m_at; }
+    void fail() noexcept { m_ok = false; }
+
+    [[nodiscard]] u64 read(usize width) noexcept
+    {
+        if (!m_ok || m_bytes.size() - m_at < width) {
+            m_ok = false;
+            return 0;
+        }
+        u64 value = 0;
+        for (usize at = 0; at < width; ++at)
+            value |= static_cast<u64>(m_bytes[m_at + at]) << (8 * at);
+        m_at += width;
+        return value;
+    }
+    [[nodiscard]] u8 u8v() noexcept { return static_cast<u8>(read(1)); }
+    [[nodiscard]] u16 u16v() noexcept { return static_cast<u16>(read(2)); }
+    [[nodiscard]] u32 u32v() noexcept { return static_cast<u32>(read(4)); }
+    [[nodiscard]] u64 u64v() noexcept { return read(8); }
+    [[nodiscard]] std::string_view text() noexcept
+    {
+        const u16 length = u16v();
+        if (!m_ok || m_bytes.size() - m_at < length) {
+            m_ok = false;
+            return {};
+        }
+        const std::string_view value{reinterpret_cast<const char*>(m_bytes.data() + m_at), length};
+        m_at += length;
+        return value;
+    }
+
+private:
+    std::span<const u8> m_bytes;
+    usize m_at = 0;
+    bool m_ok = true;
+};
+
+// --- Attribute values (ADR 0106) ----------------------------------------------
+//
+// The tag is the value's `ValueType`, so the wire and the scene agree on what a
+// number means without a second table. The layout is `docs/protocol/wire.md`'s
+// "Attribute values".
+
+void writeF32(Writer& out, f32 value)
+{
+    out.u32v(std::bit_cast<u32>(value));
+}
+
+void writeF64(Writer& out, f64 value)
+{
+    out.u64v(std::bit_cast<u64>(value));
+}
+
+[[nodiscard]] f32 readF32(Reader& in) noexcept
+{
+    return std::bit_cast<f32>(in.u32v());
+}
+
+[[nodiscard]] f64 readF64(Reader& in) noexcept
+{
+    return std::bit_cast<f64>(in.u64v());
+}
+
+// False for a value an attribute cannot hold, which is left out.
+[[nodiscard]] bool writeAttributeValue(Writer& out, const scene::Value& value,
+                                       const std::function<u32(InstanceId)>& netOf)
+{
+    const scene::ValueType type = scene::valueType(value);
+    switch (type) {
+    case scene::ValueType::Nil:
+        out.u8v(static_cast<u8>(type));
+        return true;
+    case scene::ValueType::Bool:
+        out.u8v(static_cast<u8>(type));
+        out.u8v(std::get<bool>(value) ? 1 : 0);
+        return true;
+    case scene::ValueType::Number:
+        out.u8v(static_cast<u8>(type));
+        writeF64(out, std::get<f64>(value));
+        return true;
+    case scene::ValueType::String:
+        out.u8v(static_cast<u8>(type));
+        out.text(std::get<std::string>(value));
+        return true;
+    case scene::ValueType::Vector3: {
+        const core::Vec3& v = std::get<core::Vec3>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, v.x);
+        writeF32(out, v.y);
+        writeF32(out, v.z);
+        return true;
+    }
+    case scene::ValueType::Color3: {
+        const core::Color3& c = std::get<core::Color3>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, c.r);
+        writeF32(out, c.g);
+        writeF32(out, c.b);
+        return true;
+    }
+    case scene::ValueType::CFrame: {
+        const core::CFrameD& frame = std::get<core::CFrameD>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF64(out, frame.position.x);
+        writeF64(out, frame.position.y);
+        writeF64(out, frame.position.z);
+        for (const auto& row : frame.rotation.m) {
+            for (const f32 cell : row)
+                writeF32(out, cell);
+        }
+        return true;
+    }
+    case scene::ValueType::Instance:
+        out.u8v(static_cast<u8>(type));
+        out.u32v(netOf(std::get<InstanceId>(value)));
+        return true;
+    case scene::ValueType::Vector2: {
+        const core::Vec2& v = std::get<core::Vec2>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, v.x);
+        writeF32(out, v.y);
+        return true;
+    }
+    case scene::ValueType::UDim: {
+        const core::UDim& d = std::get<core::UDim>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, d.scale);
+        writeF32(out, d.offset);
+        return true;
+    }
+    case scene::ValueType::UDim2: {
+        const core::UDim2& d = std::get<core::UDim2>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, d.x.scale);
+        writeF32(out, d.x.offset);
+        writeF32(out, d.y.scale);
+        writeF32(out, d.y.offset);
+        return true;
+    }
+    case scene::ValueType::Rect: {
+        const core::Rect& r = std::get<core::Rect>(value);
+        out.u8v(static_cast<u8>(type));
+        writeF32(out, r.min.x);
+        writeF32(out, r.min.y);
+        writeF32(out, r.max.x);
+        writeF32(out, r.max.y);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] std::optional<scene::Value> readAttributeValue(Reader& in, const std::function<InstanceId(u32)>& localOf)
+{
+    switch (static_cast<scene::ValueType>(in.u8v())) {
+    case scene::ValueType::Nil:
+        return scene::Value{};
+    case scene::ValueType::Bool:
+        return scene::Value{in.u8v() != 0};
+    case scene::ValueType::Number:
+        return scene::Value{readF64(in)};
+    case scene::ValueType::String:
+        return scene::Value{std::string(in.text())};
+    case scene::ValueType::Vector3: {
+        const f32 x = readF32(in);
+        const f32 y = readF32(in);
+        const f32 z = readF32(in);
+        return scene::Value{core::Vec3{x, y, z}};
+    }
+    case scene::ValueType::Color3: {
+        const f32 r = readF32(in);
+        const f32 g = readF32(in);
+        const f32 b = readF32(in);
+        return scene::Value{core::Color3{r, g, b}};
+    }
+    case scene::ValueType::CFrame: {
+        core::CFrameD frame;
+        frame.position.x = readF64(in);
+        frame.position.y = readF64(in);
+        frame.position.z = readF64(in);
+        for (auto& row : frame.rotation.m) {
+            for (f32& cell : row)
+                cell = readF32(in);
+        }
+        return scene::Value{frame};
+    }
+    case scene::ValueType::Instance: {
+        const InstanceId local = localOf(in.u32v());
+        return local.valid() ? scene::Value{local} : scene::Value{};
+    }
+    case scene::ValueType::Vector2: {
+        const f32 x = readF32(in);
+        const f32 y = readF32(in);
+        return scene::Value{core::Vec2{x, y}};
+    }
+    case scene::ValueType::UDim: {
+        const f32 scale = readF32(in);
+        const f32 offset = readF32(in);
+        return scene::Value{core::UDim{scale, offset}};
+    }
+    case scene::ValueType::UDim2: {
+        core::UDim2 d;
+        d.x.scale = readF32(in);
+        d.x.offset = readF32(in);
+        d.y.scale = readF32(in);
+        d.y.offset = readF32(in);
+        return scene::Value{d};
+    }
+    case scene::ValueType::Rect: {
+        core::Rect r;
+        r.min.x = readF32(in);
+        r.min.y = readF32(in);
+        r.max.x = readF32(in);
+        r.max.y = readF32(in);
+        return scene::Value{r};
+    }
+    default:
+        in.fail();
+        return std::nullopt;
+    }
+}
+
+// The count and the entries of one owner's attributes, in the order the world
+// keeps them (insertion order: the same on every run, R10).
+[[nodiscard]] std::vector<u8> encodeAttributes(const scene::World& world, InstanceId id,
+                                               const std::function<u32(InstanceId)>& netOf)
+{
+    scene::AttributeMap attributes;
+    world.collectAttributes(id, attributes);
+    Writer entries;
+    u16 count = 0;
+    for (const auto& [name, value] : attributes) {
+        Writer entry;
+        entry.text(world.atoms().text(name));
+        if (!writeAttributeValue(entry, value, netOf))
+            continue;
+        entries.bytes.insert(entries.bytes.end(), entry.bytes.begin(), entry.bytes.end());
+        ++count;
+    }
+    Writer out;
+    out.u16v(count);
+    out.bytes.insert(out.bytes.end(), entries.bytes.begin(), entries.bytes.end());
+    return out.bytes;
+}
+
+// `GlobalScriptService`, and its fixed `Shared` folder, under a data model.
+[[nodiscard]] InstanceId globalScriptsOf(const scene::World& world, InstanceId dataModel) noexcept
+{
+    return dataModel.valid() ? world.findFirstChildOfClass(
+                                   dataModel, world.classes().findId(world.atoms().lookup("GlobalScriptService")))
+                             : InstanceId{};
+}
+
+[[nodiscard]] usize schemaCount() noexcept
+{
+    return std::size(generated::Classes);
+}
+
+[[nodiscard]] u8 schemaIndexOf(const generated::ClassDesc* desc) noexcept
+{
+    for (usize at = 0; at < schemaCount(); ++at) {
+        if (&generated::Classes[at] == desc)
+            return static_cast<u8>(at);
+    }
+    return 0;
+}
+
+// The flat index of a common field by name, which is fixed by the schema.
+[[nodiscard]] usize commonIndex(std::string_view name) noexcept
+{
+    for (usize at = 0; at < std::size(generated::CommonFields); ++at) {
+        if (generated::CommonFields[at].name == name)
+            return at;
+    }
+    return static_cast<usize>(-1);
+}
+
+// The flat index a wire id names in a class, or past the end when it names none.
+[[nodiscard]] usize indexOfWireId(const generated::ClassDesc& desc, u16 wireId) noexcept
+{
+    const usize count = fieldCount(desc);
+    for (usize at = 0; at < count; ++at) {
+        if (wireIdAt(desc, at) == wireId)
+            return at;
+    }
+    return count;
+}
+
+[[nodiscard]] auto findEntity(std::vector<EntityState>& entities, u32 id)
+{
+    return std::lower_bound(entities.begin(), entities.end(), id,
+                            [](const EntityState& entity, u32 probe) { return entity.id.value < probe; });
+}
+
+[[nodiscard]] const EntityState* findEntity(const WorldState& state, u32 id) noexcept
+{
+    const auto at = std::lower_bound(state.entities.begin(), state.entities.end(), id,
+                                     [](const EntityState& entity, u32 probe) { return entity.id.value < probe; });
+    return at != state.entities.end() && at->id.value == id ? &*at : nullptr;
+}
+
+[[nodiscard]] u32 bitsOf(float value) noexcept
+{
+    u32 bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+[[nodiscard]] float floatOf(u32 bits) noexcept
+{
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+void sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u8>& bytes, net::Delivery delivery,
+               u8 channel, Stats& stats)
+{
+    if (!transport.send(peer, bytes, delivery, channel).has_value())
+        stats.bytesSent += bytes.size();
+}
+
+// The flags byte after a message's call number (protocol 8).
+constexpr u8 RemoteReplyFlag = 0x1;
+constexpr u8 RemoteFailedFlag = 0x2;
+
+// **A `RemoteEvent` message on the wire** (ADR 0077): the event's network id,
+// the call number and flags a `RemoteFunction` uses (ADR 0079), the network ids
+// of the instances its arguments name, then the payload exactly as the script
+// module wrote it. Nothing here parses the payload.
+void writeRemote(Writer& out, MessageType type, u32 remote, const scene::RemoteMessage& message,
+                 std::span<const u32> refs)
+{
+    const std::span<const u8> payload = message.payload;
+    out.u8v(static_cast<u8>(type));
+    out.u32v(remote);
+    out.u32v(message.call);
+    out.u8v(static_cast<u8>((message.reply ? RemoteReplyFlag : 0) | (message.failed ? RemoteFailedFlag : 0)));
+    out.u16v(static_cast<u16>(refs.size()));
+    for (const u32 ref : refs)
+        out.u32v(ref);
+    out.u32v(static_cast<u32>(payload.size()));
+    out.bytes.insert(out.bytes.end(), payload.begin(), payload.end());
+}
+
+struct RemoteOnWire
+{
+    u32 remote = 0;
+    u32 call = 0;
+    u8 flags = 0;
+    std::vector<u32> refs;
+    std::span<const u8> payload;
+};
+
+// Reads one, the type byte already consumed. False on anything short, long or
+// oversized -- a peer's bytes are not trusted to be what they claim.
+[[nodiscard]] bool readRemote(Reader& in, RemoteOnWire& out)
+{
+    out.remote = in.u32v();
+    out.call = in.u32v();
+    out.flags = in.u8v();
+    const u16 count = in.u16v();
+    for (u16 at = 0; at < count && in.ok(); ++at)
+        out.refs.push_back(in.u32v());
+    const u32 size = in.u32v();
+    if (!in.ok() || size > MaxRemoteWirePayload || in.bytes().size() - in.at() != size)
+        return false;
+    out.payload = in.bytes().subspan(in.at(), size);
+    in.at() += size;
+    return true;
+}
+
+// Whether `id` is what a message with this call number may name: a
+// `RemoteEvent` for a plain message, a `RemoteFunction` for a question or an
+// answer. A peer is not trusted to have picked the right one.
+[[nodiscard]] bool isRemoteTarget(const scene::World& world, InstanceId id, u32 call)
+{
+    if (!world.alive(id))
+        return false;
+    const scene::ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
+    if (descriptor == nullptr)
+        return false;
+    return world.atoms().text(descriptor->name) == (call != 0 ? "RemoteFunction" : "RemoteEvent");
+}
+
+} // namespace
+
+u64 checksumOf(const WorldState& state) noexcept
+{
+    u64 hash = 0xCBF29CE484222325ull;
+    const auto mix = [&hash](const void* data, usize size) {
+        const auto* bytes = static_cast<const u8*>(data);
+        for (usize at = 0; at < size; ++at) {
+            hash ^= bytes[at];
+            hash *= 0x100000001B3ull;
+        }
+    };
+    for (const EntityState& entity : state.entities) {
+        mix(&entity.id.value, sizeof(entity.id.value));
+        mix(&entity.schema, sizeof(entity.schema));
+        for (const FieldValue& field : entity.fields)
+            mix(field.raw.data(), field.raw.size());
+    }
+    return hash;
+}
+
+// --- Authority ----------------------------------------------------------------
+
+AuthoritySession::Peer* AuthoritySession::peerFor(net::PeerId id) noexcept
+{
+    for (Peer& peer : m_peers) {
+        if (peer.id == id)
+            return &peer;
+    }
+    return nullptr;
+}
+
+u32 AuthoritySession::peerCount() const noexcept
+{
+    return static_cast<u32>(
+        std::count_if(m_peers.begin(), m_peers.end(), [](const Peer& peer) { return peer.welcomed; }));
+}
+
+NetId AuthoritySession::netIdOf(InstanceId id) const noexcept
+{
+    const auto found = m_netIds.find(packed(id));
+    return found != m_netIds.end() ? NetId{found->second} : NetId{};
+}
+
+InstanceId AuthoritySession::instanceOfNet(const scene::World& world, u32 netId) const noexcept
+{
+    for (const Captured& captured : m_order) {
+        if (captured.netId == netId)
+            return world.alive(captured.id) ? captured.id : InstanceId{};
+    }
+    return {};
+}
+
+namespace {
+
+// A tilemap's blocks to one peer (ADR 0103), 64 to a message so a large map
+// is several messages of a size every transport carries.
+constexpr usize TileBlocksPerMessage = 64;
+constexpr usize TileBlockCells = static_cast<usize>(scene::TileChunkEdge * scene::TileChunkEdge);
+
+void sendTileBlocks(net::ITransport& transport, net::PeerId peer, u32 netId,
+                    const std::vector<std::pair<scene::TileChunkKey, scene::TileChunk>>& blocks, Stats& stats)
+{
+    for (usize first = 0; first < blocks.size(); first += TileBlocksPerMessage) {
+        const usize last = std::min(blocks.size(), first + TileBlocksPerMessage);
+        Writer out;
+        out.u8v(static_cast<u8>(MessageType::TilemapBlocks));
+        out.u32v(netId);
+        out.u16v(static_cast<u16>(last - first));
+        for (usize at = first; at < last; ++at) {
+            const auto& [key, cells] = blocks[at];
+            out.u32v(static_cast<u32>(key.x));
+            out.u32v(static_cast<u32>(key.y));
+            out.u16v(static_cast<u16>(TileBlockCells));
+            for (const u16 tile : cells)
+                out.u16v(tile);
+        }
+        sendBytes(transport, peer, out.bytes, net::Delivery::Reliable, ControlChannel, stats);
+    }
+}
+
+} // namespace
+
+void AuthoritySession::diffTilemaps(const scene::World& world)
+{
+    m_tilemapEdits.clear();
+    std::set<u32> present;
+    for (const Captured& entry : m_order) {
+        const scene::Tilemap2DComponent* tilemap = world.tilemaps2d().find(entry.id);
+        if (tilemap == nullptr)
+            continue;
+        present.insert(entry.netId);
+        const auto found = m_tilemapShadows.find(entry.netId);
+        if (found == m_tilemapShadows.end()) {
+            // New this send: every peer is sent it whole with its spawn.
+            m_tilemapShadows.emplace(entry.netId, TilemapShadow{tilemap->chunks, tilemap->revision, world.restores()});
+            continue;
+        }
+        TilemapShadow& shadow = found->second;
+        if (shadow.revision == tilemap->revision && shadow.restores == world.restores())
+            continue;
+        // Both sorted by block: one merge walk finds every changed, added and
+        // emptied block, in block order (R10).
+        std::vector<TileBlock> edits;
+        auto now = tilemap->chunks.begin();
+        auto was = shadow.blocks.begin();
+        while (now != tilemap->chunks.end() || was != shadow.blocks.end()) {
+            if (was == shadow.blocks.end() || (now != tilemap->chunks.end() && now->first < was->first)) {
+                edits.emplace_back(now->first, now->second);
+                ++now;
+            }
+            else if (now == tilemap->chunks.end() || was->first < now->first) {
+                edits.emplace_back(was->first, scene::TileChunk{});
+                ++was;
+            }
+            else {
+                if (now->second != was->second)
+                    edits.emplace_back(now->first, now->second);
+                ++now;
+                ++was;
+            }
+        }
+        shadow.blocks = tilemap->chunks;
+        shadow.revision = tilemap->revision;
+        shadow.restores = world.restores();
+        if (!edits.empty())
+            m_tilemapEdits.emplace(entry.netId, std::move(edits));
+    }
+    std::erase_if(m_tilemapShadows, [&](const auto& entry) { return !present.contains(entry.first); });
+}
+
+void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root)
+{
+    m_attributeEdits.clear();
+    const auto netOf = [this](InstanceId id) { return netIdOf(id).value; };
+    std::map<AttributeOwner, std::vector<u8>> now;
+
+    // Every captured instance, and the owners nothing spawns.
+    for (const Captured& entry : m_order)
+        now.emplace(AttributeOwner{u8{0}, entry.netId}, encodeAttributes(world, entry.id, netOf));
+    const InstanceId dataModel = world.parentOf(root);
+    const InstanceId network = scene::networkServiceOf(world, dataModel);
+    for (InstanceId child = network.valid() ? world.firstChild(network) : InstanceId{}; child.valid();
+         child = world.nextSibling(child)) {
+        if (const scene::PlayerComponent* player = world.players().find(child); player != nullptr)
+            now.emplace(AttributeOwner{u8{1}, player->userId}, encodeAttributes(world, child, netOf));
+    }
+    if (const InstanceId global = globalScriptsOf(world, dataModel); global.valid()) {
+        now.emplace(AttributeOwner{u8{2}, 0u}, encodeAttributes(world, global, netOf));
+        if (const InstanceId shared = world.findFirstChild(global, world.atoms().lookup("Shared")); shared.valid())
+            now.emplace(AttributeOwner{u8{3}, 0u}, encodeAttributes(world, shared, netOf));
+    }
+
+    // Changed against the shadow. An instance new this send is sent whole with
+    // its spawn, so only an owner that was already known is an edit.
+    for (const auto& [owner, body] : now) {
+        const auto found = m_attributeShadows.find(owner);
+        if (found == m_attributeShadows.end()) {
+            if (owner.first != 0 && body.size() > 2)
+                m_attributeEdits.emplace_back(owner, body);
+            continue;
+        }
+        if (found->second != body)
+            m_attributeEdits.emplace_back(owner, body);
+    }
+    m_attributeShadows = std::move(now);
+}
+
+void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& entering)
+{
+    const auto send = [&](const AttributeOwner& owner, const std::vector<u8>& body) {
+        Writer message;
+        message.u8v(static_cast<u8>(MessageType::Attributes));
+        message.u8v(owner.first);
+        message.u32v(owner.second);
+        message.bytes.insert(message.bytes.end(), body.begin(), body.end());
+        sendBytes(m_transport, peer.id, message.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    };
+    const auto knows = [&](u32 id) { return std::binary_search(peer.known.begin(), peer.known.end(), id); };
+    const auto isEntering = [&](u32 id) { return std::binary_search(entering.begin(), entering.end(), id); };
+
+    // A peer new to an owner is sent what it has; an owner with none is
+    // nothing to send.
+    for (const u32 id : entering) {
+        if (const auto found = m_attributeShadows.find(AttributeOwner{u8{0}, id});
+            found != m_attributeShadows.end() && found->second.size() > 2)
+            send(found->first, found->second);
+    }
+    if (!peer.attributesSeeded) {
+        peer.attributesSeeded = true;
+        for (const auto& [owner, body] : m_attributeShadows) {
+            if (owner.first != 0 && body.size() > 2)
+                send(owner, body);
+        }
+    }
+    for (const auto& [owner, body] : m_attributeEdits) {
+        if (owner.first == 0 && (!knows(owner.second) || isEntering(owner.second)))
+            continue;
+        send(owner, body);
+    }
+}
+
+void AuthoritySession::sendMessages(scene::World& world)
+{
+    std::vector<scene::RemoteMessage> outbox;
+    outbox.swap(world.engineState().remoteOutbox);
+
+    // What each peer was already waiting on goes first, in order, as far as
+    // it now knows the events named: a message never overtakes an earlier one.
+    const auto flush = [&](Peer& peer) {
+        while (!peer.held.empty()) {
+            Peer::Held& next = peer.held.front();
+            if (!std::binary_search(peer.known.begin(), peer.known.end(), next.remote)) {
+                if (++next.sends > MaxRemoteHeldSends) {
+                    peer.held.pop_front();
+                    m_stats.messagesDropped += 1;
+                    continue;
+                }
+                return;
+            }
+            sendBytes(m_transport, peer.id, next.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            m_stats.messagesSent += 1;
+            peer.held.pop_front();
+        }
+    };
+    for (Peer& peer : m_peers) {
+        if (peer.welcomed)
+            flush(peer);
+    }
+
+    for (scene::RemoteMessage& message : outbox) {
+        if (message.toServer)
+            continue; // an authority's own FireServer never left it
+        const NetId remote = netIdOf(message.remote);
+        if (!remote.valid()) {
+            // Created since the last capture: no network id yet. It waits for
+            // the next send that captures, a few ticks at most.
+            if (world.alive(message.remote) && ++message.held <= MaxRemoteHeldSends)
+                world.engineState().remoteOutbox.push_back(std::move(message));
+            else
+                m_stats.messagesDropped += 1;
+            continue;
+        }
+        std::vector<u32> refs;
+        refs.reserve(message.refs.size());
+        for (const InstanceId ref : message.refs)
+            refs.push_back(netIdOf(ref).value);
+        Writer out;
+        writeRemote(out, MessageType::RemoteToReplica, remote.value, message, refs);
+        for (Peer& peer : m_peers) {
+            if (!peer.welcomed || (message.userId != 0 && peer.userId != message.userId))
+                continue;
+            if (peer.held.empty() && std::binary_search(peer.known.begin(), peer.known.end(), remote.value)) {
+                sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+                m_stats.messagesSent += 1;
+            }
+            else {
+                peer.held.push_back(Peer::Held{remote.value, 0, out.bytes});
+            }
+        }
+    }
+}
+
+void AuthoritySession::receive(scene::World& world, InstanceId root)
+{
+    // Where players live. A world with no `NetworkService` -- a test's bare
+    // tree -- still replicates; it just has nobody to name.
+    const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    for (Peer& peer : m_peers)
+        peer.messagesThisTick = 0;
+    std::vector<net::TransportEvent> events;
+    (void)m_transport.poll(events, 0);
+    for (const net::TransportEvent& event : events) {
+        switch (event.kind) {
+        case net::TransportEvent::Kind::Connected:
+            if (peerFor(event.peer) == nullptr) {
+                Peer peer;
+                peer.id = event.peer;
+                m_peers.push_back(std::move(peer));
+                std::sort(m_peers.begin(), m_peers.end(),
+                          [](const Peer& a, const Peer& b) { return a.id.value < b.id.value; });
+            }
+            break;
+        case net::TransportEvent::Kind::Disconnected:
+            if (Peer* gone = peerFor(event.peer); gone != nullptr && gone->player.valid())
+                scene::removePlayer(world, network, gone->player);
+            std::erase_if(m_peers, [&](const Peer& peer) { return peer.id == event.peer; });
+            break;
+        case net::TransportEvent::Kind::Message: {
+            Peer* peer = peerFor(event.peer);
+            if (peer == nullptr)
+                break;
+            m_stats.bytesReceived += event.payload.size();
+            Reader reader(event.payload);
+            const auto type = static_cast<MessageType>(reader.u8v());
+            if (event.channel == IntentChannel && type == MessageType::Intent && peer->welcomed) {
+                const u64 tick = reader.u64v();
+                scene::PlayerComponent* player = peer->player.valid() ? world.players().find(peer->player) : nullptr;
+                if (!reader.ok() || tick <= peer->intentTick || player == nullptr)
+                    break;
+                std::vector<scene::PlayerIntent> intents;
+                const u16 count = reader.u16v();
+                for (u16 at = 0; at < count && reader.ok(); ++at) {
+                    const std::string_view name = reader.text();
+                    scene::PlayerIntent intent;
+                    intent.type = static_cast<core::i32>(reader.u8v());
+                    intent.axis.x = floatOf(reader.u32v());
+                    intent.axis.y = floatOf(reader.u32v());
+                    intent.axis.z = floatOf(reader.u32v());
+                    intent.pressed = reader.u8v() != 0;
+                    if (!reader.ok())
+                        break;
+                    intent.action = world.atoms().intern(name);
+                    intents.push_back(intent);
+                }
+                // Whole or not at all: half an intent is a player whose second
+                // key was released by a truncated packet.
+                if (reader.ok() && reader.done()) {
+                    player->intents = std::move(intents);
+                    peer->intentTick = tick;
+                }
+                break;
+            }
+            if (event.channel == OwnershipChannel && type == MessageType::OwnedState && peer->welcomed) {
+                const u64 tick = reader.u64v();
+                if (!reader.ok() || tick <= peer->ownedTick || peer->userId == 0)
+                    break;
+                peer->ownedTick = tick;
+                const u16 count = reader.u16v();
+                for (u16 at = 0; at < count && reader.ok(); ++at) {
+                    const u32 netId = reader.u32v();
+                    FieldValue cframe;
+                    FieldValue linear;
+                    FieldValue angular;
+                    if (!reader.ok() ||
+                        !decodeField(reader.bytes(), reader.at(), generated::Encoding::CFrameD, cframe) ||
+                        !decodeField(reader.bytes(), reader.at(), generated::Encoding::Vector3, linear) ||
+                        !decodeField(reader.bytes(), reader.at(), generated::Encoding::Vector3, angular)) {
+                        reader.fail();
+                        break;
+                    }
+                    // **Only what it was given**: a part it does not own now --
+                    // never did, or was handed back since -- is not its to move.
+                    const InstanceId id = instanceOfNet(world, netId);
+                    scene::RigidBodyComponent* body = id.valid() ? world.rigidBodies().find(id) : nullptr;
+                    scene::PartComponent* part = id.valid() ? world.parts().find(id) : nullptr;
+                    if (body == nullptr || part == nullptr || body->networkOwner != peer->userId)
+                        continue;
+                    part->cframe = asCFrame(cframe);
+                    body->linearVelocity = asVec3(linear);
+                    body->angularVelocity = asVec3(angular);
+                }
+                break;
+            }
+            if (event.channel != ControlChannel)
+                break;
+            if (type == MessageType::Hello) {
+                const u32 version = reader.u32v();
+                // **Version first, and a mismatch is a refusal rather than a
+                // guess** -- a decoder reading field ids it does not have is a
+                // replica confidently wrong about the world.
+                PlayerToken token;
+                token.high = reader.u64v();
+                token.low = reader.u64v();
+                if (!reader.ok() || version != generated::ProtocolVersion || peer->welcomed) {
+                    m_transport.disconnect(peer->id);
+                    break;
+                }
+                // **A token this authority gave is the same player again**
+                // (ADR 0085): the same `UserId`, so a game keyed on it finds
+                // the score, the seat and the inventory it left. Anything else
+                // -- the first time, or a token from an authority that has
+                // since restarted -- is a new player with a new token.
+                u32 userId = 0;
+                if (const auto known = m_identities.find(token); token.valid() && known != m_identities.end())
+                    userId = known->second;
+                if (userId != 0) {
+                    // A connection that still holds this player is one that
+                    // died without saying so and has not timed out yet: the
+                    // player is here now, so that one is let go.
+                    std::vector<net::PeerId> stale;
+                    for (const Peer& other : m_peers) {
+                        if (!(other.id == event.peer) && other.welcomed && other.token == token)
+                            stale.push_back(other.id);
+                    }
+                    for (const net::PeerId gone : stale) {
+                        if (Peer* old = peerFor(gone); old != nullptr && old->player.valid())
+                            scene::removePlayer(world, network, old->player);
+                        m_transport.disconnect(gone);
+                        std::erase_if(m_peers, [&](const Peer& candidate) { return candidate.id == gone; });
+                    }
+                    peer = peerFor(event.peer);
+                    if (peer == nullptr)
+                        break;
+                }
+                else {
+                    userId = m_nextUserId++;
+                    token = freshToken();
+                    m_identities[token] = userId;
+                }
+                peer->welcomed = true;
+                peer->userId = userId;
+                peer->token = token;
+                if (network.valid())
+                    peer->player = scene::createPlayer(world, network, peer->userId, false);
+                Writer welcome;
+                welcome.u8v(static_cast<u8>(MessageType::Welcome));
+                welcome.u32v(generated::ProtocolVersion);
+                welcome.u32v(peer->userId);
+                welcome.u64v(m_tick);
+                welcome.u64v(token.high);
+                welcome.u64v(token.low);
+                sendBytes(m_transport, peer->id, welcome.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            }
+            else if (type == MessageType::Ack) {
+                const u64 tick = reader.u64v();
+                if (reader.ok())
+                    peer->acked = std::max(peer->acked, tick);
+            }
+            else if (type == MessageType::RemoteToAuthority && peer->welcomed && peer->player.valid()) {
+                // **The sender is the connection's player**, never anything
+                // the message says; and a client is not trusted to be polite.
+                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                peer->messagesThisTick += 1;
+                RemoteOnWire wire;
+                if (!readRemote(reader, wire)) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                const InstanceId remote = instanceOfNet(world, wire.remote);
+                // A client asks and never answers: a reply from one is not a
+                // thing, and neither is a failure.
+                if (!isRemoteTarget(world, remote, wire.call) || wire.flags != 0) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                scene::RemoteMessage message;
+                message.remote = remote;
+                message.toServer = true;
+                message.call = wire.call;
+                message.player = peer->player;
+                message.payload.assign(wire.payload.begin(), wire.payload.end());
+                for (const u32 ref : wire.refs)
+                    message.refs.push_back(ref != 0 ? instanceOfNet(world, ref) : InstanceId{});
+                world.engineState().remoteInbox.push_back(std::move(message));
+                m_stats.messagesReceived += 1;
+            }
+            break;
+        }
+        case net::TransportEvent::Kind::None:
+            break;
+        }
+    }
+}
+
+void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 tick)
+{
+    auto state = std::make_shared<WorldState>();
+    state->tick = tick;
+    const usize parentField = commonIndex("Parent");
+
+    std::map<u64, u32> seen;
+    // The walk itself, for interest: which instance each entity is and where
+    // its parent is in this list, in pre-order.
+    m_order.clear();
+    std::map<u64, i32> orderOf;
+
+    // One container's subtree -- `Workspace`'s, or a service's whose contents
+    // travel (ADR 0080) -- with the container itself standing for the parent
+    // of its children. Pre-order, children in sibling order: a parent is
+    // always captured before its children, so a new child's parent already
+    // has an id. `pinned` is every replica's, whatever its position.
+    const auto walk = [&](InstanceId container, u32 containerNetId, i32 containerOrder, bool pinned) {
+        std::vector<InstanceId> stack;
+        for (InstanceId child = world.firstChild(container); child.valid(); child = world.nextSibling(child))
+            stack.push_back(child);
+        std::reverse(stack.begin(), stack.end());
+
+        while (!stack.empty()) {
+            const InstanceId id = stack.back();
+            stack.pop_back();
+            const generated::ClassDesc* desc = schemaFor(world, id);
+            FieldSet fields;
+            // **An instance the schema does not describe takes its subtree with
+            // it.** A replica could not parent the children to anything.
+            if (desc == nullptr || !extractFields(world, id, *desc, fields))
+                continue;
+
+            const u64 key = packed(id);
+            u32 netId = 0;
+            if (const auto found = m_netIds.find(key); found != m_netIds.end()) {
+                netId = found->second;
+            }
+            else {
+                netId = m_nextNetId++;
+                m_classNames[netId] = world.classes().find(world.classOf(id))->name;
+            }
+            seen[key] = netId;
+
+            const InstanceId parent = world.parentOf(id);
+            const auto parentId = parent == container ? containerNetId : seen.at(packed(parent));
+            setNetId(fields[parentField], NetId{parentId});
+
+            state->entities.push_back(EntityState{NetId{netId}, schemaIndexOf(desc), std::move(fields)});
+            const auto parentOrder = orderOf.find(packed(parent));
+            orderOf[key] = static_cast<i32>(m_order.size());
+            m_order.push_back(
+                Captured{netId, id, parentOrder != orderOf.end() ? parentOrder->second : containerOrder, pinned});
+
+            std::vector<InstanceId> children;
+            for (InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
+                children.push_back(child);
+            stack.insert(stack.end(), children.rbegin(), children.rend());
+        }
+    };
+    walk(root, RootNetId.value, -1, false);
+
+    // **The services whose properties travel** (`Service = true` in the wire
+    // schema), each under an id of its own that never changes: every world has
+    // one from boot, so there is nothing to spawn and nothing to number.
+    const InstanceId dataModel = world.parentOf(root);
+    for (usize index = 0; index < std::size(generated::Classes) && dataModel.valid(); ++index) {
+        const generated::ClassDesc& desc = generated::Classes[index];
+        if (!desc.service)
+            continue;
+        for (InstanceId child = world.firstChild(dataModel); child.valid(); child = world.nextSibling(child)) {
+            if (world.atoms().text(world.classes().find(world.classOf(child))->name) != desc.name)
+                continue;
+            FieldSet fields;
+            if (!extractFields(world, child, desc, fields))
+                break;
+            setNetId(fields[parentField], RootNetId);
+            const u32 netId = ServiceNetIdBase + static_cast<u32>(index);
+            state->entities.push_back(EntityState{NetId{netId}, static_cast<u8>(index), std::move(fields)});
+            m_order.push_back(Captured{netId, child, -1, desc.contents});
+            if (desc.contents)
+                walk(child, netId, static_cast<i32>(m_order.size() - 1), true);
+            break;
+        }
+    }
+
+    // Instances gone since the last capture give their ids up for good.
+    for (auto at = m_netIds.begin(); at != m_netIds.end();) {
+        if (!seen.contains(at->first)) {
+            m_classNames.erase(at->second);
+            at = m_netIds.erase(at);
+        }
+        else {
+            ++at;
+        }
+    }
+    m_netIds = std::move(seen);
+
+    std::sort(state->entities.begin(), state->entities.end(),
+              [](const EntityState& a, const EntityState& b) { return a.id.value < b.id.value; });
+    m_history.push_back(std::move(state));
+    while (m_history.size() > StateHistory)
+        m_history.pop_front();
+}
+
+const WorldState* AuthoritySession::historyAt(u64 tick) const noexcept
+{
+    for (auto at = m_history.rbegin(); at != m_history.rend(); ++at) {
+        if ((*at)->tick == tick)
+            return at->get();
+    }
+    return nullptr;
+}
+
+void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick)
+{
+    m_world = &world;
+    m_tick = tick;
+    capture(world, root, tick);
+    diffTilemaps(world);
+    diffAttributes(world, root);
+    const WorldState& current = *m_history.back();
+
+    // Everybody taking part, in join order -- the children of `NetworkService`,
+    // which is where every path that makes a player puts it -- each as its user
+    // id and its character's NetId, zero for none. The pair is what lets a
+    // replica know which part is its own (`Player.Character`).
+    std::vector<u32> roster;
+    const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    for (InstanceId child = network.valid() ? world.firstChild(network) : InstanceId{}; child.valid();
+         child = world.nextSibling(child)) {
+        const scene::PlayerComponent* player = world.players().find(child);
+        if (player == nullptr || world.destroyed(child))
+            continue;
+        roster.push_back(player->userId);
+        roster.push_back(player->character.valid() ? netIdOf(player->character).value : 0u);
+        roster.push_back(player->team.valid() ? netIdOf(player->team).value : 0u);
+    }
+
+    for (Peer& peer : m_peers) {
+        if (!peer.welcomed)
+            continue;
+        // What this peer owns (ADR 0099), in network-id order.
+        std::vector<u32> owned;
+        for (const Captured& entry : m_order) {
+            const scene::RigidBodyComponent* body = world.rigidBodies().find(entry.id);
+            if (body != nullptr && peer.userId != 0 && body->networkOwner == peer.userId)
+                owned.push_back(entry.netId);
+        }
+        std::sort(owned.begin(), owned.end());
+        const std::vector<u32> relevant = interestOf(world, peer);
+        sendTo(peer, current, roster, relevant, owned);
+    }
+}
+
+std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const Peer& peer) const
+{
+    std::vector<u32> relevant;
+    relevant.reserve(m_order.size());
+
+    // **Measured from the peer's character** (`Player.Character`). A player
+    // with none has nothing to measure from and is sent everything, which is
+    // what every session did before interest existed.
+    const scene::PlayerComponent* player = peer.player.valid() ? world.players().find(peer.player) : nullptr;
+    const std::optional<core::DVec3> body =
+        player != nullptr && player->character.valid() && world.alive(player->character)
+            ? placeOf(world, player->character)
+            : std::nullopt;
+    if (!body.has_value()) {
+        for (const Captured& entry : m_order)
+            relevant.push_back(entry.netId);
+        std::sort(relevant.begin(), relevant.end());
+        return relevant;
+    }
+
+    // The streaming radius, with the streaming manager's hysteresis: in at the
+    // load radius, out only past a quarter more, so a part on the boundary does
+    // not spawn and despawn on alternate ticks.
+    const f64 radius = world.engineState().streamingLoadRadius;
+    const f64 keep = radius * 1.25;
+    const core::DVec3 focus = *body;
+
+    const usize count = m_order.size();
+    std::vector<u8> inRange(count, 0);
+    std::vector<u8> positioned(count, 0);
+    std::vector<u8> marked(count, 0);
+    for (usize at = 0; at < count; ++at) {
+        const std::optional<core::DVec3> place = placeOf(world, m_order[at].id);
+        if (!place.has_value())
+            continue;
+        positioned[at] = 1;
+        const core::DVec3 delta = *place - focus;
+        const f64 distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+        const f64 reach = std::binary_search(peer.known.begin(), peer.known.end(), m_order[at].netId) ? keep : radius;
+        inRange[at] = distance <= reach * reach ? 1 : 0;
+        // What the peer owns it simulates, so it has it wherever it is.
+        if (const scene::RigidBodyComponent* owned = world.rigidBodies().find(m_order[at].id);
+            owned != nullptr && peer.userId != 0 && owned->networkOwner == peer.userId)
+            inRange[at] = 1;
+    }
+
+    // Down: a part in range brings everything under it -- what is attached to
+    // a part goes with it, whatever its own position says. Pre-order, so a
+    // parent is decided before its children.
+    std::vector<u8> positionedAbove(count, 0);
+    for (usize at = 0; at < count; ++at) {
+        const i32 parent = m_order[at].parent;
+        if (parent >= 0) {
+            const auto up = static_cast<usize>(parent);
+            positionedAbove[at] = positioned[up] || positionedAbove[up] ? 1 : 0;
+            marked[at] = marked[up] && (positioned[up] || positionedAbove[up]) ? 1 : 0;
+        }
+        if (inRange[at])
+            marked[at] = 1;
+    }
+
+    // Up: the ancestors of anything sent, so it has somewhere to be parented;
+    // and a container with no part anywhere in or above it, which costs nothing
+    // and has no position to be far from. Reverse pre-order visits children
+    // before their parent.
+    std::vector<u8> positionedBelow(count, 0);
+    for (usize at = count; at-- > 0;) {
+        const i32 parent = m_order[at].parent;
+        if (!marked[at] && !positioned[at] && !positionedBelow[at] && !positionedAbove[at])
+            marked[at] = 1;
+        if (parent >= 0) {
+            const auto up = static_cast<usize>(parent);
+            if (marked[at] && (positioned[at] || positionedBelow[at] || positionedAbove[at] || inRange[at]))
+                marked[up] = 1;
+            if (positioned[at] || positionedBelow[at])
+                positionedBelow[up] = 1;
+        }
+    }
+
+    // What a service keeps for everybody is everybody's, near or far.
+    for (usize at = 0; at < count; ++at) {
+        if (marked[at] || m_order[at].pinned)
+            relevant.push_back(m_order[at].netId);
+    }
+    std::sort(relevant.begin(), relevant.end());
+    return relevant;
+}
+
+void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const std::vector<u32>& roster,
+                              const std::vector<u32>& relevant, const std::vector<u32>& owned)
+{
+    // **This peer's world is what is in its interest.** Everything below --
+    // spawns, despawns, the diff and the checksum -- is over this, so a replica
+    // reconstructs and verifies exactly the subset it was sent (ADR 0069
+    // decision 8: its hash is a subset by design).
+    WorldState filtered;
+    filtered.tick = everything.tick;
+    filtered.entities.reserve(relevant.size());
+    for (const EntityState& entity : everything.entities) {
+        if (std::binary_search(relevant.begin(), relevant.end(), entity.id.value))
+            filtered.entities.push_back(entity);
+    }
+    const WorldState& current = filtered;
+
+    // --- Who is playing, whole, when it changed for this peer.
+    if (!peer.rosterSent || peer.roster != roster) {
+        Writer players;
+        players.u8v(static_cast<u8>(MessageType::Players));
+        players.u32v(static_cast<u32>(roster.size() / 3));
+        for (const u32 value : roster)
+            players.u32v(value);
+        sendBytes(m_transport, peer.id, players.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        peer.roster = roster;
+        peer.rosterSent = true;
+    }
+
+    // --- The scene the authority is in (ADR 0106), before anything of it is
+    // spawned: once to a peer that joins, and whenever it changes.
+    if (const std::string& scene = m_world->engineState().currentScene; !peer.sceneSent || peer.scene != scene) {
+        Writer change;
+        change.u8v(static_cast<u8>(MessageType::SceneChange));
+        change.text(scene);
+        const std::vector<u8>& data = m_world->engineState().sceneLoadData;
+        change.u32v(static_cast<u32>(data.size()));
+        for (const u8 byte : data)
+            change.u8v(byte);
+        sendBytes(m_transport, peer.id, change.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        peer.scene = scene;
+        peer.sceneSent = true;
+    }
+
+    // --- Spawns and despawns, reliable, before the snapshot that needs them.
+    std::vector<u32> now;
+    now.reserve(current.entities.size());
+    for (const EntityState& entity : current.entities)
+        now.push_back(entity.id.value);
+
+    std::vector<u32> entering;
+    std::set_difference(now.begin(), now.end(), peer.known.begin(), peer.known.end(), std::back_inserter(entering));
+    std::vector<u32> leaving;
+    std::set_difference(peer.known.begin(), peer.known.end(), now.begin(), now.end(), std::back_inserter(leaving));
+    // A service exists on both ends from boot: its first record arrives whole
+    // because no baseline has it, and it is never spawned or despawned.
+    std::erase_if(entering, [](u32 id) { return id >= ServiceNetIdBase; });
+    std::erase_if(leaving, [](u32 id) { return id >= ServiceNetIdBase; });
+
+    if (!leaving.empty()) {
+        // **Two lists: destroyed, then streamed out.** The replica treats them
+        // differently -- a destroyed instance is gone, one that only left this
+        // peer's interest is kept as a husk for a script that holds it -- and
+        // only the authority knows which is which: a streamed-out id is still in
+        // the whole world's state and only missing from this peer's.
+        std::vector<u32> destroyed;
+        std::vector<u32> streamed;
+        for (const u32 id : leaving)
+            (findEntity(everything, id) != nullptr ? streamed : destroyed).push_back(id);
+        Writer despawn;
+        despawn.u8v(static_cast<u8>(MessageType::Despawn));
+        for (const std::vector<u32>* list : {&destroyed, &streamed}) {
+            despawn.u32v(static_cast<u32>(list->size()));
+            for (const u32 id : *list)
+                despawn.u32v(id);
+        }
+        sendBytes(m_transport, peer.id, despawn.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        m_stats.despawned += static_cast<u32>(leaving.size());
+    }
+    if (!entering.empty()) {
+        Writer spawn;
+        spawn.u8v(static_cast<u8>(MessageType::Spawn));
+        spawn.u32v(static_cast<u32>(entering.size()));
+        for (const u32 id : entering) {
+            spawn.u32v(id);
+            spawn.text(m_world->atoms().text(m_classNames.at(id)));
+        }
+        sendBytes(m_transport, peer.id, spawn.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        m_stats.spawned += static_cast<u32>(entering.size());
+    }
+
+    // --- Tilemaps' cells (ADR 0103), after the spawns that name them: every
+    // block of one entering, and what this send's edits changed of the rest.
+    for (const u32 id : entering) {
+        const InstanceId instance = instanceOfNet(*m_world, id);
+        const scene::Tilemap2DComponent* tilemap = instance.valid() ? m_world->tilemaps2d().find(instance) : nullptr;
+        if (tilemap == nullptr || tilemap->chunks.empty())
+            continue;
+        const std::vector<TileBlock> blocks(tilemap->chunks.begin(), tilemap->chunks.end());
+        sendTileBlocks(m_transport, peer.id, id, blocks, m_stats);
+    }
+    for (const auto& [id, edits] : m_tilemapEdits) {
+        if (std::binary_search(now.begin(), now.end(), id) && !std::binary_search(entering.begin(), entering.end(), id))
+            sendTileBlocks(m_transport, peer.id, id, edits, m_stats);
+    }
+    // Attributes (ADR 0106), after the spawns and the players they name.
+    {
+        const std::vector<u32> known = std::move(peer.known);
+        peer.known = now;
+        sendAttributes(peer, entering);
+        peer.known = known;
+    }
+    peer.known = std::move(now);
+
+    // --- What this peer owns, whole, when it changed -- after the spawns, so
+    // it never names a part the peer has not been sent.
+    if (peer.owned != owned) {
+        Writer ownership;
+        ownership.u8v(static_cast<u8>(MessageType::Ownership));
+        ownership.u32v(static_cast<u32>(owned.size()));
+        for (const u32 id : owned)
+            ownership.u32v(id);
+        sendBytes(m_transport, peer.id, ownership.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        peer.owned = owned;
+    }
+    // What this peer holds at this tick, for the baseline a later snapshot is
+    // diffed against: the global state then, cut to what this peer had then.
+    peer.interest.push_back(PeerInterest{current.tick, peer.known});
+    while (peer.interest.size() > StateHistory)
+        peer.interest.pop_front();
+
+    // --- The snapshot, against what this peer last proved it holds.
+    const WorldState* baseline = peer.acked != 0 ? historyAt(peer.acked) : nullptr;
+    const std::vector<u32>* heldThen = nullptr;
+    for (const PeerInterest& held : peer.interest) {
+        if (held.tick == peer.acked)
+            heldThen = &held.ids;
+    }
+    if (heldThen == nullptr)
+        baseline = nullptr;
+
+    struct Record
+    {
+        const EntityState* entity = nullptr;
+        bool full = false;
+        std::vector<usize> fields;
+    };
+    std::vector<Record> records;
+    std::set<u32> atoms;
+    const usize nameField = commonIndex("Name");
+    for (const EntityState& entity : current.entities) {
+        // Diffed only against what this peer HAD at the baseline -- and whole
+        // when it is entering now, whatever the baseline says: the replica
+        // scrubbed it from every stored state when it left.
+        const bool held =
+            baseline != nullptr && std::binary_search(heldThen->begin(), heldThen->end(), entity.id.value);
+        const bool entered = std::binary_search(entering.begin(), entering.end(), entity.id.value);
+        const EntityState* before = held && !entered ? findEntity(*baseline, entity.id.value) : nullptr;
+        Record record{&entity, before == nullptr || before->schema != entity.schema, {}};
+        for (usize at = 0; at < entity.fields.size(); ++at) {
+            if (record.full || !(before->fields[at] == entity.fields[at]))
+                record.fields.push_back(at);
+        }
+        if (record.fields.empty())
+            continue;
+        // **Every name-shaped field, not `Name` alone**: a decal's image is a
+        // content URN, and an atom number means nothing on another machine.
+        const generated::ClassDesc& described = generated::Classes[entity.schema];
+        for (const usize at : record.fields) {
+            const generated::FieldDesc* field = fieldAt(described, at);
+            if (at == nameField || (field != nullptr && field->encoding == generated::Encoding::NameAtom))
+                atoms.insert(asU32(entity.fields[at]));
+        }
+        records.push_back(std::move(record));
+    }
+
+    Writer snapshot;
+    snapshot.u8v(static_cast<u8>(MessageType::Snapshot));
+    snapshot.u64v(current.tick);
+    snapshot.u64v(baseline != nullptr ? baseline->tick : 0);
+    snapshot.u64v(checksumOf(current));
+    // The last of this peer's intents the authority applied, for its
+    // prediction to reconcile against (ADR 0076).
+    snapshot.u64v(peer.intentTick);
+    // The names this message's fields mention, by the authority's atom. The
+    // replica interns each once and keeps the mapping, so a name costs its
+    // bytes on the wire when it changes rather than every tick.
+    snapshot.u16v(static_cast<u16>(atoms.size()));
+    for (const u32 atom : atoms) {
+        snapshot.u32v(atom);
+        snapshot.text(m_world->atoms().text(core::NameAtom{atom}));
+    }
+    snapshot.u32v(static_cast<u32>(records.size()));
+    for (const Record& record : records) {
+        const generated::ClassDesc& desc = generated::Classes[record.entity->schema];
+        snapshot.u32v(record.entity->id.value);
+        snapshot.u8v(record.entity->schema);
+        snapshot.u8v(record.full ? FullRecord : 0);
+        snapshot.u16v(static_cast<u16>(record.fields.size()));
+        for (const usize at : record.fields) {
+            snapshot.u16v(wireIdAt(desc, at));
+            encodeField(snapshot.bytes, fieldAt(desc, at)->encoding, record.entity->fields[at]);
+        }
+    }
+    sendBytes(m_transport, peer.id, snapshot.bytes, net::Delivery::UnreliableSequenced, StateChannel, m_stats);
+    m_stats.snapshotsSent += 1;
+}
+
+// --- Replica ------------------------------------------------------------------
+
+InstanceId ReplicaSession::localOf(NetId id) const noexcept
+{
+    const auto found = m_locals.find(id.value);
+    return found != m_locals.end() ? found->second : InstanceId{};
+}
+
+const WorldState* ReplicaSession::stateAt(u64 tick) const noexcept
+{
+    for (auto at = m_states.rbegin(); at != m_states.rend(); ++at) {
+        if ((*at)->tick == tick)
+            return at->get();
+    }
+    return nullptr;
+}
+
+void ReplicaSession::receive(scene::World& world, InstanceId root)
+{
+    std::vector<net::TransportEvent> events;
+    (void)m_transport.poll(events, 0);
+    for (const net::TransportEvent& event : events) {
+        if (!(event.peer == m_authority))
+            continue;
+        if (event.kind == net::TransportEvent::Kind::Connected) {
+            m_connected = true;
+            m_lost = false;
+            Writer hello;
+            hello.u8v(static_cast<u8>(MessageType::Hello));
+            hello.u32v(generated::ProtocolVersion);
+            hello.u64v(m_token.high);
+            hello.u64v(m_token.low);
+            sendBytes(m_transport, m_authority, hello.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            continue;
+        }
+        if (event.kind == net::TransportEvent::Kind::Disconnected) {
+            m_connected = false;
+            m_welcomed = false;
+            m_lost = true;
+            continue;
+        }
+        if (event.kind != net::TransportEvent::Kind::Message || event.payload.empty())
+            continue;
+        m_stats.bytesReceived += event.payload.size();
+        switch (static_cast<MessageType>(event.payload[0])) {
+        case MessageType::Welcome: {
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const u32 version = reader.u32v();
+            const u32 player = reader.u32v();
+            (void)reader.u64v();
+            PlayerToken token;
+            token.high = reader.u64v();
+            token.low = reader.u64v();
+            if (!reader.ok() || version != generated::ProtocolVersion) {
+                m_transport.disconnect(m_authority);
+                break;
+            }
+            if (m_joinedBefore)
+                resetForRejoin(world);
+            m_joinedBefore = true;
+            m_welcomed = true;
+            m_playerId = player;
+            m_token = token;
+            // The player at this machine takes the number the authority gave
+            // it, so `LocalPlayer.UserId` on a replica is the same number the
+            // authority's copy of that player has.
+            if (const InstanceId local = scene::localPlayerOf(world); local.valid()) {
+                if (scene::PlayerComponent* component = world.players().find(local); component != nullptr)
+                    component->userId = player;
+                world.setName(local, world.atoms().intern("Player" + std::to_string(player)));
+            }
+            break;
+        }
+        case MessageType::Spawn:
+            onSpawn(world, event.payload);
+            break;
+        case MessageType::Despawn:
+            onDespawn(world, event.payload);
+            break;
+        case MessageType::Snapshot:
+            onSnapshot(world, root, event.payload);
+            break;
+        case MessageType::Players:
+            onPlayers(world, root, event.payload);
+            break;
+        case MessageType::Ownership:
+            onOwnership(world, event.payload);
+            break;
+        case MessageType::TilemapBlocks:
+            onTilemapBlocks(world, event.payload);
+            break;
+        case MessageType::SceneChange:
+            onSceneChange(world, event.payload);
+            break;
+        case MessageType::Attributes:
+            onAttributes(world, root, event.payload);
+            break;
+        case MessageType::RemoteToReplica: {
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            RemoteOnWire wire;
+            if (!readRemote(reader, wire)) {
+                m_stats.messagesDropped += 1;
+                break;
+            }
+            const auto local = m_locals.find(wire.remote);
+            const bool reply = (wire.flags & RemoteReplyFlag) != 0;
+            // The authority answers and never asks: a call number here is an
+            // answer or nothing.
+            if (local == m_locals.end() || !isRemoteTarget(world, local->second, wire.call) ||
+                reply != (wire.call != 0)) {
+                m_stats.messagesDropped += 1;
+                break;
+            }
+            scene::RemoteMessage message;
+            message.remote = local->second;
+            message.call = wire.call;
+            message.reply = reply;
+            message.failed = (wire.flags & RemoteFailedFlag) != 0;
+            message.payload.assign(wire.payload.begin(), wire.payload.end());
+            // An instance this machine was never sent arrives as nil.
+            for (const u32 ref : wire.refs) {
+                const auto found = m_locals.find(ref);
+                message.refs.push_back(found != m_locals.end() ? found->second : InstanceId{});
+            }
+            world.engineState().remoteInbox.push_back(std::move(message));
+            m_stats.messagesReceived += 1;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    resolveCharacters(world, root);
+    m_serverClock += 1;
+    interpolate(world);
+}
+
+void ReplicaSession::sendMessages(scene::World& world)
+{
+    std::vector<scene::RemoteMessage> outbox;
+    outbox.swap(world.engineState().remoteOutbox);
+    // This machine's instance to the network id the authority knows it by.
+    const auto netIdOf = [this](InstanceId id) -> u32 {
+        for (const auto& [netId, local] : m_locals) {
+            if (local == id)
+                return netId;
+        }
+        return 0;
+    };
+    for (scene::RemoteMessage& message : outbox) {
+        if (!message.toServer)
+            continue;
+        // Not welcomed yet: nobody to send to, for a moment.
+        if (!m_welcomed) {
+            if (++message.held <= MaxRemoteHeldSends)
+                world.engineState().remoteOutbox.push_back(std::move(message));
+            else
+                m_stats.messagesDropped += 1;
+            continue;
+        }
+        // An event this replica made itself was never the authority's, and
+        // the authority has no idea what it is.
+        const u32 remote = netIdOf(message.remote);
+        if (remote == 0) {
+            m_stats.messagesDropped += 1;
+            continue;
+        }
+        std::vector<u32> refs;
+        refs.reserve(message.refs.size());
+        for (const InstanceId ref : message.refs)
+            refs.push_back(netIdOf(ref));
+        Writer out;
+        writeRemote(out, MessageType::RemoteToAuthority, remote, message, refs);
+        sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        m_stats.messagesSent += 1;
+    }
+}
+
+void ReplicaSession::interpolate(scene::World& world)
+{
+    // **Everyone else, drawn a few ticks in the past, between two snapshots**
+    // -- Valve's entity interpolation. A snapshot every other tick applied as it
+    // arrived stepped every remote part at thirty hertz; drawn `delay` ticks
+    // behind the server's clock, there are nearly always two samples around the
+    // moment being drawn, and the motion between them is a line.
+    if (m_interpolationDelay == 0)
+        return;
+    const u64 target = m_serverClock > m_interpolationDelay ? m_serverClock - m_interpolationDelay : 0;
+    for (auto& [netId, samples] : m_samples) {
+        // Its own character is predicted, never drawn from the past.
+        if (samples.empty() || netId == m_owned || m_ownedParts.contains(netId))
+            continue;
+        const auto local = m_locals.find(netId);
+        scene::PartComponent* part =
+            local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
+        if (part == nullptr)
+            continue;
+        // Past the newest sample, the newest: extrapolating a part the authority
+        // has stopped talking about would put it where it is not.
+        const Sample* before = &samples.front();
+        const Sample* after = nullptr;
+        for (const Sample& sample : samples) {
+            if (sample.tick <= target)
+                before = &sample;
+            else if (after == nullptr)
+                after = &sample;
+        }
+        if (after == nullptr || target <= before->tick || after->tick <= before->tick) {
+            part->cframe = target < samples.front().tick ? samples.front().cframe : before->cframe;
+            continue;
+        }
+        const f64 alpha = static_cast<f64>(target - before->tick) / static_cast<f64>(after->tick - before->tick);
+        part->cframe = core::lerp(before->cframe, after->cframe, alpha);
+    }
+
+    // **Sprites the same way** (ADR 0103), by the same rules: past the newest
+    // sample the newest, and nothing this machine owns.
+    for (auto& [netId, samples] : m_samples2d) {
+        if (samples.empty() || netId == m_owned || m_ownedParts.contains(netId))
+            continue;
+        const auto local = m_locals.find(netId);
+        scene::Part2DComponent* sprite =
+            local != m_locals.end() && world.alive(local->second) ? world.parts2d().find(local->second) : nullptr;
+        if (sprite == nullptr)
+            continue;
+        const Sample2D* before = &samples.front();
+        const Sample2D* after = nullptr;
+        for (const Sample2D& sample : samples) {
+            if (sample.tick <= target)
+                before = &sample;
+            else if (after == nullptr)
+                after = &sample;
+        }
+        if (after == nullptr || target <= before->tick || after->tick <= before->tick) {
+            const Sample2D& held = target < samples.front().tick ? samples.front() : *before;
+            sprite->position = held.position;
+            sprite->rotation = held.rotation;
+            continue;
+        }
+        const core::f32 alpha = static_cast<core::f32>(static_cast<f64>(target - before->tick) /
+                                                       static_cast<f64>(after->tick - before->tick));
+        sprite->position = before->position + (after->position - before->position) * alpha;
+        // **The short way round.** The solver answers in (-180, 180], so a
+        // sprite turning through 180 goes from 179 to -179; a plain lerp would
+        // spin it the long way, through zero.
+        core::f32 turn = std::fmod(after->rotation - before->rotation, 360.0f);
+        if (turn > 180.0f)
+            turn -= 360.0f;
+        else if (turn < -180.0f)
+            turn += 360.0f;
+        sprite->rotation = before->rotation + turn * alpha;
+    }
+}
+
+void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
+{
+    // Every player's `Character`, on this machine: the NetId the roster named,
+    // through this machine's own copy of it -- which may arrive a message after
+    // the roster that names it, so this runs after every receive.
+    const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    for (InstanceId child = network.valid() ? world.firstChild(network) : InstanceId{}; child.valid();
+         child = world.nextSibling(child)) {
+        scene::PlayerComponent* player = world.players().find(child);
+        if (player == nullptr)
+            continue;
+        const auto named = m_characters.find(player->userId);
+        const auto local = named != m_characters.end() ? m_locals.find(named->second) : m_locals.end();
+        player->character = local != m_locals.end() && world.alive(local->second) ? local->second : InstanceId{};
+        const auto side = m_teams.find(player->userId);
+        const auto team = side != m_teams.end() && side->second != 0 ? m_locals.find(side->second) : m_locals.end();
+        player->team =
+            team != m_locals.end() && world.alive(team->second) && world.teams().find(team->second) != nullptr
+                ? team->second
+                : InstanceId{};
+        if (player->local) {
+            m_owned = named != m_characters.end() && local != m_locals.end() ? named->second : 0u;
+            // What was buffered for it before this machine knew it was its
+            // own: the newest of it is where it starts being predicted from.
+            if (const auto buffered = m_owned != 0 ? m_samples.find(m_owned) : m_samples.end();
+                buffered != m_samples.end()) {
+                if (scene::PartComponent* part = world.parts().find(local->second);
+                    part != nullptr && !buffered->second.empty())
+                    part->cframe = buffered->second.back().cframe;
+                m_samples.erase(buffered);
+            }
+        }
+    }
+    // Its own parts, which may have spawned after the list that names them.
+    for (const u32 netId : m_ownedParts) {
+        const auto local = m_locals.find(netId);
+        scene::RigidBodyComponent* body =
+            local != m_locals.end() && world.alive(local->second) ? world.rigidBodies().find(local->second) : nullptr;
+        if (body != nullptr)
+            body->networkOwner = m_playerId;
+    }
+}
+
+void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u8 owner = reader.u8v();
+    const u32 id = reader.u32v();
+    const u16 count = reader.u16v();
+    const auto localOfNet = [this](u32 net) { return localOf(NetId{net}); };
+    std::vector<std::pair<std::string, scene::Value>> incoming;
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        std::string name(reader.text());
+        std::optional<scene::Value> value = readAttributeValue(reader, localOfNet);
+        if (!value.has_value())
+            return;
+        incoming.emplace_back(std::move(name), std::move(*value));
+    }
+    if (!reader.ok() || !reader.done())
+        return;
+
+    InstanceId target;
+    const InstanceId dataModel = world.parentOf(root);
+    switch (owner) {
+    case 0:
+        target = localOf(NetId{id});
+        break;
+    case 1:
+        target = scene::playerByUserId(world, id);
+        break;
+    case 2:
+        target = globalScriptsOf(world, dataModel);
+        break;
+    case 3:
+        if (const InstanceId global = globalScriptsOf(world, dataModel); global.valid())
+            target = world.findFirstChild(global, world.atoms().lookup("Shared"));
+        break;
+    default:
+        return;
+    }
+    if (!target.valid() || !world.alive(target))
+        return;
+
+    // **Exactly these**: what the authority has now, and nothing it removed.
+    scene::AttributeMap current;
+    world.collectAttributes(target, current);
+    for (const auto& [name, value] : current) {
+        const std::string_view text = world.atoms().text(name);
+        const bool kept =
+            std::any_of(incoming.begin(), incoming.end(), [&](const auto& entry) { return entry.first == text; });
+        if (!kept)
+            (void)world.setAttribute(target, name, scene::Value{});
+    }
+    for (const auto& [name, value] : incoming)
+        (void)world.setAttribute(target, world.atoms().intern(name), value);
+}
+
+void ReplicaSession::onSceneChange(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    std::string path(reader.text());
+    const u32 length = reader.u32v();
+    std::vector<u8> data;
+    data.reserve(length);
+    for (u32 at = 0; at < length && reader.ok(); ++at)
+        data.push_back(reader.u8v());
+    if (!reader.ok() || !reader.done())
+        return;
+    // **Already there** is what a replica that joined into the scene it booted
+    // hears, and it is not a reason to load it again.
+    if (path.empty() || path == world.engineState().currentScene || !m_sceneChanger)
+        return;
+    m_sceneChanger(world, path, std::move(data));
+}
+
+void ReplicaSession::onTilemapBlocks(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u32 netId = reader.u32v();
+    const u16 count = reader.u16v();
+    // Read whole before any is applied: a message cut short changes nothing.
+    std::vector<std::pair<scene::TileChunkKey, scene::TileChunk>> blocks;
+    blocks.reserve(count);
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        scene::TileChunkKey key{static_cast<core::i32>(reader.u32v()), static_cast<core::i32>(reader.u32v())};
+        if (reader.u16v() != TileBlockCells)
+            return;
+        scene::TileChunk cells{};
+        for (u16& tile : cells)
+            tile = reader.u16v();
+        blocks.emplace_back(key, cells);
+    }
+    if (!reader.ok() || !reader.done())
+        return;
+    const auto local = m_locals.find(netId);
+    scene::Tilemap2DComponent* tilemap =
+        local != m_locals.end() && world.alive(local->second) ? world.tilemaps2d().find(local->second) : nullptr;
+    if (tilemap == nullptr)
+        return;
+    for (const auto& [key, cells] : blocks) {
+        const bool empty = std::all_of(cells.begin(), cells.end(), [](u16 tile) { return tile == 0; });
+        if (empty)
+            tilemap->chunks.erase(key);
+        else
+            tilemap->chunks[key] = cells;
+    }
+    // What rebuilds from the cells -- the colliders and the drawing -- watches
+    // this, as it does for an edit made here.
+    tilemap->revision += 1;
+}
+
+void ReplicaSession::onOwnership(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u32 count = reader.u32v();
+    std::set<u32> owned;
+    for (u32 at = 0; at < count && reader.ok(); ++at)
+        owned.insert(reader.u32v());
+    if (!reader.ok() || !reader.done())
+        return;
+    // Handed back: a follower of the snapshots again, from the next one.
+    for (const u32 netId : m_ownedParts) {
+        if (owned.contains(netId))
+            continue;
+        const auto local = m_locals.find(netId);
+        if (local == m_locals.end() || !world.alive(local->second))
+            continue;
+        if (scene::RigidBodyComponent* body = world.rigidBodies().find(local->second); body != nullptr)
+            body->networkOwner = 0;
+        // **Back to where the authority has it**, from the newest state this
+        // replica holds: the snapshots only send what changed, and the
+        // authority's copy may never change again.
+        const EntityState* held = m_states.empty() ? nullptr : findEntity(*m_states.back(), netId);
+        scene::PartComponent* part = world.parts().find(local->second);
+        if (held == nullptr || part == nullptr)
+            continue;
+        const generated::ClassDesc& desc = generated::Classes[held->schema];
+        for (usize at = 0; at < held->fields.size(); ++at) {
+            const generated::FieldDesc* field = fieldAt(desc, at);
+            if (field != nullptr && field->name == "CFrame" && field->pool == "parts")
+                part->cframe = asCFrame(held->fields[at]);
+        }
+    }
+    for (const u32 netId : owned) {
+        m_samples.erase(netId);
+        m_samples2d.erase(netId);
+    }
+    m_ownedParts = std::move(owned);
+}
+
+void ReplicaSession::sendOwned(const scene::World& world, u64 tick)
+{
+    if (m_ownedParts.empty())
+        return;
+    Writer state;
+    state.u8v(static_cast<u8>(MessageType::OwnedState));
+    state.u64v(tick);
+    std::vector<std::pair<u32, InstanceId>> alive;
+    for (const u32 netId : m_ownedParts) {
+        const auto local = m_locals.find(netId);
+        if (local != m_locals.end() && world.alive(local->second) && world.parts().find(local->second) != nullptr &&
+            world.rigidBodies().find(local->second) != nullptr)
+            alive.emplace_back(netId, local->second);
+    }
+    state.u16v(static_cast<u16>(std::min<usize>(alive.size(), 0xFFFF)));
+    for (usize at = 0; at < alive.size() && at < 0xFFFF; ++at) {
+        const scene::PartComponent& part = *world.parts().find(alive[at].second);
+        const scene::RigidBodyComponent& body = *world.rigidBodies().find(alive[at].second);
+        state.u32v(alive[at].first);
+        FieldValue value;
+        setCFrame(value, part.cframe);
+        encodeField(state.bytes, generated::Encoding::CFrameD, value);
+        setVec3(value, body.linearVelocity);
+        encodeField(state.bytes, generated::Encoding::Vector3, value);
+        setVec3(value, body.angularVelocity);
+        encodeField(state.bytes, generated::Encoding::Vector3, value);
+    }
+    sendBytes(m_transport, m_authority, state.bytes, net::Delivery::UnreliableSequenced, OwnershipChannel, m_stats);
+}
+
+void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
+{
+    if (!m_welcomed)
+        return;
+    // What this replica predicted for its own character at this tick, for the
+    // snapshot that answers this intent to be compared against.
+    if (m_owned != 0) {
+        const auto local = m_locals.find(m_owned);
+        const scene::PartComponent* part =
+            local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
+        if (part != nullptr) {
+            m_predicted.push_back(
+                Sample{tick, part->cframe, m_replay != nullptr ? m_replay->lastCommand(local->second) : std::nullopt});
+            while (m_predicted.size() > PredictionHistory)
+                m_predicted.pop_front();
+        }
+    }
+    const InstanceId local = scene::localPlayerOf(world);
+    const scene::PlayerComponent* player = local.valid() ? world.players().find(local) : nullptr;
+    if (player == nullptr)
+        return;
+    Writer intent;
+    intent.u8v(static_cast<u8>(MessageType::Intent));
+    intent.u64v(tick);
+    intent.u16v(static_cast<u16>(std::min<usize>(player->intents.size(), 0xFFFF)));
+    for (usize at = 0; at < player->intents.size() && at < 0xFFFF; ++at) {
+        const scene::PlayerIntent& one = player->intents[at];
+        // **By name**: the authority's atom numbers are not this world's, and
+        // an action is what both ends' scripts call it.
+        intent.text(world.atoms().text(one.action));
+        intent.u8v(static_cast<u8>(one.type));
+        intent.u32v(bitsOf(one.axis.x));
+        intent.u32v(bitsOf(one.axis.y));
+        intent.u32v(bitsOf(one.axis.z));
+        intent.u8v(one.pressed ? 1 : 0);
+    }
+    sendBytes(m_transport, m_authority, intent.bytes, net::Delivery::UnreliableSequenced, IntentChannel, m_stats);
+    sendOwned(world, tick);
+}
+
+void ReplicaSession::onPlayers(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u32 count = reader.u32v();
+    std::vector<u32> roster;
+    std::map<u32, u32> characters;
+    std::map<u32, u32> teams;
+    for (u32 at = 0; at < count && reader.ok(); ++at) {
+        const u32 userId = reader.u32v();
+        const u32 character = reader.u32v();
+        const u32 team = reader.u32v();
+        roster.push_back(userId);
+        characters[userId] = character;
+        teams[userId] = team;
+    }
+    if (!reader.ok() || !reader.done())
+        return;
+    m_characters = std::move(characters);
+    m_teams = std::move(teams);
+    const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    if (!network.valid())
+        return;
+
+    // The others, as ordinary `Player`s nobody at this machine drives: gone
+    // first, then new, so a script's `PlayerRemoving` sees the list shrink
+    // before `PlayerAdded` sees it grow.
+    std::vector<InstanceId> leaving;
+    for (InstanceId child = world.firstChild(network); child.valid(); child = world.nextSibling(child)) {
+        const scene::PlayerComponent* player = world.players().find(child);
+        if (player == nullptr || player->local || world.destroyed(child))
+            continue;
+        if (std::find(roster.begin(), roster.end(), player->userId) == roster.end())
+            leaving.push_back(child);
+    }
+    for (const InstanceId gone : leaving)
+        scene::removePlayer(world, network, gone);
+    for (const u32 userId : roster) {
+        if (userId == m_playerId || scene::playerByUserId(world, userId).valid())
+            continue;
+        (void)scene::createPlayer(world, network, userId, false);
+    }
+}
+
+void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u32 count = reader.u32v();
+    for (u32 at = 0; at < count && reader.ok(); ++at) {
+        const u32 id = reader.u32v();
+        const std::string_view className = reader.text();
+        if (!reader.ok() || m_locals.contains(id))
+            continue;
+        // An id that left this replica's interest and has come back into it.
+        m_departed.erase(id);
+        // **By name, not by the authority's class number**: the two ends build
+        // their registries from the same generated tables, but a name is the
+        // fact the protocol version vouches for and a number is not.
+        const scene::ClassId classId = world.classes().findId(world.atoms().intern(className));
+        if (classId == scene::InvalidClass)
+            continue;
+        const InstanceId local = world.create(classId);
+        if (local.valid())
+            m_locals[id] = local;
+    }
+}
+
+void ReplicaSession::onDespawn(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    std::vector<u32> destroyed;
+    std::vector<u32> streamed;
+    for (std::vector<u32>* list : {&destroyed, &streamed}) {
+        const u32 count = reader.u32v();
+        for (u32 at = 0; at < count && reader.ok(); ++at) {
+            const u32 id = reader.u32v();
+            if (reader.ok())
+                list->push_back(id);
+        }
+    }
+    if (!reader.ok())
+        return;
+
+    // **Held ones first, then the rest.** A husk is taken out of the tree
+    // before anything is destroyed, so a part a script holds survives its
+    // parent leaving with it -- `destroy` takes the whole subtree.
+    std::vector<InstanceId> removed;
+    for (const u32 id : streamed) {
+        const auto found = m_locals.find(id);
+        if (found == m_locals.end() || !world.alive(found->second))
+            continue;
+        if (m_probe && m_probe(found->second)) {
+            (void)world.setParent(found->second, InstanceId{});
+            m_streamedOut.push_back(found->second);
+        }
+        else {
+            removed.push_back(found->second);
+        }
+    }
+    for (const u32 id : destroyed) {
+        if (const auto found = m_locals.find(id); found != m_locals.end() && world.alive(found->second))
+            removed.push_back(found->second);
+    }
+    for (const InstanceId gone : removed) {
+        if (world.alive(gone))
+            (void)world.destroy(gone);
+    }
+
+    for (const std::vector<u32>* list : {&destroyed, &streamed}) {
+        for (const u32 id : *list)
+            forget(id);
+    }
+}
+
+void ReplicaSession::resetForRejoin(scene::World& world)
+{
+    // Held ones become husks first, as `onDespawn` does it: `destroy` takes a
+    // whole subtree, and a part a script holds must survive its parent going.
+    std::vector<InstanceId> removed;
+    for (const auto& [id, local] : m_locals) {
+        if (!world.alive(local))
+            continue;
+        if (m_probe && m_probe(local)) {
+            (void)world.setParent(local, InstanceId{});
+            m_streamedOut.push_back(local);
+        }
+        else {
+            removed.push_back(local);
+        }
+    }
+    for (const InstanceId gone : removed) {
+        if (world.alive(gone))
+            (void)world.destroy(gone);
+    }
+    m_locals.clear();
+    m_written.clear();
+    m_departed.clear();
+    m_names.clear();
+    m_states.clear();
+    m_samples.clear();
+    m_samples2d.clear();
+    m_characters.clear();
+    m_teams.clear();
+    m_ownedParts.clear();
+    m_predicted.clear();
+    m_owned = 0;
+    m_ackedIntent = 0;
+    m_reconciledAck = 0;
+    m_applied = 0;
+}
+
+void ReplicaSession::forget(u32 id)
+{
+    m_departed.insert(id);
+    m_samples.erase(id);
+    m_samples2d.erase(id);
+    m_ownedParts.erase(id);
+    m_locals.erase(id);
+    m_written.erase(id);
+    // Out of every remembered state too, so a diff against one of them
+    // reconstructs what the authority has -- which no longer includes it.
+    for (std::shared_ptr<const WorldState>& state : m_states) {
+        if (findEntity(*state, id) == nullptr)
+            continue;
+        auto copy = std::make_shared<WorldState>(*state);
+        std::erase_if(copy->entities, [id](const EntityState& entity) { return entity.id.value == id; });
+        state = std::move(copy);
+    }
+}
+
+void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u64 tick = reader.u64v();
+    const u64 baseTick = reader.u64v();
+    const u64 checksum = reader.u64v();
+    const u64 intentTick = reader.u64v();
+    // Older than what the world already shows: a reordered straggler, and
+    // applying it would move the world backwards.
+    if (!reader.ok() || tick <= m_applied)
+        return;
+
+    const WorldState* base = baseTick != 0 ? stateAt(baseTick) : nullptr;
+    if (baseTick != 0 && base == nullptr)
+        return;
+
+    const u16 atomCount = reader.u16v();
+    for (u16 at = 0; at < atomCount && reader.ok(); ++at) {
+        const u32 atom = reader.u32v();
+        const std::string_view text = reader.text();
+        if (reader.ok())
+            m_names[atom] = world.atoms().intern(text);
+    }
+
+    auto state = std::make_shared<WorldState>();
+    state->tick = tick;
+    if (base != nullptr)
+        state->entities = base->entities;
+
+    const u32 recordCount = reader.u32v();
+    for (u32 record = 0; record < recordCount && reader.ok(); ++record) {
+        const u32 id = reader.u32v();
+        const u8 schema = reader.u8v();
+        const u8 flags = reader.u8v();
+        const u16 fields = reader.u16v();
+        if (!reader.ok() || schema >= schemaCount()) {
+            reader.fail();
+            break;
+        }
+        const generated::ClassDesc& desc = generated::Classes[schema];
+        auto at = findEntity(state->entities, id);
+        if (at == state->entities.end() || at->id.value != id) {
+            if ((flags & FullRecord) == 0) {
+                // A diff for an instance the baseline does not have: the two
+                // ends disagree about the baseline, which the checksum would
+                // catch anyway -- refused here, where the cause is plain.
+                reader.fail();
+                break;
+            }
+            at = state->entities.insert(at, EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))});
+        }
+        else if ((flags & FullRecord) != 0) {
+            *at = EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))};
+        }
+        for (u16 field = 0; field < fields && reader.ok(); ++field) {
+            const u16 wireId = reader.u16v();
+            const usize index = indexOfWireId(desc, wireId);
+            if (!reader.ok() || index >= at->fields.size()) {
+                reader.fail();
+                break;
+            }
+            FieldValue value;
+            if (!decodeField(reader.bytes(), reader.at(), fieldAt(desc, index)->encoding, value)) {
+                reader.fail();
+                break;
+            }
+            at->fields[index] = value;
+        }
+    }
+    if (!reader.ok() || !reader.done())
+        return;
+
+    std::erase_if(state->entities, [this](const EntityState& entity) { return m_departed.contains(entity.id.value); });
+    if (checksumOf(*state) != checksum) {
+        m_checksumFailures += 1;
+        return;
+    }
+
+    m_states.push_back(state);
+    while (m_states.size() > StateHistory)
+        m_states.pop_front();
+    m_applied = tick;
+    m_stats.snapshotsReceived += 1;
+    // The server's clock, as far as this replica can tell: the newest tick it
+    // has heard of, advanced one a tick between snapshots (`receive`). Pulled
+    // forward by a snapshot from further ahead, and snapped when it has drifted
+    // more than a handful of ticks behind.
+    if (tick > m_serverClock || m_serverClock - tick > 8)
+        m_serverClock = tick;
+    m_ackedIntent = intentTick;
+    applyToWorld(world, root, *state);
+
+    Writer ack;
+    ack.u8v(static_cast<u8>(MessageType::Ack));
+    ack.u64v(tick);
+    sendBytes(m_transport, m_authority, ack.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+}
+
+void ReplicaSession::reconcile(scene::World& world, InstanceId character,
+                               const scene::CharacterReplayStart& authoritative)
+{
+    const core::CFrameD& authority = authoritative.transform;
+    scene::PartComponent* part = world.parts().find(character);
+    if (part == nullptr)
+        return;
+    // What this replica predicted at the intent the authority last applied. No
+    // such prediction -- the authority has applied none of this replica's
+    // intents yet, or it answered one this replica no longer remembers -- is
+    // nothing to reconcile against, so the authority is simply right.
+    const Sample* predicted = nullptr;
+    for (const Sample& sample : m_predicted) {
+        if (sample.tick == m_ackedIntent)
+            predicted = &sample;
+    }
+    if (m_ackedIntent == 0 || predicted == nullptr) {
+        part->cframe = authority;
+        m_predicted.clear();
+        return;
+    }
+
+    const core::DVec3 error = authority.position - predicted->cframe.position;
+    const f64 distance = std::sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
+    // The turn the authority disagrees by, the same way.
+    const core::Mat3 turn = authority.rotation * core::transpose(predicted->cframe.rotation);
+    bool turned = false;
+    for (int column = 0; column < 3 && !turned; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            const core::f32 identity = column == row ? 1.0f : 0.0f;
+            if (std::abs(turn.m[column][row] - identity) > 1e-3f) {
+                turned = true;
+                break;
+            }
+        }
+    }
+    // A centimetre is inside what floats and the two ends' frame timing make of
+    // the same motion; correcting it every snapshot would be a visible shimmer.
+    if (distance < 0.01 && !turned)
+        return;
+    m_stats.corrections += 1;
+
+    // **Stepped again from where the authority put it** -- what every engine
+    // that predicts a character does. The commands this replica has not had
+    // answered yet are replayed through the same movement step the simulation
+    // uses, in the world as it now is, so a prediction that walked into a wall
+    // the authority's did not, or landed where the authority's was still
+    // falling, comes out where the authority will put it next rather than
+    // where the error at one tick implied.
+    //
+    // Only when every unanswered tick kept its command: a gap -- the character
+    // was not stepped here that tick -- is a history that cannot be replayed,
+    // and the error is what is left.
+    std::vector<scene::CharacterCommand> commands;
+    bool complete = m_replay != nullptr;
+    for (const Sample& sample : m_predicted) {
+        if (sample.tick <= m_ackedIntent)
+            continue;
+        if (!sample.command.has_value()) {
+            complete = false;
+            break;
+        }
+        commands.push_back(*sample.command);
+    }
+    if (complete) {
+        const std::vector<core::CFrameD> frames = m_replay->replay(character, authoritative, commands);
+        if (frames.size() == commands.size()) {
+            m_stats.replays += 1;
+            usize at = 0;
+            for (Sample& sample : m_predicted) {
+                if (sample.tick <= m_ackedIntent)
+                    continue;
+                sample.cframe.position = frames[at].position;
+                if (turned)
+                    sample.cframe.rotation = turn * sample.cframe.rotation;
+                ++at;
+            }
+            // The rotation is the scripts', which a controller does not turn:
+            // corrected by the turn at that moment, as before.
+            core::CFrameD now = part->cframe;
+            now.position = frames.empty() ? authority.position : frames.back().position;
+            if (turned)
+                now.rotation = turn * now.rotation;
+            part->cframe = now;
+            return;
+        }
+    }
+
+    // **The error at that moment, carried forward to now**, where there is no
+    // history to replay: the correction the error implies wherever the ground
+    // does not change underfoot, and the next snapshot corrects what it could
+    // not.
+    const auto correct = [&](core::CFrameD& frame) {
+        frame.position = frame.position + error;
+        if (turned)
+            frame.rotation = turn * frame.rotation;
+    };
+    correct(part->cframe);
+    for (Sample& sample : m_predicted) {
+        if (sample.tick > m_ackedIntent)
+            correct(sample.cframe);
+    }
+}
+
+void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const WorldState& state)
+{
+    const usize nameField = commonIndex("Name");
+    const usize parentField = commonIndex("Parent");
+    // **This world's own copy of each service, by its class name, first.**
+    // Services sort after every instance, and an instance kept in one
+    // (ADR 0080) names it as its parent in this same state.
+    for (const EntityState& entity : state.entities) {
+        if (entity.id.value < ServiceNetIdBase || m_locals.contains(entity.id.value))
+            continue;
+        const InstanceId dataModel = world.parentOf(root);
+        const std::string_view wanted = generated::Classes[entity.schema].name;
+        for (InstanceId child = dataModel.valid() ? world.firstChild(dataModel) : InstanceId{}; child.valid();
+             child = world.nextSibling(child)) {
+            if (world.atoms().text(world.classes().find(world.classOf(child))->name) == wanted) {
+                m_locals[entity.id.value] = child;
+                break;
+            }
+        }
+    }
+    for (const EntityState& entity : state.entities) {
+        const bool service = entity.id.value >= ServiceNetIdBase;
+        const auto local = m_locals.find(entity.id.value);
+        if (local == m_locals.end() || !world.alive(local->second))
+            continue; // its spawn has not arrived yet; the next apply writes it whole
+        const generated::ClassDesc& desc = generated::Classes[entity.schema];
+        const auto written = m_written.find(entity.id.value);
+        FieldSet next = entity.fields;
+        // **The own character is checked against every answer, moved or not.**
+        // Only what changed is written, and an authority that stopped the
+        // character -- against a wall the prediction walked through -- sends
+        // the same transform tick after tick: compared only on a change, the
+        // prediction was never corrected and walked on through the wall.
+        const bool answered = entity.id.value == m_owned && m_owned != 0 && m_ackedIntent != m_reconciledAck;
+        bool sampled2d = false;
+
+        for (usize at = 0; at < entity.fields.size(); ++at) {
+            const FieldValue& value = entity.fields[at];
+            if (written != m_written.end() && at < written->second.size() && written->second[at] == value) {
+                const generated::FieldDesc* same = answered ? fieldAt(desc, at) : nullptr;
+                if (same == nullptr || same->name != "CFrame" || same->pool != "parts")
+                    continue;
+            }
+            // A service keeps its own name and its place under the data model.
+            if (service && (at == nameField || at == parentField))
+                continue;
+            if (at == nameField) {
+                const auto name = m_names.find(asU32(value));
+                if (name != m_names.end())
+                    world.setName(local->second, name->second);
+                continue;
+            }
+            if (at == parentField) {
+                const u32 parentId = asNetId(value).value;
+                const InstanceId parent = parentId == RootNetId.value ? root : localOf(NetId{parentId});
+                if (!parent.valid()) {
+                    next[at] = pendingValue();
+                    continue;
+                }
+                if (!(world.parentOf(local->second) == parent))
+                    (void)world.setParent(local->second, parent);
+                continue;
+            }
+            const generated::FieldDesc* field = fieldAt(desc, at);
+            const bool cframe = field != nullptr && field->name == "CFrame" && field->pool == "parts";
+            const bool placed2d = field != nullptr && field->pool == "parts2d" &&
+                                  (field->name == "Position" || field->name == "Rotation") &&
+                                  !m_ownedParts.contains(entity.id.value);
+            // A name-shaped component field arrives as the authority's atom,
+            // and is this machine's own atom by the time it is written.
+            if (field != nullptr && field->encoding == generated::Encoding::NameAtom) {
+                const auto name = m_names.find(asU32(value));
+                if (name == m_names.end())
+                    continue;
+                FieldValue translated;
+                setU32(translated, name->second.id);
+                (void)applyField(world, local->second, desc, FieldDelta{wireIdAt(desc, at), translated});
+                continue;
+            }
+            if (entity.id.value == m_owned && m_owned != 0) {
+                // **This machine's own character is predicted** (ADR 0076): the
+                // local scripts already moved it, so the authority's value
+                // corrects it rather than replacing it. Its motion state is the
+                // local simulation's for the same reason.
+                if (cframe) {
+                    // With the authority's motion state beside its transform:
+                    // what a replay starts from that a position does not say.
+                    scene::CharacterReplayStart start;
+                    start.transform = asCFrame(value);
+                    for (usize other = 0; other < entity.fields.size(); ++other) {
+                        const generated::FieldDesc* motion = fieldAt(desc, other);
+                        if (motion == nullptr || motion->pool != "characterBodies")
+                            continue;
+                        if (motion->name == "VerticalVelocity")
+                            start.verticalVelocity = asF32(entity.fields[other]);
+                        else if (motion->name == "Grounded")
+                            start.grounded = asBool(entity.fields[other]);
+                    }
+                    reconcile(world, local->second, start);
+                    m_reconciledAck = m_ackedIntent;
+                }
+                if (field != nullptr && field->pool == "characterBodies")
+                    continue;
+                if (cframe)
+                    continue;
+            }
+            else if (cframe && m_ownedParts.contains(entity.id.value)) {
+                // **Its own part is simulated here** (ADR 0099): the authority's
+                // copy is this machine's, a round trip old.
+                continue;
+            }
+            else if (cframe && m_interpolationDelay > 0) {
+                std::deque<Sample>& samples = m_samples[entity.id.value];
+                samples.push_back(Sample{state.tick, asCFrame(value), std::nullopt});
+                while (samples.size() > InterpolationSamples)
+                    samples.pop_front();
+                continue;
+            }
+            else if (placed2d && m_interpolationDelay > 0) {
+                // Both halves of where a sprite is, from the whole state, once
+                // per snapshot however many of the two changed (ADR 0103).
+                if (!sampled2d) {
+                    sampled2d = true;
+                    Sample2D sample{state.tick, {}, 0.0f};
+                    for (usize other = 0; other < entity.fields.size(); ++other) {
+                        const generated::FieldDesc* half = fieldAt(desc, other);
+                        if (half == nullptr || half->pool != "parts2d")
+                            continue;
+                        if (half->name == "Position") {
+                            const core::Vec3 place = asVec3(entity.fields[other]);
+                            sample.position = core::Vec2{place.x, place.y};
+                        }
+                        else if (half->name == "Rotation") {
+                            sample.rotation = asF32(entity.fields[other]);
+                        }
+                    }
+                    std::deque<Sample2D>& samples = m_samples2d[entity.id.value];
+                    samples.push_back(sample);
+                    while (samples.size() > InterpolationSamples)
+                        samples.pop_front();
+                }
+                continue;
+            }
+            (void)applyField(world, local->second, desc, FieldDelta{wireIdAt(desc, at), value});
+        }
+        m_written[entity.id.value] = std::move(next);
+    }
+}
+
+} // namespace engine::replication

@@ -1,0 +1,589 @@
+# The local gate: everything CI checks that can be checked on this machine.
+#
+# The roadmap already allows gates to run here rather than on a hosted runner
+# ("a scripted local gate ... recorded in the gate log either way"). This is
+# that script, and it exists for two reasons that are not the same:
+#
+#   Cost. This repository is private, so Actions minutes carry the platform
+#   multipliers and a full run is expensive. Everything below is free.
+#
+#   Speed. A missing package in a container is a three-minute discovery here and
+#   a ten-minute one there -- and the second kind gets batched, which is how a
+#   break survives to the next commit.
+#
+# What it CANNOT do is macOS. Nothing local can, so Tier-3 stays on CI at the
+# milestone gate.
+#
+# Usage:
+#   scripts/localgate.ps1              # everything -- what you run before a push
+#   scripts/localgate.ps1 -Only docs   # one stage: docs | luau | format | windows | linux | shipping
+#   scripts/localgate.ps1 -Only asan   # address and UB sanitizers, opt-in (see below)
+#   scripts/localgate.ps1 -Only winprofiles   # the three profiles a Windows release
+#                                             # ships, on MSVC, opt-in (see below)
+#   scripts/localgate.ps1 -Only lavapipe      # the real-image goldens, on Mesa's
+#                                             # software rasterizer, opt-in
+#   scripts/localgate.ps1 -Only lavapipe -Record   # ...rewrite those goldens
+#   scripts/localgate.ps1 -Only android       # the engine cross-built for Android
+#                                             # arm64 with the pinned NDK; part of
+#                                             # every run once scripts/install-android.ps1
+#                                             # has installed it
+#   scripts/localgate.ps1 -SkipLinux   # ONLY when Docker is genuinely unavailable
+#   scripts/localgate.ps1 -Only format -Fix   # rewrite the C++ tree instead of checking it
+#   scripts/localgate.ps1 -AllowSkips         # ONLY on a machine with no GPU
+#
+# **A skipped test is a failure here.** Six gates in this repository answer
+# `ENG_TEST_SKIP` when there is no graphics device, and ctest counts a skip as
+# a pass -- so a GPU that stopped coming up would turn all six green with no
+# alarm, and the pixel gates, the two-worlds proof and the settings differential
+# would all quietly stop meaning anything. This machine has a device; if a test
+# skips on it, something is wrong with the machine or with the test. -AllowSkips
+# is for a machine that genuinely has no GPU, and typing it is the point:
+# accepting the loss should be a decision, not a default.
+#
+# The Linux stage is about twelve seconds warm and is not redundant with the
+# Windows one: Clang diagnoses things MSVC does not, warnings are errors, and it
+# has already caught a defect that would otherwise have reached CI. Skipping it
+# to go faster is a false economy -- use -Only for that.
+
+[CmdletBinding()]
+param(
+    [switch]$SkipLinux,
+    [ValidateSet('docs', 'luau', 'format', 'windows', 'linux', 'shipping', 'asan', 'winprofiles', 'lavapipe', 'android')]
+    [string]$Only,
+    # Only meaningful with -Only format: reformat in place rather than report.
+    # Off by default, because a gate that edits your tree without being asked is
+    # not a gate.
+    [switch]$Fix,
+    # Accept skipped tests instead of failing on them. See the note above.
+    [switch]$AllowSkips,
+    # Only meaningful with -Only lavapipe: rewrite the goldens rather than
+    # compare against them. A flag, and never something a comparison run can do
+    # on its own -- a gate that rewrites its own expectation is not a gate.
+    [switch]$Record
+)
+. "$PSScriptRoot/lib/brand.ps1"
+
+# 'Continue', not 'Stop', and this is not laziness. Windows PowerShell 5.1 turns
+# a native command's stderr into error records; under 'Stop' the first line of
+# Docker's buildkit progress -- which it writes to stderr on a perfectly healthy
+# build -- aborted the stage before anything compiled, and reported the progress
+# line itself as the error.
+#
+# Every stage below therefore checks $LASTEXITCODE and raises its own exception.
+# The exit code is the only signal from a native tool that means what it says.
+$ErrorActionPreference = 'Continue'
+$repo = Split-Path -Parent $PSScriptRoot
+Push-Location $repo
+
+$script:failures = @()
+$script:results = @()
+
+# **A test that skips is a test that did not run, and ctest calls that a pass.**
+#
+# Six gates here answer `ENG_TEST_SKIP` when no graphics device comes up --
+# the screenshot golden, the settings differential, the two-worlds editor-seam
+# proof and three more. On a machine with a GPU every one of them is supposed to
+# execute, so a skip means the device stopped being found and six gates went
+# green while measuring nothing. That failure is silent by construction, which is
+# exactly the kind this repository writes checks for.
+#
+# The list of what skipped is printed rather than only counted, because "one
+# test skipped" sends somebody looking and "screenshot_gate skipped" tells them
+# what they lost.
+function Assert-NoSkips {
+    param([string]$Log)
+
+    if (-not (Test-Path $Log)) { return }
+    $skipped = Select-String -Path $Log -Pattern '^\s*\d+/\d+\s+Test\s+#\d+:\s+(\S+)\s+\.+\*+Skipped' -AllMatches |
+        ForEach-Object { $_.Matches[0].Groups[1].Value }
+
+    if (-not $skipped -or $skipped.Count -eq 0) { return }
+
+    $names = ($skipped | Sort-Object -Unique) -join ', '
+    if ($AllowSkips) {
+        Write-Host "[gate] $($skipped.Count) test(s) skipped, accepted by -AllowSkips: $names" -ForegroundColor Yellow
+        return
+    }
+
+    throw ("$($skipped.Count) test(s) SKIPPED, and ctest counts a skip as a pass: $names`n" +
+        "        On a machine with a graphics device these are supposed to run. A skip here means " +
+        "the device stopped being found and those gates went green while measuring nothing.`n" +
+        "        If this machine genuinely has no GPU, re-run with -AllowSkips and accept that.")
+}
+
+function Invoke-Stage {
+    param([string]$Name, [scriptblock]$Body)
+
+    if ($Only -and $Only -ne $Name) { return }
+    # Both container stages answer to the same switch: -SkipLinux means "Docker
+    # is not available here", and the formatting gate runs in that same image
+    # because that is where the pinned clang-format lives.
+    if (($Name -eq 'linux' -or $Name -eq 'format' -or $Name -eq 'shipping' -or $Name -eq 'lavapipe') -and $SkipLinux) { return }
+
+    Write-Host ""
+    Write-Host "=== $Name ===" -ForegroundColor Cyan
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+
+    # Each stage reports its own failure rather than aborting the run: a gate
+    # that stops at the first problem hides the other three, and the point of
+    # running locally is to learn everything in one pass.
+    #
+    # Success is "did not throw", never `$?`. Windows PowerShell 5.1 sets `$?`
+    # from whether a native command wrote to stderr, not from its exit code --
+    # and Docker's buildkit writes its progress there, so `$?` reported every
+    # successful image build as a failure. Each stage below raises explicitly on
+    # a non-zero exit code, which is the only signal that means anything here.
+    try {
+        & $Body
+        $ok = $true
+    } catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        $ok = $false
+    }
+    $watch.Stop()
+
+    $seconds = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    if ($ok) {
+        $script:results += "  ok    $Name ($seconds s)"
+    } else {
+        $script:results += "  FAIL  $Name ($seconds s)"
+        $script:failures += $Name
+    }
+}
+
+# Git Bash, which ships with Git for Windows, runs the same shell scripts CI
+# runs. Using the very same files -- not a Windows transcription of them -- is
+# what keeps "it passes locally" meaningful.
+function Get-BashPath {
+    $candidates = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\bin\bash.exe"
+    )
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    $found = Get-Command bash.exe -ErrorAction SilentlyContinue
+    if ($found) { return $found.Source }
+    throw "bash not found. Install Git for Windows, or run with -Only to skip the shell gates."
+}
+
+# `Get-DeveloperShellEnv`, shared with `package.ps1` rather than written twice.
+. "$PSScriptRoot/devshell.ps1"
+
+# Two stages want the image now -- the formatting gate and the Tier-2 build --
+# so it is built once and reused. Docker's layer cache makes the second call
+# free; what this avoids is a second copy of the error handling, which is the
+# part that was subtle (see the stderr note above).
+function Initialize-Tier2Image {
+    $server = docker version --format '{{.Server.Version}}'
+    if ($LASTEXITCODE -ne 0 -or -not $server) {
+        throw "Docker is not running. Start Docker Desktop, or pass -SkipLinux."
+    }
+
+    docker build -f scripts/docker/tier2.Dockerfile -t engine-tier2:latest .
+    if ($LASTEXITCODE -ne 0) { throw "the Tier-2 image failed to build" }
+}
+
+Invoke-Stage 'docs' {
+    & (Get-BashPath) 'scripts/gates/docs-lint.sh'
+    if ($LASTEXITCODE -ne 0) { throw "docs-lint failed" }
+}
+
+Invoke-Stage 'luau' {
+    & (Get-BashPath) 'scripts/gates/luau-check.sh'
+    if ($LASTEXITCODE -ne 0) { throw "luau-check failed" }
+}
+
+Invoke-Stage 'format' {
+    # In the container rather than on this machine, because clang-format's
+    # output changes between major versions: Visual Studio ships 20 here, Ubuntu
+    # 24.04 -- and therefore both the Tier-2 image and `ubuntu-latest` -- ships
+    # 18, and a tree formatted by one is unformatted to the other. The gate
+    # script refuses any major but its pin for that reason, so running it on the
+    # host would fail against a correctly formatted tree.
+    Initialize-Tier2Image
+
+    $arguments = @('scripts/gates/clang-format.sh')
+    if ($Fix) { $arguments += '--fix' }
+
+    docker run --rm -v "${repo}:/repo" engine-tier2:latest bash @arguments
+    if ($LASTEXITCODE -ne 0) { throw "the C++ formatting gate failed" }
+}
+
+Invoke-Stage 'windows' {
+    # A running `engine-host` holds its own .exe open, so the link fails with
+    # LNK1168 -- and the file's timestamp has already moved by then, so the NEXT
+    # build considers it current and does not retry. Ninja then reports success
+    # and CTest runs a binary from before the change.
+    #
+    # That cost four wasted cycles and one wrong measurement in M4 before it was
+    # understood, which is why this is a guard rather than a note: the orphans
+    # come from a run whose output was piped into something that exited early
+    # (CLAUDE.md warns about `tail`/`head` for a different symptom of the same
+    # thing), and a gate that silently measures yesterday's binary is worse than
+    # one that refuses to start.
+    $stale = Get-Process -Name 'engine-host' -ErrorAction SilentlyContinue
+    if ($stale) {
+        Write-Host "[gate] $($stale.Count) engine-host process(es) still running; they would hold the executable open." -ForegroundColor Yellow
+        $stale | Stop-Process -Force
+        Start-Sleep -Milliseconds 200
+    }
+
+    $vcvars = Get-DeveloperShellEnv
+    if (-not $env:ENG_BUILD_ROOT) {
+        $env:ENG_BUILD_ROOT = Join-Path $env:LOCALAPPDATA "$BrandName\build"
+    }
+
+    # One cmd invocation, because the environment vcvars64.bat establishes does
+    # not survive back into PowerShell.
+    #
+    # **`chcp 65001` is load-bearing and not cosmetic** (D040). CMake writes
+    # ninja`s `msvc_deps_prefix` -- the string ninja looks for in `/showIncludes`
+    # output to learn which headers an object depends on -- as UTF-8. A LOCALISED
+    # MSVC emits that string with non-ASCII characters in the console codepage,
+    # so under any other codepage the two never match, ninja records NO header
+    # dependencies at all, and every incremental build silently reuses objects
+    # compiled against an older header. It cost this project four debugging
+    # sessions before anybody looked at why.
+    # `--no-tests=error` because an empty suite is not a passing suite: a preset
+    # that stopped registering tests would otherwise report success having run
+    # nothing, which is the same shape of lie the skip check below exists for.
+    $ctestLog = Join-Path $env:TEMP "engine-localgate-ctest-$PID.txt"
+    $script = @"
+chcp 65001 >nul
+call "$vcvars" >nul || exit /b 1
+cmake --preset win-msvc-dev || exit /b 1
+cmake --build --preset win-msvc-dev || exit /b 1
+ctest --preset win-msvc-dev --output-on-failure --no-tests=error > "$ctestLog" 2>&1 || (type "$ctestLog" & exit /b 1)
+type "$ctestLog"
+"@
+    $temp = Join-Path $env:TEMP "engine-localgate-$PID.cmd"
+    Set-Content -Path $temp -Value $script -Encoding ascii
+    try {
+        & cmd.exe /c $temp
+        if ($LASTEXITCODE -ne 0) { throw "the Windows build or tests failed" }
+        Assert-NoSkips -Log $ctestLog
+    } finally {
+        Remove-Item $temp -ErrorAction SilentlyContinue
+        Remove-Item $ctestLog -ErrorAction SilentlyContinue
+    }
+
+    # The CLI's own path to the same suite. The M3 gate wants `ludwerk test` green
+    # on both tiers, and it is a different path from ctest's: it launches the
+    # engine, reads the per-case report and emits TAP. ctest proves the engine;
+    # this proves the tool a developer types.
+    $tap = Join-Path $env:TEMP "engine-test-$PID.tap"
+    & (Get-BashPath) 'scripts/ludwerk.sh' test tests/conformance | Set-Content -Path $tap -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw "ludwerk test failed" }
+    Get-Content $tap -Tail 1
+    Remove-Item $tap -ErrorAction SilentlyContinue
+
+    # The M3 gate's first item: a dev server, this build headless against it, a
+    # file mutated by the test, and the reload confirmed over the WebSocket.
+    & lute test tests/hotreload
+    if ($LASTEXITCODE -ne 0) { throw "the hot-reload gate failed" }
+
+    # M8's packaging chain: `ludwerk new`, `ludwerk build`, the built folder RUN with
+    # no arguments, and the icon read back out of the artifact. Here rather than
+    # in ctest because it drives the CLI, which is a Lute application -- and
+    # because `--target win64` is a Windows artifact, which is this stage.
+    & lute test tests/packaging
+    if ($LASTEXITCODE -ne 0) { throw "the packaging gate failed" }
+}
+
+Invoke-Stage 'linux' {
+    # No stderr redirection on any of these. Windows PowerShell 5.1 wraps a
+    # native command's stderr in an ErrorRecord, which under
+    # $ErrorActionPreference='Stop' throws even when the exit code is zero --
+    # so `docker rm -f <nonexistent>` used to kill this stage in four seconds,
+    # before a single object was compiled.
+    Initialize-Tier2Image
+
+    # A named volume, so the second run is incremental. This is the local
+    # equivalent of CI's build cache, and it costs nothing.
+    docker volume create engine-tier2-build | Out-Null
+
+    # Asked for by id first: removing a container that is not there is an error
+    # on stderr, and see above for why that matters here.
+    $existing = docker ps -aq --filter 'name=^engine-tier2-gate$'
+    if ($existing) { docker rm -f engine-tier2-gate | Out-Null }
+
+    # Named and not --rm, so the container and its full log stay visible in
+    # Docker Desktop after it exits -- a disposable container takes its own
+    # evidence with it.
+    docker run --name engine-tier2-gate `
+        -v "${repo}:/repo" `
+        -v "engine-tier2-build:/build" `
+        engine-tier2:latest bash scripts/gates/linux-build.sh
+    if ($LASTEXITCODE -ne 0) { throw "the Tier-2 build or tests failed" }
+}
+
+# **The sanitizers, and they are opt-in for one reason only: they are slow.**
+#
+# `linux-clang-asan` has been fully wired -- configure, build and test presets,
+# with `ENG_SANITIZE=address,undefined` -- and run by nothing at all. A preset
+# nobody executes is the same shape of hole as a gate that passes by skipping:
+# it looks like coverage in the file and is none on the machine.
+#
+# It is not in the default run because an instrumented build is two to three
+# times slower to compile and to execute, and the standing gate is something a
+# person runs before every push. It belongs where slow gates belong, which is
+# the nightly job -- `.github/workflows/nightly.yml` runs it there -- and here
+# behind `-Only asan` for the afternoon somebody is chasing a lifetime bug.
+#
+# What it is expected to find, from this repository's own history: D131 was a
+# leaked IO slot, and the three-stage decode pipelines hand jobs pointers into
+# buffers whose lifetime is the whole argument for how they are written. Those
+# are exactly the defects ASan reports and no other gate here can.
+#
+# Its own build volume, so an instrumented tree never shares object files with
+# the ordinary Tier-2 one.
+Invoke-Stage 'asan' {
+    # **Opt-in, and this line is what makes it so.** `Invoke-Stage` runs every
+    # stage when no `-Only` is given, which would have put a two-to-three-times
+    # slower instrumented build into the gate a person runs before every push.
+    if (-not $Only) {
+        Write-Host '[gate] asan: skipped (opt-in; run scripts/localgate.ps1 -Only asan)' -ForegroundColor DarkGray
+        return
+    }
+    Initialize-Tier2Image
+    docker volume create engine-tier2-asan | Out-Null
+
+    $existing = docker ps -aq --filter 'name=^engine-tier2-asan$'
+    if ($existing) { docker rm -f engine-tier2-asan | Out-Null }
+
+    # `detect_leaks=0`: this is a leak-check-free run on purpose. The engine
+    # holds process-lifetime singletons -- the message catalog, the job pool,
+    # SDL's own state -- and reporting those as leaks on every run would bury
+    # the reports that matter. What is wanted here is the memory-error half:
+    # use-after-free, buffer overflow, and the undefined-behaviour checks.
+    #
+    # `halt_on_error=1` so the first report is the exit code rather than a line
+    # in a log nobody reads.
+    docker run --name engine-tier2-asan `
+        -e ENG_LINUX_PRESET=linux-clang-asan `
+        -e ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 `
+        -e ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-18/bin/llvm-symbolizer `
+        -e UBSAN_SYMBOLIZER_PATH=/usr/lib/llvm-18/bin/llvm-symbolizer `
+        -e UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 `
+        -v "${repo}:/repo" `
+        -v "engine-tier2-asan:/build" `
+        engine-tier2:latest bash scripts/gates/linux-build.sh
+    if ($LASTEXITCODE -ne 0) { throw "the sanitizer build or tests failed" }
+}
+
+# The one profile no other stage builds, and therefore the one that spent an
+# unknown number of commits not compiling at all (D056). It is here rather than
+# folded into the Windows stage for two reasons: the check is a shell script, so
+# both callers can run the same file the way CLAUDE.md asks, and Clang with
+# warnings-as-errors is the stricter reader of the `#if`s that only this profile
+# takes.
+#
+# **It builds three profiles, not one** (D057, and `editor` since): `shipping`,
+# `player` and `editor` -- the three nothing else here compiles. `player` is
+# what `ludwerk build` packages, the Luau compiler ON and the debug overlay OFF,
+# a combination no other profile has; `editor` is the reverse pairing and is
+# what a released editor archive is built from. Without this each would be a
+# shipped artifact no gate ever built, which is the objection that ruled out
+# shipping the `shipping` profile in the first place.
+#
+# This comment said TWO until 2026-08-26, and so did the error message below --
+# a stage that names fewer profiles than it builds is one whose failure sends
+# somebody looking in two places when the fault is in a third (S8.3).
+#
+# Cost: `engine_host` alone from each, compiled and linked, and not the tree
+# around them. The reasoning is in the script, and the short version is that
+# only what ENG_LUAU_COMPILER and ENG_DEBUG_UI gate can rot differently
+# here, and all of it is reachable from those executables. A few seconds warm,
+# one full Release build of the vendored tree cold.
+#
+# Last, because it is the stage most likely to be cold, and a run that fails
+# should say so before spending that.
+Invoke-Stage 'shipping' {
+    Initialize-Tier2Image
+    docker volume create engine-tier2-build | Out-Null
+
+    $existing = docker ps -aq --filter 'name=^engine-shipping-gate$'
+    if ($existing) { docker rm -f engine-shipping-gate | Out-Null }
+
+    # The same named volume the Linux stage uses: each preset writes to its own
+    # subdirectory of it, so the vendored fetches and the ccache-less object
+    # trees all survive between runs and no stage disturbs another.
+    docker run --name engine-shipping-gate `
+        -v "${repo}:/repo" `
+        -v "engine-tier2-build:/build" `
+        engine-tier2:latest bash scripts/gates/shipping-build.sh
+    if ($LASTEXITCODE -ne 0) { throw "the shipping, player or editor profile failed to build" }
+}
+
+# **The three profiles a WINDOWS release ships, on the compiler that ships them**
+# (S7.4).
+#
+# The `shipping` stage above builds `shipping`, `player` and `editor` -- on
+# Tier-2, deliberately, because Clang with warnings-as-errors is the stricter
+# reader of the `#if`s only those profiles take. What it cannot read is MSVC.
+# And MSVC is what the Windows release is compiled with, so the three artifacts
+# a person actually downloads were built by no gate on any machine: `ludwerk
+# build` packages `win-msvc-player`, a released editor archive is
+# `win-msvc-editor`, and neither had ever been compiled outside a release.
+#
+# The failure that hides here is specific rather than hypothetical. These
+# profiles differ from `dev` by what `ENG_LUAU_COMPILER` and `ENG_DEBUG_UI`
+# gate, so what rots in them is code inside an `#if` -- and a preprocessor
+# branch that one compiler takes and another does not is precisely where the
+# two disagree. D056 is this repository's own instance: an unknown number of
+# commits where the shipping profile did not compile at all.
+#
+# Opt-in for the same reason as `asan`: three Release configures and three
+# builds of the vendored tree is minutes, not seconds, and the standing gate is
+# something a person runs before every push. It belongs before a RELEASE, which
+# is where `docs/finish-line.md` S8.6 puts it, and here for the afternoon
+# somebody has touched a `#if ENG_DEBUG_UI`.
+#
+# It runs the same `shipping-build.sh` the Tier-2 stage does, with the three
+# preset names passed in -- the script already takes them that way, and one
+# implementation of "which profiles and which target" is what CLAUDE.md asks
+# for. The `.cmd` around it exists only to supply a Developer Shell, which the
+# Ninja presets require and Git Bash does not have.
+Invoke-Stage 'winprofiles' {
+    if (-not $Only) {
+        Write-Host '[gate] winprofiles: skipped (opt-in; run scripts/localgate.ps1 -Only winprofiles)' -ForegroundColor DarkGray
+        return
+    }
+
+    $vcvars = Get-DeveloperShellEnv
+    $bash = Get-BashPath
+    $script = @"
+chcp 65001 >nul
+call "$vcvars" >nul || exit /b 1
+set ENG_SHIPPING_PRESET=win-msvc-shipping
+set ENG_PLAYER_PRESET=win-msvc-player
+set ENG_EDITOR_PRESET=win-msvc-editor
+"$bash" scripts/gates/shipping-build.sh || exit /b 1
+"@
+    $temp = Join-Path $env:TEMP "engine-winprofiles-$PID.cmd"
+    Set-Content -Path $temp -Value $script -Encoding ascii
+    try {
+        & cmd.exe /c $temp
+        if ($LASTEXITCODE -ne 0) {
+            throw "the shipping, player or editor profile failed to build on MSVC"
+        }
+    } finally {
+        Remove-Item $temp -ErrorAction SilentlyContinue
+    }
+}
+
+# **The real-image golden suite, which two documents promise and neither had**
+# (S7.6). `architecture.md` §9: "a small real-image golden suite (lavapipe on
+# Linux, WARP/D3D12 on Windows) runs nightly, non-blocking". `roadmap.md` says
+# the same. What existed was one recorded PNG that nothing compared, with a
+# README explaining that a golden spanning a discrete GPU and a software
+# rasterizer cannot see a real change any more.
+#
+# It does not span them. lavapipe renders a scene to the same bytes twice --
+# measured at zero differing pixels, tolerance zero, before the goldens were
+# recorded -- so these compare EXACTLY and a single changed pixel is a change.
+#
+# Opt-in and non-blocking, which is what both documents say: a Mesa upgrade in
+# the Tier-2 image moves every pixel of every one of these, and that must not
+# redden the gate somebody runs before a push. The nightly job runs the same
+# script.
+Invoke-Stage 'lavapipe' {
+    if (-not $Only) {
+        Write-Host '[gate] lavapipe: skipped (opt-in; run scripts/localgate.ps1 -Only lavapipe)' -ForegroundColor DarkGray
+        return
+    }
+    Initialize-Tier2Image
+    docker volume create engine-tier2-build | Out-Null
+
+    $existing = docker ps -aq --filter 'name=^engine-lavapipe-gate$'
+    if ($existing) { docker rm -f engine-lavapipe-gate | Out-Null }
+
+    $arguments = @('bash', 'scripts/gates/lavapipe-goldens.sh')
+    if ($Record) { $arguments += '--record' }
+
+    docker run --name engine-lavapipe-gate `
+        -v "${repo}:/repo" `
+        -v "engine-tier2-build:/build" `
+        engine-tier2:latest @arguments
+    if ($LASTEXITCODE -ne 0) { throw "the lavapipe goldens did not match" }
+}
+
+# **The engine cross-built for Android** (arm64, the pinned NDK), which only the
+# nightly did until a surface shader's `std::from_chars(float)` -- a function
+# the NDK's standard library does not have -- reached `main` and was found the
+# next morning. Built the way the nightly's `Triangle APK` job builds it, and
+# part of every run on a machine that has the NDK: `scripts/install-android.ps1`
+# installs it. Without it, a full run says so and goes on; `-Only android` fails.
+Invoke-Stage 'android' {
+    $ndkVersion = (Select-String -Path 'cmake/toolchains/android.cmake' `
+            -Pattern '^set\(ENG_ANDROID_NDK_VERSION "([^"]+)"').Matches[0].Groups[1].Value
+    $sdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } elseif ($env:ANDROID_HOME) { $env:ANDROID_HOME } else {
+        [Environment]::GetEnvironmentVariable('ANDROID_SDK_ROOT', 'User') }
+    if (-not $sdkRoot -or -not (Test-Path (Join-Path $sdkRoot "ndk\$ndkVersion"))) {
+        if ($Only) { throw "Android NDK $ndkVersion is not installed; run scripts/install-android.ps1" }
+        Write-Host "[gate] android: skipped (no NDK $ndkVersion; scripts/install-android.ps1 installs it)" -ForegroundColor DarkGray
+        return
+    }
+
+    $vcvars = Get-DeveloperShellEnv
+    if (-not $env:ENG_BUILD_ROOT) {
+        $env:ENG_BUILD_ROOT = Join-Path $env:LOCALAPPDATA "$BrandName\build"
+    }
+    $buildDir = Join-Path $env:ENG_BUILD_ROOT 'android-arm64'
+    # And the whole player host, what a game on a phone is -- which needs the
+    # Windows stage's `engine_luauembed`, a tool that runs on this machine.
+    $playerDir = Join-Path $env:ENG_BUILD_ROOT 'android-arm64-player'
+    $luauembed = Join-Path $env:ENG_BUILD_ROOT 'win-msvc-dev\engine\script\engine_luauembed.exe'
+    if (-not (Test-Path $luauembed)) { throw "the android stage needs the windows stage's engine_luauembed; run it first" }
+    # The developer shell for CMake and Ninja; the NDK's toolchain file picks
+    # the compilers. chcp 65001 for the reason CLAUDE.md gives (D040).
+    $script = @"
+chcp 65001 >nul
+call "$vcvars" >nul || exit /b 1
+set ANDROID_SDK_ROOT=$sdkRoot
+set ANDROID_HOME=$sdkRoot
+cmake -S . -B "$buildDir" -G Ninja -DCMAKE_TOOLCHAIN_FILE="%CD%/cmake/toolchains/android.cmake" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENG_PROFILE=dev -DENG_BUILD_TESTS=OFF >nul || exit /b 1
+cmake --build "$buildDir" --target engine_triangle_sample || exit /b 1
+cmake -S . -B "$playerDir" -G Ninja -DCMAKE_TOOLCHAIN_FILE="%CD%/cmake/toolchains/android.cmake" -DCMAKE_BUILD_TYPE=Release -DENG_PROFILE=player -DENG_ENABLE_REPLICATION=ON -DENG_BUILD_TESTS=OFF -DENG_HOST_LUAUEMBED="$luauembed" >nul || exit /b 1
+cmake --build "$playerDir" --target engine_host || exit /b 1
+"@
+    $temp = Join-Path $env:TEMP "engine-android-$PID.cmd"
+    Set-Content -Path $temp -Value $script -Encoding ascii
+    try {
+        & cmd.exe /c $temp
+        if ($LASTEXITCODE -ne 0) { throw "the engine does not build for Android arm64" }
+    } finally {
+        Remove-Item $temp -ErrorAction SilentlyContinue
+    }
+
+    # **The Android export, debug and release** (ADR 0104 stages 2-3): the
+    # player just built, staged by `ludwerk build --target=android`, assembled by
+    # Gradle and verified by `apksigner` -- once with this machine's debug key,
+    # once with a release key `ludwerk keystore new` makes.
+    $env:ANDROID_SDK_ROOT = $sdkRoot
+    & lute test tests/android
+    if ($LASTEXITCODE -ne 0) { throw "the Android export failed" }
+}
+
+Pop-Location
+
+Write-Host ""
+Write-Host "=== local gate ===" -ForegroundColor Cyan
+$script:results | ForEach-Object { Write-Host $_ }
+
+if ($script:failures.Count -gt 0) {
+    Write-Host ""
+    Write-Host "FAILED: $($script:failures -join ', ')" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ""
+if ($SkipLinux) {
+    # Named rather than folded into a generic "partial", because this is the one
+    # skip that hides a whole compiler's diagnostics.
+    Write-Host "green, but the Linux tier did not run -- Clang has not seen this change" -ForegroundColor Yellow
+} elseif ($Only) {
+    Write-Host "green (partial run -- macOS is Tier-3 and only CI can build it)" -ForegroundColor Yellow
+} else {
+    Write-Host "green (macOS is Tier-3 and only CI can build it)" -ForegroundColor Green
+}
+exit 0

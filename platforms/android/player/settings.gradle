@@ -1,0 +1,26 @@
+// The Android package of a Ludwerk game: the player host (`libmain.so`), the
+// engine's content and one project, extracted to the app's storage on first
+// launch (engine/platform/src/platform.cpp, `extractAndroidPayload`).
+//
+// A separate Gradle build, like the triangle sample's, so no Gradle tooling
+// reaches the repository root. scripts/android-player.ps1 drives it; the owner
+// asked for a game on a phone on 2026-09-26, which is the first step of the
+// mobile phase (R15) and is recorded in PROGRESS.md.
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'engine-player'
+include ':app'

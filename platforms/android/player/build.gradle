@@ -1,0 +1,17 @@
+// Root build file: the plugin pin and the out-of-tree rule, as the triangle
+// sample's (samples/triangle/android/build.gradle says why each is so).
+
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}
+
+def buildRoot = project.findProperty('engine.buildRoot') ?: System.getenv('ENG_BUILD_ROOT')
+if (buildRoot == null) {
+    throw new GradleException(
+        'ENG_BUILD_ROOT is not set. Builds in this repository are always out-of-tree (R14);\n' +
+        'scripts/bootstrap.ps1 sets it, or pass -Pengine.buildRoot=<dir>.')
+}
+
+allprojects {
+    layout.buildDirectory = file("${buildRoot}/android-player-gradle/${project.name}")
+}

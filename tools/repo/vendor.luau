@@ -1,0 +1,741 @@
+--!strict
+--[[
+	The only sanctioned way to populate `third_party/` (ADR 0021).
+
+	Contracts this tool exists to enforce:
+
+	  * `third_party/manifest.json` is the sole authority on *what* is vendored
+	    and at *which commit*. This tool never writes it. Pinning is a
+	    human-approved decision (R5); a vendor tool able to rewrite its own pins
+	    would make "pinned" meaningless.
+	  * A vendored tree is exact upstream content at the pinned commit with no
+	    `.git` directory, so the repository stays hermetic and submodule-free.
+	  * Local modifications live only in `third_party/patches/<name>/*.patch`
+	    and are re-applied on every import (R13 — a vendored tree is never
+	    edited in place).
+	  * `THIRD_PARTY_NOTICES.md` is generated from the manifest, never authored.
+
+	Runs on the pinned, unmodified Lute (ADR 0003), from the repository root:
+
+	    lute tools/repo/vendor.luau status
+	    lute tools/repo/vendor.luau sync [name...]
+	    lute tools/repo/vendor.luau notices
+	    lute tools/repo/vendor.luau resolve <name> <ref>
+
+	`resolve` exists so a pin is always read off upstream rather than recalled
+	from memory (MASTER_PROMPT.md section 9).
+]]
+
+local fs = require("@std/fs")
+local json = require("@std/json")
+local process = require("@std/process")
+
+local ManifestPath = "third_party/manifest.json"
+local NoticesPath = "THIRD_PARTY_NOTICES.md"
+local PatchRoot = "third_party/patches"
+
+-- Rows carrying this placeholder are declared but not yet pinned. The roadmap
+-- allows dependencies needed by later milestones to be vendored lazily, so an
+-- unpinned row is a skip, not an error.
+local Unpinned = "TBD-AT-M0"
+
+type Dependency = {
+    name: string,
+    version: string,
+    commit: string,
+    license: string,
+    upstream: string,
+    path: string,
+    patches: { string },
+    -- Optional narrowing (ADR 0042). When present, only these upstream paths
+    -- are checked out. What lands is still EXACTLY upstream's bytes at the
+    -- pinned commit -- git's own pathspec does the selecting -- so a reviewer
+    -- can still diff a vendored file against upstream. What is given up is
+    -- "the whole tree", and it is given up only for a tree whose non-compiled
+    -- payload dwarfs its source.
+    include: { string }?,
+}
+
+-- The second kind of row (ADR 0032): a build-time release artifact fetched and
+-- hash-pinned at configure time rather than vendored as source. This tool never
+-- fetches one -- `cmake/engine_dxc.cmake` does, because the fetch has to happen
+-- during configure -- but the row still has a license, and ADR 0032 rule 4 says
+-- notices come from the manifest for every row kind.
+type BinaryArtifact = {
+    platform: string,
+    url: string,
+    sha256: string,
+}
+
+type Binary = {
+    name: string,
+    version: string,
+    license: string,
+    upstream: string,
+    artifacts: { BinaryArtifact },
+}
+
+local function fail(message: string): never
+    print(`vendor: ERROR: {message}`)
+    return process.exit(1)
+end
+
+local function info(message: string)
+    print(`vendor: {message}`)
+end
+
+local function runGit(args: { string }, what: string, cwd: string?): string
+    local argv = table.clone(args)
+    table.insert(argv, 1, "git")
+
+    local result = process.run(argv, if cwd then { cwd = cwd } else nil)
+    if not result.ok then
+        fail(`{what} failed (exit {result.exitcode})\n{result.stderr}`)
+    end
+    return result.stdout
+end
+
+local function expectString(row: json.Object, key: string, context: string): string
+    local value = row[key]
+    if typeof(value) ~= "string" then
+        fail(`{context}: field "{key}" must be a string`)
+    end
+    return value :: string
+end
+
+local function readManifest(): { Dependency }
+    if not fs.exists(ManifestPath) then
+        fail(`{ManifestPath} not found — run this from the repository root`)
+    end
+
+    local decoded = json.deserialize(fs.readFileToString(ManifestPath))
+    local root = json.asObject(decoded)
+    if not root then
+        fail(`{ManifestPath} is not a JSON object`)
+    end
+
+    local rows = json.asArray((root :: json.Object).dependencies)
+    if not rows then
+        fail(`{ManifestPath}: "dependencies" must be an array`)
+    end
+
+    local result: { Dependency } = {}
+    for index, entry in rows :: json.Array do
+        local row = json.asObject(entry)
+        if not row then
+            fail(`{ManifestPath}: dependency #{index} is not an object`)
+        end
+
+        local context = `{ManifestPath} dependency #{index}`
+        local patches: { string } = {}
+        local declaredPatches = json.asArray((row :: json.Object).patches)
+        if declaredPatches then
+            for _, patch in declaredPatches do
+                if typeof(patch) ~= "string" then
+                    fail(`{context}: "patches" entries must be strings`)
+                end
+                table.insert(patches, patch :: string)
+            end
+        end
+
+        -- Optional (ADR 0042): absent means the whole upstream tree, which is
+        -- what every row but one asks for.
+        local include: { string }? = nil
+        local declaredInclude = json.asArray((row :: json.Object).include)
+        if declaredInclude then
+            local paths: { string } = {}
+            for _, pathspec in declaredInclude do
+                if typeof(pathspec) ~= "string" then
+                    fail(`{context}: "include" entries must be strings`)
+                end
+                table.insert(paths, pathspec :: string)
+            end
+            include = paths
+        end
+
+        table.insert(result, {
+            include = include,
+            name = expectString(row :: json.Object, "name", context),
+            version = expectString(row :: json.Object, "version", context),
+            commit = expectString(row :: json.Object, "commit", context),
+            license = expectString(row :: json.Object, "license", context),
+            upstream = expectString(row :: json.Object, "upstream", context),
+            path = expectString(row :: json.Object, "path", context),
+            patches = patches,
+        })
+    end
+
+    return result
+end
+
+-- Absent is fine: the array only exists once something needs it, and a manifest
+-- with no binary rows is the normal case.
+local function readBinaries(): { Binary }
+    local decoded = json.deserialize(fs.readFileToString(ManifestPath))
+    local root = json.asObject(decoded)
+    if not root then
+        fail(`{ManifestPath} is not a JSON object`)
+    end
+
+    local rows = json.asArray((root :: json.Object).binaries)
+    if not rows then
+        return {}
+    end
+
+    local result: { Binary } = {}
+    for index, entry in rows :: json.Array do
+        local row = json.asObject(entry)
+        if not row then
+            fail(`{ManifestPath}: binary #{index} is not an object`)
+        end
+
+        local context = `{ManifestPath} binary #{index}`
+        local artifacts: { BinaryArtifact } = {}
+        local declared = json.asArray((row :: json.Object).artifacts)
+        if not declared then
+            fail(`{context}: "artifacts" must be an array`)
+        end
+
+        for artifactIndex, artifactEntry in declared :: json.Array do
+            local artifact = json.asObject(artifactEntry)
+            if not artifact then
+                fail(`{context}: artifact #{artifactIndex} is not an object`)
+            end
+
+            local artifactContext = `{context} artifact #{artifactIndex}`
+            local sha256 = expectString(artifact :: json.Object, "sha256", artifactContext)
+            -- The hash IS the pin (ADR 0032). A malformed one would otherwise
+            -- reach CMake and fail there, where the message is about a download
+            -- rather than about the manifest being wrong.
+            if #sha256 ~= 64 or not string.match(sha256, "^%x+$") then
+                fail(`{artifactContext}: "sha256" must be 64 hex characters`)
+            end
+
+            table.insert(artifacts, {
+                platform = expectString(artifact :: json.Object, "platform", artifactContext),
+                url = expectString(artifact :: json.Object, "url", artifactContext),
+                sha256 = sha256,
+            })
+        end
+
+        -- Optional (ADR 0042): absent means the whole upstream tree, which is
+        -- what every row but one asks for.
+        local include: { string }? = nil
+        local declaredInclude = json.asArray((row :: json.Object).include)
+        if declaredInclude then
+            local paths: { string } = {}
+            for _, pathspec in declaredInclude do
+                if typeof(pathspec) ~= "string" then
+                    fail(`{context}: "include" entries must be strings`)
+                end
+                table.insert(paths, pathspec :: string)
+            end
+            include = paths
+        end
+
+        table.insert(result, {
+            include = include,
+            name = expectString(row :: json.Object, "name", context),
+            version = expectString(row :: json.Object, "version", context),
+            license = expectString(row :: json.Object, "license", context),
+            upstream = expectString(row :: json.Object, "upstream", context),
+            artifacts = artifacts,
+        })
+    end
+
+    return result
+end
+
+local function isPinned(dependency: Dependency): boolean
+    return dependency.commit ~= Unpinned and #dependency.commit == 40
+end
+
+-- Vendor scratch (a bare-ish git dir) is build output and must never live in
+-- the source tree (R14). It is also what keeps `.git` out of the vendored tree:
+-- the fetch happens here, and only the working tree is checked out into place.
+local function scratchRoot(): string
+    local buildRoot = process.env.ENG_BUILD_ROOT
+    if not buildRoot or buildRoot == "" then
+        fail("ENG_BUILD_ROOT is not set — run scripts/bootstrap first (R14)")
+    end
+    return `{buildRoot}/vendor-scratch`
+end
+
+-- `git apply` resolves a patch's paths against the *repository* root even when
+-- it is invoked from a subdirectory, and it does not fail on a path that lands
+-- outside the current directory -- it prints "Skipped patch" to stderr and exits
+-- **0**. Applying from inside `third_party/<name>` therefore changed nothing and
+-- reported success, which is the failure mode this repository keeps finding: a
+-- check that passes while doing nothing.
+--
+-- So patches are applied from the repository root with `--directory`, and any
+-- skip is turned back into the error it should always have been.
+local function runGitApply(args: { string }, what: string)
+    local argv = table.clone(args)
+    table.insert(argv, 1, "git")
+
+    local result = process.run(argv)
+    if not result.ok then
+        fail(`{what} failed (exit {result.exitcode})\n{result.stderr}`)
+    end
+    if string.find(result.stderr, "Skipped patch", 1, true) then
+        fail(`{what}: git skipped the patch (paths outside the target tree)\n{result.stderr}`)
+    end
+end
+
+local function applyPatches(dependency: Dependency)
+    local dir = `{PatchRoot}/{dependency.name}`
+    if #dependency.patches == 0 then
+        return
+    end
+
+    for _, patch in dependency.patches do
+        local patchPath = `{dir}/{patch}`
+        if not fs.exists(patchPath) then
+            fail(`{dependency.name}: manifest lists patch "{patch}" but {patchPath} is missing`)
+        end
+        info(`{dependency.name}: applying {patch}`)
+        local target = `--directory={dependency.path}`
+        runGitApply({ "apply", "--whitespace=nowarn", "-p1", target, patchPath }, `patch {patch}`)
+
+        -- A patch that quietly did not take is worse than one that failed, and
+        -- R13 rests entirely on this call, so prove it landed: an applied patch
+        -- is exactly one that reverses cleanly.
+        runGitApply(
+            { "apply", "--whitespace=nowarn", "-p1", target, "--check", "--reverse", patchPath },
+            `verify {patch}`
+        )
+    end
+end
+
+local function syncOne(dependency: Dependency)
+    local scratch = `{scratchRoot()}/{dependency.name}`
+    local gitDir = `{scratch}/.git`
+
+    if fs.exists(scratch) then
+        fs.removeDirectory(scratch, { recursive = true })
+    end
+    fs.createDirectory(scratch, { makeParents = true })
+
+    if fs.exists(dependency.path) then
+        fs.removeDirectory(dependency.path, { recursive = true })
+    end
+    fs.createDirectory(dependency.path, { makeParents = true })
+
+    info(`{dependency.name}: fetching {dependency.commit} from {dependency.upstream}`)
+    runGit({ `--git-dir={gitDir}`, "init", "--quiet" }, `{dependency.name} init`)
+    runGit({ `--git-dir={gitDir}`, "remote", "add", "origin", dependency.upstream }, `{dependency.name} remote`)
+    runGit(
+        { `--git-dir={gitDir}`, "fetch", "--quiet", "--depth", "1", "origin", dependency.commit },
+        `{dependency.name} fetch`
+    )
+
+    -- Proves the tree really is the pinned commit rather than whatever the
+    -- remote's default branch happened to be.
+    local head = string.gsub(
+        runGit({ `--git-dir={gitDir}`, "rev-parse", "FETCH_HEAD" }, `{dependency.name} rev-parse`),
+        "%s+$",
+        ""
+    )
+    if head ~= dependency.commit then
+        fail(`{dependency.name}: fetched {head} but manifest pins {dependency.commit}`)
+    end
+
+    -- `-c core.autocrlf=false -c core.eol=lf` is load-bearing, not tidiness.
+    -- This checkout uses its own git dir, so the repository's `.gitattributes`
+    -- (`third_party/** -text`) does not reach it and the user's global
+    -- `core.autocrlf` does: on Windows every vendored file landed with CRLF,
+    -- and `-text` then faithfully committed the mangling instead of preventing
+    -- it. The tree stopped being byte-identical to the pinned commit -- which
+    -- is ADR 0021's whole claim -- and nothing noticed for four milestones,
+    -- because compilers do not care and no patch had ever been applied.
+    local checkoutArgs = {
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        `--git-dir={gitDir}`,
+        `--work-tree={dependency.path}`,
+        "checkout",
+        "--quiet",
+        "FETCH_HEAD",
+        "--",
+    }
+    local include = dependency.include
+    if include ~= nil and #include > 0 then
+        for _, pathspec in include do
+            table.insert(checkoutArgs, `:/{pathspec}`)
+        end
+        info(`{dependency.name}: narrowed to {#include} upstream path(s) — ADR 0042`)
+    else
+        table.insert(checkoutArgs, ":/")
+    end
+    runGit(checkoutArgs, `{dependency.name} checkout`)
+
+    fs.removeDirectory(scratch, { recursive = true })
+    applyPatches(dependency)
+
+    info(`{dependency.name}: vendored at {dependency.path}`)
+end
+
+local function commandSync(names: { string })
+    local dependencies = readManifest()
+    local selected: { Dependency } = {}
+
+    if #names == 0 then
+        for _, dependency in dependencies do
+            if isPinned(dependency) then
+                table.insert(selected, dependency)
+            else
+                info(`{dependency.name}: skipped — not pinned yet (commit is "{dependency.commit}")`)
+            end
+        end
+    else
+        for _, name in names do
+            local found: Dependency? = nil
+            for _, dependency in dependencies do
+                if dependency.name == name then
+                    found = dependency
+                    break
+                end
+            end
+            if not found then
+                fail(`no dependency named "{name}" in {ManifestPath}`)
+            end
+            if not isPinned(found :: Dependency) then
+                fail(`{name}: not pinned — set a real commit SHA in {ManifestPath} first (R5)`)
+            end
+            table.insert(selected, found :: Dependency)
+        end
+    end
+
+    if #selected == 0 then
+        info("nothing to do — no pinned dependencies")
+        return
+    end
+
+    for _, dependency in selected do
+        syncOne(dependency)
+    end
+
+    info(`{#selected} dependenc{if #selected == 1 then "y" else "ies"} vendored`)
+    -- Upstream trees carry their own .gitignore files; without -f, git would
+    -- silently drop vendored files that upstream ignores.
+    info("stage with: git add -f third_party")
+end
+
+--- Every `CMakeLists.txt` and `*.cmake` this repository OWNS, which is every
+--- one of them except the vendored trees' own. Upstream's build files reference
+--- upstream's files freely and are not our build; scanning them would report a
+--- violation for every file we deliberately do not carry.
+local function ownBuildFiles(): { string }
+    local found: { string } = {}
+    local pending: { string } = { "." }
+
+    while #pending > 0 do
+        local dir = table.remove(pending) :: string
+        for _, entry in fs.listDirectory(dir) do
+            local child = if dir == "." then entry.name else `{dir}/{entry.name}`
+            if entry.type == "dir" then
+                -- `third_party/` itself is ours; the trees inside it are not.
+                if child == ".git" or child == ".lute" or string.find(child, "^third_party/.") ~= nil then
+                    continue
+                end
+                table.insert(pending, child)
+            elseif entry.name == "CMakeLists.txt" or string.match(entry.name, "%.cmake$") ~= nil then
+                table.insert(found, child)
+            end
+        end
+    end
+
+    table.sort(found)
+    return found
+end
+
+--- Every path this repository's own build files name inside `<name>/`, as
+--- written. Deliberately textual: the alternative is running CMake, and a guard
+--- that needs a configured build tree is a guard nobody runs.
+local function buildReferences(name: string): { { file: string, path: string } }
+    local references: { { file: string, path: string } } = {}
+    local seen: { [string]: boolean } = {}
+
+    for _, file in ownBuildFiles() do
+        local text = fs.readFileToString(file)
+        for reference in string.gmatch(text, `{name}/([%w%._%-/]+)`) do
+            local key = `{file}|{reference}`
+            if not seen[key] then
+                seen[key] = true
+                table.insert(references, { file = file, path = reference })
+            end
+        end
+    end
+
+    return references
+end
+
+--- The guard ADR 0042 was approved on the condition of (human, 2026-08-21).
+---
+--- A hand-curated `include` list ROTS: at the next pin bump upstream moves a
+--- file out of the listed paths, and the build either breaks obscurely or --
+--- worse -- quietly stops compiling something. Narrowing without verification is
+--- debt with interest, so this is the interest being paid.
+---
+--- Two checks, both offline and both cheap:
+---
+---   1. every listed pathspec still selects something on disk, which is what a
+---      rename upstream destroys;
+---   2. every path OUR OWN build files name inside the tree is covered by the
+---      list and present, which is the condition in its own words -- a source
+---      added outside the curated set fails here rather than at a compiler.
+local function verifyNarrowing(dependency: Dependency): number
+    local include = dependency.include
+    if include == nil or #include == 0 then
+        return 0
+    end
+
+    local problems = 0
+
+    for _, pathspec in include do
+        local target = `{dependency.path}/{pathspec}`
+        if not fs.exists(target) then
+            print(`  {dependency.name}: include path "{pathspec}" selects nothing — upstream moved or renamed it`)
+            problems += 1
+        end
+    end
+
+    local shortName = string.match(dependency.path, "([^/]+)$") or dependency.name
+    for _, reference in buildReferences(shortName) do
+        local covered = false
+        for _, pathspec in include do
+            if reference.path == pathspec or string.sub(reference.path, 1, #pathspec + 1) == `{pathspec}/` then
+                covered = true
+                break
+            end
+        end
+
+        if not covered then
+            print(
+                `  {dependency.name}: {reference.file} names "{shortName}/{reference.path}", `
+                    .. `which the row's include list does not cover (ADR 0042)`
+            )
+            problems += 1
+        elseif not fs.exists(`{dependency.path}/{reference.path}`) then
+            print(`  {dependency.name}: {reference.file} names "{shortName}/{reference.path}", which is not there`)
+            problems += 1
+        end
+    end
+
+    return problems
+end
+
+local function commandStatus()
+    local dependencies = readManifest()
+    local missing = 0
+    local unpinned = 0
+
+    for _, dependency in dependencies do
+        local present = fs.exists(dependency.path) and fs.type(dependency.path) == "dir"
+        local hasContent = present and #fs.listDirectory(dependency.path) > 0
+
+        local state: string
+        if not isPinned(dependency) then
+            state = "unpinned"
+            unpinned += 1
+        elseif not hasContent then
+            state = "MISSING"
+            missing += 1
+        else
+            state = `ok {string.sub(dependency.commit, 1, 12)}`
+        end
+
+        print(string.format("  %-24s %-12s %s", dependency.name, dependency.version, state))
+    end
+
+    local narrowingProblems = 0
+    for _, dependency in dependencies do
+        if isPinned(dependency) then
+            narrowingProblems += verifyNarrowing(dependency)
+        end
+    end
+
+    print(
+        `vendor: {#dependencies} rows, {missing} pinned-but-missing, {unpinned} unpinned, `
+            .. `{narrowingProblems} narrowing problem(s)`
+    )
+    if missing > 0 or narrowingProblems > 0 then
+        process.exit(1)
+    end
+end
+
+local function commandNotices()
+    local dependencies = readManifest()
+    local lines = {
+        "# Third-Party Notices",
+        "",
+        "GENERATED FILE — do not edit. Regenerate with:",
+        "",
+        "```",
+        "lute tools/repo/vendor.luau notices",
+        "```",
+        "",
+        "Ludwerk vendors third-party source under `third_party/`. Each dependency keeps",
+        "its own license; this file is the aggregated index, generated from",
+        "[`third_party/manifest.json`](third_party/manifest.json) (ADR 0021).",
+        "",
+        "Rows without a pinned commit are declared for a later milestone and are not",
+        "vendored yet; the roadmap allows lazy vendoring so long as the row exists.",
+        "",
+        "| Dependency | Version | Commit | License | Upstream | Vendored path |",
+        "|---|---|---|---|---|---|",
+    }
+
+    for _, dependency in dependencies do
+        local commit = if isPinned(dependency)
+            then `\`{string.sub(dependency.commit, 1, 12)}\``
+            else "_not vendored yet_"
+        table.insert(
+            lines,
+            `| {dependency.name} | {dependency.version} | {commit} | {dependency.license} | {dependency.upstream} | \`{dependency.path}/\` |`
+        )
+    end
+
+    local binaries = readBinaries()
+    if #binaries > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "## Fetched binary artifacts")
+        table.insert(lines, "")
+        table.insert(lines, "Build-time tools that are **not** vendored and never committed: they are")
+        table.insert(lines, "downloaded at configure time into a cache under `$ENG_BUILD_ROOT` and pinned")
+        table.insert(lines, "by SHA256 (ADR 0032). They do not ship inside the engine or a packaged game.")
+        table.insert(lines, "")
+        table.insert(lines, "| Artifact | Version | License | Platform | SHA256 | Source |")
+        table.insert(lines, "|---|---|---|---|---|---|")
+
+        for _, binary in binaries do
+            for _, artifact in binary.artifacts do
+                table.insert(
+                    lines,
+                    `| {binary.name} | {binary.version} | {binary.license} | {artifact.platform} | \`{string.sub(
+                        artifact.sha256,
+                        1,
+                        16
+                    )}…\` | {artifact.url} |`
+                )
+            end
+        end
+    end
+
+    local decodedRoot = json.asObject(json.deserialize(fs.readFileToString(ManifestPath)))
+    local toolchains = if decodedRoot then json.asArray((decodedRoot :: json.Object).toolchains) else nil
+    if toolchains and #(toolchains :: json.Array) > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "## Toolchains built from source and redistributed")
+        table.insert(lines, "")
+        table.insert(lines, "Built by `tools/repo/toolchain.luau` at a pinned commit, outside the repository,")
+        table.insert(lines, "and **shipped beside the editor** (ADR 0091) -- never inside a packaged game.")
+        table.insert(lines, "The editor folder carries each one's licence texts under `licenses/<name>/`.")
+        table.insert(lines, "")
+        table.insert(lines, "| Toolchain | Version | Commit | License | Licence texts | Upstream |")
+        table.insert(lines, "|---|---|---|---|---|---|")
+        for index, entry in toolchains :: json.Array do
+            local row = json.asObject(entry)
+            if not row then
+                fail(`{ManifestPath}: toolchain #{index} is not an object`)
+            end
+            local context = `{ManifestPath} toolchain #{index}`
+            local files: { string } = {}
+            local declaredFiles = json.asArray((row :: json.Object).licenseFiles)
+            if declaredFiles then
+                for _, file in declaredFiles :: json.Array do
+                    table.insert(files, `\`{file}\``)
+                end
+            end
+            table.insert(
+                lines,
+                `| {expectString(row :: json.Object, "name", context)} | {expectString(
+                    row :: json.Object,
+                    "version",
+                    context
+                )} | \`{string.sub(expectString(row :: json.Object, "commit", context), 1, 12)}\` | {expectString(
+                    row :: json.Object,
+                    "license",
+                    context
+                )} | {table.concat(files, ", ")} | {expectString(
+                    row :: json.Object,
+                    "upstream",
+                    context
+                )} |`
+            )
+        end
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "Policy: permissive licenses only (MIT / BSD / zlib / Apache-2.0 / public domain).")
+    table.insert(lines, "No GPL, no LGPL, and no commercial dependency in the default build path. Adding")
+    table.insert(lines, "or upgrading a dependency requires human approval (see `MASTER_PROMPT.md`,")
+    table.insert(lines, "escalation rules) and an ADR.")
+    table.insert(lines, "")
+    table.insert(lines, "Tooling installed via rokit (not vendored): Lute 1.0.0 (MIT), luau-lsp 1.69.0")
+    table.insert(lines, "(MIT), StyLua 2.5.2 (MPL-2.0 — a build tool, never linked into the engine or")
+    table.insert(lines, "shipped games).")
+    table.insert(lines, "")
+
+    fs.writeStringToFile(NoticesPath, table.concat(lines, "\n"))
+    info(`wrote {NoticesPath} from {#dependencies} manifest rows`)
+end
+
+local function commandResolve(name: string, ref: string)
+    local dependencies = readManifest()
+    for _, dependency in dependencies do
+        if dependency.name == name then
+            local output = runGit({ "ls-remote", dependency.upstream, ref, ref .. "^{}" }, `resolve {name}`)
+            if output == "" then
+                fail(`{name}: upstream has no ref matching "{ref}"`)
+            end
+            -- An annotated tag resolves to two lines; the dereferenced `^{}`
+            -- entry is the commit the pin must record.
+            local resolved: string? = nil
+            for line in string.gmatch(output, "[^\r\n]+") do
+                local sha, refName = string.match(line, "^(%x+)%s+(.+)$")
+                if sha and refName then
+                    if string.sub(refName, -3) == "^{}" or not resolved then
+                        resolved = sha
+                    end
+                end
+            end
+            if not resolved then
+                fail(`{name}: could not parse ls-remote output for "{ref}"`)
+            end
+            print(resolved)
+            return
+        end
+    end
+    fail(`no dependency named "{name}" in {ManifestPath}`)
+end
+
+local function main()
+    -- Lute passes the script path as args[1]; user arguments start at 2.
+    local args = process.args
+    local command = args[2]
+
+    if command == "sync" then
+        local names: { string } = {}
+        for index = 3, #args do
+            table.insert(names, args[index])
+        end
+        commandSync(names)
+    elseif command == "status" then
+        commandStatus()
+    elseif command == "notices" then
+        commandNotices()
+    elseif command == "resolve" then
+        if not args[3] or not args[4] then
+            fail("usage: vendor.luau resolve <name> <ref>")
+        end
+        commandResolve(args[3], args[4])
+    else
+        fail("usage: vendor.luau <sync [name...] | status | notices | resolve <name> <ref>>")
+    end
+end
+
+main()

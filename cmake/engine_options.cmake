@@ -1,0 +1,165 @@
+# Build options (ADR 0023: backends are chosen at build time, wired by one
+# explicit factory in `app` -- no plugin ABI, no self-registering statics).
+#
+# Only options with a consumer today are declared. Backend toggles
+# (ENG_RHI_SDLGPU, ENG_PHYSICS_JOLT, ...) arrive with their modules rather
+# than sitting here inert: an option nothing reads is a lie about what the
+# build can do.
+
+include(CMakeDependentOption)
+
+# The C++ suite drives the engine through Luau SOURCE -- every conformance and
+# integration case is a script, and `sandbox_tests.cpp` compiles chunks with
+# `luau_compile` directly to ask what a chunk can reach. None of that exists in
+# the shipping profile, which links no compiler (ADR 0002), so a test suite built
+# there would be one that cannot run. Dependent rather than plain for the same
+# reason ENG_DEBUG_UI is: the profile is not something a `-D` should be able to
+# contradict by accident. It is also what keeps the shipping gate cheap -- that
+# profile builds the shipping binary and nothing else.
+#
+# Off for `player` as well, and for a different reason: that profile IS a
+# shipped artifact -- `ludwerk build` packages it -- so compiling doctest and a
+# hundred test translation units into the same tree is work nobody asked for.
+# It is not a claim that the profile is untested; the gate builds and links it
+# on every run, which is exactly what `shipping` gets and for the same argument.
+#
+# **Off for `editor` for that second reason exactly** (ADR 0054). That profile is
+# what `tools/repo/package.luau` copies into the archive somebody downloads, and
+# a packaging run that first compiles the C++ suite pays for a thing it then
+# does not ship.
+cmake_dependent_option(ENG_BUILD_TESTS
+    "Build C++ unit and integration tests" ON
+    "NOT ENG_PROFILE MATCHES \"^(shipping|player|editor)$\"" OFF)
+
+# The Luau compiler is present in every profile except shipping, which loads
+# precompiled bytecode only (ADR 0002). Expressed as a dependent option so the
+# shipping profile cannot accidentally carry it.
+#
+# **`player` keeps it, and that is the whole reason `player` exists** (D057).
+# `ludwerk build` ships a game's Luau as SOURCE (ADR 0045), so the binary it
+# packages has to be able to compile source -- which ruled `shipping` out and
+# left it packaging `dev`, overlay and REPL and all. The two options were only
+# ever tied together by sharing a profile string, so the fix is a profile that
+# takes one and not the other.
+cmake_dependent_option(ENG_LUAU_COMPILER
+    "Link the Luau compiler (source -> bytecode at runtime)" ON
+    "NOT ENG_PROFILE STREQUAL \"shipping\"" OFF)
+
+# --- Backend selection (ADR 0023) -------------------------------------------
+# Chosen at build time; `app` holds the one hand-written switch over what was
+# compiled in. A shipping build carries exactly one real backend per seam.
+#
+# `rhi_null` is not a debugging convenience: headless logic tests and the future
+# dedicated server need an IDevice that renders nothing, so it is part of the
+# normal build rather than something a preset turns on.
+# The exotic-format importer in `assetc` (ADR 0010: offline tool only, never the
+# runtime). ON by default because a pipeline that cannot read an FBX is a
+# pipeline most people cannot use -- and an option at all because assimp is the
+# largest single compile in this tree and somebody iterating on the engine has
+# no reason to pay for it.
+option(ENG_ASSETC_ASSIMP "Build assimp into assetc for exotic mesh formats" ON)
+
+# **The real-image golden suite both architecture.md §9 and roadmap promise**,
+# and it is OFF because they both say "non-blocking" (S7.6).
+#
+# These compare pixels against images recorded on Mesa's software rasterizer.
+# That is a legitimate exact comparison -- lavapipe is bit-identical to itself,
+# measured at zero differing pixels across two runs -- and it is legitimate on
+# NOTHING else: a discrete GPU rasterizes edges by different rules, which is the
+# whole reason `screenshot_gate` carries the `gpu-golden` label.
+#
+# So the tests do not exist unless something asks for them. A Mesa upgrade in
+# the Tier-2 image will move every pixel of every one of these, and that must
+# not be able to redden the gate somebody runs before a push. Asked for by the
+# nightly job and by `scripts/localgate.ps1 -Only lavapipe`.
+option(ENG_LAVAPIPE_GOLDENS "Register the lavapipe real-image golden tests (non-blocking)" OFF)
+
+option(ENG_RHI_SDLGPU "Build the SDL3 GPU render backend (the v1 default)" ON)
+option(ENG_RHI_NULL "Build the no-op render backend" ON)
+option(ENG_RHI_CAPTURE "Build the command-stream recording render backend" ON)
+
+# --- Shader toolchain (ADR 0006, ADR 0032) ----------------------------------
+# The defaults encode decisions rather than discovering them at build time.
+#
+# Off when cross-compiling, because shadercross is a HOST tool -- it runs during
+# the build to produce blobs, and architecture.md §8 says so explicitly ("builds
+# once as a host tool, also used when cross-compiling"). A cross build has no
+# business compiling a compiler for its target, and DirectXShaderCompiler
+# publishes no artifact for one either, so the nightly Android job would fail at
+# configure trying to fetch something that does not exist. Shaders for a
+# cross-compiled target come from a host build.
+#
+# Off on macOS, because Microsoft publishes no macOS DirectXShaderCompiler
+# binary at all (ADR 0032 states this consequence). Forcing it ON there is
+# allowed and fails with that explanation rather than a confusing not-found.
+#
+# It stays an option rather than becoming a hard platform rule because turning
+# it off is also how a build that only consumes precompiled shader blobs skips
+# the whole toolchain.
+if(APPLE OR CMAKE_CROSSCOMPILING)
+    set(ENG_SHADER_TOOLCHAIN_DEFAULT OFF)
+else()
+    set(ENG_SHADER_TOOLCHAIN_DEFAULT ON)
+endif()
+
+option(ENG_SHADER_TOOLCHAIN
+    "Build the HLSL shader toolchain (SDL_shadercross + fetched DirectXShaderCompiler)"
+    ${ENG_SHADER_TOOLCHAIN_DEFAULT})
+
+# --- Debug UI (ADR 0011) -----------------------------------------------------
+# Dear ImGui, dev-facing only and compiled out of shipping builds. Gating the
+# TARGET rather than the call sites is what makes "a shipping binary contains no
+# ImGui" a checkable claim: there is no object file to find, because none was
+# compiled. `app`'s overlay degrades to a class whose methods do nothing, not to
+# an #ifdef at every call site.
+#
+# The second condition is not defensive. The only ImGui renderer backend this
+# repository compiles is the SDL_GPU one, so a build without that RHI backend
+# has nothing for the overlay to draw with -- and an overlay target that cannot
+# render is a link error waiting for whoever switches the option on.
+#
+# **Off for `player` too** (D057), which is the option this profile exists to
+# turn off: a released game carried the overlay, the inspector and a Luau REPL
+# against its own VM, because the only profile without them could not compile
+# the Luau the game ships as source.
+#
+# **On for `editor`, which is what that profile is** (ADR 0054). The editor is
+# drawn in ImGui (ADR 0046) and is a dev build by nature; what separates it from
+# `dev` is not a feature but the difference between a build tree and an artifact
+# somebody downloads.
+cmake_dependent_option(ENG_DEBUG_UI
+    "Build the Dear ImGui debug overlay (ADR 0011: dev builds only)" ON
+    "NOT ENG_PROFILE MATCHES \"^(shipping|player)$\";ENG_RHI_SDLGPU" OFF)
+
+# --- Physics backend selection (ADR 0007, ADR 0023) --------------------------
+# The same shape as the RHI options above: `physics_api` is the seam every
+# module above L2 sees, and a backend is a build-time choice `app` resolves.
+# One backend exists in v1 and the option still exists, because "swappable" is
+# a claim the build has to be able to make rather than a promise in an ADR.
+option(ENG_PHYSICS_JOLT "Build the Jolt physics backend (the v1 default)" ON)
+
+# The 2D backend (ADR 0008), from post-v1 phase 3: Box2D behind `IPhysics2D`,
+# beside Jolt rather than instead of it -- a world may hold both kinds of body.
+option(ENG_PHYSICS_BOX2D "Build the Box2D 2D physics backend" ON)
+option(ENG_NAV_RECAST "Build navigation over Recast/Detour (ADR 0089)" ON)
+
+# Jolt's own wireframe output, bridged to the engine's debug draw (roadmap M5).
+#
+# It is a dependent option and not a plain one because the thing it turns on is
+# a chunk of Jolt compiled into the binary: JPH_DEBUG_RENDERER adds virtual
+# draw calls to shapes and a renderer base class. A shipping build has no
+# business carrying either -- ADR 0011's argument for gating the ImGui TARGET
+# rather than its call sites, applied to the same kind of debt.
+cmake_dependent_option(ENG_PHYSICS_DEBUG_DRAW
+    "Bridge Jolt's debug renderer to the engine debug draw (dev builds only)" ON
+    "NOT ENG_PROFILE MATCHES \"^(shipping|player)$\";ENG_PHYSICS_JOLT" OFF)
+
+set(ENG_SANITIZE "" CACHE STRING
+    "Comma-separated sanitizer list passed to -fsanitize (e.g. address,undefined)")
+
+if(NOT ENG_PROFILE MATCHES "^(debug|dev|profile|player|editor|shipping)$")
+    message(FATAL_ERROR
+        "ENG_PROFILE must be one of: debug, dev, profile, player, editor, shipping (got '${ENG_PROFILE}')")
+endif()
+
+message(STATUS "engine: profile=${ENG_PROFILE} luau_compiler=${ENG_LUAU_COMPILER} debug_ui=${ENG_DEBUG_UI} tests=${ENG_BUILD_TESTS}")

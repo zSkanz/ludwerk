@@ -1,0 +1,86 @@
+# L1 -- the SDL3 wrapper (ADR 0004).
+#
+# SDL3 is linked PRIVATE on purpose. The one public header that exposes SDL --
+# sdl_interop.h, for the GPU backend and the app's ImGui glue -- therefore does
+# not drag SDL's include directories along with it: a module that includes it
+# must also link SDL3 itself. That makes crossing this seam a deliberate edit to
+# a CMakeLists rather than something that can happen by adding an #include.
+
+engine_add_module(platform
+    LAYER 1
+    SOURCES
+        src/platform.cpp
+        src/async_io.cpp
+        src/file.cpp
+        src/window.cpp
+        src/process.cpp
+        src/events.cpp
+        src/console.cpp
+        src/crash.cpp
+        src/stop_signal.cpp
+    DEPS
+        core
+    PRIVATE_DEPS
+        SDL3::SDL3-static
+)
+
+# dbghelp is what writes a minidump, and it is Windows' own. Named here rather
+# than in `app` because the call site is here: the layer that knows which OS
+# this is, is the layer that names the OS's libraries.
+if(WIN32)
+    # dbghelp: the crash handler's symbol resolution. psapi: `residentBytes`,
+    # which M7's soak gate needs and which lives in neither kernel32 nor SDL.
+    target_link_libraries(engine_platform PRIVATE dbghelp psapi)
+endif()
+if(ANDROID)
+    # The system log, where an app's console output goes (console.cpp).
+    target_link_libraries(engine_platform PRIVATE log)
+endif()
+
+# The tests link SDL3 for the same reason the GPU backend will: they include
+# sdl_interop.h, to push synthetic events through the real translation path
+# rather than testing a mock of it.
+engine_add_module_tests(platform
+    SOURCES
+        tests/platform_tests.cpp
+        tests/async_io_tests.cpp
+        tests/console_tests.cpp
+        tests/crash_tests.cpp
+        tests/stop_signal_tests.cpp
+    DEPS
+        SDL3::SDL3-static
+)
+
+# The same icon resource `engine_host` carries, linked into the test binary so
+# that `applicationIconBytes()` has something to find. An executable is the only
+# thing that can hold one, so the test has to BE one -- there is no way to check
+# this against a library.
+if(WIN32 AND ENG_BUILD_TESTS)
+    target_sources(engine_platform_tests PRIVATE "${CMAKE_SOURCE_DIR}/branding/app.rc")
+    set_property(SOURCE "${CMAKE_SOURCE_DIR}/branding/app.rc" APPEND PROPERTY OBJECT_DEPENDS
+        "${CMAKE_SOURCE_DIR}/branding/icon/icon.ico")
+endif()
+
+if(ENG_BUILD_TESTS)
+    target_compile_definitions(engine_platform_tests PRIVATE
+        ENG_TEST_CATALOG="${CMAKE_SOURCE_DIR}/i18n/en.json"
+        # The icon FILE, beside the resource that embeds it (S7.14). The
+        # embedded copy can only be read back on Windows, and reading it back
+        # proves the executable has an icon -- not that it has the RIGHT one,
+        # and not that the six sizes nobody reads back are sound. Handing the
+        # test the source file lets it check both, on every platform.
+        ENG_TEST_ICON="${CMAKE_SOURCE_DIR}/branding/icon/icon.ico"
+        ENG_TEST_ICON_DIR="${CMAKE_SOURCE_DIR}/branding/icon")
+
+    # A separate executable because it faults on purpose, and a doctest case
+    # that faulted would take the runner with it. See `crash_probe.cpp`.
+    add_executable(engine_crash_probe tests/crash_probe.cpp)
+    target_link_libraries(engine_crash_probe PRIVATE engine::warnings engine::platform)
+
+    add_test(NAME crash_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DPROBE=$<TARGET_FILE:engine_crash_probe>
+            -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/crash-gate
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_crash_gate.cmake)
+    set_tests_properties(crash_gate PROPERTIES TIMEOUT 60)
+endif()

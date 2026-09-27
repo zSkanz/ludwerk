@@ -1,0 +1,584 @@
+// The world, the VM, and the project they run (architecture.md §2 "app", §3).
+//
+// This is what `engine/app/src/script_host.cpp` and `preview_api.cpp` were
+// standing in for through M1: the reflection registries, a `scene::World`, a
+// booted `script::ScriptRuntime`, and the file-backed half of `require`.
+//
+// `app` owns it rather than `script` for one reason that decides the rest:
+// resolution policy belongs with the filesystem. `script` never opens a file --
+// it asks a `ModuleLoader` for source at a canonical project-relative path --
+// and that is what keeps a Luau require deterministic under R10 and lets a test
+// mount a project that exists only in memory.
+#pragma once
+
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "engine/app/preserved.h"
+#include "engine/asset/content.h"
+#include "engine/asset/material.h"
+#include "engine/audio/audio.h"
+#include "engine/core/error.h"
+#include "engine/core/name_atom.h"
+#include "engine/input/input.h"
+#include "engine/nav/nav.h"
+#include "engine/physics/backends.h"
+#include "engine/render/animation.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/enum_registry.h"
+#include "engine/scene/physics_sync.h"
+#include "engine/scene/physics_sync_2d.h"
+#include "engine/scene/scene_file.h"
+#include "engine/scene/world.h"
+#include "engine/script/modules.h"
+#include "engine/script/runtime.h"
+#include "engine/script/services.h"
+
+namespace engine::render {
+class DebugDraw;
+}
+
+namespace engine::app {
+
+using core::f32;
+using core::f64;
+
+struct WorldHostOptions
+{
+    // A directory is a project root and gets the full mount; a file is mounted
+    // as a single entry `Script` (M2 brief, Decision 9). Empty runs an empty
+    // world, which is what `engine-host --version` and the render gates need.
+    std::filesystem::path projectPath;
+
+    // The world's own deterministic stream. Recorded in a replay, because a
+    // replay stores seeds and never draws (ADR 0025).
+    core::u64 seed = 1;
+
+    f64 fixedTimestep = 1.0 / 60.0;
+
+    // The hot-reload bag, owned by whoever outlives this host -- which is the
+    // point of it (ADR 0024). Null runs the world with the runtime's own bag,
+    // which dies with the VM and is right for a world nobody will reload.
+    script::ReloadState* reloadState = nullptr;
+
+    // Whether this world is the product of a reload, which is the whole of what
+    // `HotReloadService:IsReload` answers.
+    bool isReload = false;
+
+    // Whether the process has a window. The only thing the host does with it is
+    // decide whether to open an audio device: a headless run has no reason to
+    // hold one, and on a CI runner the attempt costs a second and a log line
+    // nobody reads. The sound TIMELINE runs either way, which is what makes
+    // `Ended` land on the same tick in both.
+    bool headless = true;
+
+    // The `PreserveOnReload` instances the outgoing world was carrying. They go
+    // into the tree after the project is mounted and **before** the entry
+    // scripts are deferred, so a script that looks for what it left behind
+    // finds it already there (M3 brief Decision 5). Null for a cold boot.
+    const std::vector<PreservedTree>* preserved = nullptr;
+
+    // Every `*.spec.luau` under this directory is mounted as an entry `Script`
+    // alongside the project's own, and one more synthesized entry runs the
+    // suite once `game.Loaded` has fired (api-design.md §3). Empty means an
+    // ordinary run.
+    std::filesystem::path conformanceRoot;
+
+    // **The authored world this run starts with, applied before a single line
+    // of script has run** (ADR 0047, and `scene_file.h`'s own opening: "boot
+    // reads it and then starts the scripts"). Absolute; empty for a project
+    // with no scene, which is every example before `06-scene`.
+    //
+    // The order is the whole of D067. A scene load REPLACES the contents of
+    // `Workspace` -- it has to, or a second load would double everything -- so
+    // applying one after the boot drain destroys every instance the entry
+    // scripts just built while the VM goes on holding references to them and
+    // its connections stay connected. The next tick then raises
+    // `instance_dead` on a handle that was valid when it was taken, once per
+    // frame, forever. Loading first cannot do that: there is nothing alive yet
+    // to invalidate, and a script that builds its world builds it on top of
+    // the file rather than under it.
+    // How the scene below reads the stamps it names (ADR 0049). Empty is legal
+    // and means a project with no stamps -- or a scene whose stamped instances
+    // are counted as missing rather than silently dropped.
+    //
+    // **Give a field added here a default member initializer**, which is not
+    // tidiness: Clang reports a skipped field without one as
+    // `-Wmissing-field-initializers`, `-Werror` turns that into six broken
+    // builds, and MSVC says nothing at all -- which is what the Tier-2 stage
+    // exists to catch. Position is irrelevant; the default is what matters.
+    // **Partitions the scene before it is applied** (ADR 0053), and answers with
+    // the file to apply instead: what stayed authored, with everything the grid
+    // took out of it.
+    //
+    // A hook rather than a step this class performs, for one reason of order.
+    // The partitioner needs the class, enum and atom registries -- a scene node
+    // means what `readSceneNode` says it means -- and those exist only once this
+    // host has built them. So the caller supplies the policy and this supplies
+    // the moment: after the registries, before the scene, and therefore before
+    // a line of script (D067's order, one step earlier).
+    //
+    // Absent, or answering with an empty path, leaves `bootScene` to be applied
+    // as it is, which is every project that streams nothing.
+    //
+    // **The `= nullptr` is load-bearing**, and the rule is narrower than the
+    // paragraph below it used to say. Clang's `-Wmissing-field-initializers`
+    // fires for a field a designated initialiser SKIPS and that has no default
+    // member initializer of its own -- position in the struct has nothing to do
+    // with it. `headless` is skipped by three call sites and says nothing,
+    // because it has a default; this one without a default broke every one of
+    // them under `-Werror`, on Clang, where MSVC was silent. That is what the
+    // Tier-2 stage is for.
+    std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> partitionScene = nullptr;
+
+    scene::StampSource bootStamps;
+    std::filesystem::path bootScene;
+    // **The scene's text, when it came from a content pack** rather than a
+    // file: a built game ships `content/` as a pack, and the scene -- which now
+    // carries the project's scripts (ADR 0092) -- is in it. `bootScene` still
+    // names it, for the report; this is what is read, and a scene read from a
+    // pack is not partitioned, because the grid's cache is keyed on a file.
+    std::string bootSceneText;
+    // `content/global.json`'s text (ADR 0105): what is authored under
+    // `GlobalScriptService` and is not code. Empty when the project has none.
+    std::string bootGlobalText;
+    // **The boot scene's content-relative path** (ADR 0106), which is what
+    // `SceneService.CurrentScene` says: `scenes/main.scene.json`.
+    std::string bootScenePath = {};
+    // How a scene named at run time is read: a content-relative path in, its
+    // text out, from a file or the pack. Absent, it is read from the
+    // project's `content/` folder.
+    std::function<std::optional<std::string>(std::string_view)> readContent = nullptr;
+    // `[network] server`, which `NetworkService:Join()` with no address dials.
+    std::string defaultServer = {};
+
+    // **Whether boot starts the entry scripts, or only mounts them** (ADR 0058).
+    //
+    // True everywhere except the editor, and that asymmetry is the decision: a
+    // game, `ludwerk dev`, a headless run, the conformance runner and a replay all
+    // want behaviour running the moment the world exists. A TOOL wants the world
+    // it was given and nothing else, because a file scope that runs on open puts
+    // instances nobody authored into a tree somebody is about to save.
+    //
+    // Mounting is unaffected either way -- the `Script` instances are in the
+    // tree, the Explorer shows them, `Source` is editable and a tab can open one
+    // (ADR 0057). What waits is the first resumption, and with it `game.Loaded`.
+    bool startScripts = true;
+
+    // **The posture, set before a single script runs** (ADR 0070). A script's
+    // file scope reads `NetworkService.Authority` in the boot drain -- that is
+    // where "build the level only if I decide the world" lives -- so a value
+    // that arrived after boot would be read wrong exactly once, by the code
+    // that most needs it right.
+    scene::NetworkTopology networkTopology = scene::NetworkTopology::Solo;
+};
+
+// What the conformance run reported. Read after the loop, because the run ends
+// by calling `game:Shutdown()` and the host notices that the way it notices any
+// other shutdown.
+struct ConformanceReport
+{
+    bool ran = false;
+    core::i64 total = 0;
+    core::i64 passed = 0;
+    core::i64 failed = 0;
+
+    // The per-case results, already JSON, as the runner produced them. Written
+    // verbatim to `--test-report=PATH`; `ludwerk test` turns it into TAP or JUnit
+    // rather than parsing a console whose every line is catalog-resolved
+    // (M3 brief, Decision 6).
+    std::string json;
+};
+
+class WorldHost
+{
+public:
+    WorldHost();
+    ~WorldHost();
+
+    WorldHost(const WorldHost&) = delete;
+    WorldHost& operator=(const WorldHost&) = delete;
+
+    // Boots the VM, mounts the project and defers every entry script. The
+    // scripts do not run here: they run at the first drain, which is what makes
+    // their first resumption a scheduled event like any other (api-design.md
+    // §3).
+    [[nodiscard]] std::optional<core::EngineError> boot(const WorldHostOptions& options);
+
+    // One simulation tick: the four phase signals with a drain after each, the
+    // task-resume phase between `PostSimulation` and `Heartbeat`, and the
+    // retirement of everything destroyed during it. This is architecture.md §3's
+    // resumption order, and it is the only place it is written down as code.
+    void tick();
+
+    // Publishes the engine's own instrumentation for this frame. Called between
+    // frames, so a stat never changes halfway through a tick that reads it.
+    void publishStats(const script::FrameStats& stats);
+
+    // What the streaming host produced this frame, turned into deferred
+    // signals. Here rather than in `engine.cpp` because firing one needs the
+    // VM, and the VM is this class's.
+    // Resumes the coroutines whose `@std/net.request` calls have finished.
+    // Called every frame at the same safe point streaming advances at, and for
+    // the same reason: a completion must enter game code where the frame loop
+    // says, not where the socket did.
+    void publishNetworkResults();
+
+    void publishStreamingResults(const std::vector<core::InstanceId>& streamedOut,
+                                 const std::function<bool(core::DVec3, f64)>& areaResident);
+
+    // Whether a script still holds `id` -- the question the husk contract asks
+    // before anything leaves the world (architecture.md §4). Asked by the
+    // streaming glue and by a replica losing interest, which are the same event.
+    [[nodiscard]] bool instanceHeld(core::InstanceId id);
+
+    // Husks this world is keeping for a script, swept at every publish: one no
+    // script holds any more is destroyed, and one a script parented back into
+    // the world is not a husk any more and is left alone.
+    [[nodiscard]] core::usize huskCount() const noexcept { return m_husks.size(); }
+
+    // The render-rate phase. Never fires headless -- headless is the same
+    // scheduler minus the render steps, and this is one of them.
+    void preRender(f64 renderDt);
+
+    // Where `DebugService`'s gizmos go this frame. Null clears it, which is what
+    // a headless run leaves it as: the calls become silent no-ops rather than
+    // errors, so debug drawing left in shared code cannot fail a headless test.
+    void setGizmoTarget(render::DebugDraw* draw);
+
+    // Entry scripts this world mounted, and how many of them failed to
+    // compile. The reload reads both: a reload that mounted nothing, or that
+    // mounted something it could not compile, is a gate passing while doing
+    // nothing (M2 Finding 19).
+    // What the restore did, filled during `boot`. Zeroes on a cold boot.
+    [[nodiscard]] const PreserveReport& preserveReport() const noexcept { return m_preserveReport; }
+
+    // What `bootScene` did, filled during `boot`. `applied` is false when the
+    // project has no scene and when the one it names would not read -- the
+    // caller needs the difference, because an editor only adopts a scene it
+    // actually has.
+    [[nodiscard]] bool bootSceneApplied() const noexcept { return m_bootSceneApplied; }
+
+    // **Replaces the scene with the one at `path`** (ADR 0106), content-
+    // relative. The old scene goes whole -- its world, its services' contents
+    // and settings, the code it mounted from `src/scenes/<scene>/`, and with
+    // them the threads of its scripts -- and the new one opens from the
+    // engine's settings, reads its file, mounts its own code and starts its
+    // scripts. `GlobalScriptService` stays, and so does a `ScreenGui` with
+    // `KeepOnSceneLoad`. `data` is what `GetLoadData` answers afterwards.
+    //
+    // Per host, with no state anywhere else: a second host beside this one
+    // loads its own scenes the same way.
+    [[nodiscard]] std::optional<core::EngineError> loadScene(const std::string& path, std::vector<core::u8> data = {});
+    // Mounts the code of the scene at `path` from `src/scenes/<scene>/`, after
+    // taking out what the scene before it mounted. What `loadScene` does
+    // between reading and starting, exposed for the editor's own scene opening.
+    void remountSceneScripts(std::string_view path);
+    // Takes a `LoadScene` a script asked for and carries it out. Called at the
+    // safe point between ticks, which is the end of `tick`.
+    bool applyPendingScene();
+
+    // **Server code starts again, fresh** (ADR 0105 §2): what `src/server/`
+    // and the current scene's `src/scenes/<scene>/server/` mount, put back and
+    // started. For a machine that becomes the authority again after leaving a
+    // match, whose server code went when it joined.
+    void restartServerCode();
+    [[nodiscard]] const scene::SceneIoReport& bootSceneReport() const noexcept { return m_bootSceneReport; }
+
+    [[nodiscard]] core::u64 mountedScriptCount() const;
+    // Every `Script` in the world, from a file or from the scene (ADR 0092):
+    // what "this project has behaviour" means now that a scene carries its
+    // scripts.
+    [[nodiscard]] core::u64 scriptCount() const;
+
+    // **Mounts one more file**, while editing, exactly as the project's open
+    // would have: a `Script` (or a `ModuleScript`) under `container` at the
+    // path the file is at relative to `root`, its folders made as needed, and a
+    // row in the mount table so play starts it and a require resolves against
+    // it (ADR 0105). `file` and `root` are project-relative with '/'
+    // separators; `container` is spelled as `MountedScript::container`.
+    // Nothing when the file cannot be read.
+    [[nodiscard]] core::InstanceId mountScriptFile(std::string_view file, std::string_view root,
+                                                   std::string_view container, bool module);
+    // The same, for a file under `src/client`.
+    [[nodiscard]] core::InstanceId mountScriptFile(std::string_view relative);
+    // The directory the project was mounted from; empty for a single file.
+    [[nodiscard]] const std::filesystem::path& projectRoot() const noexcept { return m_root; }
+    [[nodiscard]] core::u64 scriptLoadFailures() const;
+
+    [[nodiscard]] scene::World& world() noexcept { return *m_world; }
+
+    // The registries this host's world was built against.
+    //
+    // **Exposed so a SECOND world can share them**, which the prefab stage
+    // needs (ADR 0049): a stage is a world of its own -- no services, no
+    // scripts, no scene -- and a world built against a second set of
+    // registries would mint different `ClassId`s for the same classes, so an
+    // instance could not be described by one and read by the other.
+    //
+    // Shared rather than copied: a registry is a build-time fact, and two
+    // copies of one is two answers to "what is a Part".
+    [[nodiscard]] scene::ClassRegistry& classes() noexcept { return m_classes; }
+    [[nodiscard]] scene::EnumRegistry& enums() noexcept { return m_enums; }
+    [[nodiscard]] core::AtomTable& atoms() noexcept { return m_atoms; }
+
+    // `Workspace`, which is what `render::extract` treats as the world root:
+    // whatever is parented under it is in the world and whatever is not, is not.
+    [[nodiscard]] core::InstanceId workspace() const noexcept { return m_workspace; }
+
+    // `game`. Where an attribute a whole run has to agree about lives -- the
+    // conformance report's counters, and the flag a replay scenario names.
+    [[nodiscard]] core::InstanceId dataModel() const noexcept;
+
+    // The `Lighting` service, which carries the environment `extract` reads.
+    // Invalid in a build with no render module, which is not an error.
+    [[nodiscard]] core::InstanceId lighting() const noexcept { return m_lighting; }
+
+    // The parent of every `ScreenGui` (M6). A boot service for the same reason
+    // `Lighting` is: the frame reads it whether or not a script asks for it,
+    // and a service resolved after the host cached its id is how M4 spent four
+    // milestones lighting scenes with defaults.
+    [[nodiscard]] core::InstanceId uiService() const noexcept { return m_uiService; }
+
+    // The mixer and the sound timeline (M6). Owned here beside the physics
+    // mirror and the input system, and for the same reasons.
+    [[nodiscard]] audio::AudioSystem& audio() noexcept { return m_audio; }
+
+    // Where a compiled mesh comes from, for the skeleton half of one. Set before
+    // `boot`, because `syncSkeletons` runs at the top of the FIRST tick and a
+    // rig that arrived one tick late would be a character that starts a replay
+    // in its bind pose.
+    void setContentMounts(const asset::ContentMounts* mounts);
+    [[nodiscard]] const asset::ContentMounts* contentMounts() const noexcept { return m_mounts; }
+
+    // **What a URN a part wears means** (ADR 0090). The host's own library,
+    // reading through the mounts, unless the process lends it one -- the
+    // editor does, so the game's world, a stamp's stage and the material
+    // panel's preview all resolve one URN to one material. Set before `boot`:
+    // a script's file scope can call `Material.load`.
+    void setMaterialLibrary(asset::MaterialLibrary* library) noexcept;
+    [[nodiscard]] asset::MaterialLibrary& materials() noexcept { return *m_materials; }
+    // The library this host was LENT, or null for its own -- what a reload
+    // hands the host that replaces this one.
+    [[nodiscard]] asset::MaterialLibrary* lentMaterials() const noexcept
+    {
+        return m_materials == &m_ownMaterials ? nullptr : m_materials;
+    }
+
+    // `Workspace.CurrentCamera`, which is the audio listener (§2.1). Resolved
+    // per call rather than cached: it is a property a script may reassign, and a
+    // cached id is how M4 spent four milestones lighting scenes with defaults.
+    [[nodiscard]] core::InstanceId currentCamera() const noexcept
+    {
+        const scene::WorkspaceComponent* component = m_world->workspaces().find(m_workspace);
+        return component == nullptr ? core::InstanceId{} : component->currentCamera;
+    }
+
+    // The physics mirror, or null in a build with no physics backend. The world
+    // owns it because a hot reload rebuilds the world, and a simulation that
+    // outlived the tree it mirrors would be holding bodies for parts that no
+    // longer exist.
+    // The Input Action System (M6). The host owns it for the reason it owns the
+    // physics mirror: `scene` cannot hold it without L3 depending on
+    // `platform`, and a process-global would make two worlds in one process
+    // share a keyboard.
+    //
+    // `pumpInput` folds a frame's events into the device snapshot and is the
+    // only caller that reads a device at all; `tick` and `preRender` dispatch.
+    // A replay drives `input().setSnapshot` instead of pumping, which is what
+    // makes the replay a replay of INPUT rather than of the API underneath it.
+    void pumpInput(std::span<const platform::Event> events);
+    [[nodiscard]] input::InputSystem& input() noexcept { return m_input; }
+
+    // The skeletons and clips read out of each skinned glTF. Read-only from
+    // outside: the host fills it, at the tick's own safe point, because
+    // animation is SIMULATION -- it advances on the SimClock, a script reads
+    // `TimePosition` off it, and it has to run in a headless replay where there
+    // is no renderer at all.
+    [[nodiscard]] const render::SkeletonLibrary& skeletons() const noexcept { return m_skeletons; }
+
+    // The poses `render::extract` reads. Null before `boot`, which is the same
+    // window in which there is no world to extract from.
+    [[nodiscard]] const render::AnimationSystem* animation() const noexcept
+    {
+        return m_animation ? &*m_animation : nullptr;
+    }
+
+    // **The rigs every `MeshPart` names, loaded now** rather than at the top of
+    // the next tick -- which, while the editor is editing, never comes. The
+    // skeleton overlay reads through this; a tick still does it for itself.
+    void loadSkeletons() { syncSkeletons(); }
+
+    [[nodiscard]] scene::PhysicsSync* physics() noexcept { return m_physics ? &*m_physics : nullptr; }
+    [[nodiscard]] const scene::PhysicsSync* physics() const noexcept { return m_physics ? &*m_physics : nullptr; }
+    [[nodiscard]] scene::PhysicsSync2D* physics2d() noexcept { return m_physics2d ? &*m_physics2d : nullptr; }
+    [[nodiscard]] script::ScriptRuntime& runtime() noexcept { return *m_runtime; }
+
+    // **Throws the VM away and builds another one on the same world** (ADR 0058).
+    //
+    // What a play session accumulates is not in the world: it is connections,
+    // required modules, deferred entries, timers and whatever a script left in
+    // its globals. Restoring the world at stop never touched any of it, so a
+    // second play inherited every one -- which is why "two plays in a row are
+    // identical" was not true and nobody had reported it.
+    //
+    // Three things survive on purpose. The **world** does, because the editor
+    // has already restored it to where play was pressed and rebuilding it would
+    // throw away that restore. The **DataModel** does, because it is the one
+    // instance a VM makes that the world then owns -- the new runtime adopts it
+    // and finds every service under it rather than building a second set. And
+    // the **mount table** does, because it says which FILE each `Script` came
+    // from, which is a fact about the project rather than about the VM.
+    //
+    // No script is started. This is the editor's stop, and the editor starts
+    // scripts when somebody presses play.
+    [[nodiscard]] std::optional<core::EngineError> restartRuntime();
+    [[nodiscard]] bool shutdownRequested();
+
+    // Read off `game`'s attributes, which is where the runner script puts them.
+    // Attributes rather than a private channel, because the runner is an
+    // ordinary entry script and everything it does should be something a
+    // project could do.
+    [[nodiscard]] ConformanceReport conformanceReport() const;
+
+    // Runs the `BindToClose` callbacks and WAITS for them, up to
+    // `graceSeconds` of wall clock (`architecture.md` §app: "wait <= 30 s
+    // (configurable)").
+    //
+    // Waiting means advancing the world: a handler that yields on `task.wait`
+    // resumes on the SimClock, so a shutdown that drained once and left would
+    // cut off every handler that saved anything asynchronously -- which is
+    // exactly what it did until M5 (D016).
+    //
+    // The cap is wall clock rather than sim time, because its job is to stop a
+    // handler that never finishes from holding the process open, and a handler
+    // that never finishes never advances sim time either.
+    void close(core::f64 graceSeconds = 30.0);
+
+    // `HotReloadService.PreReload` on the outgoing world and `PostReload` on
+    // the incoming one, each fired and then drained -- the drain is the point,
+    // because a handler that has not run yet has not saved anything yet.
+    void firePreReload();
+    void firePostReload();
+
+private:
+    // Reads `@engine/*` out of the content directory and registers each. They are
+    // shipped content rather than compiled-in strings so that a project can read
+    // the same file its editor does.
+    [[nodiscard]] std::optional<core::EngineError> registerRuntimeModules();
+
+    // Reads the skeleton and clips of every `MeshPart` content the library does
+    // not yet hold, once per URN -- out of the COMPILED mesh (E9 step 14).
+    //
+    // It used to read the source `.gltf` and parse it with `skeletonOnly`, which
+    // was the third of the loose feeds the cut-over removed. What it does now is
+    // `decodeMesh` over the same blob the renderer uploads, so a headless replay
+    // and a rendered frame get their joints from one set of bytes rather than
+    // from two readers that could disagree about a rig.
+    //
+    // Synchronous, at the top of a tick, which is the same narrowing
+    // `MeshLoader` made for the same reason: M7 is the milestone with a job pool
+    // and something to stream, and a background loader with one caller and no
+    // eviction policy is the speculative half of the design.
+    void syncSkeletons();
+
+    [[nodiscard]] std::optional<core::EngineError> mountProject(const std::filesystem::path& path);
+    [[nodiscard]] std::optional<core::EngineError> mountConformance(const std::filesystem::path& root);
+
+    core::AtomTable m_atoms;
+    scene::ClassRegistry m_classes;
+    scene::EnumRegistry m_enums;
+    // Constructed in `boot`, because the registries have to be populated first
+    // and a `World` holds references to them.
+    std::optional<scene::World> m_world;
+    std::optional<script::ScriptRuntime> m_runtime;
+    // Instances reparented to nil because a script held them when they
+    // streamed out, in the order they left.
+    std::vector<core::InstanceId> m_husks;
+    // Declared before the mirror, and destroyed after it: the mirror holds a
+    // reference to this and tears its world down in its own destructor.
+    physics::PhysicsResult m_backend;
+    std::optional<scene::PhysicsSync> m_physics;
+    // The plane's simulation (the 2D layer), beside the 3D one and stepped
+    // after it: the two share no body, so the order between them is only
+    // the order their signals are raised in.
+    physics::Physics2DResult m_backend2d;
+    std::optional<scene::PhysicsSync2D> m_physics2d;
+    // Walkable ground and paths over it (ADR 0089), built from the world where
+    // queries ask. Null in a build without Recast.
+    std::unique_ptr<nav::INavigation> m_navigation;
+    input::InputSystem m_input;
+
+    // The skeletons the mesh loader reads out of each glTF, and the system that
+    // plays their clips. Both live here rather than beside the renderer because
+    // animation is SIMULATION: it advances on the SimClock, it has to run in a
+    // headless replay, and a script reads `TimePosition` off it. What the
+    // renderer takes is the pose it produces.
+    //
+    // Declared after `m_world` because the system holds a reference to it, and
+    // before nothing: `m_animation` is destroyed first, which is the order its
+    // own references need.
+    render::SkeletonLibrary m_skeletons;
+    // Where a compiled mesh comes from. Borrowed from whoever built the mounts
+    // -- the same object `MeshLoader` and the audio system are handed -- because
+    // a second set of mounts is a second answer to "what is this URN".
+    //
+    // **Null is a working configuration**, not an error: a host booted with no
+    // project (a bare script, a conformance run) resolves nothing, and the only
+    // consequence is that a `MeshPart` naming a rig has no skeleton, which is
+    // already true of one naming a file that does not exist.
+    const asset::ContentMounts* m_mounts = nullptr;
+    asset::MaterialLibrary m_ownMaterials;
+    asset::MaterialLibrary* m_materials = &m_ownMaterials;
+    // Content atoms already attempted, so a file with no skeleton is parsed once
+    // rather than once a tick forever.
+    // **A set rather than a list**, because `syncSkeletons` asks about every
+    // `MeshPart` on every tick for ever and a linear scan made that cost
+    // `meshParts x distinct skeleton-less meshes`. Its iteration order never
+    // reaches anything observable -- membership is the only question asked of
+    // it -- so R10 has nothing to say here.
+    std::unordered_set<core::u32> m_skeletonsTried;
+    std::optional<render::AnimationSystem> m_animation;
+
+    // The two things `boot` was handed that a REBUILT runtime has to be handed
+    // again (`restartRuntime`). Kept rather than re-derived: the reload bag
+    // belongs to whoever outlives this host and the stamp source is a policy the
+    // caller chose, and neither is recoverable from the world.
+    script::ReloadState* m_reloadState = nullptr;
+    scene::StampSource m_stampSource;
+
+    std::filesystem::path m_root;
+    core::InstanceId m_workspace;
+    core::InstanceId m_lighting;
+    core::InstanceId m_uiService;
+    audio::AudioSystem m_audio;
+    PreserveReport m_preserveReport;
+    scene::SceneIoReport m_bootSceneReport;
+    bool m_bootSceneApplied = false;
+    // How a scene named at run time is read, and its stamps (ADR 0106).
+    std::function<std::optional<std::string>(std::string_view)> m_readContent;
+    scene::StampSource m_stamps;
+    // The project was a directory, so "no scripts" is worth a warning; a lone
+    // file named on the command line is the script.
+    bool m_projectIsDirectory = false;
+    // The booting scene's file name without `.scene.json`: the folder under
+    // `src/scenes/` its own scripts mount from (ADR 0105).
+    std::string m_sceneName;
+    render::DebugDraw* m_gizmos = nullptr;
+
+    // Aliases from the project's `.luaurc`, read once at boot. Parsed with
+    // `core::json` rather than `Luau::parseConfig`, which treats any key it does
+    // not recognise as a hard error that aborts the whole require (U-42) -- a
+    // `$schema` line would break `require` at runtime.
+    std::unordered_map<std::string, std::string> m_aliases;
+
+    friend struct WorldHostLoader;
+};
+
+} // namespace engine::app

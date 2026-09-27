@@ -1,0 +1,12 @@
+    SUBCASE("fills the product's own names from the brand, which no caller supplies")
+    {
+        // ADR 0109: a message that says the product's name says {brand}, and a
+        // rebrand is branding/brand.toml -- never a message or a call site.
+        const std::array<I18nArg, 1> args{I18nArg{"version", "3.0.0"}};
+        const std::string expected =
+            std::string(luaug::core::kBrandName) + " 3.0.0, run with " + std::string(luaug::core::kBrandShort);
+        CHECK(catalog.format(LUAUG_TR("branded"), args) == expected);
+        CHECK_FALSE(luaug::core::kBrandName.empty());
+        CHECK_FALSE(luaug::core::kBrandShort.empty());
+    }
+

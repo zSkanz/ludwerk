@@ -1,0 +1,171 @@
+# Anatomy of a project
+
+A new project, from `ludwerk new` or from the editor's project browser, is a
+`project.toml`, a scene and one script file.
+
+```text
+my-game/
+├─ project.toml                   what this project is
+├─ content/
+│  └─ scenes/main.scene.json    the world
+├─ src/client/Main.luau         greets you when you press Play
+└─ .engine/                      generated, gitignored
+```
+
+The starter scene holds a small level and the code that belongs to its parts
+(ADR 0092):
+
+- the spinner's own `Script` turns it;
+- a `ModuleScript` in `ReplicatedStorage` holds the settings it requires.
+
+A directory is a project when it holds a `project.toml` **or** one of the code
+folders below. A project without a `project.toml` is legal: it takes every
+default.
+
+## Code in files, when you want it
+
+A project can also keep code in files, edited in VS Code, kept in git and
+hot-reloaded by `ludwerk dev`. None of this is required, and the two ways mix in
+one project:
+
+```text
+my-game/
+├─ .luaurc                          strict mode, and the require aliases
+├─ src/
+│  ├─ client/main.luau              runs where a player sits
+│  ├─ server/rules.luau             runs where the world is decided
+│  ├─ shared/greeting.luau          a module both sides require
+│  └─ scenes/arena/
+│     ├─ server/countdown.luau      the arena scene's own server code
+│     └─ client/scoreboard.luau     and its own player code
+├─ assets/i18n/en.json              the game's own strings
+└─ tests/example.test.luau
+```
+
+- **`src/client/`, `src/server/` and `src/shared/`** are the game's code, for
+  every scene: `Script`s under `GlobalScriptService.Client` and `.Server`, and
+  `ModuleScript`s under `.Shared` (ADR 0105).
+- **`src/scenes/<scene>/client/` and `server/`** are one scene's code, under
+  that scene's `ClientScriptService` and `ServerScriptService`.
+- Each subdirectory becomes a `Folder`: `src/client/systems/spawn.luau` is a
+  `Script` named `spawn` inside a `Folder` named `systems`. The file is that
+  script's source, so the scene does not write it.
+- **Every other `.luau` file is a module**, reached by `require` with a path and
+  never in the tree.
+- `src/scripts/`, the folder before these, is read as `src/client/` for one
+  release, with a warning.
+
+See [Scripts, modules and requires](manual:concepts/scripts) for both.
+
+## src/shared and the alias
+
+`.luaurc` declares the aliases, and both the analyzer and the engine read them:
+
+```json
+{
+  "languageMode": "strict",
+  "aliases": { "shared": "src/shared" }
+}
+```
+
+```luau
+local Greeting = require("@shared/greeting")
+```
+
+Resolution order for a require: engine-provided `@` modules first; then `@self`,
+meaning the requiring file's own directory; then the `.luaurc` aliases; then
+`./` and `../` relative to the requiring file; then a bare specifier as a path
+from the project root.
+
+`.luau` is appended if absent, then `init.luau` is tried.
+
+> **`.luaurc` takes no `$comment` key.** The runtime treats an unknown key as an
+> error rather than ignoring it, so a comment there breaks requires.
+
+## project.toml
+
+```toml
+[project]
+name = "My Game"
+id = "com.example.mygame"
+version = "0.1.0"
+company = "Example"
+icon = "branding/icon.png"
+scene = "scenes/main.scene.json"
+
+[window]
+title = "My Game"
+size = [1280, 720]
+fullscreen = false
+resizable = true
+
+[dev]
+port = 4560
+
+[network]
+server = "play.example.com:7777"
+
+[assets]
+content = "content"
+
+[graphics]
+quality = "high"
+```
+
+| Section | Keys |
+|---|---|
+| `[project]` | `name` (becomes the built executable's name), `id` (reverse-DNS; groups taskbar buttons on Windows, and the Android package), `version` (`X.Y.Z`, stamped by every export), `company`, `icon` (one square PNG, 1024 pixels is best: every export makes its own sizes from it), `scene` |
+| `[window]` | `title`, `size` (or `width` and `height`), `fullscreen`, `resizable` |
+| `[dev]` | `port` — default 4560 |
+| `[network]` | `server` — where `NetworkService:Join()` goes with no address |
+| `[assets]` | `content` — where the asset compiler reads from |
+| `[graphics]` | The quality family. See [Graphics quality settings](manual:rendering/quality) |
+
+The TOML subset is deliberately small: comments, tables, strings, numbers,
+booleans and single-line arrays. A multi-line string, an inline table, an array
+of tables or a date is an **error** rather than a silent misread.
+
+Two things to know about it as it stands:
+
+- **`[assets] content` is read by the asset compiler and not by the engine**,
+  which mounts `content/` by name. Renaming it will compile from one place and
+  mount another.
+- **`[permissions]`, `[memory]` and `[build]` parse and are reserved.** Nothing
+  reads them yet.
+
+## content/
+
+What `asset://` names. Meshes, textures, audio, fonts and scenes, in whatever
+directory layout suits you — the URN is the path relative to this directory.
+
+In development it is mounted directly, so a file dropped in is available with no
+build step.
+
+## .engine/
+
+Generated, gitignored, and safe to delete:
+
+| Path | Is |
+|---|---|
+| `types/engine.d.luau` | The engine's type definitions, for the analyzer. |
+| `content.lpack` · `content.manifest.json` | The compiled content. |
+| `content/**.lchunk` · `content.chunks.json` | Compiled streaming chunks. |
+| `types/scene.d.luau` | The scene's own tree, typed, so `workspace.Level.Ground` type-checks. |
+| `editor-layout.v3.ini` · `editor.json` | Editor panel layout and last-open scene. |
+
+## tests/
+
+`tests/**/*.test.luau` is your project's own suite, run by the pure runner.
+`tests/conformance/**/*.spec.luau` is the engine's shape, run against a headless
+engine. See [Testing](manual:guides/testing).
+
+## Reserved names
+
+`Enum.RunContext` is a reserved enum, and it does nothing: where code runs is
+where it is in the tree (ADR 0105).
+
+## Where to look next
+
+- [Your first world](manual:get-started/first-world)
+- [The ludwerk CLI](manual:get-started/cli)
+- [Content and asset URNs](manual:assets/content)

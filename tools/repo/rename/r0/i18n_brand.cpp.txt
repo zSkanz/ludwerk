@@ -1,0 +1,11 @@
+        // **Except the product's own names** (ADR 0109), which no caller
+        // supplies: a message that says the product's name says `{brand}`, and
+        // the brand comes from branding/brand.toml through the generated header,
+        // so a rebrand touches no message and no call site.
+        if (found != nullptr)
+            out.append(found->value());
+        else if (name == "brand")
+            out.append(kBrandName);
+        else if (name == "brandShort")
+            out.append(kBrandShort);
+        else

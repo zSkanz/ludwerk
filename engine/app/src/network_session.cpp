@@ -1,0 +1,325 @@
+#include "engine/app/network_session.h"
+
+#include "engine/app/world_host.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
+#include "engine/replication/extract.h"
+#include "engine/replication/replication.h"
+#include "engine/scene/players.h"
+#include "engine/scene/world.h"
+#include "engine/script/services.h"
+
+#if ENG_ENABLE_REPLICATION
+#include "engine/net/transport.h"
+#endif
+
+#include <array>
+#include <charconv>
+#include <string_view>
+#include <vector>
+
+namespace engine::app {
+namespace {
+
+// `Enum.NetworkState`'s values (ADR 0106).
+[[maybe_unused]] constexpr core::i32 StateOffline = 0;
+[[maybe_unused]] constexpr core::i32 StateConnecting = 1;
+[[maybe_unused]] constexpr core::i32 StateConnected = 2;
+[[maybe_unused]] constexpr core::i32 StateHosting = 3;
+[[maybe_unused]] constexpr core::i32 StateServing = 4;
+
+constexpr core::u16 DefaultPort = 7777;
+
+// `host` or `host:port`. A port that does not parse is the default, and the
+// connect that follows says whether the host answers.
+void splitAddress(std::string_view address, std::string& host, core::u16& port)
+{
+    port = DefaultPort;
+    const std::size_t colon = address.rfind(':');
+    if (colon == std::string_view::npos) {
+        host.assign(address);
+        return;
+    }
+    host.assign(address.substr(0, colon));
+    const std::string_view digits = address.substr(colon + 1);
+    unsigned value = 0;
+    if (const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+        error == std::errc{} && end == digits.data() + digits.size() && value >= 1 && value <= 65535)
+        port = static_cast<core::u16>(value);
+}
+
+} // namespace
+
+NetworkSession::NetworkSession(std::function<WorldHost*()> host, replication::Config base, TransportFactory transports)
+    : m_host(std::move(host)), m_base(std::move(base)), m_transports(std::move(transports))
+{}
+
+NetworkSession::~NetworkSession()
+{
+#if ENG_ENABLE_REPLICATION
+    if (m_replication != nullptr)
+        m_replication->shutdown();
+#endif
+}
+
+void NetworkSession::setReferenceProbe(std::function<bool(core::InstanceId)> probe)
+{
+    m_probe = std::move(probe);
+#if ENG_ENABLE_REPLICATION
+    if (m_replication != nullptr)
+        m_replication->setReferenceProbe(m_probe);
+#endif
+}
+
+void NetworkSession::setCharacterReplay(scene::ICharacterReplay* replay)
+{
+    m_replay = replay;
+#if ENG_ENABLE_REPLICATION
+    if (m_replication != nullptr)
+        m_replication->setCharacterReplay(replay);
+#endif
+}
+
+void NetworkSession::setState(core::i32 state)
+{
+    m_state = state;
+    if (WorldHost* host = m_host(); host != nullptr)
+        host->world().engineState().networkState = state;
+}
+
+std::optional<core::EngineError> NetworkSession::begin(replication::Topology topology, const std::string& address,
+                                                       core::u16 port, bool redial)
+{
+    m_redial = redial;
+#if ENG_ENABLE_REPLICATION
+    replication::Config config = m_base;
+    config.topology = topology;
+    config.address = address;
+    config.port = port;
+    config.redial = redial;
+    std::optional<core::EngineError> error;
+    std::unique_ptr<net::ITransport> transport = m_transports ? m_transports() : net::createEnetTransport();
+    m_replication = replication::createReplicationOver(std::move(transport), config, error);
+    if (m_replication == nullptr)
+        return error.has_value() ? error : core::makeError(ENG_TR("net.err.transport_init_failed"));
+    wire();
+    return std::nullopt;
+#else
+    (void)topology;
+    (void)address;
+    (void)port;
+    (void)m_base;
+    (void)m_transports;
+    return core::makeError(ENG_TR("engine.cli.err.no_replication"));
+#endif
+}
+
+void NetworkSession::wire()
+{
+#if ENG_ENABLE_REPLICATION
+    if (m_probe)
+        m_replication->setReferenceProbe(m_probe);
+    m_replication->setCharacterReplay(m_replay);
+    // **A replica follows its authority to another scene** (ADR 0106): the same
+    // scene, from this machine's own package, cleared of what the authority is
+    // about to send, as a join clears it.
+    const std::function<WorldHost*()> hostOf = m_host;
+    m_replication->setSceneChanger([hostOf](scene::World&, const std::string& path, std::vector<core::u8> data) {
+        WorldHost* host = hostOf();
+        if (host == nullptr)
+            return;
+        if (const std::optional<core::EngineError> error = host->loadScene(path, std::move(data)); error.has_value()) {
+            core::logText(core::LogLevel::Error, error->message);
+            return;
+        }
+        (void)replication::clearForReplica(host->world(), host->workspace());
+    });
+#endif
+}
+
+std::optional<core::EngineError> NetworkSession::start(replication::Topology topology, const std::string& address,
+                                                       core::u16 port)
+{
+    if (topology == replication::Topology::Solo)
+        return std::nullopt;
+    if (std::optional<core::EngineError> error = begin(topology, address, port, true); error.has_value())
+        return error;
+    WorldHost* host = m_host();
+    if (host == nullptr)
+        return std::nullopt;
+    switch (topology) {
+    case replication::Topology::Replica:
+#if ENG_ENABLE_REPLICATION
+        // What the authority is about to send, removed from this copy of the
+        // scene so it is not everything twice. See `clearReplicated`.
+        (void)replication::clearForReplica(host->world(), host->workspace());
+#endif
+        m_connecting = true;
+        m_waited = 0;
+        m_address = address;
+        setState(StateConnecting);
+        break;
+    case replication::Topology::Dedicated:
+        setState(StateServing);
+        break;
+    default:
+        setState(StateHosting);
+        break;
+    }
+    return std::nullopt;
+}
+
+void NetworkSession::receive()
+{
+#if ENG_ENABLE_REPLICATION
+    if (WorldHost* host = m_host(); host != nullptr && m_replication != nullptr)
+        m_replication->receive(host->world(), host->workspace());
+#endif
+}
+
+void NetworkSession::send()
+{
+#if ENG_ENABLE_REPLICATION
+    if (WorldHost* host = m_host(); host != nullptr && m_replication != nullptr)
+        m_replication->send(host->world(), host->workspace(), host->world().engineState().tick);
+#endif
+}
+
+void NetworkSession::sendMessages()
+{
+#if ENG_ENABLE_REPLICATION
+    if (WorldHost* host = m_host(); host != nullptr && m_replication != nullptr)
+        m_replication->sendMessages(host->world());
+#endif
+}
+
+void NetworkSession::goSolo(std::string_view event, std::string_view reason, bool wasAuthority)
+{
+    WorldHost* host = m_host();
+#if ENG_ENABLE_REPLICATION
+    if (m_replication != nullptr) {
+        m_replication->shutdown();
+        m_replication.reset();
+    }
+#endif
+    m_connecting = false;
+    if (host == nullptr)
+        return;
+    scene::World& world = host->world();
+    world.engineState().networkTopology = scene::NetworkTopology::Solo;
+    world.engineState().networkPeerCount = 0;
+    setState(StateOffline);
+
+    // **The others go**: a solo game has one player, the one at this machine.
+    const core::InstanceId network = scene::networkServiceOf(world, host->runtime().dataModel());
+    std::vector<core::InstanceId> others;
+    for (core::InstanceId child = network.valid() ? world.firstChild(network) : core::InstanceId{}; child.valid();
+         child = world.nextSibling(child)) {
+        const scene::PlayerComponent* player = world.players().find(child);
+        if (player != nullptr && !player->local)
+            others.push_back(child);
+    }
+    for (const core::InstanceId player : others)
+        (void)world.destroy(player);
+
+    // This machine decides the world again: its server code starts, fresh.
+    if (!wasAuthority)
+        host->restartServerCode();
+    script::fireNetworkEvent(host->runtime().state(), event, reason);
+}
+
+void NetworkSession::update()
+{
+    WorldHost* host = m_host();
+    if (host == nullptr)
+        return;
+    scene::EngineState& state = host->world().engineState();
+    state.networkState = m_state;
+
+    // --- What a script asked for, at the safe point after the frame's ticks.
+    if (state.pendingNetwork.has_value()) {
+        const scene::EngineState::NetworkRequest request = std::move(*state.pendingNetwork);
+        state.pendingNetwork.reset();
+        const bool wasAuthority = state.networkTopology != scene::NetworkTopology::Replica;
+        using Kind = scene::EngineState::NetworkRequest::Kind;
+        switch (request.kind) {
+        case Kind::Join: {
+            // Whatever this machine was doing on the network, it stops first.
+            if (active())
+                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+            std::string address;
+            core::u16 port = DefaultPort;
+            splitAddress(request.address, address, port);
+            if (std::optional<core::EngineError> error = begin(replication::Topology::Replica, address, port, false);
+                error.has_value()) {
+                script::fireNetworkEvent(host->runtime().state(), "JoinFailed", error->message);
+                break;
+            }
+            state.networkTopology = scene::NetworkTopology::Replica;
+#if ENG_ENABLE_REPLICATION
+            // **Joining replaces this machine's scene with the server's**: what
+            // the authority replicates is cleared, and server code with it.
+            (void)replication::clearForReplica(host->world(), host->workspace());
+#endif
+            m_connecting = true;
+            m_waited = 0;
+            m_address = request.address;
+            setState(StateConnecting);
+            const std::array<core::I18nArg, 2> args{core::I18nArg{"address", std::string_view{address}},
+                                                    core::I18nArg{"port", static_cast<core::i64>(port)}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.joining"), args);
+            break;
+        }
+        case Kind::Host: {
+            if (active() && state.networkTopology != scene::NetworkTopology::Replica)
+                break; // Hosting already.
+            if (active())
+                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+            if (std::optional<core::EngineError> error = begin(replication::Topology::Host, {}, request.port, false);
+                error.has_value()) {
+                core::logText(core::LogLevel::Error, error->message);
+                break;
+            }
+            state.networkTopology = scene::NetworkTopology::Host;
+            setState(StateHosting);
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"port", static_cast<core::i64>(request.port)}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.hosting"), args);
+            break;
+        }
+        case Kind::Disconnect:
+            if (active())
+                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+            break;
+        }
+    }
+
+#if ENG_ENABLE_REPLICATION
+    if (m_replication == nullptr)
+        return;
+    const replication::Status status = m_replication->status();
+    state.networkServerTick = status.serverTick;
+    state.networkPeerCount = status.peerCount;
+
+    // --- A replica: did the join take, and is the server still there?
+    if (state.networkTopology != scene::NetworkTopology::Replica)
+        return;
+    if (m_connecting) {
+        if (status.welcomed) {
+            m_connecting = false;
+            setState(StateConnected);
+            script::fireNetworkEvent(host->runtime().state(), "Connected", std::nullopt);
+        }
+        else if (status.lost || ++m_waited > m_joinTimeout) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{m_address}}};
+            goSolo("JoinFailed", core::engineCatalog().format(ENG_TR("net.err.join_failed"), args), false);
+        }
+        return;
+    }
+    // A join from the command line dials again, as it always has (ADR 0085);
+    // one a script made hands the decision back to the game.
+    if (status.lost && !m_redial)
+        goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
+#endif
+}
+
+} // namespace engine::app

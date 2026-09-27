@@ -1,0 +1,151 @@
+plugins {
+    id 'com.android.application'
+}
+
+// **The pins, from one of two places** (R5). In this repository they are read
+// out of cmake/toolchains/android.cmake and CMakeLists.txt, as the triangle
+// sample's are: one version string per decision. In an installation there is
+// no repository around the template, so `tools/repo/package.luau` writes the
+// same values into `pins.properties` beside it, and SDL's Java sources into
+// `sdl-java/` (ADR 0104 §6).
+def repoRoot = rootDir.parentFile.parentFile.parentFile
+def pinsFile = new File(rootDir, 'pins.properties')
+def ndkPin
+def abiPin
+def minSdkPin
+def engineVersion
+def sdlJavaDir
+if (pinsFile.exists()) {
+    def pins = new Properties()
+    pinsFile.withInputStream { pins.load(it) }
+    ndkPin = pins.getProperty('ndk')
+    abiPin = pins.getProperty('abi')
+    minSdkPin = pins.getProperty('minSdk') as int
+    engineVersion = pins.getProperty('engineVersion')
+    sdlJavaDir = new File(rootDir, 'sdl-java')
+} else {
+    def toolchainText = new File(repoRoot, 'cmake/toolchains/android.cmake').text
+    def cmakePin = { String name ->
+        def matcher = (toolchainText =~ /(?m)^set\(\s*${name}\s+"([^"]*)"/)
+        if (!matcher) {
+            throw new GradleException(
+                "cmake/toolchains/android.cmake no longer defines ${name} -- the pin moved or changed shape.")
+        }
+        return matcher[0][1]
+    }
+    ndkPin = cmakePin('ENG_ANDROID_NDK_VERSION')
+    abiPin = cmakePin('ANDROID_ABI')
+    minSdkPin = cmakePin('ANDROID_PLATFORM').replace('android-', '') as int
+    def versionMatcher = (new File(repoRoot, 'CMakeLists.txt').text =~ /(?m)^\s*VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)/)
+    engineVersion = versionMatcher ? versionMatcher[0][1] : '0.0.0'
+    sdlJavaDir = new File(repoRoot, 'third_party/sdl3/android-project/app/src/main/java')
+}
+
+// **What is packaged, and as what.** `ludwerk build --target=android` stages the
+// payload -- the library, the engine's content, the game -- and this build only
+// packages it (ADR 0104 §6). The game's identity comes from its project.toml,
+// read by the CLI and handed over as properties: the application id, the name
+// under the icon, the version name and code, the orientation, the launcher
+// icons and the key it is signed with.
+def stageDir = project.findProperty('engine.stageDir')
+if (stageDir == null) {
+    throw new GradleException(
+        'Nothing to package. `ludwerk build --target=android` stages a game and passes -Pengine.stageDir=<dir>.')
+}
+def applicationIdOf = project.findProperty('engine.applicationId') ?: 'dev.ludwerk.game'
+def appName = project.findProperty('engine.appName') ?: 'Game'
+def versionCodeOf = (project.findProperty('engine.versionCode') ?: '1') as int
+def versionNameOf = project.findProperty('engine.versionName') ?: engineVersion
+def orientation = project.findProperty('engine.orientation') ?: 'sensorLandscape'
+// `res/` with `mipmap-*/ic_launcher*` and the adaptive icon, from `assetc icon`.
+// Without one the platform's default icon stands in.
+def resDir = project.findProperty('engine.resDir')
+def keystore = project.findProperty('engine.keystore')
+
+
+android {
+    namespace = 'engine.player'
+    compileSdk = 35
+    buildToolsVersion = '35.0.0'
+    // The NDK only strips the prebuilt library here; `ludwerk android
+    // install-tools` installs none, and without one the library is packaged as
+    // it is. Named only when it is installed, so its absence is not an error.
+    def sdkRoot = System.getenv('ANDROID_SDK_ROOT') ?: System.getenv('ANDROID_HOME')
+    if (sdkRoot != null && new File(sdkRoot, "ndk/${ndkPin}").exists())
+        ndkVersion = ndkPin
+
+    defaultConfig {
+        applicationId = applicationIdOf
+        minSdk = minSdkPin
+        targetSdk = 35
+        versionCode = versionCodeOf
+        versionName = versionNameOf
+        resValue 'string', 'app_name', appName
+        manifestPlaceholders = [
+            engineOrientation: orientation,
+            engineIcon: resDir != null ? '@mipmap/ic_launcher' : '@android:drawable/sym_def_app_icon',
+        ]
+    }
+
+    // **The key is the CLI's to choose**: the machine's debug key, made once
+    // under the user's Ludwerk folder so every debug APK installs over the last,
+    // or the project's release key. The passwords arrive as
+    // `ORG_GRADLE_PROJECT_engine.*Password` in the environment, never as
+    // arguments.
+    if (keystore != null) {
+        signingConfigs {
+            ludwerk {
+                storeFile = file(keystore)
+                storePassword = project.findProperty('engine.storePassword')
+                keyAlias = project.findProperty('engine.keyAlias')
+                keyPassword = project.findProperty('engine.keyPassword')
+            }
+        }
+        buildTypes {
+            debug {
+                signingConfig = signingConfigs.engine
+            }
+            // A release is the build a store receives: not debuggable, and
+            // signed with the project's own key (`[export.android] release`).
+            release {
+                signingConfig = signingConfigs.engine
+                minifyEnabled = false
+            }
+        }
+    }
+
+    sourceSets.main {
+        java.srcDirs = ['src/main/java', sdlJavaDir]
+        jniLibs.srcDirs = ["${stageDir}/jniLibs"]
+        assets.srcDirs = ["${stageDir}/assets"]
+        if (resDir != null)
+            res.srcDirs += [resDir]
+    }
+
+    androidResources {
+        // AAPT drops assets whose names start with a dot, and a game's pack
+        // lives in `.engine/` and its Luau configuration is `.luaurc`. This is
+        // the default pattern less that rule (and less `<dir>_*`, which would
+        // drop a folder a project happened to name with an underscore).
+        ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+
+    lint {
+        abortOnError = false
+    }
+}
+
+def verifyStagedPayload = tasks.register('verifyStagedPayload') {
+    doLast {
+        def library = file("${stageDir}/jniLibs/${abiPin}/libmain.so")
+        if (!library.exists())
+            throw new GradleException("No native library at ${library}; run `ludwerk build --target=android`.")
+        def payload = file("${stageDir}/assets/payload.txt")
+        if (!payload.exists())
+            throw new GradleException("No payload list at ${payload}; run `ludwerk build --target=android`.")
+    }
+}
+
+tasks.named('preBuild') {
+    dependsOn verifyStagedPayload
+}

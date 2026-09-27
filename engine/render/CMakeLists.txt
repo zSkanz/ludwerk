@@ -1,0 +1,97 @@
+# L4 -- architecture.md §2 eventually gives render core, jobs, platform,
+# rhi_api, asset and scene. It now has scene as well, for `render::extract`: the
+# POD snapshot rendering reads instead of walking the ECS (ADR 0027), and
+# `platform`, for `ShaderLibrary`: a shader blob inside an Android APK is a zip
+# entry, not a file, and platform::readFile is the one seam that knows the
+# difference (engine/platform/include/engine/platform/file.h). The rest arrive
+# with the code that uses them, because a dependency with no consumer is
+# speculative.
+#
+# It links `rhi_api` and no backend. That is the seam working: this module has
+# no idea which device it is drawing with, and `app` is the only place that does
+# (ADR 0023).
+
+engine_add_module(render
+    LAYER 4
+    SOURCES
+        src/debug_draw.cpp
+        src/clusters.cpp
+        src/environment.cpp
+        src/pack_surface_source.cpp
+        src/shader_library.cpp
+        src/debug_renderer.cpp
+        src/render_world.cpp
+        src/mesh_cache.cpp
+        src/lighting.cpp
+        src/look.cpp
+        src/skybox.cpp
+        src/sky_loader.cpp
+        src/native_accessors.cpp
+        src/renderer_default.cpp
+        src/settings.cpp
+        src/transform_history.cpp
+        src/mesh_loader.cpp
+        src/terrain_loader.cpp
+        src/particles.cpp
+        src/voxel_loader.cpp
+        src/scene_types.cpp
+        src/shadow.cpp
+        src/ui_renderer.cpp
+        src/animation.cpp
+        generated/class_descriptors.gen.cpp
+    DEPS
+        asset
+        core
+        jobs
+        platform
+        rhi_api
+        scene
+)
+
+# The generated reflection tables for the classes this module owns
+# (architecture.md §4). Checked in and freshness-gated by
+# scripts/gates/luau-check.sh, like scene's.
+#
+# No include directory is added for them, deliberately: every module's generated
+# header is named `class_descriptors.gen.h`, so a second one on any include path
+# would turn `#include "class_descriptors.gen.h"` into a search-order lottery in
+# `app`, which links both. The two files that need this one reach it by a
+# relative path instead, and nothing outside `render` may include it at all --
+# `engine/render/scene_types.h` is the whole public surface.
+
+# `rhi_null` is linked into the TEST executable and nowhere else. ADR 0023's
+# rule is that a backend is linked only by `app`; a test binary is not a module,
+# and `MeshCache` cannot be exercised at all without a device that hands back
+# distinct buffer handles. `engine_render` itself still sees only the seam.
+engine_add_module_tests(render
+    MODULES
+        render
+        rhi_null
+    SOURCES
+        tests/debug_draw_tests.cpp
+        tests/cluster_tests.cpp
+        tests/environment_tests.cpp
+        tests/shader_library_tests.cpp
+        tests/render_world_tests.cpp
+        tests/mesh_cache_tests.cpp
+        tests/lighting_tests.cpp
+        tests/look_tests.cpp
+        tests/skybox_tests.cpp
+        tests/settings_tests.cpp
+        tests/shadow_tests.cpp
+        tests/animation_tests.cpp
+        tests/mesh_loader_tests.cpp
+        tests/terrain_loader_tests.cpp
+        tests/particles_tests.cpp
+        tests/voxel_loader_tests.cpp
+)
+
+if(ENG_BUILD_TESTS)
+    # One real encoded picture, so the loader can be asserted end to end -- read,
+    # decoded, uploaded -- rather than only on the paths that fail. Borrowed from
+    # `asset` rather than copied: two copies of one fixture is two things to keep
+    # in step for no gain.
+    target_compile_definitions(engine_render_tests PRIVATE
+        ENG_RENDER_TEST_IMAGE="${CMAKE_SOURCE_DIR}/engine/asset/tests/data/checker.png"
+        ENG_RENDER_TEST_MESH_DIR="${CMAKE_SOURCE_DIR}/engine/asset/tests/data")
+endif()
