@@ -202,12 +202,12 @@ jobs:
           - { os: windows-latest, preset: win-msvc-dev }
           - { os: ubuntu-latest, preset: linux-clang-dev }
     runs-on: ${{ matrix.os }}
-    # Was 45. The last cold run before this change measured 708 s (Windows) /
-    # 688 s (Linux), so 45 was never a schedule -- it is the hang guard, and on
-    # a private repo a hung Windows job burns 2x its wall time. 30 keeps around
-    # 1.7x headroom over the worst case this job now has, which is the very
-    # first run: every cache cold, plus the upload of both.
-    timeout-minutes: 30
+    # The hang guard, not a schedule. It was 45, then 30 on a cold run measured
+    # at 708 s (Windows) / 688 s (Linux) -- and the first run of the Ludwerk
+    # repository, every cache cold, was cut at exactly 30 minutes on Windows
+    # (2026-09-27): the engine has grown since that measurement. 60 is the cold
+    # case with room, and a warm run is a fraction of it.
+    timeout-minutes: 60
     env:
       # Bounded well under the 10 GiB default: this directory is uploaded to and
       # downloaded from actions/cache on every run, and GitHub evicts the whole
