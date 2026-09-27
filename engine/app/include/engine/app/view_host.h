@@ -10,6 +10,7 @@
 // monitors takes turns instead of costing twelve views.
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -41,6 +42,18 @@ struct ViewCandidate
 };
 [[nodiscard]] std::vector<core::usize> chooseViews(std::span<const ViewCandidate> views, core::u32 budget);
 
+// **What a `ViewportFrame`'s picture depends on**, as one number: the parts,
+// meshes and cameras inside it, where they are, how big and what they wear,
+// and the frame's own light. The picture is redrawn when this changes and at no
+// other time -- forty still items in an inventory are forty pictures once.
+[[nodiscard]] core::u64 frameSignature(const scene::World& world, core::InstanceId frame) noexcept;
+
+// The camera a `ViewportFrame` looks through: its `CurrentCamera` when that is a
+// camera inside it, and otherwise one that frames everything inside from the
+// front and a little above. Nothing when there is nothing inside to frame.
+[[nodiscard]] std::optional<render::ViewOverride> frameLens(const scene::World& world, core::InstanceId frame,
+                                                            float aspect);
+
 // Whether a view is due on `frame`: never drawn, or `interval` frames (one or
 // more) since it last was.
 [[nodiscard]] constexpr bool viewDue(bool drawn, core::u64 lastDrawn, core::u64 frame, core::u32 interval) noexcept
@@ -69,6 +82,12 @@ public:
         core::f64 milliseconds = 0.0;
         // Black until the first picture: a screen that is off.
         bool cleared = false;
+        // **A `ViewportFrame`'s view** rather than a camera texture's: named
+        // `#<index>`, drawn transparent by the frame's own light, and only
+        // when `signature` moves from the one it was drawn at.
+        bool frame = false;
+        core::u64 signature = 0;
+        core::u64 drawnSignature = 0;
     };
 
     void setLimits(core::u32 perFrame, core::u32 maxResolution) noexcept
@@ -94,6 +113,7 @@ public:
         view.drawn = true;
         view.lastDrawn = frame;
         view.milliseconds = milliseconds;
+        view.drawnSignature = view.signature;
     }
 
     [[nodiscard]] std::span<const View> views() const noexcept { return views_; }
@@ -105,6 +125,10 @@ public:
 
 private:
     void release(rhi::IDevice& device, render::TextureLibrary& library, render::IRenderer* renderer, View& view);
+    // The texture at `width` by `height`, made or remade, set in the library,
+    // and cleared the first time to `clear`.
+    void ensureTexture(rhi::IDevice& device, rhi::ICmdList& cmd, render::TextureLibrary& library, View& view,
+                       core::u32 width, core::u32 height, rhi::ColorRgba clear);
 
     std::vector<View> views_;
     // Instances already told their name is taken, so the log says it once.

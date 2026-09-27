@@ -4270,6 +4270,46 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (useRenderer && stageOf() == nullptr) {
                 for (ViewHost::View* view : viewHost.due(host->world(), frame.index)) {
                     const scene::World& world = host->world();
+                    // **A `ViewportFrame`** (ADR 0107): the instances inside
+                    // it and nothing else, by its own light, with no sky and
+                    // nothing behind -- only what is inside shows. Nothing in
+                    // it is simulated, so it is drawn as it stands.
+                    if (view->frame) {
+                        const scene::ViewportFrameComponent* self = world.viewportFrames().find(view->owner);
+                        const f32 shape = static_cast<f32>(view->width) / static_cast<f32>(view->height);
+                        const std::optional<render::ViewOverride> lens = frameLens(world, view->owner, shape);
+                        if (self == nullptr || !lens.has_value())
+                            continue;
+                        const core::u64 started = platform::nowNs();
+                        render::extract(world, view->owner, core::InstanceId{}, meshLibrary, shape, shadowRadius,
+                                        host->animation(), 0.0f, nullptr, viewSnapshot, &*lens, {}, &textureLibrary,
+                                        {});
+                        render::RenderEnvironment& light = viewSnapshot.environment;
+                        const core::Vec3 d = self->lightDirection;
+                        const f32 length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                        light.sunDirection = core::Vec3{-d.x / length, -d.y / length, -d.z / length};
+                        light.ambient = self->ambient;
+                        light.outdoorAmbient = self->ambient;
+                        light.lightTint = self->lightColor;
+                        light.fogEnd = 0.0f;
+                        light.globalShadows = false;
+                        light.autoExposure = false;
+                        light.exposureCompensation = 0.0f;
+                        light.transparentBackground = true;
+                        viewSnapshot.look = render::RenderLook{};
+                        viewSnapshot.look.bloomGoverned = true;
+                        viewSnapshot.look.bloomEnabled = false;
+                        renderer->render(*device, *cmd,
+                                         {.color = view->texture,
+                                          .colorFormat = ViewFormat,
+                                          .width = view->width,
+                                          .height = view->height,
+                                          .view = view->rendererView},
+                                         viewSnapshot, meshCache);
+                        ViewHost::drawn(*view, frame.index,
+                                        static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
+                        continue;
+                    }
                     const scene::CameraTextureComponent* source = world.cameraTextures().find(view->owner);
                     const scene::CameraComponent* camera =
                         source != nullptr ? world.cameras().find(source->camera) : nullptr;

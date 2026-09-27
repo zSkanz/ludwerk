@@ -23,7 +23,7 @@
 {"op":"createShader","shader":13,"stage":"Vertex","bytes":1272,"samplers":0,"uniformBuffers":0,"name":"sky"}
 {"op":"createShader","shader":14,"stage":"Fragment","bytes":2588,"samplers":0,"uniformBuffers":1,"name":"sky"}
 {"op":"createShader","shader":15,"stage":"Vertex","bytes":1552,"samplers":0,"uniformBuffers":0,"name":"tonemap"}
-{"op":"createShader","shader":16,"stage":"Fragment","bytes":3476,"samplers":3,"uniformBuffers":1,"name":"tonemap"}
+{"op":"createShader","shader":16,"stage":"Fragment","bytes":3700,"samplers":3,"uniformBuffers":1,"name":"tonemap"}
 {"op":"createShader","shader":17,"stage":"Vertex","bytes":1300,"samplers":0,"uniformBuffers":1,"name":"shadow_instanced"}
 {"op":"createShader","shader":18,"stage":"Fragment","bytes":536,"samplers":0,"uniformBuffers":0,"name":"shadow_instanced"}
 {"op":"createShader","shader":19,"stage":"Vertex","bytes":6940,"samplers":0,"uniformBuffers":1,"name":"pbr_instanced"}
@@ -607,7 +607,7 @@
 {"op":"endRenderPass"}
 {"op":"popDebugGroup"}
 {"op":"createShader","shader":63,"stage":"Vertex","bytes":1840,"samplers":0,"uniformBuffers":0,"name":"tonemap_graded"}
-{"op":"createShader","shader":64,"stage":"Fragment","bytes":4104,"samplers":3,"uniformBuffers":2,"name":"tonemap_graded"}
+{"op":"createShader","shader":64,"stage":"Fragment","bytes":4312,"samplers":3,"uniformBuffers":2,"name":"tonemap_graded"}
 {"op":"createGraphicsPipeline","pipeline":38,"vertexShader":63,"fragmentShader":64,"instancedStreams":0,"primitive":"TriangleList","fill":"Solid","cull":"None","depthTest":false,"depthWrite":false,"colorTargets":1,"depthFormat":"Undefined","name":"tonemap_graded"}
 {"op":"pushDebugGroup","name":"tonemap"}
 {"op":"beginRenderPass","colorCount":1,"depth":0,"name":"tonemap"}

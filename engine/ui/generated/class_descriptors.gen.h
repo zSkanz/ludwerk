@@ -168,6 +168,18 @@ scene::Value getUIObjectAbsoluteSize(const scene::World& world, core::InstanceId
 void attachUIObjectComponents(scene::World& world, core::InstanceId id);
 void detachUIObjectComponents(scene::World& world, core::InstanceId id);
 
+// ViewportFrame
+scene::Value getViewportFrameCurrentCamera(const scene::World& world, core::InstanceId id);
+bool setViewportFrameCurrentCamera(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getViewportFrameAmbient(const scene::World& world, core::InstanceId id);
+bool setViewportFrameAmbient(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getViewportFrameLightColor(const scene::World& world, core::InstanceId id);
+bool setViewportFrameLightColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getViewportFrameLightDirection(const scene::World& world, core::InstanceId id);
+bool setViewportFrameLightDirection(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachViewportFrameComponents(scene::World& world, core::InstanceId id);
+void detachViewportFrameComponents(scene::World& world, core::InstanceId id);
+
 // TextLabel
 scene::Value getTextLabelText(const scene::World& world, core::InstanceId id);
 bool setTextLabelText(scene::World& world, core::InstanceId id, const scene::Value& value);

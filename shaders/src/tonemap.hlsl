@@ -111,7 +111,12 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     // SampleLevel because the HDR target has one mip and this pass is a 1:1
     // blit; an implicit derivative would only compute a level that is already
     // known to be zero.
-    const float3 hdr = HdrTexture.SampleLevel(HdrSampler, input.Uv, 0.0f).rgb;
+    const float4 hdrTexel = HdrTexture.SampleLevel(HdrSampler, input.Uv, 0.0f);
+    const float3 hdr = hdrTexel.rgb;
+    // **The scene's coverage as alpha, for a view with no sky behind it**
+    // (ADR 0107, `ViewportFrame`): z set, and what nothing drew stays clear.
+    // Every other view is opaque, as it always was.
+    const float alpha = ExposureBloom.z > 0.5f ? saturate(hdrTexel.a) : 1.0f;
 
     // Bloom is added in scene-referred light, BEFORE the curve. Adding it after
     // would put a glow on top of an already-compressed image, which is the look
@@ -128,5 +133,5 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float exposure = (EngineExposureKey / measured) * exp2(ExposureBloom.x);
     const float3 exposed = max(scene * exposure, float3(0.0f, 0.0f, 0.0f));
 
-    return float4(encodeSrgb(tonemapPbrNeutral(exposed)), 1.0f);
+    return float4(encodeSrgb(tonemapPbrNeutral(exposed)), alpha);
 }

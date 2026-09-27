@@ -476,6 +476,66 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     frameDesc.doc = "A rectangle and nothing else: a background, a border of children, and the layout it imposes on them. The element every UI is mostly made of.";
     classes.registerClass(frameDesc);
 
+    // --- ViewportFrame ---
+    static std::array<scene::PropertyDesc, 4> viewportFrameProperties;
+    viewportFrameProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("CurrentCamera"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("Camera"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A `Camera` inside the frame to look through. Nil frames what is inside automatically, from the front and a little above.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getViewportFrameCurrentCamera,
+            .set = native::setViewportFrameCurrentCamera,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Ambient"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The light from every direction.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getViewportFrameAmbient,
+            .set = native::setViewportFrameAmbient,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightColor"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The colour of its one light.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getViewportFrameLightColor,
+            .set = native::setViewportFrameLightColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightDirection"),
+            .type = scene::ValueType::Vector3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which way its one light travels -- down and away from the viewer by default.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getViewportFrameLightDirection,
+            .set = native::setViewportFrameLightDirection,
+        },
+    }};
+    scene::ClassDescriptor viewportFrameDesc;
+    viewportFrameDesc.name = atoms.intern("ViewportFrame");
+    viewportFrameDesc.super = uIObjectClass;
+    viewportFrameDesc.flags = scene::ClassFlags::None;
+    viewportFrameDesc.defaultName = atoms.intern("ViewportFrame");
+    viewportFrameDesc.doc = "A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. **What is inside is its world and nothing else's**: drawn here and nowhere else, and not simulated -- no physics, no collisions -- so a script moves it by setting `CFrame`.\012\012Drawn only when something inside it, its camera or its size changes, so forty still items cost forty pictures once. Lit by its own simple light, with no sky: with `BackgroundTransparency = 1` only the instances show. It works in a `SurfaceGui` too.";
+    viewportFrameDesc.properties = viewportFrameProperties;
+    viewportFrameDesc.attachComponents = native::attachViewportFrameComponents;
+    viewportFrameDesc.detachComponents = native::detachViewportFrameComponents;
+    classes.registerClass(viewportFrameDesc);
+
     // --- TextLabel ---
     static std::array<scene::PropertyDesc, 10> textLabelProperties;
     textLabelProperties = {{

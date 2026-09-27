@@ -1,10 +1,15 @@
 // The views' budget and sizes (ADR 0107), without a device: which camera
-// textures a frame draws, and at what size. The drawing itself is
-// `views_gate`'s, which needs a GPU.
+// textures a frame draws, at what size, and when a `ViewportFrame`'s picture is
+// redrawn. The drawing itself is `views_gate`'s, which needs a GPU.
 #include <doctest/doctest.h>
 #include <vector>
 
+#include "../../render/generated/class_descriptors.gen.h"
+#include "../../scene/generated/class_descriptors.gen.h"
+#include "../../ui/generated/class_descriptors.gen.h"
 #include "engine/app/view_host.h"
+#include "engine/scene/class_registry.h"
+#include "engine/scene/enum_registry.h"
 
 using namespace engine;
 using app::ViewCandidate;
@@ -67,4 +72,59 @@ TEST_CASE("a view's size is capped on its longer side, keeping its shape")
     const core::Vec2 tiny = app::viewSize(core::Vec2{0.0f, -5.0f}, 1024);
     CHECK(tiny.x == 1.0f);
     CHECK(tiny.y == 1.0f);
+}
+
+TEST_CASE("a ViewportFrame's picture is redrawn when what is inside it changes, and not otherwise")
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    engine::ui::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    const core::InstanceId frame = world.create(classes.findId(atoms.intern("ViewportFrame")));
+    const core::InstanceId item = world.create(classes.findId(atoms.intern("Part")));
+    REQUIRE(frame.valid());
+    REQUIRE(item.valid());
+    REQUIRE_FALSE(world.setParent(item, frame).has_value());
+
+    // Still: the same number every frame, so forty still items are forty
+    // pictures once.
+    const core::u64 still = app::frameSignature(world, frame);
+    CHECK(app::frameSignature(world, frame) == still);
+
+    // Turned: a new picture.
+    world.parts().find(item)->cframe.position.y += 1.0;
+    const core::u64 moved = app::frameSignature(world, frame);
+    CHECK(moved != still);
+
+    // The frame's own light is part of the picture too.
+    world.viewportFrames().find(frame)->lightColor = core::Color3{1.0f, 0.0f, 0.0f};
+    CHECK(app::frameSignature(world, frame) != moved);
+}
+
+TEST_CASE("a ViewportFrame with nothing inside has nothing to frame")
+{
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    engine::ui::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    const core::InstanceId frame = world.create(classes.findId(atoms.intern("ViewportFrame")));
+    CHECK_FALSE(app::frameLens(world, frame, 1.0f).has_value());
+
+    // With a part inside, a camera in front of it and looking at it.
+    const core::InstanceId item = world.create(classes.findId(atoms.intern("Part")));
+    REQUIRE_FALSE(world.setParent(item, frame).has_value());
+    const std::optional<render::ViewOverride> lens = app::frameLens(world, frame, 1.0f);
+    REQUIRE(lens.has_value());
+    CHECK(lens->cframe.position.z > 0.0);
+    CHECK(lens->cframe.position.y > 0.0);
 }

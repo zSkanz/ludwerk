@@ -440,6 +440,17 @@ struct DecalComponent
     f32 transparency = 0.0f;
 };
 
+// `ViewportFrame` (ADR 0107): a UI element drawing the instances inside it,
+// by its own light. Its rectangle is the `UIObjectComponent` every element has.
+struct ViewportFrameComponent
+{
+    // A `Camera` inside the frame; invalid frames the contents automatically.
+    core::InstanceId currentCamera;
+    core::Color3 ambient{140.0f / 255.0f, 140.0f / 255.0f, 150.0f / 255.0f};
+    core::Color3 lightColor{1.0f, 1.0f, 1.0f};
+    core::Vec3 lightDirection{-1.0f, -1.0f, -1.0f};
+};
+
 // `CameraTexture` (ADR 0107): a camera drawing into a `view://` texture.
 // Rendering only -- the app's view host reads this and nothing in the
 // simulation does.

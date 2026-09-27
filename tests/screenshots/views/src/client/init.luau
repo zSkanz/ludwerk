@@ -62,3 +62,17 @@ end
 -- x 60..380 and 620..940, y 100..280.
 monitor("red", 60)
 monitor("blue", 620)
+
+-- **A `ViewportFrame`** over the green wall: a yellow cube inside it, and no
+-- background -- x 400..600, y 300..480. Its middle is the cube; its corner is
+-- the world's own green wall, seen through what the frame did not draw.
+local frame = Instance.new("ViewportFrame")
+frame.Position = UDim2.fromOffset(400, 300)
+frame.Size = UDim2.fromOffset(200, 180)
+frame.BackgroundTransparency = 1
+frame.Parent = screen
+
+local cube = Instance.new("Part")
+cube.Size = vector.create(2, 2, 2)
+cube:SetMaterialParameter("Color", Color3.new(1, 1, 0))
+cube.Parent = frame

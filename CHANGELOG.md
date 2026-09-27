@@ -67,7 +67,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   - F3 and the editor's Stats list every view and its cost.
   - A camera texture does not replicate, because a camera does not.
   - `examples/26-security-cameras`: a security office at night, six feeds on a
-    monitor wall and one on a tablet.
+    monitor wall and one on a tablet, and three items turning in inventory
+    slots.
+- **Instances in the UI** (ADR 0107, V2). A `ViewportFrame` draws the parts and
+  models inside it, unsimulated, by its own light (`Ambient`, `LightColor`,
+  `LightDirection`), with no sky, so with `BackgroundTransparency = 1` only
+  they show.
+  - With no `CurrentCamera` it frames its contents itself.
+  - It is redrawn only when something inside it, its camera, its light or its
+    size changes.
 - **The editor, remade after VS Code** (the owner's queue of 2026-09-27, Q2):
   - Dark Modern and Light Modern colours and metrics.
   - A command palette (`Ctrl+Shift+P`, `F1`) holding every menu and toolbar

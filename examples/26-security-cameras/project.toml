@@ -15,9 +15,9 @@ title = "Ludwerk — Security cameras"
 width = 1280
 height = 720
 
-# How many camera textures one frame draws, and the largest side one may have.
-# Six feeds at every other frame and one at every frame is about two and a
-# half views a frame, under the ceiling of four.
+# How many views one frame draws, and the largest side one may have. Six feeds
+# at every other frame and one at every frame is about two and a half views a
+# frame, and the three items turning in their slots are three more.
 [render]
-max_views_per_frame = 4
+max_views_per_frame = 8
 max_view_resolution = 1024

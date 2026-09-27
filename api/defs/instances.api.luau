@@ -30,6 +30,10 @@ end
 --- Something with a place in the 3D world: the world, a model, or a part
 --- (a part inside a part moves with it).
 local InTheWorld = under("Workspace", "Model", "BasePart")
+--- Something a `ViewportFrame` can show as well as the world can (ADR 0107):
+--- a part, a model, and the camera that frames them. Inside a frame it is
+--- drawn there and nowhere else, and nothing simulates it.
+local InTheWorldOrAFrame = under("Workspace", "Model", "BasePart", "ViewportFrame")
 --- Something a part or a point on one gives off or wears.
 local OnAPart = under("BasePart", "Attachment")
 --- An element of a UI tree, under one of its three roots or another element.
@@ -292,7 +296,7 @@ local Classes: { Schema.Class } = {
         Name = "Model",
         Extends = "PVInstance",
         Module = "scene",
-        Parents = InTheWorld,
+        Parents = InTheWorldOrAFrame,
         Storage = "Model",
         Doc = "A group of parts handled as one object, with a pivot to move it by and an extents box to measure it with.",
         Properties = {
@@ -650,7 +654,7 @@ local Classes: { Schema.Class } = {
         Name = "Part",
         Extends = "BasePart",
         Module = "scene",
-        Parents = InTheWorld,
+        Parents = InTheWorldOrAFrame,
         Doc = "The primitive solid: a part whose geometry is one of a small set of shapes rather than an imported mesh.",
         Properties = {
             {
@@ -675,7 +679,7 @@ local Classes: { Schema.Class } = {
         Name = "MeshPart",
         Extends = "BasePart",
         Module = "render",
-        Parents = InTheWorld,
+        Parents = InTheWorldOrAFrame,
         Storage = "MeshPart",
         Doc = "A part whose geometry is an imported mesh rather than a primitive solid. One file is one mesh: a "
             .. "model made of several pieces is several MeshParts, which is the shape a prefab assumes.",
@@ -1500,7 +1504,7 @@ local Classes: { Schema.Class } = {
         Name = "Camera",
         Extends = "PVInstance",
         Module = "render",
-        Parents = under("Workspace"),
+        Parents = under("Workspace", "ViewportFrame"),
         Storage = "Camera",
         Doc = "The viewpoint the world is rendered from. A camera is an ordinary instance a script owns and moves; "
             .. "the engine never takes it over, which is why there is no CameraType.",
@@ -2828,6 +2832,45 @@ local Classes: { Schema.Class } = {
         Module = "ui",
         Doc = "A rectangle and nothing else: a background, a border of children, and the layout it imposes on "
             .. "them. The element every UI is mostly made of.",
+    },
+    {
+        Name = "ViewportFrame",
+        Extends = "UIObject",
+        Module = "ui",
+        Storage = "ViewportFrame",
+        Doc = "A UI element that draws the parts and models inside it (ADR 0107): an item turning in an "
+            .. "inventory slot, a character preview, a 3D icon. **What is inside is its world and nothing "
+            .. "else's**: drawn here and nowhere else, and not simulated -- no physics, no collisions -- so a "
+            .. "script moves it by setting `CFrame`.\n\nDrawn only when something inside it, its camera or "
+            .. "its size changes, so forty still items cost forty pictures once. Lit by its own simple light, "
+            .. "with no sky: with `BackgroundTransparency = 1` only the instances show. It works in a "
+            .. "`SurfaceGui` too.",
+        Properties = {
+            {
+                Name = "CurrentCamera",
+                Type = "Camera?",
+                Doc = "A `Camera` inside the frame to look through. Nil frames what is inside automatically, "
+                    .. "from the front and a little above.",
+            },
+            {
+                Name = "Ambient",
+                Type = "Color3",
+                Default = "Color3.fromRGB(140, 140, 150)",
+                Doc = "The light from every direction.",
+            },
+            {
+                Name = "LightColor",
+                Type = "Color3",
+                Default = "Color3.new(1, 1, 1)",
+                Doc = "The colour of its one light.",
+            },
+            {
+                Name = "LightDirection",
+                Type = "vector",
+                Default = "vector.create(-1, -1, -1)",
+                Doc = "Which way its one light travels -- down and away from the viewer by default.",
+            },
+        },
     },
     {
         Name = "TextLabel",

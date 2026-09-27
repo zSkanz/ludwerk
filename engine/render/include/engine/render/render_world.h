@@ -159,6 +159,13 @@ struct RenderEnvironment
     f32 shadowSoftness = 0.2f;
     bool globalShadows = true;
     bool autoExposure = true;
+    // **A view with no world behind it** (ADR 0107, `ViewportFrame`): no sky
+    // is drawn, and what nothing covers is left clear, so the picture shows
+    // only its instances over whatever the UI has behind it.
+    bool transparentBackground = false;
+    // Multiplies the sun's colour: a view that lights its instances its own
+    // way (`ViewportFrame.LightColor`). White is the world's own light.
+    Color3 lightTint{1.0f, 1.0f, 1.0f};
     // The game's own clock, `RunService.SimTime`, for what drifts with it --
     // the clouds (ADR 0096). Never a wall clock (R10): a paused game's clouds
     // stand still and a replay's move the same way.

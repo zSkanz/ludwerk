@@ -1595,6 +1595,96 @@ void detachUICornerComponents(scene::World& world, core::InstanceId id)
     world.uiCorners().remove(id);
 }
 
+// --- ViewportFrame (ADR 0107) ---------------------------------------------------
+
+void attachViewportFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.viewportFrames().add(id, scene::ViewportFrameComponent{});
+}
+
+void detachViewportFrameComponents(scene::World& world, core::InstanceId id)
+{
+    world.viewportFrames().remove(id);
+}
+
+Value getViewportFrameCurrentCamera(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (frame == nullptr || !world.alive(frame->currentCamera))
+        return Value{};
+    return Value{frame->currentCamera};
+}
+
+bool setViewportFrameCurrentCamera(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (frame == nullptr)
+        return false;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        // Typed `Camera?`, as `Workspace.CurrentCamera` is.
+        const scene::ClassId cameraClass = world.classes().findId(world.atoms().lookup("Camera"));
+        if (cameraClass == scene::InvalidClass || !world.isA(*reference, cameraClass))
+            return false;
+        frame->currentCamera = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    frame->currentCamera = core::InstanceId{};
+    return true;
+}
+
+Value getViewportFrameAmbient(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->ambient};
+}
+
+bool setViewportFrameAmbient(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* color = std::get_if<core::Color3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (color == nullptr || frame == nullptr)
+        return false;
+    frame->ambient = *color;
+    return true;
+}
+
+Value getViewportFrameLightColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->lightColor};
+}
+
+bool setViewportFrameLightColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* color = std::get_if<core::Color3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    if (color == nullptr || frame == nullptr)
+        return false;
+    frame->lightColor = *color;
+    return true;
+}
+
+Value getViewportFrameLightDirection(const scene::World& world, core::InstanceId id)
+{
+    const scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    return frame == nullptr ? Value{} : Value{frame->lightDirection};
+}
+
+bool setViewportFrameLightDirection(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* direction = std::get_if<core::Vec3>(&value);
+    scene::ViewportFrameComponent* frame = world.viewportFrames().find(id);
+    // A direction: finite, and not nothing.
+    if (direction == nullptr || frame == nullptr || !std::isfinite(direction->x) || !std::isfinite(direction->y) ||
+        !std::isfinite(direction->z) ||
+        direction->x * direction->x + direction->y * direction->y + direction->z * direction->z < 1e-12f)
+        return false;
+    frame->lightDirection = *direction;
+    return true;
+}
+
 void attachUIGradientComponents(scene::World& world, core::InstanceId id)
 {
     world.uiGradients().add(id, scene::UIGradientComponent{});

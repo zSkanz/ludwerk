@@ -1707,6 +1707,18 @@ end
 declare extern type Frame extends UIObject with
 end
 
+declare extern type ViewportFrame extends UIObject with
+    --- A `Camera` inside the frame to look through. Nil frames what is inside automatically, from the
+    --- front and a little above.
+    CurrentCamera: Camera?
+    --- The light from every direction.
+    Ambient: Color3
+    --- The colour of its one light.
+    LightColor: Color3
+    --- Which way its one light travels -- down and away from the viewer by default.
+    LightDirection: vector
+end
+
 declare extern type TextLabel extends UIObject with
     --- What it says. UTF-8, and a codepoint the font has no glyph for draws the font's `.notdef` box
     --- rather than nothing: a label that silently drops characters is the failure mode that ships.
@@ -3601,6 +3613,7 @@ declare Instance: {
         & (("BillboardGui") -> BillboardGui)
         & (("SurfaceGui") -> SurfaceGui)
         & (("Frame") -> Frame)
+        & (("ViewportFrame") -> ViewportFrame)
         & (("TextLabel") -> TextLabel)
         & (("TextButton") -> TextButton)
         & (("TextInput") -> TextInput)

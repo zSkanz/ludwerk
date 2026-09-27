@@ -362,6 +362,7 @@ struct NameIndex
     X(ParticleEmitterComponent, particleEmitters)                                                                      \
     X(DecalComponent, decals)                                                                                          \
     X(CameraTextureComponent, cameraTextures)                                                                          \
+    X(ViewportFrameComponent, viewportFrames)                                                                          \
     X(Part2DComponent, parts2d)                                                                                        \
     X(Tilemap2DComponent, tilemaps2d)                                                                                  \
     X(Constraint2DComponent, constraints2d)                                                                            \
@@ -933,6 +934,11 @@ public:
     [[nodiscard]] const ComponentPool<CameraComponent>& cameras() const noexcept { return m_cameras; }
     [[nodiscard]] ComponentPool<DecalComponent>& decals() noexcept { return m_decals; }
     [[nodiscard]] const ComponentPool<DecalComponent>& decals() const noexcept { return m_decals; }
+    [[nodiscard]] ComponentPool<ViewportFrameComponent>& viewportFrames() noexcept { return m_viewportFrames; }
+    [[nodiscard]] const ComponentPool<ViewportFrameComponent>& viewportFrames() const noexcept
+    {
+        return m_viewportFrames;
+    }
     [[nodiscard]] ComponentPool<CameraTextureComponent>& cameraTextures() noexcept { return m_cameraTextures; }
     [[nodiscard]] const ComponentPool<CameraTextureComponent>& cameraTextures() const noexcept
     {

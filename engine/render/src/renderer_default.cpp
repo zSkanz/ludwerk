@@ -4097,10 +4097,14 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
     // --- Sky and forward PBR ------------------------------------------------
 
+    // Cleared to nothing -- zero coverage -- for a view with no sky behind it;
+    // the sky covers every other view's background whatever this is.
+    const bool clearBehind = world.environment.transparentBackground;
     const std::array<rhi::ColorAttachment, 1> hdrAttachment{rhi::ColorAttachment{
         .texture = hdr_,
         .loadOp = rhi::LoadOp::Clear,
         .storeOp = rhi::StoreOp::Store,
+        .clearColor = {0.0f, 0.0f, 0.0f, clearBehind ? 0.0f : 1.0f},
     }};
 
     cmd.pushDebugGroup("forward");
@@ -4138,7 +4142,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // The disc's brightness relative to the sky around it, scaled by the day
         // factor so a sun below the horizon leaves no disc behind.
         skyUniforms.sunColor[3] = kSunDiscIntensity * sky.dayFactor;
-        if (skyGoverned) {
+        if (clearBehind) {
+            // No sky behind a view that shows only its instances (ADR 0107):
+            // what nothing draws stays clear.
+        }
+        else if (skyGoverned) {
             // **The sky a `Sky` governs** (ADR 0096): its pictures or the
             // gradient, and its sun, moon and stars, through its own pipeline.
             GpuLookSkyUniforms lookSky;
@@ -4197,9 +4205,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // went on lighting every upward-facing surface from underneath.
         // The moon by night, at its own small fraction (see `SkyParams`).
         frame.sunDirectionBrightness[3] = world.environment.sunBrightness * sky.lightFactor;
-        frame.sunColorUnused[0] = sky.lightColor.r;
-        frame.sunColorUnused[1] = sky.lightColor.g;
-        frame.sunColorUnused[2] = sky.lightColor.b;
+        frame.sunColorUnused[0] = sky.lightColor.r * world.environment.lightTint.r;
+        frame.sunColorUnused[1] = sky.lightColor.g * world.environment.lightTint.g;
+        frame.sunColorUnused[2] = sky.lightColor.b * world.environment.lightTint.b;
         frame.ambient[0] = world.environment.ambient.r;
         frame.ambient[1] = world.environment.ambient.g;
         frame.ambient[2] = world.environment.ambient.b;
@@ -4724,6 +4732,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     GpuTonemapUniforms tonemap;
     tonemap.exposureBloom[0] = world.environment.exposureCompensation;
     tonemap.exposureBloom[1] = look.bloomGoverned ? kBloomIntensity * look.bloomIntensity : kBloomIntensity;
+    tonemap.exposureBloom[2] = world.environment.transparentBackground ? 1.0f : 0.0f;
 
     // **Every colour correction, as one affine map, in the graded twin of the
     // tonemap** -- chosen only on a frame that has one, so a world without
@@ -4747,10 +4756,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // fullscreen pass into a larger target sampling a smaller source is exactly
     // a bilinear upscale.
     cmd.pushDebugGroup("tonemap");
-    fullscreenPass(cmd, graded ? gradedTonemap_.handle : tonemapPipeline_, settings_.antiAliasing ? ldr_ : target.color,
-                   settings_.antiAliasing ? renderWidth_ : target.width,
-                   settings_.antiAliasing ? renderHeight_ : target.height, "tonemap", tonemapBindings,
-                   asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
+    // A view with nothing behind it goes straight to its target: the
+    // anti-aliasing resolve writes an opaque picture, and would lose the alpha.
+    const bool resolve = settings_.antiAliasing && !world.environment.transparentBackground;
+    fullscreenPass(cmd, graded ? gradedTonemap_.handle : tonemapPipeline_, resolve ? ldr_ : target.color,
+                   resolve ? renderWidth_ : target.width, resolve ? renderHeight_ : target.height, "tonemap",
+                   tonemapBindings, asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
                    graded ? asBytes(&grade, sizeof(grade)) : std::span<const std::byte>{});
     cmd.popDebugGroup();
 
@@ -4760,7 +4771,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // than temporal on purpose (M7.5 brief, Decision 10), and nothing here
     // forecloses a temporal pass -- which would replace this one rather than
     // fight it.
-    if (settings_.antiAliasing) {
+    if (resolve) {
         GpuFxaaUniforms fxaa;
         // The SOURCE's texel, not the target's. FXAA walks an edge in the image
         // it is reading, and at a reduced render scale that image is smaller
@@ -4771,9 +4782,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         const std::array<rhi::TextureBinding, 1> ldrBinding{rhi::TextureBinding{ldr_, linearSampler_}};
         cmd.pushDebugGroup("fxaa");
         // A view's texture is `kLdrFormat` whatever the window's format is.
-        const rhi::PipelineHandle resolve =
+        const rhi::PipelineHandle fxaaPass =
             target.colorFormat != colorFormat_ && fxaaViewPipeline_.valid() ? fxaaViewPipeline_ : fxaaPipeline_;
-        fullscreenPass(cmd, resolve, target.color, target.width, target.height, "fxaa", ldrBinding,
+        fullscreenPass(cmd, fxaaPass, target.color, target.width, target.height, "fxaa", ldrBinding,
                        asBytes(&fxaa, sizeof(fxaa)));
         cmd.popDebugGroup();
     }

@@ -117,6 +117,7 @@ guided tour.
 | [`UIObject`](uiobject.md) | [`Instance`](instance.md) | Anything that occupies a rectangle on screen (§2.2). |
 | [`UIPadding`](uipadding.md) | [`Instance`](instance.md) | Insets its parent's content on each side (§2.2). |
 | [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
+| [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. |
 | [`Weld`](weld.md) | [`Instance`](instance.md) | Holds one part at a fixed offset from another. |
 | [`WeldConstraint`](weldconstraint.md) | [`Instance`](instance.md) | The same joint, with the offset CAPTURED rather than authored. |
 | [`WeldConstraint2D`](weldconstraint2d.md) | [`Constraint2D`](constraint2d.md) | The two parts held rigidly together, in the placement they had when the weld was made: a sword in a hand, a crate's lid, a vehicle's body on its frame. |

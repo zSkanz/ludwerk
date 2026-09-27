@@ -14,6 +14,9 @@
 	two and a half. `[render] max_views_per_frame` in `project.toml` is the
 	ceiling, and the F3 overlay lists each view and its cost.
 
+	**What the guard carries** is three `ViewportFrame`s in the corner: a
+	keycard, a flashlight and a battery turning in their slots.
+
 	Keys: 1 to 6 choose the feed on the tablet, Tab shows or hides the tablet.
 ]]
 
@@ -196,6 +199,51 @@ local function choose(index: number)
 end
 choose(1)
 
+-- --- What the guard carries ----------------------------------------------------
+
+-- **Three items turning in slots**: each slot a `ViewportFrame` with the item
+-- inside it and no background, framed automatically. What is inside a frame is
+-- drawn there and nowhere else, and nothing simulates it -- the script turns
+-- each one by setting its `CFrame`.
+type Item = {
+    Label: string,
+    Model: Part,
+}
+
+local function slot(index: number, label: string, shape: EnumPartShape, size: vector, color: Color3): Item
+    local frame = Instance.new("ViewportFrame")
+    frame.Position = UDim2.fromOffset(24 + (index - 1) * 104, 24)
+    frame.Size = UDim2.fromOffset(92, 92)
+    frame.BackgroundColor = Color3.fromRGB(14, 16, 20)
+    frame.BackgroundTransparency = 0.2
+    frame.Parent = hud
+    local rounded = Instance.new("UICorner")
+    rounded.CornerRadius = UDim.new(0, 10)
+    rounded.Parent = frame
+
+    local model = Instance.new("Part")
+    model.Shape = shape
+    model.Size = size
+    model:SetMaterialParameter("Color", color)
+    model.Parent = frame
+
+    local caption = Instance.new("TextLabel")
+    caption.Position = UDim2.fromOffset(0, 72)
+    caption.Size = UDim2.fromOffset(92, 18)
+    caption.BackgroundTransparency = 1
+    caption.TextColor = Color3.fromRGB(210, 214, 222)
+    caption.TextSize = 13
+    caption.Text = label
+    caption.Parent = frame
+    return { Label = label, Model = model }
+end
+
+local Items: { Item } = {
+    slot(1, "Keycard", Enum.PartShape.Block, vector.create(1.6, 1, 0.08), Color3.fromRGB(230, 70, 60)),
+    slot(2, "Flashlight", Enum.PartShape.Cylinder, vector.create(2, 0.5, 0.5), Color3.fromRGB(60, 60, 70)),
+    slot(3, "Battery", Enum.PartShape.Cylinder, vector.create(1, 0.4, 0.4), Color3.fromRGB(240, 170, 40)),
+}
+
 -- --- Keys ---------------------------------------------------------------------
 
 local Controls = Instance.new("InputContext")
@@ -245,6 +293,9 @@ RunService.Heartbeat:Connect(function(dt: number)
 
     -- Every room's prop turns, so every feed is visibly live.
     Clock += dt
+    for index, item in Items do
+        item.Model.CFrame = CFrame.fromEuler(0.35, Clock * 0.9 + index, 0)
+    end
     for index, room in Rooms do
         local position = room.Prop.Position
         room.Prop.CFrame = CFrame.new(position.x, position.y, position.z)

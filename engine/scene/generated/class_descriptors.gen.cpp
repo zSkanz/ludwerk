@@ -364,7 +364,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     modelDesc.flags = ClassFlags::None;
     modelDesc.defaultName = atoms.intern("Model");
     modelDesc.doc = "A group of parts handled as one object, with a pivot to move it by and an extents box to measure it with.";
-    static constexpr std::array<std::string_view, 5> modelParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    static constexpr std::array<std::string_view, 6> modelParents{{"Workspace", "Model", "BasePart", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     modelDesc.parents = modelParents;
     modelDesc.properties = modelProperties;
     modelDesc.methods = modelMethods;
@@ -700,7 +700,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     partDesc.flags = ClassFlags::None;
     partDesc.defaultName = atoms.intern("Part");
     partDesc.doc = "The primitive solid: a part whose geometry is one of a small set of shapes rather than an imported mesh.";
-    static constexpr std::array<std::string_view, 5> partParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    static constexpr std::array<std::string_view, 6> partParents{{"Workspace", "Model", "BasePart", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     partDesc.parents = partParents;
     partDesc.properties = partProperties;
     classes.registerClass(partDesc);

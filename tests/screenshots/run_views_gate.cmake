@@ -6,7 +6,8 @@
 # `view://red` and `view://blue`; two `ImageLabel`s show those names. Probes,
 # not a golden, for the reason `run_ui_appearance_gate.cmake` gives. The feeds
 # are lighter than the world's view, and that is the claim too: each view keeps
-# its own exposure, and a camera that sees only a dark red wall opens up.
+# its own exposure, and a camera that sees only a dark red wall opens up. And a
+# `ViewportFrame` with no background shows its cube and, round it, the world.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DPROBE=<imgprobe> -DSCRIPT=<project>
@@ -39,7 +40,7 @@ endif()
 execute_process(
     COMMAND "${PROBE}" "${OUTPUT}" --tolerance=40
         # The world's own view: the green wall, between and below the pictures.
-        "0.5,0.8=2,203,19"
+        "0.25,0.8=2,203,19"
         "0.5,0.38=2,203,19"
         # The left picture is the red camera's feed, the right the blue one's.
         "0.22,0.38=248,74,78"
@@ -48,6 +49,11 @@ execute_process(
         "0.22,0.38!=117,118,252"
         "0.78,0.38!=248,74,78"
         "0.22,0.38!=2,203,19"
+        # A ViewportFrame with no background: its yellow cube in the middle, and
+        # the world's green wall through the part of the frame it left clear.
+        "0.5,0.78=196,202,2"
+        "0.41,0.62=2,203,19"
+        "0.41,0.62!=196,202,2"
     RESULT_VARIABLE probe_result
     OUTPUT_VARIABLE probe_output
     ERROR_VARIABLE probe_output)

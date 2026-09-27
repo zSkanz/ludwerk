@@ -92,7 +92,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     meshPartDesc.flags = scene::ClassFlags::None;
     meshPartDesc.defaultName = atoms.intern("MeshPart");
     meshPartDesc.doc = "A part whose geometry is an imported mesh rather than a primitive solid. One file is one mesh: a model made of several pieces is several MeshParts, which is the shape a prefab assumes.";
-    static constexpr std::array<std::string_view, 5> meshPartParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    static constexpr std::array<std::string_view, 6> meshPartParents{{"Workspace", "Model", "BasePart", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     meshPartDesc.parents = meshPartParents;
     meshPartDesc.properties = meshPartProperties;
     meshPartDesc.attachComponents = native::attachMeshPartComponents;
@@ -237,7 +237,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     cameraDesc.flags = scene::ClassFlags::None;
     cameraDesc.defaultName = atoms.intern("Camera");
     cameraDesc.doc = "The viewpoint the world is rendered from. A camera is an ordinary instance a script owns and moves; the engine never takes it over, which is why there is no CameraType.";
-    static constexpr std::array<std::string_view, 3> cameraParents{{"Workspace", "ReplicatedStorage", "ServerStorage"}};
+    static constexpr std::array<std::string_view, 4> cameraParents{{"Workspace", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     cameraDesc.parents = cameraParents;
     cameraDesc.properties = cameraProperties;
     cameraDesc.attachComponents = native::attachCameraComponents;

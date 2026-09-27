@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 #include "engine/scene/world.h"
 #include "engine/ui/ui.h"
@@ -566,6 +567,18 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             appendImageQuads(box, resolved, ready, image->scaleType, image->sliceCenter, image->imageColor,
                              entry.scissor, cornerRadius, out.quads);
         }
+        return;
+    }
+    // **A `ViewportFrame`'s picture** (ADR 0107): what the host drew of the
+    // instances inside it, under the name it registers for the frame. Nothing
+    // until the first picture -- the frame's own background shows, which is
+    // what an empty slot looks like.
+    if (world.viewportFrames().find(entry.id) != nullptr) {
+        ResolvedImage resolved;
+        const std::string name = "view://#" + std::to_string(entry.id.index);
+        if (resolveImage(name, resolved))
+            appendImageQuads(box, resolved, true, 0, core::Rect{}, core::Color3{1.0f, 1.0f, 1.0f}, entry.scissor,
+                             cornerRadius, out.quads);
         return;
     }
     if (const scene::TextLabelComponent* label = world.textLabels().find(entry.id); label != nullptr) {

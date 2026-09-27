@@ -112,20 +112,27 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage V2 — `ViewportFrame`
 
-- [ ] IDL: `ViewportFrame : GuiObject` (`CurrentCamera`, `Ambient`,
-      `LightColor`, `LightDirection`, `Quality`). Parts and models may be
-      parented under it (update `canParentInto` and the Explorer).
-- [ ] **Its instances are drawn only in it**: the main extraction skips them
-      (they are not under the `Workspace`, so physics already does), and the
-      frame extracts with itself as the root.
-- [ ] **Redrawn only when dirty**: a change to anything inside, to the camera,
-      or to the frame's size marks it; otherwise the last picture is reused.
-      With no `CurrentCamera`, a camera that frames the contents' bounds.
-- [ ] Works inside a `SurfaceGui`.
-- [ ] An inventory in an example (the camera game's tablet, or
-      `examples/18-world-ui`): items turning in slots.
-- [ ] Tests: forty still frames draw forty views once and zero after; turning
-      one redraws one; a part inside is not simulated (it does not fall).
+- [x] IDL: `ViewportFrame : UIObject` (`CurrentCamera`, `Ambient`,
+      `LightColor`, `LightDirection`). `Part`, `MeshPart`, `Model` and `Camera`
+      may be parented under it. `Quality` left out: a frame is lit by its own
+      light and nothing else, and `Full` would need the world's environment in
+      a view that has none behind it.
+- [x] **Its instances are drawn only in it**: not under the `Workspace`, so the
+      main extraction and physics skip them; the frame extracts with itself as
+      the root, and draws with no sky and its background clear (the tonemap
+      carries the scene's coverage as alpha for such a view, and FXAA is
+      skipped).
+- [x] **Redrawn only when dirty**: `frameSignature` over the parts, meshes and
+      cameras inside and the frame's light; the texture follows the frame's
+      laid-out size. With no `CurrentCamera`, `frameLens` frames a sphere round
+      everything inside from the front and fifteen degrees above.
+- [ ] Works inside a `SurfaceGui` -- the same draw path, not yet proved.
+- [x] An inventory in `examples/26-security-cameras`: three items turning in
+      slots.
+- [x] Tests: `views_gate` (a cube in a frame with the world showing round it);
+      `view_host_tests` (the signature is still when nothing moves and moves
+      when an item or the light does; nothing inside frames nothing);
+      `world/viewport_frame.spec.luau` (a loose part inside does not fall).
 
 ## Stage V3 — mirrors and portals
 

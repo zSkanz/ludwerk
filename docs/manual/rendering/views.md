@@ -46,10 +46,47 @@ drawn. For a monitor, put the picture on a `SurfaceGui`.
 | `Quality` | `Simple` (the default) draws without shadows or the look's effects; `Full` draws as the main view does. |
 
 A feed is drawn **before** the main view, so a monitor in the world shows this
-frame's picture. A camera that sees its own texture sees the previous one:
-there is no recursion to worry about. Each camera keeps **its own exposure**:
+frame's picture. A camera that sees a surface showing its own texture sees that
+surface without it -- there is no recursion to worry about, and a mirror in a
+mirror is for later. Each camera keeps **its own exposure**:
 a camera in a dark room opens up, the way a real one does, whatever the main
 view is looking at.
+
+## Instances in the UI: `ViewportFrame`
+
+An item turning in an inventory slot, a character preview, a 3D icon: a
+`ViewportFrame` is a UI element that draws the parts and models inside it.
+
+```luau
+--!strict
+local slot = Instance.new("ViewportFrame")
+slot.Size = UDim2.fromOffset(96, 96)
+slot.BackgroundTransparency = 1         -- only the item shows
+slot.Parent = inventory
+
+local keycard = Instance.new("Part")
+keycard.Size = vector.create(1.6, 1, 0.08)
+keycard:SetMaterialParameter("Color", Color3.fromRGB(230, 70, 60))
+keycard.Parent = slot
+
+RunService.Heartbeat:Connect(function()
+    keycard.CFrame = CFrame.fromEuler(0.35, os.clock(), 0)
+end)
+```
+
+- **What is inside is its world and nobody else's**: drawn in the frame and
+  nowhere else, and not simulated -- no gravity, no collisions. A script
+  moves it by setting `CFrame`.
+- **Framed for you**: with no `CurrentCamera`, it looks at everything inside
+  from the front and a little above. Put a `Camera` inside it and set
+  `CurrentCamera` to choose the angle yourself.
+- **Its own simple light**: `Ambient`, and one light of `LightColor` travelling
+  along `LightDirection`. No sky and no shadows; with
+  `BackgroundTransparency = 1`, only what is inside shows, over whatever is
+  behind the frame.
+- **Drawn only when something changes**: an item moved, its camera, its light,
+  its size. Forty still items are forty pictures once; one turning is one
+  picture a frame.
 
 ## What it costs
 
@@ -66,7 +103,8 @@ When more are due than the budget allows, the ones still black go first and
 then the oldest picture, so a wall of twelve monitors takes turns instead of
 costing twelve views. `UpdateInterval` is the other lever: six feeds at 2 are
 three views a frame. The F3 overlay -- and the editor's Stats panel -- list
-every view, its size, what it cost and how many frames ago it was drawn.
+every view, its size, what it cost and how many frames ago it was drawn. A
+`ViewportFrame` counts against the same budget whenever it is redrawn.
 
 ## In a match
 
@@ -80,4 +118,5 @@ server draws nothing.
 `examples/26-security-cameras` is a security office at night: six cameras in
 six rooms, a `SurfaceGui` monitor wall showing all six, and a tablet that shows
 one full size -- the chosen feed every frame at 640 by 360, the rest every
-other frame at 320 by 180.
+other frame at 320 by 180. In the corner, what the guard carries turns in three
+`ViewportFrame` slots.
