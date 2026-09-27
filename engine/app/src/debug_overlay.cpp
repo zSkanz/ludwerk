@@ -17,6 +17,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <deque>
@@ -34,6 +35,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -5504,76 +5506,70 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
         return;
     }
 
-    const bool matching = editor.matchRunning();
-    if (toolButton(inPlay || matching ? icons::ActionStop : icons::ActionPlay, inPlay || matching ? "stop" : "play",
-                   inPlay || matching ? "stop the game, and every window of a match"
-                                      : "run the game, remembering the world first")) {
-        if (matching)
-            commands.match = false;
-        else if (!inPlay && editor.matchSettings().isMatch())
-            commands.match = true;
-        else
-            commands.play = !inPlay;
-    }
-    // **How many players, and whether a server runs them, live on the Test tab
-    // alone** (the owner, 2026-09-27): Home is for building the scene, and a
-    // match's shape is a testing question. Play here still plays what Test
-    // says, so a match set up there starts from either button.
-    // **Export, beside Play** (ADR 0104 §4): the shortest path from a scene to
-    // a game on somebody's phone starts here.
-    ImGui::SameLine();
-    if (toolButton(icons::ActionExport, "export", "export the game for Windows, Linux or Android (Ctrl+Shift+B)"))
-        openExportWindow(editor);
-
-    // Only inside play mode, because pausing is a thing that happens to a
-    // running game. Disabled rather than hidden: a control that appears and
-    // disappears moves the ones beside it.
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!inPlay);
-    if (toolButton(run == RunState::Paused ? icons::ActionPlay : icons::ActionPause,
-                   run == RunState::Paused ? "resume" : "pause", "hold the running world still")) {
-        commands.pause = run != RunState::Paused;
-    }
-    ImGui::EndDisabled();
-
-    // **Hidden while editing, and only usable while paused.** A step is one
-    // tick of the simulation; an edited world is one whose simulation is
-    // deliberately stopped, so the control has nothing to mean there. Inside
-    // play mode it stays PRESENT and greys while running, because a control
-    // that appears and disappears moves the ones beside it -- which is the same
-    // rule pause is drawn by, applied one state further in.
-    if (inPlay) {
+    // **Play, pause and step, in the middle of the bar** -- where every game
+    // engine keeps them (the owner, 2026-09-27): the one control somebody
+    // reaches for without looking is in the one place that does not move when
+    // the tools beside it change. Drawn after the tools, and placed.
+    const auto runControls = [&]() {
+        const bool matching = editor.matchRunning();
+        if (toolButton(inPlay || matching ? icons::ActionStop : icons::ActionPlay, inPlay || matching ? "stop" : "play",
+                       inPlay || matching ? "stop the game, and every window of a match"
+                                          : "run the game, remembering the world first")) {
+            if (matching)
+                commands.match = false;
+            else if (!inPlay && editor.matchSettings().isMatch())
+                commands.match = true;
+            else
+                commands.play = !inPlay;
+        }
+        // How many players, and whether a server runs them, live on the Test tab
+        // alone (the owner, 2026-09-27); Play here still plays what Test says.
+        // Only inside play mode, because pausing is a thing that happens to a
+        // running game. Disabled rather than hidden: a control that appears and
+        // disappears moves the ones beside it.
         ImGui::SameLine();
-        ImGui::BeginDisabled(run != RunState::Paused);
-        if (toolButton(icons::ActionForward, "step", "advance exactly one simulation tick"))
-            editor.requestStep();
+        ImGui::BeginDisabled(!inPlay);
+        if (toolButton(run == RunState::Paused ? icons::ActionPlay : icons::ActionPause,
+                       run == RunState::Paused ? "resume" : "pause", "hold the running world still")) {
+            commands.pause = run != RunState::Paused;
+        }
         ImGui::EndDisabled();
 
-        // **Look somewhere else while it runs** (S5.8). Only in play mode,
-        // because while editing the view is already the editor's -- a button
-        // that did nothing in the state somebody spends most of their time in
-        // would be furniture.
-        ImGui::SameLine();
-        const bool detached = editor.cameraDetached();
-        if (detached)
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (toolButton(icons::ActionVisible, "eye",
-                       detached ? "looking through the editor's camera -- click to go back to the game's  (Shift+P)"
-                                : "fly the editor's camera while the game runs. The simulation is untouched  "
-                                  "(Shift+P)")) {
-            editor.setCameraDetached(!detached);
+        // **Hidden while editing, and only usable while paused.** A step is one
+        // tick of the simulation; an edited world is one whose simulation is
+        // deliberately stopped, so the control has nothing to mean there. Inside
+        // play mode it stays PRESENT and greys while running, because a control
+        // that appears and disappears moves the ones beside it -- which is the same
+        // rule pause is drawn by, applied one state further in.
+        if (inPlay) {
+            ImGui::SameLine();
+            ImGui::BeginDisabled(run != RunState::Paused);
+            if (toolButton(icons::ActionForward, "step", "advance exactly one simulation tick"))
+                editor.requestStep();
+            ImGui::EndDisabled();
+
+            // **Look somewhere else while it runs** (S5.8). Only in play mode,
+            // because while editing the view is already the editor's -- a button
+            // that did nothing in the state somebody spends most of their time in
+            // would be furniture.
+            ImGui::SameLine();
+            const bool detached = editor.cameraDetached();
+            if (detached)
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (toolButton(icons::ActionVisible, "eye",
+                           detached ? "looking through the editor's camera -- click to go back to the game's  (Shift+P)"
+                                    : "fly the editor's camera while the game runs. The simulation is untouched  "
+                                      "(Shift+P)")) {
+                editor.setCameraDetached(!detached);
+            }
+            if (detached)
+                ImGui::PopStyleColor();
         }
-        if (detached)
-            ImGui::PopStyleColor();
-    }
+    };
 
     // --- The manipulators -----------------------------------------------
     //
     // Selection and transforms stay here; specialized operations live in their panels.
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-
-    ImGui::SameLine();
     const bool selecting = editor.tool() == Editor::Tool::Select && !editor.handlesShown();
     if (selecting)
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
@@ -5608,8 +5604,11 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     ImGui::SameLine();
     const bool sizing = editor.gizmoMode() == GizmoMode::Scale;
     ImGui::BeginDisabled(sizing);
-    fitControl(ImGui::CalcTextSize("world").x + ImGui::GetStyle().FramePadding.x * 2.0f);
-    if (ImGui::Button(sizing || editor.gizmoLocal() ? "local" : "world"))
+    // **A picture beside the word** (the owner: intuitive, with icons): the
+    // world's axes are the globe, the selection's own are the part.
+    const bool localAxes = sizing || editor.gizmoLocal();
+    fitControl(ImGui::CalcTextSize((tabIconPad() + "world").c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f);
+    if (labeledIconButton(icons, localAxes ? icons::ClassPart : icons::ClassWorkspace, localAxes ? "local" : "world"))
         editor.setGizmoLocal(!editor.gizmoLocal());
     ImGui::EndDisabled();
     ImGui::SetItemTooltip(sizing                ? "a size is in the part's own axes, so resizing is always local"
@@ -5622,16 +5621,18 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     ImGui::SameLine();
     {
         const bool centred = editor.gizmoOrigin() == Editor::GizmoOrigin::Centre;
-        fitControl(ImGui::CalcTextSize("centre").x + ImGui::GetStyle().FramePadding.x * 2.0f);
-        if (ImGui::Button(centred ? "centre" : "pivot"))
+        fitControl(ImGui::CalcTextSize((tabIconPad() + "centre").c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f);
+        // The point a thing turns about, or the middle of what is selected.
+        if (labeledIconButton(icons, centred ? icons::ClassModel : icons::ClassAttachment,
+                              centred ? "centre" : "pivot"))
             editor.setGizmoOrigin(centred ? Editor::GizmoOrigin::Pivot : Editor::GizmoOrigin::Centre);
         ImGui::SetItemTooltip(centred ? "the middle of the selection -- click for the last thing clicked"
                                       : "the last thing clicked -- click for the middle of the selection");
     }
 
     ImGui::SameLine();
+    const bool snapping = editor.snapping();
     {
-        const bool snapping = editor.snapping();
         if (snapping)
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (toolButton(icons::ActionGrid, "snap",
@@ -5688,43 +5689,95 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
             ImGui::Checkbox("show a grid in the viewport", &panels.showGrid);
             ImGui::EndPopup();
         }
+    }
 
+    // **The run controls, in the middle of the bar**, when the tools on the
+    // left leave room for them there -- and straight after the tools when they
+    // do not.
+    const ImGuiStyle& barStyle = ImGui::GetStyle();
+    {
+        const float button = (icons != nullptr && icons->ready() ? glyph : ImGui::CalcTextSize("resume").x) +
+                             barStyle.FramePadding.x * 2.0f;
+        const int count = inPlay ? 4 : 2;
+        const float group = button * static_cast<float>(count) + barStyle.ItemSpacing.x * static_cast<float>(count - 1);
+        ImGui::SameLine();
+        const float centred = (ImGui::GetWindowWidth() - group) * 0.5f;
+        if (centred > ImGui::GetCursorPosX() + barStyle.ItemSpacing.x * 2.0f)
+            ImGui::SetCursorPosX(centred);
+        runControls();
+    }
+
+    // **And at the far end, what sets the tools up and what ships the game**:
+    // the snap steps, the tool panels, the viewport's settings and Export.
+    // Right-aligned by the width the group took last frame, which is exact
+    // where an estimate of four widgets' widths would drift with the theme.
+    // Measured as the sum of its items' own widths, which is right wherever
+    // they landed -- a width taken from positions is wrong the frame the group
+    // wraps, and then keeps it wrapped.
+    static float s_endGroupWidth = 0.0f;
+    float endGroupWidth = 0.0f;
+    const auto measured = [&]() { endGroupWidth += ImGui::GetItemRectSize().x + barStyle.ItemSpacing.x; };
+    ImGui::SameLine();
+    const float atEnd = ImGui::GetWindowWidth() - barStyle.WindowPadding.x - s_endGroupWidth;
+    if (s_endGroupWidth > 0.0f && atEnd > ImGui::GetCursorPosX() + barStyle.ItemSpacing.x * 2.0f)
+        ImGui::SetCursorPosX(atEnd);
+    {
         // **The steps themselves, on the toolbar beside the switch** (the
         // owner's feedback): how far a drag moves, turns and resizes is read
         // and changed while placing something, so it lives where the placing
         // is and not in a settings panel. Dimmed with the switch off, and still
         // editable, so the numbers can be set up before snapping is turned on.
-        const auto stepField = [&](GizmoMode mode, const char* id, const char* format, f32 slowest, f32 fastest,
-                                   const char* tip) {
-            ImGui::SameLine();
-            const float width = ImGui::CalcTextSize("move 0.25 m").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            fitControl(width);
-            ImGui::SetNextItemWidth(width);
+        //
+        // **Each wears its tool's picture** rather than its name (the owner:
+        // intuitive, with icons) -- the move, turn and resize handles the
+        // buttons on the left already show -- and falls back to the word when
+        // there is no atlas.
+        const bool pictured = icons != nullptr && icons->ready();
+        const auto stepField = [&](GizmoMode mode, std::string_view icon, const char* id, const char* format,
+                                   const char* worded, f32 slowest, f32 fastest, const char* tip) {
+            const float width =
+                ImGui::CalcTextSize(pictured ? "0.25 m" : "move 0.25 m").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            fitControl(width + (pictured ? glyph + ImGui::GetStyle().ItemInnerSpacing.x : 0.0f));
             if (!snapping)
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.6f);
+            if (pictured) {
+                const float lift = (ImGui::GetFrameHeight() - glyph) * 0.5f;
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + lift);
+                (void)drawIcon(icons, icon, glyph);
+                ImGui::SetItemTooltip("%s", tip);
+                measured();
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - lift);
+            }
+            ImGui::SetNextItemWidth(width);
             f32 step = editor.snapStep(mode);
-            if (ImGui::DragFloat(id, &step, step * 0.05f + 0.001f, slowest, fastest, format))
+            if (ImGui::DragFloat(id, &step, step * 0.05f + 0.001f, slowest, fastest, pictured ? format : worded))
                 editor.setSnapStep(mode, step);
             if (!snapping)
                 ImGui::PopStyleVar();
             ImGui::SetItemTooltip("%s", tip);
+            measured();
         };
-        stepField(GizmoMode::Translate, "##move-step", "move %.2f m", 0.001f, 64.0f,
+        stepField(GizmoMode::Translate, icons::ActionMove, "##move-step", "%.2f m", "move %.2f m", 0.001f, 64.0f,
                   "how far a move snaps, in metres -- drag or double-click to type");
-        stepField(GizmoMode::Rotate, "##turn-step", "turn %.0f deg", 0.1f, 90.0f,
+        ImGui::SameLine();
+        stepField(GizmoMode::Rotate, icons::ActionRotate, "##turn-step", "%.0f deg", "turn %.0f deg", 0.1f, 90.0f,
                   "how far a turn snaps, in degrees -- drag or double-click to type");
-        stepField(GizmoMode::Scale, "##size-step", "size %.2f m", 0.001f, 64.0f,
+        ImGui::SameLine();
+        stepField(GizmoMode::Scale, icons::ActionScale, "##size-step", "%.2f m", "size %.2f m", 0.001f, 64.0f,
                   "how far a resize snaps, in metres -- drag or double-click to type");
     }
 
     ImGui::SameLine();
     ImGui::TextDisabled("|");
+    measured();
 
     ImGui::SameLine();
     fitControl(ImGui::CalcTextSize("Tools").x + glyph + ImGui::GetStyle().FramePadding.x * 3.0f);
     if (labeledIconButton(icons, icons::ActionTools, "Tools"))
         ImGui::OpenPopup("viewport-tools");
     ImGui::SetItemTooltip("Open a tool panel without changing the active tool");
+    measured();
     if (ImGui::BeginPopup("viewport-tools")) {
         if (iconMenuItem(icons, icons::ClassTerrain, "Terrain")) {
             panels.terrain = true;
@@ -5744,6 +5797,16 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
     ImGui::SameLine();
     if (toolButton(icons::ActionSettings, "viewport settings", "camera, snapping and visualization overlays"))
         panels.viewportSettings = !panels.viewportSettings;
+    measured();
+
+    // **Export** (ADR 0104 §4): the way from a scene to a game on somebody's
+    // phone, at the end of the bar, where a finished thing leaves.
+    ImGui::SameLine();
+    if (toolButton(icons::ActionExport, "export", "export the game for Windows, Linux or Android (Ctrl+Shift+B)"))
+        openExportWindow(editor);
+    measured();
+    s_endGroupWidth = endGroupWidth - barStyle.ItemSpacing.x;
+
     // Whether the game runs, which tool is in hand and how to fly are the
     // status bar's to say now (the owner's queue, Q2).
     (void)run;
@@ -6264,6 +6327,20 @@ void selectDockTab(const char* name)
         window->DockNode->TabBar->NextSelectedTabId = window->TabId;
 }
 
+// **A workbench key, pressed from anywhere -- the code included.** The code
+// pane claims every key while its caret is in it (`SetActiveIdUsingAllKeyboardKeys`,
+// as a text field does), and a global route loses to that: Ctrl+Shift+P typed
+// into a script did nothing, and the next words landed in the code. The
+// palette, the panels and Run work from every text field in the editor this
+// follows; only a modal dialog keeps them.
+bool workbenchKey(ImGuiKeyChord keys)
+{
+    if (ImGui::Shortcut(keys, ImGuiInputFlags_RouteGlobal))
+        return true;
+    return ImGui::IsAnyItemActive() && ImGui::GetTopMostPopupModal() == nullptr &&
+           ImGui::IsKeyChordPressed(keys, ImGuiInputFlags_None, ImGuiKeyOwner_Any);
+}
+
 // Built once, and only when there is no saved layout: `DockBuilderRemoveNode`
 // would throw away the arrangement somebody chose.
 void buildDefaultLayout(ImGuiID dockspace)
@@ -6272,34 +6349,39 @@ void buildDefaultLayout(ImGuiID dockspace)
     ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
 
-    // The centre is the world and everything else is furniture around it, which
-    // is the one thing every editor of this shape agrees on.
+    // **A game engine's arrangement** (the owner, 2026-09-27: the look may be
+    // the code editor's, the layout has to be an engine's). The world in the
+    // middle, and every open script a tab beside it; the tree on the left; the
+    // selection's properties down the whole right side; and along the bottom,
+    // under the tree and the world both, the project's files and what the game
+    // said -- where Unity keeps its Project and Console and Unreal its content
+    // drawer. Split right first, so the inspector runs the full height, and
+    // bottom second, so the browser gets the width a grid of assets wants.
     ImGuiID centre = dockspace;
-    const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.18f, nullptr, &centre);
-    const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.24f, nullptr, &centre);
-    const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.28f, nullptr, &centre);
+    const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.22f, nullptr, &centre);
+    const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.30f, nullptr, &centre);
+    const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.20f, nullptr, &centre);
 
     ImGui::DockBuilderDockWindow("Viewport", centre);
-    // **The side bar, as the editor this follows arranges it** (the owner's
-    // queue, Q2): the views the activity bar switches between, in one node --
-    // the tree, the project's files, the debugger. A tab node opens on
-    // whichever window was docked last, so which one greets somebody is set
-    // explicitly after the build (`selectDockTab`).
+    // The tree, alone: the panel somebody is in all day is not a tab they have
+    // to find behind two others.
     ImGui::DockBuilderDockWindow("Explorer", left);
-    ImGui::DockBuilderDockWindow("Content", left);
-    ImGui::DockBuilderDockWindow("Debug", left);
-    // The secondary side bar: what describes the selection, and the tools that
-    // edit it. **The world tools stay here, beside Properties, and not in the
-    // side bar**: selecting a terrain in the tree opens its panel, and a panel
-    // that appears comes to the front of its node -- in the side bar that
-    // would put the Explorer away under the click that chose the terrain.
+    // What describes the selection, and the tools that edit it. **The world
+    // tools stay beside Properties**: selecting a terrain in the tree opens its
+    // panel, and a panel that appears comes to the front of its node -- beside
+    // the tree, that would put the Explorer away under the click that chose
+    // the terrain.
     ImGui::DockBuilderDockWindow("Properties", right);
     ImGui::DockBuilderDockWindow("Terrain", right);
     ImGui::DockBuilderDockWindow("Blocks", right);
     ImGui::DockBuilderDockWindow("Tiles", right);
     ImGui::DockBuilderDockWindow("Viewport Settings", right);
-    // The panel under the world: what the game said, and the numbers.
+    // Under everything: the files, what the game said, the debugger, and the
+    // numbers. A tab node opens on whichever window was docked last, so which
+    // one greets somebody is set explicitly after the build (`selectDockTab`).
+    ImGui::DockBuilderDockWindow("Content", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
+    ImGui::DockBuilderDockWindow("Debug", bottom);
     ImGui::DockBuilderDockWindow("Stats", bottom);
     ImGui::DockBuilderDockWindow("Streaming", bottom);
 
@@ -6742,7 +6824,7 @@ struct ContentLayout
         layout.columns = 1;
         return layout;
     case EditorPanels::ContentView::Tiles:
-        layout.icon = ImGui::GetFrameHeight() * 1.6f;
+        layout.icon = ImGui::GetFrameHeight() * 2.0f;
         break;
     case EditorPanels::ContentView::Icons:
         layout.icon = ImGui::GetFrameHeight() * 3.0f;
@@ -6750,7 +6832,11 @@ struct ContentLayout
     }
 
     const float padding = ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
-    const float side = layout.icon + padding;
+    // **Wide enough for a name**, not only for the icon: a cell as wide as its
+    // picture cut "materials" to "materi..." -- which is a grid of pictures
+    // with the words taken away. About eleven characters, as the grids of
+    // Unity's and Unreal's browsers give a name.
+    const float side = std::max(layout.icon, ImGui::GetFontSize() * 5.5f) + padding;
     layout.cell = ImVec2(side, layout.icon + ImGui::GetTextLineHeight() + padding);
     layout.nameBelow = true;
     // At least one, whatever the panel has been dragged down to: a column count
@@ -6786,6 +6872,107 @@ struct ContentLayout
 void openSceneOrAsk(Editor& editor, EditorCommands& commands, EditorDialogs& dialogs, std::string_view path)
 {
     issueOrAsk(EditorDialogs::Pending::OpenScene, editor.hasUnsavedWork(), path, dialogs, commands);
+}
+
+// **The folder tree beside the grid** (the owner, 2026-09-27: a game engine's
+// browser). Along the bottom the browser is wide, and every engine that puts it
+// there gives it the project's folders down the left -- a click on any of them
+// goes straight there, where the path above only goes back up. Read from disk
+// when the browser re-reads a folder, never per frame.
+struct ContentFolderNode
+{
+    std::string name;
+    std::string relative;
+    std::vector<std::size_t> children;
+};
+
+void drawContentFolders(Editor& editor, const IconAtlas* icons)
+{
+    ContentTree& tree = editor.content();
+    static std::vector<ContentFolderNode> s_folders;
+    static std::filesystem::path s_root;
+    static core::u64 s_readAt = ~0ull;
+    if (s_root != tree.root() || s_readAt != tree.refreshes()) {
+        s_root = tree.root();
+        s_readAt = tree.refreshes();
+        s_folders.clear();
+        s_folders.push_back(ContentFolderNode{"content", "", {}});
+        std::vector<std::string> found;
+        std::error_code ec;
+        for (std::filesystem::recursive_directory_iterator walk(s_root, ec), done; !ec && walk != done;
+             walk.increment(ec)) {
+            const std::string name = walk->path().filename().string();
+            // Hidden folders are the tools', not the project's.
+            if (!name.empty() && name.front() == '.') {
+                walk.disable_recursion_pending();
+                continue;
+            }
+            if (walk->is_directory(ec))
+                found.push_back(walk->path().lexically_relative(s_root).generic_string());
+            // A tree of thousands is a tree nobody reads; the path still gets there.
+            if (found.size() >= 4000)
+                break;
+        }
+        std::sort(found.begin(), found.end());
+        std::unordered_map<std::string, std::size_t> index{{"", 0}};
+        for (const std::string& relative : found) {
+            const std::size_t slash = relative.rfind('/');
+            const std::string parent = slash == std::string::npos ? std::string() : relative.substr(0, slash);
+            const auto up = index.find(parent);
+            if (up == index.end())
+                continue;
+            index.emplace(relative, s_folders.size());
+            s_folders[up->second].children.push_back(s_folders.size());
+            s_folders.push_back(
+                ContentFolderNode{slash == std::string::npos ? relative : relative.substr(slash + 1), relative, {}});
+        }
+    }
+
+    const std::string current = tree.currentFolder();
+    const float glyph = ImGui::GetFontSize();
+    std::optional<std::string> go;
+    const std::function<void(std::size_t)> node = [&](std::size_t at) {
+        const ContentFolderNode& folder = s_folders[at];
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (folder.children.empty())
+            flags |= ImGuiTreeNodeFlags_Leaf;
+        if (folder.relative == current)
+            flags |= ImGuiTreeNodeFlags_Selected;
+        // The folder somebody is in is shown, open all the way down to it.
+        if (folder.relative.empty() ||
+            (!current.empty() && (current == folder.relative || current.starts_with(folder.relative + "/"))))
+            ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        const bool open = ImGui::TreeNodeEx(folder.relative.empty() ? "##content-root" : folder.relative.c_str(), flags,
+                                            "%s%s", tabIconPad().c_str(), folder.name.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            go = folder.relative;
+        // The folder's own picture, in the colour somebody gave it.
+        if (icons != nullptr && icons->ready() && g_device != nullptr) {
+            const IconSprite sprite = icons->find(icons::ContentFolder, static_cast<core::u32>(glyph + 0.5f));
+            if (SDL_GPUTexture* texture = rhi::nativeTexture(*g_device, icons->texture());
+                sprite.valid && texture != nullptr) {
+                ImVec4 tint = iconTint(icons, icons::ContentFolder);
+                if (const std::optional<core::Color3> own = editor.contentColor(folder.relative); own.has_value())
+                    tint = ImVec4(own->r, own->g, own->b, tint.w);
+                const ImVec2 corner(ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing(),
+                                    ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - glyph) * 0.5f);
+                ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(texture)),
+                                                     corner, ImVec2(corner.x + glyph, corner.y + glyph),
+                                                     ImVec2(sprite.u0, sprite.v0), ImVec2(sprite.u1, sprite.v1),
+                                                     ImGui::GetColorU32(tint));
+            }
+        }
+        if (open) {
+            for (const std::size_t child : folder.children)
+                node(child);
+            ImGui::TreePop();
+        }
+    };
+    node(0);
+    // After the walk, which reads the tree it would change.
+    if (go.has_value() && *go != current)
+        (void)tree.open(tree.root(), *go);
 }
 
 void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels, EditorDialogs& dialogs,
@@ -7006,6 +7193,18 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
     }
 
     ImGui::Separator();
+
+    // Beside the grid when there is width for both -- which is the bottom of the
+    // screen, where the browser lives -- and not in a narrow column.
+    const float browserScale = ImGui::GetStyle().FontScaleMain;
+    if (ImGui::GetContentRegionAvail().x > 640.0f * browserScale) {
+        const float folderWidth =
+            std::clamp(ImGui::GetContentRegionAvail().x * 0.2f, 170.0f * browserScale, 280.0f * browserScale);
+        if (ImGui::BeginChild("folders", ImVec2(folderWidth, 0.0f), ImGuiChildFlags_ResizeX))
+            drawContentFolders(editor, icons);
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
 
     if (ImGui::BeginChild("entries")) {
         // What the filter left. Pointers into the tree's own vector, which
@@ -10340,6 +10539,43 @@ void buildPaletteFiles(Editor& editor, EditorCommands& commands, EditorDialogs& 
         }
     }
 
+    // **Every script of the project can be found**, not only the ones in the
+    // world (the owner found `game.luau` missing): the code of a scene other
+    // than the open one -- `src/scenes/<scene>/` -- is not mounted, so the tree
+    // below never lists it. It opens as a file, relative to the content root
+    // the way every file tab is. The open scene's own folder and `src/client`,
+    // `src/server` and `src/shared` are in the tree already.
+    {
+        std::error_code ec;
+        const std::filesystem::path project = editor.content().root().parent_path();
+        const std::filesystem::path scenes = project / "src" / "scenes";
+        std::string openScene = std::filesystem::path(editor.openScenePath()).filename().string();
+        if (const std::size_t dot = openScene.find('.'); dot != std::string::npos)
+            openScene.resize(dot);
+        std::vector<std::string> found;
+        for (std::filesystem::recursive_directory_iterator walk(scenes, ec), done; !ec && walk != done;
+             walk.increment(ec)) {
+            if (!walk->is_regular_file(ec) || walk->path().extension() != ".luau")
+                continue;
+            const std::string relative = walk->path().lexically_relative(project).generic_string();
+            const std::string scene = walk->path().lexically_relative(scenes).begin()->generic_string();
+            if (!openScene.empty() && scene == openScene)
+                continue;
+            found.push_back(relative);
+        }
+        // The walk's order is the file system's; the list is the palette's.
+        std::sort(found.begin(), found.end());
+        for (const std::string& relative : found) {
+            auto [name, folder] = split(relative);
+            PaletteItem item;
+            item.title = std::move(name);
+            item.detail = std::move(folder);
+            item.icon = std::string(icons::ClassScript);
+            item.run = [&commands, relative] { commands.openFile = "../" + relative; };
+            out.push_back(std::move(item));
+        }
+    }
+
     if (world == nullptr)
         return;
     const scene::ClassId baseScript = world->classes().findId(world->atoms().lookup("BaseScript"));
@@ -10384,33 +10620,33 @@ void openQuickOpen()
 void handleWorkbenchKeys(Editor& editor, EditorCommands& commands, EditorPanels& panels, EditorDialogs& dialogs,
                          const DebugView& debug)
 {
-    const ImGuiInputFlags global = ImGuiInputFlags_RouteGlobal;
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P, global) || ImGui::Shortcut(ImGuiKey_F1, global))
+    const auto global = workbenchKey;
+    if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P) || global(ImGuiKey_F1))
         g_palette.open(CommandPalette::Mode::Commands);
-    else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, global))
+    else if (global(ImGuiMod_Ctrl | ImGuiKey_P))
         g_palette.open(CommandPalette::Mode::Files);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_B, global))
+    if (global(ImGuiMod_Ctrl | ImGuiKey_B))
         toggleSideBar(panels);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_B, global))
+    if (global(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_B))
         panels.properties = !panels.properties;
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_J, global))
+    if (global(ImGuiMod_Ctrl | ImGuiKey_J))
         panels.console = !panels.console;
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_GraveAccent, global)) {
+    if (global(ImGuiMod_Ctrl | ImGuiKey_GraveAccent)) {
         panels.console = true;
         ImGui::SetWindowFocus("Console");
     }
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Comma, global))
+    if (global(ImGuiMod_Ctrl | ImGuiKey_Comma))
         dialogs.preferences = true;
     // F5 is the debugger's Continue while a script is stopped, so it starts the
     // game only when nothing is.
     if (!debug.parked && !editor.inPlayMode() && !editor.matchRunning() && !editor.stampSession().open() &&
-        ImGui::Shortcut(ImGuiKey_F5, global)) {
+        global(ImGuiKey_F5)) {
         if (editor.matchSettings().isMatch())
             commands.match = true;
         else
             commands.play = true;
     }
-    if (ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_F5, global)) {
+    if (global(ImGuiMod_Shift | ImGuiKey_F5)) {
         if (editor.matchRunning())
             commands.match = false;
         else if (editor.inPlayMode())
@@ -10890,13 +11126,14 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
 
-    // The keys the editor this follows opens its views with.
-    const ImGuiInputFlags global = ImGuiInputFlags_RouteGlobal;
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_E, global))
+    // The keys the editor this follows opens its views with -- from anywhere,
+    // the code included (`workbenchKey`).
+    const auto global = workbenchKey;
+    if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_E))
         revealPanel(panels, "###Explorer", panels.explorer);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_A, global))
+    if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_A))
         revealPanel(panels, "###Content", panels.content);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, global))
+    if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D))
         revealPanel(panels, "###Debug", panels.debug);
 }
 
@@ -11090,6 +11327,40 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
         drawActivityBar(panels, dialogs, icons);
     }
 
+    // **Each node opens on the tab it was left on.** ImGui restores that only
+    // when a node's tab bar is made, and selects any tab that turns up in a
+    // LATER frame -- and a panel or two is only submitted a few frames in, so
+    // every launch after the first opened the bottom panel on Stats. The saved
+    // choices are read from the layout file itself -- `ID=` and `Selected=` on
+    // each node's line, which is the whole of what ImGui kept -- and put back
+    // for the first frames; a click in the first tenth of a second is the
+    // price. (ImGui's own parsed copy is a type private to its source file.)
+    static std::vector<std::pair<ImGuiID, ImGuiID>> s_savedTabs;
+    static int s_restoreTabs = -1;
+    if (s_restoreTabs < 0) {
+        s_restoreTabs = 0;
+        std::string layout;
+        if (const char* file = ImGui::GetIO().IniFilename; file != nullptr && platform::readTextFile(file, layout)) {
+            for (std::size_t at = 0; at < layout.size();) {
+                const std::size_t end = std::min(layout.find('\n', at), layout.size());
+                const std::string_view line(layout.data() + at, end - at);
+                at = end + 1;
+                if (line.find("Dock") == std::string_view::npos)
+                    continue;
+                const std::size_t id = line.find(" ID=0x");
+                const std::size_t selected = line.find(" Selected=0x");
+                if (id == std::string_view::npos || selected == std::string_view::npos)
+                    continue;
+                const auto hex = [&line](std::size_t from) {
+                    return static_cast<ImGuiID>(std::strtoul(std::string(line.substr(from, 8)).c_str(), nullptr, 16));
+                };
+                s_savedTabs.emplace_back(hex(id + 6), hex(selected + 12));
+            }
+        }
+        if (!s_savedTabs.empty())
+            s_restoreTabs = 12;
+    }
+
     // A transparent central node, so a layout that has not been built yet shows
     // the frame underneath instead of a slab of grey.
     const ImGuiID dockspace =
@@ -11116,10 +11387,17 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
         // there is nothing to throw away.
         // And once for a layout older than the workbench's arrangement, which moved
         // every panel (`Editor::CurrentLayoutRevision`).
-        const bool beforeWorkbench = editor != nullptr && editor->layoutRevision() < 2;
+        const bool beforeWorkbench = editor != nullptr && editor->layoutRevision() < Editor::CurrentLayoutRevision;
         if (asked || beforeWorkbench || node == nullptr || (!node->IsSplitNode() && node->Windows.Size == 0)) {
             buildDefaultLayout(dockspace);
             builtThisFrame = true;
+            // The browser moved under the world, where a list is a column of
+            // names in a wide panel: an arrangement older than that one gets
+            // the grid with it.
+            if (beforeWorkbench && editor != nullptr) {
+                panels.contentView = EditorPanels::ContentView::Tiles;
+                editor->setContentView(panels.contentView);
+            }
             if (asked) {
                 panels = EditorPanels{};
                 // Reset Layout means the arrangement, and the browser's layout
@@ -11146,7 +11424,12 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     // out to sit BESIDE the world rather than over it -- which is what was asked
     // for and what a hand-rolled tab bar would have refused.
     if (scripts != nullptr) {
-        const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace);
+        // Where the Viewport IS, which is not always the dockspace's central
+        // node: somebody may have moved the world, and a script belongs with it.
+        const ImGuiWindow* world3d = ImGui::FindWindowByName("###Viewport");
+        const ImGuiDockNode* central = world3d != nullptr && world3d->DockNode != nullptr
+                                           ? world3d->DockNode
+                                           : ImGui::DockBuilderGetCentralNode(dockspace);
         const ScriptActionButton scriptButton = [icons](std::string_view id, const char* label, bool compact) {
             if (compact)
                 return iconButton(icons, id, ImGui::GetFontSize(), label, label, label);
@@ -11641,10 +11924,40 @@ terrainPanelDone:;
     // put where it belongs, and every panel size and split stays exactly where
     // it was. A person who chooses `stats` afterwards keeps it, because the
     // revision has already moved and this never runs again.
+    if (s_restoreTabs > 0) {
+        // **And the keyboard to the tree, once.** A window that appears takes
+        // the focus, the last one to appear keeps it, and a node always shows
+        // the tab of the focused window -- so the bottom panel went on opening
+        // on Stats, the last panel drawn, whatever tab had been left in front.
+        // This is the focus a freshly built layout gives too.
+        if (s_restoreTabs == 12)
+            ImGui::SetWindowFocus("###Explorer");
+        --s_restoreTabs;
+        for (const auto& [nodeId, tabId] : s_savedTabs) {
+            ImGuiDockNode* node = ImGui::DockBuilderGetNode(nodeId);
+            if (node != nullptr && node->TabBar != nullptr &&
+                ImGui::TabBarFindTabByID(node->TabBar, tabId) != nullptr) {
+                node->SelectedTabId = tabId;
+                node->TabBar->NextSelectedTabId = tabId;
+            }
+        }
+        if (builtThisFrame)
+            s_restoreTabs = 0;
+    }
+
     const bool migrating = editor != nullptr && editor->layoutRevision() < Editor::CurrentLayoutRevision;
     if (builtThisFrame || migrating) {
+        // The panel under the world in the order an engine keeps it: the
+        // files, then what the game said, then the debugger and the numbers.
+        // A tab bar sorts the tabs it adds by this, and the layout file keeps
+        // it; without it the order is whichever panel was drawn first.
+        short order = 0;
+        for (const char* name : {"###Content", "###Console", "###Debug", "###Stats", "###Streaming"}) {
+            if (ImGuiWindow* window = ImGui::FindWindowByName(name); window != nullptr)
+                window->DockOrder = order++;
+        }
         selectDockTab("Properties");
-        selectDockTab("Console");
+        selectDockTab("Content");
         selectDockTab("Explorer");
         // Keyboard focus goes to the tree rather than to the grid: it belongs
         // to the panel somebody is about to move around in.

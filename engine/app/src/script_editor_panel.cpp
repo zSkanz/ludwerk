@@ -2545,13 +2545,6 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
     const FoldView view = foldView(tab.document.lineCount(), tab.foldRanges, tab.folded);
     m.view = &view;
 
-    // A tab whose indentation was made tabs on opening hands the text to the
-    // instance now, the way an edit would (see `OpenScript::convertedIndent`).
-    if (tab.convertedIndent) {
-        tab.convertedIndent = false;
-        edited(out, index);
-    }
-
     // **Parsed when the text is at rest**, which is one frame after the last
     // edit: per keystroke would re-parse a file per character, and a timer would
     // put a clock in a panel.
@@ -3334,10 +3327,22 @@ void drawScriptEditor(ScriptEditor& editor, core::u32 dockNode, DebugView& debug
         (void)std::snprintf(name, sizeof(name), "%s%s%s%s", tabIconPad().c_str(), tab->title.c_str(),
                             tab->dirty() ? tabIconPad().c_str() : "", scriptWindowId(*tab).c_str());
 
-        // Beside the Viewport on first appearance, and wherever somebody moved
-        // it afterwards -- `FirstUseEver` is what lets the saved layout win.
-        if (dockNode != 0)
-            ImGui::SetNextWindowDockID(static_cast<ImGuiID>(dockNode), ImGuiCond_FirstUseEver);
+        // **Beside the Viewport, as a tab, whenever it opens undocked** (the
+        // owner: a script opened as a floating window). `FirstUseEver` was not
+        // enough: a layout that remembered the window floating -- an older
+        // arrangement, or one drag out -- won over it every time after. A
+        // script docked somewhere stays there; one that is not is put where a
+        // game engine puts a document, with the world. Only as it appears, so
+        // a script somebody drags out keeps floating until it is closed.
+        if (dockNode != 0) {
+            const ImGuiID id = ImHashStr(name);
+            const ImGuiWindow* live = ImGui::FindWindowByID(id);
+            const ImGuiWindowSettings* saved = ImGui::FindWindowSettingsByID(id);
+            const bool appearing = live == nullptr || !live->WasActive;
+            const bool docked = live != nullptr ? live->DockId != 0 : saved != nullptr && saved->DockId != 0;
+            if (appearing && !docked)
+                ImGui::SetNextWindowDockID(static_cast<ImGuiID>(dockNode), ImGuiCond_Always);
+        }
 
         bool open = true;
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;

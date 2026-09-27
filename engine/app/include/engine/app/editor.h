@@ -339,7 +339,9 @@ struct EditorPanels
         Tiles,
         Icons,
     };
-    ContentView contentView = ContentView::List;
+    // The grid: along the bottom, where the browser lives, a list is a column
+    // of names in a wide empty panel.
+    ContentView contentView = ContentView::Tiles;
 
     // **Whether the Explorer shows what STREAMING made**, and it is off.
     //
@@ -1683,11 +1685,12 @@ public:
     // Bump it only for a default that was WRONG rather than merely different. A
     // number that moved for a preference would be a preference overwritten.
     //
-    // 2 is the one exception, and it was asked for: the owner's remake of the
-    // editor after VS Code (2026-09-27) moved every panel -- the side bar, the
-    // secondary side bar, the panel -- and a layout saved before it is rebuilt
-    // once, as Reset Layout would.
-    static constexpr core::i64 CurrentLayoutRevision = 2;
+    // 2 and 3 are the exceptions, and both were asked for: the owner's remake
+    // of the editor after VS Code (2026-09-27) moved every panel, and the same
+    // day's "a game engine's layout" moved them again -- the files under the
+    // world, the tree alone, the inspector the full height. A layout saved
+    // before either is rebuilt once, as Reset Layout would.
+    static constexpr core::i64 CurrentLayoutRevision = 3;
 
     [[nodiscard]] core::i64 layoutRevision() const noexcept { return m_layoutRevision; }
     void setLayoutRevision(core::i64 revision) noexcept
@@ -2692,7 +2695,7 @@ private:
     GizmoOrigin m_gizmoOrigin = GizmoOrigin::Pivot;
     bool m_snap = true;
     bool m_snapSuspended = false;
-    EditorPanels::ContentView m_contentView = EditorPanels::ContentView::List;
+    EditorPanels::ContentView m_contentView = EditorPanels::ContentView::Tiles;
     // Zero for a project arranged before this existed, which is the case the
     // migration is for.
     core::i64 m_layoutRevision = 0;

@@ -137,9 +137,9 @@ struct ScriptEditorCommands
 // siblings in one node into a tab strip, and it also lets somebody drag one out
 // to sit beside the world instead of over it -- which is the arrangement asked
 // for and which a hand-rolled tab bar would have refused.
-// `dockNode` is the dockspace's central node -- where the Viewport lives -- so a
-// script opened for the first time appears beside it rather than floating in the
-// middle of the screen. Zero docks nothing, which is what a shell with no
+// `dockNode` is the node the Viewport is docked in, so a script that opens
+// undocked appears as a tab beside the world rather than floating in the middle
+// of the screen. Zero docks nothing, which is what a shell with no
 // dockspace wants. `ImGuiID` is an unsigned int; taking it as one is what keeps
 // this header free of ImGui.
 // `root` is the DataModel -- what `game` names -- and it is here because

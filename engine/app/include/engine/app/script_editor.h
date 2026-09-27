@@ -290,11 +290,6 @@ struct OpenScript
     // caret on its first line, instead of waiting for a click.
     bool claimCaret = false;
 
-    // **Its indentation was made tabs when it was opened** (`indentWithTabs`),
-    // so the text differs from the instance's `Source`: the pane hands it over
-    // on its first draw, and the tab is unsaved until somebody saves it.
-    bool convertedIndent = false;
-
     [[nodiscard]] bool dirty() const noexcept { return document.revision() != savedRevision; }
 };
 

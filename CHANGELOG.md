@@ -279,12 +279,36 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **The editor is laid out as a game engine** (the owner, 2026-09-27: the look
+  may be the code editor's, the layout has to be an engine's). The Explorer
+  alone on the left, Properties the full height on the right, and along the
+  bottom, under the tree and the world, the Content browser, the Console, Run
+  and Debug and Stats. Every open script is a tab beside the Viewport -- and
+  one that would open undocked, from an older layout, opens there too. Play,
+  pause and step sit in the middle of the toolbar, the transform tools on the
+  left, and the snap steps, the tools and Export on the right. The browser
+  shows the project's folders beside a grid wide enough for names. Layouts
+  saved before are rebuilt once.
 - `SetMaterialParameter` with a name no built-in field has, on a part whose
   material does not declare it, raises *not declared* rather than *not a
   parameter*: such a name may be a surface shader's.
 
 ### Fixed
 
+- **The editor asked to save scripts nobody had changed**: a script written
+  with spaces was converted to tabs on opening and marked unsaved, and its
+  scene with it -- which is every template and example. The conversion stays;
+  the tabs are written with the first save of a real edit.
+- **Ctrl+Shift+P, Ctrl+P, Ctrl+B, F5 and the rest did nothing with the caret
+  in a script**, and what was typed next landed in the code: the code pane
+  claims every key while it is active. The workbench's keys now work from any
+  text field, as they do in the editor it follows; only a modal keeps them.
+- **The bottom panel reopened on Stats every launch**, whichever tab had been
+  left in front: the last panel to appear took the focus, and a node shows
+  its focused window's tab. The Explorer takes the focus at launch, and each
+  node's saved tab is put back.
+- **Quick Open (Ctrl+P) could not find the code of another scene**
+  (`src/scenes/<scene>/`), which is not in the world until that scene loads.
 - **An orthographic camera lost what stood above it** (the owner's report,
   2026-09-27): a top-down camera standing lower than the top of a ball, a
   cylinder or a wedge showed only its shadow, and -- once depth was clipped for
