@@ -21,7 +21,10 @@ namespace {
 [[nodiscard]] std::vector<std::byte> bytesOf(const std::string& text)
 {
     std::vector<std::byte> out(text.size());
-    std::memcpy(out.data(), text.data(), text.size());
+    // An empty vector's data is null, and `memcpy` from or to null is
+    // undefined even for zero bytes -- UBSan says so.
+    if (!text.empty())
+        std::memcpy(out.data(), text.data(), text.size());
     return out;
 }
 

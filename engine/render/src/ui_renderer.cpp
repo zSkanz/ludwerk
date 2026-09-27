@@ -252,7 +252,10 @@ void UiRenderer::uploadGradients(rhi::ICmdList& cmd, std::span<const core::u8> r
     uploadedGradients_.assign(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(used));
 
     std::vector<std::byte> whole(static_cast<core::usize>(UiGradientRows) * UiGradientRowBytes, std::byte{0xFF});
-    std::memcpy(whole.data(), uploadedGradients_.data(), uploadedGradients_.size());
+    // No rows is a table of white: `memcpy` from an empty vector's null data
+    // is undefined even for zero bytes.
+    if (!uploadedGradients_.empty())
+        std::memcpy(whole.data(), uploadedGradients_.data(), uploadedGradients_.size());
     cmd.uploadTexture(gradientTable_, whole, 0);
     gradientsUploaded_ = true;
 }
