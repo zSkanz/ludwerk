@@ -48,11 +48,19 @@ and a timeout all come back as a value. It raises only for a malformed *call* â€
 a missing `url`, a field of the wrong type â€” because that is a bug in the script
 rather than a fact about the world.
 
-**`https://` is refused rather than downgraded.** This build vendors no TLS
-library, and a silent fallback to plaintext would put credentials on the wire
-from a line that reads as secure. For anything real, terminate TLS in front of
-your backend and reach it over a private network, or wait for the engine to
-carry TLS.
+**`https://` works, through the platform's own TLS** (ADR 0063): WinHTTP on
+Windows, the system's OpenSSL on Linux (`libssl.so.3`, loaded at the first
+request), `NSURLSession` on macOS and the Java stack on Android. The
+certificate is checked against the device's trust store every time, and there
+is no switch that turns the check off -- so a backend needs a certificate from
+an authority the operating system trusts, which a free one is. A certificate
+that is expired, self-signed or for another name fails with
+`net.err.https_untrusted`, and nothing is sent.
+
+Redirects are followed, at most five. A redirect from `https` to `http` is
+refused (`net.err.http_redirect_downgrade`), a `303` -- or a `301`/`302`
+answering a `POST` -- becomes a `GET` without its body, and `Authorization` and
+`Cookie` are not carried to another host.
 
 ## Naming
 

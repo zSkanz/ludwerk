@@ -10,6 +10,7 @@
 // compiles on one platform.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -56,6 +57,10 @@ public:
 
     void close();
     [[nodiscard]] bool isOpen() const noexcept;
+
+    // The operating system's socket, or -1 when closed: what a TLS stack that
+    // takes a descriptor is handed (ADR 0063). The stream still owns it.
+    [[nodiscard]] std::intptr_t nativeHandle() const noexcept;
 
 private:
     struct Impl;

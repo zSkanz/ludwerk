@@ -179,6 +179,12 @@ struct Paths
 // and a path nobody uses is a path nobody has checked.
 [[nodiscard]] const Paths& paths();
 
+// **The Java environment of the calling thread, on Android** -- a `JNIEnv*`,
+// typed `void*` so that no header here includes `jni.h` (R17) -- attaching the
+// thread to the virtual machine if it was not. Null everywhere else. What the
+// platform's own HTTPS stack is reached through (ADR 0063).
+[[nodiscard]] void* androidJavaEnv();
+
 // Starts another program and does not wait for it. Used by the launcher to
 // start the editor on the project somebody chose (ADR 0055), which is a
 // relaunch rather than a load: everything a project decides is resolved at boot.

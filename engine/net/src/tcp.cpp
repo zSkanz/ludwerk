@@ -372,6 +372,11 @@ void TcpStream::close()
     }
 }
 
+std::intptr_t TcpStream::nativeHandle() const noexcept
+{
+    return isOpen() ? static_cast<std::intptr_t>(m_impl->handle) : -1;
+}
+
 bool TcpStream::isOpen() const noexcept
 {
     return m_impl && m_impl->handle != kInvalidSocket;

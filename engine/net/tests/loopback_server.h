@@ -138,6 +138,9 @@ public:
 
     void close() { closeRaw(std::exchange(m_socket, kInvalid)); }
 
+    // The socket itself, for a test server that speaks TLS over it.
+    [[nodiscard]] RawSocket raw() const noexcept { return m_socket; }
+
 private:
     void pump()
     {
@@ -219,6 +222,27 @@ public:
                 handler(connection);
             } catch (const std::exception& error) {
                 m_failure = error.what();
+            }
+        });
+    }
+
+    // Accepts `count` clients one after another -- a redirect is a second
+    // connection -- handing each to `handler` with its index.
+    void serveEach(int count, std::function<void(Connection&, int)> handler)
+    {
+        m_thread = std::thread([this, count, handler = std::move(handler)] {
+            for (int index = 0; index < count; ++index) {
+                const RawSocket accepted = acceptWithDeadline();
+                if (accepted == kInvalid) {
+                    return;
+                }
+                Connection connection(accepted);
+                try {
+                    handler(connection, index);
+                } catch (const std::exception& error) {
+                    m_failure = error.what();
+                    return;
+                }
             }
         });
     }

@@ -27,9 +27,10 @@
 --- `timeout` is in SECONDS, like every other duration a script writes in this
 --- engine (`task.wait`, `TweenInfo`).
 export type RequestOptions = {
-    --- `http://` only in v1. An `https://` URL is REFUSED rather than downgraded
-    --- to plaintext: this build vendors no TLS library, and a silent downgrade
-    --- would put credentials on the wire from a line that reads as secure.
+    --- `http://` or `https://`. HTTPS is the platform's own (WinHTTP, the
+    --- system's OpenSSL, `NSURLSession`, Android's stack), and the certificate
+    --- is always checked against the device's trust store. Redirects are
+    --- followed, at most five, and never from `https` to `http`.
     url: string,
     method: string?,
     headers: { [string]: string }?,

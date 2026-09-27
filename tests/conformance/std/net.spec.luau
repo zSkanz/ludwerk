@@ -31,10 +31,10 @@ local testing = require("@engine/testing")
 
 local describe, it, expect = testing.describe, testing.it, testing.expect
 
--- Refused while the URL is being read: this build vendors no TLS library, and
--- refusing beats downgrading. Used throughout as "a request that fails without a
--- network", which is the only kind this suite can afford.
-local UnreachableUrl = "https://example.test/"
+-- Refused while the URL is being read -- no scheme but `http` and `https` is
+-- requested. Used throughout as "a request that fails without a network", which
+-- is the only kind this suite can afford.
+local UnreachableUrl = "ftp://example.test/"
 
 describe("@std/net", function()
     it("resolves and is the same table every time", function()
@@ -111,9 +111,15 @@ describe("@std/net", function()
             expect(typeof(response.headers)):ToBe("table")
         end)
 
-        it("refuses https rather than downgrading it", function()
-            local response = net.request({ url = UnreachableUrl })
-            expect(string.find(response.statusMessage, "http_tls_unsupported") ~= nil):ToBe(true)
+        it("takes https, from the platform, rather than refusing it", function()
+            -- A URL with no host: refused while it is read, as this suite
+            -- needs, but for having no host -- the scheme was accepted. The
+            -- requests themselves are the net module's own tests, against a TLS
+            -- server on loopback.
+            local response = net.request({ url = "https:///no-host" })
+            expect(response.ok):ToBe(false)
+            expect(string.find(response.statusMessage, "http_url_malformed") ~= nil):ToBe(true)
+            expect(string.find(response.statusMessage, "http_tls_unsupported")):ToBe(nil)
         end)
 
         it("refuses a URL carrying a credential", function()

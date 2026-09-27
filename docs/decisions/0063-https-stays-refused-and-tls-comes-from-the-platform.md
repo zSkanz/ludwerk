@@ -98,3 +98,30 @@ That last point is why the decision is not obvious, and why it is written down.
 - The human-approval requirement the client's header names is preserved for the
   route that actually needs it: vendoring. The platform route needs no new
   dependency and therefore no approval under R5.
+
+## Built (2026-09-27, the game-ready plan's A1)
+
+- **One backend per platform, as decided**: WinHTTP on Windows (a session per
+  process, whose connection pool is the keep-alive), `NSURLSession` on macOS
+  (an ephemeral session), and the system's OpenSSL on Linux. `http://` stays on
+  the socket client.
+- **Linux loads OpenSSL at the first `https://` request** (`dlopen` of
+  `libssl.so.3`, then `libssl.so`) rather than linking it: no OpenSSL is needed
+  to build, a binary is not tied to one soname, and a machine without it fails
+  that request by name (`net.err.https_no_openssl`). The socket client's HTTP
+  runs over the TLS stream with `Connection: close`, so that path has no
+  keep-alive -- the other three do.
+- **Android, which this record predates, uses the Java platform**
+  (`java.net.HttpURLConnection`, through JNI on the calling thread): the NDK
+  offers no TLS, and the BoringSSL inside the system is a private library an
+  app may not load. The Java stack verifies against the device's store,
+  user-added roots included.
+- **Redirects are `performHttp`'s, not the backends'**: every backend is told
+  not to follow them, so one rule holds everywhere -- at most five, never
+  `https` to `http`, `303` (and `301`/`302` after a `POST`) as a `GET`, no
+  `Authorization` or `Cookie` to another host.
+- **The tests make their certificate when they run**, never committed: Schannel
+  serves it on Windows (a key under a name of its own, deleted after), the
+  system OpenSSL on Linux. On Windows only the refusal can be tested -- adding
+  a root asks the person at the machine -- and Linux tests the accepted request
+  too, through a hook compiled only into a build with tests.

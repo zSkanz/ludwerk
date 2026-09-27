@@ -55,6 +55,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`https://` in `net.request`, from the platform** (ADR 0063, the game-ready
+  plan's A1): WinHTTP on Windows, the system's OpenSSL on Linux (loaded at the
+  first request), `NSURLSession` on macOS and the Java stack on Android. The
+  certificate is always checked against the device's trust store, with no way
+  to turn that off. Redirects are followed for every scheme: at most five,
+  never from `https` to `http`, a `303` as a `GET`, and no `Authorization` or
+  `Cookie` to another host.
 - **Cameras on screens** (ADR 0107, V0 and V1). A `CameraTexture` draws a
   `Camera` into `view://<ViewName>`, and anything that takes a texture shows
   it: an `ImageLabel` on a `SurfaceGui` or a `ScreenGui`, a `Decal`, a

@@ -417,6 +417,16 @@ void setApplicationId([[maybe_unused]] std::string_view id)
 #endif
 }
 
+void* androidJavaEnv()
+{
+#ifdef SDL_PLATFORM_ANDROID
+    // SDL attaches a thread it has not seen, and detaches it when it ends.
+    return SDL_GetAndroidJNIEnv();
+#else
+    return nullptr;
+#endif
+}
+
 const Paths& paths()
 {
     // Resolvable without a video subsystem, so a tool or a test that only wants

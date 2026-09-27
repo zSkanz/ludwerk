@@ -111,9 +111,11 @@ Three things about it that catch people out:
 - **It never raises for a network condition.** A timeout, a bad host and a
   refused connection all come back as a value. It raises only for a malformed
   *call*, because that is a bug in the script.
-- **`https://` is refused rather than downgraded.** This build vendors no TLS,
-  and quietly falling back to plaintext would put credentials on the wire from a
-  line that reads as secure.
+- **`https://` is the platform's own TLS**: WinHTTP on Windows, the system's
+  OpenSSL on Linux, `NSURLSession` on macOS and the Java stack on Android. The
+  certificate is always checked against the device's trust store, and there is
+  no way to turn that off. Redirects are followed -- at most five, never from
+  `https` to `http`, and a credential is not carried to another host.
 
 There is no server, no raw socket and no WebSocket client for a script.
 `net.serve` is a reserved name rather than a missing feature: the engine never

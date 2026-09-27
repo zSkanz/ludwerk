@@ -53,18 +53,6 @@ TEST_CASE("a URL is split into the parts a request line needs")
     CHECK(url.target == "/");
 }
 
-TEST_CASE("https is refused rather than quietly downgraded")
-{
-    seedCatalog();
-
-    // The whole point of the test: a downgrade would put a caller's credentials
-    // on the wire in the clear from a line of code that reads as secure.
-    ParsedUrl url;
-    const auto error = parseUrl("https://example.test/", url);
-    REQUIRE(error.has_value());
-    CHECK(error->message.find("net.err.http_tls_unsupported") != std::string::npos);
-}
-
 TEST_CASE("a URL that carries a credential is refused")
 {
     seedCatalog();

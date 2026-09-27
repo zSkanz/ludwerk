@@ -4,9 +4,12 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <functional>
+#include <span>
 
 #include "engine/core/i18n.h"
 #include "engine/net/tcp.h"
+#include "http_internal.h"
 
 namespace engine::net {
 namespace {
@@ -112,12 +115,9 @@ std::optional<core::EngineError> parseUrl(std::string_view url, ParsedUrl& out)
         return core::makeError(ENG_TR("net.err.http_url_malformed"), args);
     }
     out.scheme = lowered(url.substr(0, schemeEnd));
-    if (out.scheme == "https") {
-        // Refused rather than downgraded. See `http.h`.
-        const I18nArg args[] = {{"url", std::string(url)}};
-        return core::makeError(ENG_TR("net.err.http_tls_unsupported"), args);
-    }
-    if (out.scheme != "http") {
+    if (out.scheme == "https")
+        out.port = 443;
+    else if (out.scheme != "http") {
         const I18nArg args[] = {{"scheme", out.scheme}};
         return core::makeError(ENG_TR("net.err.http_scheme_unsupported"), args);
     }
@@ -225,36 +225,27 @@ std::optional<core::EngineError> parseHttpResponse(std::string_view raw, core::u
     return std::nullopt;
 }
 
-std::optional<core::EngineError> performHttp(const HttpRequest& request, HttpResponse& response)
+std::optional<core::EngineError> buildRequestWire(const HttpRequest& request, const ParsedUrl& url, std::string& wire)
 {
-    response = HttpResponse{};
-
-    ParsedUrl url;
-    if (auto error = parseUrl(request.url, url); error.has_value()) {
-        return error;
-    }
-
-    TcpStream stream;
-    if (auto error = stream.connect(url.host, url.port, request.timeoutMs); error.has_value()) {
-        return error;
-    }
-
-    std::string wire;
+    wire.clear();
     wire.reserve(256 + request.body.size());
     wire.append(request.method).append(" ").append(url.target).append(" HTTP/1.1\r\n");
     wire.append("Host: ").append(url.host);
-    if (url.port != 80) {
+    if (url.port != (url.scheme == "https" ? 443 : 80)) {
         wire.append(":").append(std::to_string(url.port));
     }
     wire.append("\r\n");
 
     // `Connection: close` is what makes "read until the peer closes" a correct
-    // way to find the end of a body, and it is why there is no keep-alive here:
-    // pooling connections means tracking their idle state and their server's
-    // willingness to keep them, which is a feature and not a detail.
+    // way to find the end of a body, and it is why there is no keep-alive on
+    // the socket client: pooling connections means tracking their idle state
+    // and their server's willingness to keep them, which the platforms' own
+    // stacks do and this one does not.
     bool sawContentLength = false;
     bool sawConnection = false;
     for (const HttpHeader& header : request.headers) {
+        if (auto error = checkHeader(header); error.has_value())
+            return error;
         const std::string name = lowered(header.name);
         sawContentLength = sawContentLength || name == "content-length";
         sawConnection = sawConnection || name == "connection";
@@ -263,14 +254,6 @@ std::optional<core::EngineError> performHttp(const HttpRequest& request, HttpRes
             // smuggling primitive, and the one above is derived from the URL
             // the caller actually asked for.
             continue;
-        }
-        // A header value carrying a newline would let a caller inject a second
-        // request into this one. Refused, and named, because silently stripping
-        // it hides that somebody tried.
-        if (header.name.find_first_of("\r\n") != std::string::npos ||
-            header.value.find_first_of("\r\n") != std::string::npos) {
-            const I18nArg args[] = {{"header", header.name}};
-            return core::makeError(ENG_TR("net.err.http_header_injection"), args);
         }
         wire.append(header.name).append(": ").append(header.value).append("\r\n");
     }
@@ -281,17 +264,31 @@ std::optional<core::EngineError> performHttp(const HttpRequest& request, HttpRes
         wire.append("Content-Length: ").append(std::to_string(request.body.size())).append("\r\n");
     }
     wire.append("\r\n").append(request.body);
+    return std::nullopt;
+}
 
-    const auto* const bytes = reinterpret_cast<const u8*>(wire.data());
-    if (auto error = stream.send({bytes, wire.size()}); error.has_value()) {
-        return error;
+std::optional<core::EngineError> checkHeader(const HttpHeader& header)
+{
+    // A header value carrying a newline would let a caller inject a second
+    // request into this one. Refused, and named, because silently stripping
+    // it hides that somebody tried.
+    if (header.name.find_first_of("\r\n") != std::string::npos ||
+        header.value.find_first_of("\r\n") != std::string::npos) {
+        const I18nArg args[] = {{"header", header.name}};
+        return core::makeError(ENG_TR("net.err.http_header_injection"), args);
     }
+    return std::nullopt;
+}
 
-    std::string raw;
+std::optional<core::EngineError> readUntilClosed(
+    const std::function<std::optional<core::EngineError>(std::span<u8> chunk, core::usize& received)>& receive,
+    core::usize maxBodyBytes, std::string& raw)
+{
+    raw.clear();
     std::array<u8, 8192> chunk{};
     while (true) {
         core::usize received = 0;
-        const auto error = stream.receive(chunk, received, request.timeoutMs);
+        const auto error = receive(chunk, received);
         if (error.has_value()) {
             // An orderly close is how a `Connection: close` response ends, so it
             // is the SUCCESS path here and not a failure. Anything else is real.
@@ -303,14 +300,156 @@ std::optional<core::EngineError> performHttp(const HttpRequest& request, HttpRes
         if (received == 0) {
             return core::makeError(ENG_TR("net.err.http_response_timeout"));
         }
-        if (raw.size() + received > request.maxBodyBytes) {
-            const I18nArg args[] = {{"limit", static_cast<core::i64>(request.maxBodyBytes)}};
+        if (raw.size() + received > maxBodyBytes) {
+            const I18nArg args[] = {{"limit", static_cast<core::i64>(maxBodyBytes)}};
             return core::makeError(ENG_TR("net.err.http_body_too_large"), args);
         }
         raw.append(reinterpret_cast<const char*>(chunk.data()), received);
     }
+    return std::nullopt;
+}
 
+namespace {
+
+// One `http://` exchange over a socket.
+[[nodiscard]] std::optional<core::EngineError> performPlain(const HttpRequest& request, const ParsedUrl& url,
+                                                            HttpResponse& response)
+{
+    std::string wire;
+    if (auto error = buildRequestWire(request, url, wire); error.has_value()) {
+        return error;
+    }
+
+    TcpStream stream;
+    if (auto error = stream.connect(url.host, url.port, request.timeoutMs); error.has_value()) {
+        return error;
+    }
+    const auto* const bytes = reinterpret_cast<const u8*>(wire.data());
+    if (auto error = stream.send({bytes, wire.size()}); error.has_value()) {
+        return error;
+    }
+
+    std::string raw;
+    const auto receive = [&](std::span<u8> chunk, core::usize& received) {
+        return stream.receive(chunk, received, request.timeoutMs);
+    };
+    if (auto error = readUntilClosed(receive, request.maxBodyBytes, raw); error.has_value()) {
+        return error;
+    }
     return parseHttpResponse(raw, request.maxBodyBytes, response);
+}
+
+[[nodiscard]] bool isRedirect(u16 code) noexcept
+{
+    return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+}
+
+} // namespace
+
+std::optional<core::EngineError> resolveRedirect(std::string_view from, std::string_view location, std::string& out)
+{
+    location = trimmed(location);
+    ParsedUrl base;
+    if (auto error = parseUrl(from, base); error.has_value())
+        return error;
+    if (location.empty()) {
+        const I18nArg args[] = {{"url", std::string(from)}};
+        return core::makeError(ENG_TR("net.err.http_redirect_malformed"), args);
+    }
+    if (location.find("://") != std::string_view::npos) {
+        out = std::string(location);
+        return std::nullopt;
+    }
+    if (location.starts_with("//")) {
+        out = base.scheme + ":" + std::string(location);
+        return std::nullopt;
+    }
+
+    std::string origin = base.scheme + "://" + base.host;
+    if (base.port != (base.scheme == "https" ? 443 : 80))
+        origin.append(":").append(std::to_string(base.port));
+
+    // The base path without its query or fragment.
+    std::string path = base.target;
+    if (const core::usize cut = path.find_first_of("?#"); cut != std::string::npos)
+        path.resize(cut);
+
+    if (location.front() == '/') {
+        out = origin + std::string(location);
+    }
+    else if (location.front() == '?') {
+        out = origin + path + std::string(location);
+    }
+    else {
+        const core::usize slash = path.rfind('/');
+        const std::string directory = slash == std::string::npos ? std::string("/") : path.substr(0, slash + 1);
+        out = origin + directory + std::string(location);
+    }
+    return std::nullopt;
+}
+
+std::optional<core::EngineError> performHttp(const HttpRequest& request, HttpResponse& response)
+{
+    HttpRequest current = request;
+    for (u32 hop = 0;; ++hop) {
+        response = HttpResponse{};
+
+        ParsedUrl url;
+        if (auto error = parseUrl(current.url, url); error.has_value()) {
+            return error;
+        }
+        const auto error =
+            url.scheme == "https" ? performHttps(current, url, response) : performPlain(current, url, response);
+        if (error.has_value()) {
+            response = HttpResponse{};
+            return error;
+        }
+
+        const HttpHeader* location = isRedirect(response.statusCode) ? find(response.headers, "location") : nullptr;
+        if (location == nullptr) {
+            return std::nullopt;
+        }
+        if (hop == MaxRedirects) {
+            const I18nArg args[] = {{"url", request.url}, {"limit", static_cast<core::i64>(MaxRedirects)}};
+            response = HttpResponse{};
+            return core::makeError(ENG_TR("net.err.http_too_many_redirects"), args);
+        }
+
+        std::string next;
+        if (auto redirectError = resolveRedirect(current.url, location->value, next); redirectError.has_value()) {
+            response = HttpResponse{};
+            return redirectError;
+        }
+        ParsedUrl nextUrl;
+        if (auto nextError = parseUrl(next, nextUrl); nextError.has_value()) {
+            response = HttpResponse{};
+            return nextError;
+        }
+        if (url.scheme == "https" && nextUrl.scheme != "https") {
+            const I18nArg args[] = {{"from", current.url}, {"to", next}};
+            response = HttpResponse{};
+            return core::makeError(ENG_TR("net.err.http_redirect_downgrade"), args);
+        }
+
+        // What every browser does, and what servers expect.
+        const u16 code = response.statusCode;
+        if (code == 303 || ((code == 301 || code == 302) && current.method == "POST")) {
+            current.method = "GET";
+            current.body.clear();
+            std::erase_if(current.headers, [](const HttpHeader& header) {
+                const std::string name = lowered(header.name);
+                return name == "content-length" || name == "content-type";
+            });
+        }
+        // A credential meant for one host is not handed to the next.
+        if (nextUrl.host != url.host) {
+            std::erase_if(current.headers, [](const HttpHeader& header) {
+                const std::string name = lowered(header.name);
+                return name == "authorization" || name == "cookie";
+            });
+        }
+        current.url = std::move(next);
+    }
 }
 
 } // namespace engine::net
