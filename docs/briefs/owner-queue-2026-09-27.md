@@ -33,8 +33,22 @@ feature to be tried before anything new. What that sweep found:
 - [x] **Every exported desktop game carried the editor's files**: the
       new-project template (a starter project's scripts included) and the
       editor's icon theme. The phone's export already left both out.
-- [ ] The owner's own error, which is not yet known -- asked for on
-      2026-09-27.
+- [x] **The owner's own error**, found by driving the packaged editor's
+      Export window (he asked for it to be found without him): ImGui's
+      "Code uses SetCursorPos()/SetCursorScreenPos() to extend window/parent
+      boundaries" box over the window, and a red frame round the target
+      list. Each target card moved the cursor into itself to draw its icon
+      and back, and the last card left it past what the list had drawn. The
+      icon is painted now. Interface errors of that kind now also reach
+      the engine's log (`engine.overlay.warn.interface_error`), once each,
+      so the console and the log file show what the red box said.
+- [x] Found on the way, by the same sweep: **Ctrl+Shift+S overwrote the open
+      scene** instead of asking for a name (the Ctrl+S handler never read
+      Shift); **Escape did not close the Export window**; a client of a
+      dedicated server with no address read "joins ?".
+- [x] The nightly's sanitizers: `memcpy` from an empty vector's null data
+      in the UI gradient upload (every capture gate aborted on it) and in an
+      archive test. `-Only asan` passes all 70 locally.
 - [ ] Two games started from the same folder share one `engine.log`, and the
       second says it cannot open it. A match tested from one folder always
       does this.
@@ -147,15 +161,20 @@ details included. After Q1, and before anything else; defects still come first.
      Help), every item a palette command by id; the ribbon's tab row gone,
      its toolbar one row; the match's shape at the top of Run and Debug and in
      the Run menu.
-  6. [~] Done: close buttons only on the active or hovered tab; "Insert
-     Object" first on the Explorer's right-click; the Console filtered by
-     level with counts, its actions as icons at the right, no box inside the
-     box, its prompt labelled. Not yet: the Explorer's services grouped (a
-     virtual row breaks selection and drag, which index real instances --
-     needs its own design), Properties' two header styles made one.
-  7. [~] Done: notifications as cards in the bottom-right corner. Not yet: a
-     Welcome page, a settings editor with search (the Preferences dialog has
-     three sections; a search worth having is a settings model of its own).
+  6. [x] Close buttons only on the active or hovered tab; "Insert Object"
+     first on the Explorer's right-click; the Console filtered by level with
+     counts, its actions as icons at the right, no box inside the box, its
+     prompt labelled; Attributes and Tags headed like the property
+     categories. **Decided against: the services grouped in the Explorer.**
+     A virtual group row breaks the tree's exact row pitch and its
+     selection, which index real instances, and hiding services moves rows
+     the owner's hands know from the other platform. Revisit if he asks.
+  7. [x] Notifications as cards in the bottom-right corner; a Welcome page
+     (Help > Welcome: start, the project's scenes, the keys to know); search
+     on the two long Preferences pages -- the script colours by name, the
+     shortcuts by command or by keys -- and Preferences: Keyboard Shortcuts
+     in the palette. General holds five settings, and a search there would
+     find what the eye already sees.
 
 ## Q3 — then
 

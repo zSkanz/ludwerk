@@ -78,6 +78,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   - The keys VS Code users expect: `F5`, `Shift+F5`, `Ctrl+J`, `` Ctrl+` ``,
     `Ctrl+,`, `Ctrl+Shift+E`/`A`/`D`.
 
+  - A Welcome page (Help > Welcome).
+  - Search on the script colours and shortcuts pages of Preferences, and
+    Preferences: Keyboard Shortcuts in the palette.
+  - One heading style in Properties.
+
   A layout saved before this is rebuilt once, to the new arrangement.
   `--editor-drive=FILE` drives the editor from a script of input events, so
   every state of it can be photographed with nobody at the machine.
@@ -228,6 +233,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **The Export window showed an ImGui error box** ("Code uses
+  SetCursorPos()/SetCursorScreenPos() to extend window/parent boundaries")
+  and framed its target list in red: each target card moved the cursor to
+  draw its icon and left it past the list's end. Errors of that kind now also
+  reach the engine's log, once each.
+- **Ctrl+Shift+S overwrote the open scene** instead of asking for a name.
+- Escape now closes the Export window. A client of a dedicated server with no
+  address says to type one, instead of "joins ?".
+- Two zero-length `memcpy`s from a null pointer that UBSan stops on: the UI
+  gradient upload (every capture gate under the sanitizers) and an archive
+  test.
 - **The Android export works again.** The rename left the Gradle signing
   configuration named after the brand and its two uses named `engine`, so every
   Android export failed while evaluating `build.gradle`.

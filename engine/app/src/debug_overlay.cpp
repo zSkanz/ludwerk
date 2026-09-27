@@ -29,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -4241,6 +4242,22 @@ core::u64 g_propertyGesture = 0;
 // names; an attribute is whatever this instance was given, so the panel cannot
 // know what to show until it asks.
 //
+// **One heading style in the Properties panel.** The property categories are
+// rows of the grid, on the header ground with the arrow at the cell's edge;
+// Attributes and Tags were framed collapsing headers with their arrow further
+// in -- two kinds of heading one above the other, which the survey counted
+// against the panel. This draws the categories' kind outside the grid.
+bool propertiesSection(const char* label)
+{
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float left = ImGui::GetWindowPos().x;
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(left, at.y),
+                                              ImVec2(left + ImGui::GetWindowWidth(), at.y + ImGui::GetFrameHeight()),
+                                              ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+    ImGui::AlignTextToFramePadding();
+    return ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+}
+
 // The primary's, not the selection's. Over four instances "the attributes" is
 // four different lists, and merging them would invent a row for something three
 // of them do not have -- so the section says whose it is and edits reach the
@@ -4248,7 +4265,7 @@ core::u64 g_propertyGesture = 0;
 void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId primary,
                     std::span<const core::InstanceId> targets)
 {
-    if (!ImGui::CollapsingHeader("Attributes"))
+    if (!propertiesSection("Attributes"))
         return;
 
     static scene::AttributeMap rows;
@@ -4373,7 +4390,7 @@ void drawAttributes(scene::World& world, Inspector& inspector, core::InstanceId 
 void drawTags(scene::World& world, Inspector& inspector, core::InstanceId primary,
               std::span<const core::InstanceId> targets)
 {
-    if (!ImGui::CollapsingHeader("Tags"))
+    if (!propertiesSection("Tags"))
         return;
 
     static scene::TagSet held;
@@ -5257,7 +5274,8 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
 
             const bool focused = ImGui::IsWindowFocused();
             const bool ctrl = ImGui::GetIO().KeyCtrl;
-            if (focused && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false))
+            // Not with Shift: Ctrl+Shift+A shows Content.
+            if (focused && ctrl && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false))
                 selectAll();
             const bool hasSelection = selection.anchorSeq != 0 && (selection.anchorSeq != selection.headSeq ||
                                                                    selection.anchorOffset != selection.headOffset);
@@ -6317,6 +6335,13 @@ void drawScriptColourPreferences()
         settings.colors = {};
         saveScriptPreferences();
     }
+    // **A search, as the settings of the editor this follows have one**: the
+    // list is thirty colours long, and the one wanted is found by its name.
+    static std::array<char, 64> colourFilter{};
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##colour-filter", "search colours", colourFilter.data(), colourFilter.size());
+    const std::string_view colourNeedle{colourFilter.data()};
     ImGui::Spacing();
 
     const float height = std::max(ImGui::GetFrameHeightWithSpacing() * 8.0f,
@@ -6330,6 +6355,8 @@ void drawScriptColourPreferences()
         for (std::size_t index = 0; index < kScriptColorCount; ++index) {
             const auto which = static_cast<ScriptColor>(index);
             const ScriptColorInfo& info = scriptColorInfo()[index];
+            if (!colourNeedle.empty() && !containsFold(info.label, colourNeedle))
+                continue;
             ImGui::PushID(static_cast<int>(index));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -6360,6 +6387,8 @@ void drawScriptColourPreferences()
 
 // The command waiting for a chord, when somebody clicked one to rebind it.
 std::optional<ScriptAction> g_capturingChord;
+// Set to open Preferences on its Shortcuts page, and read once.
+bool g_preferencesToShortcuts = false;
 
 void drawScriptShortcutPreferences()
 {
@@ -6372,6 +6401,14 @@ void drawScriptShortcutPreferences()
         g_capturingChord.reset();
         saveScriptPreferences();
     }
+    // Searched by the command's name or by its keys, as the keyboard
+    // shortcuts editor of the editor this follows searches: "ctrl+d" finds
+    // what that chord does.
+    static std::array<char, 64> keyFilter{};
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##key-filter", "search by command or keys", keyFilter.data(), keyFilter.size());
+    const std::string_view keyNeedle{keyFilter.data()};
     ImGui::Spacing();
 
     // The chord being recorded: the first key that is not a modifier, with the
@@ -6416,6 +6453,9 @@ void drawScriptShortcutPreferences()
             const auto which = static_cast<ScriptAction>(index);
             const ScriptActionInfo& info = scriptActionInfo()[index];
             const KeyChord chord = settings.chord(which);
+            if (!keyNeedle.empty() && !containsFold(info.label, keyNeedle) &&
+                (chord.key.empty() || !containsFold(formatChord(chord), keyNeedle)))
+                continue;
             const std::optional<ScriptAction> clash = settings.conflictOf(which, chord);
             ImGui::PushID(static_cast<int>(index));
             ImGui::TableNextRow();
@@ -7466,6 +7506,7 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
     }
 
     if (ImGui::BeginMenu("Help")) {
+        (void)menuCommand("Help: Welcome");
         if (iconMenuItem(icons, icons::ActionSearch, "Show All Commands", "Ctrl+Shift+P"))
             openCommandPalette();
         ImGui::Separator();
@@ -8174,11 +8215,13 @@ void drawTargetCard(ExportUi& ui, std::string_view name, const IconAtlas* icons)
     const std::string_view mark_ = name.starts_with("windows") ? icons::ActionTargetWindows
                                    : name.starts_with("linux") ? icons::ActionTargetLinux
                                                                : icons::ActionTargetAndroid;
-    const ImVec2 after = ImGui::GetCursorScreenPos();
+    // Painted, not placed: moving the cursor into the card and back left the
+    // last card's cursor past everything the list had drawn, which ImGui
+    // reports as an error box over the Export window -- the one the owner saw.
     const float inset = tile * 0.18f;
-    ImGui::SetCursorScreenPos(ImVec2(min.x + pad + inset, min.y + pad + inset));
-    (void)drawIcon(icons, mark_, tile - inset * 2.0f);
-    ImGui::SetCursorScreenPos(after);
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32_WHITE);
+    paintActionIcon(icons, mark_, ImVec2(min.x + pad + inset, min.y + pad + inset), tile - inset * 2.0f);
+    ImGui::PopStyleColor();
 
     const float textX = min.x + pad * 2.0f + tile;
     draw->AddText(ImVec2(textX, min.y + pad), ImGui::GetColorU32(ImGuiCol_Text), targetTitle(name));
@@ -8187,10 +8230,16 @@ void drawTargetCard(ExportUi& ui, std::string_view name, const IconAtlas* icons)
     if (status == nullptr) {
         state = ui.cli ? "checking..." : "ludwerk was not found";
     }
+    else if (status->ready && dedicated && !server && ui.server[0] == 0) {
+        // A client of a dedicated server has to be told where the server is;
+        // "joins ?" left somebody guessing what the question mark wanted.
+        state = "client -- type the server's address above";
+        colour = ImGui::GetColorU32(themeColor(palette().warning));
+    }
     else if (status->ready) {
         state = name == "android" && !ui.phone.empty() ? "phone connected: " + ui.phone
-                : dedicated && !server ? "client -- joins " + std::string(ui.server[0] ? ui.server.data() : "?")
-                                       : "ready";
+                : dedicated && !server                 ? "client -- joins " + std::string(ui.server.data())
+                                                       : "ready";
         colour = ImGui::GetColorU32(themeColor(palette().success));
     }
     else if (!status->tools) {
@@ -8481,6 +8530,12 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
     if (!ImGui::Begin("Export", &ui.open)) {
         ImGui::End();
         return;
+    }
+    // Escape closes it while it has the keyboard, as it closes every dialog.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ui.open = false;
+        g_escapeTaken = true;
     }
     if (!ui.cli) {
         ImGui::TextWrapped("The ludwerk CLI was not found beside this editor or above the project, so there is "
@@ -8794,7 +8849,10 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
             drawScriptColourPreferences();
             ImGui::EndTabItem();
         }
-        if (tabs && ImGui::BeginTabItem("Shortcuts")) {
+        // Opened on this page by Preferences: Keyboard Shortcuts.
+        const ImGuiTabItemFlags toShortcuts =
+            std::exchange(g_preferencesToShortcuts, false) ? ImGuiTabItemFlags_SetSelected : 0;
+        if (tabs && ImGui::BeginTabItem("Shortcuts", nullptr, toShortcuts)) {
             drawScriptShortcutPreferences();
             ImGui::EndTabItem();
         }
@@ -9267,6 +9325,8 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
             id = std::string(icons::ClassVoxelService);
         else if (name.ends_with("###Debug"))
             id = std::string(icons::ClassDebugService);
+        else if (name.ends_with("###Welcome"))
+            id = std::string(icons::ActionInformation);
         else if (scripts != nullptr && world != nullptr) {
             for (const OpenScript& tab : scripts->tabs()) {
                 if (!name.ends_with(scriptWindowId(tab)))
@@ -10112,6 +10172,10 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
     // them under "Color Theme".
     add("Preferences: Open Settings", "Ctrl+,", icons::ActionSettings, true,
         [&dialogs] { dialogs.preferences = true; });
+    add("Preferences: Keyboard Shortcuts", "", icons::ActionSettings, true, [&dialogs] {
+        dialogs.preferences = true;
+        g_preferencesToShortcuts = true;
+    });
     add("Preferences: Project Settings", "", icons::ClassWorkspace, true,
         [&dialogs] { dialogs.projectSettings = true; });
     for (const Theme& theme : themes()) {
@@ -10125,6 +10189,10 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
             },
             "theme." + id);
     }
+    add("Help: Welcome", "", icons::ActionInformation, true, [&panels] {
+        panels.welcome = true;
+        ImGui::SetWindowFocus("###Welcome");
+    });
     add("Help: About", "", icons::ActionInformation, true, [&dialogs] { dialogs.about = true; });
 
     // Insert, one per class a person can make: the Explorer's plus, by name.
@@ -10204,6 +10272,16 @@ bool menuCommand(std::string_view id, const char* label, bool checked)
     return true;
 }
 
+// Runs a palette command by id, from somewhere that is not a menu.
+void runCommand(std::string_view id)
+{
+    const PaletteItem* item = findCommand(id);
+    if (item == nullptr || !item->enabled || !item->run)
+        return;
+    const std::function<void()> run = item->run;
+    run();
+}
+
 // Quick open: the project's scenes, stamps, materials and shaders, and every
 // script in the tree -- what a person means by "a file" here.
 void buildPaletteFiles(Editor& editor, EditorCommands& commands, EditorDialogs& dialogs, const scene::World* world,
@@ -10275,6 +10353,11 @@ void buildPaletteFiles(Editor& editor, EditorCommands& commands, EditorDialogs& 
 void openCommandPalette()
 {
     g_palette.open(CommandPalette::Mode::Commands);
+}
+
+void openQuickOpen()
+{
+    g_palette.open(CommandPalette::Mode::Files);
 }
 
 // The palette's keys, and the other window-wide keys the editor this follows
@@ -10799,6 +10882,150 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
         revealPanel(panels, "###Debug", panels.debug);
 }
 
+// --- The Welcome page (the owner's queue, Q2) -------------------------------
+//
+// **What the editor this follows shows when nothing is open**: the name, a
+// column of ways to start, the recent work, and the keys worth knowing on the
+// first day. A tab beside the Viewport, opened from Help > Welcome; closing it
+// is permanent until it is asked for again, because a page that comes back
+// every launch is a page people learn to close without reading.
+namespace {
+
+// A line of accent-coloured text that acts, as a link does there.
+bool welcomeLink(const IconAtlas* icons, std::string_view icon, const char* label, const char* detail = nullptr)
+{
+    const float glyph = ImGui::GetFontSize();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = glyph + 6.0f + ImGui::CalcTextSize(label).x;
+    ImGui::PushID(label);
+    const bool pressed = ImGui::InvisibleButton("##link", ImVec2(width, ImGui::GetTextLineHeightWithSpacing()));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 ink = ImGui::ColorConvertFloat4ToU32(themeColor(palette().accent));
+    ImGui::PushStyleColor(ImGuiCol_Text, ink);
+    paintActionIcon(icons, icon, at, glyph);
+    ImGui::PopStyleColor();
+    draw->AddText(ImVec2(at.x + glyph + 6.0f, at.y), ink, label);
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const float y = at.y + ImGui::GetTextLineHeight();
+        draw->AddLine(ImVec2(at.x + glyph + 6.0f, y), ImVec2(at.x + width, y), ink);
+    }
+    if (detail != nullptr) {
+        ImGui::SameLine(0.0f, 12.0f);
+        ImGui::TextDisabled("%s", detail);
+    }
+    return pressed;
+}
+
+} // namespace
+
+void drawWelcome(Editor& editor, EditorPanels& panels, EditorCommands& commands, EditorDialogs& dialogs,
+                 const IconAtlas* icons, ImGuiID centralNode)
+{
+    if (!panels.welcome)
+        return;
+    if (centralNode != 0)
+        ImGui::SetNextWindowDockID(centralNode, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin((tabIconPad() + "Welcome###Welcome").c_str(), &panels.welcome)) {
+        ImGui::End();
+        return;
+    }
+
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float room = ImGui::GetContentRegionAvail().x;
+    const float width = std::min(room, 880.0f * scale);
+    const float inset = std::max(0.0f, (room - width) * 0.5f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + inset);
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(0.0f, 28.0f * scale));
+
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 2.4f);
+    ImGui::TextUnformatted(std::string(core::kBrandName).c_str());
+    ImGui::PopFont();
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.3f);
+    ImGui::TextDisabled("%s", editor.content().root().parent_path().filename().string().c_str());
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, 24.0f * scale));
+
+    const bool twoColumns = width > 560.0f * scale;
+    const float column = twoColumns ? (width - 40.0f * scale) * 0.5f : width;
+    const auto heading = [](const char* text) {
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.25f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopFont();
+        ImGui::Spacing();
+    };
+
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(column, 0.0f));
+    heading("Start");
+    if (welcomeLink(icons, icons::ContentScene, "New Scene..."))
+        runCommand("File: New Scene");
+    if (welcomeLink(icons, icons::ActionOpen, "Open File...", "Ctrl+P"))
+        openQuickOpen();
+    if (welcomeLink(icons, icons::ActionOpen, "Open Project..."))
+        runCommand("File: Open Project...");
+    if (welcomeLink(icons, icons::ActionPlay, "Start the Game", "F5"))
+        runCommand("run.start");
+    if (welcomeLink(icons, icons::ActionExport, "Export...", "Ctrl+Shift+B"))
+        dialogs.exportWindow = true;
+    ImGui::Dummy(ImVec2(0.0f, 20.0f * scale));
+
+    // The project's scenes: recent work, the one a project has.
+    heading("Scenes");
+    const std::vector<std::string> scenes = editor.content().filesOfKind(ContentKind::Scene);
+    if (scenes.empty())
+        ImGui::TextDisabled("No scene yet -- New Scene makes one.");
+    for (std::size_t index = 0; index < scenes.size() && index < 8; ++index) {
+        const std::string& path = scenes[index];
+        const std::size_t slash = path.rfind('/');
+        const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        const std::string folder = slash == std::string::npos ? std::string() : path.substr(0, slash);
+        ImGui::PushID(static_cast<int>(index));
+        if (welcomeLink(icons, icons::ContentScene, name.c_str(), folder.c_str()))
+            openSceneOrAsk(editor, commands, dialogs, path);
+        ImGui::PopID();
+    }
+    ImGui::EndGroup();
+
+    if (twoColumns)
+        ImGui::SameLine(0.0f, 40.0f * scale);
+    else
+        ImGui::Dummy(ImVec2(0.0f, 20.0f * scale));
+
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(column, 0.0f));
+    heading("Keys to know");
+    static constexpr std::pair<const char*, const char*> Keys[] = {
+        {"Ctrl+Shift+P", "every command, by name"},         {"Ctrl+P", "any scene, stamp, material or script"},
+        {"F5 / Shift+F5", "start and stop the game"},       {"Ctrl+B", "the side bar away and back"},
+        {"Ctrl+1 to Ctrl+4", "select, move, resize, turn"}, {"F", "frame the selection"},
+        {"W A S D, Q E", "fly, with the viewport focused"}, {"Ctrl+J", "the console"},
+    };
+    if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {
+        for (const auto& [keys, what] : Keys) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(themeColor(palette().accent), "%s", keys);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextDisabled("%s", what);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Dummy(ImVec2(0.0f, 16.0f * scale));
+    if (welcomeLink(icons, icons::ActionSearch, "Show All Commands", "Ctrl+Shift+P"))
+        openCommandPalette();
+    if (welcomeLink(icons, icons::ActionSettings, "Settings", "Ctrl+,"))
+        dialogs.preferences = true;
+    ImGui::EndGroup();
+
+    ImGui::EndGroup();
+    (void)panels;
+    ImGui::End();
+}
+
 void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId root, Inspector* inspector,
                      script::ScriptRuntime* runtime, Editor* editor, rhi::TextureHandle viewport, bool& laidOut,
                      EditorCommands& commands, EditorPanels& panels, EditorDialogs& dialogs, IconAtlas* icons,
@@ -10889,6 +11116,8 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     if (editor != nullptr) {
         if (panels.viewport)
             drawViewport(world, inspector, *editor, viewport, commands, panels, panels.viewport, icons);
+        const ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockspace);
+        drawWelcome(*editor, panels, commands, dialogs, icons, centralNode != nullptr ? centralNode->ID : 0);
         if (panels.content)
             drawContent(*editor, commands, panels, dialogs, icons, world, inspector);
     }
@@ -11275,7 +11504,14 @@ terrainPanelDone:;
         // **Ctrl+S saves what is open**, which is a stamp while one is and the
         // scene otherwise. One key, because "save" is one intention and the
         // person pressing it is not thinking about which document it reaches.
-        if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        // **Ctrl+Shift+S is Save As, and only that.** The shift went unread,
+        // so it overwrote the open scene and never asked for a name -- the
+        // opposite of what the menu beside it promises.
+        if (ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+            if (editor == nullptr || !editor->stampSession().open())
+                commands.wantSaveAs = true;
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             if (editor != nullptr && editor->stampSession().open())
                 commands.saveStamp = true;
             else if (editor != nullptr && !editor->openScenePath().empty())
@@ -12225,6 +12461,41 @@ void DebugOverlay::handleEvents(std::span<const platform::Event> events)
     }
 }
 
+namespace {
+
+// **An interface error goes to the log, once**, not only to a red box on the
+// screen. ImGui reports a misuse -- a cursor moved past what a window drew, a
+// push without its pop -- as a tooltip that only somebody looking at that
+// window sees; the owner met one in the Export window and could not say what
+// it was. Its debug log carries the same line, and this reads the new part of
+// that log each frame and says each distinct error once, in the engine's own
+// log, where the console, the log file and a test can all see it.
+void forwardInterfaceErrors()
+{
+    static std::size_t seen = 0;
+    static std::set<std::string> said;
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    const ImGuiTextBuffer& log = g.DebugLogBuf;
+    if (static_cast<std::size_t>(log.size()) < seen)
+        seen = 0;
+    const std::string_view fresh(log.begin() + seen, static_cast<std::size_t>(log.size()) - seen);
+    seen = static_cast<std::size_t>(log.size());
+    constexpr std::string_view Marker = "[imgui-error] In window ";
+    std::size_t at = fresh.find(Marker);
+    while (at != std::string_view::npos) {
+        const std::size_t end = fresh.find('\n', at);
+        const std::size_t from = at + Marker.size();
+        std::string message(fresh.substr(from, end == std::string_view::npos ? std::string_view::npos : end - from));
+        if (said.insert(message).second) {
+            const core::I18nArg args[] = {{"message", message}};
+            core::log(core::LogLevel::Warn, ENG_TR("engine.overlay.warn.interface_error"), args);
+        }
+        at = end == std::string_view::npos ? end : fresh.find(Marker, end);
+    }
+}
+
+} // namespace
+
 void DebugOverlay::render(rhi::ICmdList& cmd, rhi::TextureHandle target, const Frame& frame)
 {
     // **The editor draws while hidden, and every other shell does not.** In the
@@ -12259,6 +12530,7 @@ void DebugOverlay::render(rhi::ICmdList& cmd, rhi::TextureHandle target, const F
     else
         drawShell(frame, world_, root_, inspector_, runtime_, streaming_, counters_);
     ImGui::Render();
+    forwardInterfaceErrors();
 
     ImDrawData* drawData = ImGui::GetDrawData();
     if (drawData == nullptr)

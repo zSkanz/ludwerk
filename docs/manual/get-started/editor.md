@@ -123,7 +123,8 @@ Ctrl or Alt is held, so a shortcut never moves the camera.
 | Ctrl+B / Ctrl+Alt+B | Fold the side bar away / hide Properties |
 | Ctrl+Shift+E / Ctrl+Shift+A / Ctrl+Shift+D | Show the Explorer / Content / Run and Debug |
 | Ctrl+J / Ctrl+` | Hide or show the Console / go to it |
-| Ctrl+, | Settings |
+| Ctrl+, | Settings (Preferences: Keyboard Shortcuts in the palette opens the shortcuts page, searchable by command or by keys) |
+| Ctrl+S / Ctrl+Shift+S | Save / save under a new name |
 
 Picking up a terrain or block brush lets go of the selection, and selecting
 something (in the Explorer, or by inserting it) puts the brush down.
@@ -131,7 +132,8 @@ something (in the Explorer, or by inserting it) puts the brush down.
 The menus are VS Code's -- **File, Edit, Selection, View, Go, Run, Help** --
 and the toolbar under them holds play, the transform tools and the snap steps
 beside the snap switch. Right-click a row in the Explorer and **Insert Object**
-is the first thing on the menu.
+is the first thing on the menu. **Help > Welcome** is a page of ways to
+start, the project's scenes and the keys worth knowing.
 
 ## Where things can go
 

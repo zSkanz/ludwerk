@@ -18,7 +18,9 @@
 //     dbl 120 40          a double click
 //     drag 10 10 200 10   press at one point, release at the other
 //     wheel -3            scroll, lines
-//     key ctrl+shift+p    a chord: ctrl, shift, alt and super, then a key
+//     key ctrl+shift+p    a chord: ctrl, shift, alt and super, then a key --
+//                         a letter, a digit, f1-f12, or a name (enter,
+//                         escape, comma, grave, pagedown...)
 //     text hello world    characters typed, as a keyboard would
 //     shot name           logs "[drive] shot name", then waits a moment,
 //                         so whoever reads the log can photograph the window

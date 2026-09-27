@@ -321,6 +321,9 @@ struct EditorPanels
     // because a debugger nobody can find is a debugger nobody uses, and it says
     // "running" when nothing is stopped rather than being empty.
     bool debug = true;
+    // The Welcome page (Help > Welcome), a tab beside the Viewport. Closed by
+    // default: a page that opens every launch is one people close unread.
+    bool welcome = false;
 
     // How the content browser lays its entries out.
     //

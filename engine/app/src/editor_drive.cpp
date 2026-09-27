@@ -40,7 +40,9 @@ namespace {
         {"backspace", ImGuiKey_Backspace}, {"delete", ImGuiKey_Delete},     {"space", ImGuiKey_Space},
         {"up", ImGuiKey_UpArrow},          {"down", ImGuiKey_DownArrow},    {"left", ImGuiKey_LeftArrow},
         {"right", ImGuiKey_RightArrow},    {"home", ImGuiKey_Home},         {"end", ImGuiKey_End},
-        {"pageup", ImGuiKey_PageUp},       {"pagedown", ImGuiKey_PageDown},
+        {"pageup", ImGuiKey_PageUp},       {"pagedown", ImGuiKey_PageDown}, {"comma", ImGuiKey_Comma},
+        {"period", ImGuiKey_Period},       {"slash", ImGuiKey_Slash},       {"grave", ImGuiKey_GraveAccent},
+        {"minus", ImGuiKey_Minus},         {"equal", ImGuiKey_Equal},
     };
     for (const auto& [text, key] : Named) {
         if (name == text)
