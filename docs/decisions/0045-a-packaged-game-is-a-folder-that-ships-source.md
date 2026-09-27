@@ -6,6 +6,9 @@
   -- the folder is still the product, and now for Windows, Linux and Android,
   with an archive beside it; `game/` leaves the editor's files out, and a
   dedicated game's two sides each leave out the other's code (0105).
+- Amended by: [0112](0112-an-exported-game-carries-bytecode-not-source.md)
+  -- the package carries the scripts as bytecode, with line information;
+  `[export] ship_source = true` keeps this record's behaviour.
 - Amends: `docs/api-design.md` §4's `luaug build` row, which said "Luau bytecode
   compile (O2), content-addressed asset pack, single-folder/exe output".
 

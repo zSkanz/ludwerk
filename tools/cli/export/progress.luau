@@ -26,6 +26,7 @@ local Steps = {
     "check", -- the project, the player for the target, the tools it needs
     "pack", -- the content pack, per side when the game is dedicated
     "layout", -- the player, the engine's content and the game, into the folder
+    "compile", -- the game's scripts to bytecode, unless it ships source (ADR 0112)
     "partition", -- the streaming cells, pre-warmed into the package's `.engine/`
     "icon", -- one PNG, every size the target needs
     "stamp", -- the icon and the version into the executable
@@ -42,6 +43,9 @@ local Labels: { [string]: () -> string } = {
     end,
     pack = function()
         return tr("cli.build.step.pack")
+    end,
+    compile = function()
+        return tr("cli.build.step.compile")
     end,
     partition = function()
         return tr("cli.build.step.partition")

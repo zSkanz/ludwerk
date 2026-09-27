@@ -8837,6 +8837,8 @@ struct ExportUi
 
     // The project's `[export]` settings, as last read or written.
     int multiplayer = 0; // none, host, dedicated
+    // `[export] ship_source` (ADR 0112): scripts as source rather than bytecode.
+    bool shipSource = false;
     std::array<char, 128> server{};
     std::array<char, 96> windowsExecutable{};
     std::array<char, 96> linuxExecutable{};
@@ -8972,6 +8974,7 @@ void readExportSettings(ExportUi& ui)
     };
     const std::string mode = stringOf("export.multiplayer", "none");
     ui.multiplayer = mode == "dedicated" ? 2 : mode == "host" ? 1 : 0;
+    ui.shipSource = document.boolean("export.ship_source").value_or(false);
     copyInto(ui.server, stringOf("network.server"));
     copyInto(ui.windowsExecutable, stringOf("export.windows.executable"));
     copyInto(ui.linuxExecutable, stringOf("export.linux.executable"));
@@ -9592,6 +9595,14 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
         if (ImGui::IsItemDeactivatedAfterEdit())
             writeExportSetting(ui, "network.server", core::tomlString(ui.server.data()));
     }
+    // Beside the mode rather than on a card: every target of a game ships its
+    // scripts the same way.
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
+    if (ImGui::Checkbox("Ship source", &ui.shipSource))
+        writeExportSetting(ui, "export.ship_source", core::tomlBoolean(ui.shipSource));
+    ImGui::SetItemTooltip("Off: the game's scripts are compiled to bytecode, and no .luau is in the package "
+                          "(errors still name the script and the line). On: the scripts ship as source, for a "
+                          "game meant to be read or modded.");
     if (!ui.problem.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().danger));
         ImGui::TextWrapped("%s", ui.problem.c_str());

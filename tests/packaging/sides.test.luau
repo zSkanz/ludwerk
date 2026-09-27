@@ -62,8 +62,13 @@ local function write(file: string, text: string)
     fs.writeStringToFile(file, text)
 end
 
+--- In a comment of every script, so only its source carries it: the compiled
+--- package must not (ADR 0112), while the strings the scripts print stay in
+--- the bytecode and prove the search reached them.
+local SourceOnly = "SENTINEL-SOURCE-ONLY"
+
 local function script(name: string): string
-    return `--!strict\nprint("{name}")\n`
+    return `--!strict\n-- {SourceOnly}\nprint("{name}")\n`
 end
 
 local function folder(name: string): string
@@ -143,6 +148,11 @@ local function checkSide(output: string, own: { string }, foreign: { string })
         for file, text in files do
             assert.that(string.find(text, sentinel, 1, true) == nil, `{sentinel} leaked into {file}`)
         end
+    end
+    -- Bytecode, not source: no script's text and no `.luau` in the game.
+    for file, text in files do
+        assert.that(string.find(text, SourceOnly, 1, true) == nil, `a script's source shipped in {file}`)
+        assert.that(string.sub(file, -5) ~= ".luau", `{file} shipped as source`)
     end
     for _, sentinel in own do
         local found = false

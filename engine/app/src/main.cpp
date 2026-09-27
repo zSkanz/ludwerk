@@ -19,6 +19,7 @@
 #include "engine/app/engine.h"
 #include "engine/app/project_config.h"
 #include "engine/app/replay.h"
+#include "engine/app/script_package.h"
 #include "engine/app/two_worlds.h"
 #include "engine/core/build_info.h"
 #include "engine/core/error.h"
@@ -660,6 +661,21 @@ int main(int argc, char** argv)
 
     if (!args.empty() && args[0] == "--help") {
         engine::core::log(LogLevel::Info, ENG_TR("engine.cli.usage"));
+        return kExitOk;
+    }
+
+    // **A build step, and nothing else** (ADR 0112): `ludwerk build` hands the
+    // laid-out game here so its scripts are compiled by this engine's compiler
+    // with the options it runs them with. No window, no world.
+    if (args.size() == 2 && args[0] == "--compile-scripts") {
+        engine::app::ScriptPackageReport report;
+        if (!engine::app::compileGameScripts(std::filesystem::path(args[1]), report)) {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.compile_script"), failed);
+            return kExitScriptError;
+        }
+        const std::array<I18nArg, 1> compiled{I18nArg{"count", static_cast<engine::core::i64>(report.compiled)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.compiled_scripts"), compiled);
         return kExitOk;
     }
 

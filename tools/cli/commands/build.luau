@@ -106,6 +106,13 @@ local function identityOf(project: projectlib.Project): desktop.Identity
     }
 end
 
+--- `[export] ship_source`: the game's scripts as source rather than bytecode
+--- (ADR 0112). Off unless the author asks, for a game meant to be modded or read.
+local function shipsSource(project: projectlib.Project): boolean
+    local section = project.config.export
+    return typeof(section) == "table" and section.ship_source == true
+end
+
 --- `[export] multiplayer`, or `none`.
 local function multiplayerMode(project: projectlib.Project): (string?, string?)
     local mode = stringField(project.config.export, "multiplayer") or "none"
@@ -326,6 +333,25 @@ local function run(options: Options): number
         end)
     end
 
+    -- **compile**: every script in the laid-out game to bytecode, by the
+    -- engine's own compiler (ADR 0112) -- before the partition, which boots
+    -- the game and so reads what it will ship.
+    local compileGame = function(gameDir: string): boolean
+        if shipsSource(project) then
+            return true
+        end
+        return progress.step(reporter, "compile", function(): string?
+            if host == nil then
+                return tr("cli.build.err.no_script_compiler")
+            end
+            local compiled = process.run({ host :: string, "--compile-scripts", gameDir })
+            if not compiled.ok then
+                return compiled.stdout .. compiled.stderr
+            end
+            return nil
+        end)
+    end
+
     if chosen.platform == "android" then
         local tools = androidTools :: android.Tools
         local settings = androidSettings :: android.Settings
@@ -341,6 +367,9 @@ local function run(options: Options): number
             return nil
         end)
         if not laidOut then
+            return 1
+        end
+        if not compileGame(projectlib.joined(stage, "assets", "game")) then
             return 1
         end
         partitionGame(projectlib.joined(stage, "assets", "game"))
@@ -459,6 +488,9 @@ local function run(options: Options): number
         return nil
     end)
     if not laidOut then
+        return 1
+    end
+    if not compileGame(projectlib.joined(output, "game")) then
         return 1
     end
     partitionGame(projectlib.joined(output, "game"))

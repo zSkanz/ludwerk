@@ -186,8 +186,8 @@ What each service is, on each side (solo and a host have both columns):
 
 ## What goes into `game/`
 
-Every target's `game/` holds `project.toml` and `.luaurc`, the source, the
-content pack, and the partition cache -- made on the package itself, so a
+Every target's `game/` holds `project.toml` and `.luaurc`, the scripts
+(compiled, below), the content pack, and the partition cache -- made on the package itself, so a
 dedicated side's cache holds only its own scene. It does **not** hold the
 editor's files: layouts, `editor.json`, the import and check caches.
 
@@ -195,27 +195,32 @@ If no content pack was built, the loose `content/` and `assets/` trees are
 copied instead -- shipping both would double the size of every game, and
 shipping neither would be a game with no art.
 
-## It ships Luau source
+## It ships bytecode, not source
 
-The packaged game contains your `.luau` files as text.
+Every script in `game/src/` is compiled to Luau bytecode as the game is laid
+out, by the engine's own compiler with the options it runs scripts with, and
+the source is removed: `init.luau` ships as `init.luauc`. No `.luau` is in the
+package (ADR 0112).
 
-That is a decision rather than an oversight, and it is worth knowing before you
-ship:
+- **An error still names the script and the line.** The bytecode keeps line
+  information, so a player's log says `src/client/init.luau:42` as your own
+  run would; what it drops is local variable names.
+- **A package runs only on the engine build that exported it**, or one that
+  reads the same bytecode versions. Run by another, a script is refused with a
+  message naming both, and exporting again fixes it.
+- **Bytecode is not encryption.** It removes the plain-text copy, and a
+  determined reader can still decompile it. Anything that must not be in the
+  game — a key, a token, an endpoint you do not want found — belongs on your
+  backend. A dedicated game's server code is the exception, because it is not
+  in the client's package at all.
 
-- The module loader is defined in terms of source at a path. A bytecode pack
-  would mean teaching `require`, the entry-script mount and the reload a second
-  unit type.
-- Hot reload replaces source and recompiles. A packaged build could skip that —
-  and then **the packaged path and the development path stop being the same
-  path**, which is what makes a shipped game debuggable.
-- The benefit would be boot time and source concealment. Boot time is not a
-  problem at these sizes, and **concealment is not a promise this engine can
-  make honestly**: Luau bytecode is trivially decompiled.
+To ship the source instead — a game meant to be read or modded — tick **Ship
+source** in the Export window, or:
 
-So: **a player who receives your folder has your source.** Anything that must
-not be in it — a key, a token, an endpoint you do not want found — belongs on
-your backend and not in the game. A dedicated game's server code is the
-exception, because it is not in the client's package at all.
+```toml
+[export]
+ship_source = true
+```
 
 ## Before you ship
 

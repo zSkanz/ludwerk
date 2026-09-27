@@ -18,6 +18,7 @@ engine_add_module(app
         src/project_config.cpp
         src/reload.cpp
         src/replay.cpp
+        src/script_package.cpp
         src/two_worlds.cpp
         src/bench.cpp
         src/screenshot.cpp

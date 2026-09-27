@@ -3,24 +3,16 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <algorithm>
+#include <cstdlib>
+
 #include "engine/scene/world.h"
+#include "engine/script/bytecode.h"
 #include "engine/script/debugger.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/sandbox.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
-
-// ADR 0002: the shipping profile links Luau.VM and Luau.CodeGen only, so this
-// header does not exist in that build. Everything under the guard is the one
-// source-to-bytecode path this module has.
-#if ENG_LUAU_COMPILER
-#include <luacode.h>
-
-#include "engine/script/compile_options.h"
-#endif
-
-#include <algorithm>
-#include <cstdlib>
 
 namespace engine::script {
 namespace {
@@ -37,28 +29,26 @@ namespace {
 
 // --- Loading -----------------------------------------------------------------
 
-#if ENG_LUAU_COMPILER
-
-// The one compile in the engine, so the options that make `Vector3.new` a
-// constant live in exactly one place (ADR 0013). `chunkName` is what
+// The one load in this module, source or bytecode (ADR 0112): `bytecodeOf`
+// compiles the first with the options that make `Vector3.new` a constant
+// (ADR 0013) and takes the second as it is, so a packaged game's `require` and
+// the editor's reach `luau_load` the same way. `chunkName` is what
 // `lua_getinfo` reports back as the requiring file, which is how a relative
 // specifier knows where it is relative to.
+//
+// A build with no compiler refuses SOURCE here -- at the single point where
+// source would have become bytecode -- so every caller reports it through the
+// failure path it already has, keyed and logged the same way a syntax error is.
 [[nodiscard]] bool loadChunk(lua_State* co, std::string_view source, std::string_view chunkName, std::string& outError)
 {
-    size_t bytecodeSize = 0;
-    lua_CompileOptions options{};
-    configureCompileOptions(options);
-
-    const std::string chunk = "@" + std::string(chunkName);
-    char* bytecode = luau_compile(source.data(), source.size(), &options, &bytecodeSize);
-    if (bytecode == nullptr) {
-        outError = "compilation produced no bytecode";
+    std::string bytecode;
+    if (const auto refused = bytecodeOf(source, chunkName, bytecode)) {
+        outError = refused->message;
         return false;
     }
 
-    const int status = luau_load(co, chunk.c_str(), bytecode, bytecodeSize, 0);
-    std::free(bytecode);
-
+    const std::string chunk = "@" + std::string(chunkName);
+    const int status = luau_load(co, chunk.c_str(), bytecode.data(), bytecode.size(), 0);
     if (status != LUA_OK) {
         const char* message = lua_tostring(co, -1);
         outError = message == nullptr ? std::string{} : std::string(message);
@@ -67,22 +57,6 @@ namespace {
     }
     return true;
 }
-
-#else
-
-// A build with no compiler refuses source rather than quietly loading nothing.
-// The refusal is placed HERE, at the single point where source would have
-// become bytecode, so every caller -- `require`, the entry-script mount --
-// reports it through the failure path it already has, keyed and logged the same
-// way a syntax error is. The reason travels as the `{message}` of that error,
-// key-prefixed, because a refusal is an engine message and R3 governs those.
-[[nodiscard]] bool loadChunk(lua_State*, std::string_view, std::string_view, std::string& outError)
-{
-    outError = core::formatKeyPrefixed(ENG_TR("script.err.no_compiler"));
-    return false;
-}
-
-#endif
 
 // The chunk name of whatever called `require`, without the `@`. Empty at the
 // top of a C boundary, which is what makes a relative specifier from there a

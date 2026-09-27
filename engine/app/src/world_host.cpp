@@ -20,6 +20,7 @@
 #include "engine/scene/players.h"
 #include "engine/scene/sprite_animation.h"
 #include "engine/scene/voxel_fluid.h"
+#include "engine/script/bytecode.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/net_module.h"
 #include "engine/script/remote.h"
@@ -114,7 +115,20 @@ constexpr std::string_view ConformanceRunnerPath = "runtime/conformance/runner.l
     return !out.empty();
 }
 
-// Every `.luau` file under `folder`, as entries for `container` (ADR 0105).
+// `init.luauc` is `init.luau` compiled (ADR 0112): mounted, named and
+// required by its source's name, so a packaged game's chunk names -- what an
+// error in a player's log says -- are the ones its author wrote.
+[[nodiscard]] std::filesystem::path sourceNameOf(const std::filesystem::path& file)
+{
+    if (file.extension() != script::CompiledExtension)
+        return file;
+    std::filesystem::path renamed = file;
+    renamed.replace_extension(".luau");
+    return renamed;
+}
+
+// Every `.luau` file under `folder`, as entries for `container` (ADR 0105), or
+// its compiled `.luauc`.
 void collectScriptFiles(const std::filesystem::path& root, const std::filesystem::path& folder, std::string container,
                         bool module, std::vector<script::MountedScript>& entries)
 {
@@ -128,17 +142,19 @@ void collectScriptFiles(const std::filesystem::path& root, const std::filesystem
     // dies with no message about what it was mounting.
     for (std::filesystem::recursive_directory_iterator it(folder, ec), end; it != end && !ec; it.increment(ec)) {
         const std::filesystem::directory_entry& entry = *it;
-        if (!entry.is_regular_file(ec) || entry.path().extension() != ".luau")
+        if (!entry.is_regular_file(ec) ||
+            (entry.path().extension() != ".luau" && entry.path().extension() != script::CompiledExtension))
             continue;
         std::string source;
         if (!readFile(entry.path(), source))
             continue;
+        const std::filesystem::path named = sourceNameOf(entry.path());
         entries.push_back(script::MountedScript{
-            .path = toProjectPath(std::filesystem::relative(entry.path(), root, ec)),
+            .path = toProjectPath(std::filesystem::relative(named, root, ec)),
             // Relative to its folder, so `src/client/enemy/patrol.luau` mounts
             // as `Client/enemy/patrol` rather than dragging the two directory
             // levels that got it there into the tree.
-            .mountPath = toProjectPath(std::filesystem::relative(entry.path(), folder, ec)),
+            .mountPath = toProjectPath(std::filesystem::relative(named, folder, ec)),
             .source = std::move(source),
             .container = container,
             .module = module,
@@ -218,15 +234,20 @@ struct WorldHostLoader
 
         // The extension is added rather than required, and `init.luau` is the
         // directory form. Both are tried in a fixed order so the answer never
-        // depends on which file was created first.
+        // depends on which file was created first -- each as source, then
+        // compiled (ADR 0112), under the source's name either way.
+        const auto present = [&](const std::string& path) {
+            return std::filesystem::is_regular_file(host.m_root / path) ||
+                   std::filesystem::is_regular_file(host.m_root / (path + "c"));
+        };
         const std::string withExtension = normalised.ends_with(".luau") ? normalised : normalised + ".luau";
-        if (std::filesystem::is_regular_file(host.m_root / withExtension)) {
+        if (present(withExtension)) {
             outPath = withExtension;
             return true;
         }
 
         const std::string asDirectory = normalised + "/init.luau";
-        if (std::filesystem::is_regular_file(host.m_root / asDirectory)) {
+        if (present(asDirectory)) {
             outPath = asDirectory;
             return true;
         }
@@ -236,7 +257,13 @@ struct WorldHostLoader
     static bool read(void* user, std::string_view path, std::string& outSource)
     {
         auto& host = *static_cast<WorldHost*>(user);
-        return readFile(host.m_root / std::filesystem::path(path), outSource);
+        const std::filesystem::path file = host.m_root / std::filesystem::path(path);
+        if (readFile(file, outSource))
+            return true;
+        // A packaged game's scripts are compiled beside where their source was.
+        std::filesystem::path compiled = file;
+        compiled.replace_extension(script::CompiledExtension);
+        return path.ends_with(".luau") && readFile(compiled, outSource);
     }
 };
 

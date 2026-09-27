@@ -55,6 +55,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **An exported game carries bytecode, not source** (ADR 0112, the
+  game-ready plan's A3). `ludwerk build` compiles every script in `game/src/`
+  with the engine's own compiler -- `init.luau` ships as `init.luauc` -- and
+  an error in a player's log still names the script and the line. Bytecode
+  from another engine build is refused by a keyed error naming both versions.
+  `[export] ship_source = true` (a **Ship source** box in the Export window)
+  keeps the source. A build without a compiler now runs a compiled game.
 - **An FBX or Collada file with bones brings its skeleton, skin and takes**,
   where it used to import as a static mesh. An `AnimationPlayer` under the
   `MeshPart` plays a take by the name after its `|`. The armature's scale (the

@@ -3,10 +3,16 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/script/builtins.h"
+#include "engine/script/bytecode.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/debugger.h"
 #include "engine/script/input_events.h"
@@ -20,20 +26,6 @@
 #include "engine/script/tasks.h"
 #include "engine/script/tweens.h"
 #include "print_tree.h"
-
-// ADR 0002: shipping links Luau.VM and Luau.CodeGen only, and this header comes
-// with the Compiler that profile drops. `runSource` refuses below rather than
-// pretending to have run something.
-#if ENG_LUAU_COMPILER
-#include <luacode.h>
-
-#include "engine/script/compile_options.h"
-#endif
-
-#include <algorithm>
-#include <cstdlib>
-#include <string>
-#include <vector>
 
 namespace engine::script {
 namespace {
@@ -426,29 +418,12 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
     if (L == nullptr)
         return core::makeError(ENG_TR("script.err.vm_not_booted"));
 
-#if !ENG_LUAU_COMPILER
-    // ADR 0002: this profile loads precompiled bytecode only, and there is no
-    // bytecode unit type yet (ADR 0045 ships a game as source). So the honest
-    // answer to "run this source" here is a catalogued refusal -- not a silent
-    // success that leaves the caller believing a script is running.
-    (void)source;
-    (void)category;
-    // The chunk name goes in `detail`, which is developer context and never
-    // localised -- the message itself says what the build cannot do, once.
-    return core::makeError(ENG_TR("script.err.no_compiler"), {}, std::string(chunkName));
-#else
-    size_t bytecodeSize = 0;
-    lua_CompileOptions options{};
-    // The one set of options, shared with the build-time compile (ADR 0094).
-    configureCompileOptions(options);
-
-    const std::string chunk = "@" + std::string(chunkName);
-    char* bytecode = luau_compile(source.data(), source.size(), &options, &bytecodeSize);
-    if (bytecode == nullptr) {
-        const core::I18nArg args[] = {{"source", chunkName},
-                                      {"message", std::string_view{"compilation produced no bytecode"}}};
-        return core::makeError(ENG_TR("script.err.syntax"), args);
-    }
+    // Source is compiled with the one set of options shared with the build-time
+    // compile (ADR 0094); bytecode -- a packaged game's (ADR 0112) -- is taken
+    // as it is, which is what lets a build with no compiler run one.
+    std::string bytecode;
+    if (auto refused = bytecodeOf(source, chunkName, bytecode))
+        return std::move(*refused);
 
     // Each script runs on its own thread with its own globals table, which is
     // what "per-script sandboxing" means (api-design.md §3): a global one script
@@ -465,8 +440,8 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
     // the DebugShell's memory table per-script rather than one number.
     lua_setmemcat(thread, static_cast<int>(category));
 
-    const int loadStatus = luau_load(thread, chunk.c_str(), bytecode, bytecodeSize, 0);
-    std::free(bytecode);
+    const std::string chunk = "@" + std::string(chunkName);
+    const int loadStatus = luau_load(thread, chunk.c_str(), bytecode.data(), bytecode.size(), 0);
 
     if (loadStatus != LUA_OK) {
         const char* message = lua_tostring(thread, -1);
@@ -491,7 +466,6 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
 
     lua_pop(L, 1); // the thread
     return std::nullopt;
-#endif
 }
 
 void ScriptRuntime::stepTweens(f64 fixedDt)
