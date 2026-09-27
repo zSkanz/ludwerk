@@ -49,10 +49,16 @@ PickRay rayThroughPixel(const Mat4& projection, const Mat4& view, DVec3 cameraOr
     // **An orthographic camera (the 2D layer) looks along one direction from
     // every pixel**, and what the pixel moves is where the ray starts: the
     // same two numbers are half-extents rather than tangents.
+    //
+    // It starts at the projection's near plane, which is BEHIND the camera
+    // (`render_world.cpp`: an orthographic camera sees its whole column), so
+    // what is drawn above where the camera stands can be picked too. The near
+    // distance comes out of the matrix: `m22 = 1 / (n - f)`, `m32 = n / (n - f)`.
     if (core::isOrthographic(projection)) {
         const Vec3 offsetWorld = core::transformDirection(viewInverse, Vec3{ndcX * tanX, ndcY * tanY, 0.0f});
         const Vec3 forwardWorld = core::normalize(core::transformDirection(viewInverse, Vec3{0.0f, 0.0f, -1.0f}));
-        return PickRay{cameraOrigin + core::toDVec3(offsetWorld), forwardWorld};
+        const f32 nearDistance = projection.m[2][2] != 0.0f ? projection.m[3][2] / projection.m[2][2] : 0.0f;
+        return PickRay{cameraOrigin + core::toDVec3(offsetWorld + forwardWorld * nearDistance), forwardWorld};
     }
 
     const Vec3 directionWorld = core::normalize(core::transformDirection(viewInverse, directionView));

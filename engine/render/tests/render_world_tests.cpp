@@ -1659,3 +1659,37 @@ TEST_CASE("a clip plane cuts what is behind it out of the camera's depth range (
     CHECK(beyond > 0.0f);
     CHECK(beyond < 1.0f);
 }
+
+TEST_CASE("an orthographic camera sees its whole column, above where it stands too")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    render::RenderWorld snapshot;
+    // Top-down, standing one metre up: a ball resting two metres up is wholly
+    // above the camera, and a top-down view must still show it.
+    render::ViewOverride lens;
+    lens.cframe =
+        core::lookAtCFrame(core::DVec3{0.0, 1.0, 0.0}, core::DVec3{0.0, 0.0, 0.0}, core::Vec3{0.0f, 0.0f, -1.0f});
+    lens.projection = 1;
+    lens.orthographicSize = 10.0f;
+    lens.farPlane = 500.0f;
+    render::extract(fixture.world, workspace, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr,
+                    snapshot, &lens);
+    REQUIRE(snapshot.camera.valid);
+
+    const auto depth = [&](core::Vec3 point) {
+        const core::Mat4& m = snapshot.camera.viewProjection;
+        return m.m[0][2] * point.x + m.m[1][2] * point.y + m.m[2][2] * point.z + m.m[3][2];
+    };
+    // Camera-relative: a metre above the camera, and a metre below it.
+    const float above = depth(core::Vec3{0.0f, 1.0f, 0.0f});
+    const float below = depth(core::Vec3{0.0f, -1.0f, 0.0f});
+    CHECK(above > 0.0f);
+    CHECK(above < 1.0f);
+    CHECK(below > above);
+    CHECK(below < 1.0f);
+    // And what is above is in the frustum a draw is culled against.
+    CHECK(core::intersects(snapshot.camera.frustum,
+                           core::AABB::fromMinMax(core::Vec3{-0.75f, 0.25f, -0.75f}, core::Vec3{0.75f, 1.75f, 0.75f})));
+}

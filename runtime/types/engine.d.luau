@@ -1226,7 +1226,8 @@ declare extern type Camera extends PVInstance with
     --- produce a projection matrix that renders nothing.
     FieldOfView: number
     --- Distance in metres to the near clip plane. Small values buy little and cost depth precision
-    --- everywhere, so this is worth raising rather than lowering.
+    --- everywhere, so this is worth raising rather than lowering. A perspective camera's only: an
+    --- orthographic one sees behind where it stands too (see `OrthographicSize`).
     NearPlane: number
     --- Distance in metres to the far clip plane; geometry beyond it is not drawn.
     FarPlane: number
@@ -1235,7 +1236,10 @@ declare extern type Camera extends PVInstance with
     --- the view, whatever the distance.
     Projection: EnumCameraProjection
     --- Half the height of what an orthographic camera shows, in metres. Its width follows from the
-    --- window's shape. Zooming a 2D view is changing this.
+    --- window's shape. Zooming a 2D view is changing this. **An orthographic camera sees its whole
+    --- column**, from `FarPlane` behind where it stands to `FarPlane` in front: nothing in its picture
+    --- shrinks with distance, so a top-down camera standing lower than the top of what it looks at
+    --- still shows all of it.
     OrthographicSize: number
     --- A plane the camera does not see behind (ADR 0107), used while `ClipPlaneEnabled` is true: it
     --- passes through this CFrame's position, and what lies in front of its `LookVector` is drawn while

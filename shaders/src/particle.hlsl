@@ -109,8 +109,10 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     }
 
     // The scene's depth at this pixel, linear, against the particle's own.
+    // An orthographic camera's depth runs from its far distance behind it to
+    // the same in front (`render_world.cpp`).
     const bool orthographic = ParticleDepth.x < 0.0f;
-    const float near = abs(ParticleDepth.x);
+    const float near = orthographic ? -ParticleDepth.y : ParticleDepth.x;
     const float far = ParticleDepth.y;
     const float device = SceneDepth.SampleLevel(SceneDepthSampler, input.Position.xy * ParticleDepth.zw, 0.0f).r;
     const float scene = orthographic ? near + device * (far - near)

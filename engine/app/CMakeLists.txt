@@ -869,6 +869,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # An orthographic camera shows its whole column, whatever the shape and
+    # however low it stands (the owner's report, 2026-09-27).
+    add_test(NAME ortho_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/ortho
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/ortho.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_ortho_gate.cmake)
+    set_tests_properties(ortho_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0107 §3: a sub-world draws its own world, and only its own.
     add_test(NAME subworld_gate
         COMMAND ${CMAKE_COMMAND}

@@ -656,8 +656,16 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         const f32 aspect = viewportAspect > 0.0f ? viewportAspect : 1.0f;
         // `Enum.CameraProjection`: 0 Perspective, 1 Orthographic (the 2D layer).
         const bool orthographic = camera->projection == 1;
+        // **An orthographic camera sees its whole column**: from `FarPlane`
+        // behind where it stands to `FarPlane` in front. Nothing in its picture
+        // shrinks with distance, so where along its axis it stands is a detail
+        // -- and a top-down camera placed lower than the top of a ball or a
+        // tower must still show it. A near plane at the camera culled
+        // everything above it: first whatever lay wholly above (the shadow
+        // stayed, because the sun's pass does not use this camera), and, once
+        // depth was clipped for mirrors, the tops of what crossed it too.
         out.camera.projection =
-            orthographic ? core::orthographic(camera->orthographicSize, aspect, camera->nearPlane, camera->farPlane)
+            orthographic ? core::orthographic(camera->orthographicSize, aspect, -camera->farPlane, camera->farPlane)
                          : core::perspective(camera->fieldOfView * kDegreesToRadians, aspect, camera->nearPlane,
                                              camera->farPlane);
         // **The oblique near plane** (ADR 0107; the technique is Lengyel's):

@@ -130,6 +130,7 @@ void buildClusters(const RenderCamera& camera, std::span<const RenderLight> ligh
     const f32 ratio = farPlane / nearPlane;
 
     const core::ViewSpread spread = core::viewSpread(camera.projection);
+    const bool orthographic = core::isOrthographic(camera.projection);
 
     out.lightCount = static_cast<u32>(std::min<usize>(lights.size(), kMaxClusteredLights));
     if (out.lightCount == 0)
@@ -158,11 +159,21 @@ void buildClusters(const RenderCamera& camera, std::span<const RenderLight> ligh
         const f32 depth = -entry.position.z;
         const f32 lowDepth = depth - entry.range;
         const f32 highDepth = depth + entry.range;
-        if (highDepth <= nearPlane)
-            continue;
-        entry.touchesFrustum = true;
-        entry.sliceLow = clusterSliceOf(std::max(lowDepth, nearPlane), out.sliceScale, out.sliceBias);
-        entry.sliceHigh = clusterSliceOf(std::max(highDepth, nearPlane), out.sliceScale, out.sliceBias);
+        if (orthographic) {
+            // An orthographic camera sees behind where it stands too
+            // (`render_world.cpp`), where view depth is negative and no slice
+            // is meaningful: a light reaches every slice of its tiles.
+            entry.touchesFrustum = true;
+            entry.sliceLow = 0;
+            entry.sliceHigh = kClusterSlices - 1;
+        }
+        else {
+            if (highDepth <= nearPlane)
+                continue;
+            entry.touchesFrustum = true;
+            entry.sliceLow = clusterSliceOf(std::max(lowDepth, nearPlane), out.sliceScale, out.sliceBias);
+            entry.sliceHigh = clusterSliceOf(std::max(highDepth, nearPlane), out.sliceScale, out.sliceBias);
+        }
 
         // The light's screen extent, from the bounding box of its sphere
         // projected at the CLOSEST depth it reaches. Conservative: a sphere's

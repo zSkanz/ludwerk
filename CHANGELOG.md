@@ -278,6 +278,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **An orthographic camera lost what stood above it** (the owner's report,
+  2026-09-27): a top-down camera standing lower than the top of a ball, a
+  cylinder or a wedge showed only its shadow, and -- once depth was clipped for
+  mirrors -- the tops of blocks went too. An orthographic camera now sees its
+  whole column, from `FarPlane` behind where it stands to `FarPlane` in front;
+  clustered lights, soft particles and the editor's picking follow.
+  `ortho_gate` holds it.
 - **The Export window showed an ImGui error box** ("Code uses
   SetCursorPos()/SetCursorScreenPos() to extend window/parent boundaries")
   and framed its target list in red: each target card moved the cursor to

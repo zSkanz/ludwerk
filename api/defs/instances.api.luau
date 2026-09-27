@@ -1541,7 +1541,8 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 ErrorKey = "scene.err.number_above_zero",
                 Doc = "Distance in metres to the near clip plane. Small values buy little and cost depth precision "
-                    .. "everywhere, so this is worth raising rather than lowering.",
+                    .. "everywhere, so this is worth raising rather than lowering. A perspective camera's only: an "
+                    .. "orthographic one sees behind where it stands too (see `OrthographicSize`).",
             },
             {
                 Name = "FarPlane",
@@ -1562,7 +1563,10 @@ local Classes: { Schema.Class } = {
                 Default = "10",
                 ErrorKey = "scene.err.number_above_zero",
                 Doc = "Half the height of what an orthographic camera shows, in metres. Its width follows from "
-                    .. "the window's shape. Zooming a 2D view is changing this.",
+                    .. "the window's shape. Zooming a 2D view is changing this.\n\n"
+                    .. "**An orthographic camera sees its whole column**, from `FarPlane` behind where it stands to "
+                    .. "`FarPlane` in front: nothing in its picture shrinks with distance, so a top-down camera "
+                    .. "standing lower than the top of what it looks at still shows all of it.",
             },
             {
                 Name = "ClipPlane",
