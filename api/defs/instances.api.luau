@@ -13,7 +13,8 @@ local Schema = require("../schema")
 --- times. It widened once, at M6, when `Vector2`, `UDim`, `UDim2` and `Rect`
 --- were declared -- which is the whole of what §2.2's "as those datatypes ship"
 --- was waiting for.
-local AttributeValue = "string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect"
+local AttributeValue =
+    "string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence"
 local OptionalAttributeValue = "(" .. AttributeValue .. ")?"
 local AttributeMap = "{ [string]: " .. AttributeValue .. " }"
 
@@ -3116,6 +3117,155 @@ local Classes: { Schema.Class } = {
                 Default = "UDim.new(0, 8)",
                 Doc = "Scale is a fraction of the parent's SHORTER side, so a pill shape is "
                     .. "`UDim.new(0.5, 0)` whatever the box's proportions.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIGradient",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject", "UIStroke"),
+        Storage = "UIGradient",
+        Doc = "Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its "
+            .. "text -- is multiplied by `Color` and faded by `Transparency` along the gradient. Under a "
+            .. "`UIStroke` it colours the stroke instead. Like `UICorner`, it changes the drawing and not the "
+            .. "layout or the hit test; the first one under a parent is the one that counts.",
+        Properties = {
+            {
+                Name = "Color",
+                Type = "ColorSequence",
+                Default = "ColorSequence.new(Color3.new(1, 1, 1))",
+                Doc = "The colours along the gradient, multiplied into the parent's own. White changes nothing.",
+            },
+            {
+                Name = "Transparency",
+                Type = "NumberSequence",
+                Default = "NumberSequence.new(0)",
+                Doc = "The see-through along the gradient: 0 leaves the parent as opaque as it was, 1 hides it.",
+            },
+            {
+                Name = "Offset",
+                Type = "Vector2",
+                Default = "Vector2.new(0, 0)",
+                Doc = "Moves the gradient's centre by fractions of the parent's size: (1, 0) is a whole width to the "
+                    .. "right. Negative values are legal.",
+            },
+            {
+                Name = "Rotation",
+                Type = "number",
+                Default = "0",
+                Doc = "Degrees, clockwise. A linear gradient at 0 runs left to right; a conical one starts pointing "
+                    .. "right. A radial gradient ignores it.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Off draws the parent as though it had no gradient.",
+            },
+            {
+                Name = "Type",
+                Type = "Enum.GradientType",
+                Default = "Enum.GradientType.Linear",
+                Doc = "The gradient's shape: a line across the parent, a circle out from its centre, or a sweep "
+                    .. "round it.",
+            },
+            {
+                Name = "TileMode",
+                Type = "Enum.GradientTileMode",
+                Default = "Enum.GradientTileMode.Clamp",
+                Doc = "What fills the space past the sequence's end when `Scale` is below 1 or `Offset` moves it: "
+                    .. "the end colours, the sequence again, or the sequence mirrored.",
+            },
+            {
+                Name = "Scale",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_positive",
+                Doc = "How much of the parent one run of the sequence spans: 1 is once across; 0.25 is a quarter, "
+                    .. "the rest filled per `TileMode`. For a radial gradient it scales the radius, for a conical "
+                    .. "one the sweep (never more than a turn).",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIStroke",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UIStroke",
+        Doc = "An outline on its parent's text or border (ADR 0110). On a text object it outlines the text unless "
+            .. "`ApplyStrokeMode` says `Border`; on anything else, the border. A `UIGradient` under it colours "
+            .. "the stroke. Several border strokes may share an element, ordered by `ZIndex`; a text object takes "
+            .. "one text stroke. A stroke never changes the layout, so an outer one can overlap a neighbour.",
+        Properties = {
+            {
+                Name = "Color",
+                Type = "Color3",
+                Default = "Color3.new(0, 0, 0)",
+                Doc = "The stroke's colour.",
+            },
+            {
+                Name = "Thickness",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Pixels, or with `StrokeSizingMode.ScaledSize` a fraction of the parent's shorter side (of "
+                    .. "the font size, on text). Animating it on text makes a new outline for every size it passes "
+                    .. "through, so prefer a fixed one there.",
+            },
+            {
+                Name = "Transparency",
+                Type = "number",
+                Default = "0",
+                Doc = "The stroke's own see-through, apart from its parent's: a stroke on text whose "
+                    .. "`TextTransparency` is 1 is hollow lettering.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Off draws nothing.",
+            },
+            {
+                Name = "ApplyStrokeMode",
+                Type = "Enum.ApplyStrokeMode",
+                Default = "Enum.ApplyStrokeMode.Contextual",
+                Doc = "`Contextual` outlines the text of a text object and the border of anything else; `Border` "
+                    .. "always outlines the border.",
+            },
+            {
+                Name = "LineJoinMode",
+                Type = "Enum.LineJoinMode",
+                Default = "Enum.LineJoinMode.Round",
+                Doc = "How a corner is turned: rounded, cut off, or brought to a point. A `UICorner` on the parent "
+                    .. "makes a border stroke round whatever this says.",
+            },
+            {
+                Name = "StrokeSizingMode",
+                Type = "Enum.StrokeSizingMode",
+                Default = "Enum.StrokeSizingMode.FixedSize",
+                Doc = "Whether `Thickness` is pixels or a fraction of the parent.",
+            },
+            {
+                Name = "BorderStrokePosition",
+                Type = "Enum.BorderStrokePosition",
+                Default = "Enum.BorderStrokePosition.Outer",
+                Doc = "Where on the border a border stroke lies: wholly outside it, centred on it, or wholly inside.",
+            },
+            {
+                Name = "BorderOffset",
+                Type = "UDim",
+                Default = "UDim.new(0, 0)",
+                Doc = "Moves a border stroke outwards (inwards when negative). Scale is a fraction of the parent's "
+                    .. "shorter side. Text strokes ignore it.",
+            },
+            {
+                Name = "ZIndex",
+                Type = "number",
+                Default = "1",
+                Doc = "The order among the element's strokes: lower draws behind higher, and equal ones draw in "
+                    .. "child order.",
             },
         } :: { Schema.Property },
     },

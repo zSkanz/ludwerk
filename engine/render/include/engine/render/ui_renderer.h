@@ -19,6 +19,7 @@
 #include "engine/core/error.h"
 #include "engine/core/math.h"
 #include "engine/render/shader_library.h"
+#include "engine/render/ui_gradient.h"
 #include "engine/rhi/device.h"
 
 namespace engine::render {
@@ -63,9 +64,13 @@ struct UiVertex
     // multiplies by one.
     core::f32 u = 0.0f;
     core::f32 v = 0.0f;
+
+    // A gradient and a stroke (ADR 0110). A quad with neither carries the
+    // defaults, which the shader passes through with three compares.
+    UiVertexAppearance look;
 };
 
-static_assert(sizeof(UiVertex) == 40, "the ui2d vertex layout is an ABI decision the shader shares");
+static_assert(sizeof(UiVertex) == 92, "the ui2d vertex layout is an ABI decision the shader shares");
 
 // One run of quads sharing a clip rectangle. The draw list is already ordered,
 // so a run is a contiguous span rather than a bucket -- which is what makes
@@ -106,6 +111,13 @@ public:
     void upload(rhi::IDevice& device, rhi::ICmdList& cmd, std::span<const UiVertex> vertices,
                 std::span<const UiScissorRun> runs);
 
+    // **The frame's gradient table** (ADR 0110): `rowCount` rows of
+    // `UiGradientRowBytes` each, uploaded only when they differ from the last
+    // frame's. No render pass may be open. The screen's UI and the world's
+    // both read it; `gradientTable` is the handle the world's pass binds.
+    void uploadGradients(rhi::ICmdList& cmd, std::span<const core::u8> rows, core::u32 rowCount);
+    [[nodiscard]] rhi::TextureHandle gradientTable() const noexcept { return gradientTable_; }
+
     // Records the draws. Call inside a render pass, after `upload`.
     //
     // `viewport` is the target's full size in pixels; the projection is derived
@@ -128,6 +140,14 @@ private:
     rhi::TextureHandle whitePixel_{};
     rhi::SamplerHandle sampler_{};
     bool whiteUploaded_ = false;
+
+    // The gradient table, its sampler (clamped and filtered, so a row is read
+    // between texels), and the pixels last uploaded -- kept so an unchanged
+    // frame uploads nothing.
+    rhi::TextureHandle gradientTable_{};
+    rhi::SamplerHandle gradientSampler_{};
+    std::vector<core::u8> uploadedGradients_;
+    bool gradientsUploaded_ = false;
 
     core::u32 capacityVertices_ = 0;
     core::u32 pendingVertices_ = 0;

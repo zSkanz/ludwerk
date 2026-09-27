@@ -1,7 +1,9 @@
 #include "engine/render/ui_renderer.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 
 #include "engine/core/text_key.h"
 
@@ -34,7 +36,7 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = kVertexStride}};
 
-    const std::array<rhi::VertexAttribute, 5> attributes{
+    const std::array<rhi::VertexAttribute, 9> attributes{
         rhi::VertexAttribute{
             .location = 0,
             .bufferSlot = 0,
@@ -67,6 +69,32 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
             .bufferSlot = 0,
             .format = rhi::VertexFormat::Float2,
             .offsetBytes = offsetof(UiVertex, u),
+        },
+        // The gradient and the stroke (ADR 0110), `UiVertexAppearance` as
+        // four attributes.
+        rhi::VertexAttribute{
+            .location = 5,
+            .bufferSlot = 0,
+            .format = rhi::VertexFormat::Float4,
+            .offsetBytes = offsetof(UiVertex, look) + offsetof(UiVertexAppearance, gradientX),
+        },
+        rhi::VertexAttribute{
+            .location = 6,
+            .bufferSlot = 0,
+            .format = rhi::VertexFormat::Float4,
+            .offsetBytes = offsetof(UiVertex, look) + offsetof(UiVertexAppearance, gradientRow),
+        },
+        rhi::VertexAttribute{
+            .location = 7,
+            .bufferSlot = 0,
+            .format = rhi::VertexFormat::Float4,
+            .offsetBytes = offsetof(UiVertex, look) + offsetof(UiVertexAppearance, gradientOffsetX),
+        },
+        rhi::VertexAttribute{
+            .location = 8,
+            .bufferSlot = 0,
+            .format = rhi::VertexFormat::Float1,
+            .offsetBytes = offsetof(UiVertex, look) + offsetof(UiVertexAppearance, strokeJoin),
         },
     };
 
@@ -117,11 +145,34 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
     if (!whitePixel_.valid() || !sampler_.valid())
         return core::makeError(ENG_TR("render.err.ui_pipeline_failed"));
 
+    // The gradient table (ADR 0110): a row per distinct gradient of a frame.
+    // Created whole, because `uploadTexture` writes a whole level.
+    gradientTable_ = device.createTexture({
+        .format = rhi::TextureFormat::Rgba8Unorm,
+        .usage = rhi::TextureUsage::Sampled,
+        .width = UiGradientWidth,
+        .height = UiGradientRows,
+        .debugName = "ui-gradients",
+    });
+    gradientSampler_ = device.createSampler({.addressU = rhi::AddressMode::ClampToEdge,
+                                             .addressV = rhi::AddressMode::ClampToEdge,
+                                             .debugName = "ui-gradients"});
+    if (!gradientTable_.valid() || !gradientSampler_.valid())
+        return core::makeError(ENG_TR("render.err.ui_pipeline_failed"));
+
     return std::nullopt;
 }
 
 void UiRenderer::destroy(rhi::IDevice& device)
 {
+    if (gradientTable_.valid())
+        device.destroy(gradientTable_);
+    if (gradientSampler_.valid())
+        device.destroy(gradientSampler_);
+    gradientTable_ = {};
+    gradientSampler_ = {};
+    uploadedGradients_.clear();
+    gradientsUploaded_ = false;
     if (whitePixel_.valid())
         device.destroy(whitePixel_);
     if (sampler_.valid())
@@ -187,6 +238,25 @@ void UiRenderer::upload(rhi::IDevice& device, rhi::ICmdList& cmd, std::span<cons
     cmd.upload(vertices_, std::as_bytes(vertices), 0);
 }
 
+void UiRenderer::uploadGradients(rhi::ICmdList& cmd, std::span<const core::u8> rows, core::u32 rowCount)
+{
+    if (!gradientTable_.valid())
+        return;
+    const core::usize used =
+        std::min<core::usize>(static_cast<core::usize>(rowCount) * UiGradientRowBytes, rows.size());
+    // Nothing changed, nothing sent: the common frame, where a HUD's
+    // gradients are the ones it had last frame.
+    if (gradientsUploaded_ && used == uploadedGradients_.size() &&
+        std::equal(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(used), uploadedGradients_.begin()))
+        return;
+    uploadedGradients_.assign(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(used));
+
+    std::vector<std::byte> whole(static_cast<core::usize>(UiGradientRows) * UiGradientRowBytes, std::byte{0xFF});
+    std::memcpy(whole.data(), uploadedGradients_.data(), uploadedGradients_.size());
+    cmd.uploadTexture(gradientTable_, whole, 0);
+    gradientsUploaded_ = true;
+}
+
 void UiRenderer::render(rhi::ICmdList& cmd, core::Vec2 viewport)
 {
     if (pendingVertices_ == 0 || !pipeline_.valid() || !vertices_.valid())
@@ -219,7 +289,9 @@ void UiRenderer::render(rhi::ICmdList& cmd, core::Vec2 viewport)
             // The sampler travels WITH the texture: `TextureBinding` is one
             // pair, which is SDL_GPU's own shape and the reason `rhi` has no
             // separate sampler bind.
-            const std::array<rhi::TextureBinding, 1> textures{rhi::TextureBinding{texture, sampler_}};
+            const std::array<rhi::TextureBinding, 2> textures{
+                rhi::TextureBinding{texture, sampler_},
+                rhi::TextureBinding{gradientTable_.valid() ? gradientTable_ : whitePixel_, gradientSampler_}};
             cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
             bound = texture;
         }

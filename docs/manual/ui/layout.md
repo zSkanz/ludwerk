@@ -177,9 +177,9 @@ still a rectangle to the solver and to the pointer.
 
 ## What is not here
 
-No `UIGridLayout`, `UIScale`, `UIStroke`, `UIGradient` or
-`UIAspectRatioConstraint`. Three modifiers is the set, and each of those is a
-real feature rather than an afternoon. There are no borders either.
+No `UIGridLayout`, `UIScale` or `UIAspectRatioConstraint`. A border is a
+`UIStroke`, and a gradient a `UIGradient`: see
+[Gradients and strokes](manual:ui/gradients-and-strokes).
 
 ## Where to look next
 

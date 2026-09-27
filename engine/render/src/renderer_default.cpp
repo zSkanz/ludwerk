@@ -2680,7 +2680,7 @@ bool DefaultRenderer::ensureWorldUi(rhi::IDevice& device)
         return false;
     }
 
-    const std::array<rhi::VertexAttribute, 5> attributes{
+    const std::array<rhi::VertexAttribute, 9> attributes{
         rhi::VertexAttribute{.location = 0,
                              .bufferSlot = 0,
                              .format = rhi::VertexFormat::Float3,
@@ -2701,6 +2701,24 @@ bool DefaultRenderer::ensureWorldUi(rhi::IDevice& device)
                              .bufferSlot = 0,
                              .format = rhi::VertexFormat::Float2,
                              .offsetBytes = offsetof(WorldUiVertex, u)},
+        // The gradient and the stroke (ADR 0110), as the screen's UI reads them.
+        rhi::VertexAttribute{.location = 5,
+                             .bufferSlot = 0,
+                             .format = rhi::VertexFormat::Float4,
+                             .offsetBytes = offsetof(WorldUiVertex, look) + offsetof(UiVertexAppearance, gradientX)},
+        rhi::VertexAttribute{.location = 6,
+                             .bufferSlot = 0,
+                             .format = rhi::VertexFormat::Float4,
+                             .offsetBytes = offsetof(WorldUiVertex, look) + offsetof(UiVertexAppearance, gradientRow)},
+        rhi::VertexAttribute{.location = 7,
+                             .bufferSlot = 0,
+                             .format = rhi::VertexFormat::Float4,
+                             .offsetBytes =
+                                 offsetof(WorldUiVertex, look) + offsetof(UiVertexAppearance, gradientOffsetX)},
+        rhi::VertexAttribute{.location = 8,
+                             .bufferSlot = 0,
+                             .format = rhi::VertexFormat::Float1,
+                             .offsetBytes = offsetof(WorldUiVertex, look) + offsetof(UiVertexAppearance, strokeJoin)},
     };
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(WorldUiVertex)},
@@ -4399,8 +4417,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     GpuWorldUiLook look;
                     look.params[0] = run.brightness;
                     cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&look, sizeof(look)));
-                    const std::array<rhi::TextureBinding, 1> texture{
-                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, environmentSampler_}};
+                    // The run's picture and the frame's gradient table (ADR
+                    // 0110), which the screen's UI reads too.
+                    const std::array<rhi::TextureBinding, 2> texture{
+                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, environmentSampler_},
+                        rhi::TextureBinding{world.worldUiGradients.valid() ? world.worldUiGradients : whitePixel_,
+                                            environmentSampler_}};
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, texture);
                     cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
                     stats_.drawCalls += 1;

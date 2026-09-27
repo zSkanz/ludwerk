@@ -947,6 +947,244 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     uICornerDesc.detachComponents = native::detachUICornerComponents;
     classes.registerClass(uICornerDesc);
 
+    // --- UIGradient ---
+    static std::array<scene::PropertyDesc, 8> uIGradientProperties;
+    uIGradientProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = scene::ValueType::ColorSequence,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The colours along the gradient, multiplied into the parent's own. White changes nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color_sequence"),
+            .get = native::getUIGradientColor,
+            .set = native::setUIGradientColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Transparency"),
+            .type = scene::ValueType::NumberSequence,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The see-through along the gradient: 0 leaves the parent as opaque as it was, 1 hides it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number_sequence"),
+            .get = native::getUIGradientTransparency,
+            .set = native::setUIGradientTransparency,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Offset"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Moves the gradient's centre by fractions of the parent's size: (1, 0) is a whole width to the right. Negative values are legal.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUIGradientOffset,
+            .set = native::setUIGradientOffset,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Rotation"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Degrees, clockwise. A linear gradient at 0 runs left to right; a conical one starts pointing right. A radial gradient ignores it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIGradientRotation,
+            .set = native::setUIGradientRotation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Off draws the parent as though it had no gradient.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIGradientEnabled,
+            .set = native::setUIGradientEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Type"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("GradientType"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The gradient's shape: a line across the parent, a circle out from its centre, or a sweep round it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGradientType,
+            .set = native::setUIGradientType,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TileMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("GradientTileMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What fills the space past the sequence's end when `Scale` is below 1 or `Offset` moves it: the end colours, the sequence again, or the sequence mirrored.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGradientTileMode,
+            .set = native::setUIGradientTileMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Scale"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of the parent one run of the sequence spans: 1 is once across; 0.25 is a quarter, the rest filled per `TileMode`. For a radial gradient it scales the radius, for a conical one the sweep (never more than a turn).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getUIGradientScale,
+            .set = native::setUIGradientScale,
+        },
+    }};
+    scene::ClassDescriptor uIGradientDesc;
+    uIGradientDesc.name = atoms.intern("UIGradient");
+    uIGradientDesc.super = instanceClass;
+    uIGradientDesc.flags = scene::ClassFlags::None;
+    uIGradientDesc.defaultName = atoms.intern("UIGradient");
+    uIGradientDesc.doc = "Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its text -- is multiplied by `Color` and faded by `Transparency` along the gradient. Under a `UIStroke` it colours the stroke instead. Like `UICorner`, it changes the drawing and not the layout or the hit test; the first one under a parent is the one that counts.";
+    static constexpr std::array<std::string_view, 4> uIGradientParents{{"UIObject", "UIStroke", "ReplicatedStorage", "ServerStorage"}};
+    uIGradientDesc.parents = uIGradientParents;
+    uIGradientDesc.properties = uIGradientProperties;
+    uIGradientDesc.attachComponents = native::attachUIGradientComponents;
+    uIGradientDesc.detachComponents = native::detachUIGradientComponents;
+    classes.registerClass(uIGradientDesc);
+
+    // --- UIStroke ---
+    static std::array<scene::PropertyDesc, 10> uIStrokeProperties;
+    uIStrokeProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The stroke's colour.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getUIStrokeColor,
+            .set = native::setUIStrokeColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Pixels, or with `StrokeSizingMode.ScaledSize` a fraction of the parent's shorter side (of the font size, on text). Animating it on text makes a new outline for every size it passes through, so prefer a fixed one there.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUIStrokeThickness,
+            .set = native::setUIStrokeThickness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Transparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The stroke's own see-through, apart from its parent's: a stroke on text whose `TextTransparency` is 1 is hollow lettering.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIStrokeTransparency,
+            .set = native::setUIStrokeTransparency,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Off draws nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIStrokeEnabled,
+            .set = native::setUIStrokeEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ApplyStrokeMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ApplyStrokeMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "`Contextual` outlines the text of a text object and the border of anything else; `Border` always outlines the border.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIStrokeApplyStrokeMode,
+            .set = native::setUIStrokeApplyStrokeMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LineJoinMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("LineJoinMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How a corner is turned: rounded, cut off, or brought to a point. A `UICorner` on the parent makes a border stroke round whatever this says.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIStrokeLineJoinMode,
+            .set = native::setUIStrokeLineJoinMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("StrokeSizingMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("StrokeSizingMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether `Thickness` is pixels or a fraction of the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIStrokeStrokeSizingMode,
+            .set = native::setUIStrokeStrokeSizingMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("BorderStrokePosition"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("BorderStrokePosition"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where on the border a border stroke lies: wholly outside it, centred on it, or wholly inside.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIStrokeBorderStrokePosition,
+            .set = native::setUIStrokeBorderStrokePosition,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("BorderOffset"),
+            .type = scene::ValueType::UDim,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Moves a border stroke outwards (inwards when negative). Scale is a fraction of the parent's shorter side. Text strokes ignore it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim"),
+            .get = native::getUIStrokeBorderOffset,
+            .set = native::setUIStrokeBorderOffset,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ZIndex"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The order among the element's strokes: lower draws behind higher, and equal ones draw in child order.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIStrokeZIndex,
+            .set = native::setUIStrokeZIndex,
+        },
+    }};
+    scene::ClassDescriptor uIStrokeDesc;
+    uIStrokeDesc.name = atoms.intern("UIStroke");
+    uIStrokeDesc.super = instanceClass;
+    uIStrokeDesc.flags = scene::ClassFlags::None;
+    uIStrokeDesc.defaultName = atoms.intern("UIStroke");
+    uIStrokeDesc.doc = "An outline on its parent's text or border (ADR 0110). On a text object it outlines the text unless `ApplyStrokeMode` says `Border`; on anything else, the border. A `UIGradient` under it colours the stroke. Several border strokes may share an element, ordered by `ZIndex`; a text object takes one text stroke. A stroke never changes the layout, so an outer one can overlap a neighbour.";
+    static constexpr std::array<std::string_view, 3> uIStrokeParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIStrokeDesc.parents = uIStrokeParents;
+    uIStrokeDesc.properties = uIStrokeProperties;
+    uIStrokeDesc.attachComponents = native::attachUIStrokeComponents;
+    uIStrokeDesc.detachComponents = native::detachUIStrokeComponents;
+    classes.registerClass(uIStrokeDesc);
+
     // --- UIService ---
     static std::array<scene::PropertyDesc, 3> uIServiceProperties;
     uIServiceProperties = {{

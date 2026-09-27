@@ -341,6 +341,16 @@ def draw_icon(group, name):
     elif name == "ScrollFrame": i.rect(3,3,18,18).line((16,7),(16,17),width=2.6).line((7,8),(11,8)).line((7,12),(11,12)).line((7,16),(11,16))
     elif name == "UICorner": i.line((3,21),(3,11)).arc(11,11,8,180,270).line((11,3),(21,3)).line((10,21),(10,14),(14,10),(21,10))
     elif name == "UIPadding": i.rect(2,3,20,18).rect(7,8,10,8,1)
+    elif name == "UIGradient":
+        # A frame whose fill thins from solid to nothing: diagonal bands, each
+        # narrower than the one before.
+        i.rect(3,4,18,16)
+        for x, width in ((6.5, 3.4), (11, 2.4), (15, 1.5), (18.4, 0.8)):
+            i.line((x - 1.6, 17), (x + 1.6, 7), width=width)
+    elif name == "UIStroke":
+        # An outline drawn around an outline: the element, and the stroke
+        # standing off it.
+        i.rect(6,7,12,10,1).rect(2,3,20,18,4)
     elif name == "UIListLayout":
         for y in (5,12,19): i.circle(4,y,1,True).line((9,y),(21,y))
     elif name in ("Sound","AudioService"):

@@ -55,6 +55,26 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`UIGradient` and `UIStroke`** (ADR 0110). A gradient colours and fades the
+  element it is under -- background, picture and text -- along a
+  `ColorSequence` and a `NumberSequence`: **linear, radial or conical**, rotated
+  and offset, with a `Scale` and **Clamp, Repeat or Mirror** tiling. A stroke
+  outlines an element's **border** -- **outer, centred or inner**, with an
+  offset, round, bevel or miter corners, and several per element ordered by
+  `ZIndex` -- or a text object's **text**, hollow lettering included; its
+  thickness is pixels or a fraction of the element (of the font size, on text),
+  and a `UIGradient` under it colours it. Rich text takes
+  `<stroke color thickness transparency joins sizing>`. Both work in a
+  `SurfaceGui` and a `BillboardGui`. `examples/25-gradients-and-strokes` shows
+  every one; `docs/manual/ui/gradients-and-strokes.md` explains them.
+- **`ColorSequence`, `NumberSequence` and their keypoints** (ADR 0110): two to
+  twenty stops from time 0 to time 1, immutable, compared by value. Properties
+  and attributes hold them, a scene saves them, and attributes replicate them
+  (protocol 18). A sequence in the Properties panel is a bar with a handle per
+  stop.
+- **`imgprobe`** beside `imgcmp`: asserts the colour at named points of a
+  screenshot, which is how `ui_appearance_gate` checks eighteen claims about
+  gradients and strokes without a golden image.
 - **A game's identity, set once** (ADR 0104): `[project] company`, a validated
   `[project] version` (`X.Y.Z`), `[window] fullscreen` and `resizable`, and
   `[window] width` / `height` read as `size`. A PNG `[project] icon` is what the

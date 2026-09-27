@@ -471,7 +471,8 @@ int methodDestroy(lua_State* L)
     // what says the two lists are the same list.
     for (const scene::ValueType candidate :
          {scene::ValueType::CFrame, scene::ValueType::Color3, scene::ValueType::Vector2, scene::ValueType::UDim,
-          scene::ValueType::UDim2, scene::ValueType::Rect}) {
+          scene::ValueType::UDim2, scene::ValueType::Rect, scene::ValueType::ColorSequence,
+          scene::ValueType::NumberSequence}) {
         if (std::optional<scene::Value> value = toValue(L, index, candidate))
             return value;
     }

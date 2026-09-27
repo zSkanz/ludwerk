@@ -41,6 +41,7 @@
 #include "engine/core/id.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
+#include "engine/core/sequence.h"
 #include "engine/core/types.h"
 #include "engine/scene/types.h"
 
@@ -1244,6 +1245,44 @@ struct UIPaddingComponent
 struct UICornerComponent
 {
     core::UDim cornerRadius{0.0f, 8.0f};
+};
+
+// `UIGradient` (ADR 0110). Read by the draw list and nothing else: it changes
+// the drawing, never the layout, so a write marks nothing dirty -- the draw
+// list is built every frame.
+struct UIGradientComponent
+{
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    core::Vec2 offset{};
+    // Degrees, clockwise.
+    f32 rotation = 0.0f;
+    bool enabled = true;
+    // `Enum.GradientType`: 0 Linear, 1 Radial, 2 Conical.
+    i32 type = 0;
+    // `Enum.GradientTileMode`: 0 Clamp, 1 Repeat, 2 Mirror.
+    i32 tileMode = 0;
+    f32 scale = 1.0f;
+};
+
+// `UIStroke` (ADR 0110), read by the draw list and, on text, by the glyph
+// store's stroked glyphs.
+struct UIStrokeComponent
+{
+    core::Color3 color{0.0f, 0.0f, 0.0f};
+    f32 thickness = 1.0f;
+    f32 transparency = 0.0f;
+    bool enabled = true;
+    // `Enum.ApplyStrokeMode`: 0 Contextual, 1 Border.
+    i32 applyStrokeMode = 0;
+    // `Enum.LineJoinMode`: 0 Round, 1 Bevel, 2 Miter.
+    i32 lineJoinMode = 0;
+    // `Enum.StrokeSizingMode`: 0 FixedSize, 1 ScaledSize.
+    i32 strokeSizingMode = 0;
+    // `Enum.BorderStrokePosition`: 0 Outer, 1 Center, 2 Inner.
+    i32 borderStrokePosition = 0;
+    core::UDim borderOffset{};
+    f32 zIndex = 1.0f;
 };
 
 // --- Audio (M6) --------------------------------------------------------------

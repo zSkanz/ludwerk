@@ -150,6 +150,13 @@ enum class UserdataTag : int
     // where a clone's hold is given back.
     Material = 21,
 
+    // ADR 0110: the two sequences and their stops. The sequences own their
+    // stops, so each has a destructor; a stop is a few numbers.
+    ColorSequence = 22,
+    ColorSequenceKeypoint = 23,
+    NumberSequence = 24,
+    NumberSequenceKeypoint = 25,
+
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.
     Count,

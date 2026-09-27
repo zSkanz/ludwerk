@@ -37,6 +37,9 @@ namespace {
     case ValueType::UDim:
     case ValueType::UDim2:
     case ValueType::Rect:
+    // ADR 0110: values, not references, so an attribute may hold one.
+    case ValueType::ColorSequence:
+    case ValueType::NumberSequence:
         return true;
     case ValueType::Instance:
     case ValueType::EnumItem:

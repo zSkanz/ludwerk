@@ -56,6 +56,12 @@ target_link_libraries(imgcmp PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgstrip src/strip_main.cpp)
 target_link_libraries(imgstrip PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgprobe` asserts the colour at named points of a screenshot -- the shape of
+# a claim about one feature ("the bar's left end is red"), which a golden image
+# of the whole frame over-states. Same library, same independence.
+add_executable(imgprobe src/probe_main.cpp)
+target_link_libraries(imgprobe PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp

@@ -13,6 +13,8 @@
 // light and scaled by the gui's `Brightness`, so white at one is about as
 // bright as a lit white wall and above one it blooms.
 
+#include "engine_ui.hlsli"
+
 cbuffer UiWorldView : register(b0, space1)
 {
     column_major float4x4 ViewProjection;
@@ -26,6 +28,9 @@ cbuffer UiWorldLook : register(b0, space3)
 
 Texture2D<float4> UiTexture : register(t0, space2);
 SamplerState UiSampler : register(s0, space2);
+// The frame's gradient table (ADR 0110), the screen's UI's own.
+Texture2D<float4> GradientTable : register(t1, space2);
+SamplerState GradientSampler : register(s1, space2);
 
 struct VertexInput
 {
@@ -37,6 +42,11 @@ struct VertexInput
     float4 LocalHalf : TEXCOORD2;
     float Radius : TEXCOORD3;
     float2 Uv : TEXCOORD4;
+    // A gradient and a stroke (ADR 0110), as `ui2d.hlsl` reads them.
+    float4 GradientFrame : TEXCOORD5;
+    float4 GradientShape : TEXCOORD6;
+    float4 GradientOffsetBand : TEXCOORD7;
+    float StrokeJoin : TEXCOORD8;
 };
 
 struct Interpolants
@@ -45,6 +55,10 @@ struct Interpolants
     float4 LocalHalf : TEXCOORD1;
     float Radius : TEXCOORD2;
     float2 Uv : TEXCOORD3;
+    float4 GradientFrame : TEXCOORD4;
+    nointerpolation float4 GradientShape : TEXCOORD5;
+    nointerpolation float4 GradientOffsetBand : TEXCOORD6;
+    nointerpolation float StrokeJoin : TEXCOORD7;
     float4 Position : SV_Position;
 };
 
@@ -56,14 +70,11 @@ Interpolants VertexMain(VertexInput input)
     output.LocalHalf = input.LocalHalf;
     output.Radius = input.Radius;
     output.Uv = input.Uv;
+    output.GradientFrame = input.GradientFrame;
+    output.GradientShape = input.GradientShape;
+    output.GradientOffsetBand = input.GradientOffsetBand;
+    output.StrokeJoin = input.StrokeJoin;
     return output;
-}
-
-// `ui2d.hlsl`'s, unchanged: the corner is arithmetic on the fragment.
-float roundedRectDistance(float2 local, float2 half, float radius)
-{
-    const float2 outside = abs(local) - (half - radius);
-    return length(max(outside, 0.0f)) + min(max(outside.x, outside.y), 0.0f) - radius;
 }
 
 float3 srgbToLinear(float3 color)
@@ -74,11 +85,20 @@ float3 srgbToLinear(float3 color)
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
     float4 color = input.Color * UiTexture.Sample(UiSampler, input.Uv);
-    if (input.Radius > 0.0f) {
-        const float distance = roundedRectDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius);
+    const float2 band = input.GradientOffsetBand.zw;
+    if (band.y > band.x) {
+        const float distance =
+            uiStrokeDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius, input.StrokeJoin);
+        color.a *= uiStrokeCoverage(distance, band.x, band.y);
+    }
+    else if (input.Radius > 0.0f) {
+        const float distance = uiRoundedRectDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius);
         const float edge = fwidth(distance);
         color.a *= 1.0f - smoothstep(-edge, edge, distance);
     }
+    color *= uiGradient(GradientTable, GradientSampler, input.GradientFrame.xy, input.GradientFrame.zw,
+                        input.GradientShape.y, input.GradientShape.x, input.GradientShape.z, input.GradientShape.w,
+                        input.GradientOffsetBand.xy);
     // Nothing to blend is nothing to write, which keeps a label's empty corners
     // from greying the depth-sorted surfaces behind them at the edges.
     clip(color.a - 1.0f / 255.0f);

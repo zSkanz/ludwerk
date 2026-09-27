@@ -128,6 +128,7 @@ local Sections: { Section } = {
             { Slug = "tree", Title = "The UI tree" },
             { Slug = "layout", Title = "Layout with UDim2" },
             { Slug = "text-and-images", Title = "Text and images" },
+            { Slug = "gradients-and-strokes", Title = "Gradients and strokes" },
             { Slug = "interaction", Title = "Buttons and interaction" },
             { Slug = "world-space", Title = "UI in the world" },
         },

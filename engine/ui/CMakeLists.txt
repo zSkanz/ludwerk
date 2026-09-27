@@ -38,6 +38,7 @@ engine_add_module_tests(ui
         ui
     SOURCES
         tests/layout_tests.cpp
+        tests/appearance_tests.cpp
         tests/glyph_tests.cpp
         tests/rich_text_tests.cpp
         tests/interaction_tests.cpp

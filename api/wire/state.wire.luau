@@ -1432,6 +1432,8 @@ local Excluded: { Schema.Excluded } = {
     { Name = "ImageButton", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "ScrollFrame", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UICorner", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIGradient", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIStroke", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIListLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIPadding", Reason = "Screen-space UI. The same as `ScreenGui`." },
 

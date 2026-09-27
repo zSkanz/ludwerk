@@ -129,6 +129,24 @@ end
 declare extern type EnumNetworkState extends EnumItem with
 end
 
+declare extern type EnumGradientType extends EnumItem with
+end
+
+declare extern type EnumGradientTileMode extends EnumItem with
+end
+
+declare extern type EnumApplyStrokeMode extends EnumItem with
+end
+
+declare extern type EnumLineJoinMode extends EnumItem with
+end
+
+declare extern type EnumStrokeSizingMode extends EnumItem with
+end
+
+declare extern type EnumBorderStrokePosition extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -303,6 +321,37 @@ declare extern type Rect with
     --- `Max.Y - Min.Y`, which is negative for an inverted rectangle rather than zero.
     read Height: number
     function __eq(self, other: Rect): boolean
+end
+
+declare extern type ColorSequenceKeypoint with
+    --- Where along the sequence the stop is, from 0 to 1.
+    read Time: number
+    --- The colour at that time.
+    read Value: Color3
+    function __eq(self, other: ColorSequenceKeypoint): boolean
+end
+
+declare extern type ColorSequence with
+    --- The stops, in time order. A new table each read.
+    read Keypoints: { ColorSequenceKeypoint }
+    function __eq(self, other: ColorSequence): boolean
+end
+
+declare extern type NumberSequenceKeypoint with
+    --- Where along the sequence the stop is, from 0 to 1.
+    read Time: number
+    --- The number at that time.
+    read Value: number
+    --- How far a value drawn from the sequence may stray from `Value` here. Kept with the stop; the UI
+    --- does not use it.
+    read Envelope: number
+    function __eq(self, other: NumberSequenceKeypoint): boolean
+end
+
+declare extern type NumberSequence with
+    --- The stops, in time order. A new table each read.
+    read Keypoints: { NumberSequenceKeypoint }
+    function __eq(self, other: NumberSequence): boolean
 end
 
 declare extern type Random with
@@ -643,12 +692,12 @@ declare extern type Instance with
     function Destroy(self): ()
     --- The value of that attribute, or nil when it has never been set; attribute names are
     --- case-sensitive.
-    function GetAttribute(self, name: string): (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?
+    function GetAttribute(self, name: string): (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?
     --- Sets that attribute, or removes it when value is nil; a table, an Instance or a function raises
     --- and leaves any previous value in place, and an empty name raises.
-    function SetAttribute(self, name: string, value: (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?): ()
+    function SetAttribute(self, name: string, value: (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?): ()
     --- A fresh table of this instance's attributes, which the caller owns.
-    function GetAttributes(self): { [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect }
+    function GetAttributes(self): { [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence }
     --- The signal fired when that attribute changes; any name is accepted, because an attribute that
     --- has never been set is a reasonable thing to wait for.
     function GetAttributeChangedSignal(self, name: string): Signal<()>
@@ -1774,6 +1823,61 @@ declare extern type UICorner extends Instance with
     --- Scale is a fraction of the parent's SHORTER side, so a pill shape is `UDim.new(0.5, 0)` whatever
     --- the box's proportions.
     CornerRadius: UDim
+end
+
+declare extern type UIGradient extends Instance with
+    --- The colours along the gradient, multiplied into the parent's own. White changes nothing.
+    Color: ColorSequence
+    --- The see-through along the gradient: 0 leaves the parent as opaque as it was, 1 hides it.
+    Transparency: NumberSequence
+    --- Moves the gradient's centre by fractions of the parent's size: (1, 0) is a whole width to the
+    --- right. Negative values are legal.
+    Offset: Vector2
+    --- Degrees, clockwise. A linear gradient at 0 runs left to right; a conical one starts pointing
+    --- right. A radial gradient ignores it.
+    Rotation: number
+    --- Off draws the parent as though it had no gradient.
+    Enabled: boolean
+    --- The gradient's shape: a line across the parent, a circle out from its centre, or a sweep round
+    --- it.
+    Type: EnumGradientType
+    --- What fills the space past the sequence's end when `Scale` is below 1 or `Offset` moves it: the
+    --- end colours, the sequence again, or the sequence mirrored.
+    TileMode: EnumGradientTileMode
+    --- How much of the parent one run of the sequence spans: 1 is once across; 0.25 is a quarter, the
+    --- rest filled per `TileMode`. For a radial gradient it scales the radius, for a conical one the
+    --- sweep (never more than a turn).
+    Scale: number
+end
+
+declare extern type UIStroke extends Instance with
+    --- The stroke's colour.
+    Color: Color3
+    --- Pixels, or with `StrokeSizingMode.ScaledSize` a fraction of the parent's shorter side (of the
+    --- font size, on text). Animating it on text makes a new outline for every size it passes through,
+    --- so prefer a fixed one there.
+    Thickness: number
+    --- The stroke's own see-through, apart from its parent's: a stroke on text whose `TextTransparency`
+    --- is 1 is hollow lettering.
+    Transparency: number
+    --- Off draws nothing.
+    Enabled: boolean
+    --- `Contextual` outlines the text of a text object and the border of anything else; `Border` always
+    --- outlines the border.
+    ApplyStrokeMode: EnumApplyStrokeMode
+    --- How a corner is turned: rounded, cut off, or brought to a point. A `UICorner` on the parent
+    --- makes a border stroke round whatever this says.
+    LineJoinMode: EnumLineJoinMode
+    --- Whether `Thickness` is pixels or a fraction of the parent.
+    StrokeSizingMode: EnumStrokeSizingMode
+    --- Where on the border a border stroke lies: wholly outside it, centred on it, or wholly inside.
+    BorderStrokePosition: EnumBorderStrokePosition
+    --- Moves a border stroke outwards (inwards when negative). Scale is a fraction of the parent's
+    --- shorter side. Text strokes ignore it.
+    BorderOffset: UDim
+    --- The order among the element's strokes: lower draws behind higher, and equal ones draw in child
+    --- order.
+    ZIndex: number
 end
 
 declare extern type AudioGroup extends Instance with
@@ -3150,6 +3254,40 @@ declare Enum: {
         Serving: EnumNetworkState,
         GetEnumItems: (self: any) -> { EnumNetworkState },
     },
+    GradientType: {
+        Linear: EnumGradientType,
+        Radial: EnumGradientType,
+        Conical: EnumGradientType,
+        GetEnumItems: (self: any) -> { EnumGradientType },
+    },
+    GradientTileMode: {
+        Clamp: EnumGradientTileMode,
+        Repeat: EnumGradientTileMode,
+        Mirror: EnumGradientTileMode,
+        GetEnumItems: (self: any) -> { EnumGradientTileMode },
+    },
+    ApplyStrokeMode: {
+        Contextual: EnumApplyStrokeMode,
+        Border: EnumApplyStrokeMode,
+        GetEnumItems: (self: any) -> { EnumApplyStrokeMode },
+    },
+    LineJoinMode: {
+        Round: EnumLineJoinMode,
+        Bevel: EnumLineJoinMode,
+        Miter: EnumLineJoinMode,
+        GetEnumItems: (self: any) -> { EnumLineJoinMode },
+    },
+    StrokeSizingMode: {
+        FixedSize: EnumStrokeSizingMode,
+        ScaledSize: EnumStrokeSizingMode,
+        GetEnumItems: (self: any) -> { EnumStrokeSizingMode },
+    },
+    BorderStrokePosition: {
+        Outer: EnumBorderStrokePosition,
+        Center: EnumBorderStrokePosition,
+        Inner: EnumBorderStrokePosition,
+        GetEnumItems: (self: any) -> { EnumBorderStrokePosition },
+    },
 }
 
 declare Vector3: {
@@ -3271,6 +3409,26 @@ declare UDim2: {
 declare Rect: {
     --- A rectangle from its two corners.
     new: ((min: Vector2, max: Vector2) -> Rect),
+}
+
+declare ColorSequenceKeypoint: {
+    --- A stop at `time`, which must be between 0 and 1.
+    new: ((time: number, color: Color3) -> ColorSequenceKeypoint),
+}
+
+declare ColorSequence: {
+    --- One colour from start to end.
+    new: ((color: Color3) -> ColorSequence) & ((from: Color3, to: Color3) -> ColorSequence) & ((keypoints: { ColorSequenceKeypoint }) -> ColorSequence),
+}
+
+declare NumberSequenceKeypoint: {
+    --- A stop at `time`, which must be between 0 and 1.
+    new: ((time: number, value: number, envelope: number?) -> NumberSequenceKeypoint),
+}
+
+declare NumberSequence: {
+    --- One number from start to end.
+    new: ((value: number) -> NumberSequence) & ((from: number, to: number) -> NumberSequence) & ((keypoints: { NumberSequenceKeypoint }) -> NumberSequence),
 }
 
 declare Random: {
@@ -3423,6 +3581,8 @@ declare Instance: {
         & (("UIListLayout") -> UIListLayout)
         & (("UIPadding") -> UIPadding)
         & (("UICorner") -> UICorner)
+        & (("UIGradient") -> UIGradient)
+        & (("UIStroke") -> UIStroke)
         & (("AudioGroup") -> AudioGroup)
         & (("Sound") -> Sound)
         & (("AnimationPlayer") -> AnimationPlayer)

@@ -19,6 +19,7 @@
 #include "engine/script/input_events.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/materials.h"
+#include "engine/script/sequences.h"
 #include "engine/script/tweens.h"
 
 namespace engine::script {
@@ -1780,6 +1781,7 @@ void registerDatatypes(lua_State* L)
     registerAnimationTypes(L);
     registerInputTypes(L);
     registerMaterialTypes(L);
+    registerSequenceTypes(L);
     registerVector(L);
 }
 
@@ -1892,6 +1894,12 @@ void pushValue(lua_State* L, const scene::Value& value)
     case scene::ValueType::MaterialParameters:
         pushMaterialParameters(L, std::get<asset::MaterialOverrides>(value));
         return;
+    case scene::ValueType::ColorSequence:
+        pushColorSequence(L, std::get<core::ColorSequence>(value));
+        return;
+    case scene::ValueType::NumberSequence:
+        pushNumberSequence(L, std::get<core::NumberSequence>(value));
+        return;
     }
     lua_pushnil(L);
 }
@@ -1991,6 +1999,14 @@ std::optional<scene::Value> toValue(lua_State* L, int index, scene::ValueType ex
     case scene::ValueType::MaterialParameters:
         if (const std::optional<asset::MaterialOverrides> overrides = toMaterialParameters(L, index))
             return scene::Value{*overrides};
+        return std::nullopt;
+    case scene::ValueType::ColorSequence:
+        if (const core::ColorSequence* sequence = toColorSequence(L, index))
+            return scene::Value{*sequence};
+        return std::nullopt;
+    case scene::ValueType::NumberSequence:
+        if (const core::NumberSequence* sequence = toNumberSequence(L, index))
+            return scene::Value{*sequence};
         return std::nullopt;
     }
     return std::nullopt;

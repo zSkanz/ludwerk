@@ -37,6 +37,7 @@ engine_add_module(render
         src/scene_types.cpp
         src/shadow.cpp
         src/ui_renderer.cpp
+        src/ui_gradient.cpp
         src/animation.cpp
         generated/class_descriptors.gen.cpp
     DEPS

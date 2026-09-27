@@ -926,7 +926,7 @@ TEST_CASE("every Value alternative reaches the hasher")
     // The two material alternatives (ADR 0090) are not attribute values, so
     // they cannot be reached through one; `material_world_tests.cpp` hashes
     // them through `BasePart.Material` and `BasePart.MaterialParameters`.
-    static_assert(std::variant_size_v<Value> == 15, "a new Value alternative needs a row below");
+    static_assert(std::variant_size_v<Value> == 17, "a new Value alternative needs a row below");
 
     // Two distinct values per alternative, chosen to differ in every field so
     // that a partial hash -- one that reads `min` and forgets `max` -- fails
@@ -943,6 +943,12 @@ TEST_CASE("every Value alternative reaches the hasher")
          Value{engine::core::UDim2{engine::core::UDim{0.5f, 8.0f}, engine::core::UDim{1.0f, 3.0f}}}},
         {Value{engine::core::Rect{engine::core::Vec2{0.0f, 0.0f}, engine::core::Vec2{4.0f, 4.0f}}},
          Value{engine::core::Rect{engine::core::Vec2{0.0f, 0.0f}, engine::core::Vec2{4.0f, 5.0f}}}},
+        // ADR 0110: a stop's colour, and a stop's time, each changed alone.
+        {Value{engine::core::ColorSequence{}},
+         Value{engine::core::ColorSequence{
+             {{0.0f, engine::core::Color3{1.0f, 1.0f, 1.0f}}, {1.0f, engine::core::Color3{1.0f, 1.0f, 0.5f}}}}}},
+        {Value{engine::core::NumberSequence{{{0.0f, 0.0f, 0.0f}, {0.5f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}}},
+         Value{engine::core::NumberSequence{{{0.0f, 0.0f, 0.0f}, {0.6f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}}}},
     };
 
     for (const auto& [first, second] : pairs) {

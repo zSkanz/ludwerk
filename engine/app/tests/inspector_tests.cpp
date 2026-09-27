@@ -90,8 +90,8 @@ TEST_CASE("the sweep visits every property of a class it has never seen")
     // `propertySlot`'s numbering. Written out rather than counted, because
     // "there are ten of them" would still pass with the wrong ten.
     const std::vector<std::string> expected{
-        "Owner", "Flag", "Locked", "Sealed", "Count", "Label",  "Offset", "Frame",
-        "Tint",  "Link", "Mood",   "Anchor", "Pad",   "Extent", "Slice",  "Nothing",
+        "Owner", "Flag", "Locked", "Sealed", "Count",  "Label", "Offset", "Frame", "Tint",
+        "Link",  "Mood", "Anchor", "Pad",    "Extent", "Slice", "Shade",  "Fade",  "Nothing",
     };
     CHECK(propertyNames(fixture, fixture.widgetClass) == expected);
 

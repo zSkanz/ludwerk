@@ -51,6 +51,131 @@ void composeTurn(Vec2 outerAxis, Vec2 outerOffset, Vec2& axis, Vec2& offset)
     axis = combined;
 }
 
+// --- Gradients and strokes (ADR 0110) -------------------------------------------
+
+// A `UIGradient` as the quads it colours carry it: its row in the frame's
+// table and where it lies. `slot` zero is no gradient.
+struct GradientPaint
+{
+    u32 slot = 0;
+    u32 type = 0;
+    u32 tile = 0;
+    f32 angle = 0.0f;
+    f32 scale = 1.0f;
+    Vec2 offset{};
+};
+
+// The first enabled `UIGradient` under `holder` -- an element or a stroke --
+// laid over `box`. The first counts and the rest do not, which is the ADR's
+// "one parent, one gradient".
+[[nodiscard]] GradientPaint gradientUnder(const scene::World& world, core::InstanceId holder, const Rect& box,
+                                          DrawList& out)
+{
+    GradientPaint paint;
+    for (core::InstanceId child = world.firstChild(holder); child.valid(); child = world.nextSibling(child)) {
+        const scene::UIGradientComponent* gradient = world.uiGradients().find(child);
+        if (gradient == nullptr)
+            continue;
+        if (!gradient->enabled)
+            return paint;
+        paint.slot = out.gradientSlot(DrawGradient{gradient->color, gradient->transparency});
+        paint.type = static_cast<u32>(std::clamp(gradient->type, 0, 2));
+        paint.tile = static_cast<u32>(std::clamp(gradient->tileMode, 0, 2));
+        paint.angle = gradient->rotation * (3.14159265358979323846f / 180.0f);
+        paint.scale = gradient->scale;
+        paint.offset = Vec2{gradient->offset.x * (box.max.x - box.min.x), gradient->offset.y * (box.max.y - box.min.y)};
+        return paint;
+    }
+    return paint;
+}
+
+void applyGradient(DrawQuad& quad, const GradientPaint& paint, const Rect& box)
+{
+    quad.gradient = paint.slot;
+    quad.gradientBox = box;
+    quad.gradientType = paint.type;
+    quad.gradientTile = paint.tile;
+    quad.gradientAngle = paint.angle;
+    quad.gradientScale = paint.scale;
+    quad.gradientOffset = paint.offset;
+}
+
+// One `UIStroke` under an element, with the child order that breaks a `ZIndex`
+// tie.
+struct StrokeEntry
+{
+    core::InstanceId id;
+    const scene::UIStrokeComponent* stroke = nullptr;
+    u32 order = 0;
+};
+
+// Everything an element owes after its own drawing: its gradient over what it
+// drew, then its border strokes in `ZIndex` order. A destructor, like the turn
+// stamp beside it, because `emit` leaves by four doors.
+struct AppearanceStamp
+{
+    const scene::World& world;
+    DrawList& out;
+    core::usize first = 0;
+    Rect box;
+    f32 cornerRadius = 0.0f;
+    u32 scissor = 0;
+    GradientPaint gradient;
+    std::vector<StrokeEntry> borders;
+
+    ~AppearanceStamp()
+    {
+        for (core::usize index = first; index < out.quads.size(); ++index) {
+            DrawQuad& quad = out.quads[index];
+            // An outline carries its stroke's gradient, over the same box.
+            if (quad.outline) {
+                if (quad.gradient != 0)
+                    quad.gradientBox = box;
+                continue;
+            }
+            if (gradient.slot != 0)
+                applyGradient(quad, gradient, box);
+        }
+
+        const f32 shorter = std::fmin(box.max.x - box.min.x, box.max.y - box.min.y);
+        for (const StrokeEntry& entry : borders) {
+            const scene::UIStrokeComponent& stroke = *entry.stroke;
+            const f32 thickness = stroke.strokeSizingMode == 1 ? stroke.thickness * shorter : stroke.thickness;
+            const f32 alpha = 1.0f - std::fmin(std::fmax(stroke.transparency, 0.0f), 1.0f);
+            if (!(thickness > 0.0f) || !(alpha > 0.0f))
+                continue;
+            // Where the band lies, in pixels from the edge, outwards positive.
+            const f32 offset = stroke.borderOffset.scale * shorter + stroke.borderOffset.offset;
+            f32 inner = offset;
+            if (stroke.borderStrokePosition == 1)
+                inner = offset - thickness * 0.5f;
+            else if (stroke.borderStrokePosition == 2)
+                inner = offset - thickness;
+            const f32 outer = inner + thickness;
+
+            // The quad covers the band's outside and one pixel more, for the
+            // soft edge; the band inside the box is inside it anyway.
+            const f32 grow = std::fmax(outer, 0.0f) + 1.0f;
+            DrawQuad band;
+            band.min = Vec2{box.min.x - grow, box.min.y - grow};
+            band.max = Vec2{box.max.x + grow, box.max.y + grow};
+            band.color = stroke.color;
+            band.alpha = alpha;
+            band.scissor = scissor;
+            band.cornerRadius = cornerRadius;
+            band.borderStroke = true;
+            band.strokeBox = box;
+            band.strokeInner = inner;
+            band.strokeOuter = outer;
+            band.strokeJoin = static_cast<u32>(std::clamp(stroke.lineJoinMode, 0, 2));
+            const Rect reach{band.min, band.max};
+            if (const GradientPaint own = gradientUnder(world, entry.id, reach, out); own.slot != 0)
+                applyGradient(band, own, reach);
+            out.quads.push_back(band);
+        }
+    }
+};
+
 // --- Images ------------------------------------------------------------------
 
 // Set by the app, which is the only thing that can see both a content mount and
@@ -367,6 +492,44 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
         }
     }
 
+    // **A gradient over everything the element draws, and its strokes after**
+    // (ADR 0110). A text object's contextual stroke is the text's outline and
+    // goes to the glyphs below; every other stroke is a border.
+    const bool isText = world.textLabels().find(entry.id) != nullptr;
+    AppearanceStamp appearance{world, out, out.quads.size(), box, cornerRadius, entry.scissor, {}, {}};
+    appearance.gradient = gradientUnder(world, entry.id, box, out);
+    TextStroke textStroke;
+    bool textStroked = false;
+    u32 strokeOrder = 0;
+    for (core::InstanceId child = world.firstChild(entry.id); child.valid(); child = world.nextSibling(child)) {
+        const scene::UIStrokeComponent* stroke = world.uiStrokes().find(child);
+        if (stroke == nullptr || !stroke->enabled)
+            continue;
+        if (isText && stroke->applyStrokeMode == 0) {
+            // One text stroke: the first.
+            if (textStroked)
+                continue;
+            textStroked = true;
+            textStroke.thickness = stroke->thickness;
+            textStroke.scaled = stroke->strokeSizingMode == 1;
+            textStroke.color = stroke->color;
+            textStroke.alpha = 1.0f - std::fmin(std::fmax(stroke->transparency, 0.0f), 1.0f);
+            textStroke.join = static_cast<u32>(std::clamp(stroke->lineJoinMode, 0, 2));
+            if (const GradientPaint own = gradientUnder(world, child, box, out); own.slot != 0) {
+                textStroke.gradient = own.slot;
+                textStroke.gradientType = own.type;
+                textStroke.gradientTile = own.tile;
+                textStroke.gradientAngle = own.angle;
+                textStroke.gradientScale = own.scale;
+                textStroke.gradientOffset = own.offset;
+            }
+            continue;
+        }
+        appearance.borders.push_back(StrokeEntry{child, stroke, strokeOrder++});
+    }
+    std::stable_sort(appearance.borders.begin(), appearance.borders.end(),
+                     [](const StrokeEntry& a, const StrokeEntry& b) { return a.stroke->zIndex < b.stroke->zIndex; });
+
     if (backgroundAlpha > 0.0f) {
         DrawQuad quad;
         quad.min = box.min;
@@ -443,11 +606,11 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
         if (rich)
             buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
                                   label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
-                                  out.quads);
+                                  out.quads, textStroke);
         else
             buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
                               label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
-                              out.quads);
+                              out.quads, textStroke);
 
         // --- The caret (S6.7) -------------------------------------------------
         //
@@ -554,6 +717,18 @@ void buildCanvasDrawList(const scene::World& world, core::InstanceId root, DrawL
                      [](const Entry& a, const Entry& b) { return a.zIndex < b.zIndex; });
     for (const Entry& entry : entries)
         emit(world, entry, out);
+}
+
+u32 DrawList::gradientSlot(const DrawGradient& gradient)
+{
+    // A linear scan: a frame has a handful of distinct gradients, and the
+    // order they were first named in is the table's row order (R10).
+    for (usize index = 0; index < gradients.size(); ++index) {
+        if (gradients[index] == gradient)
+            return static_cast<u32>(index) + 1u;
+    }
+    gradients.push_back(gradient);
+    return static_cast<u32>(gradients.size());
 }
 
 void setImageProvider(ImageProvider provider, void* user) noexcept

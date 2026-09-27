@@ -16,6 +16,15 @@ How a `Material` reads the alpha channel of its colour. glTF's three modes, kept
 | `Mask` | 1 | Alpha is a coverage TEST against `AlphaCutoff`, not a blend: a pixel is drawn or it is not. Leaves and chain-link fences want this -- it stays in the opaque pass, so it writes depth and needs no sorting. |
 | `Blend` | 2 | Alpha blends. Glass and smoke want this, and it costs what every transparent surface costs: a sorted pass and no depth writes. |
 
+## Enum.ApplyStrokeMode
+
+What a `UIStroke` outlines.
+
+| Item | Value | Description |
+|---|---|---|
+| `Contextual` | 0 | The text of a text object; the border of anything else. |
+| `Border` | 1 | The element's border, even on a text object. |
+
 ## Enum.AutomaticSize
 
 Which axes a `UIObject` sizes to fit its contents on, overriding that half of `Size` (§2.2). Text and lists are what need it: a label whose box is smaller than its words is the commonest UI defect there is.
@@ -36,6 +45,16 @@ How much of what is behind a block shows through it (V1).
 | `Opaque` | 0 | Nothing. A face against it is hidden, and it shades the corners it touches. |
 | `Cutout` | 1 | Holes where its image is transparent: leaves, a fence, a grate. Each pixel is there or not, and the faces between two cutout blocks are drawn, which is what makes a tree full. |
 | `Translucent` | 2 | Blended over what is behind it: glass, water, ice. No face between two blocks of the same type, so a lake is one surface. |
+
+## Enum.BorderStrokePosition
+
+Where a border `UIStroke` lies against its element's edge.
+
+| Item | Value | Description |
+|---|---|---|
+| `Outer` | 0 | Wholly outside the element. |
+| `Center` | 1 | Half outside and half inside. |
+| `Inner` | 2 | Wholly inside the element. |
 
 ## Enum.CameraProjection
 
@@ -115,6 +134,26 @@ Which way a `UIListLayout` stacks its siblings (§2.2).
 |---|---|---|
 | `Horizontal` | 0 |  |
 | `Vertical` | 1 |  |
+
+## Enum.GradientTileMode
+
+What a `UIGradient` draws past the end of its sequence.
+
+| Item | Value | Description |
+|---|---|---|
+| `Clamp` | 0 | The colours at the two ends carry on, filling everything before and after. |
+| `Repeat` | 1 | The sequence again from its start: a seam wherever its two ends differ. |
+| `Mirror` | 2 | The sequence backwards, then forwards, and so on: no seam. |
+
+## Enum.GradientType
+
+The shape of a `UIGradient`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Linear` | 0 | Across the element, in the direction `Rotation` points; `Offset` moves where it is centred. |
+| `Radial` | 1 | Out from the element's centre (plus `Offset`) to a radius of (width + height) / 4. `Rotation` does nothing. |
+| `Conical` | 2 | Clockwise round the element's centre (plus `Offset`), a whole turn, starting where `Rotation` points. |
 
 ## Enum.HorizontalAlignment
 
@@ -268,6 +307,16 @@ Items are analogue or digital, and mixing them is the one mistake this enum make
 | `Virtual4` | 100 |  |
 | `VirtualStick1` | 101 | `Virtual1` and `Virtual2` as one Vector2 -- the source a `Direction2D` action binds for an on-screen thumbstick. The same relationship `LeftThumbstick` has to `LeftStickX` and `LeftStickY`, and the reason the virtual seam carries a value: design an on-screen BUTTON and the thumbstick does not fit later. |
 | `VirtualStick2` | 102 | `Virtual3` and `Virtual4` as one Vector2. |
+
+## Enum.LineJoinMode
+
+How a `UIStroke` turns a corner.
+
+| Item | Value | Description |
+|---|---|---|
+| `Round` | 0 | Rounded: the corner is an arc as wide as the stroke. |
+| `Bevel` | 1 | Cut off square across the corner. |
+| `Miter` | 2 | Brought to a point. |
 
 ## Enum.LogLevel
 
@@ -431,6 +480,15 @@ How a `Model` behaves when the streaming system reaches it. The grid decides WHE
 | `Nonatomic` | 0 | Its descendants are placed in cells one at a time, each by its own position, and they arrive and leave independently. The default, and what a world of loose scenery wants: a distant hillside's parts can go one at a time. |
 | `Atomic` | 1 | The model is ONE unit: it goes in a single cell however far its parts spread, and it materialises and evicts whole. A house arrives as a house rather than as forty parts appearing in an order nobody chose, and a machine assembled from moving parts is never half a mechanism. |
 | `Persistent` | 2 | Never enters the grid at all. It stays in the scene, it exists before the first tick, and no eviction reaches it however far the focus walks. The spawn, the checkpoint, and anything a script holds a long-lived reference to. |
+
+## Enum.StrokeSizingMode
+
+What a `UIStroke`'s `Thickness` is measured in.
+
+| Item | Value | Description |
+|---|---|---|
+| `FixedSize` | 0 | Pixels. |
+| `ScaledSize` | 1 | A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke grows with what it outlines. |
 
 ## Enum.TextureFilter
 

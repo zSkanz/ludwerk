@@ -71,6 +71,12 @@ inline constexpr EnumId TextureFilterEnumId = 30;
 inline constexpr EnumId CameraProjectionEnumId = 31;
 inline constexpr EnumId ScreenOrientationEnumId = 32;
 inline constexpr EnumId NetworkStateEnumId = 33;
+inline constexpr EnumId GradientTypeEnumId = 34;
+inline constexpr EnumId GradientTileModeEnumId = 35;
+inline constexpr EnumId ApplyStrokeModeEnumId = 36;
+inline constexpr EnumId LineJoinModeEnumId = 37;
+inline constexpr EnumId StrokeSizingModeEnumId = 38;
+inline constexpr EnumId BorderStrokePositionEnumId = 39;
 
 } // namespace generated
 

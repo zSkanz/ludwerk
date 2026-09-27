@@ -149,6 +149,30 @@ TEST_CASE("attributes and tags survive")
     CHECK(reloaded.world.hasTag(child, reloaded.atom("Breakable")));
 }
 
+TEST_CASE("a sequence attribute survives, every stop of it (ADR 0110)")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Graded", {});
+    const core::ColorSequence colours{{{0.0f, core::Color3{1.0f, 0.0f, 0.0f}},
+                                       {0.25f, core::Color3{0.0f, 1.0f, 0.0f}},
+                                       {0.25f, core::Color3{0.0f, 0.0f, 1.0f}},
+                                       {1.0f, core::Color3{1.0f, 1.0f, 1.0f}}}};
+    const core::NumberSequence fade{{{0.0f, 0.0f, 0.5f}, {1.0f, 1.0f, 0.0f}}};
+    REQUIRE(fixture.world.setAttribute(part, fixture.atom("Colours"), scene::Value{colours}));
+    REQUIRE(fixture.world.setAttribute(part, fixture.atom("Fade"), scene::Value{fade}));
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    CHECK(std::get<core::ColorSequence>(reloaded.world.getAttribute(child, reloaded.atom("Colours"))) == colours);
+    CHECK(std::get<core::NumberSequence>(reloaded.world.getAttribute(child, reloaded.atom("Fade"))) == fade);
+}
+
 TEST_CASE("a reference inside the scene resolves, including a forward one")
 {
     Fixture fixture;

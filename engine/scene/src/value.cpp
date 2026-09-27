@@ -44,6 +44,10 @@ const char* valueTypeName(ValueType type) noexcept
         return "Material";
     case ValueType::MaterialParameters:
         return "MaterialParameters";
+    case ValueType::ColorSequence:
+        return "ColorSequence";
+    case ValueType::NumberSequence:
+        return "NumberSequence";
     }
     return "nil";
 }

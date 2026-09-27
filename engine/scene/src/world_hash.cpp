@@ -263,6 +263,27 @@ void hashValue(Hasher& hasher, const Value& value, const World& world)
         hashMaterialFields(hasher, overrides.set, asset::overrideValues(overrides));
         break;
     }
+    // ADR 0110: every stop, count first, so two sequences that differ only in
+    // how many stops they have cannot hash alike.
+    case ValueType::ColorSequence: {
+        const core::ColorSequence& sequence = std::get<core::ColorSequence>(value);
+        hasher.pod(static_cast<u32>(sequence.keypoints.size()));
+        for (const core::ColorKeypoint& stop : sequence.keypoints) {
+            hasher.number(stop.time);
+            hasher.color3(stop.value);
+        }
+        break;
+    }
+    case ValueType::NumberSequence: {
+        const core::NumberSequence& sequence = std::get<core::NumberSequence>(value);
+        hasher.pod(static_cast<u32>(sequence.keypoints.size()));
+        for (const core::NumberKeypoint& stop : sequence.keypoints) {
+            hasher.number(stop.time);
+            hasher.number(stop.value);
+            hasher.number(stop.envelope);
+        }
+        break;
+    }
     }
 }
 

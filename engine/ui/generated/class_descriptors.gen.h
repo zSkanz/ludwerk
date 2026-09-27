@@ -73,6 +73,12 @@ inline constexpr scene::EnumId TextureFilterEnumId = 30;
 inline constexpr scene::EnumId CameraProjectionEnumId = 31;
 inline constexpr scene::EnumId ScreenOrientationEnumId = 32;
 inline constexpr scene::EnumId NetworkStateEnumId = 33;
+inline constexpr scene::EnumId GradientTypeEnumId = 34;
+inline constexpr scene::EnumId GradientTileModeEnumId = 35;
+inline constexpr scene::EnumId ApplyStrokeModeEnumId = 36;
+inline constexpr scene::EnumId LineJoinModeEnumId = 37;
+inline constexpr scene::EnumId StrokeSizingModeEnumId = 38;
+inline constexpr scene::EnumId BorderStrokePositionEnumId = 39;
 
 } // namespace generated
 
@@ -246,6 +252,50 @@ scene::Value getUICornerCornerRadius(const scene::World& world, core::InstanceId
 bool setUICornerCornerRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachUICornerComponents(scene::World& world, core::InstanceId id);
 void detachUICornerComponents(scene::World& world, core::InstanceId id);
+
+// UIGradient
+scene::Value getUIGradientColor(const scene::World& world, core::InstanceId id);
+bool setUIGradientColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientTransparency(const scene::World& world, core::InstanceId id);
+bool setUIGradientTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientOffset(const scene::World& world, core::InstanceId id);
+bool setUIGradientOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientRotation(const scene::World& world, core::InstanceId id);
+bool setUIGradientRotation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientEnabled(const scene::World& world, core::InstanceId id);
+bool setUIGradientEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientType(const scene::World& world, core::InstanceId id);
+bool setUIGradientType(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientTileMode(const scene::World& world, core::InstanceId id);
+bool setUIGradientTileMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGradientScale(const scene::World& world, core::InstanceId id);
+bool setUIGradientScale(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUIGradientComponents(scene::World& world, core::InstanceId id);
+void detachUIGradientComponents(scene::World& world, core::InstanceId id);
+
+// UIStroke
+scene::Value getUIStrokeColor(const scene::World& world, core::InstanceId id);
+bool setUIStrokeColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeThickness(const scene::World& world, core::InstanceId id);
+bool setUIStrokeThickness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeTransparency(const scene::World& world, core::InstanceId id);
+bool setUIStrokeTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeEnabled(const scene::World& world, core::InstanceId id);
+bool setUIStrokeEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeApplyStrokeMode(const scene::World& world, core::InstanceId id);
+bool setUIStrokeApplyStrokeMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeLineJoinMode(const scene::World& world, core::InstanceId id);
+bool setUIStrokeLineJoinMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeStrokeSizingMode(const scene::World& world, core::InstanceId id);
+bool setUIStrokeStrokeSizingMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeBorderStrokePosition(const scene::World& world, core::InstanceId id);
+bool setUIStrokeBorderStrokePosition(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeBorderOffset(const scene::World& world, core::InstanceId id);
+bool setUIStrokeBorderOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIStrokeZIndex(const scene::World& world, core::InstanceId id);
+bool setUIStrokeZIndex(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUIStrokeComponents(scene::World& world, core::InstanceId id);
+void detachUIStrokeComponents(scene::World& world, core::InstanceId id);
 
 // UIService
 scene::Value getUIServiceSafeAreaInsets(const scene::World& world, core::InstanceId id);

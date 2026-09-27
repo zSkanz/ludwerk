@@ -934,6 +934,126 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0110, the six a gradient and a stroke are described with. At the END.
+        {
+            Name = "GradientType",
+            Doc = "The shape of a `UIGradient`.",
+            Items = {
+                {
+                    Name = "Linear",
+                    Value = 0,
+                    Doc = "Across the element, in the direction `Rotation` points; `Offset` moves where it is centred.",
+                },
+                {
+                    Name = "Radial",
+                    Value = 1,
+                    Doc = "Out from the element's centre (plus `Offset`) to a radius of (width + height) / 4. "
+                        .. "`Rotation` does nothing.",
+                },
+                {
+                    Name = "Conical",
+                    Value = 2,
+                    Doc = "Clockwise round the element's centre (plus `Offset`), a whole turn, starting where "
+                        .. "`Rotation` points.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "GradientTileMode",
+            Doc = "What a `UIGradient` draws past the end of its sequence.",
+            Items = {
+                {
+                    Name = "Clamp",
+                    Value = 0,
+                    Doc = "The colours at the two ends carry on, filling everything before and after.",
+                },
+                {
+                    Name = "Repeat",
+                    Value = 1,
+                    Doc = "The sequence again from its start: a seam wherever its two ends differ.",
+                },
+                {
+                    Name = "Mirror",
+                    Value = 2,
+                    Doc = "The sequence backwards, then forwards, and so on: no seam.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ApplyStrokeMode",
+            Doc = "What a `UIStroke` outlines.",
+            Items = {
+                {
+                    Name = "Contextual",
+                    Value = 0,
+                    Doc = "The text of a text object; the border of anything else.",
+                },
+                {
+                    Name = "Border",
+                    Value = 1,
+                    Doc = "The element's border, even on a text object.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "LineJoinMode",
+            Doc = "How a `UIStroke` turns a corner.",
+            Items = {
+                {
+                    Name = "Round",
+                    Value = 0,
+                    Doc = "Rounded: the corner is an arc as wide as the stroke.",
+                },
+                {
+                    Name = "Bevel",
+                    Value = 1,
+                    Doc = "Cut off square across the corner.",
+                },
+                {
+                    Name = "Miter",
+                    Value = 2,
+                    Doc = "Brought to a point.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "StrokeSizingMode",
+            Doc = "What a `UIStroke`'s `Thickness` is measured in.",
+            Items = {
+                {
+                    Name = "FixedSize",
+                    Value = 0,
+                    Doc = "Pixels.",
+                },
+                {
+                    Name = "ScaledSize",
+                    Value = 1,
+                    Doc = "A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke "
+                        .. "grows with what it outlines.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "BorderStrokePosition",
+            Doc = "Where a border `UIStroke` lies against its element's edge.",
+            Items = {
+                {
+                    Name = "Outer",
+                    Value = 0,
+                    Doc = "Wholly outside the element.",
+                },
+                {
+                    Name = "Center",
+                    Value = 1,
+                    Doc = "Half outside and half inside.",
+                },
+                {
+                    Name = "Inner",
+                    Value = 2,
+                    Doc = "Wholly inside the element.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

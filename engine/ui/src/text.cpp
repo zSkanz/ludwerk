@@ -223,17 +223,43 @@ GlyphStore& store()
     return instance;
 }
 
-// The key. Face, size and codepoint, packed: 16 bits of face hash, 16 of size in
-// quarter-pixels, 32 of codepoint.
+// A text stroke as the glyph store keys it (ADR 0110): the outline's radius in
+// quarter pixels, the join, and whether it is the ring alone. Zero quarters is
+// the plain glyph.
+//
+// **The ring** is the outline without the letter inside it -- what hollow
+// lettering shows. It is only for text that is not drawn: under a visible
+// letter the ring's inner edge and the letter's edge are each half-covered, and
+// the background shows through the seam between them, where a whole outline
+// under the letter has none.
+struct GlyphStroke
+{
+    u32 quarters = 0;
+    u32 join = 0;
+    bool ring = false;
+};
+
+// The widest outline a glyph is given: 63 pixels and three quarters, which is
+// what eight bits of quarters hold.
+constexpr u32 MaxStrokeQuarters = 255;
+
+// The key. Face, size, codepoint and stroke, packed: 16 bits of face hash, 16
+// of size in quarter-pixels, and in the low 32 the join (2 bits), the ring (1),
+// the stroke's radius in quarter pixels (8) and the codepoint (21 -- every
+// Unicode scalar fits). A plain glyph's stroke bits are zero, so its key is
+// what it was before strokes existed.
 //
 // The size is quantized rather than taken raw because a `TextSize` animated by a
 // tween would otherwise mint an entry per frame, and a quarter of a pixel is
 // below what any face resolves.
-[[nodiscard]] u64 glyphKey(u32 face, f32 pixelSize, u32 codepoint) noexcept
+[[nodiscard]] u64 glyphKey(u32 face, f32 pixelSize, u32 codepoint, GlyphStroke stroke = {}) noexcept
 {
     const f32 clamped = std::fmin(std::fmax(pixelSize, 0.0f), 16383.0f);
     const auto quarters = static_cast<u64>(clamped * 4.0f) & 0xFFFFu;
-    return (static_cast<u64>(face & 0xFFFFu) << 48) | (quarters << 32) | static_cast<u64>(codepoint);
+    const u64 low = (static_cast<u64>(stroke.join & 3u) << 30) | (static_cast<u64>(stroke.ring ? 1u : 0u) << 29) |
+                    (static_cast<u64>(std::min(stroke.quarters, MaxStrokeQuarters)) << 21) |
+                    static_cast<u64>(codepoint & 0x1FFFFFu);
+    return (static_cast<u64>(face & 0xFFFFu) << 48) | (quarters << 32) | low;
 }
 
 // FNV-1a over the font's content URN. A hash rather than an interned atom
@@ -441,9 +467,66 @@ FaceTable& faceTable()
 // where it genuinely fills up.
 constexpr u32 AtlasSize = 1024;
 
-// Rasterises one codepoint into the atlas at `pixelSize`, filling `entry`.
-// False means it did not fit, which the caller answers by clearing the store.
-[[nodiscard]] bool rasteriseGlyph(Face& face, f32 pixelSize, u32 codepoint, GlyphEntry& entry, GlyphStore& cache)
+// **A glyph's outline, made from its coverage** (ADR 0110): every texel takes
+// the largest coverage within `radius` of it, through a kernel shaped like the
+// join -- a disc rounds the corners, an octagon cuts them, a square keeps them
+// -- and the kernel's own edge is soft over one texel, so a stroke of 2.3
+// pixels is 2.3 and not 2 or 3. `out` is the glyph grown by `pad` on each side.
+void dilateCoverage(const std::vector<core::u8>& coverage, u32 width, u32 height, f32 radius, u32 join, u32 pad,
+                    std::vector<core::u8>& out)
+{
+    const u32 outWidth = width + pad * 2;
+    const u32 outHeight = height + pad * 2;
+    out.assign(static_cast<usize>(outWidth) * outHeight, 0u);
+
+    struct Tap
+    {
+        i32 dx = 0;
+        i32 dy = 0;
+        f32 weight = 0.0f;
+    };
+    std::vector<Tap> taps;
+    const auto reach = static_cast<i32>(std::ceil(radius)) + 1;
+    for (i32 dy = -reach; dy <= reach; ++dy) {
+        for (i32 dx = -reach; dx <= reach; ++dx) {
+            const auto ax = static_cast<f32>(std::abs(dx));
+            const auto ay = static_cast<f32>(std::abs(dy));
+            f32 distance = std::sqrt(ax * ax + ay * ay);
+            if (join == 2)
+                distance = std::fmax(ax, ay);
+            else if (join == 1)
+                distance = std::fmax(std::fmax(ax, ay), (ax + ay) * 0.70710678f);
+            const f32 weight = std::fmin(std::fmax(radius + 0.5f - distance, 0.0f), 1.0f);
+            if (weight > 0.0f)
+                taps.push_back(Tap{dx, dy, weight});
+        }
+    }
+
+    for (u32 y = 0; y < outHeight; ++y) {
+        for (u32 x = 0; x < outWidth; ++x) {
+            const i32 sourceX = static_cast<i32>(x) - static_cast<i32>(pad);
+            const i32 sourceY = static_cast<i32>(y) - static_cast<i32>(pad);
+            f32 best = 0.0f;
+            for (const Tap& tap : taps) {
+                const i32 readX = sourceX + tap.dx;
+                const i32 readY = sourceY + tap.dy;
+                if (readX < 0 || readY < 0 || readX >= static_cast<i32>(width) || readY >= static_cast<i32>(height))
+                    continue;
+                const f32 value =
+                    static_cast<f32>(coverage[static_cast<usize>(readY) * width + static_cast<usize>(readX)]) *
+                    tap.weight;
+                best = std::fmax(best, value);
+            }
+            out[static_cast<usize>(y) * outWidth + x] = static_cast<core::u8>(std::fmin(best + 0.5f, 255.0f));
+        }
+    }
+}
+
+// Rasterises one codepoint into the atlas at `pixelSize`, filling `entry` --
+// outlined by `stroke` when it has a radius. False means it did not fit, which
+// the caller answers by clearing the store.
+[[nodiscard]] bool rasteriseGlyph(Face& face, f32 pixelSize, u32 codepoint, GlyphEntry& entry, GlyphStore& cache,
+                                  GlyphStroke stroke = {})
 {
     const f32 scale = stbtt_ScaleForPixelHeight(&face.info, pixelSize);
     const int glyph = stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint));
@@ -461,11 +544,11 @@ constexpr u32 AtlasSize = 1024;
     int x1 = 0;
     int y1 = 0;
     stbtt_GetGlyphBitmapBox(&face.info, glyph, scale, scale, &x0, &y0, &x1, &y1);
-    const auto width = static_cast<u32>(x1 - x0);
-    const auto height = static_cast<u32>(y1 - y0);
+    const auto plainWidth = static_cast<u32>(x1 - x0);
+    const auto plainHeight = static_cast<u32>(y1 - y0);
 
     entry.textured = true;
-    if (width == 0 || height == 0) {
+    if (plainWidth == 0 || plainHeight == 0) {
         // A space, and every other glyph with no ink. It has an advance and no
         // quad, which is exactly right -- and it must still be CACHED, or every
         // space in a paragraph is a rasterisation.
@@ -478,6 +561,32 @@ constexpr u32 AtlasSize = 1024;
         cache.atlasWidth = AtlasSize;
         cache.atlasHeight = AtlasSize;
     }
+
+    // An outline is the glyph drawn somewhere else first, and grown: `pad`
+    // texels on every side, which is where the outline goes.
+    const f32 radius = static_cast<f32>(stroke.quarters) * 0.25f;
+    const u32 pad = stroke.quarters == 0 ? 0u : static_cast<u32>(std::ceil(radius)) + 1u;
+    std::vector<core::u8> outlined;
+    if (pad > 0) {
+        std::vector<core::u8> plain(static_cast<usize>(plainWidth) * plainHeight, 0u);
+        stbtt_MakeGlyphBitmap(&face.info, plain.data(), static_cast<int>(plainWidth), static_cast<int>(plainHeight),
+                              static_cast<int>(plainWidth), scale, scale, glyph);
+        dilateCoverage(plain, plainWidth, plainHeight, radius, stroke.join, pad, outlined);
+        if (stroke.ring) {
+            // The letter taken back out, texel for texel.
+            const u32 grownWidth = plainWidth + pad * 2;
+            for (u32 row = 0; row < plainHeight; ++row) {
+                for (u32 column = 0; column < plainWidth; ++column) {
+                    core::u8& texel =
+                        outlined[static_cast<usize>(row + pad) * grownWidth + static_cast<usize>(column + pad)];
+                    const core::u8 letter = plain[static_cast<usize>(row) * plainWidth + column];
+                    texel = texel > letter ? static_cast<core::u8>(texel - letter) : core::u8{0};
+                }
+            }
+        }
+    }
+    const u32 width = plainWidth + pad * 2;
+    const u32 height = plainHeight + pad * 2;
 
     // One texel of padding on each side, so bilinear sampling at the edge of a
     // glyph cannot reach into its neighbour. Without it, text at a fractional
@@ -495,9 +604,17 @@ constexpr u32 AtlasSize = 1024;
 
     const u32 originX = packer.cursorX + Padding;
     const u32 originY = packer.cursorY + Padding;
-    stbtt_MakeGlyphBitmap(&face.info, cache.atlas.data() + static_cast<usize>(originY) * cache.atlasWidth + originX,
-                          static_cast<int>(width), static_cast<int>(height), static_cast<int>(cache.atlasWidth), scale,
-                          scale, glyph);
+    if (pad == 0) {
+        stbtt_MakeGlyphBitmap(&face.info, cache.atlas.data() + static_cast<usize>(originY) * cache.atlasWidth + originX,
+                              static_cast<int>(width), static_cast<int>(height), static_cast<int>(cache.atlasWidth),
+                              scale, scale, glyph);
+    }
+    else {
+        for (u32 row = 0; row < height; ++row) {
+            std::copy_n(outlined.data() + static_cast<usize>(row) * width, width,
+                        cache.atlas.data() + static_cast<usize>(originY + row) * cache.atlasWidth + originX);
+        }
+    }
 
     packer.cursorX += width + Padding * 2;
     packer.rowHeight = std::max(packer.rowHeight, height + Padding * 2);
@@ -511,10 +628,10 @@ constexpr u32 AtlasSize = 1024;
     entry.firstQuad = static_cast<u32>(cache.quads.size());
     entry.quadCount = 1;
     cache.quads.push_back(GlyphQuad{
-        .minX = static_cast<f32>(x0),
-        .minY = ascentPixels + static_cast<f32>(y0),
-        .maxX = static_cast<f32>(x0) + static_cast<f32>(width),
-        .maxY = ascentPixels + static_cast<f32>(y0) + static_cast<f32>(height),
+        .minX = static_cast<f32>(x0) - static_cast<f32>(pad),
+        .minY = ascentPixels + static_cast<f32>(y0) - static_cast<f32>(pad),
+        .maxX = static_cast<f32>(x0) - static_cast<f32>(pad) + static_cast<f32>(width),
+        .maxY = ascentPixels + static_cast<f32>(y0) - static_cast<f32>(pad) + static_cast<f32>(height),
         .u0 = static_cast<f32>(originX) / static_cast<f32>(cache.atlasWidth),
         .v0 = static_cast<f32>(originY) / static_cast<f32>(cache.atlasHeight),
         .u1 = static_cast<f32>(originX + width) / static_cast<f32>(cache.atlasWidth),
@@ -605,7 +722,20 @@ void clearStore(GlyphStore& cache)
 // time anything asked. Returns an INDEX rather than a pointer, because filling
 // may reallocate and a caller that held a pointer across the call would be
 // holding a dangling one -- which is the classic way a cache becomes a crash.
-[[nodiscard]] usize glyphIndex(Face& face, f32 pixelSize, u32 codepoint)
+// The quads of a solid-rectangle glyph (the built-in face, the replacement
+// box) grown by `amount` face units on every side: its outline.
+void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
+{
+    for (u32 index = 0; index < entry.quadCount; ++index) {
+        GlyphQuad& quad = quads[entry.firstQuad + index];
+        quad.minX -= amount;
+        quad.minY -= amount;
+        quad.maxX += amount;
+        quad.maxY += amount;
+    }
+}
+
+[[nodiscard]] usize glyphIndex(Face& face, f32 pixelSize, u32 codepoint, GlyphStroke stroke = {})
 {
     GlyphStore& cache = store();
     const bool drawable = codepoint >= FirstFaceCodepoint && codepoint <= LastFaceCodepoint;
@@ -616,7 +746,7 @@ void clearStore(GlyphStore& cache)
     // The one exception is a byte sequence that is not a character at all: those
     // all decode to `ReplacementCodepoint` and share one entry, because "this is
     // not text" is one fact however many times it happens.
-    const u64 key = glyphKey(face.hash, pixelSize, codepoint);
+    const u64 key = glyphKey(face.hash, pixelSize, codepoint, stroke);
 
     const auto position = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
                                            [](const GlyphEntry& entry, u64 value) { return entry.key < value; });
@@ -627,19 +757,19 @@ void clearStore(GlyphStore& cache)
 
     if (cache.entries.size() >= MaxGlyphEntries) {
         clearStore(cache);
-        return glyphIndex(face, pixelSize, codepoint);
+        return glyphIndex(face, pixelSize, codepoint, stroke);
     }
 
     GlyphEntry entry;
     entry.key = key;
     bool filled = false;
     if (face.ready) {
-        filled = rasteriseGlyph(face, pixelSize, codepoint, entry, cache);
+        filled = rasteriseGlyph(face, pixelSize, codepoint, entry, cache, stroke);
         if (!filled && !cache.atlas.empty() && cache.entries.size() > 0) {
             // The atlas is full rather than the codepoint being absent. Clearing
             // is the same answer the entry limit gets and for the same reason.
             clearStore(cache);
-            return glyphIndex(face, pixelSize, codepoint);
+            return glyphIndex(face, pixelSize, codepoint, stroke);
         }
         if (!filled) {
             // The face has no glyph for this codepoint. The visible box, same
@@ -647,17 +777,27 @@ void clearStore(GlyphStore& cache)
             // font is missing glyphs.
             fillReplacementGlyph(entry, cache.quads);
             entry.textured = false;
-            ++cache.stats.missingGlyphs;
+            if (stroke.quarters == 0)
+                ++cache.stats.missingGlyphs;
+            else
+                growQuads(entry, cache.quads, static_cast<f32>(stroke.quarters) * 0.25f / scaleFor(face, pixelSize));
             filled = true;
         }
     }
     else if (drawable) {
         fillFaceGlyph(codepoint, entry, cache.quads);
+        // A vector glyph is rectangles, so its outline is the rectangles
+        // grown: the join has no corner to shape at this size.
+        if (stroke.quarters > 0)
+            growQuads(entry, cache.quads, static_cast<f32>(stroke.quarters) * 0.25f / scaleFor(face, pixelSize));
         filled = true;
     }
     if (!filled) {
         fillReplacementGlyph(entry, cache.quads);
-        ++cache.stats.missingGlyphs;
+        if (stroke.quarters == 0)
+            ++cache.stats.missingGlyphs;
+        else
+            growQuads(entry, cache.quads, static_cast<f32>(stroke.quarters) * 0.25f / scaleFor(face, pixelSize));
     }
 
     const auto inserted = cache.entries.insert(position, entry);
@@ -773,6 +913,8 @@ struct RichStyle
     bool italic = false;
     bool underline = false;
     bool strike = false;
+    // The label's `UIStroke`, or a `<stroke>` tag's (ADR 0110).
+    TextStroke stroke;
 };
 
 struct RichGlyph
@@ -967,6 +1109,55 @@ struct RichText
                 style.underline = true;
             else if (name == "s")
                 style.strike = true;
+            else if (name == "stroke") {
+                // `<stroke color thickness transparency joins sizing>` (ADR
+                // 0110), with `th` and `tr` as the short forms. Every attribute
+                // is optional: a bare `<stroke>` is a one-pixel black outline.
+                const std::string_view rest = space != std::string_view::npos ? tag.substr(space + 1) : "";
+                TextStroke outline;
+                outline.thickness = 1.0f;
+                if (const std::optional<std::string_view> colour = attribute(rest, "color")) {
+                    const std::optional<Color3> parsed = colourOf(*colour);
+                    understood = understood && parsed.has_value();
+                    if (parsed)
+                        outline.color = *parsed;
+                }
+                std::optional<std::string_view> thickness = attribute(rest, "thickness");
+                if (!thickness)
+                    thickness = attribute(rest, "th");
+                if (thickness) {
+                    const std::optional<f32> parsed = numberOf(*thickness);
+                    understood = understood && parsed.has_value() && *parsed >= 0.0f;
+                    if (parsed && *parsed >= 0.0f)
+                        outline.thickness = std::min(*parsed, 64.0f);
+                }
+                std::optional<std::string_view> transparency = attribute(rest, "transparency");
+                if (!transparency)
+                    transparency = attribute(rest, "tr");
+                if (transparency) {
+                    const std::optional<f32> parsed = numberOf(*transparency);
+                    understood = understood && parsed.has_value();
+                    if (parsed)
+                        outline.alpha = 1.0f - std::clamp(*parsed, 0.0f, 1.0f);
+                }
+                if (const std::optional<std::string_view> joins = attribute(rest, "joins")) {
+                    if (*joins == "round")
+                        outline.join = 0;
+                    else if (*joins == "bevel")
+                        outline.join = 1;
+                    else if (*joins == "miter")
+                        outline.join = 2;
+                    else
+                        understood = false;
+                }
+                if (const std::optional<std::string_view> sizing = attribute(rest, "sizing")) {
+                    if (*sizing == "scaled")
+                        outline.scaled = true;
+                    else if (*sizing != "fixed")
+                        understood = false;
+                }
+                style.stroke = outline;
+            }
             else if (name == "font" && space != std::string_view::npos) {
                 const std::string_view rest = tag.substr(space + 1);
                 const std::optional<std::string_view> colour = attribute(rest, "color");
@@ -1138,9 +1329,35 @@ TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pix
     return metrics;
 }
 
+// The stroke key an outline of `stroke` at `pixelSize` is cached under: its
+// radius in quarter pixels, at least one quarter so a hair of a stroke still
+// shows, and the join.
+// `hollow` is text whose letters are not drawn, which takes the ring alone.
+[[nodiscard]] GlyphStroke glyphStrokeOf(const TextStroke& stroke, f32 pixelSize, bool hollow) noexcept
+{
+    const f32 pixels = stroke.scaled ? stroke.thickness * pixelSize : stroke.thickness;
+    const auto quarters =
+        static_cast<u32>(std::fmin(std::fmax(pixels * 4.0f + 0.5f, 1.0f), static_cast<f32>(MaxStrokeQuarters)));
+    return GlyphStroke{quarters, std::min(stroke.join, 2u), hollow};
+}
+
+// An outline quad takes the stroke's colour and the stroke's own gradient.
+void paintOutline(DrawQuad& quad, const TextStroke& stroke)
+{
+    quad.color = stroke.color;
+    quad.alpha = stroke.alpha;
+    quad.outline = true;
+    quad.gradient = stroke.gradient;
+    quad.gradientType = stroke.gradientType;
+    quad.gradientTile = stroke.gradientTile;
+    quad.gradientAngle = stroke.gradientAngle;
+    quad.gradientScale = stroke.gradientScale;
+    quad.gradientOffset = stroke.gradientOffset;
+}
+
 void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
                        i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
-                       std::vector<DrawQuad>& out)
+                       std::vector<DrawQuad>& out, const TextStroke& stroke)
 {
     Face& face = faceFor(font);
     const f32 scale = scaleFor(face, pixelSize);
@@ -1152,50 +1369,63 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
     const f32 boxWidth = box.max.x - box.min.x;
     const f32 boxHeight = box.max.y - box.min.y;
 
-    f32 y = box.min.y;
+    f32 top = box.min.y;
     if (verticalAlignment == 1)
-        y += (boxHeight - totalHeight) * 0.5f;
+        top += (boxHeight - totalHeight) * 0.5f;
     else if (verticalAlignment == 2)
-        y += boxHeight - totalHeight;
+        top += boxHeight - totalHeight;
 
-    for (const Line& line : lines) {
-        f32 x = box.min.x;
-        if (horizontalAlignment == 1)
-            x += (boxWidth - line.width) * 0.5f;
-        else if (horizontalAlignment == 2)
-            x += boxWidth - line.width;
+    // Twice when there is an outline: every outline first, then every glyph,
+    // so one letter's outline never lies over the letter beside it.
+    const bool outlined = stroke.thickness > 0.0f && stroke.alpha > 0.0f;
+    const GlyphStroke key = outlined ? glyphStrokeOf(stroke, pixelSize, alpha <= 0.0f) : GlyphStroke{};
+    for (int pass = outlined ? 0 : 1; pass < 2; ++pass) {
+        const bool outline = pass == 0;
+        f32 y = top;
+        for (const Line& line : lines) {
+            f32 x = box.min.x;
+            if (horizontalAlignment == 1)
+                x += (boxWidth - line.width) * 0.5f;
+            else if (horizontalAlignment == 2)
+                x += boxWidth - line.width;
 
-        f32 pen = 0.0f;
-        usize index = line.begin;
-        while (index < line.end) {
-            const Decoded decoded = decodeUtf8(text, index);
-            const usize slot = glyphIndex(face, pixelSize, decoded.codepoint);
-            // Copied out rather than referenced: the next `glyphIndex` may
-            // reallocate the entry vector, and this loop calls it again.
-            const GlyphEntry entry = store().entries[slot];
+            f32 pen = 0.0f;
+            usize index = line.begin;
+            while (index < line.end) {
+                const Decoded decoded = decodeUtf8(text, index);
+                // The plain glyph's advance places both passes, so an outline
+                // sits exactly under its letter.
+                const f32 advance = store().entries[glyphIndex(face, pixelSize, decoded.codepoint)].advance;
+                const usize slot = glyphIndex(face, pixelSize, decoded.codepoint, outline ? key : GlyphStroke{});
+                // Copied out rather than referenced: the next `glyphIndex` may
+                // reallocate the entry vector, and this loop calls it again.
+                const GlyphEntry entry = store().entries[slot];
 
-            for (u32 quad = 0; quad < entry.quadCount; ++quad) {
-                const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
-                DrawQuad glyph;
-                glyph.min = Vec2{x + (pen + shape.minX) * scale, y + shape.minY * scale};
-                glyph.max = Vec2{x + (pen + shape.maxX) * scale, y + shape.maxY * scale};
-                glyph.color = color;
-                glyph.alpha = alpha;
-                // Texture 1 is the glyph atlas by convention (`ui.h`). A vector
-                // glyph is a solid rectangle and samples nothing, which is
-                // texture 0 -- the two faces differ here and in the metrics, and
-                // nowhere else.
-                glyph.texture = entry.textured ? 1u : 0u;
-                glyph.uvMin = Vec2{shape.u0, shape.v0};
-                glyph.uvMax = Vec2{shape.u1, shape.v1};
-                glyph.scissor = scissor;
-                out.push_back(glyph);
+                for (u32 quad = 0; quad < entry.quadCount; ++quad) {
+                    const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
+                    DrawQuad glyph;
+                    glyph.min = Vec2{x + (pen + shape.minX) * scale, y + shape.minY * scale};
+                    glyph.max = Vec2{x + (pen + shape.maxX) * scale, y + shape.maxY * scale};
+                    glyph.color = color;
+                    glyph.alpha = alpha;
+                    // Texture 1 is the glyph atlas by convention (`ui.h`). A
+                    // vector glyph is a solid rectangle and samples nothing,
+                    // which is texture 0 -- the two faces differ here and in
+                    // the metrics, and nowhere else.
+                    glyph.texture = entry.textured ? 1u : 0u;
+                    glyph.uvMin = Vec2{shape.u0, shape.v0};
+                    glyph.uvMax = Vec2{shape.u1, shape.v1};
+                    glyph.scissor = scissor;
+                    if (outline)
+                        paintOutline(glyph, stroke);
+                    out.push_back(glyph);
+                }
+
+                pen += advance;
+                index += decoded.length;
             }
-
-            pen += entry.advance;
-            index += decoded.length;
+            y += lineHeight;
         }
-        y += lineHeight;
     }
 }
 
@@ -1220,13 +1450,14 @@ TextRunMetrics measureRichText(std::string_view markup, std::string_view font, f
 
 void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
                            i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
-                           std::vector<DrawQuad>& out)
+                           std::vector<DrawQuad>& out, const TextStroke& labelStroke)
 {
     Face& face = faceFor(font);
     RichStyle base;
     base.size = pixelSize;
     base.color = color;
     base.alpha = alpha;
+    base.stroke = labelStroke;
     const RichText text = parseRichText(markup, base);
     std::vector<RichLine> lines;
     breakRichLines(text, face, maxWidth, lines);
@@ -1237,11 +1468,11 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
     const f32 boxWidth = box.max.x - box.min.x;
     const f32 boxHeight = box.max.y - box.min.y;
 
-    f32 y = box.min.y;
+    f32 firstTop = box.min.y;
     if (verticalAlignment == 1)
-        y += (boxHeight - totalHeight) * 0.5f;
+        firstTop += (boxHeight - totalHeight) * 0.5f;
     else if (verticalAlignment == 2)
-        y += boxHeight - totalHeight;
+        firstTop += boxHeight - totalHeight;
 
     const auto rule = [&](f32 left, f32 right, f32 top, f32 thickness, const RichStyle& style) {
         DrawQuad bar;
@@ -1253,60 +1484,78 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
         out.push_back(bar);
     };
 
-    for (const RichLine& line : lines) {
-        f32 x = box.min.x;
-        if (horizontalAlignment == 1)
-            x += (boxWidth - line.width) * 0.5f;
-        else if (horizontalAlignment == 2)
-            x += boxWidth - line.width;
-        const f32 baseline = y + line.ascent;
+    // Twice: every outline a run asked for (a `UIStroke` or a `<stroke>`),
+    // then every glyph, so no outline lies over a neighbouring letter.
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool outlinePass = pass == 0;
+        f32 y = firstTop;
+        for (const RichLine& line : lines) {
+            f32 x = box.min.x;
+            if (horizontalAlignment == 1)
+                x += (boxWidth - line.width) * 0.5f;
+            else if (horizontalAlignment == 2)
+                x += boxWidth - line.width;
+            const f32 baseline = y + line.ascent;
 
-        f32 pen = x;
-        for (usize index = line.begin; index < line.end; ++index) {
-            const RichGlyph glyph = text.glyphs[index];
-            const RichStyle& style = text.styles[glyph.style];
-            const f32 scale = scaleFor(face, style.size);
-            // A glyph's quads are measured from the top of ITS size's line, so
-            // a smaller run is dropped until its baseline meets the line's.
-            const f32 top = baseline - ascentOf(face, style.size);
-            const usize slot = glyphIndex(face, style.size, glyph.codepoint);
-            const GlyphEntry entry = store().entries[slot];
-            const f32 advance = entry.advance * scale + (style.bold ? boldOffsetOf(style.size) : 0.0f);
-
-            const int strokes = style.bold ? 2 : 1;
-            for (int stroke = 0; stroke < strokes; ++stroke) {
-                const f32 offset = stroke == 0 ? 0.0f : boldOffsetOf(style.size);
-                for (u32 quad = 0; quad < entry.quadCount; ++quad) {
-                    const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
-                    DrawQuad drawn;
-                    drawn.min = Vec2{pen + offset + shape.minX * scale, top + shape.minY * scale};
-                    drawn.max = Vec2{pen + offset + shape.maxX * scale, top + shape.maxY * scale};
-                    drawn.color = style.color;
-                    drawn.alpha = style.alpha;
-                    drawn.texture = entry.textured ? 1u : 0u;
-                    drawn.uvMin = Vec2{shape.u0, shape.v0};
-                    drawn.uvMax = Vec2{shape.u1, shape.v1};
-                    drawn.scissor = scissor;
-                    // Sheared about the baseline rather than the quad's own
-                    // bottom, so every glyph of a word leans the same way.
-                    if (style.italic) {
-                        drawn.slant = ItalicSlant;
-                        const f32 lift = baseline - drawn.max.y;
-                        drawn.min.x += lift * ItalicSlant;
-                        drawn.max.x += lift * ItalicSlant;
-                    }
-                    out.push_back(drawn);
+            f32 pen = x;
+            for (usize index = line.begin; index < line.end; ++index) {
+                const RichGlyph glyph = text.glyphs[index];
+                const RichStyle& style = text.styles[glyph.style];
+                const f32 scale = scaleFor(face, style.size);
+                // A glyph's quads are measured from the top of ITS size's line, so
+                // a smaller run is dropped until its baseline meets the line's.
+                const f32 top = baseline - ascentOf(face, style.size);
+                const f32 advance = store().entries[glyphIndex(face, style.size, glyph.codepoint)].advance * scale +
+                                    (style.bold ? boldOffsetOf(style.size) : 0.0f);
+                const bool outlined = style.stroke.thickness > 0.0f && style.stroke.alpha > 0.0f;
+                if (outlinePass && !outlined) {
+                    pen += advance;
+                    continue;
                 }
-            }
+                const usize slot = glyphIndex(face, style.size, glyph.codepoint,
+                                              outlinePass ? glyphStrokeOf(style.stroke, style.size, style.alpha <= 0.0f)
+                                                          : GlyphStroke{});
+                const GlyphEntry entry = store().entries[slot];
 
-            const f32 thickness = std::max(1.0f, std::round(style.size / 14.0f));
-            if (style.underline)
-                rule(pen, pen + advance, baseline + thickness, thickness, style);
-            if (style.strike)
-                rule(pen, pen + advance, baseline - ascentOf(face, style.size) * 0.32f, thickness, style);
-            pen += advance;
+                const int strokes = style.bold ? 2 : 1;
+                for (int stroke = 0; stroke < strokes; ++stroke) {
+                    const f32 offset = stroke == 0 ? 0.0f : boldOffsetOf(style.size);
+                    for (u32 quad = 0; quad < entry.quadCount; ++quad) {
+                        const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
+                        DrawQuad drawn;
+                        drawn.min = Vec2{pen + offset + shape.minX * scale, top + shape.minY * scale};
+                        drawn.max = Vec2{pen + offset + shape.maxX * scale, top + shape.maxY * scale};
+                        drawn.color = style.color;
+                        drawn.alpha = style.alpha;
+                        drawn.texture = entry.textured ? 1u : 0u;
+                        drawn.uvMin = Vec2{shape.u0, shape.v0};
+                        drawn.uvMax = Vec2{shape.u1, shape.v1};
+                        drawn.scissor = scissor;
+                        // Sheared about the baseline rather than the quad's own
+                        // bottom, so every glyph of a word leans the same way.
+                        if (style.italic) {
+                            drawn.slant = ItalicSlant;
+                            const f32 lift = baseline - drawn.max.y;
+                            drawn.min.x += lift * ItalicSlant;
+                            drawn.max.x += lift * ItalicSlant;
+                        }
+                        if (outlinePass)
+                            paintOutline(drawn, style.stroke);
+                        out.push_back(drawn);
+                    }
+                }
+
+                if (!outlinePass) {
+                    const f32 thickness = std::max(1.0f, std::round(style.size / 14.0f));
+                    if (style.underline)
+                        rule(pen, pen + advance, baseline + thickness, thickness, style);
+                    if (style.strike)
+                        rule(pen, pen + advance, baseline - ascentOf(face, style.size) * 0.32f, thickness, style);
+                }
+                pen += advance;
+            }
+            y += line.height;
         }
-        y += line.height;
     }
 }
 

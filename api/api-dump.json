@@ -1426,7 +1426,7 @@
               "Type": "string"
             }
           ],
-          "Returns": ["(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?"]
+          "Returns": ["(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?"]
         },
         {
           "Name": "GetAttributeChangedSignal",
@@ -1441,7 +1441,7 @@
         {
           "Name": "GetAttributes",
           "Parameters": [],
-          "Returns": ["{ [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect }"]
+          "Returns": ["{ [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence }"]
         },
         {
           "Name": "GetChildren",
@@ -1527,7 +1527,7 @@
             },
             {
               "Name": "value",
-              "Type": "(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?"
+              "Type": "(string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?"
             }
           ],
           "Returns": []
@@ -4079,6 +4079,55 @@
       "Events": []
     },
     {
+      "Name": "UIGradient",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "ColorSequence",
+          "Default": "ColorSequence.new(Color3.new(1, 1, 1))"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Offset",
+          "Type": "Vector2",
+          "Default": "Vector2.new(0, 0)"
+        },
+        {
+          "Name": "Rotation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Scale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "TileMode",
+          "Type": "Enum.GradientTileMode",
+          "Default": "Enum.GradientTileMode.Clamp"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(0)"
+        },
+        {
+          "Name": "Type",
+          "Type": "Enum.GradientType",
+          "Default": "Enum.GradientType.Linear"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "UIListLayout",
       "Extends": "Instance",
       "Tags": [],
@@ -4256,6 +4305,65 @@
           "Name": "ScreenOrientation",
           "Type": "Enum.ScreenOrientation",
           "Default": "Enum.ScreenOrientation.LandscapeSensor"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UIStroke",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "ApplyStrokeMode",
+          "Type": "Enum.ApplyStrokeMode",
+          "Default": "Enum.ApplyStrokeMode.Contextual"
+        },
+        {
+          "Name": "BorderOffset",
+          "Type": "UDim",
+          "Default": "UDim.new(0, 0)"
+        },
+        {
+          "Name": "BorderStrokePosition",
+          "Type": "Enum.BorderStrokePosition",
+          "Default": "Enum.BorderStrokePosition.Outer"
+        },
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(0, 0, 0)"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "LineJoinMode",
+          "Type": "Enum.LineJoinMode",
+          "Default": "Enum.LineJoinMode.Round"
+        },
+        {
+          "Name": "StrokeSizingMode",
+          "Type": "Enum.StrokeSizingMode",
+          "Default": "Enum.StrokeSizingMode.FixedSize"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "ZIndex",
+          "Type": "number",
+          "Default": "1"
         }
       ],
       "Methods": [],
@@ -5331,6 +5439,118 @@
       ]
     },
     {
+      "Name": "ColorSequence",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "color",
+              "Type": "Color3"
+            }
+          ],
+          "Returns": ["ColorSequence"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "Color3"
+            },
+            {
+              "Name": "to",
+              "Type": "Color3"
+            }
+          ],
+          "Returns": ["ColorSequence"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "keypoints",
+              "Type": "{ ColorSequenceKeypoint }"
+            }
+          ],
+          "Returns": ["ColorSequence"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Keypoints",
+          "Type": "{ ColorSequenceKeypoint }",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "ColorSequence"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
+      "Name": "ColorSequenceKeypoint",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "time",
+              "Type": "number"
+            },
+            {
+              "Name": "color",
+              "Type": "Color3"
+            }
+          ],
+          "Returns": ["ColorSequenceKeypoint"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Time",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Value",
+          "Type": "Color3",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "ColorSequenceKeypoint"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
       "Name": "Connection",
       "Constructors": [],
       "Constants": [],
@@ -5516,6 +5736,129 @@
         }
       ],
       "Operators": []
+    },
+    {
+      "Name": "NumberSequence",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["NumberSequence"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "from",
+              "Type": "number"
+            },
+            {
+              "Name": "to",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["NumberSequence"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "keypoints",
+              "Type": "{ NumberSequenceKeypoint }"
+            }
+          ],
+          "Returns": ["NumberSequence"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Keypoints",
+          "Type": "{ NumberSequenceKeypoint }",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "NumberSequence"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
+    },
+    {
+      "Name": "NumberSequenceKeypoint",
+      "Constructors": [
+        {
+          "Name": "new",
+          "Parameters": [
+            {
+              "Name": "time",
+              "Type": "number"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            },
+            {
+              "Name": "envelope",
+              "Type": "number?",
+              "Default": "0"
+            }
+          ],
+          "Returns": ["NumberSequenceKeypoint"],
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Envelope",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Time",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Value",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [],
+      "Operators": [
+        {
+          "Name": "__eq",
+          "Parameters": [
+            {
+              "Name": "other",
+              "Type": "NumberSequenceKeypoint"
+            }
+          ],
+          "Returns": ["boolean"]
+        }
+      ]
     },
     {
       "Name": "Promise",
@@ -7028,6 +7371,19 @@
       ]
     },
     {
+      "Name": "ApplyStrokeMode",
+      "Items": [
+        {
+          "Name": "Border",
+          "Value": 1
+        },
+        {
+          "Name": "Contextual",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "AutomaticSize",
       "Items": [
         {
@@ -7062,6 +7418,23 @@
         {
           "Name": "Translucent",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "BorderStrokePosition",
+      "Items": [
+        {
+          "Name": "Center",
+          "Value": 1
+        },
+        {
+          "Name": "Inner",
+          "Value": 2
+        },
+        {
+          "Name": "Outer",
+          "Value": 0
         }
       ]
     },
@@ -7216,6 +7589,40 @@
         },
         {
           "Name": "Vertical",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "GradientTileMode",
+      "Items": [
+        {
+          "Name": "Clamp",
+          "Value": 0
+        },
+        {
+          "Name": "Mirror",
+          "Value": 2
+        },
+        {
+          "Name": "Repeat",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "GradientType",
+      "Items": [
+        {
+          "Name": "Conical",
+          "Value": 2
+        },
+        {
+          "Name": "Linear",
+          "Value": 0
+        },
+        {
+          "Name": "Radial",
           "Value": 1
         }
       ]
@@ -7710,6 +8117,23 @@
       ]
     },
     {
+      "Name": "LineJoinMode",
+      "Items": [
+        {
+          "Name": "Bevel",
+          "Value": 1
+        },
+        {
+          "Name": "Miter",
+          "Value": 2
+        },
+        {
+          "Name": "Round",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "LogLevel",
       "Items": [
         {
@@ -8013,6 +8437,19 @@
         {
           "Name": "Persistent",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "StrokeSizingMode",
+      "Items": [
+        {
+          "Name": "FixedSize",
+          "Value": 0
+        },
+        {
+          "Name": "ScaledSize",
+          "Value": 1
         }
       ]
     },

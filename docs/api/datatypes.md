@@ -241,6 +241,59 @@ Six lowercase hex digits with no leading `#` (`"ff8800"`). The channels are clam
 |---|---|---|
 | `__eq` | `(other: Color3): boolean` | Exact and component-wise. Channels are not clamped, so two colours that would render identically after clamping are still unequal if their stored values differ. |
 
+## ColorSequence
+
+Colours along a line from 0 to 1 (ADR 0110): up to 20 stops, the first at time 0 and the last at 1, and between two stops their straight mix. What `UIGradient.Color` holds. Immutable; `==` compares every stop.
+
+## ColorSequence — constructors
+
+### `new(color: Color3): ColorSequence`
+
+One colour from start to end.
+
+### `new(from: Color3, to: Color3): ColorSequence`
+
+`from` at time 0 blending into `to` at time 1.
+
+### `new(keypoints: { ColorSequenceKeypoint }): ColorSequence`
+
+The stops as given: two to twenty, times rising, the first at exactly 0 and the last at exactly 1. Two stops at one time are a hard edge. Anything else raises `script.err.bad_sequence`.
+
+## ColorSequence — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Keypoints` | `{ ColorSequenceKeypoint }` | — | read-only | The stops, in time order. A new table each read. |
+
+## ColorSequence — operators
+
+| Operator | Signature | Description |
+|---|---|---|
+| `__eq` | `(other: ColorSequence): boolean` | Exact equality of every stop. |
+
+## ColorSequenceKeypoint
+
+One stop of a `ColorSequence`: a colour at a time between 0 and 1. Immutable; `==` is exact.
+
+## ColorSequenceKeypoint — constructors
+
+### `new(time: number, color: Color3): ColorSequenceKeypoint`
+
+A stop at `time`, which must be between 0 and 1.
+
+## ColorSequenceKeypoint — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Time` | `number` | — | read-only | Where along the sequence the stop is, from 0 to 1. |
+| `Value` | `Color3` | — | read-only | The colour at that time. |
+
+## ColorSequenceKeypoint — operators
+
+| Operator | Signature | Description |
+|---|---|---|
+| `__eq` | `(other: ColorSequenceKeypoint): boolean` | Exact equality of the time and the colour. |
+
 ## Connection
 
 The handle a `Signal:Connect` or `:Once` returns. Its only job is to end the connection it represents; it is not constructible on its own.
@@ -319,6 +372,60 @@ A parameter of the surface shader this material names (ADR 0091), as the materia
 ### `SetShaderParameter(name: string, value: number | boolean | Vector2 | vector | Color3 | { number } | string)`
 
 Sets a parameter of the surface shader, on a clone -- a loaded material is shared and read-only, as it is for the built-in fields. A string is a texture's URN. Every part wearing the clone draws with the new value from the next frame. **Not replicated**: a clone's shader parameters are this machine's; set them where the part is drawn.
+
+## NumberSequence
+
+Numbers along a line from 0 to 1 (ADR 0110): up to 20 stops, the first at time 0 and the last at 1, and between two stops their straight mix. What `UIGradient.Transparency` holds. Immutable; `==` compares every stop.
+
+## NumberSequence — constructors
+
+### `new(value: number): NumberSequence`
+
+One number from start to end.
+
+### `new(from: number, to: number): NumberSequence`
+
+`from` at time 0 blending into `to` at time 1.
+
+### `new(keypoints: { NumberSequenceKeypoint }): NumberSequence`
+
+The stops as given: two to twenty, times rising, the first at exactly 0 and the last at exactly 1. Anything else raises `script.err.bad_sequence`.
+
+## NumberSequence — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Keypoints` | `{ NumberSequenceKeypoint }` | — | read-only | The stops, in time order. A new table each read. |
+
+## NumberSequence — operators
+
+| Operator | Signature | Description |
+|---|---|---|
+| `__eq` | `(other: NumberSequence): boolean` | Exact equality of every stop. |
+
+## NumberSequenceKeypoint
+
+One stop of a `NumberSequence`: a number at a time between 0 and 1, and an envelope around it. Immutable; `==` is exact.
+
+## NumberSequenceKeypoint — constructors
+
+### `new(time: number, value: number, envelope: number? = 0): NumberSequenceKeypoint`
+
+A stop at `time`, which must be between 0 and 1.
+
+## NumberSequenceKeypoint — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Envelope` | `number` | — | read-only | How far a value drawn from the sequence may stray from `Value` here. Kept with the stop; the UI does not use it. |
+| `Time` | `number` | — | read-only | Where along the sequence the stop is, from 0 to 1. |
+| `Value` | `number` | — | read-only | The number at that time. |
+
+## NumberSequenceKeypoint — operators
+
+| Operator | Signature | Description |
+|---|---|---|
+| `__eq` | `(other: NumberSequenceKeypoint): boolean` | Exact equality of all three numbers. |
 
 ## Promise
 

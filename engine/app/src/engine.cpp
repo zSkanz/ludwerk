@@ -199,7 +199,8 @@ private:
 // smallest thing in the frame; an index buffer would save a third of its
 // bandwidth and cost a second upload.
 void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<render::UiVertex>& vertices,
-                     std::vector<render::UiScissorRun>& runs, std::span<const rhi::TextureHandle> textures)
+                     std::vector<render::UiScissorRun>& runs, std::span<const rhi::TextureHandle> textures,
+                     UiGradientRows& gradients)
 {
     vertices.clear();
     runs.clear();
@@ -243,6 +244,10 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
         // without knowing where on screen the quad is (D030).
         const f32 halfX = (quad.max.x - quad.min.x) * 0.5f;
         const f32 halfY = (quad.max.y - quad.min.y) * 0.5f;
+        // Its gradient's row in the frame's table (ADR 0110), if it has one.
+        const f32 gradientRow = quad.gradient != 0 && quad.gradient <= list.gradients.size()
+                                    ? gradients.rowOf(list.gradients[quad.gradient - 1])
+                                    : -1.0f;
 
         // The turn, from `GuiObject.Rotation` (S7.13). Applied to the POSITION
         // and to nothing else: the two coordinates after it are the quad's own
@@ -259,7 +264,7 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
             const f32 placedX = x + shift;
             const f32 turnedX = quad.turn.x * placedX - quad.turn.y * y + quad.turnOffset.x;
             const f32 turnedY = quad.turn.y * placedX + quad.turn.x * y + quad.turnOffset.y;
-            return render::UiVertex{turnedX,
+            render::UiVertex vertex{turnedX,
                                     turnedY,
                                     toByte(quad.color.r),
                                     toByte(quad.color.g),
@@ -271,7 +276,11 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
                                     halfY,
                                     quad.cornerRadius,
                                     u,
-                                    v};
+                                    v,
+                                    {}};
+            fillUiCorner(quad, x, y, gradientRow, vertex.localX, vertex.localY, vertex.halfX, vertex.halfY,
+                         vertex.look);
+            return vertex;
         };
 
         const render::UiVertex a = corner(quad.min.x, quad.min.y, quad.uvMin.x, quad.uvMin.y, lean);
@@ -939,6 +948,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     std::vector<render::UiVertex> uiVertices;
     std::vector<render::UiScissorRun> uiRuns;
     std::vector<rhi::TextureHandle> uiTextures;
+    // The frame's gradient rows, shared by the screen's UI and the world's.
+    UiGradientRows uiGradients;
     bool debugPassAttempted = false;
 
     // Mounts and the streamed world are set up HERE, outside `ensureDebugPass`,
@@ -4031,14 +4042,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiTextures.push_back(uiText.atlasTexture());
             for (const rhi::TextureHandle image : uiText.images())
                 uiTextures.push_back(image);
-            buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures);
+            uiGradients.clear();
+            buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients);
 
             // **The world's UI, into the picture the renderer is about to
             // draw** (F3): laid out and drawn by the same code as the screen's,
             // placed on its parts and billboards, and sharing the screen's
             // glyph atlas and images.
             buildWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport, uiTextures, worldUiDrawList,
-                         snapshot);
+                         snapshot, &uiGradients);
 
             frameVisibleObjects = 0;
             frameTriangles = 0;
@@ -4210,6 +4222,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // new glyphs as last frame's pixels.
                 uiText.sync(*device, *cmd);
             uiRenderer.upload(*device, *cmd, uiVertices, uiRuns);
+            // The gradient table, before any pass, for both UIs (ADR 0110).
+            uiRenderer.uploadGradients(*cmd, uiGradients.pixels(), uiGradients.count());
+            snapshot.worldUiGradients = uiRenderer.gradientTable();
 
             // The real renderer owns the target when there is a camera to look
             // through. Without one -- an empty project, a world booting, a

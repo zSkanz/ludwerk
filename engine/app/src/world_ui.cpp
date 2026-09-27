@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "engine/app/picking.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/scene/components.h"
 #include "engine/scene/world.h"
 
@@ -85,9 +87,12 @@ struct FaceFrame
 
 // One tree's quads, placed and appended, and grouped into runs.
 void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 brightness, bool onTop,
-                std::span<const rhi::TextureHandle> textures, render::RenderWorld& out)
+                std::span<const rhi::TextureHandle> textures, render::RenderWorld& out, UiGradientRows* gradients)
 {
     for (const ui::DrawQuad& quad : list.quads) {
+        const f32 gradientRow = gradients != nullptr && quad.gradient != 0 && quad.gradient <= list.gradients.size()
+                                    ? gradients->rowOf(list.gradients[quad.gradient - 1])
+                                    : -1.0f;
         f32 minX = quad.min.x;
         f32 minY = quad.min.y;
         f32 maxX = quad.max.x;
@@ -161,6 +166,8 @@ void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 
             vertex.localY = y - centreY;
             vertex.halfX = halfX;
             vertex.halfY = halfY;
+            fillUiCorner(quad, x, y, gradientRow, vertex.localX, vertex.localY, vertex.halfX, vertex.halfY,
+                         vertex.look);
             vertex.radius = quad.cornerRadius;
             vertex.u = u;
             vertex.v = v;
@@ -176,6 +183,68 @@ void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 
 }
 
 } // namespace
+
+void UiGradientRows::clear()
+{
+    rows_.clear();
+    pixels_.clear();
+}
+
+f32 UiGradientRows::rowOf(const ui::DrawGradient& gradient)
+{
+    for (u32 row = 0; row < rows_.size(); ++row) {
+        if (rows_[row] == gradient)
+            return render::uiGradientRowV(row);
+    }
+    if (rows_.size() >= render::UiGradientRows) {
+        if (!warned_) {
+            warned_ = true;
+            const core::I18nArg args[] = {{"limit", static_cast<core::i64>(render::UiGradientRows)}};
+            core::log(core::LogLevel::Warn, ENG_TR("ui.warn.gradient_table_full"), args);
+        }
+        return -1.0f;
+    }
+    rows_.push_back(gradient);
+    const core::usize at = pixels_.size();
+    pixels_.resize(at + render::UiGradientRowBytes);
+    render::bakeUiGradientRow(gradient.color, gradient.transparency,
+                              std::span<core::u8>(pixels_.data() + at, render::UiGradientRowBytes));
+    return render::uiGradientRowV(static_cast<u32>(rows_.size() - 1));
+}
+
+void fillUiCorner(const ui::DrawQuad& quad, f32 x, f32 y, f32 gradientRow, f32& localX, f32& localY, f32& halfX,
+                  f32& halfY, render::UiVertexAppearance& look) noexcept
+{
+    // A border stroke measures its band from its ELEMENT's edge, so its frame
+    // is the element's box rather than the (larger) quad it is drawn with.
+    if (quad.borderStroke) {
+        const f32 boxHalfX = (quad.strokeBox.max.x - quad.strokeBox.min.x) * 0.5f;
+        const f32 boxHalfY = (quad.strokeBox.max.y - quad.strokeBox.min.y) * 0.5f;
+        localX = x - (quad.strokeBox.min.x + boxHalfX);
+        localY = y - (quad.strokeBox.min.y + boxHalfY);
+        halfX = boxHalfX;
+        halfY = boxHalfY;
+        look.strokeInner = quad.strokeInner;
+        look.strokeOuter = quad.strokeOuter;
+        look.strokeJoin = static_cast<f32>(quad.strokeJoin);
+    }
+    if (gradientRow >= 0.0f) {
+        const f32 boxHalfX = (quad.gradientBox.max.x - quad.gradientBox.min.x) * 0.5f;
+        const f32 boxHalfY = (quad.gradientBox.max.y - quad.gradientBox.min.y) * 0.5f;
+        look.gradientX = x - (quad.gradientBox.min.x + boxHalfX);
+        look.gradientY = y - (quad.gradientBox.min.y + boxHalfY);
+        look.gradientHalfX = boxHalfX;
+        look.gradientHalfY = boxHalfY;
+        look.gradientRow = gradientRow;
+        // The shape is one-based in the shader (1 linear, 2 radial, 3
+        // conical), which is the enum plus one, and the tiling rides above it.
+        look.gradientKind = static_cast<f32>(quad.gradientType + 1u + quad.gradientTile * 4u);
+        look.gradientAngle = quad.gradientAngle;
+        look.gradientScale = quad.gradientScale;
+        look.gradientOffsetX = quad.gradientOffset.x;
+        look.gradientOffsetY = quad.gradientOffset.y;
+    }
+}
 
 std::optional<CanvasPlacement> placeBillboard(const scene::BillboardGuiComponent& gui, core::DVec3 anchor,
                                               const render::RenderCamera& camera, Vec2 viewport)
@@ -299,7 +368,8 @@ struct Tree
 } // namespace
 
 void buildWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService, Vec2 viewport,
-                  std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out)
+                  std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
+                  UiGradientRows* gradients)
 {
     if (!out.camera.valid)
         return;
@@ -315,7 +385,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
     for (const Tree& tree : trees) {
         ui::layoutCanvas(world, tree.id, tree.placement.canvas);
         ui::buildCanvasDrawList(world, tree.id, scratch);
-        emitCanvas(scratch, tree.placement, tree.brightness, tree.onTop, textures, out);
+        emitCanvas(scratch, tree.placement, tree.brightness, tree.onTop, textures, out, gradients);
     }
 }
 

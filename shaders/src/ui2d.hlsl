@@ -20,6 +20,8 @@
 // use TEXCOORDn because that is what SDL_shadercross maps to SPIR-V input
 // locations; POSITION would compile and then bind nothing.
 
+#include "engine_ui.hlsli"
+
 cbuffer Ui2dProjection : register(b0, space1)
 {
     // Pixels to clip space, as a scale and a bias rather than a matrix: the
@@ -33,6 +35,9 @@ cbuffer Ui2dProjection : register(b0, space1)
 
 Texture2D<float4> UiTexture : register(t0, space2);
 SamplerState UiSampler : register(s0, space2);
+// A row per gradient of the frame (ADR 0110), read by a quad that has one.
+Texture2D<float4> GradientTable : register(t1, space2);
+SamplerState GradientSampler : register(s1, space2);
 
 struct VertexInput
 {
@@ -44,6 +49,13 @@ struct VertexInput
     float4 LocalHalf : TEXCOORD2;
     float Radius : TEXCOORD3;
     float2 Uv : TEXCOORD4;
+    // The gradient and the stroke (ADR 0110): where this vertex is in the
+    // gradient's box and the box's half-size; the row, kind, angle and scale;
+    // the offset and the stroke's band; the join.
+    float4 GradientFrame : TEXCOORD5;
+    float4 GradientShape : TEXCOORD6;
+    float4 GradientOffsetBand : TEXCOORD7;
+    float StrokeJoin : TEXCOORD8;
 };
 
 struct Interpolants
@@ -52,6 +64,10 @@ struct Interpolants
     float4 LocalHalf : TEXCOORD1;
     float Radius : TEXCOORD2;
     float2 Uv : TEXCOORD3;
+    float4 GradientFrame : TEXCOORD4;
+    nointerpolation float4 GradientShape : TEXCOORD5;
+    nointerpolation float4 GradientOffsetBand : TEXCOORD6;
+    nointerpolation float StrokeJoin : TEXCOORD7;
     float4 Position : SV_Position;
 };
 
@@ -64,17 +80,11 @@ Interpolants VertexMain(VertexInput input)
     output.LocalHalf = input.LocalHalf;
     output.Radius = input.Radius;
     output.Uv = input.Uv;
+    output.GradientFrame = input.GradientFrame;
+    output.GradientShape = input.GradientShape;
+    output.GradientOffsetBand = input.GradientOffsetBand;
+    output.StrokeJoin = input.StrokeJoin;
     return output;
-}
-
-// The signed distance from a point to a rounded rectangle centred on the origin:
-// negative inside, zero on the edge, positive outside. The standard form, and
-// the reason a corner needs no extra geometry -- the quad stays four vertices
-// and the shape is arithmetic on the fragment.
-float roundedRectDistance(float2 local, float2 half, float radius)
-{
-    const float2 outside = abs(local) - (half - radius);
-    return length(max(outside, 0.0f)) + min(max(outside.x, outside.y), 0.0f) - radius;
 }
 
 float4 FragmentMain(Interpolants input) : SV_Target0
@@ -85,10 +95,18 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     // One multiplication serves both, which is why there is one shader.
     float4 color = input.Color * UiTexture.Sample(UiSampler, input.Uv);
 
+    // A stroke's band (ADR 0110): what lies between its inner and outer
+    // distance from its element's edge, measured round the element's corner.
+    const float2 band = input.GradientOffsetBand.zw;
+    if (band.y > band.x) {
+        const float distance =
+            uiStrokeDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius, input.StrokeJoin);
+        color.a *= uiStrokeCoverage(distance, band.x, band.y);
+    }
     // A radius of zero is a square corner and the overwhelmingly common case, so
     // it costs one compare rather than a second pipeline.
-    if (input.Radius > 0.0f) {
-        const float distance = roundedRectDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius);
+    else if (input.Radius > 0.0f) {
+        const float distance = uiRoundedRectDistance(input.LocalHalf.xy, input.LocalHalf.zw, input.Radius);
         // Antialiased over one pixel of the distance's own gradient rather than
         // clipped: a hard cut on a curve is a staircase, and `fwidth` is what
         // makes the edge one pixel wide whatever the UI is scaled to.
@@ -96,5 +114,9 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         color.a *= 1.0f - smoothstep(-edge, edge, distance);
     }
 
+    // The gradient multiplies the colour and the opacity (ADR 0110).
+    color *= uiGradient(GradientTable, GradientSampler, input.GradientFrame.xy, input.GradientFrame.zw,
+                        input.GradientShape.y, input.GradientShape.x, input.GradientShape.z, input.GradientShape.w,
+                        input.GradientOffsetBand.xy);
     return color;
 }

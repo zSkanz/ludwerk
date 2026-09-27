@@ -53,7 +53,7 @@ The first direct child whose ClassName is exactly className, or nil; asking for 
 
 The first direct child that IsA className, or nil; matching runs through the class hierarchy, so abstract base names are accepted.
 
-### `GetAttribute(name: string): (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?`
+### `GetAttribute(name: string): (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?`
 
 The value of that attribute, or nil when it has never been set; attribute names are case-sensitive.
 
@@ -61,7 +61,7 @@ The value of that attribute, or nil when it has never been set; attribute names 
 
 The signal fired when that attribute changes; any name is accepted, because an attribute that has never been set is a reasonable thing to wait for.
 
-### `GetAttributes(): { [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect }`
+### `GetAttributes(): { [string]: string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence }`
 
 A fresh table of this instance's attributes, which the caller owns.
 
@@ -101,7 +101,7 @@ Whether this instance sits anywhere below ancestor; read strictly, so an instanc
 
 Removes a tag from this instance, a no-op when it is absent.
 
-### `SetAttribute(name: string, value: (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect)?)`
+### `SetAttribute(name: string, value: (string | number | boolean | vector | CFrame | Color3 | Vector2 | UDim | UDim2 | Rect | ColorSequence | NumberSequence)?)`
 
 Sets that attribute, or removes it when value is nil; a table, an Instance or a function raises and leaves any previous value in place, and an empty name raises.
 

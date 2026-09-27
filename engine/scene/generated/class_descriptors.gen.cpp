@@ -5149,6 +5149,146 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     networkStateDesc.docKey = {};
     networkStateDesc.items = networkStateItems;
     enums.registerEnum(networkStateDesc);
+
+    // --- GradientType ---
+    static std::array<EnumItemDesc, 3> gradientTypeItems;
+    gradientTypeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Linear"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Radial"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Conical"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor gradientTypeDesc;
+    gradientTypeDesc.name = atoms.intern("GradientType");
+    gradientTypeDesc.docKey = {};
+    gradientTypeDesc.items = gradientTypeItems;
+    enums.registerEnum(gradientTypeDesc);
+
+    // --- GradientTileMode ---
+    static std::array<EnumItemDesc, 3> gradientTileModeItems;
+    gradientTileModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Clamp"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Repeat"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Mirror"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor gradientTileModeDesc;
+    gradientTileModeDesc.name = atoms.intern("GradientTileMode");
+    gradientTileModeDesc.docKey = {};
+    gradientTileModeDesc.items = gradientTileModeItems;
+    enums.registerEnum(gradientTileModeDesc);
+
+    // --- ApplyStrokeMode ---
+    static std::array<EnumItemDesc, 2> applyStrokeModeItems;
+    applyStrokeModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Contextual"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Border"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor applyStrokeModeDesc;
+    applyStrokeModeDesc.name = atoms.intern("ApplyStrokeMode");
+    applyStrokeModeDesc.docKey = {};
+    applyStrokeModeDesc.items = applyStrokeModeItems;
+    enums.registerEnum(applyStrokeModeDesc);
+
+    // --- LineJoinMode ---
+    static std::array<EnumItemDesc, 3> lineJoinModeItems;
+    lineJoinModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Round"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Bevel"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Miter"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor lineJoinModeDesc;
+    lineJoinModeDesc.name = atoms.intern("LineJoinMode");
+    lineJoinModeDesc.docKey = {};
+    lineJoinModeDesc.items = lineJoinModeItems;
+    enums.registerEnum(lineJoinModeDesc);
+
+    // --- StrokeSizingMode ---
+    static std::array<EnumItemDesc, 2> strokeSizingModeItems;
+    strokeSizingModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("FixedSize"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("ScaledSize"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor strokeSizingModeDesc;
+    strokeSizingModeDesc.name = atoms.intern("StrokeSizingMode");
+    strokeSizingModeDesc.docKey = {};
+    strokeSizingModeDesc.items = strokeSizingModeItems;
+    enums.registerEnum(strokeSizingModeDesc);
+
+    // --- BorderStrokePosition ---
+    static std::array<EnumItemDesc, 3> borderStrokePositionItems;
+    borderStrokePositionItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Outer"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Center"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Inner"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor borderStrokePositionDesc;
+    borderStrokePositionDesc.name = atoms.intern("BorderStrokePosition");
+    borderStrokePositionDesc.docKey = {};
+    borderStrokePositionDesc.items = borderStrokePositionItems;
+    enums.registerEnum(borderStrokePositionDesc);
 }
 
 } // namespace engine::scene::generated

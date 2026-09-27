@@ -951,6 +951,310 @@ bool setUICornerCornerRadius(scene::World& world, core::InstanceId id, const Val
     return true;
 }
 
+// --- UIGradient (ADR 0110) ---------------------------------------------------
+//
+// None of these mark a layout dirty: a gradient changes the drawing, and the
+// draw list is rebuilt every frame from what the components hold.
+
+Value getUIGradientColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->color};
+}
+
+bool setUIGradientColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* sequence = std::get_if<core::ColorSequence>(&value);
+    if (component == nullptr || sequence == nullptr || !core::validSequence(sequence->keypoints))
+        return false;
+    component->color = *sequence;
+    return true;
+}
+
+Value getUIGradientTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->transparency};
+}
+
+bool setUIGradientTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* sequence = std::get_if<core::NumberSequence>(&value);
+    if (component == nullptr || sequence == nullptr || !core::validSequence(sequence->keypoints))
+        return false;
+    component->transparency = *sequence;
+    return true;
+}
+
+Value getUIGradientOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->offset};
+}
+
+bool setUIGradientOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* offset = std::get_if<core::Vec2>(&value);
+    if (component == nullptr || offset == nullptr || !isFinite(*offset))
+        return false;
+    component->offset = *offset;
+    return true;
+}
+
+Value getUIGradientRotation(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->rotation)};
+}
+
+bool setUIGradientRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->rotation = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIGradientEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setUIGradientEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    return true;
+}
+
+Value getUIGradientType(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::GradientTypeEnumId, component->type}};
+}
+
+bool setUIGradientType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::GradientTypeEnumId, item))
+        return false;
+    component->type = item;
+    return true;
+}
+
+Value getUIGradientTileMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::GradientTileModeEnumId, component->tileMode}};
+}
+
+bool setUIGradientTileMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::GradientTileModeEnumId, item))
+        return false;
+    component->tileMode = item;
+    return true;
+}
+
+Value getUIGradientScale(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIGradientComponent* component = world.uiGradients().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->scale)};
+}
+
+bool setUIGradientScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIGradientComponent* component = world.uiGradients().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Above zero: a scale of nothing is a sequence squeezed to a point, which
+    // every tiling would then divide by.
+    if (component == nullptr || number == nullptr || !isFinite(*number) || !(*number > 0.0))
+        return false;
+    component->scale = static_cast<f32>(*number);
+    return true;
+}
+
+// --- UIStroke (ADR 0110) ------------------------------------------------------
+
+Value getUIStrokeColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->color};
+}
+
+bool setUIStrokeColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (component == nullptr || color == nullptr)
+        return false;
+    component->color = *color;
+    return true;
+}
+
+Value getUIStrokeThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->thickness)};
+}
+
+bool setUIStrokeThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number) || *number < 0.0)
+        return false;
+    component->thickness = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIStrokeTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->transparency)};
+}
+
+bool setUIStrokeTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->transparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIStrokeEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->enabled};
+}
+
+bool setUIStrokeEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->enabled = *flag;
+    return true;
+}
+
+Value getUIStrokeApplyStrokeMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::ApplyStrokeModeEnumId, component->applyStrokeMode}};
+}
+
+bool setUIStrokeApplyStrokeMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::ApplyStrokeModeEnumId, item))
+        return false;
+    component->applyStrokeMode = item;
+    return true;
+}
+
+Value getUIStrokeLineJoinMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::LineJoinModeEnumId, component->lineJoinMode}};
+}
+
+bool setUIStrokeLineJoinMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::LineJoinModeEnumId, item))
+        return false;
+    component->lineJoinMode = item;
+    return true;
+}
+
+Value getUIStrokeStrokeSizingMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::StrokeSizingModeEnumId, component->strokeSizingMode}};
+}
+
+bool setUIStrokeStrokeSizingMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::StrokeSizingModeEnumId, item))
+        return false;
+    component->strokeSizingMode = item;
+    return true;
+}
+
+Value getUIStrokeBorderStrokePosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr
+               ? Value{}
+               : Value{scene::EnumValue{generated::BorderStrokePositionEnumId, component->borderStrokePosition}};
+}
+
+bool setUIStrokeBorderStrokePosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    core::i32 item = 0;
+    if (component == nullptr || !takeEnum(world, value, generated::BorderStrokePositionEnumId, item))
+        return false;
+    component->borderStrokePosition = item;
+    return true;
+}
+
+Value getUIStrokeBorderOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{component->borderOffset};
+}
+
+bool setUIStrokeBorderOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* udim = std::get_if<core::UDim>(&value);
+    if (component == nullptr || udim == nullptr || !isFinite(*udim))
+        return false;
+    component->borderOffset = *udim;
+    return true;
+}
+
+Value getUIStrokeZIndex(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->zIndex)};
+}
+
+bool setUIStrokeZIndex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIStrokeComponent* component = world.uiStrokes().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->zIndex = static_cast<f32>(*number);
+    return true;
+}
+
 // --- Storage ----------------------------------------------------------------
 //
 // One pair per class that declares its own components. `World::create` walks the
@@ -1289,6 +1593,26 @@ void attachUICornerComponents(scene::World& world, core::InstanceId id)
 void detachUICornerComponents(scene::World& world, core::InstanceId id)
 {
     world.uiCorners().remove(id);
+}
+
+void attachUIGradientComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGradients().add(id, scene::UIGradientComponent{});
+}
+
+void detachUIGradientComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiGradients().remove(id);
+}
+
+void attachUIStrokeComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiStrokes().add(id, scene::UIStrokeComponent{});
+}
+
+void detachUIStrokeComponents(scene::World& world, core::InstanceId id)
+{
+    world.uiStrokes().remove(id);
 }
 
 // --- UIService --------------------------------------------------------------

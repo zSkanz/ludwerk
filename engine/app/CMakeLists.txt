@@ -823,6 +823,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # ADR 0110: a gradient and a stroke land where the ADR says, asked of the
+    # screenshot point by point (`imgprobe`) rather than against a golden.
+    add_test(NAME ui_appearance_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/uiappearance
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/ui-appearance.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_ui_appearance_gate.cmake)
+    set_tests_properties(ui_appearance_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0091's proof: the built-in surface, written as a surface shader,
     # forced onto every static part, draws what the built-in surface draws --
     # to the bit, on this machine. Two scenes: lights, shadows and fog; and
@@ -935,7 +948,7 @@ if(ENG_BUILD_TESTS)
     # script, the scene and the assets, and a CI runner with no Vulkan driver
     # must not turn "this machine has no graphics" into a red build.
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
-                    21-navigation 22-atmosphere 23-surfaces 24-scenes)
+                    21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

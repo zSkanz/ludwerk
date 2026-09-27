@@ -16,10 +16,12 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "engine/core/math.h"
 #include "engine/core/types.h"
 #include "engine/render/render_world.h"
+#include "engine/render/ui_gradient.h"
 #include "engine/rhi/types.h"
 #include "engine/ui/ui.h"
 
@@ -59,12 +61,43 @@ inline constexpr core::f32 BillboardPixelsPerMetre = 50.0f;
                                                           const core::CFrameD& part, core::Vec3 size,
                                                           core::DVec3 cameraOrigin);
 
+// **The frame's gradient table, as rows** (ADR 0110). Every draw list of a
+// frame -- the screen's and each canvas in the world -- numbers its gradients
+// from one; this gives each distinct one a row of the one table both passes
+// read, and bakes the rows the renderer uploads.
+class UiGradientRows
+{
+public:
+    void clear();
+
+    // The row `gradient` is drawn from, as the shader's `v`; below zero when
+    // the table is full, which draws that quad ungraded and says so once.
+    [[nodiscard]] core::f32 rowOf(const ui::DrawGradient& gradient);
+
+    [[nodiscard]] std::span<const core::u8> pixels() const noexcept { return pixels_; }
+    [[nodiscard]] core::u32 count() const noexcept { return static_cast<core::u32>(rows_.size()); }
+
+private:
+    std::vector<ui::DrawGradient> rows_;
+    std::vector<core::u8> pixels_;
+    bool warned_ = false;
+};
+
+// One corner of `quad`, at upright pixels `(x, y)`: the rounded-corner frame
+// the shader measures in -- the quad's own, or for a border stroke its
+// element's -- and the gradient and stroke block. `gradientRow` is `rowOf`'s
+// answer for the quad's gradient.
+void fillUiCorner(const ui::DrawQuad& quad, core::f32 x, core::f32 y, core::f32 gradientRow, core::f32& localX,
+                  core::f32& localY, core::f32& halfX, core::f32& halfY, render::UiVertexAppearance& look) noexcept;
+
 // Lays out, draws and places every enabled `BillboardGui` and `SurfaceGui`
 // under `workspace` or `uiService`, and appends the result to `out`'s world UI
 // geometry, back to front. `textures` is the screen UI's texture table --
-// the glyph atlas and the images -- which world UI shares.
+// the glyph atlas and the images -- which world UI shares; `gradients` the
+// frame's gradient rows, null to draw every gradient as none.
 void buildWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService, core::Vec2 viewport,
-                  std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out);
+                  std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
+                  UiGradientRows* gradients = nullptr);
 
 // What the pointer's ray met in the world's UI: the element, and how far along
 // the ray it is.

@@ -111,9 +111,11 @@ guided tour.
 | [`TextLabel`](textlabel.md) | [`UIObject`](uiobject.md) | Text in a box (§2.2). |
 | [`Tilemap2D`](tilemap2d.md) | [`Instance`](instance.md) | A grid of tiles from one tileset image, on the 2D plane (the 2D layer, phase 3): a level you paint. |
 | [`UICorner`](uicorner.md) | [`Instance`](instance.md) | Rounds its parent's corners (§2.2). |
+| [`UIGradient`](uigradient.md) | [`Instance`](instance.md) | Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its text -- is multiplied by `Color` and faded by `Transparency` along the gradient. |
 | [`UIListLayout`](uilistlayout.md) | [`Instance`](instance.md) | Stacks its parent's `UIObject` children in a line (§2.2). |
 | [`UIObject`](uiobject.md) | [`Instance`](instance.md) | Anything that occupies a rectangle on screen (§2.2). |
 | [`UIPadding`](uipadding.md) | [`Instance`](instance.md) | Insets its parent's content on each side (§2.2). |
+| [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
 | [`Weld`](weld.md) | [`Instance`](instance.md) | Holds one part at a fixed offset from another. |
 | [`WeldConstraint`](weldconstraint.md) | [`Instance`](instance.md) | The same joint, with the offset CAPTURED rather than authored. |
 | [`WeldConstraint2D`](weldconstraint2d.md) | [`Constraint2D`](constraint2d.md) | The two parts held rigidly together, in the placement they had when the weld was made: a sword in a hand, a crate's lid, a vehicle's body on its frame. |

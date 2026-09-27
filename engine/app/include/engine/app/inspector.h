@@ -158,6 +158,9 @@ enum class EditorKind : core::u8
     // What that material lets the part change, each parameter with its value
     // and a revert -- and a kept override the material ignores, struck through.
     MaterialParameters,
+    // A `ColorSequence` or a `NumberSequence` (ADR 0110): the gradient drawn as
+    // a bar, its stops as handles on it to drag, and each stop's value.
+    Sequence,
 };
 
 [[nodiscard]] EditorKind editorFor(scene::ValueType type) noexcept;

@@ -30,6 +30,7 @@
 
 #include "engine/core/id.h"
 #include "engine/core/math.h"
+#include "engine/core/sequence.h"
 #include "engine/core/types.h"
 
 namespace engine::scene {
@@ -129,6 +130,73 @@ struct DrawQuad
     // is every quad but an italic glyph's, and a vertex is moved by it before
     // the turn above, so a turned label's italics lean with the label.
     f32 slant = 0.0f;
+
+    // --- `UIGradient` (ADR 0110) ----------------------------------------------
+    //
+    // Which of `DrawList::gradients` colours this quad, plus one; 0 is none,
+    // and is every quad of an element with no gradient. The rest says where
+    // the gradient lies: the element's box in the same upright pixels `min`
+    // and `max` are in (before the turn), so a glyph deep inside a label is
+    // coloured by where it is in the LABEL, not in itself.
+    u32 gradient = 0;
+    core::Rect gradientBox{};
+    // `Enum.GradientType` and `Enum.GradientTileMode`.
+    u32 gradientType = 0;
+    u32 gradientTile = 0;
+    // Radians, clockwise on screen.
+    f32 gradientAngle = 0.0f;
+    f32 gradientScale = 1.0f;
+    // Pixels: `Offset` already multiplied by the box's size.
+    core::Vec2 gradientOffset{};
+
+    // --- A border `UIStroke` (ADR 0110) ----------------------------------------
+    //
+    // A quad that is a stroke's band rather than a fill: it covers the band's
+    // outer edge, and the fragment keeps what lies between `strokeInner` and
+    // `strokeOuter` pixels from `strokeBox`'s edge (negative is inside). The
+    // box's corners are rounded by `cornerRadius`, as the element's are.
+    bool borderStroke = false;
+    core::Rect strokeBox{};
+    f32 strokeInner = 0.0f;
+    f32 strokeOuter = 0.0f;
+    // `Enum.LineJoinMode`.
+    u32 strokeJoin = 0;
+    // A glyph's outline (a text stroke) rather than the glyph: coloured by the
+    // stroke's own gradient, never by the element's.
+    bool outline = false;
+};
+
+// One distinct gradient of a frame (ADR 0110): its two sequences, which is
+// everything that becomes a row of the gradient table. The rest of a gradient
+// -- shape, tiling, angle -- rides on each quad, so two elements with the same
+// colours and different shapes share a row.
+struct DrawGradient
+{
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+
+    [[nodiscard]] bool operator==(const DrawGradient&) const = default;
+};
+
+// A text stroke (ADR 0110): what `UIStroke` on a text object, or rich text's
+// `<stroke>`, asks the glyphs for. A thickness of zero is none.
+struct TextStroke
+{
+    f32 thickness = 0.0f;
+    core::Color3 color{0.0f, 0.0f, 0.0f};
+    f32 alpha = 1.0f;
+    // `Enum.LineJoinMode`: 0 Round, 1 Bevel, 2 Miter.
+    u32 join = 0;
+    // `thickness` is a fraction of the font size rather than pixels.
+    bool scaled = false;
+    // Which of `DrawList::gradients` colours it, plus one, and where -- copied
+    // onto every stroke quad as a fill's gradient is.
+    u32 gradient = 0;
+    u32 gradientType = 0;
+    u32 gradientTile = 0;
+    f32 gradientAngle = 0.0f;
+    f32 gradientScale = 1.0f;
+    core::Vec2 gradientOffset{};
 };
 
 struct DrawList
@@ -136,12 +204,19 @@ struct DrawList
     std::vector<DrawQuad> quads;
     // Index 0 is the whole window. A `ClipsDescendants` element pushes one.
     std::vector<core::Rect> scissors;
+    // Every distinct gradient the quads name, in the order first named.
+    std::vector<DrawGradient> gradients;
 
     void clear()
     {
         quads.clear();
         scissors.clear();
+        gradients.clear();
     }
+
+    // The index plus one a quad names `gradient` by: an existing entry when an
+    // equal one is already here, a new one otherwise.
+    [[nodiscard]] u32 gradientSlot(const DrawGradient& gradient);
 };
 
 // What the glyph store has been asked for and what it has done about it.
@@ -250,9 +325,12 @@ inline constexpr f32 kMaxScaledTextSize = 100.0f;
 
 // The quads one run draws, aligned inside `box`. Appended rather than returned,
 // because a draw list is built by appending and a label is one of many.
+// `stroke`, when it has a thickness, outlines every glyph (ADR 0110): the
+// outlines first, all of them, and the text over them, so no glyph's outline
+// covers its neighbour.
 void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
                        i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
-                       std::vector<DrawQuad>& out);
+                       std::vector<DrawQuad>& out, const TextStroke& stroke = {});
 
 // **Rich text** (F3): the same two answers for a label whose `RichText` is on,
 // reading its text as markup -- `<b>`, `<i>`, `<u>`, `<s>`, `<font color size
@@ -261,9 +339,11 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
 // does not understand is drawn as text, so a mistake shows as itself.
 [[nodiscard]] TextRunMetrics measureRichText(std::string_view markup, std::string_view font, f32 pixelSize,
                                              f32 maxWidth);
+// `stroke` is the label's own; a `<stroke>` tag replaces it for what it
+// encloses.
 void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 pixelSize, f32 maxWidth, core::Rect box,
                            i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
-                           std::vector<DrawQuad>& out);
+                           std::vector<DrawQuad>& out, const TextStroke& stroke = {});
 
 // The text a markup string reads as, with its tags taken out and its entities
 // put back. What a screen reader, a copy, or a length limit should see.

@@ -31,6 +31,7 @@
 #include "engine/render/mesh_cache.h"
 #include "engine/render/shader_types.h"
 #include "engine/render/transform_history.h"
+#include "engine/render/ui_gradient.h"
 #include "engine/rhi/types.h"
 
 namespace engine::scene {
@@ -412,9 +413,11 @@ struct WorldUiVertex
     f32 radius = 0.0f;
     f32 u = 0.0f;
     f32 v = 0.0f;
+    // A gradient and a stroke (ADR 0110), as the screen's vertex carries them.
+    UiVertexAppearance look;
 };
 
-static_assert(sizeof(WorldUiVertex) == 44, "the ui_world vertex layout is an ABI decision the shader shares");
+static_assert(sizeof(WorldUiVertex) == 96, "the ui_world vertex layout is an ABI decision the shader shares");
 
 // A stretch of world UI vertices drawn with one texture, one brightness and one
 // depth rule. In back-to-front order of the trees they came from.
@@ -501,6 +504,9 @@ struct RenderWorld
     // draws what it is handed.
     std::vector<WorldUiVertex> worldUiVertices;
     std::vector<WorldUiRun> worldUiRuns;
+    // The frame's UI gradient table (ADR 0110), which a world UI vertex's
+    // gradient row indexes. The host's, and the same one the screen's UI reads.
+    rhi::TextureHandle worldUiGradients{};
     // The block world's block size, which the block shader needs to name the
     // block a fragment belongs to.
     f32 voxelBlockSize = 1.0f;

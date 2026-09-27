@@ -1033,6 +1033,202 @@ local Datatypes: { Schema.Datatype } = {
             },
         } :: { Schema.Operator },
     },
+    -- ADR 0110: the two sequences a `UIGradient` is made of, and their stops.
+    {
+        Name = "ColorSequenceKeypoint",
+        Module = "script",
+        Doc = "One stop of a `ColorSequence`: a colour at a time between 0 and 1. Immutable; `==` is exact.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "time", Type = "number" },
+                    { Name = "color", Type = "Color3" },
+                },
+                Returns = { "ColorSequenceKeypoint" },
+                ThreadSafety = "Safe",
+                Doc = "A stop at `time`, which must be between 0 and 1.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Time",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where along the sequence the stop is, from 0 to 1.",
+            },
+            {
+                Name = "Value",
+                Type = "Color3",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The colour at that time.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "ColorSequenceKeypoint" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of the time and the colour.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "ColorSequence",
+        Module = "script",
+        Doc = "Colours along a line from 0 to 1 (ADR 0110): up to 20 stops, the first at time 0 and the last at 1, "
+            .. "and between two stops their straight mix. What `UIGradient.Color` holds. Immutable; `==` compares "
+            .. "every stop.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = { { Name = "color", Type = "Color3" } },
+                Returns = { "ColorSequence" },
+                ThreadSafety = "Safe",
+                Doc = "One colour from start to end.",
+            },
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "from", Type = "Color3" },
+                    { Name = "to", Type = "Color3" },
+                },
+                Returns = { "ColorSequence" },
+                ThreadSafety = "Safe",
+                Doc = "`from` at time 0 blending into `to` at time 1.",
+            },
+            {
+                Name = "new",
+                Parameters = { { Name = "keypoints", Type = "{ ColorSequenceKeypoint }" } },
+                Returns = { "ColorSequence" },
+                ThreadSafety = "Safe",
+                Doc = "The stops as given: two to twenty, times rising, the first at exactly 0 and the last at "
+                    .. "exactly 1. Two stops at one time are a hard edge. Anything else raises "
+                    .. "`script.err.bad_sequence`.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Keypoints",
+                Type = "{ ColorSequenceKeypoint }",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The stops, in time order. A new table each read.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "ColorSequence" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of every stop.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "NumberSequenceKeypoint",
+        Module = "script",
+        Doc = "One stop of a `NumberSequence`: a number at a time between 0 and 1, and an envelope around it. "
+            .. "Immutable; `==` is exact.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "time", Type = "number" },
+                    { Name = "value", Type = "number" },
+                    { Name = "envelope", Type = "number?", Default = "0" },
+                },
+                Returns = { "NumberSequenceKeypoint" },
+                ThreadSafety = "Safe",
+                Doc = "A stop at `time`, which must be between 0 and 1.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Time",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where along the sequence the stop is, from 0 to 1.",
+            },
+            {
+                Name = "Value",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The number at that time.",
+            },
+            {
+                Name = "Envelope",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "How far a value drawn from the sequence may stray from `Value` here. Kept with the stop; "
+                    .. "the UI does not use it.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "NumberSequenceKeypoint" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of all three numbers.",
+            },
+        } :: { Schema.Operator },
+    },
+    {
+        Name = "NumberSequence",
+        Module = "script",
+        Doc = "Numbers along a line from 0 to 1 (ADR 0110): up to 20 stops, the first at time 0 and the last at 1, "
+            .. "and between two stops their straight mix. What `UIGradient.Transparency` holds. Immutable; `==` "
+            .. "compares every stop.",
+        Constructors = {
+            {
+                Name = "new",
+                Parameters = { { Name = "value", Type = "number" } },
+                Returns = { "NumberSequence" },
+                ThreadSafety = "Safe",
+                Doc = "One number from start to end.",
+            },
+            {
+                Name = "new",
+                Parameters = {
+                    { Name = "from", Type = "number" },
+                    { Name = "to", Type = "number" },
+                },
+                Returns = { "NumberSequence" },
+                ThreadSafety = "Safe",
+                Doc = "`from` at time 0 blending into `to` at time 1.",
+            },
+            {
+                Name = "new",
+                Parameters = { { Name = "keypoints", Type = "{ NumberSequenceKeypoint }" } },
+                Returns = { "NumberSequence" },
+                ThreadSafety = "Safe",
+                Doc = "The stops as given: two to twenty, times rising, the first at exactly 0 and the last at "
+                    .. "exactly 1. Anything else raises `script.err.bad_sequence`.",
+            },
+        } :: { Schema.Method },
+        Properties = {
+            {
+                Name = "Keypoints",
+                Type = "{ NumberSequenceKeypoint }",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The stops, in time order. A new table each read.",
+            },
+        } :: { Schema.Property },
+        Operators = {
+            {
+                Name = "__eq",
+                Parameters = { { Name = "other", Type = "NumberSequence" } },
+                Returns = { "boolean" },
+                Doc = "Exact equality of every stop.",
+            },
+        } :: { Schema.Operator },
+    },
     {
         Name = "Random",
         Module = "script",

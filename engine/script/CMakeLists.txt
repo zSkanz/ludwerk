@@ -30,6 +30,7 @@ engine_add_module(script
         src/tasks.cpp
         src/tweens.cpp
         src/sandbox.cpp
+        src/sequences.cpp
         src/stdlib.cpp
         src/reload_state.cpp
         src/runtime.cpp

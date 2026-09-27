@@ -268,6 +268,30 @@ void writeF64(Writer& out, f64 value)
         writeF32(out, r.max.y);
         return true;
     }
+    // ADR 0110, protocol 18: a stop count, then each stop's numbers.
+    case scene::ValueType::ColorSequence: {
+        const core::ColorSequence& sequence = std::get<core::ColorSequence>(value);
+        out.u8v(static_cast<u8>(type));
+        out.u8v(static_cast<u8>(sequence.keypoints.size()));
+        for (const core::ColorKeypoint& stop : sequence.keypoints) {
+            writeF32(out, stop.time);
+            writeF32(out, stop.value.r);
+            writeF32(out, stop.value.g);
+            writeF32(out, stop.value.b);
+        }
+        return true;
+    }
+    case scene::ValueType::NumberSequence: {
+        const core::NumberSequence& sequence = std::get<core::NumberSequence>(value);
+        out.u8v(static_cast<u8>(type));
+        out.u8v(static_cast<u8>(sequence.keypoints.size()));
+        for (const core::NumberKeypoint& stop : sequence.keypoints) {
+            writeF32(out, stop.time);
+            writeF32(out, stop.value);
+            writeF32(out, stop.envelope);
+        }
+        return true;
+    }
     default:
         return false;
     }
@@ -336,6 +360,37 @@ void writeF64(Writer& out, f64 value)
         r.max.x = readF32(in);
         r.max.y = readF32(in);
         return scene::Value{r};
+    }
+    // A sequence the authority could not have made is a message that lies;
+    // refused, as any other malformed value is.
+    case scene::ValueType::ColorSequence: {
+        core::ColorSequence sequence;
+        sequence.keypoints.resize(in.u8v());
+        for (core::ColorKeypoint& stop : sequence.keypoints) {
+            stop.time = readF32(in);
+            stop.value.r = readF32(in);
+            stop.value.g = readF32(in);
+            stop.value.b = readF32(in);
+        }
+        if (!core::validSequence(sequence.keypoints)) {
+            in.fail();
+            return std::nullopt;
+        }
+        return scene::Value{std::move(sequence)};
+    }
+    case scene::ValueType::NumberSequence: {
+        core::NumberSequence sequence;
+        sequence.keypoints.resize(in.u8v());
+        for (core::NumberKeypoint& stop : sequence.keypoints) {
+            stop.time = readF32(in);
+            stop.value = readF32(in);
+            stop.envelope = readF32(in);
+        }
+        if (!core::validSequence(sequence.keypoints)) {
+            in.fail();
+            return std::nullopt;
+        }
+        return scene::Value{std::move(sequence)};
     }
     default:
         in.fail();

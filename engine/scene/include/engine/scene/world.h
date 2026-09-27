@@ -351,6 +351,8 @@ struct NameIndex
     X(UIListLayoutComponent, listLayouts)                                                                              \
     X(UIPaddingComponent, uiPaddings)                                                                                  \
     X(UICornerComponent, uiCorners)                                                                                    \
+    X(UIGradientComponent, uiGradients)                                                                                \
+    X(UIStrokeComponent, uiStrokes)                                                                                    \
     X(InputContextComponent, inputContexts)                                                                            \
     X(InputActionComponent, inputActions)                                                                              \
     X(InputBindingComponent, inputBindings)                                                                            \
@@ -1035,6 +1037,10 @@ public:
     [[nodiscard]] const ComponentPool<UIPaddingComponent>& uiPaddings() const noexcept { return m_uiPaddings; }
     [[nodiscard]] ComponentPool<UICornerComponent>& uiCorners() noexcept { return m_uiCorners; }
     [[nodiscard]] const ComponentPool<UICornerComponent>& uiCorners() const noexcept { return m_uiCorners; }
+    [[nodiscard]] ComponentPool<UIGradientComponent>& uiGradients() noexcept { return m_uiGradients; }
+    [[nodiscard]] const ComponentPool<UIGradientComponent>& uiGradients() const noexcept { return m_uiGradients; }
+    [[nodiscard]] ComponentPool<UIStrokeComponent>& uiStrokes() noexcept { return m_uiStrokes; }
+    [[nodiscard]] const ComponentPool<UIStrokeComponent>& uiStrokes() const noexcept { return m_uiStrokes; }
 
     // The audio module's classes (M6).
     [[nodiscard]] ComponentPool<SoundComponent>& sounds() noexcept { return m_sounds; }

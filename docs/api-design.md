@@ -14,7 +14,7 @@ during implementation goes through an ADR + an edit here in the same commit.
 
 | Tier | What lives there | Rationale |
 |---|---|---|
-| **Globals** | The world model: `game`, `workspace`, `script`, `Instance`, datatypes (`Vector2`, `Vector3`, `CFrame`, `Color3`, `UDim`, `UDim2`, `Rect`, `TweenInfo`, `RaycastParams`, `Random`, `Signal`, `Collector`, `Promise`), `Enum`, plus the Luau builtins listed in full below | Roblox muscle memory: you never require Vector3 |
+| **Globals** | The world model: `game`, `workspace`, `script`, `Instance`, datatypes (`Vector2`, `Vector3`, `CFrame`, `Color3`, `UDim`, `UDim2`, `Rect`, `ColorSequence`, `NumberSequence`, `TweenInfo`, `RaycastParams`, `Random`, `Signal`, `Collector`, `Promise`), `Enum`, plus the Luau builtins listed in full below | Roblox muscle memory: you never require Vector3 |
 | **`@std/…`** | The cross-runtime stdlib (Lute-compatible surface, §7): `@std/json`, `@std/net`, `@std/fs`, `@std/path`, `@std/task`, `@std/stringext`, `@std/tableext`, … This is the scope, not the state: §7 says which of them the game VM registers, and today it is one | The convergence bet (ADR 0030): utility code runs unchanged on Roblox/Lute/Ludwerk |
 | **`@engine/…`** | Engine-provided optional Luau libraries (not core world): `@engine/camera` (third-person/orbit rigs), `@engine/testing` (engine-aware test helpers) | Keeps the global surface small; optional things are opt-in |
 
@@ -485,7 +485,10 @@ Instance (abstract)
 │  └─ ScrollFrame              -- CanvasSize, CanvasPosition, ScrollBarThickness
 └─ UI modifiers, each extending Instance and acting on the UIObject it is parented to:
    UIListLayout (FillDirection, Padding: UDim, HorizontalAlignment, VerticalAlignment,
-   SortOrder, Wraps), UIPadding, UICorner
+   SortOrder, Wraps), UIPadding, UICorner, UIGradient (Color: ColorSequence,
+   Transparency: NumberSequence, Offset, Rotation, Type, TileMode, Scale -- ADR 0110),
+   UIStroke (Color, Thickness, Transparency, ApplyStrokeMode, LineJoinMode,
+   StrokeSizingMode, BorderStrokePosition, BorderOffset, ZIndex -- ADR 0110)
 ```
 
 Layout is computed directly -- two passes over each dirty `ScreenGui` -- and no
@@ -609,7 +612,8 @@ thing to wait for.
 
 **Attributes** are per-instance values independent of the class's properties.
 An attribute may hold a `string`, `number`, `boolean`, `vector`, `CFrame` or
-`Color3`, and `Vector2`, `UDim`, `UDim2` and `Rect` as those datatypes ship;
+`Color3`, and `Vector2`, `UDim`, `UDim2`, `Rect`, `ColorSequence` and
+`NumberSequence` as those datatypes ship;
 `SetAttribute` with a table, an `Instance` or a function raises
 `scene.err.attribute_type` and leaves the attribute unset — a rejected write
 does not clear a previous value. `SetAttribute(name, nil)` removes the
@@ -677,6 +681,7 @@ change how it falls.
 | `Color3` | `new(r?, g?, b?)` — nominally 0–1, each channel defaulting to 0, and **not clamped**: values outside the range are legal and meaningful (HDR emissive, tint multipliers over 1), so clamping, where it is wanted, belongs to the consumer. `fromRGB(r, g, b)` (0–255), `fromHSV(h, s, v)` / `:ToHSV()` — all three components 0–1, so `fromHSV(1/3, 1, 1)` is green — `fromHex`; fields `R G B`; `:Lerp`, `:ToHSV`, `:ToHex`, and `==` (exact, component-wise). `:ToHex()` returns six lowercase hex digits with no leading `#` (`"ff8800"`); `fromHex` accepts `#rrggbb`, `rrggbb`, `#rgb` and `rgb`, case-insensitively, so the round trip is defined in both directions and neither call has to guess what the other meant. Anything else raises `script.err.color_hex_invalid`. No BrickColor. |
 | `UDim` / `UDim2` | `UDim.new(scale, offset)` with fields `Scale`, `Offset`; `UDim2.new(xs, xo, ys, yo)`, `UDim2.fromScale`, `UDim2.fromOffset`; `X: UDim`, `Y: UDim`. |
 | `Rect` | `Rect.new(min: Vector2, max: Vector2)`; `Min`, `Max`, `Width`, `Height`. |
+| `ColorSequence` / `NumberSequence` | ADR 0110. `ColorSequence.new(color)`, `.new(from, to)`, `.new({ColorSequenceKeypoint})`; `ColorSequenceKeypoint.new(time, color)` with `Time`, `Value`. `NumberSequence.new(value)`, `.new(from, to)`, `.new({NumberSequenceKeypoint})`; `NumberSequenceKeypoint.new(time, value, envelope?)` with `Time`, `Value`, `Envelope`. `Keypoints` returns a new table of the stops. Two to twenty stops, times rising from exactly 0 to exactly 1, equal times legal (a hard edge); anything else raises `script.err.bad_sequence`. Immutable, `==` exact, not tweenable. |
 | `TweenInfo` | `TweenInfo.new(time, easingStyle?, easingDirection?, repeatCount?, reverses?, delayTime?)` — enum params also accept string literals ("Quad") via typed unions. |
 | `Signal<T...>` / `Connection` | THE signal types (never "RBXScriptSignal"). `Signal:Connect(fn) → Connection`, `:Once(fn)`, `:Wait() → T...`; `Connection:Disconnect()`, `.Connected`. `Disconnect` is idempotent: a second call is a no-op and `.Connected` stays `false`. Deferred-only (ADR 0015), ordering per §3.1. User-creatable: `Signal.new()` with `:Fire(...)`, `:Destroy()` — replaces BindableEvent/BindableFunction. `Signal.new()` is generic and its pack is inferred from the `Fire`/`Connect` sites; annotate it (`Signal<string>`, `Signal<()>`) where inference has nothing to work from, such as an array element type. `ConnectParallel` reserved, not in v1. |
 | `RaycastParams` / `RaycastResult` | `RaycastParams.new { Filter = {Instance}, FilterType = Enum.RaycastFilterType.Exclude, CollisionGroup = "Default" }` (table constructor); result: `Instance`, `Position`, `Normal`, `Distance`. Both are read-only once built: a params object mutated between two casts is a question that means something different depending on when the engine looked at it. The filter covers a named instance's **descendants**, so filtering a `Model` filters its parts, and each word means what it says at the edges — an empty `Exclude` filter hits everything and an empty `Include` filter hits nothing. `CollisionGroup` is the empty string for "any group". **`RaycastResult` still carries no `Material`**, and the reason it was given here has since gone: `BasePart.Material` ships (§2.2) and this field did not arrive with it. The rule that kept it out stands on its own — a field reporting a value nothing sets is worse than one that is absent, and nothing sets this one. Note for `--!strict` callers: Luau table types are invariant, so `Filter = { part }` needs `:: { Instance }` — the annotation a `{Instance}` field costs. |

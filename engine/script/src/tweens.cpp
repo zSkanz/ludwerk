@@ -273,6 +273,10 @@ int tweenCancel(lua_State* L)
     // parameter through the object that owns it, not the set around it.
     case scene::ValueType::Material:
     case scene::ValueType::MaterialParameters:
+    // Two sequences may not even have the same stops; there is no halfway
+    // between them that means anything (ADR 0110).
+    case scene::ValueType::ColorSequence:
+    case scene::ValueType::NumberSequence:
         return false;
     }
     return false;

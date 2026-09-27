@@ -77,12 +77,20 @@ ones:
 - Rich text's `<stroke color thickness transparency joins sizing>` tag.
 - Strokes do not affect layout.
 
-- [ ] ADR, IDL (classes and five enums appended), accessors, `.d.luau`,
-      reference pages, editor icons.
-- [ ] The 2D and world UI shaders: gradient and stroke on the one pipeline.
-- [ ] Text strokes: stroked glyphs in the atlas.
-- [ ] Rich text `<stroke>`.
-- [ ] An example, screenshots, tests, docs.
+- [x] ADR 0110; IDL (the two classes, four datatypes, six enums appended),
+      accessors, `.d.luau`, reference pages, editor icons.
+- [x] `ColorSequence` and `NumberSequence` as values: scene files (an object
+      keyed by which, so an attribute reads back as what it was), the world
+      hash, attribute replication (protocol 18), the Luau types, and a
+      sequence editor in the Properties panel.
+- [x] The 2D and world UI shaders: gradient and stroke on the one pipeline,
+      through `engine_ui.hlsli`, with one gradient table the two share.
+- [x] Text strokes: stroked glyphs in the atlas (the coverage dilated by the
+      join's kernel), and a ring for hollow lettering.
+- [x] Rich text `<stroke>`.
+- [x] `examples/25-gradients-and-strokes`; `ui_appearance_gate` (eighteen
+      probes, `imgprobe`); unit tests for the draw list, the sequences and the
+      scene file; conformance specs for the API; the manual page.
 
 ## Q2 — the editor, remade after VS Code
 

@@ -17,6 +17,7 @@
 #include "engine/asset/material.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
+#include "engine/core/sequence.h"
 #include "engine/core/types.h"
 #include "engine/scene/types.h"
 
@@ -60,7 +61,9 @@ using Value = std::variant<std::monostate, // absent -- an unset attribute, or a
                            // geometry, because the index IS the wire tag.
                            core::Vec2, core::UDim, core::UDim2, core::Rect,
                            // ADR 0090: a part wears a material and overrides what it declares.
-                           MaterialRef, asset::MaterialOverrides>;
+                           MaterialRef, asset::MaterialOverrides,
+                           // ADR 0110: what a gradient is made of.
+                           core::ColorSequence, core::NumberSequence>;
 
 enum class ValueType : u8
 {
@@ -79,6 +82,8 @@ enum class ValueType : u8
     Rect = 12,
     Material = 13,
     MaterialParameters = 14,
+    ColorSequence = 15,
+    NumberSequence = 16,
 };
 
 [[nodiscard]] constexpr ValueType valueType(const Value& value) noexcept

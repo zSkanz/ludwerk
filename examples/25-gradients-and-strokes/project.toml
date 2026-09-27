@@ -1,0 +1,16 @@
+# Gradients and strokes (ADR 0110): every shape of UIGradient and every kind of
+# UIStroke on one screen, a few of them moving.
+#
+# No scene file: the script builds the screen, because how each one is made is
+# the subject.
+
+[project]
+name = "Ludwerk Gradients and Strokes"
+id = "dev.ludwerk.gradients-and-strokes"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Gradients and strokes"
+width = 1280
+height = 720

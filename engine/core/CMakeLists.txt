@@ -29,6 +29,7 @@ engine_add_module(core
         src/name_atom.cpp
         src/number_parse.cpp
         src/random.cpp
+        src/sequence.cpp
         src/toml.cpp
         src/toml_edit.cpp
     PUBLIC_DEPS
@@ -54,6 +55,7 @@ engine_add_module_tests(core
         tests/slotmap_tests.cpp
         tests/name_atom_tests.cpp
         tests/random_tests.cpp
+        tests/sequence_tests.cpp
         tests/toml_edit_tests.cpp
         tests/toml_tests.cpp
 )

@@ -124,6 +124,9 @@ local ScalarValueTypes: { [string]: string } = {
     -- so each is its own `ValueType`.
     ["Material"] = "Material",
     ["MaterialParameters"] = "MaterialParameters",
+    -- ADR 0110: what a gradient is made of.
+    ["ColorSequence"] = "ColorSequence",
+    ["NumberSequence"] = "NumberSequence",
 }
 
 --- `PropertyDesc::errKeyOnInvalidSet`, keyed by `ValueType`. One key per type
@@ -144,6 +147,8 @@ local InvalidSetKeys: { [string]: string } = {
     Rect = "scene.err.expected_rect",
     Material = "scene.err.expected_material",
     MaterialParameters = "scene.err.expected_material_parameters",
+    ColorSequence = "scene.err.expected_color_sequence",
+    NumberSequence = "scene.err.expected_number_sequence",
 }
 
 --- `Schema.ClassTag` -> `scene::ClassFlags`. The two lists are the same set

@@ -19,6 +19,7 @@
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlgpu3.h>
@@ -3482,6 +3483,180 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
     return {};
 }
 
+// **A sequence, edited the way a gradient is** (ADR 0110): the whole sequence
+// drawn as a bar, a handle under it for every stop, and below it the selected
+// stop's time and value with a button to add a stop and one to take the
+// selected one away. The ends are pinned at 0 and 1 -- a sequence must start
+// and end there -- so their handles change colour or value and never move.
+//
+// Which stop is selected lives in ImGui's own storage under the widget's id,
+// so two sequence rows keep two selections and nothing here outlives the panel.
+// True when `value` was changed, and then it is still a valid sequence.
+template <class Keypoint>
+[[nodiscard]] bool drawKeypoints(std::vector<Keypoint>& stops, const std::function<ImU32(core::f32)>& colourAt,
+                                 const std::function<bool(Keypoint&)>& editValue)
+{
+    bool changed = false;
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID selectedKey = ImGui::GetID("##selected-stop");
+    int selected = std::clamp(storage->GetInt(selectedKey, 0), 0, static_cast<int>(stops.size()) - 1);
+
+    const float width = std::max(ImGui::GetContentRegionAvail().x, 60.0f);
+    const float barHeight = ImGui::GetFrameHeight() * 0.8f;
+    const float handle = ImGui::GetFontSize() * 0.45f;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    // A checkerboard under it, so a see-through stop reads as see-through.
+    const float cell = barHeight * 0.5f;
+    for (float x = 0.0f; x < width; x += cell) {
+        for (int row = 0; row < 2; ++row) {
+            const bool dark = (static_cast<int>(x / cell) + row) % 2 == 0;
+            draw->AddRectFilled(
+                ImVec2(origin.x + x, origin.y + static_cast<float>(row) * cell),
+                ImVec2(origin.x + std::min(x + cell, width), origin.y + static_cast<float>(row + 1) * cell),
+                dark ? IM_COL32(90, 90, 96, 255) : IM_COL32(150, 150, 156, 255));
+        }
+    }
+    constexpr int Segments = 64;
+    for (int segment = 0; segment < Segments; ++segment) {
+        const float from = static_cast<float>(segment) / Segments;
+        const float to = static_cast<float>(segment + 1) / Segments;
+        draw->AddRectFilledMultiColor(ImVec2(origin.x + from * width, origin.y),
+                                      ImVec2(origin.x + to * width, origin.y + barHeight), colourAt(from), colourAt(to),
+                                      colourAt(to), colourAt(from));
+    }
+    draw->AddRect(origin, ImVec2(origin.x + width, origin.y + barHeight), IM_COL32(0, 0, 0, 160));
+
+    // The handles: a triangle under the bar at each stop, the selected one
+    // filled. Dragging moves an inner stop between its neighbours.
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + barHeight));
+    ImGui::InvisibleButton("##stops", ImVec2(width, handle * 2.2f));
+    const bool pressed = ImGui::IsItemActivated();
+    const bool dragging = ImGui::IsItemActive();
+    const float mouseTime = std::clamp((ImGui::GetIO().MousePos.x - origin.x) / width, 0.0f, 1.0f);
+    if (pressed) {
+        float best = FLT_MAX;
+        for (int index = 0; index < static_cast<int>(stops.size()); ++index) {
+            const float distance = std::fabs(stops[static_cast<core::usize>(index)].time - mouseTime) * width;
+            if (distance < best) {
+                best = distance;
+                selected = index;
+            }
+        }
+    }
+    const bool inner = selected > 0 && selected + 1 < static_cast<int>(stops.size());
+    if (dragging && inner && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        const auto at = static_cast<core::usize>(selected);
+        const float low = stops[at - 1].time;
+        const float high = stops[at + 1].time;
+        const float time = std::clamp(mouseTime, low, high);
+        if (time != stops[at].time) {
+            stops[at].time = time;
+            changed = true;
+        }
+    }
+    for (int index = 0; index < static_cast<int>(stops.size()); ++index) {
+        const float x = origin.x + stops[static_cast<core::usize>(index)].time * width;
+        const float top = origin.y + barHeight + 1.0f;
+        const ImU32 fill = index == selected ? IM_COL32(255, 196, 70, 255) : IM_COL32(210, 214, 222, 255);
+        draw->AddTriangleFilled(ImVec2(x, top), ImVec2(x - handle, top + handle * 1.8f),
+                                ImVec2(x + handle, top + handle * 1.8f), fill);
+        draw->AddTriangle(ImVec2(x, top), ImVec2(x - handle, top + handle * 1.8f),
+                          ImVec2(x + handle, top + handle * 1.8f), IM_COL32(0, 0, 0, 200));
+    }
+
+    // The selected stop: its time (the ends' is fixed), its value, and the
+    // two buttons.
+    auto& stop = stops[static_cast<core::usize>(selected)];
+    ImGui::BeginDisabled(!inner);
+    float time = stop.time;
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("0.000").x + ImGui::GetStyle().FramePadding.x * 2.0f);
+    if (ImGui::DragFloat("##time", &time, 0.002f, 0.0f, 1.0f, "%.3f") && inner) {
+        const auto at = static_cast<core::usize>(selected);
+        stop.time = std::clamp(time, stops[at - 1].time, stops[at + 1].time);
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("where this stop is, from 0 to 1; the first and last stay at the ends");
+    ImGui::SameLine();
+    const float buttons = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - buttons, 40.0f));
+    if (editValue(stop))
+        changed = true;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(stops.size() >= core::MaxSequenceKeypoints);
+    if (ImGui::Button("+", ImVec2(ImGui::GetFrameHeight(), 0.0f))) {
+        // Into the widest gap, halfway, carrying the colour already there so
+        // adding a stop changes nothing until it is moved.
+        core::usize widest = 0;
+        for (core::usize index = 1; index < stops.size(); ++index) {
+            if (stops[index].time - stops[index - 1].time > stops[widest + 1].time - stops[widest].time)
+                widest = index - 1;
+        }
+        Keypoint added = stops[widest];
+        added.time = (stops[widest].time + stops[widest + 1].time) * 0.5f;
+        stops.insert(stops.begin() + static_cast<std::ptrdiff_t>(widest + 1), added);
+        selected = static_cast<int>(widest + 1);
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("add a stop in the widest gap (up to twenty)");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!inner);
+    if (ImGui::Button("-", ImVec2(ImGui::GetFrameHeight(), 0.0f)) && inner) {
+        stops.erase(stops.begin() + selected);
+        selected = std::max(selected - 1, 0);
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("remove the selected stop; the ends cannot be removed");
+
+    storage->SetInt(selectedKey, selected);
+    return changed && core::validSequence(stops);
+}
+
+[[nodiscard]] bool drawSequenceEditor(scene::Value& value)
+{
+    const auto toByte = [](core::f32 channel) {
+        return static_cast<int>(std::clamp(channel, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    if (core::ColorSequence* colours = std::get_if<core::ColorSequence>(&value)) {
+        const core::ColorSequence shown = *colours;
+        return drawKeypoints<core::ColorKeypoint>(
+            colours->keypoints,
+            [&](core::f32 time) {
+                const core::Color3 colour = core::evaluate(shown, time);
+                return IM_COL32(toByte(colour.r), toByte(colour.g), toByte(colour.b), 255);
+            },
+            [](core::ColorKeypoint& stop) {
+                float rgb[3]{stop.value.r, stop.value.g, stop.value.b};
+                if (!ImGui::ColorEdit3("##stop", rgb, ImGuiColorEditFlags_Float))
+                    return false;
+                stop.value = core::Color3{rgb[0], rgb[1], rgb[2]};
+                return true;
+            });
+    }
+    if (core::NumberSequence* numbers = std::get_if<core::NumberSequence>(&value)) {
+        const core::NumberSequence shown = *numbers;
+        // A number is drawn as white over the checkerboard, as opaque as one
+        // minus it: every number sequence the UI takes is a transparency.
+        return drawKeypoints<core::NumberKeypoint>(
+            numbers->keypoints,
+            [&](core::f32 time) {
+                const core::f32 opacity = 1.0f - core::evaluate(shown, time);
+                return IM_COL32(245, 245, 245, toByte(opacity));
+            },
+            [](core::NumberKeypoint& stop) {
+                return ImGui::DragFloat("##stop", &stop.value, 0.01f, 0.0f, 0.0f, "%.3f");
+            });
+    }
+    return false;
+}
+
 // `tree` is the content browser's, and null wherever there is none -- the F3
 // overlay over a running game has an inspector and no project. The `Content`
 // editor then keeps its text field and its drop target and offers an empty list,
@@ -3988,6 +4163,15 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
     // 20}`, the same string `formatValue` has printed since M6 -- and the rows
     // underneath are where the numbers are. A box is for a value; the name of
     // the value belongs in the column that holds every other name in this panel.
+    case EditorKind::Sequence: {
+        // A mixed selection shows its first member's sequence, and an edit
+        // writes the edited one to every member -- the same flattening every
+        // other widget here does.
+        scene::Value edited = shared.value;
+        if (drawSequenceEditor(edited))
+            commit(edited);
+        break;
+    }
     case EditorKind::UDim:
     case EditorKind::UDim2:
     // `InstanceRef` never reaches here -- it returns above, before the guard

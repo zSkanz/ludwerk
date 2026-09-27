@@ -35,7 +35,7 @@ namespace scene = engine::scene;
 // say so at build time: the list of types the panel must render is exactly the
 // list of alternatives, and a new one that nothing here names is the silent
 // gap risk 6 describes.
-static_assert(std::variant_size_v<scene::Value> == 15, "every Value alternative needs an editor and a test row");
+static_assert(std::variant_size_v<scene::Value> == 17, "every Value alternative needs an editor and a test row");
 
 // Where the fixture's properties actually live. Generated accessors are plain
 // function pointers with no place to put state, so the real ones write into
@@ -63,6 +63,9 @@ struct Bag
     core::UDim pad;
     core::UDim2 extent;
     core::Rect slice;
+    // ADR 0110's two sequences.
+    core::ColorSequence shade;
+    core::NumberSequence fade;
 };
 
 inline std::unordered_map<core::u32, Bag> g_bags;
@@ -332,6 +335,34 @@ inline bool setSlice(scene::World&, core::InstanceId id, const scene::Value& val
     return true;
 }
 
+inline scene::Value getShade(const scene::World&, core::InstanceId id)
+{
+    return scene::Value{bagOf(id).shade};
+}
+
+inline bool setShade(scene::World&, core::InstanceId id, const scene::Value& value)
+{
+    const core::ColorSequence* shade = std::get_if<core::ColorSequence>(&value);
+    if (shade == nullptr || !core::validSequence(shade->keypoints))
+        return false;
+    bagOf(id).shade = *shade;
+    return true;
+}
+
+inline scene::Value getFade(const scene::World&, core::InstanceId id)
+{
+    return scene::Value{bagOf(id).fade};
+}
+
+inline bool setFade(scene::World&, core::InstanceId id, const scene::Value& value)
+{
+    const core::NumberSequence* fade = std::get_if<core::NumberSequence>(&value);
+    if (fade == nullptr || !core::validSequence(fade->keypoints))
+        return false;
+    bagOf(id).fade = *fade;
+    return true;
+}
+
 // `ValueType::Nil`. Nothing in the v1 surface declares one, which is exactly
 // why the fixture does: the type the panel is likeliest to forget is the one no
 // shipped class exercises.
@@ -510,6 +541,18 @@ struct Fixture
                 .type = scene::ValueType::Rect,
                 .get = &getSlice,
                 .set = &setSlice,
+            },
+            scene::PropertyDesc{
+                .name = atoms.intern("Shade"),
+                .type = scene::ValueType::ColorSequence,
+                .get = &getShade,
+                .set = &setShade,
+            },
+            scene::PropertyDesc{
+                .name = atoms.intern("Fade"),
+                .type = scene::ValueType::NumberSequence,
+                .get = &getFade,
+                .set = &setFade,
             },
             // Deliberately carries neither, because a hand-built descriptor is
             // allowed to: `doc` has to read as an empty string rather than as a

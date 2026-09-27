@@ -309,6 +309,82 @@ void writeMaterialParameters(JsonWriter& out, const asset::MaterialOverrides& ov
     return out;
 }
 
+// A sequence (ADR 0110) as an object with one key naming which, so an
+// attribute -- which has no declared type -- reads back as what it was: each
+// stop an inline array of its time and its colour, or its time, value and
+// envelope.
+void writeSequence(JsonWriter& out, const core::ColorSequence& sequence)
+{
+    out.beginObject();
+    out.key("colorSequence");
+    out.beginArray();
+    for (const core::ColorKeypoint& stop : sequence.keypoints) {
+        out.beginInlineArray();
+        out.value(static_cast<core::f64>(stop.time));
+        out.value(static_cast<core::f64>(stop.value.r));
+        out.value(static_cast<core::f64>(stop.value.g));
+        out.value(static_cast<core::f64>(stop.value.b));
+        out.endArray();
+    }
+    out.endArray();
+    out.endObject();
+}
+
+void writeSequence(JsonWriter& out, const core::NumberSequence& sequence)
+{
+    out.beginObject();
+    out.key("numberSequence");
+    out.beginArray();
+    for (const core::NumberKeypoint& stop : sequence.keypoints) {
+        out.beginInlineArray();
+        out.value(static_cast<core::f64>(stop.time));
+        out.value(static_cast<core::f64>(stop.value));
+        out.value(static_cast<core::f64>(stop.envelope));
+        out.endArray();
+    }
+    out.endArray();
+    out.endObject();
+}
+
+// The reverse, for either: nothing for an object that is not a well-formed
+// sequence, which the caller counts as refused.
+[[nodiscard]] std::optional<Value> readSequence(const JsonValue& json)
+{
+    if (json.type() != core::JsonType::Object)
+        return std::nullopt;
+    const auto number = [](const JsonValue& stop, core::usize index) {
+        return static_cast<core::f32>(stop.at(index).asNumber());
+    };
+    if (const JsonValue stops = json["colorSequence"]; stops.type() == core::JsonType::Array) {
+        core::ColorSequence sequence;
+        sequence.keypoints.clear();
+        for (core::usize index = 0; index < stops.size(); ++index) {
+            const JsonValue stop = stops.at(index);
+            if (stop.type() != core::JsonType::Array || stop.size() < 4)
+                return std::nullopt;
+            sequence.keypoints.push_back(
+                core::ColorKeypoint{number(stop, 0), core::Color3{number(stop, 1), number(stop, 2), number(stop, 3)}});
+        }
+        if (!core::validSequence(sequence.keypoints))
+            return std::nullopt;
+        return Value{std::move(sequence)};
+    }
+    if (const JsonValue stops = json["numberSequence"]; stops.type() == core::JsonType::Array) {
+        core::NumberSequence sequence;
+        sequence.keypoints.clear();
+        for (core::usize index = 0; index < stops.size(); ++index) {
+            const JsonValue stop = stops.at(index);
+            if (stop.type() != core::JsonType::Array || stop.size() < 3)
+                return std::nullopt;
+            sequence.keypoints.push_back(core::NumberKeypoint{number(stop, 0), number(stop, 1), number(stop, 2)});
+        }
+        if (!core::validSequence(sequence.keypoints))
+            return std::nullopt;
+        return Value{std::move(sequence)};
+    }
+    return std::nullopt;
+}
+
 void writeValue(JsonWriter& out, const World& world, const Value& value,
                 const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
 {
@@ -434,6 +510,12 @@ void writeValue(JsonWriter& out, const World& world, const Value& value,
         break;
     case ValueType::MaterialParameters:
         writeMaterialParameters(out, std::get<asset::MaterialOverrides>(value));
+        break;
+    case ValueType::ColorSequence:
+        writeSequence(out, std::get<core::ColorSequence>(value));
+        break;
+    case ValueType::NumberSequence:
+        writeSequence(out, std::get<core::NumberSequence>(value));
         break;
     }
 }
@@ -972,6 +1054,11 @@ struct PendingReference
         if (const std::optional<asset::MaterialOverrides> overrides = readMaterialParameters(json))
             return Value{*overrides};
         return std::nullopt;
+    case ValueType::ColorSequence:
+    case ValueType::NumberSequence:
+        if (std::optional<Value> sequence = readSequence(json); sequence && valueType(*sequence) == expected)
+            return sequence;
+        return std::nullopt;
     }
     return std::nullopt;
 }
@@ -1218,6 +1305,10 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
                     value = Value{core::Vec3{static_cast<core::f32>(entry.at(0).asNumber()),
                                              static_cast<core::f32>(entry.at(1).asNumber()),
                                              static_cast<core::f32>(entry.at(2).asNumber())}};
+                break;
+            case core::JsonType::Object:
+                // The one object an attribute can be: a sequence (ADR 0110).
+                value = readSequence(entry);
                 break;
             default:
                 break;

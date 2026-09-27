@@ -73,6 +73,12 @@ inline constexpr scene::EnumId TextureFilterEnumId = 30;
 inline constexpr scene::EnumId CameraProjectionEnumId = 31;
 inline constexpr scene::EnumId ScreenOrientationEnumId = 32;
 inline constexpr scene::EnumId NetworkStateEnumId = 33;
+inline constexpr scene::EnumId GradientTypeEnumId = 34;
+inline constexpr scene::EnumId GradientTileModeEnumId = 35;
+inline constexpr scene::EnumId ApplyStrokeModeEnumId = 36;
+inline constexpr scene::EnumId LineJoinModeEnumId = 37;
+inline constexpr scene::EnumId StrokeSizingModeEnumId = 38;
+inline constexpr scene::EnumId BorderStrokePositionEnumId = 39;
 
 } // namespace generated
 

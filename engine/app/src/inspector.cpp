@@ -107,6 +107,34 @@ struct ValueFormatter
         return std::string(buffer);
     }
 
+    // A sequence by its stops: a colour by its channels 0-255 and a number as
+    // it is, each at its time -- short enough for a row, exact enough to copy.
+    [[nodiscard]] std::string operator()(const core::ColorSequence& value) const
+    {
+        std::string out;
+        for (const core::ColorKeypoint& stop : value.keypoints) {
+            char buffer[FormatBufferSize]{};
+            std::snprintf(buffer, sizeof(buffer), "%s%.2f (%d, %d, %d)", out.empty() ? "" : "; ",
+                          static_cast<f64>(stop.time), static_cast<int>(stop.value.r * 255.0f + 0.5f),
+                          static_cast<int>(stop.value.g * 255.0f + 0.5f),
+                          static_cast<int>(stop.value.b * 255.0f + 0.5f));
+            out += buffer;
+        }
+        return out;
+    }
+
+    [[nodiscard]] std::string operator()(const core::NumberSequence& value) const
+    {
+        std::string out;
+        for (const core::NumberKeypoint& stop : value.keypoints) {
+            char buffer[FormatBufferSize]{};
+            std::snprintf(buffer, sizeof(buffer), "%s%.2f %.3g", out.empty() ? "" : "; ", static_cast<f64>(stop.time),
+                          static_cast<f64>(stop.value));
+            out += buffer;
+        }
+        return out;
+    }
+
     // The asset's URN, and the clone's number when it is one: a clone is the
     // same asset changed at runtime, and the panel says which.
     [[nodiscard]] std::string operator()(const scene::MaterialRef& value) const
@@ -210,6 +238,9 @@ EditorKind editorFor(scene::ValueType type) noexcept
         return EditorKind::Material;
     case scene::ValueType::MaterialParameters:
         return EditorKind::MaterialParameters;
+    case scene::ValueType::ColorSequence:
+    case scene::ValueType::NumberSequence:
+        return EditorKind::Sequence;
     }
 
     // `Nil` is a property holding nothing, and so is anything the switch above
