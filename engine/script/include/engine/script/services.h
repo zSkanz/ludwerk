@@ -318,6 +318,12 @@ void fireStreamedOut(lua_State* L, core::InstanceId instance);
 // first resumption.
 void fireSceneLoaded(lua_State* L, std::string_view path);
 
+// **What crossed between two worlds** (ADR 0107 §3), fired once a tick at its
+// start beside the network's messages: each `SubWorld`'s `Received`, with what
+// its sub-world sent out, and -- inside a sub-world -- `SceneService.
+// HostMessageReceived`, with what the world running it sent in.
+void fireSubWorldMessages(lua_State* L);
+
 // One of `NetworkService`'s `Connected`, `JoinFailed` or `Disconnected` (ADR
 // 0106), fired by the host when the connection it manages changes; the last
 // two carry a readable reason.

@@ -10,6 +10,7 @@
 // monitors takes turns instead of costing twelve views.
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -88,6 +89,9 @@ public:
         bool frame = false;
         core::u64 signature = 0;
         core::u64 drawnSignature = 0;
+        // **A `SubWorld`'s view** (ADR 0107 §3): the world it runs, from that
+        // world's own camera -- drawn by the frame from the sub-world's host.
+        bool subWorld = false;
     };
 
     void setLimits(core::u32 perFrame, core::u32 maxResolution) noexcept
@@ -105,7 +109,10 @@ public:
               render::TextureLibrary& library, render::IRenderer* renderer);
 
     // The views to draw on frame `frame`, within the budget.
-    [[nodiscard]] std::vector<View*> due(const scene::World& world, core::u64 frame);
+    // A `SubWorld`'s view is due only while `running` says its world is up
+    // and ticking; without the question, never.
+    [[nodiscard]] std::vector<View*> due(const scene::World& world, core::u64 frame,
+                                         const std::function<bool(core::InstanceId)>& running = nullptr);
 
     // What the loop calls after drawing one.
     static void drawn(View& view, core::u64 frame, core::f64 milliseconds) noexcept

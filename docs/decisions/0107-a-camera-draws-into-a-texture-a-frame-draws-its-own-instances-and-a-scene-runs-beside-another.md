@@ -243,3 +243,22 @@ promises:
   rectangle in its picture, and cuts it out with a new pair of image
   properties, `ImageLabel.ImageRectOffset` and `ImageRectSize` (a negative size
   reads backwards, which turns a mirror's picture round).
+- **`SubWorld` gained `IsLoaded()`, and `SceneService` `IsSubWorld()`**: a
+  script asks whether the world is up, and a scene asks whether it runs inside
+  another, without keeping its own flag.
+- **`SceneService.HostMessage` is `HostMessageReceived`**: an event is a
+  past-tense fact (api-design §9), and the API lint said so.
+- **A sub-world is simulated inside `WorldHost`**, not by the frame: the host
+  that ticks a world ticks its sub-worlds after it, so a headless run, a
+  replay and the conformance runner run them exactly as a window does. The
+  frame only draws them, with a mesh cache, loader and libraries per
+  sub-world, because a cache keyed by one world's instances and atoms means
+  nothing in another's.
+- **What its picture holds is its world**: as for every view, not the UI in
+  it, and -- in this stage -- not its own `CameraTexture`s or
+  `ViewportFrame`s either. A view host per world is work of its own, and
+  nothing yet asks for it. Its sounds are silent: the one audio device is the
+  game's.
+- **A sub-world's scene may be empty and its code build it** -- a small game
+  usually is -- so D074's "two sources for one world" is not said of one: its
+  scene is what `Load()` names and cannot be left out.

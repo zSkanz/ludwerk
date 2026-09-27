@@ -124,6 +124,75 @@ behind the plane, as a mirror's and a portal's always are.
 camera texture's picture. A mirror seen in another mirror is its bare glass,
 and a feed of the security office shows its monitor wall dark.
 
+## A game inside the game: `SubWorld`
+
+An arcade cabinet you can play, a computer in the game running a game of its
+own, a snow globe with its own weather: a `SubWorld` runs a scene beside this
+one, in a world of its own, and draws it into a `view://` name.
+
+```luau
+--!strict
+local cabinet = Instance.new("SubWorld")
+cabinet.Scene = "scenes/arcade.scene.json"   -- the scene it runs
+cabinet.ViewName = "arcade"                   -- draws into view://arcade
+cabinet.Parent = workspace.Arcade
+cabinet:Load()
+
+cabinet:Send("coin")                          -- into its world...
+cabinet:SetInputState("Move", 1)              -- ...its input...
+cabinet.Received:Connect(function(kind: string, score: number)
+    print(kind, score)                        -- ...and out of it
+end)
+```
+
+And inside, in the scene's own code:
+
+```luau
+--!strict
+local SceneService = game:GetService("SceneService")
+
+SceneService.HostMessageReceived:Connect(function(kind: string)
+    if kind == "coin" then
+        -- start a game
+    end
+end)
+SceneService:SendToHost("score", 12)
+```
+
+- **A world of its own, completely**: its own instances, scripts, physics,
+  navigation and clock. A script there cannot find an instance here, nor one
+  here an instance there. What crosses is what `Send` and `SendToHost` carry
+  -- the plain values a `RemoteEvent` takes, never an instance -- delivered on
+  the other side's next tick.
+- **It runs its scene's own code**, `src/scenes/<scene>/server/` and
+  `client/` and the scripts saved in the scene, as a game played alone. Not the
+  project's `src/client`, `src/server` or `src/shared`: those are the game that
+  runs it. Inside, `SceneService:IsSubWorld()` is true.
+- **Its input is what you give it.** The keyboard, the mouse and the pads are
+  this world's. `SetInputState(action, value)` holds its `InputAction` named
+  `action` at `value` -- true or false, a number, a `Vector2` or a `vector` --
+  until it is set again, so the game running it decides what reaches it and
+  when.
+- **It ticks with this world**: one tick of its own after each of this
+  world's, at the same step, so a replay of this world replays it too. Its
+  world hash is its own, and nothing in it moves this world's.
+- `Load()` returns at once: the world boots after the tick, `Loaded` fires
+  when its scripts have started, and `IsLoaded()` says so until `Unload()` (or
+  `Destroy()`). `Running = false` pauses it and keeps its picture.
+- **One level deep**: a sub-world cannot load a `SubWorld` of its own, and
+  `[render] max_sub_worlds` (2 by default) are the most that run at once -- a
+  third `Load()` raises, naming the limit.
+
+**Its picture is its world**, from its own `workspace.CurrentCamera`, drawn
+with `Resolution`, `UpdateInterval` and `Quality` as a `CameraTexture` is and
+under the same budget. As with any view, the UI in it is not in the picture --
+a sub-world shows its score to the game running it, which writes it where it
+likes -- and neither, in this release, are its own camera textures or
+viewport frames. Its sounds are silent: the one audio device is the game's.
+
+**It does not replicate.** In a match, each machine that loads one runs its
+own, which is what an arcade cabinet each player plays alone is.
+
 ## What it costs
 
 A camera texture is the world drawn again, from another place. So the budget
@@ -140,7 +209,17 @@ then the oldest picture, so a wall of twelve monitors takes turns instead of
 costing twelve views. `UpdateInterval` is the other lever: six feeds at 2 are
 three views a frame. The F3 overlay -- and the editor's Stats panel -- list
 every view, its size, what it cost and how many frames ago it was drawn. A
-`ViewportFrame` counts against the same budget whenever it is redrawn.
+`ViewportFrame` counts against the same budget whenever it is redrawn, and a
+`SubWorld` whenever its picture is.
+
+A `SubWorld` costs more than its picture: it is a second game -- a VM, a
+physics system and a tick -- whether or not it is on screen, which is why
+there is a limit on how many run at once:
+
+```toml
+[render]
+max_sub_worlds = 2           # at most this many running at once
+```
 
 ## In a match
 
@@ -150,6 +229,11 @@ in a match a client script makes its cameras and their textures. A dedicated
 server draws nothing.
 
 ## A worked example
+
+`examples/28-arcade` is an arcade: two cabinets, each a `SubWorld` playing a
+small game by itself until somebody puts a coin in. Press E at the left one
+and the hall sends it a coin, passes the arrow keys on as its `Move` action,
+and writes the score it sends back on the cabinet's marquee.
 
 `examples/27-mirrors-and-portals` is a gallery with a mirror and a door onto
 a garden room across the map, seen by a camera walking past.

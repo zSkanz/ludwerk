@@ -291,6 +291,11 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // Both, so a read before any write gives what the scheduler is running on
     // rather than the struct's default.
     m_world->engineState().requestedFixedTimestep = options.fixedTimestep;
+    // Before the mount, which reads it: a sub-world mounts its scene's code
+    // and none of the game's (ADR 0107 §3).
+    m_world->engineState().subWorld = options.subWorld;
+    m_world->engineState().maxSubWorlds = options.subWorld ? 0u : options.maxSubWorlds;
+    m_seed = options.seed;
 
     m_runtime.emplace(*m_world);
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
@@ -489,7 +494,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // came to render an empty screen with no diagnostic at all. Asked after the
     // scene, because the scene carries scripts too (ADR 0092); a warning rather
     // than an error, because an empty project is the user's mistake to make.
-    if (m_projectIsDirectory && scriptCount() == 0) {
+    if (m_projectIsDirectory && scriptCount() == 0 && !options.subWorld) {
         const std::array<I18nArg, 1> args{I18nArg{"path", m_root.string()}};
         core::log(LogLevel::Warn, ENG_TR("engine.project.warn.no_scripts"), args);
     }
@@ -536,7 +541,11 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // there are only two: stop building that world in code -- which is what
     // ADR 0047 asks projects to become and what `examples/06-scene` shows -- or
     // do not give this project a scene.
-    if (m_bootSceneApplied) {
+    //
+    // Not for a sub-world: its scene is what `Load()` names and cannot be
+    // absent, so "do not give it a scene" is not advice it can take -- and a
+    // small game whose scene is empty and whose code builds it is ordinary.
+    if (m_bootSceneApplied && !options.subWorld) {
         core::u32 authoredNow = 0;
         for (core::InstanceId child = m_world->firstChild(m_workspace); child.valid();
              child = m_world->nextSibling(child)) {
@@ -559,6 +568,9 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
 {
     if (!m_runtime.has_value() || !m_world.has_value())
         return std::nullopt;
+
+    // A sub-world was started by the play that is ending, and goes with it.
+    closeSubWorlds();
 
     // Read BEFORE the teardown, because both live in the VM that is about to go.
     const core::InstanceId dataModel = m_runtime->dataModel();
@@ -665,13 +677,17 @@ std::optional<core::EngineError> WorldHost::mountProject(const std::filesystem::
         };
         const std::filesystem::path source = m_root / "src";
         const std::filesystem::path legacy = source / "scripts";
-        if (std::filesystem::is_directory(legacy, ec)) {
-            core::log(LogLevel::Warn, ENG_TR("engine.boot.warn.src_scripts_moved"));
-            mountFolder(legacy, "GlobalScriptService/Client", false);
+        // A sub-world is a scene played alone inside the game, not the game:
+        // `GlobalScriptService` is the host's (ADR 0107 §3).
+        if (!m_world->engineState().subWorld) {
+            if (std::filesystem::is_directory(legacy, ec)) {
+                core::log(LogLevel::Warn, ENG_TR("engine.boot.warn.src_scripts_moved"));
+                mountFolder(legacy, "GlobalScriptService/Client", false);
+            }
+            mountFolder(source / "client", "GlobalScriptService/Client", false);
+            mountFolder(source / "server", "GlobalScriptService/Server", false);
+            mountFolder(source / "shared", "GlobalScriptService/Shared", true);
         }
-        mountFolder(source / "client", "GlobalScriptService/Client", false);
-        mountFolder(source / "server", "GlobalScriptService/Server", false);
-        mountFolder(source / "shared", "GlobalScriptService/Shared", true);
         if (!m_sceneName.empty()) {
             const std::filesystem::path scene = source / "scenes" / m_sceneName;
             mountFolder(scene / "server", "ServerScriptService", false);
@@ -932,6 +948,9 @@ void WorldHost::tick()
     // beside the input events, for the same reason -- arrival was a network
     // event at a wall-clock moment, and this is where it becomes a tick.
     script::fireRemoteMessages(m_runtime->state());
+    // And what crossed from a sub-world, or into one (ADR 0107 §3), for the
+    // same reason: it arrived between ticks, and this is where it becomes one.
+    script::fireSubWorldMessages(m_runtime->state());
 
     // This tick's input, as the local player's intent (N1): after the dispatch
     // that resolved it, before any phase a script reads it in.
@@ -1043,6 +1062,10 @@ void WorldHost::tick()
     // tick has drained, `SceneLoading` handlers included, and nothing of the
     // next has started.
     (void)applyPendingScene();
+
+    // **Then the sub-worlds' tick** (ADR 0107 §3): one of theirs for one of
+    // this world's, after it, so what this tick sent reaches them in theirs.
+    stepSubWorlds();
 }
 
 bool WorldHost::applyPendingScene()
@@ -1309,6 +1332,8 @@ bool WorldHost::shutdownRequested()
 
 void WorldHost::close(core::f64 graceSeconds)
 {
+    // What this world runs closes before it does.
+    closeSubWorlds();
     script::runCloseHandlers(m_runtime->state());
     // One drain, so anything a close handler deferred already runs.
     m_runtime->drain(core::Phase::Heartbeat);

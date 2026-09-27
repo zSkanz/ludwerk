@@ -1336,7 +1336,7 @@ budget the project sets rather than a constant the engine picks:
 [render]
 max_views_per_frame = 4    # camera textures drawn in one frame; the oldest picture first
 max_view_resolution = 1024 # the largest side a view's texture may have
-max_sub_worlds = 2         # sub-worlds running at once (ADR 0107 §3, not yet built)
+max_sub_worlds = 2         # sub-worlds running at once (ADR 0107 §3)
 ```
 
 **`[project] icon`** is a project-relative path to a PNG or a multi-size `.ico`.

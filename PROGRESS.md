@@ -96,9 +96,12 @@ approximating one, and the packaged game ships Luau SOURCE rather than bytecode
   `UIGradient` and `UIStroke` with their recent features, then the editor
   remade after VS Code, and only then Views (ADR 0107) and the AI panel
   (ADR 0108). **Done through Q2 on 2026-09-27**, the owner's export error with
-  it (an ImGui error box in the Export window). **Views V0 and V1 are built**:
-  `CameraTexture`, `view://`, the per-view renderer state and
-  `examples/26-security-cameras`. V2 (`ViewportFrame`) is next.
+  it (an ImGui error box in the Export window). **Views is done (V0 to V5, 2026-09-27)**:
+  `CameraTexture` and `view://` (`examples/26-security-cameras`),
+  `ViewportFrame`, mirrors and portals with `Camera.ClipPlane`
+  (`examples/27-mirrors-and-portals`), and `SubWorld`, a scene running in a
+  world of its own beside the game (`examples/28-arcade`). The game-ready
+  plan is next.
 
 - **Post-v1 phases 2 and 4 are OPEN and being built.** The owner opened both on
   2026-08-27 in one instruction — *"terrain editor multiplayer voxels etc."* —

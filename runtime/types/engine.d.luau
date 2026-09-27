@@ -1310,6 +1310,46 @@ declare extern type CameraTexture extends Instance with
     Quality: EnumViewQuality
 end
 
+declare extern type SubWorld extends Instance with
+    --- The scene file it runs, content-relative: `scenes/arcade.scene.json`. Read when `Load()` starts
+    --- it; a change afterwards waits for the next `Load()`.
+    Scene: string
+    --- The name its picture is drawn into: `view://` followed by this. Empty draws nothing, and the
+    --- world runs all the same.
+    ViewName: string
+    --- The picture's size in pixels, as a `CameraTexture`'s.
+    Resolution: Vector2
+    --- Draw on one frame in this many. The world ticks every tick regardless.
+    UpdateInterval: number
+    --- `Simple` draws without shadows or the look's effects; `Full` draws the way the main view does.
+    Quality: EnumViewQuality
+    --- False pauses it: no ticks, and its picture stays as it was.
+    Running: boolean
+    --- Its world is running and its scripts have started.
+    read Loaded: Signal<()>
+    --- The values the sub-world passed to `SceneService:SendToHost`, one tick after it sent them.
+    read Received: Signal<...any>
+    --- Starts the scene. **Returns at once**: the world boots after this tick, and `Loaded` fires when
+    --- its scripts have started. Loading one already loaded does nothing. Raises when `[render]
+    --- max_sub_worlds` are already running, and inside a sub-world.
+    function Load(self): ()
+    --- Stops it and throws its world away, after this tick. Its picture stays until the next `Load()`
+    --- draws over it. Destroying the `SubWorld` does the same.
+    function Unload(self): ()
+    --- Whether its world is running (or paused by `Running`), which is true from `Loaded` until
+    --- `Unload`.
+    function IsLoaded(self): boolean
+    --- Holds the sub-world's `InputAction` named `action` at `value` -- true or false for a `Bool`
+    --- action, a number, a `Vector2` or a `vector` for a direction -- from its next tick until it is
+    --- set again. Nothing else reaches its input: the keyboard, the mouse and the pads are this
+    --- world's, and passing them on is this world's decision.
+    function SetInputState(self, action: string, value: boolean | number | Vector2 | vector): ()
+    --- Sends plain values into the sub-world, where `SceneService.HostMessageReceived` fires with them
+    --- on its next tick. The values a `RemoteEvent` takes, and never an instance -- the two worlds have
+    --- none in common. Dropped when it is not loaded.
+    function Send(self, ...: any): ()
+end
+
 declare extern type ParticleEmitter extends Instance with
     --- Whether it emits continuously. `Emit` works either way: a burst is a separate thing from a
     --- stream.
@@ -2395,6 +2435,9 @@ declare extern type SceneService extends Instance with
     read SceneLoading: Signal<string>
     --- The new scene is in place and its scripts have started.
     read SceneLoaded: Signal<string>
+    --- Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the `SubWorld`'s
+    --- `Send`, on the tick after it sent them. Never fires anywhere else.
+    read HostMessageReceived: Signal<...any>
     --- Unloads this scene and loads `path` (content-relative). **Returns at once**: the change happens
     --- at the next safe point between ticks, after `SceneLoading` has run. The old scene goes whole --
     --- its world, its services' contents and settings, and its scripts, whose threads stop -- and the
@@ -2405,6 +2448,12 @@ declare extern type SceneService extends Instance with
     function LoadScene(self, path: string, data: any?): ()
     --- The `data` the last `LoadScene` passed, decoded afresh, or nil.
     function GetLoadData(self): any
+    --- Inside a `SubWorld` (ADR 0107): sends plain values out to the game that runs this one, where the
+    --- `SubWorld`'s `Received` fires with them on its next tick -- a score, a game over. The values a
+    --- `RemoteEvent` takes, and never an instance. Anywhere else there is no host, and it raises.
+    function SendToHost(self, ...: any): ()
+    --- Whether this world runs inside another game's `SubWorld`.
+    function IsSubWorld(self): boolean
 end
 
 declare extern type ServerStorage extends Instance with
@@ -3612,6 +3661,7 @@ declare Instance: {
         & (("PointLight") -> PointLight)
         & (("Decal") -> Decal)
         & (("CameraTexture") -> CameraTexture)
+        & (("SubWorld") -> SubWorld)
         & (("ParticleEmitter") -> ParticleEmitter)
         & (("SpotLight") -> SpotLight)
         & (("BloomEffect") -> BloomEffect)

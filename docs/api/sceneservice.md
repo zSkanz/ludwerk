@@ -26,16 +26,28 @@ offers is on the base's page, which is what keeps one added member on
 
 The `data` the last `LoadScene` passed, decoded afresh, or nil.
 
+### `IsSubWorld(): boolean`
+
+Whether this world runs inside another game's `SubWorld`.
+
 ### `LoadScene(path: string, data: any? = nil)`
 
 Unloads this scene and loads `path` (content-relative). **Returns at once**: the change happens at the next safe point between ticks, after `SceneLoading` has run. The old scene goes whole -- its world, its services' contents and settings, and its scripts, whose threads stop -- and the new one opens from the engine's settings, reads its file, mounts its own `src/scenes/<scene>/` code and starts its scripts.
 
 `data` is handed to the new scene through `GetLoadData`: plain values only, the same a `RemoteEvent` argument takes, and no instance, since the old scene's are gone. A client connected to a match may not call it: the scene is the server's.
 
+### `SendToHost(arguments: ...any)`
+
+Inside a `SubWorld` (ADR 0107): sends plain values out to the game that runs this one, where the `SubWorld`'s `Received` fires with them on its next tick -- a score, a game over. The values a `RemoteEvent` takes, and never an instance. Anywhere else there is no host, and it raises.
+
 ## Events
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
 drain point, never inside the call that fired it.
+
+### `HostMessageReceived(arguments: ...any)`
+
+Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the `SubWorld`'s `Send`, on the tick after it sent them. Never fires anywhere else.
 
 ### `SceneLoaded(path: string)`
 

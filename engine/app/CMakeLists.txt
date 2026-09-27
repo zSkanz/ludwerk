@@ -7,6 +7,7 @@ engine_add_module(app
     LAYER 6
     SOURCES
         src/world_host.cpp
+        src/world_host_sub_worlds.cpp
         src/network_session.cpp
         src/match_launcher.cpp
         src/export_runner.cpp
@@ -289,6 +290,7 @@ engine_add_module_tests(app
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp
         tests/world_host_tests.cpp
+        tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp
         tests/launcher_tests.cpp
@@ -867,6 +869,18 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # ADR 0107 §3: a sub-world draws its own world, and only its own.
+    add_test(NAME subworld_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/subworld
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/subworld.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_subworld_gate.cmake)
+    set_tests_properties(subworld_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0091's proof: the built-in surface, written as a surface shader,
     # forced onto every static part, draws what the built-in surface draws --
     # to the bit, on this machine. Two scenes: lights, shadows and fog; and
@@ -980,7 +994,7 @@ if(ENG_BUILD_TESTS)
     # must not turn "this machine has no graphics" into a red build.
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
-                    26-security-cameras 27-mirrors-and-portals)
+                    26-security-cameras 27-mirrors-and-portals 28-arcade)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

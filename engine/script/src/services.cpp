@@ -1264,6 +1264,114 @@ int sceneServiceGetLoadData(lua_State* L)
     return 1;
 }
 
+// --- SubWorld (ADR 0107 §3) ------------------------------------------------------
+
+// What the methods ask for is written down here and carried out by the host at
+// the end of the tick: a world boots, and a message crosses, between ticks.
+int subWorldLoad(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    if (state.subWorld)
+        raise(L, ENG_TR("scene.err.sub_world_nested"));
+    // A `SubWorld` destroyed this tick is gone from the count now, not when
+    // the host next looks.
+    const World& w = world(L);
+    std::erase_if(state.subWorldsWanted, [&w](core::InstanceId id) { return !w.alive(id) || w.destroyed(id); });
+    if (std::find(state.subWorldsWanted.begin(), state.subWorldsWanted.end(), self) != state.subWorldsWanted.end())
+        return 0;
+    if (state.subWorldsWanted.size() >= state.maxSubWorlds) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(state.maxSubWorlds)}};
+        raise(L, ENG_TR("scene.err.sub_world_limit"), args);
+    }
+    state.subWorldsWanted.push_back(self);
+    return 0;
+}
+
+int subWorldUnload(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    std::erase(world(L).engineState().subWorldsWanted, self);
+    return 0;
+}
+
+int subWorldIsLoaded(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const std::vector<core::InstanceId>& loaded = world(L).engineState().subWorldsLoaded;
+    lua_pushboolean(L, std::find(loaded.begin(), loaded.end(), self) != loaded.end() ? 1 : 0);
+    return 1;
+}
+
+int subWorldSetInputState(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    size_t length = 0;
+    const char* action = luaL_checklstring(L, 2, &length);
+    scene::EngineState::SubWorldInput input{.subWorld = self, .action = std::string(action, length)};
+    if (lua_isboolean(L, 3)) {
+        input.pressed = lua_toboolean(L, 3) != 0;
+        input.value = core::Vec3{input.pressed ? 1.0f : 0.0f, 0.0f, 0.0f};
+    }
+    else if (lua_isnumber(L, 3)) {
+        const auto amount = static_cast<f32>(lua_tonumber(L, 3));
+        input.value = core::Vec3{amount, 0.0f, 0.0f};
+        input.pressed = amount != 0.0f;
+    }
+    else if (const float* v = lua_tovector(L, 3); v != nullptr) {
+        input.value = core::Vec3{v[0], v[1], v[2]};
+        input.pressed = v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f;
+    }
+    else {
+        // Anything else must be a `Vector2`, and says so if it is not.
+        const core::Vec2 v2 = checkVector2(L, 3);
+        input.value = core::Vec3{v2.x, v2.y, 0.0f};
+        input.pressed = v2.x != 0.0f || v2.y != 0.0f;
+    }
+    world(L).engineState().subWorldInputs.push_back(std::move(input));
+    return 0;
+}
+
+// Plain values, encoded at the call, where a mistake is reported: the two
+// worlds have no instance in common.
+std::vector<core::u8> encodeCrossing(lua_State* L)
+{
+    std::vector<core::u8> payload;
+    std::vector<core::InstanceId> refs;
+    encodeRemoteArguments(L, 2, lua_gettop(L) - 1, payload, refs);
+    if (!refs.empty())
+        raise(L, ENG_TR("scene.err.sub_world_instance"));
+    return payload;
+}
+
+int subWorldSend(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    std::vector<core::u8> payload = encodeCrossing(L);
+    scene::EngineState& state = world(L).engineState();
+    if (std::find(state.subWorldsWanted.begin(), state.subWorldsWanted.end(), self) == state.subWorldsWanted.end())
+        return 0;
+    state.subWorldOutbox.push_back(scene::EngineState::SubWorldMessage{self, std::move(payload)});
+    return 0;
+}
+
+int sceneServiceSendToHost(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState& state = world(L).engineState();
+    if (!state.subWorld)
+        raise(L, ENG_TR("scene.err.no_host_world"));
+    state.hostOutbox.push_back(encodeCrossing(L));
+    return 0;
+}
+
+int sceneServiceIsSubWorld(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, world(L).engineState().subWorld ? 1 : 0);
+    return 1;
+}
+
 // --- NetworkService at run time (ADR 0106) -------------------------------------
 
 // A dedicated server is one for its whole run: `--serve` is the only way in,
@@ -1860,6 +1968,13 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
 
     {"SceneService", "LoadScene", sceneServiceLoadScene},
     {"SceneService", "GetLoadData", sceneServiceGetLoadData},
+    {"SceneService", "SendToHost", sceneServiceSendToHost},
+    {"SceneService", "IsSubWorld", sceneServiceIsSubWorld},
+    {"SubWorld", "Load", subWorldLoad},
+    {"SubWorld", "Unload", subWorldUnload},
+    {"SubWorld", "IsLoaded", subWorldIsLoaded},
+    {"SubWorld", "SetInputState", subWorldSetInputState},
+    {"SubWorld", "Send", subWorldSend},
 
     {"TagService", "GetTagged", tagServiceGetTagged},
     {"TagService", "GetAllTags", tagServiceGetAllTags},
@@ -2103,6 +2218,50 @@ void publishMessage(lua_State* L, core::LogLevel level, std::string_view text)
 void fireSceneLoaded(lua_State* L, std::string_view path)
 {
     fireSceneEvent(L, "SceneLoaded", path);
+}
+
+void fireSubWorldMessages(lua_State* L)
+{
+    World& w = world(L);
+    scene::EngineState& state = w.engineState();
+
+    // From the sub-worlds this world runs, as each `SubWorld`'s `Received`.
+    std::vector<scene::EngineState::SubWorldMessage> inbox;
+    inbox.swap(state.subWorldInbox);
+    if (!inbox.empty()) {
+        const core::NameAtom received = w.atoms().intern("Received");
+        for (const scene::EngineState::SubWorldMessage& message : inbox) {
+            if (!w.alive(message.subWorld))
+                continue;
+            const scene::EventDesc* event = w.classes().findEvent(w.classOf(message.subWorld), received);
+            if (event == nullptr)
+                continue;
+            const int top = lua_gettop(L);
+            const int decoded = decodeRemoteArguments(L, message.payload, {});
+            if (decoded >= 0)
+                fireInstanceEvent(L, message.subWorld, event->slot, top + 1, decoded);
+            lua_settop(L, top);
+        }
+    }
+
+    // From the world that runs this one, as `SceneService.HostMessageReceived`.
+    std::vector<std::vector<core::u8>> fromHost;
+    fromHost.swap(state.hostInbox);
+    if (fromHost.empty())
+        return;
+    const scene::ClassId sceneServiceClass = w.classes().findId(w.atoms().lookup("SceneService"));
+    const core::InstanceId service = findServiceOfClass(L, sceneServiceClass);
+    const scene::EventDesc* event =
+        service.valid() ? w.classes().findEvent(sceneServiceClass, w.atoms().intern("HostMessageReceived")) : nullptr;
+    if (event == nullptr)
+        return;
+    for (const std::vector<core::u8>& payload : fromHost) {
+        const int top = lua_gettop(L);
+        const int decoded = decodeRemoteArguments(L, payload, {});
+        if (decoded >= 0)
+            fireInstanceEvent(L, service, event->slot, top + 1, decoded);
+        lua_settop(L, top);
+    }
 }
 
 void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason)

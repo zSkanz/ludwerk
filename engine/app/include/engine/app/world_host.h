@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -177,6 +178,13 @@ struct WorldHostOptions
     // that arrived after boot would be read wrong exactly once, by the code
     // that most needs it right.
     scene::NetworkTopology networkTopology = scene::NetworkTopology::Solo;
+
+    // **A world run inside another's `SubWorld`** (ADR 0107 §3): it mounts its
+    // scene's own code and none of the game's -- `src/client`, `src/server`
+    // and `src/shared` are the host game's -- and holds no sub-world of its own.
+    bool subWorld = false;
+    // `[render] max_sub_worlds`: how many sub-worlds this world may run at once.
+    core::u32 maxSubWorlds = 2;
 };
 
 // What the conformance run reported. Read after the loop, because the run ends
@@ -313,6 +321,22 @@ public:
     [[nodiscard]] core::u64 scriptLoadFailures() const;
 
     [[nodiscard]] scene::World& world() noexcept { return *m_world; }
+
+    // **A sub-world this host runs** (ADR 0107 §3): booted at the end of the
+    // tick its `SubWorld:Load()` was called in, and ticked once for each of
+    // this world's ticks after that, in the order they were loaded.
+    struct SubWorldRun
+    {
+        // The `SubWorld` instance, in this world.
+        core::InstanceId owner;
+        // Unique for this host's life, so a cache keyed on it -- the frame's
+        // meshes for it -- cannot take a reloaded world for the one before.
+        core::u64 serial = 0;
+        std::unique_ptr<WorldHost> host;
+    };
+    [[nodiscard]] std::span<const SubWorldRun> subWorlds() const noexcept { return m_subWorlds; }
+    // The world a `SubWorld` runs, or null while it is not loaded.
+    [[nodiscard]] WorldHost* subWorld(core::InstanceId owner) noexcept;
 
     // The registries this host's world was built against.
     //
@@ -489,6 +513,15 @@ private:
     void syncSkeletons();
 
     [[nodiscard]] std::optional<core::EngineError> mountProject(const std::filesystem::path& path);
+
+    // The sub-worlds' half of a tick (`world_host_sub_worlds.cpp`): what was
+    // unloaded goes, what was loaded boots, input and messages cross, and each
+    // running one ticks.
+    void stepSubWorlds();
+    [[nodiscard]] bool bootSubWorld(core::InstanceId owner);
+    // Every sub-world closed and forgotten: this world is closing, or its
+    // runtime is being rebuilt.
+    void closeSubWorlds();
     [[nodiscard]] std::optional<core::EngineError> mountConformance(const std::filesystem::path& root);
 
     core::AtomTable m_atoms;
@@ -577,6 +610,13 @@ private:
     // not recognise as a hard error that aborts the whole require (U-42) -- a
     // `$schema` line would break `require` at runtime.
     std::unordered_map<std::string, std::string> m_aliases;
+
+    // What a sub-world's seed is drawn from, with the order it was loaded in.
+    core::u64 m_seed = 1;
+    core::u64 m_nextSubWorld = 1;
+    // **Last, so destroyed first**: a sub-world borrows this host's mounts and
+    // material library, and must be gone before either is.
+    std::vector<SubWorldRun> m_subWorlds;
 
     friend struct WorldHostLoader;
 };

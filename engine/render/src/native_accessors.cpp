@@ -521,6 +521,118 @@ bool setCameraTextureQuality(scene::World& world, core::InstanceId id, const Val
     return true;
 }
 
+// --- SubWorld (ADR 0107 §3) -------------------------------------------------------
+
+void attachSubWorldComponents(scene::World& world, core::InstanceId id)
+{
+    world.subWorlds().add(id, scene::SubWorldComponent{});
+}
+
+void detachSubWorldComponents(scene::World& world, core::InstanceId id)
+{
+    world.subWorlds().remove(id);
+}
+
+Value getSubWorldScene(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->scene))};
+}
+
+bool setSubWorldScene(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->scene = world.atoms().intern(*text);
+    return true;
+}
+
+Value getSubWorldViewName(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->viewName))};
+}
+
+bool setSubWorldViewName(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->viewName = world.atoms().intern(*text);
+    return true;
+}
+
+Value getSubWorldResolution(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{self->resolution};
+}
+
+bool setSubWorldResolution(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* size = std::get_if<core::Vec2>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    if (size == nullptr || self == nullptr || !(size->x >= 1.0f) || !(size->y >= 1.0f) || !std::isfinite(size->x) ||
+        !std::isfinite(size->y))
+        return false;
+    self->resolution = *size;
+    return true;
+}
+
+Value getSubWorldUpdateInterval(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->updateInterval)};
+}
+
+bool setSubWorldUpdateInterval(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    // As `CameraTexture.UpdateInterval`.
+    if (number == nullptr || self == nullptr || !std::isfinite(*number) || *number < 1.0 || *number > 1000.0 ||
+        std::floor(*number) != *number)
+        return false;
+    self->updateInterval = static_cast<core::u32>(*number);
+    return true;
+}
+
+Value getSubWorldQuality(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::ViewQualityEnumId, self->quality}};
+}
+
+bool setSubWorldQuality(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    if (self == nullptr || item == nullptr || item->enumId != generated::ViewQualityEnumId || item->value < 0 ||
+        item->value > 1)
+        return false;
+    self->quality = item->value;
+    return true;
+}
+
+Value getSubWorldRunning(const scene::World& world, core::InstanceId id)
+{
+    const scene::SubWorldComponent* self = world.subWorlds().find(id);
+    return self == nullptr ? Value{} : Value{self->running};
+}
+
+bool setSubWorldRunning(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    scene::SubWorldComponent* self = world.subWorlds().find(id);
+    if (flag == nullptr || self == nullptr)
+        return false;
+    self->running = *flag;
+    return true;
+}
+
 // --- Decal (F2) -------------------------------------------------------------------
 
 void attachDecalComponents(scene::World& world, core::InstanceId id)

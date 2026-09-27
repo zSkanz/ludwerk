@@ -1,0 +1,8 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace"
+ }
+}

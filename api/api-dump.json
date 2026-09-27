@@ -2852,6 +2852,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "IsSubWorld",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
           "Name": "LoadScene",
           "Parameters": [
             {
@@ -2866,9 +2872,29 @@
           ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SendToHost",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [
+        {
+          "Name": "HostMessageReceived",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ]
+        },
         {
           "Name": "SceneLoaded",
           "Parameters": [
@@ -3387,6 +3413,102 @@
             {
               "Name": "instance",
               "Type": "Instance"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "SubWorld",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Quality",
+          "Type": "Enum.ViewQuality",
+          "Default": "Enum.ViewQuality.Simple"
+        },
+        {
+          "Name": "Resolution",
+          "Type": "Vector2",
+          "Default": "Vector2.new(512, 288)"
+        },
+        {
+          "Name": "Running",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Scene",
+          "Type": "string"
+        },
+        {
+          "Name": "UpdateInterval",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ViewName",
+          "Type": "string"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "IsLoaded",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "Load",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Send",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetInputState",
+          "Parameters": [
+            {
+              "Name": "action",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "boolean | number | Vector2 | vector"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Unload",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Loaded",
+          "Parameters": []
+        },
+        {
+          "Name": "Received",
+          "Parameters": [
+            {
+              "Name": "arguments",
+              "Type": "...any"
             }
           ]
         }

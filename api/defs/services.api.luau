@@ -460,6 +460,23 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "The `data` the last `LoadScene` passed, decoded afresh, or nil.",
             },
+            {
+                Name = "SendToHost",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Inside a `SubWorld` (ADR 0107): sends plain values out to the game that runs this "
+                    .. "one, where the `SubWorld`'s `Received` fires with them on its next tick -- a score, a "
+                    .. "game over. The values a `RemoteEvent` takes, and never an instance. Anywhere else there "
+                    .. "is no host, and it raises.",
+            },
+            {
+                Name = "IsSubWorld",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "ReadParallel",
+                Doc = "Whether this world runs inside another game's `SubWorld`.",
+            },
         } :: { Schema.Method },
         Events = {
             {
@@ -472,6 +489,12 @@ local Classes: { Schema.Class } = {
                 Name = "SceneLoaded",
                 Parameters = { { Name = "path", Type = "string" } },
                 Doc = "The new scene is in place and its scripts have started.",
+            },
+            {
+                Name = "HostMessageReceived",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Doc = "Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the "
+                    .. "`SubWorld`'s `Send`, on the tick after it sent them. Never fires anywhere else.",
             },
         } :: { Schema.Event },
     },

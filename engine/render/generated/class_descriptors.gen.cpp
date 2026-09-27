@@ -507,6 +507,138 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     cameraTextureDesc.detachComponents = native::detachCameraTextureComponents;
     classes.registerClass(cameraTextureDesc);
 
+    // --- SubWorld ---
+    static std::array<scene::PropertyDesc, 6> subWorldProperties;
+    subWorldProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Scene"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The scene file it runs, content-relative: `scenes/arcade.scene.json`. Read when `Load()` starts it; a change afterwards waits for the next `Load()`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getSubWorldScene,
+            .set = native::setSubWorldScene,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ViewName"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The name its picture is drawn into: `view://` followed by this. Empty draws nothing, and the world runs all the same.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getSubWorldViewName,
+            .set = native::setSubWorldViewName,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Resolution"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The picture's size in pixels, as a `CameraTexture`'s.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.size2_positive"),
+            .get = native::getSubWorldResolution,
+            .set = native::setSubWorldResolution,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("UpdateInterval"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Draw on one frame in this many. The world ticks every tick regardless.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.whole_number_at_least_one"),
+            .get = native::getSubWorldUpdateInterval,
+            .set = native::setSubWorldUpdateInterval,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Quality"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ViewQuality"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "`Simple` draws without shadows or the look's effects; `Full` draws the way the main view does.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getSubWorldQuality,
+            .set = native::setSubWorldQuality,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Running"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "False pauses it: no ticks, and its picture stays as it was.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSubWorldRunning,
+            .set = native::setSubWorldRunning,
+        },
+    }};
+    static std::array<scene::MethodDesc, 5> subWorldMethods;
+    subWorldMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("Load"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Starts the scene. **Returns at once**: the world boots after this tick, and `Loaded` fires when its scripts have started. Loading one already loaded does nothing. Raises when `[render] max_sub_worlds` are already running, and inside a sub-world.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("Unload"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Stops it and throws its world away, after this tick. Its picture stays until the next `Load()` draws over it. Destroying the `SubWorld` does the same.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("IsLoaded"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::ReadParallel,
+            .doc = "Whether its world is running (or paused by `Running`), which is true from `Loaded` until `Unload`.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("SetInputState"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Holds the sub-world's `InputAction` named `action` at `value` -- true or false for a `Bool` action, a number, a `Vector2` or a `vector` for a direction -- from its next tick until it is set again. Nothing else reaches its input: the keyboard, the mouse and the pads are this world's, and passing them on is this world's decision.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("Send"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Sends plain values into the sub-world, where `SceneService.HostMessageReceived` fires with them on its next tick. The values a `RemoteEvent` takes, and never an instance -- the two worlds have none in common. Dropped when it is not loaded.",
+        },
+    }};
+    static std::array<scene::EventDesc, 2> subWorldEvents;
+    subWorldEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("Loaded"),
+            .slot = 7,
+            .doc = "Its world is running and its scripts have started.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("Received"),
+            .slot = 8,
+            .doc = "The values the sub-world passed to `SceneService:SendToHost`, one tick after it sent them.",
+        },
+    }};
+    scene::ClassDescriptor subWorldDesc;
+    subWorldDesc.name = atoms.intern("SubWorld");
+    subWorldDesc.super = instanceClass;
+    subWorldDesc.flags = scene::ClassFlags::None;
+    subWorldDesc.defaultName = atoms.intern("SubWorld");
+    subWorldDesc.doc = "A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a computer inside the game, a snow globe with its own weather. `Load()` starts the scene named by `Scene` in a world of its own -- its own instances, scripts, physics and clock -- and its current camera draws into `view://` followed by `ViewName`, which an `ImageLabel` on a `SurfaceGui` shows like any other picture.\012\012**Nothing crosses except what you send.** A script here cannot reach an instance there, nor one there an instance here. The two talk through `Send` and `Received` (inside, `SceneService:SendToHost` and `SceneService.HostMessageReceived`), and this side decides what input reaches it with `SetInputState`.\012\012It runs the scene's own `ServerScriptService` and `ClientScriptService` as a game played alone, never the project's `GlobalScriptService`, and it ticks once for each tick of this world. At most `[render] max_sub_worlds` run at once (2 by default); a sub-world cannot hold another. **It does not replicate**: in a match, each machine that loads one runs its own.";
+    static constexpr std::array<std::string_view, 5> subWorldParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    subWorldDesc.parents = subWorldParents;
+    subWorldDesc.properties = subWorldProperties;
+    subWorldDesc.methods = subWorldMethods;
+    subWorldDesc.events = subWorldEvents;
+    subWorldDesc.attachComponents = native::attachSubWorldComponents;
+    subWorldDesc.detachComponents = native::detachSubWorldComponents;
+    classes.registerClass(subWorldDesc);
+
     // --- ParticleEmitter ---
     static std::array<scene::PropertyDesc, 16> particleEmitterProperties;
     particleEmitterProperties = {{

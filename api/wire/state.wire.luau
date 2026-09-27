@@ -1440,6 +1440,11 @@ local Excluded: { Schema.Excluded } = {
             .. "one would show nothing, and one kept under its camera would not arrive at all. A feed is set "
             .. "up by the machine that draws it (ADR 0107's finding).",
     },
+    {
+        Name = "SubWorld",
+        Reason = "A world of its own, run by the machine that loads it (ADR 0107 §3): what it holds is "
+            .. "not this world's state, and a sub-world shared by players is a later decision.",
+    },
     { Name = "UIStroke", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIListLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIPadding", Reason = "Screen-space UI. The same as `ScreenGui`." },

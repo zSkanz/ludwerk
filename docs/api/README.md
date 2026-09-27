@@ -103,6 +103,7 @@ guided tour.
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light confined to a cone about its forward direction -- its holder's, turned by its own `CFrame`, or its own alone when nothing holds it (ADR 0095). |
 | [`SpringConstraint2D`](springconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A distance between two points, held softly: a spring, a bungee, a suspension. |
 | [`SpriteAnimator`](spriteanimator.md) | [`Instance`](instance.md) | Plays frames of its parent `Part2D`'s sprite sheet on the simulation clock (ADR 0102), so a walk cycle is data instead of script. |
+| [`SubWorld`](subworld.md) | [`Instance`](instance.md) | A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a computer inside the game, a snow globe with its own weather. |
 | [`SunRaysEffect`](sunrayseffect.md) | [`PostEffect`](posteffect.md) | Shafts of light streaming from the sun past whatever stands in front of it. |
 | [`SurfaceGui`](surfacegui.md) | [`Instance`](instance.md) | A UI tree drawn onto one face of a part (F3): a screen on a wall, a sign, a scoreboard, a label on a crate. |
 | [`Team`](team.md) | [`Instance`](instance.md) | A side (ADR 0099): a name -- its `Name` -- a colour, and the players whose `Player.Team` is it. |

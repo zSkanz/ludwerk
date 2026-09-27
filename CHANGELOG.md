@@ -69,6 +69,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   - `examples/26-security-cameras`: a security office at night, six feeds on a
     monitor wall and one on a tablet, and three items turning in inventory
     slots.
+- **`SubWorld`: a scene running beside this one** (ADR 0107, V4). `Load()`
+  starts a scene in a world of its own -- its instances, scripts, physics and
+  clock -- and draws its camera into a `view://` name.
+  - The two talk only through `Send`/`Received` and, inside,
+    `SceneService:SendToHost`/`HostMessageReceived`: plain values, delivered at the
+    other side's next tick.
+  - Its input is only what `SetInputState(action, value)` gives it.
+  - It ticks once per tick of the world running it, and its world hash is its
+    own. It runs its scene's own code, never the project's global code.
+  - At most `[render] max_sub_worlds` (2) run at once, one level deep. It does
+    not replicate.
+  - `examples/28-arcade`: two playable cabinets.
 - **Mirrors and portals** (ADR 0107, V3). `@engine/views` has
   `views.mirror(part)` and `views.portal(a, b)`. Each is a `CameraTexture`
   whose camera is moved every tick, with its picture on the part's front face.

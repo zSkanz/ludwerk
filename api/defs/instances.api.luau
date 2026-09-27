@@ -1747,6 +1747,128 @@ local Classes: { Schema.Class } = {
         },
     },
     {
+        Name = "SubWorld",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("Workspace", "Model", "BasePart"),
+        Storage = "SubWorld",
+        Doc = "A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a "
+            .. "computer inside the game, a snow globe with its own weather. `Load()` starts the scene named "
+            .. "by `Scene` in a world of its own -- its own instances, scripts, physics and clock -- and its "
+            .. "current camera draws into `view://` followed by `ViewName`, which an `ImageLabel` on a "
+            .. "`SurfaceGui` shows like any other picture.\n\n"
+            .. "**Nothing crosses except what you send.** A script here cannot reach an instance there, "
+            .. "nor one there an instance here. The two talk through `Send` and `Received` (inside, "
+            .. "`SceneService:SendToHost` and `SceneService.HostMessageReceived`), and this side decides what input "
+            .. "reaches it with `SetInputState`.\n\n"
+            .. "It runs the scene's own `ServerScriptService` and `ClientScriptService` as a game played "
+            .. "alone, never the project's `GlobalScriptService`, and it ticks once for each tick of this "
+            .. "world. At most `[render] max_sub_worlds` run at once (2 by default); a sub-world cannot hold "
+            .. "another. **It does not replicate**: in a match, each machine that loads one runs its own.",
+        Properties = {
+            {
+                Name = "Scene",
+                Type = "string",
+                Doc = "The scene file it runs, content-relative: `scenes/arcade.scene.json`. Read when "
+                    .. "`Load()` starts it; a change afterwards waits for the next `Load()`.",
+            },
+            {
+                Name = "ViewName",
+                Type = "string",
+                Doc = "The name its picture is drawn into: `view://` followed by this. Empty draws nothing, "
+                    .. "and the world runs all the same.",
+            },
+            {
+                Name = "Resolution",
+                Type = "Vector2",
+                Default = "Vector2.new(512, 288)",
+                ErrorKey = "scene.err.size2_positive",
+                Doc = "The picture's size in pixels, as a `CameraTexture`'s.",
+            },
+            {
+                Name = "UpdateInterval",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.whole_number_at_least_one",
+                Doc = "Draw on one frame in this many. The world ticks every tick regardless.",
+            },
+            {
+                Name = "Quality",
+                Type = "Enum.ViewQuality",
+                Default = "Enum.ViewQuality.Simple",
+                Doc = "`Simple` draws without shadows or the look's effects; `Full` draws the way the main "
+                    .. "view does.",
+            },
+            {
+                Name = "Running",
+                Type = "boolean",
+                Default = "true",
+                Doc = "False pauses it: no ticks, and its picture stays as it was.",
+            },
+        },
+        Methods = {
+            {
+                Name = "Load",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Starts the scene. **Returns at once**: the world boots after this tick, and "
+                    .. "`Loaded` fires when its scripts have started. Loading one already loaded does nothing. "
+                    .. "Raises when `[render] max_sub_worlds` are already running, and inside a sub-world.",
+            },
+            {
+                Name = "Unload",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops it and throws its world away, after this tick. Its picture stays until the "
+                    .. "next `Load()` draws over it. Destroying the `SubWorld` does the same.",
+            },
+            {
+                Name = "IsLoaded",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "ReadParallel",
+                Doc = "Whether its world is running (or paused by `Running`), which is true from `Loaded` "
+                    .. "until `Unload`.",
+            },
+            {
+                Name = "SetInputState",
+                Parameters = {
+                    { Name = "action", Type = "string" },
+                    { Name = "value", Type = "boolean | number | Vector2 | vector" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Holds the sub-world's `InputAction` named `action` at `value` -- true or false for "
+                    .. "a `Bool` action, a number, a `Vector2` or a `vector` for a direction -- from its next "
+                    .. "tick until it is set again. Nothing else reaches its input: the keyboard, the mouse "
+                    .. "and the pads are this world's, and passing them on is this world's decision.",
+            },
+            {
+                Name = "Send",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends plain values into the sub-world, where `SceneService.HostMessageReceived` fires with "
+                    .. "them on its next tick. The values a `RemoteEvent` takes, and never an instance -- "
+                    .. "the two worlds have none in common. Dropped when it is not loaded.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "Loaded",
+                Parameters = {},
+                Doc = "Its world is running and its scripts have started.",
+            },
+            {
+                Name = "Received",
+                Parameters = { { Name = "arguments", Type = "...any" } },
+                Doc = "The values the sub-world passed to `SceneService:SendToHost`, one tick after it sent them.",
+            },
+        } :: { Schema.Event },
+    },
+    {
         Name = "ParticleEmitter",
         Extends = "Instance",
         Module = "render",

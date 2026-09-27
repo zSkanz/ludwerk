@@ -178,6 +178,22 @@ bool setCameraTextureQuality(scene::World& world, core::InstanceId id, const sce
 void attachCameraTextureComponents(scene::World& world, core::InstanceId id);
 void detachCameraTextureComponents(scene::World& world, core::InstanceId id);
 
+// SubWorld
+scene::Value getSubWorldScene(const scene::World& world, core::InstanceId id);
+bool setSubWorldScene(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSubWorldViewName(const scene::World& world, core::InstanceId id);
+bool setSubWorldViewName(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSubWorldResolution(const scene::World& world, core::InstanceId id);
+bool setSubWorldResolution(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSubWorldUpdateInterval(const scene::World& world, core::InstanceId id);
+bool setSubWorldUpdateInterval(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSubWorldQuality(const scene::World& world, core::InstanceId id);
+bool setSubWorldQuality(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSubWorldRunning(const scene::World& world, core::InstanceId id);
+bool setSubWorldRunning(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachSubWorldComponents(scene::World& world, core::InstanceId id);
+void detachSubWorldComponents(scene::World& world, core::InstanceId id);
+
 // ParticleEmitter
 scene::Value getParticleEmitterEnabled(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);

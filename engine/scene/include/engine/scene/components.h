@@ -473,6 +473,22 @@ struct CameraTextureComponent
     i32 quality = 1;
 };
 
+// `SubWorld` (ADR 0107 §3): a scene running beside this one. The world it runs
+// is the app's (`WorldHost`); this is what a script set on the instance.
+struct SubWorldComponent
+{
+    // The scene file, content-relative.
+    core::NameAtom scene;
+    // The name after `view://`; empty draws nothing.
+    core::NameAtom viewName;
+    core::Vec2 resolution{512.0f, 288.0f};
+    u32 updateInterval = 1;
+    // `Enum.ViewQuality`: 0 Full, 1 Simple.
+    i32 quality = 1;
+    // False pauses its ticks.
+    bool running = true;
+};
+
 struct SpotLightComponent
 {
     // As on `PointLightComponent` (ADR 0095).

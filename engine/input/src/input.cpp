@@ -470,6 +470,18 @@ void InputSystem::setVirtualState(i32 keyCode, f32 value) noexcept
         m_state.lastDevice = DeviceType::Touch;
 }
 
+void InputSystem::setActionState(std::string_view action, core::Vec3 value, bool pressed)
+{
+    for (HeldAction& held : m_held) {
+        if (held.name == action) {
+            held.value = value;
+            held.pressed = pressed;
+            return;
+        }
+    }
+    m_held.push_back(HeldAction{std::string(action), value, pressed});
+}
+
 bool InputSystem::isKeyDown(i32 keyCode) const noexcept
 {
     // The same `digital`, with nothing consumed: a poll is about the device.
@@ -745,6 +757,19 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
                     case ActionType::ViewportPosition:
                         break;
                     }
+                }
+            }
+
+            // Held from outside (ADR 0107 §3): the value the world running
+            // this one gave it, in place of whatever its bindings read.
+            if (live && !m_held.empty()) {
+                const std::string_view name = world.atoms().text(world.name(actionId));
+                for (const HeldAction& held : m_held) {
+                    if (held.name != name)
+                        continue;
+                    pressed = type == ActionType::Bool && held.pressed;
+                    value = type == ActionType::Bool ? core::Vec3{} : held.value;
+                    break;
                 }
             }
 

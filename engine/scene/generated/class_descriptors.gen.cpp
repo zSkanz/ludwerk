@@ -2620,7 +2620,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 2> sceneServiceMethods;
+    static std::array<MethodDesc, 4> sceneServiceMethods;
     sceneServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("LoadScene"),
@@ -2634,8 +2634,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "The `data` the last `LoadScene` passed, decoded afresh, or nil.",
         },
+        MethodDesc{
+            .name = atoms.intern("SendToHost"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Inside a `SubWorld` (ADR 0107): sends plain values out to the game that runs this one, where the `SubWorld`'s `Received` fires with them on its next tick -- a score, a game over. The values a `RemoteEvent` takes, and never an instance. Anywhere else there is no host, and it raises.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsSubWorld"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "Whether this world runs inside another game's `SubWorld`.",
+        },
     }};
-    static std::array<EventDesc, 2> sceneServiceEvents;
+    static std::array<EventDesc, 3> sceneServiceEvents;
     sceneServiceEvents = {{
         EventDesc{
             .name = atoms.intern("SceneLoading"),
@@ -2646,6 +2658,11 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("SceneLoaded"),
             .slot = 8,
             .doc = "The new scene is in place and its scripts have started.",
+        },
+        EventDesc{
+            .name = atoms.intern("HostMessageReceived"),
+            .slot = 9,
+            .doc = "Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the `SubWorld`'s `Send`, on the tick after it sent them. Never fires anywhere else.",
         },
     }};
     ClassDescriptor sceneServiceDesc;

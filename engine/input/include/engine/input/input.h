@@ -29,6 +29,7 @@
 
 #include <array>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -246,6 +247,12 @@ public:
     // everything else, so a press cannot survive losing focus.
     void setVirtualState(i32 keyCode, f32 value) noexcept;
 
+    // **Holds the action named `action` at a value, whatever its bindings say**
+    // (ADR 0107 §3): how the world running a `SubWorld` drives the sub-world's
+    // input, by name -- the two worlds share no instance to name it by. It
+    // sticks until it is set again.
+    void setActionState(std::string_view action, core::Vec3 value, bool pressed);
+
     // Resolves every `Simulation`-rate context and writes the result into the
     // world. Enqueues a `Change` per action whose value moved.
     void dispatchSimTick(scene::World& world, u64 tick);
@@ -330,6 +337,15 @@ private:
     // the same on every run (R10).
     std::vector<std::pair<f32, core::InstanceId>> m_contexts;
     std::array<bool, kKeyCodeCount> m_consumed{};
+
+    // What `setActionState` holds, in the order the names were first set.
+    struct HeldAction
+    {
+        std::string name;
+        core::Vec3 value;
+        bool pressed = false;
+    };
+    std::vector<HeldAction> m_held;
 };
 
 } // namespace engine::input

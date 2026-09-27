@@ -285,6 +285,40 @@ struct EngineState
     };
     std::optional<PendingSceneLoad> pendingSceneLoad;
 
+    // **Sub-worlds** (ADR 0107 §3). What this world's scripts asked of the
+    // `SubWorld`s in it, carried out by the host at the end of the tick, and
+    // what crossed back. The worlds themselves are the host's.
+    //
+    // Whether this world runs inside another's `SubWorld` -- which may not
+    // hold one of its own -- and how many it may run.
+    bool subWorld = false;
+    u32 maxSubWorlds = 2;
+    // `Load()`ed and not `Unload()`ed, in the order they were asked for; and
+    // those running now.
+    std::vector<core::InstanceId> subWorldsWanted;
+    std::vector<core::InstanceId> subWorldsLoaded;
+    struct SubWorldInput
+    {
+        core::InstanceId subWorld{};
+        std::string action{};
+        core::Vec3 value{};
+        bool pressed = false;
+    };
+    std::vector<SubWorldInput> subWorldInputs;
+    // Plain values in the `RemoteEvent` encoding: `Send()` on the way in, and
+    // `SendToHost()` arrived, for `Received`.
+    struct SubWorldMessage
+    {
+        core::InstanceId subWorld{};
+        std::vector<u8> payload{};
+    };
+    std::vector<SubWorldMessage> subWorldOutbox;
+    std::vector<SubWorldMessage> subWorldInbox;
+    // Inside a sub-world: what the host sent, for `SceneService.HostMessageReceived`,
+    // and what `SendToHost` is sending out.
+    std::vector<std::vector<u8>> hostInbox;
+    std::vector<std::vector<u8>> hostOutbox;
+
     // **`NetworkService` at run time** (ADR 0106): `State`, as
     // `Enum.NetworkState`'s value; `[network] server`, where `Join` with no
     // address goes; and a `Join`, `Host` or `Disconnect` a script asked for,
@@ -322,6 +356,8 @@ struct NameIndex
 // updates two of them -- and the symptom of that is a component that quietly
 // stops surviving a restore, which no test asks about unless somebody thought
 // to write one.
+// clang-format off: the list is one pool a line, which clang-format 18 does not
+// keep once it grows past a length -- it re-flows it differently on every pass.
 #define ENG_SCENE_POOL_LIST(X)                                                                                         \
     X(PVComponent, pvInstances)                                                                                        \
     X(PartComponent, parts)                                                                                            \
@@ -362,6 +398,7 @@ struct NameIndex
     X(ParticleEmitterComponent, particleEmitters)                                                                      \
     X(DecalComponent, decals)                                                                                          \
     X(CameraTextureComponent, cameraTextures)                                                                          \
+    X(SubWorldComponent, subWorlds)                                                                                    \
     X(ViewportFrameComponent, viewportFrames)                                                                          \
     X(Part2DComponent, parts2d)                                                                                        \
     X(Tilemap2DComponent, tilemaps2d)                                                                                  \
@@ -384,6 +421,7 @@ struct NameIndex
     X(NameIndex, nameIndices)                                                                                          \
     X(AttributeMap, attributes)                                                                                        \
     X(TagSet, tags)
+// clang-format on
 
 // A runtime copy of a material asset (ADR 0090): made by `material:Clone()`,
 // owned by nobody, never saved, and released when nothing points at it.
@@ -944,6 +982,8 @@ public:
     {
         return m_cameraTextures;
     }
+    [[nodiscard]] ComponentPool<SubWorldComponent>& subWorlds() noexcept { return m_subWorlds; }
+    [[nodiscard]] const ComponentPool<SubWorldComponent>& subWorlds() const noexcept { return m_subWorlds; }
     // The 2D layer (post-v1 phase 3).
     [[nodiscard]] ComponentPool<Part2DComponent>& parts2d() noexcept { return m_parts2d; }
     [[nodiscard]] const ComponentPool<Part2DComponent>& parts2d() const noexcept { return m_parts2d; }

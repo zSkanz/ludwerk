@@ -132,6 +132,47 @@ void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& worl
                       {0.0f, 0.0f, 0.0f, 0.0f});
     });
 
+    // **Every `SubWorld` with a name to draw into** (ADR 0107 §3), black until
+    // its world's first picture -- the screen of a cabinet nobody switched on.
+    world.subWorlds().forEach([&](core::InstanceId id, const scene::SubWorldComponent& source) {
+        const std::string_view name = world.atoms().text(source.viewName);
+        if (name.empty() || !inWorld(world, id, workspace))
+            return;
+        auto view = std::find_if(views_.begin(), views_.end(), [&](const View& v) { return v.owner == id; });
+        if (view != views_.end() && view->name != name) {
+            const std::ptrdiff_t at = view - views_.begin();
+            release(device, library, renderer, *view);
+            views_.erase(view);
+            seen.erase(seen.begin() + at);
+            view = views_.end();
+        }
+        if (view == views_.end()) {
+            if (std::any_of(views_.begin(), views_.end(), [&](const View& v) { return v.name == name; })) {
+                if (std::find(warned_.begin(), warned_.end(), id) == warned_.end()) {
+                    warned_.push_back(id);
+                    const std::array<core::I18nArg, 2> args{
+                        core::I18nArg{"name", std::string(name)},
+                        core::I18nArg{"instance", std::string(world.atoms().text(world.name(id)))}};
+                    core::log(core::LogLevel::Warn, ENG_TR("render.warn.view_name_taken"), args);
+                }
+                return;
+            }
+            View made;
+            made.owner = id;
+            made.subWorld = true;
+            made.name = std::string(name);
+            made.urn = world.atoms().intern("view://" + made.name);
+            made.rendererView = nextRendererView_++;
+            views_.push_back(std::move(made));
+            seen.push_back(false);
+            view = views_.end() - 1;
+        }
+        seen[static_cast<core::usize>(view - views_.begin())] = true;
+        const core::Vec2 size = viewSize(source.resolution, maxResolution_);
+        ensureTexture(device, cmd, library, *view, static_cast<core::u32>(size.x), static_cast<core::u32>(size.y),
+                      {0.0f, 0.0f, 0.0f, 1.0f});
+    });
+
     // What no camera texture declares any more.
     for (core::usize index = views_.size(); index-- > 0;) {
         if (seen[index])
@@ -176,7 +217,8 @@ void ViewHost::ensureTexture(rhi::IDevice& device, rhi::ICmdList& cmd, render::T
     }
 }
 
-std::vector<ViewHost::View*> ViewHost::due(const scene::World& world, core::u64 frame)
+std::vector<ViewHost::View*> ViewHost::due(const scene::World& world, core::u64 frame,
+                                           const std::function<bool(core::InstanceId)>& running)
 {
     std::vector<ViewCandidate> candidates(views_.size());
     for (core::usize index = 0; index < views_.size(); ++index) {
@@ -187,6 +229,12 @@ std::vector<ViewHost::View*> ViewHost::due(const scene::World& world, core::u64 
         // A frame's picture is redrawn when what it shows has changed.
         if (view.frame) {
             candidate.due = view.texture.valid() && (!view.drawn || view.signature != view.drawnSignature);
+            continue;
+        }
+        if (view.subWorld) {
+            const scene::SubWorldComponent* source = world.subWorlds().find(view.owner);
+            candidate.due = source != nullptr && view.texture.valid() && running && running(view.owner) &&
+                            viewDue(view.drawn, view.lastDrawn, frame, source->updateInterval);
             continue;
         }
         const scene::CameraTextureComponent* source = world.cameraTextures().find(view.owner);

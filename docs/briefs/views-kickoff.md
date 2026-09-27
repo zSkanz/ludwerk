@@ -157,37 +157,46 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage V4 — `SubWorld` (after the other ledger's S2)
 
-- [ ] IDL: `SubWorld` (`Scene`, `ViewName`, `Resolution`, `Quality`,
-      `UpdateInterval`, `Running`, `Load`, `Unload`, `Loaded`,
+- [x] IDL: `SubWorld` (`Scene`, `ViewName`, `Resolution`, `Quality`,
+      `UpdateInterval`, `Running`, `Load`, `Unload`, `IsLoaded`, `Loaded`,
       `SetInputState`, `Send`, `Received`); inside a sub-world,
-      `SceneService.HostMessage` and `SceneService:SendToHost`.
-- [ ] A second `WorldHost` per sub-world (registries, VM, physics, navigation),
-      as `two_worlds.cpp` builds them; its scene through S2's load path; it
-      runs the scene's `ServerScriptService` and `ClientScriptService` as a
-      solo game, and not the project's `GlobalScriptService`.
-- [ ] Ticks one for one with the host at the host's fixed step; `Running =
-      false` pauses it; its world hash is its own.
-- [ ] Input: the sub-world's `InputService` reads only what `SetInputState`
-      gives it. Messages: plain values in the `RemoteEvent` encoding, delivered
-      at the next tick on the other side.
-- [ ] Budget: `max_sub_worlds`; a third `Load()` is a keyed error. A sub-world
-      cannot hold a `SubWorld`.
-- [ ] Not replicated: a `SubWorld` on a client runs there alone.
-- [ ] **The example**: an arcade cabinet in the camera game (or its own
-      example): walk up, press E, the cabinet's screen takes the input and
-      plays a small 2D game; its score comes back through `Received`.
-- [ ] Tests: the host's trace is unchanged with a sub-world running; the
-      sub-world's own trace is stable across runs; a script in the sub-world
-      cannot find a host instance; `Send`/`Received` round-trip; unloading
-      frees its VM and physics (memory back within a margin).
+      `SceneService.HostMessageReceived`, `SceneService:SendToHost` and
+      `SceneService:IsSubWorld`.
+- [x] A second `WorldHost` per sub-world, owned by the host that runs it
+      (`world_host_sub_worlds.cpp`); its scene read as `LoadScene` reads one;
+      it mounts `src/scenes/<scene>/` and the scene's own scripts, and none of
+      `src/client`, `src/server` or `src/shared`.
+- [x] Ticks one for one after the host, at the host's step; `Running = false`
+      pauses it; its world hash is its own.
+- [x] Input: `SetInputState` holds a named `InputAction` in the sub-world
+      (`InputSystem::setActionState`); nothing else reaches it. Messages: the
+      `RemoteEvent` encoding, delivered at the other side's next tick.
+- [x] Budget: `max_sub_worlds`; a third `Load()` raises
+      `scene.err.sub_world_limit`. A sub-world cannot hold a `SubWorld`
+      (`scene.err.sub_world_nested`).
+- [x] Not replicated (excluded from the wire, with its reason).
+- [x] **The example**: `examples/28-arcade`, two cabinets playing by
+      themselves; E at the left one puts a coin in, the arrow keys become its
+      `Move`, and the score comes back on the marquee.
+- [x] Tests: `sub_world_tests.cpp` -- the scene's code and not the game's,
+      one tick for one, falling under its own physics; the same run twice
+      hashes the same, and a different sub-world beside the same host leaves
+      the host's hash where it was; unloading and destroying throw the world
+      away and a reload is a new one. `world/sub_world.spec.luau` -- isolation,
+      messages both ways, input, pausing, the budget, reloading, a missing
+      scene. `subworld_gate` -- two sub-worlds drawn side by side, one told to
+      change, and the host's world in neither.
 
 ## Stage V5 — documentation and closing
 
-- [ ] A manual page, *Views*: cameras on screens, the camera game walked
-      through, mirrors and portals, inventory previews, sub-worlds, and the
-      budgets with their costs.
-- [ ] CHANGELOG entries; PROGRESS.md; `api-design.md`.
-- [ ] This ledger's Findings section.
+- [x] A manual page, *Views* (`docs/manual/rendering/views.md`): cameras on
+      screens, inventory previews, mirrors and portals, sub-worlds, the budgets
+      with their costs, and the three examples walked through.
+- [x] CHANGELOG entries; PROGRESS.md; `api-design.md`'s `[render]` budgets.
+- [x] This ledger's Findings section.
+
+**Closed on 2026-09-27.** Next in the owner's queue is the game-ready plan
+([`game-ready-plan.md`](game-ready-plan.md)), block A first.
 
 ## Findings
 
@@ -213,6 +222,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - **Each view's exposure is its own, and it shows**: a camera looking at a dark
   wall opens up. The gate's feeds are lighter than the main view for exactly
   this reason, and the gate asserts it.
+- **A `Vector2` does not cross between two worlds**, because the `RemoteEvent`
+  encoding does not carry one (a `vector` does). The spec's scene sends a
+  direction as two numbers. Widening the encoding is the network's decision,
+  not this ledger's.
+- **The simulation half of a sub-world belongs to `WorldHost`**, not to the
+  frame, and that is what made it testable: the conformance runner, which has
+  no renderer, runs every `SubWorld` case, and a replay of the host replays
+  its sub-worlds.
 - **Depth was clamped, never clipped, on every pipeline**, which nothing had
   noticed until an oblique near plane needed what falls behind it cut away.
   `rhi::RasterizerState::depthClip` is now on for the world's geometry. It is

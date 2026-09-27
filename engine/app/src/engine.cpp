@@ -893,6 +893,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     viewHost.setLimits(options.maxViewsPerFrame, options.maxViewResolution);
     // Reused from frame to frame, so a view's extraction allocates once.
     render::RenderWorld viewSnapshot;
+    // **What the frame keeps for each sub-world it draws** (ADR 0107 §3): its
+    // own meshes and textures. A cache is keyed by one world's instances and
+    // atoms, which mean nothing in another's -- the two-worlds proof's lesson.
+    // Keyed by the run's serial, so a world loaded again starts clean.
+    struct SubWorldGpu
+    {
+        core::u64 serial = 0;
+        render::MeshCache meshes;
+        render::MeshLoader loader;
+        render::MeshLibrary library;
+        render::TextureLibrary textures;
+    };
+    std::vector<std::unique_ptr<SubWorldGpu>> subWorldGpu;
     render::MeshCache meshCache;
     render::MeshLoader meshLoader;
     core::u64 contentRefreshesSeen = 0;
@@ -1345,6 +1358,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // it was given, and behaviour begins when somebody presses play.
         .startScripts = !options.editor && !options.writeTypesOnly,
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
+        .maxSubWorlds = options.maxSubWorlds,
     };
 
     auto host = std::make_unique<WorldHost>();
@@ -4268,8 +4282,102 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // extracted from its camera and drawn with its own renderer state;
             // a camera that sees its own texture sees the last picture.
             if (useRenderer && stageOf() == nullptr) {
-                for (ViewHost::View* view : viewHost.due(host->world(), frame.index)) {
+                // **Each running sub-world's content, loaded as the game's
+                // is** (ADR 0107 §3), whether or not its picture is drawn this
+                // frame: a mesh that lands also tells its physics what it
+                // collides as. What unloaded gives its GPU state back.
+                std::erase_if(subWorldGpu, [&](const std::unique_ptr<SubWorldGpu>& gpu) {
+                    const std::span<const WorldHost::SubWorldRun> runs = host->subWorlds();
+                    if (std::any_of(runs.begin(), runs.end(),
+                                    [&](const WorldHost::SubWorldRun& run) { return run.serial == gpu->serial; }))
+                        return false;
+                    gpu->loader.destroy(*device);
+                    gpu->meshes.destroy(*device);
+                    return true;
+                });
+                for (const WorldHost::SubWorldRun& run : host->subWorlds()) {
+                    auto found = std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
+                                              [&](const auto& gpu) { return gpu->serial == run.serial; });
+                    if (found == subWorldGpu.end()) {
+                        auto made = std::make_unique<SubWorldGpu>();
+                        made->serial = run.serial;
+                        if (made->meshes.create(*device).has_value())
+                            continue;
+                        made->loader.setContentRoot(contentRoot);
+                        made->loader.setContentMounts(&contentMounts);
+                        made->loader.setDeferredTextures(!options.headless);
+                        made->loader.setDeferredMeshes(!options.headless);
+                        subWorldGpu.push_back(std::move(made));
+                        found = subWorldGpu.end() - 1;
+                    }
+                    SubWorldGpu& gpu = **found;
+                    WorldHost& inner = *run.host;
+                    gpu.meshes.beginFrame(*device);
+                    gpu.loader.syncPrimitives(*device, *cmd, inner.world(), gpu.meshes, gpu.library);
+                    (void)gpu.loader.syncTextures(*device, *cmd, inner.world(), gpu.textures);
+                    meshCompletions.clear();
+                    (void)gpu.loader.sync(*device, *cmd, inner.world(), inner.workspace(), gpu.meshes, gpu.library,
+                                          nullptr, &meshCompletions);
+                    if (inner.physics() != nullptr) {
+                        for (const core::NameAtom content : meshCompletions) {
+                            const render::MeshLibrary::Entry* entry = gpu.library.find(content);
+                            if (entry != nullptr && !entry->positions.empty())
+                                inner.physics()->setCollisionPoints(content, entry->positions);
+                        }
+                    }
+                }
+                const auto subWorldRunning = [&](core::InstanceId owner) {
+                    const scene::SubWorldComponent* self = host->world().subWorlds().find(owner);
+                    return self != nullptr && self->running && host->subWorld(owner) != nullptr;
+                };
+
+                for (ViewHost::View* view : viewHost.due(host->world(), frame.index, subWorldRunning)) {
                     const scene::World& world = host->world();
+                    // **A `SubWorld`** (ADR 0107 §3): its world, from its own
+                    // current camera, with its own meshes. Drawn at the tick, as
+                    // a headless run is: its transforms keep no history to
+                    // interpolate between.
+                    if (view->subWorld) {
+                        const scene::SubWorldComponent* self = world.subWorlds().find(view->owner);
+                        const WorldHost::SubWorldRun* run = nullptr;
+                        for (const WorldHost::SubWorldRun& candidate : host->subWorlds()) {
+                            if (candidate.owner == view->owner)
+                                run = &candidate;
+                        }
+                        const auto gpu = run == nullptr
+                                             ? subWorldGpu.end()
+                                             : std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
+                                                            [&](const auto& g) { return g->serial == run->serial; });
+                        if (self == nullptr || gpu == subWorldGpu.end())
+                            continue;
+                        WorldHost& inner = *run->host;
+                        const core::u64 started = platform::nowNs();
+                        render::extract(inner.world(), inner.workspace(), inner.lighting(), (*gpu)->library,
+                                        static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
+                                        inner.animation(), 0.0f, nullptr, viewSnapshot, nullptr, {}, &(*gpu)->textures,
+                                        {});
+                        if (!viewSnapshot.camera.valid)
+                            continue;
+                        if (self->quality == 1) {
+                            viewSnapshot.environment.globalShadows = false;
+                            viewSnapshot.look.bloomGoverned = true;
+                            viewSnapshot.look.bloomEnabled = false;
+                            viewSnapshot.look.graded = false;
+                            viewSnapshot.look.blurSize = 0.0f;
+                            viewSnapshot.look.depthOfField = false;
+                            viewSnapshot.look.sunRays = false;
+                        }
+                        renderer->render(*device, *cmd,
+                                         {.color = view->texture,
+                                          .colorFormat = ViewFormat,
+                                          .width = view->width,
+                                          .height = view->height,
+                                          .view = view->rendererView},
+                                         viewSnapshot, (*gpu)->meshes);
+                        ViewHost::drawn(*view, frame.index,
+                                        static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
+                        continue;
+                    }
                     // **A `ViewportFrame`** (ADR 0107): the instances inside
                     // it and nothing else, by its own light, with no sky and
                     // nothing behind -- only what is inside shows. Nothing in
@@ -4719,6 +4827,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     }
 
     skyLoader.destroy(*device);
+    for (const std::unique_ptr<SubWorldGpu>& gpu : subWorldGpu) {
+        gpu->loader.destroy(*device);
+        gpu->meshes.destroy(*device);
+    }
+    subWorldGpu.clear();
     viewHost.destroy(*device, textureLibrary, renderer.get());
     uiText.destroy(*device);
     uiRenderer.destroy(*device);
