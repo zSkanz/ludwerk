@@ -181,6 +181,25 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **The Android export works again.** The rename left the Gradle signing
+  configuration named after the brand and its two uses named `engine`, so every
+  Android export failed while evaluating `build.gradle`.
+- **A dedicated server opens no graphics device.** It used to open one and draw
+  every frame offscreen for nobody; on a Linux host with no GPU that device is
+  Mesa's software rasteriser, and an exported server crashed in it seconds after
+  starting. `--rhi=` still chooses one.
+- **`ludwerk keystore new --alias upload --out release.keystore` works as its
+  usage text shows.** Every option that carries a value takes `--name value` as
+  well as `--name=value`; before, the space form made a keystore named `true`.
+- **An exported desktop game no longer carries the editor's files** -- the
+  new-project template and the editor's icon theme -- as the Android export
+  already did not.
+- **Messages spoke the old names**: the host's usage text (`luaug-host`, which
+  now also lists `--host`, `--serve` and `--join`), `.luaug/types/`,
+  `luaug.toml`, `LUAUG_TEXTURE` and `LUAUG_PARAM` in a surface shader's errors,
+  `luaug build-assets`. The brand lint reads the message catalog now.
+- **Home no longer carries the match controls** (player count, dedicated
+  server): they are on the Test tab, whose settings Play on Home still plays.
 - **A service's settings are saved with the scene when nothing is under it**,
   and a scene opened in the editor starts from the engine's settings instead of
   the last scene's (D203). A property marked `Transient` in the IDL is no longer

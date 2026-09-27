@@ -123,6 +123,11 @@ struct EngineOptions
     std::string devControlToken;
 
     rhi::BackendId backend = rhi::BackendId::SdlGpu;
+    // `--rhi=` named the backend. Without it a dedicated server takes the
+    // no-op one: it draws nothing, and a device it never draws with is a GPU
+    // driver -- or, on a machine with none, a software rasteriser -- it can
+    // crash in.
+    bool backendChosen = false;
 
     // Print a frame-time summary at exit. Off by default because the numbers
     // are wall-clock and a run that is not being measured should not pay for

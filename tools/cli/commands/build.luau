@@ -443,7 +443,12 @@ local function run(options: Options): number
     local executable = projectlib.joined(output, executableName)
     local laidOut = progress.step(reporter, "layout", function(): string?
         fs.copy(player, executable)
-        game.copyTree(engineContent, projectlib.joined(output, "content"))
+        -- Less what only an editor reads, as the phone's copy already was: the
+        -- new-project template and the editor's icon theme. Every game used to
+        -- ship both, a starter project's scripts included.
+        game.copyTree(engineContent, projectlib.joined(output, "content"), function(relative: string): boolean
+            return relative == "templates" or relative == "icons"
+        end)
         composeGame(projectlib.joined(output, "game"))
         if chosen.platform == "linux" and not chosen.server then
             fs.writeStringToFile(

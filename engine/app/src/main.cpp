@@ -518,6 +518,7 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 return kExitUsage;
             }
             options.backend = *backend;
+            options.backendChosen = true;
             continue;
         }
 
@@ -832,6 +833,18 @@ int main(int argc, char** argv)
             return kExitScriptError;
         }
         return kExitOk;
+    }
+
+    // **A dedicated server opens no graphics device** (ADR 0105, ADR 0107: a
+    // server draws nothing). It used to open the ordinary one and render every
+    // frame offscreen for nobody -- and on a Linux host with no GPU, the
+    // machine a server most often runs on, that device is Mesa's software
+    // rasteriser, which crashed the server a few seconds after it started. The
+    // no-op backend hands out handles and draws nothing; `--rhi=` still wins.
+    if (options.network.topology == engine::replication::Topology::Dedicated && options.headless &&
+        !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
     }
 
     if (const std::optional<engine::core::EngineError> error = engine::app::run(options)) {

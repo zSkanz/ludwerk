@@ -264,7 +264,7 @@ fi
 # patched Luau calls, which renaming would mean re-vendoring.
 echo "== brand (ADR 0109) =="
 brandHits="$(git ls-files -z -- engine runtime tools api templates examples scripts cmake samples tests platforms \
-        shaders branding .github CMakeLists.txt CMakePresets.json \
+        i18n icons .vscode shaders branding .github CMakeLists.txt CMakePresets.json \
         third_party/CMakeLists.txt third_party/manifest.json third_party/README.md \
         ':(exclude)*.md' ':(exclude)*.png' ':(exclude)*.ico' ':(exclude)scripts/gates/docs-lint.sh' \
         ':(exclude)branding/brand.toml' ':(exclude)tools/repo/rename' \

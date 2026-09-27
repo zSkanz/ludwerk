@@ -5181,8 +5181,10 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
         else
             commands.play = !inPlay;
     }
-    ImGui::SameLine();
-    drawMatchControls(editor, inPlay || matching);
+    // **How many players, and whether a server runs them, live on the Test tab
+    // alone** (the owner, 2026-09-27): Home is for building the scene, and a
+    // match's shape is a testing question. Play here still plays what Test
+    // says, so a match set up there starts from either button.
     // **Export, beside Play** (ADR 0104 §4): the shortest path from a scene to
     // a game on somebody's phone starts here.
     ImGui::SameLine();

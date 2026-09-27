@@ -59,11 +59,37 @@ type Parsed = {
     flags: { [string]: string },
 }
 
+--- The options that carry a value, which may be written `--out=file` or
+--- `--out file`. **Both, because the usage text shows the second** -- and
+--- before this list only the first worked: `keystore new --alias upload --out
+--- release.keystore` made a keystore named `true` with a key named `true`, and
+--- left the two real names lying unread among the positionals.
+---
+--- Every other option is a switch, and a word after a switch is a positional:
+--- `build --dev-host mygame` builds `mygame`.
+local ValueFlags: { [string]: boolean } = {
+    alias = true,
+    definitions = true,
+    junit = true,
+    name = true,
+    out = true,
+    output = true,
+    port = true,
+    progress = true,
+    report = true,
+    target = true,
+    template = true,
+    validity = true,
+}
+
 local function parse(argv: { string }): Parsed
     local parsed: Parsed = { command = "", positional = {}, flags = {} }
 
-    for index, argument in argv do
-        if index == 1 then
+    local index = 1
+    while index <= #argv do
+        local argument = argv[index]
+        index += 1
+        if index == 2 then
             parsed.command = argument
             continue
         end
@@ -72,6 +98,9 @@ local function parse(argv: { string }): Parsed
             local equals = string.find(body, "=", 1, true)
             if equals ~= nil then
                 parsed.flags[string.sub(body, 1, equals - 1)] = string.sub(body, equals + 1)
+            elseif ValueFlags[body] and index <= #argv and string.sub(argv[index], 1, 2) ~= "--" then
+                parsed.flags[body] = argv[index]
+                index += 1
             else
                 parsed.flags[body] = "true"
             end

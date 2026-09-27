@@ -34,7 +34,7 @@
 
     "$comment.definitions": [
         "Declaration files describe globals; they are not sources. Without this the",
-        "extension analyses `declare luaug: { ... }` as ordinary Luau and reports a",
+        "extension analyses `declare engine: { ... }` as ordinary Luau and reports a",
         "syntax error on a file that is perfectly valid -- while the scripts that",
         "depend on it report unknown-global errors. scripts/gates/luau-check.sh",
         "passes the same files with --definitions. From M3 these are generated from",

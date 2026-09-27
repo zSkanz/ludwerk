@@ -94,7 +94,7 @@ android {
     // arguments.
     if (keystore != null) {
         signingConfigs {
-            ludwerk {
+            engine {
                 storeFile = file(keystore)
                 storePassword = project.findProperty('engine.storePassword')
                 keyAlias = project.findProperty('engine.keyAlias')
