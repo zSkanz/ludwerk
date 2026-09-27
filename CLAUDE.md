@@ -19,7 +19,9 @@ code in three script services (`ServerScriptService` and `ClientScriptService`
 per scene, `GlobalScriptService` for the whole game; `ScriptService` retired),
 scenes changed at run time, a match joined and hosted from a script, and
 attributes that replicate. **What is being built now** is three ledgers in
-`docs/briefs/`, in this order: `export-and-server-kickoff.md` (ADR 0104, the
+`docs/briefs/`, preceded since 2026-09-27 by the owner's queue
+(`owner-queue-2026-09-27.md`: defects, then `UIGradient`/`UIStroke`, then the
+editor remade after VS Code), in this order: `export-and-server-kickoff.md` (ADR 0104, the
 export window and targets), `rename-kickoff.md` (ADR 0109: the brand becomes
 **Ludwerk**, and the code takes the neutral internal name `engine` --
 `engine::`, `ENG_*`, `project.toml`, `@engine/` -- with the brand read from

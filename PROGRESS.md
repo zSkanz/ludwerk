@@ -90,6 +90,13 @@ approximating one, and the packaged game ships Luau SOURCE rather than bytecode
 
 ## Now / Next
 
+- **The owner's queue of 2026-09-27 is the order of work**
+  ([`docs/briefs/owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
+  defects first -- an export sweep found five, fixed the same day -- then
+  `UIGradient` and `UIStroke` with their recent features, then the editor
+  remade after VS Code, and only then Views (ADR 0107) and the AI panel
+  (ADR 0108).
+
 - **Post-v1 phases 2 and 4 are OPEN and being built.** The owner opened both on
   2026-08-27 in one instruction — *"terrain editor multiplayer voxels etc."* —
   which also answers the terrain's one recorded open question: **voxel, not
