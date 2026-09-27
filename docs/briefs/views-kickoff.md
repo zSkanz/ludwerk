@@ -196,7 +196,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - [x] This ledger's Findings section.
 
 **Closed on 2026-09-27.** Next in the owner's queue is the game-ready plan
-([`game-ready-plan.md`](game-ready-plan.md)), block A first.
+(`docs/briefs/game-ready-plan.md`), block A first.
 
 ## Findings
 

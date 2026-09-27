@@ -7381,10 +7381,8 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
     if (!ImGui::BeginMainMenuBar())
         return;
 
-    const float brandSize = ImGui::GetFontSize() * 1.25f;
-    drawBrandMark(ImGui::GetCursorScreenPos(), brandSize);
-    ImGui::Dummy(ImVec2(brandSize, ImGui::GetFontSize()));
-    ImGui::SameLine();
+    // No mark before `File`: the window's own title bar already carries the
+    // engine's icon a line above, and two of them read as a mistake.
 
     // **The menus of the editor this follows**, in its order -- File, Edit,
     // Selection, View, Go, Run, Help -- each item a palette command, so a menu
