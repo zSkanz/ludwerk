@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -118,6 +120,328 @@ namespace {
     return material;
 }
 
+// --- The skeleton ------------------------------------------------------------
+//
+// **One skeleton, in the shape the glTF importer leaves one** (asset/model.h):
+// joints sorted parents first, each with a rigid rest transform against its
+// parent, an inverse bind matrix, and vertices in the space those matrices
+// agree on -- here the file's world, because a file with three skinned meshes
+// under three differently placed nodes has no other space they share.
+//
+// **A joint's rest transform is rigid and a file's is not.** The pose is
+// `composeTrs(position, rotation, animatedScale)` per joint (render/
+// animation.cpp), so a rest SCALE -- which an FBX nearly always has, on the
+// armature that converts centimetres -- has nowhere to go. Uniform scale
+// commutes with rotation, so it is folded instead: every translation below a
+// scaled node is multiplied by the scale above it, and the scale itself goes
+// into the joint's inverse bind matrix, which a skin multiplies last anyway.
+// A non-uniform rest scale is read as its average; it is rare on a skeleton
+// and the alternative is refusing the file.
+//
+// **The nodes above the skeleton are folded into its roots** rather than made
+// joints, which is where the file's axis conversion and armature live. They
+// would cost palette slots (render/shader_types.h: sixty-four) and animate
+// nothing.
+
+// The renderer's palette budget (`render::kMaxSkinJoints`, which this tool
+// cannot include). A rig that fits keeps every bone the file declares -- an
+// unweighted one may be what a script attaches a sword to -- and one that does
+// not keeps only the bones that move a vertex.
+constexpr std::size_t PaletteBudget = 64;
+
+[[nodiscard]] core::Mat4 toMat4(const aiMatrix4x4& source) noexcept
+{
+    // assimp's matrix is row-major (`a4` is the x translation) and `core::Mat4`
+    // is `[column][row]`, so this is a transpose. The opposite assumption gives
+    // a skin that looks right until something is off-axis.
+    core::Mat4 result;
+    for (unsigned int row = 0; row < 4; ++row) {
+        for (unsigned int column = 0; column < 4; ++column)
+            result.m[column][row] = source[row][column];
+    }
+    return result;
+}
+
+[[nodiscard]] aiMatrix4x4 globalOf(const aiNode* node) noexcept
+{
+    aiMatrix4x4 global;
+    for (; node != nullptr; node = node->mParent)
+        global = node->mTransformation * global;
+    return global;
+}
+
+// A transform as its rigid part and one uniform scale.
+struct Rigid
+{
+    aiVector3D position;
+    aiQuaternion rotation;
+    float scale = 1.0f;
+};
+
+[[nodiscard]] Rigid split(const aiMatrix4x4& matrix)
+{
+    Rigid out;
+    aiVector3D scaling;
+    matrix.Decompose(scaling, out.rotation, out.position);
+    out.rotation.Normalize();
+    out.scale = (std::abs(scaling.x) + std::abs(scaling.y) + std::abs(scaling.z)) / 3.0f;
+    if (!(out.scale > 0.0f))
+        out.scale = 1.0f;
+    return out;
+}
+
+struct Skeleton
+{
+    std::vector<const aiNode*> nodes;
+    std::map<std::string, core::u32> jointOf;
+    // Per joint: the scale folded into everything below it, the joint's own
+    // rest scale, and -- for a root -- the rigid transform of what is above it.
+    std::vector<float> scaleBelow;
+    std::vector<float> ownScale;
+    std::vector<float> parentScale;
+    std::vector<Rigid> above;
+    std::vector<bool> root;
+
+    [[nodiscard]] core::u32 find(const aiString& name) const
+    {
+        const auto found = jointOf.find(std::string(name.C_Str()));
+        return found == jointOf.end() ? asset::Joint::NoParent : found->second;
+    }
+};
+
+void collectJoints(const aiNode* node, const std::set<const aiNode*>& members, std::vector<const aiNode*>& order)
+{
+    // Pre-order over the file's own graph, which is what makes parents come
+    // before children without a sort.
+    if (members.contains(node))
+        order.push_back(node);
+    for (unsigned int child = 0; child < node->mNumChildren; ++child)
+        collectJoints(node->mChildren[child], members, order);
+}
+
+void meshNodes(const aiNode* node, std::vector<const aiNode*>& out)
+{
+    for (unsigned int index = 0; index < node->mNumMeshes; ++index) {
+        const unsigned int mesh = node->mMeshes[index];
+        if (mesh < out.size() && out[mesh] == nullptr)
+            out[mesh] = node;
+    }
+    for (unsigned int child = 0; child < node->mNumChildren; ++child)
+        meshNodes(node->mChildren[child], out);
+}
+
+void readSkeleton(const aiScene& scene, const std::vector<const aiNode*>& meshNodeOf, asset::Model& out,
+                  Skeleton& skeleton)
+{
+    std::set<const aiNode*> bones;
+    std::set<const aiNode*> weighted;
+    for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex) {
+        const aiMesh& mesh = *scene.mMeshes[meshIndex];
+        for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones; ++boneIndex) {
+            const aiBone& bone = *mesh.mBones[boneIndex];
+            const aiNode* node = scene.mRootNode->FindNode(bone.mName);
+            if (node == nullptr)
+                continue;
+            bones.insert(node);
+            for (unsigned int weight = 0; weight < bone.mNumWeights; ++weight) {
+                if (bone.mWeights[weight].mWeight > 0.0f) {
+                    weighted.insert(node);
+                    break;
+                }
+            }
+        }
+    }
+    const std::set<const aiNode*>& kept = bones.size() <= PaletteBudget ? bones : weighted;
+
+    // A node between two kept bones is a joint too -- the chain from one to the
+    // other has to exist for the pose to reach the lower one -- and a node
+    // above the topmost is not.
+    std::set<const aiNode*> members = kept;
+    for (const aiNode* node : kept) {
+        std::vector<const aiNode*> path;
+        for (const aiNode* up = node->mParent; up != nullptr; up = up->mParent) {
+            if (kept.contains(up)) {
+                members.insert(path.begin(), path.end());
+                break;
+            }
+            path.push_back(up);
+        }
+    }
+    collectJoints(scene.mRootNode, members, skeleton.nodes);
+
+    const std::size_t count = skeleton.nodes.size();
+    skeleton.scaleBelow.assign(count, 1.0f);
+    skeleton.ownScale.assign(count, 1.0f);
+    skeleton.parentScale.assign(count, 1.0f);
+    skeleton.above.assign(count, Rigid{});
+    skeleton.root.assign(count, false);
+    out.joints.resize(count);
+
+    for (core::u32 joint = 0; joint < count; ++joint) {
+        const aiNode* node = skeleton.nodes[joint];
+        skeleton.jointOf.emplace(std::string(node->mName.C_Str()), joint);
+
+        const Rigid local = split(node->mTransformation);
+        const auto parent = node->mParent == nullptr ? skeleton.jointOf.end()
+                                                     : skeleton.jointOf.find(std::string(node->mParent->mName.C_Str()));
+        aiVector3D position;
+        aiQuaternion rotation;
+        asset::Joint& target = out.joints[joint];
+        target.name = node->mName.C_Str();
+        skeleton.ownScale[joint] = local.scale;
+        if (parent != skeleton.jointOf.end() && skeleton.nodes[parent->second] == node->mParent) {
+            target.parent = parent->second;
+            skeleton.parentScale[joint] = skeleton.scaleBelow[parent->second];
+            position = local.position * skeleton.parentScale[joint];
+            rotation = local.rotation;
+        }
+        else {
+            // A root: everything above it, down to the file's own root node,
+            // folded into its rest transform (and into its channels, below).
+            const Rigid above = split(globalOf(node->mParent));
+            skeleton.root[joint] = true;
+            skeleton.above[joint] = above;
+            skeleton.parentScale[joint] = above.scale;
+            position = above.position + above.rotation.Rotate(local.position * above.scale);
+            rotation = above.rotation * local.rotation;
+        }
+        rotation.Normalize();
+        skeleton.scaleBelow[joint] = skeleton.parentScale[joint] * local.scale;
+        target.localBind.position = core::DVec3{static_cast<core::f64>(position.x), static_cast<core::f64>(position.y),
+                                                static_cast<core::f64>(position.z)};
+        target.localBind.rotation = core::fromQuaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+    }
+
+    // Inverse binds: the file's offset matrices are mesh space to bone space,
+    // and the vertices are moved into the world below, so each is taken from
+    // the world through the mesh's own node. A joint no bone names -- one in a
+    // chain between two -- binds where it rests.
+    std::vector<aiMatrix4x4> inverseBind(count);
+    std::vector<bool> bound(count, false);
+    for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex) {
+        const aiMesh& mesh = *scene.mMeshes[meshIndex];
+        if (mesh.mNumBones == 0)
+            continue;
+        aiMatrix4x4 worldToMesh = globalOf(meshNodeOf[meshIndex]);
+        worldToMesh.Inverse();
+        for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones; ++boneIndex) {
+            const core::u32 joint = skeleton.find(mesh.mBones[boneIndex]->mName);
+            if (joint == asset::Joint::NoParent || bound[joint])
+                continue;
+            inverseBind[joint] = mesh.mBones[boneIndex]->mOffsetMatrix * worldToMesh;
+            bound[joint] = true;
+        }
+    }
+
+    out.sourceJointCount = static_cast<core::u32>(count);
+    out.restPalette.resize(count);
+    for (core::u32 joint = 0; joint < count; ++joint) {
+        const aiMatrix4x4 global = globalOf(skeleton.nodes[joint]);
+        if (!bound[joint]) {
+            inverseBind[joint] = global;
+            inverseBind[joint].Inverse();
+        }
+        aiMatrix4x4 folded;
+        const float scale = skeleton.scaleBelow[joint];
+        aiMatrix4x4::Scaling(aiVector3D(scale, scale, scale), folded);
+        out.joints[joint].inverseBind = toMat4(folded * inverseBind[joint]);
+        out.restPalette[joint] = toMat4(global * inverseBind[joint]);
+    }
+}
+
+// The joint a vertex nothing weights follows: its mesh's nearest joint above
+// it, so a prop parented to a hand stays in the hand, or the first root.
+[[nodiscard]] core::u32 carrierOf(const aiNode* node, const Skeleton& skeleton)
+{
+    for (; node != nullptr; node = node->mParent) {
+        const core::u32 joint = skeleton.find(node->mName);
+        if (joint != asset::Joint::NoParent && skeleton.nodes[joint] == node)
+            return joint;
+    }
+    return 0;
+}
+
+void readClips(const aiScene& scene, const Skeleton& skeleton, asset::Model& out)
+{
+    for (unsigned int animationIndex = 0; animationIndex < scene.mNumAnimations; ++animationIndex) {
+        const aiAnimation& animation = *scene.mAnimations[animationIndex];
+        // Ticks, not seconds. Zero means the file did not say, and assimp's
+        // own documentation gives twenty-five as what that means.
+        const double ticksPerSecond = animation.mTicksPerSecond > 0.0 ? animation.mTicksPerSecond : 25.0;
+
+        asset::AnimationClip clip;
+        clip.name = animation.mName.C_Str();
+        // An exporter names a take after its armature ("Armature|Run"); the
+        // part a script asks for is the one after the bar.
+        if (const std::size_t bar = clip.name.rfind('|'); bar != std::string::npos)
+            clip.name = clip.name.substr(bar + 1);
+
+        const auto seconds = [&](double ticks) {
+            const auto time = static_cast<core::f32>(ticks / ticksPerSecond);
+            clip.duration = std::max(clip.duration, time);
+            return time;
+        };
+
+        for (unsigned int channelIndex = 0; channelIndex < animation.mNumChannels; ++channelIndex) {
+            const aiNodeAnim& channel = *animation.mChannels[channelIndex];
+            const core::u32 joint = skeleton.find(channel.mNodeName);
+            if (joint == asset::Joint::NoParent)
+                continue;
+            const bool root = skeleton.root[joint];
+            const Rigid& above = skeleton.above[joint];
+
+            // Every key goes through the same fold the rest pose did, or a
+            // clip would play in centimetres on a skeleton built in metres.
+            if (channel.mNumPositionKeys > 0) {
+                asset::AnimationChannel keys;
+                keys.joint = joint;
+                keys.target = asset::AnimationChannel::Target::Translation;
+                keys.stride = 3;
+                for (unsigned int key = 0; key < channel.mNumPositionKeys; ++key) {
+                    const aiVectorKey& source = channel.mPositionKeys[key];
+                    const aiVector3D value = root ? above.position + above.rotation.Rotate(source.mValue * above.scale)
+                                                  : source.mValue * skeleton.parentScale[joint];
+                    keys.times.push_back(seconds(source.mTime));
+                    keys.values.insert(keys.values.end(), {value.x, value.y, value.z});
+                }
+                clip.channels.push_back(std::move(keys));
+            }
+            if (channel.mNumRotationKeys > 0) {
+                asset::AnimationChannel keys;
+                keys.joint = joint;
+                keys.target = asset::AnimationChannel::Target::Rotation;
+                keys.stride = 4;
+                for (unsigned int key = 0; key < channel.mNumRotationKeys; ++key) {
+                    const aiQuatKey& source = channel.mRotationKeys[key];
+                    aiQuaternion value = root ? above.rotation * source.mValue : source.mValue;
+                    value.Normalize();
+                    keys.times.push_back(seconds(source.mTime));
+                    keys.values.insert(keys.values.end(), {value.x, value.y, value.z, value.w});
+                }
+                clip.channels.push_back(std::move(keys));
+            }
+            if (channel.mNumScalingKeys > 0) {
+                // The rest scale is already in the skeleton, so a key says how
+                // far from it the joint is.
+                asset::AnimationChannel keys;
+                keys.joint = joint;
+                keys.target = asset::AnimationChannel::Target::Scale;
+                keys.stride = 3;
+                const float rest = skeleton.ownScale[joint];
+                for (unsigned int key = 0; key < channel.mNumScalingKeys; ++key) {
+                    const aiVectorKey& source = channel.mScalingKeys[key];
+                    keys.times.push_back(seconds(source.mTime));
+                    keys.values.insert(keys.values.end(),
+                                       {source.mValue.x / rest, source.mValue.y / rest, source.mValue.z / rest});
+                }
+                clip.channels.push_back(std::move(keys));
+            }
+        }
+        if (!clip.channels.empty())
+            out.clips.push_back(std::move(clip));
+    }
+}
+
 } // namespace
 
 std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, const std::filesystem::path& directory,
@@ -126,6 +450,10 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
     out = asset::Model{};
 
     Assimp::Importer importer;
+    // An FBX's pivots as their own helper nodes (`$AssimpFbx$_Rotation`) would
+    // put nodes between a bone and its parent that no clip animates, and the
+    // clip's channel for the bone itself would then drive only part of it.
+    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
 
     // **From MEMORY with the extension as a hint**, not from a path. The caller
     // already read the bytes -- content addressing means every file is read
@@ -148,8 +476,8 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
     //   one wasted pass over every mesh.
     //   PreTransformVertices is deliberately OFF: it would bake the scene graph
     //   into one mesh, which is right for this pipeline (a `MeshPart` is one
-    //   mesh) but loses the node names a future skeleton import needs. The
-    //   flattening happens below, explicitly, where it can be read.
+    //   mesh) but loses the node names a skeleton needs. The flattening
+    //   happens below, explicitly, where it can be read.
     const unsigned int flags = aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace |
                                aiProcess_JoinIdenticalVertices | aiProcess_GenUVCoords |
                                aiProcess_ValidateDataStructure;
@@ -181,6 +509,19 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
     // formats put a model at the origin in its own space, and a file that does
     // not is a file whose author expected a scene importer rather than a mesh
     // importer. That is a different feature and nobody has asked for it.
+    //
+    // **A skinned file is the exception**: its bones are placed by the node
+    // graph and its vertices have to be in the space the bones agree on, so
+    // there every mesh moves into the file's world (`readSkeleton`).
+    std::vector<const aiNode*> meshNodeOf(scene->mNumMeshes, nullptr);
+    meshNodes(scene->mRootNode, meshNodeOf);
+    bool skinned = false;
+    for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+        skinned = skinned || scene->mMeshes[meshIndex]->mNumBones > 0;
+    Skeleton skeleton;
+    if (skinned)
+        readSkeleton(*scene, meshNodeOf, out, skeleton);
+    skinned = skinned && !skeleton.nodes.empty();
     // Both default to the EMPTY box, so `expand` from a default is correct and
     // a mesh nobody filled cannot be mistaken for a point at the origin
     // (`core/math.h`).
@@ -199,15 +540,70 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
         const auto vertexBase = static_cast<core::u32>(out.mesh.vertices.size());
         core::AABB submeshBounds;
 
+        // Into the world for a skinned file: points through the node's whole
+        // transform, directions through its 3x3 (inverse-transposed for the
+        // normal, so a scaled node does not bend its shading).
+        const aiMatrix4x4 place = skinned ? globalOf(meshNodeOf[meshIndex]) : aiMatrix4x4{};
+        const aiMatrix3x3 direction(place);
+        aiMatrix3x3 normalDirection = direction;
+        normalDirection.Inverse().Transpose();
+        const auto moved = [&](const aiVector3D& value, const aiMatrix3x3& by) {
+            aiVector3D result = by * value;
+            return result.Normalize();
+        };
+
+        std::vector<asset::SkinVertex> influences;
+        if (skinned) {
+            influences.resize(mesh.mNumVertices);
+            for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones; ++boneIndex) {
+                const aiBone& bone = *mesh.mBones[boneIndex];
+                const core::u32 joint = skeleton.find(bone.mName);
+                if (joint == asset::Joint::NoParent)
+                    continue;
+                for (unsigned int weightIndex = 0; weightIndex < bone.mNumWeights; ++weightIndex) {
+                    const aiVertexWeight& weight = bone.mWeights[weightIndex];
+                    if (weight.mVertexId >= mesh.mNumVertices || !(weight.mWeight > 0.0f))
+                        continue;
+                    // The four heaviest, by replacing the lightest lane: a
+                    // fifth influence is below what anyone can see (model.h).
+                    asset::SkinVertex& skin = influences[weight.mVertexId];
+                    std::size_t lightest = 0;
+                    for (std::size_t lane = 1; lane < 4; ++lane) {
+                        if (skin.weights[lane] < skin.weights[lightest])
+                            lightest = lane;
+                    }
+                    if (weight.mWeight > skin.weights[lightest]) {
+                        skin.weights[lightest] = weight.mWeight;
+                        skin.joints[lightest] = static_cast<core::f32>(joint);
+                    }
+                }
+            }
+            const auto carrier = static_cast<core::f32>(carrierOf(meshNodeOf[meshIndex], skeleton));
+            for (asset::SkinVertex& skin : influences) {
+                const core::f32 total = skin.weights[0] + skin.weights[1] + skin.weights[2] + skin.weights[3];
+                if (total > 0.0f) {
+                    for (core::f32& weight : skin.weights)
+                        weight /= total;
+                }
+                else {
+                    skin = asset::SkinVertex{};
+                    skin.joints[0] = carrier;
+                    skin.weights[0] = 1.0f;
+                }
+            }
+        }
+
         for (unsigned int index = 0; index < mesh.mNumVertices; ++index) {
             asset::Vertex vertex;
-            vertex.position = toVec3(mesh.mVertices[index]);
+            vertex.position = toVec3(skinned ? place * mesh.mVertices[index] : mesh.mVertices[index]);
             if (mesh.mNormals != nullptr) {
-                vertex.normal = toVec3(mesh.mNormals[index]);
+                vertex.normal = toVec3(skinned ? moved(mesh.mNormals[index], normalDirection) : mesh.mNormals[index]);
             }
             if (mesh.mTangents != nullptr && mesh.mBitangents != nullptr) {
-                const core::Vec3 tangent = toVec3(mesh.mTangents[index]);
-                const core::Vec3 bitangent = toVec3(mesh.mBitangents[index]);
+                const core::Vec3 tangent =
+                    toVec3(skinned ? moved(mesh.mTangents[index], direction) : mesh.mTangents[index]);
+                const core::Vec3 bitangent =
+                    toVec3(skinned ? moved(mesh.mBitangents[index], direction) : mesh.mBitangents[index]);
                 vertex.tangent[0] = tangent.x;
                 vertex.tangent[1] = tangent.y;
                 vertex.tangent[2] = tangent.z;
@@ -223,6 +619,8 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
                 vertex.uv[1] = mesh.mTextureCoords[0][index].y;
             }
             out.mesh.vertices.push_back(vertex);
+            if (skinned)
+                out.skin.push_back(influences[index]);
 
             core::expand(submeshBounds, vertex.position);
         }
@@ -245,6 +643,8 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
             // Nothing drawable came out, so the vertices are dead weight. Rolled
             // back rather than left in the buffer.
             out.mesh.vertices.resize(vertexBase);
+            if (skinned)
+                out.skin.resize(vertexBase);
             continue;
         }
         submesh.bounds = submeshBounds;
@@ -257,6 +657,8 @@ std::optional<core::EngineError> importExotic(std::span<const std::byte> bytes, 
         return core::makeError(ENG_TR("assetc.err.exotic_no_geometry"));
     }
     out.mesh.bounds = bounds;
+    if (skinned)
+        readClips(*scene, skeleton, out);
 
     // Images are NOT imported. An FBX may embed textures and an OBJ names them
     // in an MTL beside it, and following either is a second resolution path

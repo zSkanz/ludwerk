@@ -12,6 +12,9 @@ walk.Looped = true
 walk:Play(0.2)                 -- fade the weight in over 0.2 s
 ```
 
+The clips come from the mesh's file: a glTF's animations, or an FBX's or a
+Collada file's takes ([Meshes and models](manual:world/meshes)).
+
 **Parent it to the `MeshPart` whose skeleton the clips belong to.** That is
 where it looks for them, and an `AnimationPlayer` parented anywhere else finds
 nothing rather than guessing.

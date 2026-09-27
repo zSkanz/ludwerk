@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -339,6 +340,159 @@ TEST_CASE("an OBJ is imported into the same shape a glTF is")
 #endif
 
     std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("a skinned file brings its skeleton and its clips, in metres")
+{
+    // Collada rather than FBX because it is text a test can write, and assimp
+    // hands both to this importer as the same bones, offsets and node channels.
+    // The armature is scaled by two -- what an FBX's centimetre conversion
+    // looks like -- which a joint's rigid rest pose cannot carry, so the
+    // importer has to fold it.
+    const std::string dae = R"(<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><unit name="meter" meter="1"/><up_axis>Y_UP</up_axis></asset>
+  <library_geometries>
+    <geometry id="bar-mesh" name="bar"><mesh>
+      <source id="bar-positions">
+        <float_array id="bar-positions-array" count="12">0 0 0 1 0 0 1 2 0 0 2 0</float_array>
+        <technique_common><accessor source="#bar-positions-array" count="4" stride="3">
+          <param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/>
+        </accessor></technique_common>
+      </source>
+      <vertices id="bar-vertices"><input semantic="POSITION" source="#bar-positions"/></vertices>
+      <triangles count="2"><input semantic="VERTEX" source="#bar-vertices" offset="0"/><p>0 1 2 0 2 3</p></triangles>
+    </mesh></geometry>
+  </library_geometries>
+  <library_controllers>
+    <controller id="bar-skin"><skin source="#bar-mesh">
+      <bind_shape_matrix>1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</bind_shape_matrix>
+      <source id="bar-joints">
+        <Name_array id="bar-joints-array" count="2">Lower Upper</Name_array>
+        <technique_common><accessor source="#bar-joints-array" count="2" stride="1">
+          <param name="JOINT" type="name"/></accessor></technique_common>
+      </source>
+      <source id="bar-binds">
+        <float_array id="bar-binds-array" count="32">0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 1 0.5 0 0 0 0 0.5 0 -1 0 0 0.5 0 0 0 0 1</float_array>
+        <technique_common><accessor source="#bar-binds-array" count="2" stride="16">
+          <param name="TRANSFORM" type="float4x4"/></accessor></technique_common>
+      </source>
+      <source id="bar-weights">
+        <float_array id="bar-weights-array" count="1">1</float_array>
+        <technique_common><accessor source="#bar-weights-array" count="1" stride="1">
+          <param name="WEIGHT" type="float"/></accessor></technique_common>
+      </source>
+      <joints><input semantic="JOINT" source="#bar-joints"/><input semantic="INV_BIND_MATRIX" source="#bar-binds"/></joints>
+      <vertex_weights count="4">
+        <input semantic="JOINT" source="#bar-joints" offset="0"/><input semantic="WEIGHT" source="#bar-weights" offset="1"/>
+        <vcount>1 1 1 1</vcount><v>0 0 0 0 1 0 1 0</v>
+      </vertex_weights>
+    </skin></controller>
+  </library_controllers>
+  <library_animations>
+    <animation id="bend">
+      <source id="bend-input"><float_array id="bend-input-array" count="2">0 2</float_array>
+        <technique_common><accessor source="#bend-input-array" count="2" stride="1">
+          <param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="bend-output"><float_array id="bend-output-array" count="32">1 0 0 0 0 1 0 1 0 0 1 0 0 0 0 1 0 -1 0 0 1 0 0 1 0 0 1 0 0 0 0 1</float_array>
+        <technique_common><accessor source="#bend-output-array" count="2" stride="16">
+          <param name="TRANSFORM" type="float4x4"/></accessor></technique_common></source>
+      <source id="bend-interp"><Name_array id="bend-interp-array" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#bend-interp-array" count="2" stride="1">
+          <param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="bend-sampler"><input semantic="INPUT" source="#bend-input"/>
+        <input semantic="OUTPUT" source="#bend-output"/><input semantic="INTERPOLATION" source="#bend-interp"/></sampler>
+      <channel source="#bend-sampler" target="Upper/transform"/>
+    </animation>
+  </library_animations>
+  <library_visual_scenes>
+    <visual_scene id="scene">
+      <node id="Armature" name="Armature" type="NODE">
+        <matrix sid="transform">2 0 0 0 0 2 0 0 0 0 2 0 0 0 0 1</matrix>
+        <node id="Lower" name="Lower" sid="Lower" type="JOINT">
+          <matrix sid="transform">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</matrix>
+          <node id="Upper" name="Upper" sid="Upper" type="JOINT">
+            <matrix sid="transform">1 0 0 0 0 1 0 1 0 0 1 0 0 0 0 1</matrix>
+          </node>
+        </node>
+      </node>
+      <node id="Bar" name="Bar" type="NODE">
+        <instance_controller url="#bar-skin"><skeleton>#Lower</skeleton></instance_controller>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#scene"/></scene>
+</COLLADA>
+)";
+    const auto* const data = reinterpret_cast<const std::byte*>(dae.data());
+    engine::asset::Model model;
+    const auto error = engine::assetc::importExotic(std::span<const std::byte>(data, dae.size()), {}, ".dae", model);
+
+#if ENG_ASSETC_ASSIMP
+    if (error.has_value()) {
+        FAIL(error->message);
+    }
+    REQUIRE(model.skinned());
+
+    // Two joints, parents first; the armature above them is folded, not a
+    // joint, because it would spend a palette slot animating nothing.
+    REQUIRE(model.joints.size() == 2);
+    CHECK(model.joints[0].name == "Lower");
+    CHECK(model.joints[1].name == "Upper");
+    CHECK(model.joints[0].parent == engine::asset::Joint::NoParent);
+    CHECK(model.joints[1].parent == 0u);
+    // The armature's scale is in the translation: one unit in the file is two
+    // in the world the vertices are in.
+    CHECK(model.joints[1].localBind.position.y == doctest::Approx(2.0));
+
+    // At rest, the pose the renderer builds (render/animation.cpp: rigid
+    // parent * local, then the inverse bind) leaves every vertex where it is.
+    std::vector<engine::core::Mat4> global(model.joints.size());
+    for (std::size_t joint = 0; joint < model.joints.size(); ++joint) {
+        const engine::core::Mat4 local = engine::core::toRenderMatrix(model.joints[joint].localBind, {});
+        const engine::core::u32 parent = model.joints[joint].parent;
+        global[joint] = parent == engine::asset::Joint::NoParent ? local : global[parent] * local;
+    }
+    REQUIRE(model.skin.size() == model.mesh.vertices.size());
+    for (std::size_t index = 0; index < model.mesh.vertices.size(); ++index) {
+        const engine::asset::SkinVertex& skin = model.skin[index];
+        CHECK(static_cast<double>(skin.weights[0]) == doctest::Approx(1.0));
+        const auto joint = static_cast<std::size_t>(skin.joints[0] + 0.5f);
+        REQUIRE(joint < global.size());
+        const engine::core::Vec3 rest = model.mesh.vertices[index].position;
+        const engine::core::Vec3 posed =
+            engine::core::transformPoint(global[joint] * model.joints[joint].inverseBind, rest);
+        CHECK(static_cast<double>(posed.x) == doctest::Approx(static_cast<double>(rest.x)).epsilon(1e-4));
+        CHECK(static_cast<double>(posed.y) == doctest::Approx(static_cast<double>(rest.y)).epsilon(1e-4));
+        // The top two corners follow the upper bone.
+        CHECK(joint == (rest.y > 1.0f ? 1u : 0u));
+    }
+
+    // The clip: two seconds, the upper bone turning a quarter about Z, and its
+    // translation keys scaled the way its rest was.
+    REQUIRE(model.clips.size() == 1);
+    CHECK(static_cast<double>(model.clips[0].duration) == doctest::Approx(2.0));
+    bool turned = false;
+    bool moved = false;
+    for (const engine::asset::AnimationChannel& channel : model.clips[0].channels) {
+        CHECK(channel.joint == 1u);
+        REQUIRE(channel.values.size() == channel.times.size() * channel.stride);
+        const std::size_t last = channel.values.size() - channel.stride;
+        if (channel.target == engine::asset::AnimationChannel::Target::Rotation) {
+            CHECK(std::abs(static_cast<double>(channel.values[last + 2])) == doctest::Approx(0.7071).epsilon(1e-3));
+            CHECK(std::abs(static_cast<double>(channel.values[last + 3])) == doctest::Approx(0.7071).epsilon(1e-3));
+            turned = true;
+        }
+        if (channel.target == engine::asset::AnimationChannel::Target::Translation) {
+            CHECK(static_cast<double>(channel.values[last + 1]) == doctest::Approx(2.0));
+            moved = true;
+        }
+    }
+    CHECK(turned);
+    CHECK(moved);
+#else
+    REQUIRE(error.has_value());
+#endif
 }
 
 TEST_CASE("a file that is not the format its name claims is refused by name")

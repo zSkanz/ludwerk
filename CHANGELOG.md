@@ -55,6 +55,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **An FBX or Collada file with bones brings its skeleton, skin and takes**,
+  where it used to import as a static mesh. An `AnimationPlayer` under the
+  `MeshPart` plays a take by the name after its `|`. The armature's scale (the
+  centimetre conversion) is folded into the bones, the nodes above the
+  skeleton cost no palette slots, and a rig past sixty-four bones keeps the
+  ones that move a vertex. Projects recompile their meshes on the next open.
 - **`SaveService`: a game keeps what outlives a run** (ADR 0111, the
   game-ready plan's A2). `GetSlotAsync(name)` hands back a `SaveSlot` --
   `Get`, `Set`, `Update`, `Remove`, `GetKeys`, `SaveAsync`, `Changed`,

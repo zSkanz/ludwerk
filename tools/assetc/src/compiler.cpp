@@ -105,7 +105,10 @@ using asset::AssetKind;
 //
 // 3: that answer comes from the project's MATERIAL FILES (ADR 0090) rather
 // than from `Material` instances in its scenes, which no longer exist.
-constexpr core::u32 kCompilerRules = 3;
+//
+// 4: an FBX, Collada or other assimp file with bones brings its skeleton, its
+// skin and its clips, and its vertices move into the file's world.
+constexpr core::u32 kCompilerRules = 4;
 
 // What one source compiled to, remembered between runs.
 //

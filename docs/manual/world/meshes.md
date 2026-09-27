@@ -43,6 +43,20 @@ glTF (`.gltf`, `.glb`) is the canonical format. The offline importer also reads
 `.fbx`, `.obj`, `.dae`, `.ply` and `.stl` and converts them — see
 [The asset pipeline](manual:assets/pipeline).
 
+**An FBX or Collada file with bones keeps them.** Its skeleton, its skin and
+its takes come through as they do from a glTF, so an `AnimationPlayer` under
+the `MeshPart` plays them by name — a take Blender calls `Armature|Run` is
+`"Run"` ([Skeletal animation](manual:animation/skeletal)). Two things change on
+the way in:
+
+- The model is placed where the file's scene puts it, not at its mesh's own
+  origin, because that is the space its bones agree on. `Size` still fits it.
+- A scale on the armature — the centimetre conversion most exporters write — is
+  folded into the bones, so the clip plays at the size the model is drawn.
+
+A rig of more than sixty-four bones keeps only the bones that move a vertex;
+past that, the joints beyond the sixty-fourth stay in their rest pose.
+
 ## Size against the mesh
 
 `Size` is still the full extent in metres, and the mesh is fitted to it. A mesh
