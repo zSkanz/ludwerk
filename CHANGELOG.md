@@ -353,6 +353,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **An attribute holding a `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` or
+  `Rect` survives saving the scene.** Written untyped, a colour came back as a
+  vector and the other five did not come back; the file now says the type for
+  these, and reads the old spelling as before.
 - **Stamps** (an audit of the whole feature): two children of one name no
   longer swap their overrides; a child renamed in one instance keeps its name
   and its edits; attributes, tags and a part's shader parameters on a linked

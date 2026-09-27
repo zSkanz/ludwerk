@@ -149,6 +149,43 @@ TEST_CASE("attributes and tags survive")
     CHECK(reloaded.world.hasTag(child, reloaded.atom("Breakable")));
 }
 
+TEST_CASE("an attribute of every kind comes back as that kind")
+{
+    // A Color3 and a Vector3 are both three numbers: written untyped, a colour
+    // came back as a vector, and a CFrame, a Vector2, a UDim, a UDim2 or a Rect
+    // did not come back at all.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId part = partUnder(fixture, workspace, "Kinds", {});
+    core::CFrameD frame;
+    frame.position = core::DVec3{1.0, 2.0, 3.0};
+    const std::pair<const char*, scene::Value> kinds[] = {
+        {"Colour", scene::Value{core::Color3{0.25f, 0.5f, 0.75f}}},
+        {"Frame", scene::Value{frame}},
+        {"Plane", scene::Value{core::Vec2{4.0f, 5.0f}}},
+        {"Offset", scene::Value{core::UDim{0.5f, 8.0f}}},
+        {"Box", scene::Value{core::UDim2{core::UDim{0.1f, 1.0f}, core::UDim{0.2f, 2.0f}}}},
+        {"Area", scene::Value{core::Rect{core::Vec2{1.0f, 2.0f}, core::Vec2{3.0f, 4.0f}}}},
+        {"Point", scene::Value{core::Vec3{7.0f, 8.0f, 9.0f}}},
+    };
+    for (const auto& [name, value] : kinds)
+        REQUIRE(fixture.world.setAttribute(part, fixture.atom(name), value));
+
+    const std::string text = scene::writeScene(fixture.world);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    SceneIoReport read;
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text, &read).has_value());
+    CHECK(read.refusedProperties == 0);
+    const core::InstanceId child = reloaded.world.firstChild(target);
+    REQUIRE(child.valid());
+    for (const auto& [name, value] : kinds) {
+        INFO(name);
+        CHECK(reloaded.world.getAttribute(child, reloaded.atom(name)) == value);
+    }
+}
+
 TEST_CASE("a sequence attribute survives, every stop of it (ADR 0110)")
 {
     Fixture fixture;

@@ -734,7 +734,28 @@ void writeAttributes(JsonWriter& out, const World& world, core::InstanceId id,
     // -- the same property the world hash relies on.
     for (const auto& entry : attributes) {
         out.key(world.atoms().text(entry.first));
-        writeValue(out, world, entry.second, paths, report);
+        // **An attribute has no declared type, so the file says it** for every
+        // kind whose numbers alone are ambiguous: a `Color3` and a `Vector3` are
+        // both three numbers, and a `CFrame`, a `UDim2` and a `Rect` were not
+        // read back at all. A number, a string, a boolean, a vector and a
+        // sequence keep the spelling they always had.
+        switch (valueType(entry.second)) {
+        case ValueType::CFrame:
+        case ValueType::Color3:
+        case ValueType::Vector2:
+        case ValueType::UDim:
+        case ValueType::UDim2:
+        case ValueType::Rect:
+            out.beginObject();
+            out.field("$", std::string_view(valueTypeName(valueType(entry.second))));
+            out.key("v");
+            writeValue(out, world, entry.second, paths, report);
+            out.endObject();
+            break;
+        default:
+            writeValue(out, world, entry.second, paths, report);
+            break;
+        }
     }
     out.endObject();
 }
@@ -1471,8 +1492,20 @@ void applyCarried(World& world, core::InstanceId id, const JsonValue& json, Scen
                                              static_cast<core::f32>(entry.at(2).asNumber())}};
                 break;
             case core::JsonType::Object:
-                // The one object an attribute can be: a sequence (ADR 0110).
-                value = readSequence(entry);
+                // A typed value (`writeAttributes`), or a sequence (ADR 0110).
+                if (const std::string_view tag = entry["$"].asString(); !tag.empty()) {
+                    for (const ValueType candidate : {ValueType::CFrame, ValueType::Color3, ValueType::Vector2,
+                                                      ValueType::UDim, ValueType::UDim2, ValueType::Rect}) {
+                        if (tag == valueTypeName(candidate)) {
+                            std::vector<PendingReference> none;
+                            value = readValue(candidate, entry["v"], none, id, world.atoms().intern(name), true);
+                            break;
+                        }
+                    }
+                }
+                else {
+                    value = readSequence(entry);
+                }
                 break;
             default:
                 break;
