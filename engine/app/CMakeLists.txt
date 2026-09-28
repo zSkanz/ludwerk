@@ -19,6 +19,7 @@ engine_add_module(app
         src/reload.cpp
         src/replay.cpp
         src/script_package.cpp
+        src/script_files.cpp
         src/two_worlds.cpp
         src/bench.cpp
         src/screenshot.cpp
@@ -292,6 +293,7 @@ engine_add_module_tests(app
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp
         tests/world_host_tests.cpp
+        tests/script_files_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp

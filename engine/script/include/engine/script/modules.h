@@ -18,6 +18,7 @@
 // and a cycle is a keyed error rather than a crash.
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -190,6 +191,21 @@ public:
 // it. What `Ctrl+S` in the script editor asks, and the only question a second
 // copy of the source could not have answered.
 [[nodiscard]] std::string_view mountedPathOf(lua_State* L, core::InstanceId instance);
+
+// **The mount table, for the editor that keeps `src/` in step with the tree**
+// (ADR 0105), read with `mountedEntries` below. Records that `instance` is the script `path` holds -- a pasted script
+// whose file was just written, or a moved one whose file moved -- replacing whatever the table said about either.
+void setMountedPath(lua_State* L, core::InstanceId instance, std::string path);
+// Forgets the file at `path`: its script left the file tree.
+void forgetMountedPath(lua_State* L, std::string_view path);
+
+// **What a script file's name says it is**: `Tool.module.luau` is a
+// `ModuleScript` wherever it is, `Boot.script.luau` a `Script` wherever it is,
+// and a plain `.luau` whatever its folder makes it. The instance is named
+// without either suffix. `.luauc` is the packaged form of each.
+[[nodiscard]] std::string_view scriptNameOfFile(std::string_view fileName) noexcept;
+// True or false when the name decides the class, nothing when the folder does.
+[[nodiscard]] std::optional<bool> moduleByFileName(std::string_view fileName) noexcept;
 
 // What a script that did not come from a file is called: its place in the tree.
 // `Workspace.Rig.Walk` reads the way somebody would say it out loud, and it is

@@ -213,6 +213,13 @@ readScene(World& world, std::string_view json, SceneIoReport* report = nullptr, 
 [[nodiscard]] std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport* report = nullptr,
                                      StampLibrary* stamps = nullptr);
 
+// **The same, for a copy that leaves the tree**: the clipboard, a stamp made
+// from a selection. What the `src/` mount made is written in full -- class,
+// code, everything -- where `writeStamp` writes a mark that only a reopen of
+// the same project could resolve. Read back with `readStamp`, it is ordinary
+// instances; saved under a script service, they become files of their own.
+[[nodiscard]] std::string writeCopy(const World& world, core::InstanceId root, SceneIoReport* report = nullptr);
+
 // **What a stamp name means, as a path under `content/`**: `\` as `/`, a
 // typed `content/` dropped, a bare name in `stamps/`, a whole file name at the
 // root, and `.stamp.json` put on when it is not there. One rule for the editor

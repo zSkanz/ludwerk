@@ -1589,9 +1589,6 @@ public:
         // `refused` because it is a fact about the TARGET, and a drag of four
         // things onto it fails for one reason rather than four.
         bool targetRefuses = false;
-        // Something turned away was made from a file under `src/scripts`,
-        // which says "move the file" rather than "cannot go there".
-        bool mountedRefused = false;
     };
     [[nodiscard]] static ReparentPlan planReparent(const scene::World& world, std::span<const core::InstanceId> ids,
                                                    core::InstanceId newParent, core::InstanceId root);
@@ -2171,6 +2168,13 @@ public:
     using TerrainSaver =
         std::function<bool(scene::World& world, const std::filesystem::path& scenePath, std::string& note)>;
     void setTerrainSaver(TerrainSaver saver) { m_terrainSaver = std::move(saver); }
+    // **Run at the start of every save too, after the terrain's**: the files in
+    // `src/` made to match the script services (`script_files.h`), so a script
+    // pasted, dragged or renamed there is saved as the file the next open
+    // mounts, and nothing under a script service is written into the scene as
+    // well. Returns a note for the status line, empty for none.
+    using ScriptFileSaver = std::function<std::string(scene::World& world, const std::filesystem::path& scenePath)>;
+    void setScriptFileSaver(ScriptFileSaver saver) { m_scriptFileSaver = std::move(saver); }
     // How many stamps the last finished stroke laid down. Zero before the first
     // one. For the status line, and for the test that a drag cut into forty
     // frames edits the ground the same number of times as the same drag cut
@@ -2786,6 +2790,7 @@ private:
     bool m_terrainPanelShown = true;
     core::u64 m_worldRestores = 0;
     TerrainSaver m_terrainSaver;
+    ScriptFileSaver m_scriptFileSaver;
     bool m_brushPlaneLock = true;
     std::filesystem::path m_heightmapSource;
     core::u32 m_lastStrokeStamps = 0;

@@ -140,12 +140,41 @@ constexpr std::array<std::string_view, 3> FirstServices{"ReplicatedStorage", "Se
 // writing it would put a second copy beside the one the mount makes at the
 // next open. A mounted node that DOES hold something authored is written as a
 // mark instead (see `writeInstance`).
+// **What a script from a file carries that its file does not**: being off
+// (`Enabled`), attributes and tags. The file is its source and nothing more, so
+// these ride on the node's mark -- or a script disabled, tagged or pasted in
+// with attributes would come back without them at the next open.
+[[nodiscard]] bool disabledScript(const World& world, core::InstanceId id) noexcept
+{
+    const ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
+    if (descriptor == nullptr || world.atoms().text(descriptor->name) != "Script")
+        return false;
+    const std::optional<Value> enabled = world.getProperty(id, world.atoms().lookup("Enabled"));
+    const bool* on = enabled.has_value() ? std::get_if<bool>(&*enabled) : nullptr;
+    return on != nullptr && !*on;
+}
+
+[[nodiscard]] bool carriesOwn(const World& world, core::InstanceId id) noexcept
+{
+    if (disabledScript(world, id))
+        return true;
+    AttributeMap attributes;
+    world.collectAttributes(id, attributes);
+    if (!attributes.empty())
+        return true;
+    TagSet tags;
+    world.collectTags(id, tags);
+    return !tags.empty();
+}
+
 [[nodiscard]] bool mountedScriptTree(const World& world, core::InstanceId id) noexcept
 {
     // `GlobalScriptService`'s fixed folders are the engine's node in the same
     // sense (ADR 0105): made at boot, found again by name, and written only as
     // the mark that holds what somebody put inside.
     if (!world.mounted(id) && !world.fixed(id))
+        return false;
+    if (world.mounted(id) && carriesOwn(world, id))
         return false;
     for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
         if (!mountedScriptTree(world, child))
@@ -158,13 +187,20 @@ constexpr std::array<std::string_view, 3> FirstServices{"ReplicatedStorage", "Se
 // it**: a streamed chunk (and the whole subtree with it), or a `Player`, which
 // the engine makes for somebody taking part and nothing can author, or
 // what the `src/` mount made.
+// **Whether what the mount made is written in full**: a scene leaves it to the
+// files and writes marks, but a COPY -- the clipboard, a stamp made from a
+// selection -- is going somewhere the files are not, and a mark there finds
+// nothing: a pasted script came back as an empty folder of its name, its code
+// gone. Set for the length of one `writeCopy`.
+thread_local bool t_mountedInFull = false;
+
 [[nodiscard]] bool engineMade(const World& world, core::InstanceId id) noexcept
 {
     if (world.generated(id))
         return true;
     if (classNameOf(world, id) == "Player")
         return true;
-    return mountedScriptTree(world, id);
+    return !t_mountedInFull && mountedScriptTree(world, id);
 }
 
 // Whether a storage holds anything a scene would write.
@@ -953,8 +989,18 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
     // source, and what is written is only what somebody put inside it -- a
     // `Loader` script's modules, say. `readInstance` finds the mount's node by
     // the mark and puts them back under it.
-    if (world.mounted(id) || world.fixed(id)) {
+    if ((world.mounted(id) && !t_mountedInFull) || world.fixed(id)) {
         out.field("mounted", true);
+        if (world.mounted(id)) {
+            if (disabledScript(world, id)) {
+                out.key("properties");
+                out.beginObject();
+                out.field("Enabled", false);
+                out.endObject();
+                ++report.properties;
+            }
+            writeCarried(out, world, id, paths, report);
+        }
         out.key("children");
         out.beginArray();
         for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
@@ -1801,6 +1847,19 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
             (void)world.setParent(node, parent);
             ++report.orphanedMounts;
         }
+        // What the file does not hold: `Enabled` on the script itself, and
+        // attributes and tags on whatever the node became.
+        if (world.classOf(node) == markedClass) {
+            if (const JsonValue properties = json["properties"]; properties.type() == core::JsonType::Object) {
+                if (const JsonValue enabled = properties["Enabled"]; enabled.type() == core::JsonType::Boolean) {
+                    const World::SetResult set =
+                        world.setProperty(node, world.atoms().intern("Enabled"), Value{enabled.asBool()});
+                    if (set == World::SetResult::Changed || set == World::SetResult::Unchanged)
+                        ++report.properties;
+                }
+            }
+        }
+        applyCarried(world, node, json, report, false);
         if (const JsonValue children = json["children"]; children.type() == core::JsonType::Array) {
             for (core::usize index = 0; index < children.size(); ++index)
                 readInstance(world, node, children.at(index), pending, report, stamps, depth);
@@ -2506,6 +2565,18 @@ std::string writeStamp(const World& world, core::InstanceId root, SceneIoReport*
 
     writer.endObject();
     return writer.text();
+}
+
+std::string writeCopy(const World& world, core::InstanceId root, SceneIoReport* report)
+{
+    struct Full
+    {
+        Full() { t_mountedInFull = true; }
+        ~Full() { t_mountedInFull = false; }
+        Full(const Full&) = delete;
+        Full& operator=(const Full&) = delete;
+    } full;
+    return writeStamp(world, root, report, nullptr);
 }
 
 std::string normalizeStampPath(std::string_view typed)

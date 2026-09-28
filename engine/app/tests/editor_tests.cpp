@@ -1050,13 +1050,14 @@ TEST_CASE("a script lives in any instance, and one made from a file stays where 
     CHECK(editor.reparent(world, modules, script, root, inspector));
     CHECK(world.parentOf(module) == script);
 
-    // And one made from a file does not leave: the file would mount it again.
+    // And one made from a file moves too: its file follows at the save
+    // (`script_files.h`), and a refused drag is what sent people to copy and
+    // paste instead.
     const std::array<core::InstanceId, 1> fromFile{patrol};
     const Editor::ReparentPlan out = Editor::planReparent(world, fromFile, workspace, root);
-    CHECK(out.movable.empty());
-    CHECK(out.mountedRefused);
-    CHECK_FALSE(editor.reparent(world, fromFile, workspace, root, inspector));
-    CHECK(world.parentOf(patrol) == enemy);
+    CHECK(out.movable.size() == 1);
+    CHECK(editor.reparent(world, fromFile, workspace, root, inspector));
+    CHECK(world.parentOf(patrol) == workspace);
 }
 
 TEST_CASE("a drop at a place under another parent moves and places in one undo step")

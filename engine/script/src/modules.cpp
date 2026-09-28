@@ -406,12 +406,6 @@ int scriptRequire(lua_State* L)
     return segments;
 }
 
-[[nodiscard]] std::string_view withoutExtension(std::string_view name)
-{
-    const usize dot = name.rfind('.');
-    return dot == std::string_view::npos ? name : name.substr(0, dot);
-}
-
 // The C function `startScripts` defers last. It runs after every entry script's
 // first resumption, which is what lets a `game.Loaded:Connect` written at file
 // scope be in the connection list the fire captures.
@@ -512,8 +506,11 @@ std::vector<core::InstanceId> mountScripts(lua_State* L, std::span<const Mounted
             parent = folder;
         }
 
-        const core::InstanceId instance = w.create(entry.module ? moduleClass : scriptClass);
-        w.setName(instance, w.atoms().intern(withoutExtension(segments.back())));
+        // The file's name can decide the class (`.module.luau`), over the
+        // folder's default.
+        const bool module = moduleByFileName(segments.back()).value_or(entry.module);
+        const core::InstanceId instance = w.create(module ? moduleClass : scriptClass);
+        w.setName(instance, w.atoms().intern(scriptNameOfFile(segments.back())));
         (void)w.setParent(instance, parent);
         w.setMounted(instance, true);
         // **The file's text becomes the instance's `Source`** (ADR 0057), which
@@ -546,6 +543,56 @@ std::string treePathOf(const scene::World& w, core::InstanceId id)
         out.append(parts[index - 1]);
     }
     return out;
+}
+
+void setMountedPath(lua_State* L, core::InstanceId instance, std::string path)
+{
+    std::vector<ModuleRegistry::Entry>& entries = registry(L).entries;
+    std::erase_if(entries,
+                  [&](const ModuleRegistry::Entry& entry) { return entry.instance == instance || entry.path == path; });
+    // Kept in path order, as the mount made it, so a start order read off
+    // the table is the one opening the project would give (R10).
+    const auto at = std::lower_bound(
+        entries.begin(), entries.end(), path,
+        [](const ModuleRegistry::Entry& entry, const std::string& wanted) { return entry.path < wanted; });
+    entries.insert(at, ModuleRegistry::Entry{std::move(path), instance});
+}
+
+void forgetMountedPath(lua_State* L, std::string_view path)
+{
+    std::erase_if(registry(L).entries, [&](const ModuleRegistry::Entry& entry) { return entry.path == path; });
+}
+
+std::string_view scriptNameOfFile(std::string_view fileName) noexcept
+{
+    for (const std::string_view suffix : {std::string_view{".luauc"}, std::string_view{".luau"}}) {
+        if (fileName.size() > suffix.size() && fileName.ends_with(suffix)) {
+            fileName.remove_suffix(suffix.size());
+            break;
+        }
+    }
+    for (const std::string_view kind : {std::string_view{".module"}, std::string_view{".script"}}) {
+        if (fileName.size() > kind.size() && fileName.ends_with(kind)) {
+            fileName.remove_suffix(kind.size());
+            break;
+        }
+    }
+    return fileName;
+}
+
+std::optional<bool> moduleByFileName(std::string_view fileName) noexcept
+{
+    for (const std::string_view suffix : {std::string_view{".luauc"}, std::string_view{".luau"}}) {
+        if (fileName.size() > suffix.size() && fileName.ends_with(suffix)) {
+            fileName.remove_suffix(suffix.size());
+            break;
+        }
+    }
+    if (fileName.ends_with(".module"))
+        return true;
+    if (fileName.ends_with(".script"))
+        return false;
+    return std::nullopt;
 }
 
 std::string_view mountedPathOf(lua_State* L, core::InstanceId instance)

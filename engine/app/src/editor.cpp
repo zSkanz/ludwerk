@@ -207,6 +207,9 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
         m_status = EditorStatus{"could not write the terrain's cells: " + terrainNote, true};
         return false;
     }
+    // The scripts' files next, for the reason the cells come first: the scene
+    // leaves out whatever a file holds, so the files have to be there.
+    const std::string scriptNote = m_scriptFileSaver ? m_scriptFileSaver(world, path) : std::string{};
 
     scene::SceneIoReport report;
     // **The stamps this scene names, read once each**, so a stamped instance
@@ -255,6 +258,8 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     std::string message = "saved " + std::to_string(report.instances) + " instance(s) to " + path.string();
     if (!terrainNote.empty())
         message += " -- " + terrainNote;
+    if (!scriptNote.empty())
+        message += " -- " + scriptNote;
     // Counted rather than swallowed. A reference that pointed outside the scene
     // is a thing the person authored and the file cannot hold, and finding that
     // out when you reopen is finding it out too late.
@@ -1092,7 +1097,8 @@ bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::I
                 const std::string_view folder = world.atoms().text(world.name(walk));
                 container = "GlobalScriptService/" + std::string(folder);
                 folderRoot = folder == "Server" ? "src/server" : folder == "Shared" ? "src/shared" : "src/client";
-                module = module || folder == "Shared";
+                // The class made is the class kept: a `Script` in `Shared` is
+                // written as `.script.luau` rather than turned into a module.
                 break;
             }
             if (!isClass(world, walk, "Folder"))
@@ -1209,14 +1215,10 @@ Editor::ReparentPlan Editor::planReparent(const scene::World& world, std::span<c
             ++plan.refused;
             continue;
         }
-        // **A script made from a file is where its file says.** Moving it would
-        // leave the file to mount it again at the next open -- two copies, both
-        // running.
-        if (fileBacked(world, id)) {
-            ++plan.refused;
-            plan.mountedRefused = true;
-            continue;
-        }
+        // **A script made from a file moves, and its file follows at the save**
+        // (`script_files.h`): refusing the drag is what sent people to copy
+        // and paste instead, and a pasted copy beside a file that still
+        // mounted was two scripts at the next open.
         // A cycle: onto itself, or into its own subtree. `World::setParent`
         // refuses both and this asks the SAME function rather than carrying a
         // second copy of the rule.
@@ -1297,7 +1299,7 @@ void Editor::copySelection(const scene::World& world, std::span<const core::Inst
         }
         if (insideAnother)
             continue;
-        m_clipboard.push_back(scene::writeStamp(world, id));
+        m_clipboard.push_back(scene::writeCopy(world, id));
         // **The stamp marks in it, by where they are** (B11): the text holds
         // every stamped instance in full, and a paste that dropped their marks
         // made unlinked copies the next change to the stamp left behind.
@@ -2456,7 +2458,9 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     }
 
     scene::SceneIoReport report;
-    const std::string text = scene::writeStamp(world, id, &report);
+    // In full: a stamp is a file of its own, and a script from `src/` in it is
+    // code the stamp has to carry.
+    const std::string text = scene::writeCopy(world, id, &report);
     if (!platform::writeTextFile(absolute, text)) {
         m_status = EditorStatus{"could not write that stamp", true};
         return false;
@@ -2710,10 +2714,6 @@ bool Editor::reparent(scene::World& world, std::span<const core::InstanceId> ids
     const ReparentPlan plan = planReparent(world, ids, newParent, root);
     if (plan.targetRefuses) {
         m_status = EditorStatus{"nothing authored can live in that -- the scene does not save what is put there", true};
-        return false;
-    }
-    if (plan.mountedRefused && plan.movable.empty()) {
-        m_status = EditorStatus{"that script is a file in src/scripts -- move the file to move it", true};
         return false;
     }
     if (plan.movable.empty()) {
@@ -3276,6 +3276,15 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
 
     if (m_openScene.empty() || !world.alive(script))
         return saveOpenScene(world) ? ScriptSave::Scene : ScriptSave::Failed;
+
+    // **Under a script service, a script is a file** (ADR 0105), written by the
+    // save that keeps `src/` in step with the tree -- one pasted or moved there
+    // has no place in the scene file to be patched into.
+    for (core::InstanceId walk = world.parentOf(script); walk.valid(); walk = world.parentOf(walk)) {
+        if (isClass(world, walk, "GlobalScriptService") || isClass(world, walk, "ServerScriptService") ||
+            isClass(world, walk, "ClientScriptService"))
+            return whole("its file is written with the scene");
+    }
 
     const core::NameAtom sourceKey = world.atoms().intern("Source");
     const std::optional<scene::Value> source = world.getProperty(script, sourceKey);

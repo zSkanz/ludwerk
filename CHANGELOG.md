@@ -398,6 +398,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Scripts copied, pasted or moved between the script services no longer lose
+  their code or come back twice** (reported by a tester: scripts dragged and
+  pasted between client and server would not save, and were doubled after
+  reopening). A copy of a script from `src/` held only a mark, so a paste
+  elsewhere became an empty folder of its name, and one beside it vanished into
+  the original; a drag was refused, which sent people to copy and paste. Now a
+  copy carries the whole script, a drag moves it, and every save makes `src/`
+  match the tree -- moving, renaming and writing files, taking the next free
+  name rather than writing over one, and moving a file a script gave up to
+  `.engine/trash/` instead of deleting it. A script's `Enabled`, attributes and
+  tags survive a reopen too; a `ModuleScript` outside `src/shared/` is written
+  as `Name.module.luau`.
 - **An attribute holding a `Color3`, `CFrame`, `Vector2`, `UDim`, `UDim2` or
   `Rect` survives saving the scene.** Written untyped, a colour came back as a
   vector and the other five did not come back; the file now says the type for

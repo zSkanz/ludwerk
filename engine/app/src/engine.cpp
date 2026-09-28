@@ -53,6 +53,7 @@
 #include "engine/app/reload.h"
 #include "engine/app/scene_definitions.h"
 #include "engine/app/screenshot.h"
+#include "engine/app/script_files.h"
 #include "engine/app/skeleton_overlay.h"
 #include "engine/app/soak.h"
 #include "engine/app/streaming_host.h"
@@ -1471,6 +1472,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         [&host, &terrainCells](scene::World& world, const std::filesystem::path& scenePath, std::string& note) {
             return terrainCells.save(world, host->workspace(), scenePath, note);
         });
+    // **And the scripts' files** (ADR 0105): what a paste, a drag or a rename
+    // did under a script service, written into `src/` -- only for the world
+    // being edited, never a play session's and never a stamp's.
+    editor.setScriptFileSaver([&host, &editor](scene::World& world, const std::filesystem::path& scenePath) {
+        if (&world != &host->world() || editor.inPlayMode())
+            return std::string{};
+        std::string scene = scenePath.filename().string();
+        if (constexpr std::string_view Suffix = ".scene.json"; scene.ends_with(Suffix))
+            scene.resize(scene.size() - Suffix.size());
+        return app::syncScriptFiles(*host, scene).summary();
+    });
 
     LiveCharacterReplay characterReplay(host);
     network.setReferenceProbe(held);
@@ -1930,9 +1942,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // A name the folder does not have yet: `Script`, then
                     // `Script2`, as the Explorer names siblings.
                     std::string stem = request->name.empty() ? std::string("Script") : request->name;
-                    std::filesystem::path file = directory / (stem + ".luau");
+                    // A class other than the folder's own says so in the name
+                    // (`Tool.module.luau`), or the next open would make it the
+                    // folder's.
+                    const bool folderModules = request->root == "src/shared";
+                    const std::string kind =
+                        request->module == folderModules ? "" : (request->module ? ".module" : ".script");
+                    std::filesystem::path file = directory / (stem + kind + ".luau");
                     for (int suffix = 2; std::filesystem::exists(file, ec) && suffix < 1000; ++suffix)
-                        file = directory / (stem + std::to_string(suffix) + ".luau");
+                        file = directory / (stem + std::to_string(suffix) + kind + ".luau");
                     const std::string relative =
                         std::filesystem::relative(file, host->projectRoot(), ec).generic_string();
                     if (!platform::writeTextFile(file, request->source)) {
@@ -2017,6 +2035,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     const std::string_view now = w.atoms().text(w.name(shown->instance));
                     if (shown->title != now)
                         shown->title = std::string(now);
+                    // **And which file it is NOW**: a save that moved it, or
+                    // wrote a pasted one's file for the first time (ADR 0105),
+                    // changed the answer, and `Ctrl+S` writes where this says.
+                    if (shown->origin == ScriptOrigin::Scene) {
+                        const std::string_view file = script::mountedPathOf(host->runtime().state(), shown->instance);
+                        if (shown->file != file)
+                            shown->file = std::string(file);
+                    }
                 }
 
                 ScriptEditorCommands scriptCommands = overlay->takeScriptCommands();

@@ -117,15 +117,38 @@ A module in `src/shared/` is one module however it is reached:
 tree evaluate it once.
 
 **The file is that script's source, and the scene does not duplicate it.** A
-script mounted from a file is marked as mounted. The scene does not write it,
-and the editor does not move it, because the file decides where it is.
-Anything you put **inside** a mounted script in the editor is authored work,
-and it is saved and kept. If the file disappears later, those children are kept
-in a `Folder` of the same name rather than lost.
+script mounted from a file is marked as mounted, and the scene does not write
+it. What the file cannot hold rides with the scene instead: a script turned off
+(`Enabled`), its attributes and its tags. Anything you put **inside** a mounted
+script in the editor is authored work, and it is saved and kept. If the file
+disappears later, those children are kept in a `Folder` of the same name rather
+than lost.
 
-**A script you make in the editor inside one of the three services is written
-as a file** in the folder above, and opens in a tab: code is in `src/`, where a
-diff and a text editor find it. What you put under `GlobalScriptService` that is
+**Under the three services, a script is a file, whatever put it there.** Made,
+pasted, duplicated or dragged in from another service, renamed, or moved into
+another folder: when you save, `src/` is made to match the tree.
+
+- A script that moved has its file moved; one renamed, its file renamed; a
+  folder renamed, every file in it.
+- A script deleted, or moved out of the three services -- into `Workspace`,
+  say -- gives its file up, and a script moved out is saved in the scene.
+- **Nothing is deleted.** A file a script gives up is moved to
+  `.engine/trash/<date>-<time>/` with its path, where you can get it back.
+- **Nothing is written over.** If a file is already where a script wants to go,
+  and it is not that script's, the script takes the next free name (`Tool2`)
+  and is renamed in the tree to match.
+- A name a file system refuses (`What?Now`) is made one it takes (`What_Now`),
+  in the tree too.
+- A `ModuleScript` outside `src/shared/` is written as `Name.module.luau`, and a
+  `Script` inside it as `Name.script.luau`, so each opens again as what it was.
+  `require("./Name")` finds either.
+- **Until you save, the disk does not change**, so undo is always safe, and
+  closing without saving leaves `src/` as it was.
+- **Save As** gives the new scene copies of the scene's own scripts, in
+  `src/scenes/<new>/`; the old scene keeps its own.
+
+A script you make in the editor inside one of the three services opens in a
+tab: code is in `src/`, where a diff and a text editor find it. What you put under `GlobalScriptService` that is
 not code -- a `Folder` of values, an attribute -- is saved in
 `content/global.json`, because no scene owns it.
 

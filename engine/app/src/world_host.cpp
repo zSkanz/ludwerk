@@ -245,6 +245,15 @@ struct WorldHostLoader
             outPath = withExtension;
             return true;
         }
+        // A module outside `src/shared` says so in its name (`Tool.module.luau`)
+        // and is required as `Tool` all the same.
+        if (!normalised.ends_with(".luau")) {
+            const std::string asModule = normalised + ".module.luau";
+            if (present(asModule)) {
+                outPath = asModule;
+                return true;
+            }
+        }
 
         const std::string asDirectory = normalised + "/init.luau";
         if (present(asDirectory)) {
