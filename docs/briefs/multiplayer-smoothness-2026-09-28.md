@@ -150,3 +150,35 @@ defects are D242 to D246.
   needs the machine's owner.
 - **Note 2**: the second server exits with code 1 in this build; what was
   missing was a message a person would see (D246).
+
+## Stage 2 — predicted physics and an exact replay (ADR 0133)
+
+Found in the owner's second match (2026-09-28): pushing a crate puts the
+character inside it (the side-pass of D244), and jumping onto a block's corner
+rolls the character back repeatedly. The owner chose to do it as the large
+engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-touches-and-replays-it-exactly.md).
+
+- [ ] **Measure first:** a replica jumping onto a block's edge 100 times at
+  varied offsets over the jitter/loss transport; record corrections and their
+  size, and find which of the three suspects causes them (the jump's tick at
+  either end of the input buffer; `stepController`'s shorter path; state the
+  snapshot does not carry).
+- [ ] **The replay is the live step:** retire `stepController` for predicting
+  replicas; the snapshot carries every field the controller reads.
+- [ ] **Predicted set:** loose parts within `[network] predict_radius` (8 m) of
+  the own character plus what they touch, capped at `predict_max_bodies` (32),
+  entering at the authority's full motion state, leaving after
+  `predict_linger_ticks` (30) with a blend.
+- [ ] **Island correction:** on a failed comparison, restore character and
+  predicted bodies to the snapshot's tick and re-simulate to the present with
+  the ADR 0101 machinery, scoped to the island; predicted bodies sent in full
+  (protocol version rises).
+- [ ] Remove the side-pass (D244) for predicted parts; keep it for other
+  players' characters.
+- [ ] F3 Network panel and `GetStats()`: predicted bodies, re-simulations/s,
+  ticks re-simulated, re-simulation time.
+- [ ] **Tests:** pushing a crate for 10 s over jitter/loss — zero corrections
+  above 1 cm and no overlap; 100 corner jumps — zero corrections above 1 cm;
+  the authority's determinism traces unchanged.
+- [ ] Re-export the owner's test game and measure it windowed with a real key;
+  record the re-simulation cost in `docs/perf-baselines.md`.
