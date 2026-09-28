@@ -409,6 +409,27 @@ What this section used to hold, resolved, for whoever remembers it:
 
 ## Now
 
+**The audit of 2026-09-28 comes first**
+([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's
+priority, band by band. After it: F1b, `DragDetector`, and the game-ready
+plan where it stopped.
+
+- [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
+      and a second review of the network code, D218 to D232 (`c5cc5cf5`).
+      The band's close, 2026-09-28:
+      - the package was rebuilt;
+      - examples 10, 14, 26 and 28 each ran three times with
+        `--frame-stats`, all exit 0 with no errors. 14-voxels' worst frame
+        was 15 ms against the audit's 37, with no P0 change behind it;
+      - the exported `TesteMultiplayer` was exported again and driven with
+        real input: the IP typed, the join made, the walk taken, and the
+        reconnection after its server was killed and restarted.
+- [ ] **P1, failures and data loss**: S2 with S3, S6, S7, S10, A1 to A12,
+      A15, F6 to F9.
+- [ ] **P1, performance**: the frame statistics first (p95, the CPU and GPU
+      split, time per phase), then each fix measured before and after.
+- [ ] **P2.**
+
 **The owner's defect list of 2026-09-28**, ahead of the plan
 ([`owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
 
