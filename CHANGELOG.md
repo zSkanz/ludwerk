@@ -55,6 +55,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Wind** (ADR 0115, the game-ready plan's B5). `Workspace.GlobalWind`,
+  `WindGusts` and `WindTurbulence`, and `Workspace:GetWindAt(position)`: one
+  function of them and the simulation clock, the same in C++ and HLSL, so a
+  script reads the wind the picture shows. Visual only -- it pushes no body and
+  stays out of the world hash. Particles drift with it where
+  `ParticleEmitter.WindAffectsDrift` is on; surface shaders read
+  `SurfaceInputs.Wind` (contract 1.1; the block header is 64 bytes). The wind
+  replicates as `Workspace`'s properties (protocol 19). A still world, the
+  default, looks as it did.
 - **Rules paint a terrain by slope and height** (ADR 0113 §2, the game-ready
   plan's B2). `Terrain:GetRules()` / `SetRules()`: each rule draws a layer
   where the ground is between two slopes and two heights, over the layers it

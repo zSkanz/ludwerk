@@ -173,6 +173,12 @@ export type Property = {
     --- the ordinary hashed properties the branch wrote to. What is excluded is
     --- only the fact itself, which no operation produced.
     HostFact: boolean?,
+    --- **Moves only what is drawn** (ADR 0115): the wind is the case. Kept out
+    --- of the world hash like a host fact -- not because nothing produced it,
+    --- but because it changes nothing a trace records, and a world that never
+    --- sets it must hash as it did before it existed. A script that branches on
+    --- it still moves the world through what the branch writes.
+    Presentation: boolean?,
     Doc: string,
 }
 

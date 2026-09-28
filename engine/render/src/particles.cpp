@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "engine/render/render_world.h"
+#include "engine/scene/wind.h"
 #include "engine/scene/world.h"
 
 namespace engine::render {
@@ -108,6 +109,14 @@ void ParticleSystem::update(const scene::World& world, core::InstanceId root, f6
     for (Emitter& emitter : m_emitters)
         emitter.seen = false;
 
+    // The world's wind, and the clock it blows on: the simulation's, as
+    // `Workspace:GetWindAt` reads it.
+    scene::WindSettings wind;
+    if (const scene::WorkspaceComponent* workspace = world.workspaces().find(root); workspace != nullptr)
+        wind = scene::WindSettings{workspace->globalWind, workspace->windGusts, workspace->windTurbulence};
+    const bool windy = wind.global.x != 0.0f || wind.global.y != 0.0f || wind.global.z != 0.0f;
+    const auto windTime = static_cast<f32>(world.engineState().simTime);
+
     world.particleEmitters().forEach([&](core::InstanceId id, const scene::ParticleEmitterComponent& config) {
         if (world.destroyed(id))
             return;
@@ -132,13 +141,22 @@ void ParticleSystem::update(const scene::World& world, core::InstanceId root, f6
         emitter.seen = true;
         emitter.config = config;
 
-        // Age and move what is alive, and let the dead go.
+        // Age and move what is alive, and let the dead go. **The wind carries
+        // what is set to drift with it** (ADR 0115): added to how each one moves
+        // rather than to its velocity, so a particle is carried by the air
+        // around it and does not keep a gust after it passes.
         const f32 keep = std::max(0.0f, 1.0f - config.drag * step);
         for (Particle& particle : emitter.particles) {
             particle.velocity = (particle.velocity + config.acceleration * step) * keep;
-            particle.position.x += static_cast<f64>(particle.velocity.x * step);
-            particle.position.y += static_cast<f64>(particle.velocity.y * step);
-            particle.position.z += static_cast<f64>(particle.velocity.z * step);
+            core::Vec3 moving = particle.velocity;
+            if (config.windAffectsDrift && windy) {
+                const core::Vec3 where{static_cast<f32>(particle.position.x), static_cast<f32>(particle.position.y),
+                                       static_cast<f32>(particle.position.z)};
+                moving = moving + scene::windAt(wind, where, windTime);
+            }
+            particle.position.x += static_cast<f64>(moving.x * step);
+            particle.position.y += static_cast<f64>(moving.y * step);
+            particle.position.z += static_cast<f64>(moving.z * step);
             particle.age += step;
         }
         std::erase_if(emitter.particles, [](const Particle& particle) { return particle.age >= particle.lifetime; });

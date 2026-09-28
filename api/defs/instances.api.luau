@@ -2002,6 +2002,14 @@ local Classes: { Schema.Class } = {
                 Doc = "The fraction of its velocity a particle loses each second: smoke slows, sparks do not.",
             },
             {
+                Name = "WindAffectsDrift",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Doc = "Whether the workspace's wind carries the particles: the wind where each one is is added "
+                    .. "to how it moves. Off by default, so an effect made before the wind looks as it did.",
+            },
+            {
                 Name = "Color",
                 Type = "Color3",
                 Default = "Color3.new(1, 1, 1)",

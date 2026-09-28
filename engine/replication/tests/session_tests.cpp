@@ -1091,6 +1091,27 @@ TEST_CASE("night on the authority is night on the replica: Lighting's properties
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("the wind the authority sets is the wind every replica draws")
+{
+    // ADR 0115, protocol 19: the workspace's wind travels as a service's
+    // properties, so a gust crosses every player's field the same.
+    PlayedMatch match;
+    scene::WorkspaceComponent* air = match.server.world.workspaces().find(match.server.workspace);
+    REQUIRE(air != nullptr);
+    air->globalWind = core::Vec3{7.0f, 0.0f, -2.0f};
+    air->windGusts = 0.4f;
+    air->windTurbulence = 0.25f;
+    match.run(4);
+
+    const scene::WorkspaceComponent* seen = match.client.world.workspaces().find(match.client.workspace);
+    REQUIRE(seen != nullptr);
+    CHECK(static_cast<double>(seen->globalWind.x) == doctest::Approx(7.0));
+    CHECK(static_cast<double>(seen->globalWind.z) == doctest::Approx(-2.0));
+    CHECK(static_cast<double>(seen->windGusts) == doctest::Approx(0.4));
+    CHECK(static_cast<double>(seen->windTurbulence) == doctest::Approx(0.25));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("an instance leaving interest that a script holds is a husk; one the authority destroyed is gone")
 {
     PlayedMatch match;

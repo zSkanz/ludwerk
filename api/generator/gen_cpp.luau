@@ -689,10 +689,12 @@ local function generate(target: Module)
                 emit(`            .threadSafety = {scope}ThreadSafety::{property.ThreadSafety or "Unsafe"},`)
                 emit(`            .readOnly = {if property.ReadOnly == true then "true" else "false"},`)
                 emit(`            .inert = {if property.Inert == true then "true" else "false"},`)
-                if property.HostFact == true then
-                    -- A fact about the build or the machine, kept out of the
-                    -- world hash. Emitted only when true, like `observed`:
-                    -- almost every property in the IDL is about the world.
+                if property.HostFact == true or property.Presentation == true then
+                    -- A fact about the build or the machine, or a setting that
+                    -- moves only what is drawn (`Presentation`, ADR 0115), kept
+                    -- out of the world hash. Emitted only when true, like
+                    -- `observed`: almost every property in the IDL is about the
+                    -- world.
                     emit("            .hostFact = true,")
                 end
                 if property.Transient == true then

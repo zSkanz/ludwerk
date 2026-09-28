@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 18;
+inline constexpr u32 ProtocolVersion = 19;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -180,6 +180,7 @@ inline constexpr FieldDesc ParticleEmitterFields[] = {
     {"Brightness", 15, Encoding::F32, Source::Component, "particleEmitters"},
     {"Shape", 16, Encoding::I32, Source::Component, "particleEmitters"},
     {"Emitted", 17, Encoding::U32, Source::Component, "particleEmitters"},
+    {"WindAffectsDrift", 18, Encoding::Bool, Source::Component, "particleEmitters"},
 };
 
 inline constexpr FieldDesc Part2DFields[] = {
@@ -282,6 +283,12 @@ inline constexpr FieldDesc TeamFields[] = {
     {"AutoAssign", 2, Encoding::Bool, Source::Component, "teams"},
 };
 
+inline constexpr FieldDesc WorkspaceFields[] = {
+    {"GlobalWind", 1, Encoding::Vector3, Source::Component, "workspaces"},
+    {"WindGusts", 2, Encoding::F32, Source::Component, "workspaces"},
+    {"WindTurbulence", 3, Encoding::F32, Source::Component, "workspaces"},
+};
+
 // Every replicated class, in schema order.
 inline constexpr ClassDesc Classes[] = {
     {"BasePart", BasePartFields, -1, false, false},
@@ -305,6 +312,7 @@ inline constexpr ClassDesc Classes[] = {
     {"Sky", SkyFields, -1, false, false},
     {"TeamService", {}, -1, true, true},
     {"Team", TeamFields, -1, false, false},
+    {"Workspace", WorkspaceFields, -1, true, false},
 };
 
 // ENet's delivery mode per channel, as `net::Delivery` spells it.

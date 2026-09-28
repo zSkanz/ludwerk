@@ -209,6 +209,8 @@ scene::Value getParticleEmitterAcceleration(const scene::World& world, core::Ins
 bool setParticleEmitterAcceleration(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterDrag(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterDrag(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterWindAffectsDrift(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterWindAffectsDrift(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterColor(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterColor(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterColorEnd(const scene::World& world, core::InstanceId id);

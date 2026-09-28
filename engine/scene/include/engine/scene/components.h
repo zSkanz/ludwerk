@@ -427,6 +427,8 @@ struct ParticleEmitterComponent
     f32 brightness = 1.0f;
     // `Enum.ParticleShape`: 0 Soft, 1 Disc, 2 Square.
     i32 shape = 0;
+    // Whether the workspace's wind carries the particles (ADR 0115).
+    bool windAffectsDrift = false;
     // Every particle `Emit` has asked for since the emitter existed.
     u64 emitted = 0;
 };
@@ -644,6 +646,11 @@ struct WorkspaceComponent
     core::InstanceId currentCamera;
     // SI and signed, so the default points down (api-design.md §2.1).
     core::Vec3 gravity{0.0f, -9.81f, 0.0f};
+    // The wind (ADR 0115): direction and speed, and how gusty and turbulent.
+    // Visual only; `scene/wind.h` is the function of them.
+    core::Vec3 globalWind{0.0f, 0.0f, 0.0f};
+    f32 windGusts = 0.0f;
+    f32 windTurbulence = 0.0f;
 };
 
 // `Terrain`'s own state: the field, and the reservation that bounds it.

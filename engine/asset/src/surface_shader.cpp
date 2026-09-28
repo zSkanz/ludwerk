@@ -393,7 +393,8 @@ void appendBlock(std::string& out, const SurfaceReflection& reflection, std::str
 {
     out += "cbuffer EngineSurfaceBlock : register(";
     out += registerName;
-    out += ")\n{\n    float4 EngineSurfaceClock;\n    uint4 EngineSurfaceTextures;\n";
+    out += ")\n{\n    float4 EngineSurfaceClock;\n    uint4 EngineSurfaceTextures;\n"
+           "    float4 EngineSurfaceWind;\n    float4 EngineSurfaceWindShape;\n";
     for (const SurfaceParam& param : reflection.params) {
         out += "    ";
         out += hlslType(param.type);
@@ -473,6 +474,8 @@ SurfaceInputs engineVertexInputs(SurfaceVertex vertex, float4x4 model)
     inputs.ScreenPosition = float4(0.0f, 0.0f, 0.0f, 0.0f);
     inputs.SceneDepth = 3.0e38f;
     inputs.SceneColor = float3(0.0f, 0.0f, 0.0f);
+    inputs.Wind = engineWindAt(EngineSurfaceWind.xyz, EngineSurfaceWind.w, EngineSurfaceWindShape.x,
+                               inputs.WorldPosition, inputs.Time);
     return inputs;
 }
 
@@ -555,6 +558,8 @@ constexpr std::string_view ForwardFragment = R"(float4 FragmentMain(Interpolants
     inputs.SceneDepth = 3.0e38f;
     inputs.SceneColor = float3(0.0f, 0.0f, 0.0f);
 #endif
+    inputs.Wind = engineWindAt(EngineSurfaceWind.xyz, EngineSurfaceWind.w, EngineSurfaceWindShape.x,
+                               inputs.WorldPosition, inputs.Time);
 
     SurfaceOutput surface;
     surface.BaseColor = float3(1.0f, 1.0f, 1.0f);

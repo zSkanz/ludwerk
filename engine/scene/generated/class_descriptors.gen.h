@@ -451,6 +451,12 @@ Value getDataModelLuauVersion(const World& world, core::InstanceId id);
 // Workspace
 Value getWorkspaceGravity(const World& world, core::InstanceId id);
 bool setWorkspaceGravity(World& world, core::InstanceId id, const Value& value);
+Value getWorkspaceGlobalWind(const World& world, core::InstanceId id);
+bool setWorkspaceGlobalWind(World& world, core::InstanceId id, const Value& value);
+Value getWorkspaceWindGusts(const World& world, core::InstanceId id);
+bool setWorkspaceWindGusts(World& world, core::InstanceId id, const Value& value);
+Value getWorkspaceWindTurbulence(const World& world, core::InstanceId id);
+bool setWorkspaceWindTurbulence(World& world, core::InstanceId id, const Value& value);
 Value getWorkspaceCurrentCamera(const World& world, core::InstanceId id);
 bool setWorkspaceCurrentCamera(World& world, core::InstanceId id, const Value& value);
 Value getWorkspaceTerrain(const World& world, core::InstanceId id);

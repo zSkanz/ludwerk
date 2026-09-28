@@ -684,6 +684,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     }
     out.environment.surfaceTime =
         world.engineState().simTime + static_cast<core::f64>(alpha) * world.engineState().fixedTimestep;
+    if (const scene::WorkspaceComponent* workspace = world.workspaces().find(root); workspace != nullptr) {
+        out.environment.wind = workspace->globalWind;
+        out.environment.windGusts = workspace->windGusts;
+        out.environment.windTurbulence = workspace->windTurbulence;
+    }
 
     // The look (ADR 0096): `Lighting`'s children and the current camera's. The
     // WORLD's camera, not an editor's view override -- a viewer's effects belong

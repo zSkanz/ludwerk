@@ -51,21 +51,21 @@ TEST_CASE("a surface's parameters are read with their types, defaults and annota
     CHECK(height.name == "WaveHeight");
     CHECK(height.annotation == SurfaceAnnotation::Range);
     CHECK(static_cast<double>(height.maximum) == doctest::Approx(4.0));
-    CHECK(height.offset == 32);
+    CHECK(height.offset == 64);
     CHECK(height.line == 4);
 
     // A float3 fits after one float in a row of sixteen -- four and twelve.
     const SurfaceParam& deep = *reflection.param("Deep");
-    CHECK(deep.offset == 36);
+    CHECK(deep.offset == 68);
     CHECK(deep.annotation == SurfaceAnnotation::Colour);
     CHECK(static_cast<double>(deep.value[2]) == doctest::Approx(0.2));
     // The row is full, so the next float starts one.
-    CHECK(reflection.param("Speed")->offset == 48);
-    CHECK(reflection.param("Foamy")->offset == 52);
+    CHECK(reflection.param("Speed")->offset == 80);
+    CHECK(reflection.param("Foamy")->offset == 84);
     CHECK(static_cast<double>(reflection.param("Foamy")->value[0]) == doctest::Approx(1.0));
-    // A float4 never straddles: after 56 it goes to 64.
-    CHECK(reflection.param("Tint")->offset == 64);
-    CHECK(reflection.blockBytes == 80);
+    // A float4 never straddles: after 88 it goes to 96.
+    CHECK(reflection.param("Tint")->offset == 96);
+    CHECK(reflection.blockBytes == 112);
 
     REQUIRE(reflection.textures.size() == 2);
     CHECK(reflection.textures[1].fallback == SurfaceTextureDefault::Normal);
@@ -156,11 +156,11 @@ TEST_CASE("a parameter's value is written where its offset says, in its own repr
     const core::f32 off[1] = {0.0f};
     writeSurfaceParam(*reflection.param("Foamy"), off, block);
     core::f32 read[3]{};
-    std::memcpy(read, block.data() + 36, sizeof(read));
+    std::memcpy(read, block.data() + 68, sizeof(read));
     CHECK(read[0] == 0.25f);
     CHECK(read[2] == 0.75f);
     core::u32 flag = 7;
-    std::memcpy(&flag, block.data() + 52, 4);
+    std::memcpy(&flag, block.data() + 84, 4);
     CHECK(flag == 0u);
 }
 

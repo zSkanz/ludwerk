@@ -2154,6 +2154,16 @@ void DefaultRenderer::prepareSurfaces(rhi::IDevice& device, const RenderWorld& w
         std::vector<core::u8>& block = materialBlock_[index];
         block.assign(reflection.blockBytes, 0);
         std::memcpy(block.data(), clock, sizeof(clock));
+        // The wind (ADR 0115), after the clock and the texture mask.
+        const f32 wind[8] = {world.environment.wind.x,
+                             world.environment.wind.y,
+                             world.environment.wind.z,
+                             world.environment.windGusts,
+                             world.environment.windTurbulence,
+                             0.0f,
+                             0.0f,
+                             0.0f};
+        std::memcpy(block.data() + 32, wind, sizeof(wind));
         for (const asset::SurfaceParam& param : reflection.params) {
             if (const SurfaceValue* value = valueOf(param.name); value != nullptr && !value->isTexture) {
                 asset::writeSurfaceParam(param, value->value, block);

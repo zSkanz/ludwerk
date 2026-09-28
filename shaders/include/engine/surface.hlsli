@@ -37,8 +37,12 @@
 #ifndef ENG_SURFACE_HLSLI
 #define ENG_SURFACE_HLSLI
 
-// Bumped when anything below changes meaning. A shader may test it.
+// Bumped when anything below changes meaning. A shader may test it. The
+// minor step is what was added without changing anything: 1.1 is `Wind`.
 #define ENG_SURFACE_CONTRACT 1
+#define ENG_SURFACE_CONTRACT_MINOR 1
+
+#include "engine/wind.hlsli"
 
 // A vertex as the mesh gave it, in the object's space. `Color` is the mesh's
 // vertex colour, white when it has none; `Uv1` is its second set, or `Uv0`.
@@ -84,6 +88,10 @@ struct SurfaceInputs
     // What was drawn behind this pixel before any blended surface, linear HDR.
     // Only when the material sets `readsSceneColor`; black otherwise.
     float3 SceneColor;
+    // The workspace's wind here and now, metres a second, gusts included
+    // (ADR 0115): `Workspace:GetWindAt` at `WorldPosition`. Zero in a still
+    // world.
+    float3 Wind;
 };
 
 // What the surface is. Starts as the engine's defaults: white, opaque, not

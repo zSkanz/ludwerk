@@ -141,6 +141,33 @@ local Classes: { Schema.Class } = {
                     .. "reaching for a separate multiplier.",
             },
             {
+                Name = "GlobalWind",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Presentation = true,
+                Doc = "The wind's direction and speed, in metres per second. **Visual only**: it moves what is "
+                    .. "drawn -- particles that drift with it, surface shaders that read it, foliage -- and pushes "
+                    .. "no body. Zero, the default, is a still world. `GetWindAt` is the wind at a point, gusts "
+                    .. "and all.",
+            },
+            {
+                Name = "WindGusts",
+                Type = "number",
+                Default = "0",
+                Presentation = true,
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How far the wind's speed rises and falls in gusts, from 0 (steady) to 1. Gusts travel "
+                    .. "downwind at the wind's own speed, so one is seen crossing a field.",
+            },
+            {
+                Name = "WindTurbulence",
+                Type = "number",
+                Default = "0",
+                Presentation = true,
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How far the wind's direction wanders from place to place, from 0 (straight) to 1.",
+            },
+            {
                 Name = "CurrentCamera",
                 Type = "Camera?",
                 Doc = "The camera the world is rendered from. Nil renders nothing rather than falling back to a "
@@ -159,6 +186,15 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Property },
         Methods = {
+            {
+                Name = "GetWindAt",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "vector" },
+                ThreadSafety = "Safe",
+                Doc = "The wind at a point now, in metres per second: `GlobalWind` with its gusts and turbulence, "
+                    .. "at `RunService.SimTime`. It is the same function the renderer draws with, so a flag, a "
+                    .. "sail or a sound put where this says the wind is agrees with the picture.",
+            },
             {
                 Name = "Raycast",
                 Parameters = {

@@ -875,6 +875,22 @@ bool setParticleEmitterDrag(scene::World& world, core::InstanceId id, const Valu
     return true;
 }
 
+Value getParticleEmitterWindAffectsDrift(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{emitter->windAffectsDrift};
+}
+
+bool setParticleEmitterWindAffectsDrift(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    if (next == nullptr || emitter == nullptr)
+        return false;
+    emitter->windAffectsDrift = *next;
+    return true;
+}
+
 Value getParticleEmitterColor(const scene::World& world, core::InstanceId id)
 {
     const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);

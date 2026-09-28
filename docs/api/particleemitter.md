@@ -31,6 +31,7 @@ offers is on the base's page, which is what keeps one added member on
 | `SpreadAngle` | `number` | `15` | read/write | How far, in degrees, a particle's direction may stray from straight up: 0 is a jet, 180 a sphere. |
 | `Transparency` | `number` | `0` | read/write | 0 opaque to 1 invisible, at birth. |
 | `TransparencyEnd` | `number` | `1` | read/write | At death. The default fades each particle out as it dies. |
+| `WindAffectsDrift` | `boolean` | `false` | read/write | Whether the workspace's wind carries the particles: the wind where each one is is added to how it moves. Off by default, so an effect made before the wind looks as it did. |
 
 ## Methods
 

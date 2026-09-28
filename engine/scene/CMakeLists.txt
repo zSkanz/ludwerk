@@ -20,6 +20,7 @@ engine_add_module(scene
         src/enum_registry.cpp
         src/world.cpp
         src/world_hash.cpp
+        src/wind.cpp
         src/world_snapshot.cpp
         src/scene_file.cpp
         src/json_slice.cpp
@@ -75,6 +76,7 @@ engine_add_module_tests(scene
         tests/world_snapshot_tests.cpp
         tests/material_world_tests.cpp
         tests/scene_file_tests.cpp
+        tests/wind_tests.cpp
         tests/partition_tests.cpp
         tests/physics_sync_tests.cpp
         tests/physics_sync_2d_tests.cpp

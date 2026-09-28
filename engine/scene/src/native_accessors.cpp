@@ -267,6 +267,54 @@ bool setWorkspaceGravity(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getWorkspaceGlobalWind(const World& world, core::InstanceId id)
+{
+    const WorkspaceComponent* workspace = world.workspaces().find(id);
+    return workspace == nullptr ? Value{} : Value{workspace->globalWind};
+}
+
+bool setWorkspaceGlobalWind(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* wind = std::get_if<core::Vec3>(&value);
+    WorkspaceComponent* workspace = world.workspaces().find(id);
+    if (wind == nullptr || workspace == nullptr || !finite(wind->x) || !finite(wind->y) || !finite(wind->z))
+        return false;
+    workspace->globalWind = *wind;
+    return true;
+}
+
+Value getWorkspaceWindGusts(const World& world, core::InstanceId id)
+{
+    const WorkspaceComponent* workspace = world.workspaces().find(id);
+    return workspace == nullptr ? Value{} : Value{static_cast<f64>(workspace->windGusts)};
+}
+
+bool setWorkspaceWindGusts(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<f64>(&value);
+    WorkspaceComponent* workspace = world.workspaces().find(id);
+    if (next == nullptr || workspace == nullptr || !finite(*next) || *next < 0.0 || *next > 1.0)
+        return false;
+    workspace->windGusts = static_cast<f32>(*next);
+    return true;
+}
+
+Value getWorkspaceWindTurbulence(const World& world, core::InstanceId id)
+{
+    const WorkspaceComponent* workspace = world.workspaces().find(id);
+    return workspace == nullptr ? Value{} : Value{static_cast<f64>(workspace->windTurbulence)};
+}
+
+bool setWorkspaceWindTurbulence(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<f64>(&value);
+    WorkspaceComponent* workspace = world.workspaces().find(id);
+    if (next == nullptr || workspace == nullptr || !finite(*next) || *next < 0.0 || *next > 1.0)
+        return false;
+    workspace->windTurbulence = static_cast<f32>(*next);
+    return true;
+}
+
 void attachWorkspaceComponents(World& world, core::InstanceId id)
 {
     world.workspaces().add(id, WorkspaceComponent{});

@@ -1435,6 +1435,9 @@ declare extern type ParticleEmitter extends Instance with
     Acceleration: vector
     --- The fraction of its velocity a particle loses each second: smoke slows, sparks do not.
     Drag: number
+    --- Whether the workspace's wind carries the particles: the wind where each one is is added to how
+    --- it moves. Off by default, so an effect made before the wind looks as it did.
+    WindAffectsDrift: boolean
     --- The colour at birth.
     Color: Color3
     --- The colour at death; life interpolates between the two.
@@ -2388,6 +2391,15 @@ declare extern type Workspace extends Instance with
     --- so the default points down; a game wanting moon gravity scales it rather than reaching for a
     --- separate multiplier.
     Gravity: vector
+    --- The wind's direction and speed, in metres per second. **Visual only**: it moves what is drawn --
+    --- particles that drift with it, surface shaders that read it, foliage -- and pushes no body. Zero,
+    --- the default, is a still world. `GetWindAt` is the wind at a point, gusts and all.
+    GlobalWind: vector
+    --- How far the wind's speed rises and falls in gusts, from 0 (steady) to 1. Gusts travel downwind
+    --- at the wind's own speed, so one is seen crossing a field.
+    WindGusts: number
+    --- How far the wind's direction wanders from place to place, from 0 (straight) to 1.
+    WindTurbulence: number
     --- The camera the world is rendered from. Nil renders nothing rather than falling back to a camera
     --- the engine invented, because a view nobody asked for is harder to debug than a black frame that
     --- says why.
@@ -2397,6 +2409,10 @@ declare extern type Workspace extends Instance with
     --- reach the one the engine treats as the world's ground. Parent a second one and it is a perfectly
     --- good terrain that this does not point at.
     read Terrain: Terrain?
+    --- The wind at a point now, in metres per second: `GlobalWind` with its gusts and turbulence, at
+    --- `RunService.SimTime`. It is the same function the renderer draws with, so a flag, a sail or a
+    --- sound put where this says the wind is agrees with the picture.
+    function GetWindAt(self, position: vector): vector
     --- The nearest thing a ray from `origin` hits, or nil. The direction is NOT normalised: its length
     --- is how far the ray reaches, so `direction * 100` is a hundred-metre ray. A tie between two
     --- surfaces at the same distance resolves the same way on every run, because a query whose answer

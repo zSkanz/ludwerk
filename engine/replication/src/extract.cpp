@@ -269,6 +269,21 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "workspaces") {
+        const scene::WorkspaceComponent* workspace = world.workspaces().find(id);
+        if (workspace == nullptr)
+            return false;
+        if (field.name == "GlobalWind")
+            setVec3(out, workspace->globalWind);
+        else if (field.name == "WindGusts")
+            setF32(out, workspace->windGusts);
+        else if (field.name == "WindTurbulence")
+            setF32(out, workspace->windTurbulence);
+        else
+            return false;
+        return true;
+    }
+
     if (field.pool == "lighting") {
         const scene::LightingComponent* lighting = world.lighting().find(id);
         if (lighting == nullptr) {
@@ -641,6 +656,10 @@ using generated::Source;
         }
         if (field.name == "Emitted") {
             setU32(out, static_cast<core::u32>(emitter->emitted));
+            return true;
+        }
+        if (field.name == "WindAffectsDrift") {
+            setBool(out, emitter->windAffectsDrift);
             return true;
         }
         return false;
@@ -1080,6 +1099,21 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "workspaces") {
+        scene::WorkspaceComponent* workspace = world.workspaces().find(id);
+        if (workspace == nullptr)
+            return false;
+        if (field.name == "GlobalWind")
+            workspace->globalWind = asVec3(value);
+        else if (field.name == "WindGusts")
+            workspace->windGusts = asF32(value);
+        else if (field.name == "WindTurbulence")
+            workspace->windTurbulence = asF32(value);
+        else
+            return false;
+        return true;
+    }
+
     if (field.pool == "lighting") {
         scene::LightingComponent* lighting = world.lighting().find(id);
         if (lighting == nullptr) {
@@ -1225,6 +1259,10 @@ using generated::Source;
             // difference, so a wrap of the 32 bits on the wire costs nothing.
             const core::u32 sent = asU32(value);
             emitter->emitted += static_cast<core::u32>(sent - static_cast<core::u32>(emitter->emitted));
+            return true;
+        }
+        if (field.name == "WindAffectsDrift") {
+            emitter->windAffectsDrift = asBool(value);
             return true;
         }
         return false;

@@ -889,6 +889,43 @@ local ParticleEmitterFields: { Schema.Field } = {
         Component = "particleEmitters",
         Doc = "**How bursts reach a replica**: a running total of what `Emit` asked for, so a replica spawns the difference it has not seen -- the low 32 bits, because a difference is all it ever takes, and it wraps safely.",
     },
+    {
+        Name = "WindAffectsDrift",
+        Id = 18,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "Whether the smoke leans with the wind (ADR 0115, protocol 19).",
+    },
+}
+
+--- The workspace's own properties that travel (ADR 0115, protocol 19): the
+--- wind, so every player sees the same one.
+local WorkspaceFields: { Schema.Field } = {
+    {
+        Name = "GlobalWind",
+        Id = 1,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "workspaces",
+        Doc = "The wind the authority set is the wind every replica draws.",
+    },
+    {
+        Name = "WindGusts",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "workspaces",
+        Doc = "How gusty, so a gust crosses every player's field the same.",
+    },
+    {
+        Name = "WindTurbulence",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "workspaces",
+        Doc = "How turbulent.",
+    },
 }
 
 --- A sprite and a body on the 2D plane (the 2D layer, ADR 0088). Every field is
@@ -1263,6 +1300,14 @@ local Classes: { Schema.Class } = {
         Doc = "A side (ADR 0099, protocol 14). Who is on it is not a field of the team: it is the "
             .. "roster's third column, beside each player's character.",
         Fields = TeamFields,
+    },
+    {
+        Name = "Workspace",
+        Service = true,
+        Doc = "The wind (ADR 0115, protocol 19). **A service for its properties only**: its children "
+            .. "already travel as the world, by where they are, so it does not carry its contents the way "
+            .. "`ReplicatedStorage` does. Last in this list, so every service before it keeps its id.",
+        Fields = WorkspaceFields,
     },
 }
 

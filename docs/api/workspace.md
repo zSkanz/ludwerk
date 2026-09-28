@@ -17,14 +17,21 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `CurrentCamera` | `Camera?` | — | read/write | The camera the world is rendered from. Nil renders nothing rather than falling back to a camera the engine invented, because a view nobody asked for is harder to debug than a black frame that says why. |
+| `GlobalWind` | `vector` | `vector.create(0, 0, 0)` | read/write | The wind's direction and speed, in metres per second. **Visual only**: it moves what is drawn -- particles that drift with it, surface shaders that read it, foliage -- and pushes no body. Zero, the default, is a still world. `GetWindAt` is the wind at a point, gusts and all. |
 | `Gravity` | `vector` | `vector.create(0, -9.81, 0)` | read/write | The acceleration applied to every unanchored part, in metres per second squared. SI and signed, so the default points down; a game wanting moon gravity scales it rather than reaching for a separate multiplier. |
 | `Terrain` | `Terrain?` | — | read-only | This world's ground, or nil in a world that has none.<br><br>Read-only because it names rather than owns: a `Terrain` is an ordinary instance parented under the workspace, and this is how you reach the one the engine treats as the world's ground. Parent a second one and it is a perfectly good terrain that this does not point at. |
+| `WindGusts` | `number` | `0` | read/write | How far the wind's speed rises and falls in gusts, from 0 (steady) to 1. Gusts travel downwind at the wind's own speed, so one is seen crossing a field. |
+| `WindTurbulence` | `number` | `0` | read/write | How far the wind's direction wanders from place to place, from 0 (straight) to 1. |
 
 ## Methods
 
 ### `GetBodiesInBox(cframe: CFrame, size: vector, params: RaycastParams? = nil): {BasePart}`
 
 Every part overlapping an oriented box, as a fresh array in a stable order -- one entry per part however many of its surfaces are inside. `size` is the full extent, matching `BasePart.Size`.
+
+### `GetWindAt(position: vector): vector`
+
+The wind at a point now, in metres per second: `GlobalWind` with its gusts and turbulence, at `RunService.SimTime`. It is the same function the renderer draws with, so a flag, a sail or a sound put where this says the wind is agrees with the picture.
 
 ### `Raycast(origin: vector, direction: vector, params: RaycastParams? = nil): RaycastResult?`
 

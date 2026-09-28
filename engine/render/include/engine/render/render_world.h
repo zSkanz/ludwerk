@@ -180,6 +180,10 @@ struct RenderEnvironment
     // the tick fraction the transforms are drawn at -- which is what a surface
     // shader's `Time` is (ADR 0091), so a GPU wave and a Luau wave agree.
     core::f64 surfaceTime = 0.0;
+    // The workspace's wind (ADR 0115): direction and speed, gusts, turbulence.
+    core::Vec3 wind{};
+    core::f32 windGusts = 0.0f;
+    core::f32 windTurbulence = 0.0f;
 };
 
 // One value a surface shader reads (ADR 0091), by the name it declares: a

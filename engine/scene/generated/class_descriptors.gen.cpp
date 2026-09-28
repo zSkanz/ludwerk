@@ -2479,7 +2479,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(dataModelDesc);
 
     // --- Workspace ---
-    static std::array<PropertyDesc, 3> workspaceProperties;
+    static std::array<PropertyDesc, 6> workspaceProperties;
     workspaceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Gravity"),
@@ -2491,6 +2491,42 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getWorkspaceGravity,
             .set = native::setWorkspaceGravity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("GlobalWind"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The wind's direction and speed, in metres per second. **Visual only**: it moves what is drawn -- particles that drift with it, surface shaders that read it, foliage -- and pushes no body. Zero, the default, is a still world. `GetWindAt` is the wind at a point, gusts and all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getWorkspaceGlobalWind,
+            .set = native::setWorkspaceGlobalWind,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WindGusts"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far the wind's speed rises and falls in gusts, from 0 (steady) to 1. Gusts travel downwind at the wind's own speed, so one is seen crossing a field.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getWorkspaceWindGusts,
+            .set = native::setWorkspaceWindGusts,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WindTurbulence"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far the wind's direction wanders from place to place, from 0 (straight) to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getWorkspaceWindTurbulence,
+            .set = native::setWorkspaceWindTurbulence,
         },
         PropertyDesc{
             .name = atoms.intern("CurrentCamera"),
@@ -2517,8 +2553,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 4> workspaceMethods;
+    static std::array<MethodDesc, 5> workspaceMethods;
     workspaceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetWindAt"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Safe,
+            .doc = "The wind at a point now, in metres per second: `GlobalWind` with its gusts and turbulence, at `RunService.SimTime`. It is the same function the renderer draws with, so a flag, a sail or a sound put where this says the wind is agrees with the picture.",
+        },
         MethodDesc{
             .name = atoms.intern("Raycast"),
             .yields = false,

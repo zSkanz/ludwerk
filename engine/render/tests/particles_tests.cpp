@@ -122,6 +122,31 @@ TEST_CASE("they fly along the emitter's up, fall with acceleration, and are draw
     CHECK(static_cast<double>(later.particles[0].position.y) < static_cast<double>(drawn.particles[0].position.y));
 }
 
+TEST_CASE("the wind carries the particles set to drift with it, and only those")
+{
+    // ADR 0115: a still jet goes straight up; with the wind on and drift on,
+    // it leans downwind; with drift off, the wind is nothing to it.
+    const auto lean = [](bool drift, core::Vec3 wind) {
+        ParticleFixture fixture;
+        fixture.world.workspaces().add(fixture.root, scene::WorkspaceComponent{});
+        fixture.world.workspaces().find(fixture.root)->globalWind = wind;
+        fixture.config().enabled = false;
+        fixture.config().speed = 5.0f;
+        fixture.config().spreadAngle = 0.0f;
+        fixture.config().lifetime = 5.0f;
+        fixture.config().windAffectsDrift = drift;
+        fixture.config().emitted = 1;
+        fixture.run(60);
+        RenderWorld drawn;
+        fixture.system.append(drawn);
+        REQUIRE(drawn.particles.size() == 1);
+        return static_cast<double>(drawn.particles[0].position.x);
+    };
+    CHECK(lean(true, core::Vec3{6.0f, 0.0f, 0.0f}) == doctest::Approx(6.0).epsilon(0.05));
+    CHECK(lean(false, core::Vec3{6.0f, 0.0f, 0.0f}) == doctest::Approx(0.0).epsilon(1e-3));
+    CHECK(lean(true, core::Vec3{}) == doctest::Approx(0.0).epsilon(1e-3));
+}
+
 TEST_CASE("the same emitter, the same frames: the same particles")
 {
     ParticleFixture first;

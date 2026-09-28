@@ -2432,6 +2432,11 @@
           "Name": "TransparencyEnd",
           "Type": "number",
           "Default": "1"
+        },
+        {
+          "Name": "WindAffectsDrift",
+          "Type": "boolean",
+          "Default": "false"
         }
       ],
       "Methods": [
@@ -5002,6 +5007,11 @@
           "Type": "Camera?"
         },
         {
+          "Name": "GlobalWind",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
           "Name": "Gravity",
           "Type": "vector",
           "Default": "vector.create(0, -9.81, 0)"
@@ -5010,6 +5020,16 @@
           "Name": "Terrain",
           "Type": "Terrain?",
           "ReadOnly": true
+        },
+        {
+          "Name": "WindGusts",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "WindTurbulence",
+          "Type": "number",
+          "Default": "0"
         }
       ],
       "Methods": [
@@ -5032,6 +5052,17 @@
           ],
           "Returns": ["{BasePart}"],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetWindAt",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector"],
+          "ThreadSafety": "Safe"
         },
         {
           "Name": "Raycast",

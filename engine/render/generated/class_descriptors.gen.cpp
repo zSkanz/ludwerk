@@ -640,7 +640,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(subWorldDesc);
 
     // --- ParticleEmitter ---
-    static std::array<scene::PropertyDesc, 16> particleEmitterProperties;
+    static std::array<scene::PropertyDesc, 17> particleEmitterProperties;
     particleEmitterProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -718,6 +718,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
             .get = native::getParticleEmitterDrag,
             .set = native::setParticleEmitterDrag,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WindAffectsDrift"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the workspace's wind carries the particles: the wind where each one is is added to how it moves. Off by default, so an effect made before the wind looks as it did.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getParticleEmitterWindAffectsDrift,
+            .set = native::setParticleEmitterWindAffectsDrift,
         },
         scene::PropertyDesc{
             .name = atoms.intern("Color"),

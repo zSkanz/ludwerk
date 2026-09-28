@@ -164,6 +164,23 @@ TEST_CASE("every replicated field that is not a property is state the world hash
             REQUIRE(field != nullptr);
             if (field->source != wire::Source::Component)
                 continue;
+            // **Presentation is exempt** (ADR 0115): the wind travels so every
+            // player draws the same one, and stays out of the hash so a world
+            // that never sets it hashes as it always did. The IDL says which --
+            // a property marked `Presentation` is generated as `hostFact`.
+            bool presentation = false;
+            for (scene::ClassId at = classId; at != scene::InvalidClass && !presentation;) {
+                const scene::ClassDescriptor* descriptor = classes.find(at);
+                if (descriptor == nullptr)
+                    break;
+                for (const scene::PropertyDesc& property : descriptor->properties) {
+                    if (atoms.text(property.name) == field->name && property.hostFact)
+                        presentation = true;
+                }
+                at = descriptor->super;
+            }
+            if (presentation)
+                continue;
             CAPTURE(std::string(field->name));
             replication::FieldValue a;
             replication::FieldValue b;

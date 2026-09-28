@@ -21,6 +21,7 @@
 #include "engine/platform/event.h"
 #include "engine/scene/players.h"
 #include "engine/scene/voxel_fluid.h"
+#include "engine/scene/wind.h"
 #include "engine/scene/world.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
@@ -809,6 +810,23 @@ struct TerrainRayHit
                                              static_cast<core::f32>(best.position.y));
     });
     return best;
+}
+
+// **The wind at a point now** (ADR 0115): the renderer's own function, at
+// `RunService.SimTime`, so what a script reads is what is drawn there.
+int workspaceGetWindAt(lua_State* L)
+{
+    const core::InstanceId workspace = checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    World& w = world(L);
+    const scene::WorkspaceComponent* component = w.workspaces().find(workspace);
+    if (component == nullptr) {
+        pushVector3(L, core::Vec3{});
+        return 1;
+    }
+    const scene::WindSettings wind{component->globalWind, component->windGusts, component->windTurbulence};
+    pushVector3(L, scene::windAt(wind, position, static_cast<f32>(w.engineState().simTime)));
+    return 1;
 }
 
 int workspaceRaycast(lua_State* L)
@@ -2025,6 +2043,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"Sound", "Stop", soundStop},
     {"AudioService", "PlayLocal", audioServicePlayLocal},
 
+    {"Workspace", "GetWindAt", workspaceGetWindAt},
     {"Workspace", "Raycast", workspaceRaycast},
     {"Workspace", "Raycast2D", workspaceRaycast2D},
     {"NavigationService", "FindPath", navigationFindPath},

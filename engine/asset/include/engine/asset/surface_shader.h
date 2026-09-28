@@ -104,7 +104,8 @@ struct SurfaceReflection
 };
 
 inline constexpr core::u32 SurfaceContractVersion = 1;
-inline constexpr core::u32 SurfaceBlockHeaderBytes = 32;
+// The clock and the camera, the texture mask, and the wind (ADR 0115).
+inline constexpr core::u32 SurfaceBlockHeaderBytes = 64;
 inline constexpr core::u32 MaxSurfaceBlockBytes = 1024;
 inline constexpr core::u32 MaxSurfaceTextures = 5;
 // The engine's fragment samplers end at t12 (`engine_forward.hlsli`); a stage
