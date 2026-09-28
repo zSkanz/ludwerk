@@ -1198,6 +1198,111 @@ local Tilemap2DFields: { Schema.Field } = {
     },
 }
 
+local ClickDetectorFields: { Schema.Field } = {
+    {
+        Name = "MaxActivationDistance",
+        Id = 1,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "clickDetectors",
+        Doc = "A replica decides what its pointer is on, so it needs the reach the authority checks against.",
+    },
+    {
+        Name = "CursorIcon",
+        Id = 2,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "clickDetectors",
+        Doc = "What the pointer shows over it, on the machine that points.",
+    },
+}
+
+-- Everything a replica needs to show a prompt and trigger it: the texts, the
+-- keys, the reach, the rules. `UIOffset` is not carried -- it moves a drawn
+-- box by pixels, and a game that sets it sets it where the prompt is drawn.
+local ProximityPromptFields: { Schema.Field } = {
+    {
+        Name = "ActionText",
+        Id = 1,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "The words of the action, drawn on the prompt.",
+    },
+    {
+        Name = "ObjectText",
+        Id = 2,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "What it is, drawn above the action.",
+    },
+    {
+        Name = "KeyboardKeyCode",
+        Id = 3,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "The key that triggers it, which the replica listens for.",
+    },
+    {
+        Name = "GamepadKeyCode",
+        Id = 4,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "The gamepad button that triggers it.",
+    },
+    {
+        Name = "HoldDuration",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "How long the replica holds before it triggers.",
+    },
+    {
+        Name = "MaxActivationDistance",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "How near a replica's character must be for it to show; the authority checks the same.",
+    },
+    {
+        Name = "RequiresLineOfSight",
+        Id = 7,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "Whether the replica hides it behind something.",
+    },
+    {
+        Name = "Exclusivity",
+        Id = 8,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "Which of several show.",
+    },
+    {
+        Name = "Style",
+        Id = 9,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "Whether the engine draws it.",
+    },
+    {
+        Name = "Enabled",
+        Id = 10,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "proximityPrompts",
+        Doc = "A disabled prompt shows nowhere.",
+    },
+}
+
 local Classes: { Schema.Class } = {
     {
         Name = "BasePart",
@@ -1289,6 +1394,18 @@ local Classes: { Schema.Class } = {
             .. "`TilemapBlocks` -- every block after the spawn, then each block an edit changed. What a "
             .. "wall broken or a floor built on the authority is on every replica.",
         Fields = Tilemap2DFields,
+    },
+    {
+        Name = "ClickDetector",
+        Doc = "A part a player clicks (ADR 0126, protocol 21). Each machine resolves its own pointer and tells "
+            .. "the authority, so the detector has to be there.",
+        Fields = ClickDetectorFields,
+    },
+    {
+        Name = "ProximityPrompt",
+        Doc = "A prompt a player triggers (ADR 0126, protocol 21). Shown and triggered on the machine near it, "
+            .. "checked and fired on the authority.",
+        Fields = ProximityPromptFields,
     },
     {
         Name = "BloomEffect",
@@ -2057,6 +2174,28 @@ local Messages: { Schema.Message } = {
             .. "attributes exactly these, so a message received twice is simply the truth, and an attribute "
             .. "missing from it is gone. Reliable and after the spawns, so it never names an instance the "
             .. "replica has not been sent.",
+    },
+    {
+        Name = "DetectorInput",
+        Id = 16,
+        Channel = "Control",
+        Direction = "ToAuthority",
+        Layout = {
+            {
+                Name = "detector",
+                Type = "u32",
+                Doc = "The network id of the `ClickDetector` or the `ProximityPrompt`.",
+            },
+            {
+                Name = "kind",
+                Type = "u8",
+                Doc = "0 a click, 1 a right click, 2 triggered, 3 trigger ended, 4 hold began, 5 hold ended.",
+            },
+        },
+        Doc = "A player pressed something (ADR 0126, protocol 21). The replica fired it already, for its own "
+            .. "scripts; the authority checks it -- the detector is live and enabled, and within reach of the "
+            .. "sender's character -- and fires it there with the connection's player, never one the message "
+            .. "names. Counted against the same per-tick limit as `RemoteToAuthority`.",
     },
 }
 

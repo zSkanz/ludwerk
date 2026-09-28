@@ -1046,7 +1046,11 @@ void WorldHost::tick()
     // the familiar surface gets, and they come out of THIS dispatch rather than
     // from the OS -- so they sink like an action, replay like an action, and a
     // handler that writes to the world is deterministic.
-    m_runtime->fireInputEvents(m_input.drainRawEvents());
+    const std::span<const input::RawInputEvent> rawEvents = m_input.drainRawEvents();
+    // Clicks and prompts (ADR 0126) first: the same events, resolved against
+    // the world as this tick begins.
+    m_runtime->stepDetectors(state.fixedTimestep, rawEvents);
+    m_runtime->fireInputEvents(rawEvents);
 
     // `RemoteEvent` messages that arrived since the last tick (ADR 0077):
     // beside the input events, for the same reason -- arrival was a network

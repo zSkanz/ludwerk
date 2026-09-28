@@ -407,12 +407,26 @@ local ServiceNameExceptions = {
 --- that makes it one. §2.1 names it, and it is the name a person arriving from
 --- a familiar platform reaches for -- `InstanceStreamedOutEnded` is not a
 --- sentence anybody would write.
+---
+--- ADR 0126's detectors are the same trade, decided by the owner with the
+--- toolkit: `MouseClick`, `RightMouseClick`, `MouseHoverEnter` and
+--- `MouseHoverLeave` are the names a person arriving reaches for on a
+--- `ClickDetector`; `PromptButtonHoldBegan` is `InputBegan`'s case; and
+--- `PromptShown` and `PromptHidden` are past participles the pattern cannot
+--- see, as `FocusLost` is.
 local EventNameExceptions = {
     Heartbeat = true,
     MessageOut = true,
     FocusLost = true,
     InputBegan = true,
     InstanceStreamedOut = true,
+    MouseClick = true,
+    RightMouseClick = true,
+    MouseHoverEnter = true,
+    MouseHoverLeave = true,
+    PromptButtonHoldBegan = true,
+    PromptShown = true,
+    PromptHidden = true,
 }
 
 local function isPascalCase(name: string): boolean

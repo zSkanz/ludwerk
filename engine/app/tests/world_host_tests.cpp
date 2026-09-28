@@ -13,10 +13,12 @@
 #include "engine/app/world_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/input/input.h"
 #include "engine/render/lighting.h"
 #include "engine/render/render_world.h"
 #include "engine/scene/components.h"
 #include "engine/scene/physics_sync.h"
+#include "engine/scene/players.h"
 #include "engine/scene/scene_file.h"
 #include "engine_test_nearly.h"
 #include "lua.h"
@@ -2234,4 +2236,205 @@ TEST_CASE("PreloadAsync waits for every item, reports each, and names what an in
     CHECK(log.contains("preloaded ImageLabel=Success asset://models/crate.gltf=Success "
                        "asset://models/missing.gltf=Failure queue 0"));
     CHECK(log.contains("refused true"));
+}
+
+// --- Clicked and prompted without code (ADR 0126) ---------------------------------
+
+namespace {
+
+// A pointer at `pixel` and whatever keys are held, as a device would give it.
+void pointAt(app::WorldHost& host, core::Vec2 pixel, std::initializer_list<core::i32> held = {})
+{
+    input::DeviceState device;
+    device.pointer = pixel;
+    for (const core::i32 key : held)
+        device.held[static_cast<core::usize>(key)] = true;
+    host.input().setSnapshot(device);
+}
+
+constexpr core::i32 KeyE = 18;
+constexpr core::i32 KeyMouseLeft = 67;
+
+} // namespace
+
+TEST_CASE("a ClickDetector is hovered and clicked through the pointer, and not out of reach")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/clicks.luau", R"(
+        local camera = Instance.new("Camera")
+        camera.CFrame = CFrame.new(0, 0, 0)
+        camera.Parent = workspace
+        workspace.CurrentCamera = camera
+        local function button(name: string, z: number, reach: number)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Anchored = true
+            part.Size = Vector3.new(4, 4, 1)
+            part.CFrame = CFrame.new(0, 0, z)
+            part.Parent = workspace
+            local detector = Instance.new("ClickDetector")
+            detector.MaxActivationDistance = reach
+            detector.Parent = part
+            detector.MouseClick:Connect(function(player: Player)
+                print(`{name} clicked by player {player.UserId}`)
+            end)
+            detector.MouseHoverEnter:Connect(function()
+                print(`{name} hovered`)
+            end)
+            return part
+        end
+        local near = button("Near", -10, 32)
+        task.delay(0.2, function()
+            near:Destroy()
+            button("Far", -40, 32)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.world().engineState().viewportSize = core::Vec2{800.0f, 600.0f};
+    const core::Vec2 centre{400.0f, 300.0f};
+
+    pointAt(host, centre);
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    pointAt(host, centre, {KeyMouseLeft});
+    host.tick();
+    pointAt(host, centre);
+    host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("Near hovered"));
+    CHECK(log.contains("Near clicked by player 1"));
+
+    // Forty metres away is past its reach: neither hovered nor clicked.
+    for (int tick = 0; tick < 15; ++tick)
+        host.tick();
+    pointAt(host, centre, {KeyMouseLeft});
+    host.tick();
+    pointAt(host, centre);
+    host.tick();
+    CHECK_FALSE(log.contains("Far hovered"));
+    CHECK_FALSE(log.contains("Far clicked"));
+}
+
+TEST_CASE("a held ProximityPrompt triggers after its duration, and one per key shows")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/prompts.luau", R"(
+        local camera = Instance.new("Camera")
+        camera.CFrame = CFrame.new(0, 0, 0)
+        camera.Parent = workspace
+        workspace.CurrentCamera = camera
+        local function prompt(name: string, z: number, hold: number)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Anchored = true
+            part.CFrame = CFrame.new(0, 0, z)
+            part.Parent = workspace
+            local p = Instance.new("ProximityPrompt")
+            p.HoldDuration = hold
+            p.Parent = part
+            p.PromptShown:Connect(function(inputType: Enum.ProximityPromptInputType)
+                print(`{name} shown for {inputType.Name}`)
+            end)
+            p.PromptButtonHoldBegan:Connect(function()
+                print(`{name} hold began`)
+            end)
+            p.Triggered:Connect(function(player: Player)
+                print(`{name} triggered by player {player.UserId}`)
+            end)
+            p.TriggerEnded:Connect(function()
+                print(`{name} ended`)
+            end)
+            return p
+        end
+        prompt("Door", -3, 0.25)
+        prompt("Crate", -6, 0)
+        -- A character where the camera is: reach and sight are measured from
+        -- inside it, so it must not hide the prompts from itself.
+        local body = Instance.new("Part")
+        body.Anchored = true
+        body.Size = Vector3.new(1, 2, 1)
+        body.Parent = workspace
+        local me = game:GetService("NetworkService").LocalPlayer
+        if me then
+            me.Character = body
+        end
+        game:GetService("ProximityPromptService").PromptTriggered:Connect(function(p: ProximityPrompt)
+            print(`service saw {(p.Parent :: Instance).Name}`)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.world().engineState().viewportSize = core::Vec2{800.0f, 600.0f};
+
+    pointAt(host, core::Vec2{400.0f, 300.0f});
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    // Both on E, so only the nearer shows.
+    CHECK(log.contains("Door shown for Keyboard"));
+    CHECK_FALSE(log.contains("Crate shown"));
+
+    pointAt(host, core::Vec2{400.0f, 300.0f}, {KeyE});
+    for (int tick = 0; tick < 5; ++tick)
+        host.tick();
+    CHECK(log.contains("Door hold began"));
+    CHECK_FALSE(log.contains("Door triggered"));
+    for (int tick = 0; tick < 15; ++tick)
+        host.tick();
+    CHECK(log.contains("Door triggered by player 1"));
+    CHECK(log.contains("service saw Door"));
+    pointAt(host, core::Vec2{400.0f, 300.0f});
+    for (int tick = 0; tick < 2; ++tick)
+        host.tick();
+    CHECK(log.contains("Door ended"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("the authority fires a client's click with its player only within reach of the character")
+{
+    Captured log;
+    Project project;
+    project.write("src/server/check.luau", R"(
+        local part = Instance.new("Part")
+        part.Name = "Lever"
+        part.Anchored = true
+        part.CFrame = CFrame.new(100, 0, 0)
+        part.Parent = workspace
+        local detector = Instance.new("ClickDetector")
+        detector.MaxActivationDistance = 10
+        detector.Parent = part
+        detector.MouseClick:Connect(function(player: Player)
+            print(`lever pulled by player {player.UserId}`)
+        end)
+        local body = Instance.new("Part")
+        body.Name = "Body"
+        body.Anchored = true
+        body.Parent = workspace
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId player = scene::localPlayerOf(world);
+    const core::InstanceId body = world.findFirstChild(host.workspace(), world.atoms().lookup("Body"));
+    const core::InstanceId lever = world.findFirstChild(host.workspace(), world.atoms().lookup("Lever"));
+    REQUIRE(player.valid());
+    REQUIRE(body.valid());
+    REQUIRE(lever.valid());
+    world.players().find(player)->character = body;
+    const core::InstanceId detector = world.firstChild(lever);
+
+    // Forged from far away: the body is a hundred metres off.
+    world.engineState().detectorInbox.push_back(
+        scene::DetectorMessage{detector, player, scene::DetectorMessage::Kind::Click, 0});
+    host.tick();
+    CHECK_FALSE(log.contains("lever pulled"));
+
+    world.parts().find(body)->cframe.position = core::DVec3{96.0, 0.0, 0.0};
+    world.engineState().detectorInbox.push_back(
+        scene::DetectorMessage{detector, player, scene::DetectorMessage::Kind::Click, 0});
+    host.tick();
+    CHECK(log.contains("lever pulled by player 1"));
 }

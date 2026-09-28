@@ -1133,6 +1133,33 @@ local Definition: Schema.Definition = {
                 { Name = "Failure", Value = 1, Doc = "Something it names could not be found or read." },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0126. At the END.
+        {
+            Name = "ProximityPromptExclusivity",
+            Doc = "Which of several `ProximityPrompt`s in reach show.",
+            Items = {
+                { Name = "OnePerButton", Value = 0, Doc = "The nearest of those on the same key." },
+                { Name = "OneGlobally", Value = 1, Doc = "The nearest of all that are `OneGlobally`." },
+                { Name = "AlwaysShow", Value = 2, Doc = "This one whenever it is in reach." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ProximityPromptStyle",
+            Doc = "Who draws a `ProximityPrompt`.",
+            Items = {
+                { Name = "Default", Value = 0, Doc = "The engine: the key, the texts and a hold ring." },
+                { Name = "Custom", Value = 1, Doc = "The game, on `PromptShown` and `PromptHidden`." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ProximityPromptInputType",
+            Doc = "The input a shown `ProximityPrompt` is drawn for.",
+            Items = {
+                { Name = "Keyboard", Value = 0, Doc = "A key." },
+                { Name = "Gamepad", Value = 1, Doc = "A gamepad button." },
+                { Name = "Touch", Value = 2, Doc = "A tap on the prompt." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

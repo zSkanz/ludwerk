@@ -149,8 +149,9 @@ TEST_CASE("the generated schema is what the module was built against")
     // RemoteEvent, ReplicatedStorage, RemoteFunction and Part2D (protocol 11),
     // ADR 0096's five effects, `Atmosphere` and `Sky` (protocol 13), and
     // `TeamService` and `Team` (protocol 14), `Tilemap2D` (protocol 15), and
-    // `Workspace` for its wind (protocol 19).
-    CHECK(std::size(generated::Classes) == 22);
+    // `Workspace` for its wind (protocol 19), and `ClickDetector` and
+    // `ProximityPrompt` (protocol 21).
+    CHECK(std::size(generated::Classes) == 24);
     CHECK(std::size(generated::Channels) == 4);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift

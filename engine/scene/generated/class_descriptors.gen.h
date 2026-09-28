@@ -80,6 +80,9 @@ inline constexpr EnumId BorderStrokePositionEnumId = 39;
 inline constexpr EnumId ViewQualityEnumId = 40;
 inline constexpr EnumId SceneLoadStatusEnumId = 41;
 inline constexpr EnumId AssetFetchStatusEnumId = 42;
+inline constexpr EnumId ProximityPromptExclusivityEnumId = 43;
+inline constexpr EnumId ProximityPromptStyleEnumId = 44;
+inline constexpr EnumId ProximityPromptInputTypeEnumId = 45;
 
 } // namespace generated
 
@@ -446,6 +449,40 @@ bool setNavigationAgentAgentType(World& world, core::InstanceId id, const Value&
 void attachNavigationAgentComponents(World& world, core::InstanceId id);
 void detachNavigationAgentComponents(World& world, core::InstanceId id);
 
+// ClickDetector
+Value getClickDetectorMaxActivationDistance(const World& world, core::InstanceId id);
+bool setClickDetectorMaxActivationDistance(World& world, core::InstanceId id, const Value& value);
+Value getClickDetectorCursorIcon(const World& world, core::InstanceId id);
+bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& value);
+void attachClickDetectorComponents(World& world, core::InstanceId id);
+void detachClickDetectorComponents(World& world, core::InstanceId id);
+
+// ProximityPrompt
+Value getProximityPromptActionText(const World& world, core::InstanceId id);
+bool setProximityPromptActionText(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptObjectText(const World& world, core::InstanceId id);
+bool setProximityPromptObjectText(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptKeyboardKeyCode(const World& world, core::InstanceId id);
+bool setProximityPromptKeyboardKeyCode(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptGamepadKeyCode(const World& world, core::InstanceId id);
+bool setProximityPromptGamepadKeyCode(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptHoldDuration(const World& world, core::InstanceId id);
+bool setProximityPromptHoldDuration(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptMaxActivationDistance(const World& world, core::InstanceId id);
+bool setProximityPromptMaxActivationDistance(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptRequiresLineOfSight(const World& world, core::InstanceId id);
+bool setProximityPromptRequiresLineOfSight(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptExclusivity(const World& world, core::InstanceId id);
+bool setProximityPromptExclusivity(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptUIOffset(const World& world, core::InstanceId id);
+bool setProximityPromptUIOffset(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptStyle(const World& world, core::InstanceId id);
+bool setProximityPromptStyle(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptEnabled(const World& world, core::InstanceId id);
+bool setProximityPromptEnabled(World& world, core::InstanceId id, const Value& value);
+void attachProximityPromptComponents(World& world, core::InstanceId id);
+void detachProximityPromptComponents(World& world, core::InstanceId id);
+
 // DataModel
 Value getDataModelEngineVersion(const World& world, core::InstanceId id);
 Value getDataModelLuauVersion(const World& world, core::InstanceId id);
@@ -476,6 +513,12 @@ Value getTeamAutoAssign(const World& world, core::InstanceId id);
 bool setTeamAutoAssign(World& world, core::InstanceId id, const Value& value);
 void attachTeamComponents(World& world, core::InstanceId id);
 void detachTeamComponents(World& world, core::InstanceId id);
+
+// ProximityPromptService
+Value getProximityPromptServiceEnabled(const World& world, core::InstanceId id);
+bool setProximityPromptServiceEnabled(World& world, core::InstanceId id, const Value& value);
+Value getProximityPromptServiceMaxPromptsVisible(const World& world, core::InstanceId id);
+bool setProximityPromptServiceMaxPromptsVisible(World& world, core::InstanceId id, const Value& value);
 
 // NetworkService
 Value getNetworkServiceAuthority(const World& world, core::InstanceId id);

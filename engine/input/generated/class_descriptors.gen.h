@@ -82,6 +82,9 @@ inline constexpr scene::EnumId BorderStrokePositionEnumId = 39;
 inline constexpr scene::EnumId ViewQualityEnumId = 40;
 inline constexpr scene::EnumId SceneLoadStatusEnumId = 41;
 inline constexpr scene::EnumId AssetFetchStatusEnumId = 42;
+inline constexpr scene::EnumId ProximityPromptExclusivityEnumId = 43;
+inline constexpr scene::EnumId ProximityPromptStyleEnumId = 44;
+inline constexpr scene::EnumId ProximityPromptInputTypeEnumId = 45;
 
 } // namespace generated
 

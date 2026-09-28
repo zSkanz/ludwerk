@@ -2001,4 +2001,256 @@ bool setDebugServiceOverlayVisible(World& world, core::InstanceId, const Value& 
     return true;
 }
 
+// --- ClickDetector and ProximityPrompt (ADR 0126) ---------------------------------
+
+namespace {
+
+[[nodiscard]] bool distanceFrom(const Value& value, f64& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !(*number >= 0.0) || !std::isfinite(*number))
+        return false;
+    out = *number;
+    return true;
+}
+
+[[nodiscard]] bool enumFrom(const World& world, const Value& value, EnumId enumId, i32& out)
+{
+    const auto* item = std::get_if<EnumValue>(&value);
+    if (item == nullptr || item->enumId != enumId || world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    out = item->value;
+    return true;
+}
+
+} // namespace
+
+void attachClickDetectorComponents(World& world, core::InstanceId id)
+{
+    world.clickDetectors().add(id, ClickDetectorComponent{});
+}
+
+void detachClickDetectorComponents(World& world, core::InstanceId id)
+{
+    world.clickDetectors().remove(id);
+}
+
+Value getClickDetectorMaxActivationDistance(const World& world, core::InstanceId id)
+{
+    const ClickDetectorComponent* detector = world.clickDetectors().find(id);
+    return detector == nullptr ? Value{} : Value{detector->maxActivationDistance};
+}
+
+bool setClickDetectorMaxActivationDistance(World& world, core::InstanceId id, const Value& value)
+{
+    ClickDetectorComponent* detector = world.clickDetectors().find(id);
+    return detector != nullptr && distanceFrom(value, detector->maxActivationDistance);
+}
+
+Value getClickDetectorCursorIcon(const World& world, core::InstanceId id)
+{
+    const ClickDetectorComponent* detector = world.clickDetectors().find(id);
+    return detector == nullptr ? Value{} : Value{std::string(world.atoms().text(detector->cursorIcon))};
+}
+
+bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    ClickDetectorComponent* detector = world.clickDetectors().find(id);
+    if (text == nullptr || detector == nullptr)
+        return false;
+    detector->cursorIcon = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+void attachProximityPromptComponents(World& world, core::InstanceId id)
+{
+    ProximityPromptComponent prompt;
+    prompt.actionText = world.atoms().intern("Interact");
+    world.proximityPrompts().add(id, prompt);
+}
+
+void detachProximityPromptComponents(World& world, core::InstanceId id)
+{
+    world.proximityPrompts().remove(id);
+}
+
+Value getProximityPromptActionText(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{std::string(world.atoms().text(prompt->actionText))};
+}
+
+bool setProximityPromptActionText(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    if (text == nullptr || prompt == nullptr)
+        return false;
+    prompt->actionText = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getProximityPromptObjectText(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{std::string(world.atoms().text(prompt->objectText))};
+}
+
+bool setProximityPromptObjectText(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    if (text == nullptr || prompt == nullptr)
+        return false;
+    prompt->objectText = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getProximityPromptKeyboardKeyCode(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{EnumValue{generated::KeyCodeEnumId, prompt->keyboardKeyCode}};
+}
+
+bool setProximityPromptKeyboardKeyCode(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr && enumFrom(world, value, generated::KeyCodeEnumId, prompt->keyboardKeyCode);
+}
+
+Value getProximityPromptGamepadKeyCode(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{EnumValue{generated::KeyCodeEnumId, prompt->gamepadKeyCode}};
+}
+
+bool setProximityPromptGamepadKeyCode(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr && enumFrom(world, value, generated::KeyCodeEnumId, prompt->gamepadKeyCode);
+}
+
+Value getProximityPromptHoldDuration(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{prompt->holdDuration};
+}
+
+bool setProximityPromptHoldDuration(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr && distanceFrom(value, prompt->holdDuration);
+}
+
+Value getProximityPromptMaxActivationDistance(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{prompt->maxActivationDistance};
+}
+
+bool setProximityPromptMaxActivationDistance(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr && distanceFrom(value, prompt->maxActivationDistance);
+}
+
+Value getProximityPromptRequiresLineOfSight(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{prompt->requiresLineOfSight};
+}
+
+bool setProximityPromptRequiresLineOfSight(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    if (flag == nullptr || prompt == nullptr)
+        return false;
+    prompt->requiresLineOfSight = *flag;
+    return true;
+}
+
+Value getProximityPromptExclusivity(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{}
+                             : Value{EnumValue{generated::ProximityPromptExclusivityEnumId, prompt->exclusivity}};
+}
+
+bool setProximityPromptExclusivity(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr &&
+           enumFrom(world, value, generated::ProximityPromptExclusivityEnumId, prompt->exclusivity);
+}
+
+Value getProximityPromptUIOffset(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{prompt->uiOffset};
+}
+
+bool setProximityPromptUIOffset(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* offset = std::get_if<core::Vec2>(&value);
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    if (offset == nullptr || prompt == nullptr)
+        return false;
+    prompt->uiOffset = *offset;
+    return true;
+}
+
+Value getProximityPromptStyle(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{EnumValue{generated::ProximityPromptStyleEnumId, prompt->style}};
+}
+
+bool setProximityPromptStyle(World& world, core::InstanceId id, const Value& value)
+{
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt != nullptr && enumFrom(world, value, generated::ProximityPromptStyleEnumId, prompt->style);
+}
+
+Value getProximityPromptEnabled(const World& world, core::InstanceId id)
+{
+    const ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    return prompt == nullptr ? Value{} : Value{prompt->enabled};
+}
+
+bool setProximityPromptEnabled(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    ProximityPromptComponent* prompt = world.proximityPrompts().find(id);
+    if (flag == nullptr || prompt == nullptr)
+        return false;
+    prompt->enabled = *flag;
+    return true;
+}
+
+Value getProximityPromptServiceEnabled(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().promptsEnabled};
+}
+
+bool setProximityPromptServiceEnabled(World& world, core::InstanceId, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr)
+        return false;
+    world.engineState().promptsEnabled = *flag;
+    return true;
+}
+
+Value getProximityPromptServiceMaxPromptsVisible(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().maxPromptsVisible};
+}
+
+bool setProximityPromptServiceMaxPromptsVisible(World& world, core::InstanceId, const Value& value)
+{
+    return distanceFrom(value, world.engineState().maxPromptsVisible);
+}
+
 } // namespace engine::scene::native

@@ -1905,3 +1905,42 @@ TEST_CASE("a player who leaves gives back every part they owned")
     scene::removePlayer(match.server.world, match.server.network, match.remote());
     CHECK(match.server.world.rigidBodies().find(ball)->networkOwner == 0);
 }
+
+TEST_CASE("a detector replicates, and a replica's click reaches the authority from its own player")
+{
+    PlayedMatch match;
+    const core::InstanceId crate = match.part("Crate", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId detector =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("ClickDetector")));
+    REQUIRE(detector.valid());
+    REQUIRE_FALSE(match.server.world.setParent(detector, crate).has_value());
+    match.server.world.clickDetectors().find(detector)->maxActivationDistance = 12.0;
+    const core::InstanceId prompt =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("ProximityPrompt")));
+    REQUIRE_FALSE(match.server.world.setParent(prompt, crate).has_value());
+    match.server.world.proximityPrompts().find(prompt)->actionText = match.server.atoms.intern("Open");
+    match.run(3);
+
+    // The replica has both, with what the authority set.
+    const core::InstanceId detectorHere = match.copyOf(detector);
+    const core::InstanceId promptHere = match.copyOf(prompt);
+    REQUIRE(detectorHere.valid());
+    REQUIRE(promptHere.valid());
+    CHECK(match.client.world.clickDetectors().find(detectorHere)->maxActivationDistance == 12.0);
+    CHECK(match.client.atoms.text(match.client.world.proximityPrompts().find(promptHere)->actionText) == "Open");
+
+    match.client.world.engineState().detectorOutbox.push_back(
+        scene::DetectorMessage{detectorHere, {}, scene::DetectorMessage::Kind::Click, 0});
+    match.client.world.engineState().detectorOutbox.push_back(
+        scene::DetectorMessage{promptHere, {}, scene::DetectorMessage::Kind::Triggered, 0});
+    match.run(2);
+
+    const std::vector<scene::DetectorMessage>& arrived = match.server.world.engineState().detectorInbox;
+    REQUIRE(arrived.size() == 2);
+    CHECK(arrived[0].detector == detector);
+    CHECK(arrived[0].kind == scene::DetectorMessage::Kind::Click);
+    // **The sender is the connection's player**, never one the message names.
+    CHECK(arrived[0].player == match.remote());
+    CHECK(arrived[1].detector == prompt);
+    CHECK(arrived[1].kind == scene::DetectorMessage::Kind::Triggered);
+}

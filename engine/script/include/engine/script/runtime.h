@@ -137,6 +137,9 @@ public:
     // events (ADR 0041). Called right after the simulation dispatch, so they
     // land in the same drain as the `InputAction` signals the same tick raised.
     void fireInputEvents(std::span<const input::RawInputEvent> events);
+    // Clicks and prompts (ADR 0126), from the same events, before scripts see
+    // them.
+    void stepDetectors(core::f64 dt, std::span<const input::RawInputEvent> events);
 
     // The animation host the `AnimationTrack` bindings drive. Null in a build
     // with no render module, which those bindings answer as a track that plays

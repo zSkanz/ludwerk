@@ -311,6 +311,12 @@ void ScriptRuntime::setInput(input::InputSystem* input)
     m_impl->services.input = input;
 }
 
+void ScriptRuntime::stepDetectors(core::f64 dt, std::span<const input::RawInputEvent> events)
+{
+    if (m_impl->state != nullptr)
+        engine::script::stepDetectors(m_impl->state, dt, events);
+}
+
 void ScriptRuntime::fireInputEvents(std::span<const input::RawInputEvent> events)
 {
     engine::script::fireInputEvents(m_impl->state, events);

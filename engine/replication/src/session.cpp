@@ -1011,6 +1011,27 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                 world.engineState().remoteInbox.push_back(std::move(message));
                 m_stats.messagesReceived += 1;
             }
+            else if (type == MessageType::DetectorInput && peer->welcomed && peer->player.valid()) {
+                // **The sender is the connection's player** here too; whether
+                // it could have pressed the thing is the tick's to check
+                // (ADR 0126), against the world as it stands then.
+                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                peer->messagesThisTick += 1;
+                const u32 netId = reader.u32v();
+                const u8 kind = reader.u8v();
+                const InstanceId detector = instanceOfNet(world, netId);
+                if (!reader.ok() || !reader.done() || !detector.valid() ||
+                    kind > static_cast<u8>(scene::DetectorMessage::Kind::HoldEnded)) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                world.engineState().detectorInbox.push_back(
+                    scene::DetectorMessage{detector, peer->player, static_cast<scene::DetectorMessage::Kind>(kind), 0});
+                m_stats.messagesReceived += 1;
+            }
             break;
         }
         case net::TransportEvent::Kind::None:
@@ -1644,6 +1665,27 @@ void ReplicaSession::sendMessages(scene::World& world)
             refs.push_back(netIdOf(ref));
         Writer out;
         writeRemote(out, MessageType::RemoteToAuthority, remote, message, refs);
+        sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        m_stats.messagesSent += 1;
+    }
+
+    // Clicks and prompts (ADR 0126): the detector by the id the authority
+    // knows it by, and what was done to it.
+    std::vector<scene::DetectorMessage> pressed;
+    pressed.swap(world.engineState().detectorOutbox);
+    for (scene::DetectorMessage& message : pressed) {
+        const u32 detector = m_welcomed ? netIdOf(message.detector) : 0u;
+        if (detector == 0) {
+            if (++message.held <= MaxRemoteHeldSends)
+                world.engineState().detectorOutbox.push_back(message);
+            else
+                m_stats.messagesDropped += 1;
+            continue;
+        }
+        Writer out;
+        out.u8v(static_cast<u8>(MessageType::DetectorInput));
+        out.u32v(detector);
+        out.u8v(static_cast<u8>(message.kind));
         sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         m_stats.messagesSent += 1;
     }

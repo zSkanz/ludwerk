@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 20;
+inline constexpr u32 ProtocolVersion = 21;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -220,6 +220,24 @@ inline constexpr FieldDesc Tilemap2DFields[] = {
     {"Friction", 9, Encoding::F32, Source::Component, "tilemaps2d"},
 };
 
+inline constexpr FieldDesc ClickDetectorFields[] = {
+    {"MaxActivationDistance", 1, Encoding::F32, Source::Component, "clickDetectors"},
+    {"CursorIcon", 2, Encoding::NameAtom, Source::Component, "clickDetectors"},
+};
+
+inline constexpr FieldDesc ProximityPromptFields[] = {
+    {"ActionText", 1, Encoding::NameAtom, Source::Component, "proximityPrompts"},
+    {"ObjectText", 2, Encoding::NameAtom, Source::Component, "proximityPrompts"},
+    {"KeyboardKeyCode", 3, Encoding::I32, Source::Component, "proximityPrompts"},
+    {"GamepadKeyCode", 4, Encoding::I32, Source::Component, "proximityPrompts"},
+    {"HoldDuration", 5, Encoding::F32, Source::Component, "proximityPrompts"},
+    {"MaxActivationDistance", 6, Encoding::F32, Source::Component, "proximityPrompts"},
+    {"RequiresLineOfSight", 7, Encoding::Bool, Source::Component, "proximityPrompts"},
+    {"Exclusivity", 8, Encoding::I32, Source::Component, "proximityPrompts"},
+    {"Style", 9, Encoding::I32, Source::Component, "proximityPrompts"},
+    {"Enabled", 10, Encoding::Bool, Source::Component, "proximityPrompts"},
+};
+
 inline constexpr FieldDesc BloomEffectFields[] = {
     {"Enabled", 1, Encoding::Bool, Source::Component, "postEffects"},
     {"Intensity", 2, Encoding::F32, Source::Component, "bloomEffects"},
@@ -307,6 +325,8 @@ inline constexpr ClassDesc Classes[] = {
     {"RemoteFunction", {}, -1, false, false},
     {"Part2D", Part2DFields, -1, false, false},
     {"Tilemap2D", Tilemap2DFields, -1, false, false},
+    {"ClickDetector", ClickDetectorFields, -1, false, false},
+    {"ProximityPrompt", ProximityPromptFields, -1, false, false},
     {"BloomEffect", BloomEffectFields, -1, false, false},
     {"ColorCorrectionEffect", ColorCorrectionEffectFields, -1, false, false},
     {"BlurEffect", BlurEffectFields, -1, false, false},
@@ -360,6 +380,7 @@ enum class MessageType : u8
     TilemapBlocks = 13,
     SceneChange = 14,
     Attributes = 15,
+    DetectorInput = 16,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -395,6 +416,7 @@ inline constexpr MessageDesc Messages[] = {
     {"TilemapBlocks", MessageType::TilemapBlocks, 0, Direction::ToReplica},
     {"SceneChange", MessageType::SceneChange, 0, Direction::ToReplica},
     {"Attributes", MessageType::Attributes, 0, Direction::ToReplica},
+    {"DetectorInput", MessageType::DetectorInput, 0, Direction::ToAuthority},
 };
 
 } // namespace engine::replication::generated

@@ -4678,6 +4678,178 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Property },
     },
+    -- ADR 0126: a part pressed, prompted and pulled without code.
+    {
+        Name = "ClickDetector",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("BasePart", "Model"),
+        Storage = "ClickDetector",
+        Doc = "Makes the part or model it is in something a player clicks (ADR 0126). The engine casts the "
+            .. "pointer -- the mouse, or a tap -- into the world once a tick; the nearest part with a detector "
+            .. "in it, or in a model around it, is the one pointed at, and a part with `CanQuery` false is "
+            .. "passed through. **In a match** the click is sent to the authority, which checks the distance "
+            .. "from the player's character and fires `MouseClick` there with the player; the machine that "
+            .. "clicked fires it too, so its own scripts react at once. Hovering is this machine's alone.",
+        Properties = {
+            {
+                Name = "MaxActivationDistance",
+                Type = "number",
+                Default = "32",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far from the player's character, in metres, a click still counts -- from the camera "
+                    .. "when there is no character.",
+            },
+            {
+                Name = "CursorIcon",
+                Type = "Content",
+                Default = '""',
+                ContentKind = "Texture",
+                Inert = true,
+                Doc = "The picture the pointer shows over it. Empty keeps the pointer as it is. Stored, "
+                    .. "replicated and not drawn yet: the pointer keeps its look (the toolkit's F1 ledger).",
+            },
+        } :: { Schema.Property },
+        Events = {
+            {
+                Name = "MouseClick",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "The primary button, or a tap, went down on it within reach.",
+            },
+            {
+                Name = "RightMouseClick",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "The secondary button went down on it within reach.",
+            },
+            {
+                Name = "MouseHoverEnter",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "The pointer came onto it, within reach. On this machine only.",
+            },
+            {
+                Name = "MouseHoverLeave",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "The pointer left it, or it went out of reach. On this machine only.",
+            },
+        } :: { Schema.Event },
+    },
+    {
+        Name = "ProximityPrompt",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("BasePart", "Attachment", "Model"),
+        Storage = "ProximityPrompt",
+        Doc = "A prompt that appears when a player comes near the part, attachment or model it is in -- "
+            .. "**Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap "
+            .. "(ADR 0126). The engine draws it: the key, the two texts and, for a held prompt, a ring that "
+            .. "fills; `Style = Custom` draws nothing and leaves `PromptShown` and `PromptHidden` to the "
+            .. "game. Its keys go through an input context the engine owns, below a game's own, so a game's "
+            .. "context that sinks the same key wins. **In a match** it is triggered here, and checked and "
+            .. "fired on the authority with the player.",
+        Properties = {
+            {
+                Name = "ActionText",
+                Type = "string",
+                Default = '"Interact"',
+                Doc = "What triggering it does, such as `Open`.",
+            },
+            {
+                Name = "ObjectText",
+                Type = "string",
+                Default = '""',
+                Doc = "What it is, such as `Door`. Empty shows the action alone.",
+            },
+            {
+                Name = "KeyboardKeyCode",
+                Type = "Enum.KeyCode",
+                Default = "Enum.KeyCode.E",
+                Doc = "The key that triggers it.",
+            },
+            {
+                Name = "GamepadKeyCode",
+                Type = "Enum.KeyCode",
+                Default = "Enum.KeyCode.ButtonWest",
+                Doc = "The gamepad button that triggers it.",
+            },
+            {
+                Name = "HoldDuration",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How long the key must be held, in seconds. 0 triggers on the press.",
+            },
+            {
+                Name = "MaxActivationDistance",
+                Type = "number",
+                Default = "10",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How near, in metres, the player's character must be for it to show.",
+            },
+            {
+                Name = "RequiresLineOfSight",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether something between the character and it hides it.",
+            },
+            {
+                Name = "Exclusivity",
+                Type = "Enum.ProximityPromptExclusivity",
+                Default = "Enum.ProximityPromptExclusivity.OnePerButton",
+                Doc = "Which of several prompts in reach show: the nearest per key, the nearest of all, or "
+                    .. "this one always.",
+            },
+            {
+                Name = "UIOffset",
+                Type = "Vector2",
+                Default = "Vector2.new(0, 0)",
+                Doc = "Moves the drawn prompt on the screen, in pixels, from where it is anchored.",
+            },
+            {
+                Name = "Style",
+                Type = "Enum.ProximityPromptStyle",
+                Default = "Enum.ProximityPromptStyle.Default",
+                Doc = "`Default` is drawn by the engine; `Custom` draws nothing.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether it shows and can be triggered.",
+            },
+        } :: { Schema.Property },
+        Events = {
+            {
+                Name = "Triggered",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "Pressed -- or held for `HoldDuration` -- while shown.",
+            },
+            {
+                Name = "TriggerEnded",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "The key that triggered it was let go.",
+            },
+            {
+                Name = "PromptButtonHoldBegan",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "A held prompt's key went down.",
+            },
+            {
+                Name = "PromptButtonHoldEnded",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Doc = "A held prompt's key came up, triggered or not.",
+            },
+            {
+                Name = "PromptShown",
+                Parameters = { { Name = "inputType", Type = "Enum.ProximityPromptInputType" } },
+                Doc = "It appeared on this machine, for the kind of input the player is using.",
+            },
+            {
+                Name = "PromptHidden",
+                Parameters = {},
+                Doc = "It went away on this machine.",
+            },
+        } :: { Schema.Event },
+    },
 }
 
 local Definition: Schema.Definition = {

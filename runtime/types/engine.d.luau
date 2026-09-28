@@ -156,6 +156,15 @@ end
 declare extern type EnumAssetFetchStatus extends EnumItem with
 end
 
+declare extern type EnumProximityPromptExclusivity extends EnumItem with
+end
+
+declare extern type EnumProximityPromptStyle extends EnumItem with
+end
+
+declare extern type EnumProximityPromptInputType extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2456,6 +2465,61 @@ declare extern type FoliageMesh extends Instance with
     Material: Material?
 end
 
+declare extern type ClickDetector extends Instance with
+    --- How far from the player's character, in metres, a click still counts -- from the camera when
+    --- there is no character.
+    MaxActivationDistance: number
+    --- The picture the pointer shows over it. Empty keeps the pointer as it is. Stored, replicated and
+    --- not drawn yet: the pointer keeps its look (the toolkit's F1 ledger).
+    CursorIcon: Content
+    --- The primary button, or a tap, went down on it within reach.
+    read MouseClick: Signal<Player>
+    --- The secondary button went down on it within reach.
+    read RightMouseClick: Signal<Player>
+    --- The pointer came onto it, within reach. On this machine only.
+    read MouseHoverEnter: Signal<Player>
+    --- The pointer left it, or it went out of reach. On this machine only.
+    read MouseHoverLeave: Signal<Player>
+end
+
+declare extern type ProximityPrompt extends Instance with
+    --- What triggering it does, such as `Open`.
+    ActionText: string
+    --- What it is, such as `Door`. Empty shows the action alone.
+    ObjectText: string
+    --- The key that triggers it.
+    KeyboardKeyCode: EnumKeyCode
+    --- The gamepad button that triggers it.
+    GamepadKeyCode: EnumKeyCode
+    --- How long the key must be held, in seconds. 0 triggers on the press.
+    HoldDuration: number
+    --- How near, in metres, the player's character must be for it to show.
+    MaxActivationDistance: number
+    --- Whether something between the character and it hides it.
+    RequiresLineOfSight: boolean
+    --- Which of several prompts in reach show: the nearest per key, the nearest of all, or this one
+    --- always.
+    Exclusivity: EnumProximityPromptExclusivity
+    --- Moves the drawn prompt on the screen, in pixels, from where it is anchored.
+    UIOffset: Vector2
+    --- `Default` is drawn by the engine; `Custom` draws nothing.
+    Style: EnumProximityPromptStyle
+    --- Whether it shows and can be triggered.
+    Enabled: boolean
+    --- Pressed -- or held for `HoldDuration` -- while shown.
+    read Triggered: Signal<Player>
+    --- The key that triggered it was let go.
+    read TriggerEnded: Signal<Player>
+    --- A held prompt's key went down.
+    read PromptButtonHoldBegan: Signal<Player>
+    --- A held prompt's key came up, triggered or not.
+    read PromptButtonHoldEnded: Signal<Player>
+    --- It appeared on this machine, for the kind of input the player is using.
+    read PromptShown: Signal<EnumProximityPromptInputType>
+    --- It went away on this machine.
+    read PromptHidden: Signal<()>
+end
+
 declare extern type DataModel extends Instance with
     --- The version of the engine runtime executing this VM, as `project.toml` pins it. Read-only: the
     --- runtime is chosen before the VM exists, so nothing a script does can change it.
@@ -2474,6 +2538,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "SaveService"): SaveService
     function GetService(self, name: "TeamService"): TeamService
     function GetService(self, name: "ContentProvider"): ContentProvider
+    function GetService(self, name: "ProximityPromptService"): ProximityPromptService
     function GetService(self, name: "SceneService"): SceneService
     function GetService(self, name: "ServerStorage"): ServerStorage
     function GetService(self, name: "NetworkService"): NetworkService
@@ -2681,6 +2746,15 @@ declare extern type ContentProvider extends Instance with
     --- Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything
     --- else is found or not.
     function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
+end
+
+declare extern type ProximityPromptService extends Instance with
+    --- False hides every prompt and triggers none -- a cutscene, a menu.
+    Enabled: boolean
+    --- The most prompts shown at once, nearest first.
+    MaxPromptsVisible: number
+    --- Any prompt was triggered, with the player who triggered it.
+    read PromptTriggered: Signal<ProximityPrompt, Player>
 end
 
 declare extern type SceneService extends Instance with
@@ -3707,6 +3781,23 @@ declare Enum: {
         Failure: EnumAssetFetchStatus,
         GetEnumItems: (self: any) -> { EnumAssetFetchStatus },
     },
+    ProximityPromptExclusivity: {
+        OnePerButton: EnumProximityPromptExclusivity,
+        OneGlobally: EnumProximityPromptExclusivity,
+        AlwaysShow: EnumProximityPromptExclusivity,
+        GetEnumItems: (self: any) -> { EnumProximityPromptExclusivity },
+    },
+    ProximityPromptStyle: {
+        Default: EnumProximityPromptStyle,
+        Custom: EnumProximityPromptStyle,
+        GetEnumItems: (self: any) -> { EnumProximityPromptStyle },
+    },
+    ProximityPromptInputType: {
+        Keyboard: EnumProximityPromptInputType,
+        Gamepad: EnumProximityPromptInputType,
+        Touch: EnumProximityPromptInputType,
+        GetEnumItems: (self: any) -> { EnumProximityPromptInputType },
+    },
 }
 
 declare Vector3: {
@@ -4019,6 +4110,8 @@ declare Instance: {
         & (("NavigationAgent") -> NavigationAgent)
         & (("FoliageLayer") -> FoliageLayer)
         & (("FoliageMesh") -> FoliageMesh)
+        & (("ClickDetector") -> ClickDetector)
+        & (("ProximityPrompt") -> ProximityPrompt)
         & (("Team") -> Team)
         & (("RemoteEvent") -> RemoteEvent)
         & (("RemoteFunction") -> RemoteFunction),

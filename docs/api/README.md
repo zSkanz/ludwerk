@@ -32,6 +32,7 @@ guided tour.
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Where an agent can walk, and how it gets somewhere (ADR 0089). |
 | [`NetworkService`](networkservice.md) | [`Instance`](instance.md) | What this process is in a networked game, and the way to join, host or leave one (ADR 0069, ADR 0106). |
 | [`PhysicsService`](physicsservice.md) | [`Instance`](instance.md) | The simulation tick grid and the physics controls that do not belong on an individual part. |
+| [`ProximityPromptService`](proximitypromptservice.md) | [`Instance`](instance.md) | Every `ProximityPrompt` at once (ADR 0126): whether any show, how many at most, and a signal for any of them triggered. |
 | [`ReplicatedStorage`](replicatedstorage.md) | [`Instance`](instance.md) | What every machine has and nobody sees (ADR 0080): templates to clone, `RemoteEvent`s, anything a game keeps rather than shows. |
 | [`RunService`](runservice.md) | [`Instance`](instance.md) | The frame loop: the phase signals per-frame work hangs off, and the clock that work reads. |
 | [`SaveService`](saveservice.md) | [`Instance`](instance.md) | Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. |
@@ -64,6 +65,7 @@ guided tour.
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is rendered from. |
 | [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. |
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: the player, or anything that should climb a ramp and step over a kerb instead of tumbling. |
+| [`ClickDetector`](clickdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player clicks (ADR 0126). |
 | [`ColorCorrectionEffect`](colorcorrectioneffect.md) | [`PostEffect`](posteffect.md) | A grade over the whole picture: brighter or darker, flatter or punchier, greyer or more vivid, and tinted. |
 | [`Constraint`](constraint.md) | [`Instance`](instance.md) | The base of anything the SOLVER holds together. |
 | [`Constraint2D`](constraint2d.md) | [`Instance`](instance.md) | The base of a joint between two `Part2D`s (ADR 0102): the 2D solver holds them together, and a rope bridge, a door on a hinge or a swinging lamp is what comes of it. |
@@ -96,6 +98,7 @@ guided tour.
 | [`Player`](player.md) | [`Instance`](instance.md) | Somebody taking part in this world (N1). |
 | [`PointLight`](pointlight.md) | [`Instance`](instance.md) | A light radiating equally in every direction. |
 | [`PostEffect`](posteffect.md) | [`Instance`](instance.md) | The abstract base of the effects that change the finished picture rather than the world in it (ADR 0096). |
+| [`ProximityPrompt`](proximityprompt.md) | [`Instance`](instance.md) | A prompt that appears when a player comes near the part, attachment or model it is in -- **Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap (ADR 0126). |
 | [`Ragdoll`](ragdoll.md) | [`Instance`](instance.md) | Makes a character's pose come from the simulation instead of from a clip. |
 | [`RemoteEvent`](remoteevent.md) | [`Instance`](instance.md) | A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. |
 | [`RemoteFunction`](remotefunction.md) | [`Instance`](instance.md) | A question a client asks the server and waits for the answer to (ADR 0079): "what is in my inventory?", "may I open this door?". |

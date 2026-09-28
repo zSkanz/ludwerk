@@ -33,6 +33,7 @@
 #include <thread>
 #include <vector>
 
+#include "class_descriptors.gen.h"
 #include "engine/app/backends.h"
 #include "engine/app/brush_overlay.h"
 #include "engine/app/chunk_overlay.h"
@@ -429,6 +430,129 @@ void submitCameraVolumes(const scene::World& world, std::span<const core::Instan
         // Which way is up in the shot: a small tick above the far edge.
         draw.line(at(-farHalfX * 0.2f, farHalfY, -depth), at(0.0f, farHalfY * 1.2f, -depth), colour);
         draw.line(at(0.0f, farHalfY * 1.2f, -depth), at(farHalfX * 0.2f, farHalfY, -depth), colour);
+    }
+}
+
+// **The engine's look for a `ProximityPrompt`** (ADR 0126): a dark box above
+// where it hangs, the key on its left -- a ring filling under it for a held
+// prompt -- and the two texts. The same box, at the same place, the tick
+// hit-tests a tap against (`scene::PromptWidth`).
+void appendPrompts(const scene::World& world, const render::RenderCamera& camera, core::Vec2 viewport,
+                   ui::DrawList& out)
+{
+    const scene::EngineState& state = world.engineState();
+    if (state.shownPrompts.empty() || !camera.valid || viewport.x <= 0.0f || viewport.y <= 0.0f)
+        return;
+    const ViewportRect rect{0.0f, 0.0f, viewport.x, viewport.y};
+    const auto keyName = [&world](core::i32 keyCode) -> std::string {
+        const scene::EnumItemDesc* item = world.enums().findValue(scene::generated::KeyCodeEnumId, keyCode);
+        std::string name = item != nullptr ? std::string(world.atoms().text(item->name)) : std::string{};
+        // The standard layout's face buttons by the letters printed on them.
+        if (name == "ButtonSouth")
+            return "A";
+        if (name == "ButtonEast")
+            return "B";
+        if (name == "ButtonWest")
+            return "X";
+        if (name == "ButtonNorth")
+            return "Y";
+        return name;
+    };
+    const core::Color3 panel{0.08f, 0.09f, 0.11f};
+    const core::Color3 keyFill{0.92f, 0.93f, 0.95f};
+    const core::Color3 ink{0.08f, 0.09f, 0.11f};
+    const core::Color3 white{1.0f, 1.0f, 1.0f};
+    const core::Color3 muted{0.72f, 0.74f, 0.78f};
+    for (const scene::ShownPrompt& shown : state.shownPrompts) {
+        const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(shown.prompt);
+        if (prompt == nullptr)
+            continue;
+        const std::optional<core::Vec2> at =
+            worldToViewport(camera.projection, camera.view, camera.origin, rect, shown.anchor);
+        if (!at.has_value())
+            continue;
+        const core::Vec2 centre{at->x + prompt->uiOffset.x, at->y + prompt->uiOffset.y - scene::PromptLift};
+        const core::Vec2 min{centre.x - scene::PromptWidth * 0.5f, centre.y - scene::PromptHeight * 0.5f};
+        const core::Vec2 max{centre.x + scene::PromptWidth * 0.5f, centre.y + scene::PromptHeight * 0.5f};
+
+        ui::DrawQuad box;
+        box.min = min;
+        box.max = max;
+        box.color = panel;
+        box.alpha = 0.78f;
+        box.cornerRadius = 10.0f;
+        out.quads.push_back(box);
+
+        const f32 key = scene::PromptHeight - 16.0f;
+        ui::DrawQuad cap;
+        cap.min = core::Vec2{min.x + 8.0f, min.y + 8.0f};
+        cap.max = core::Vec2{cap.min.x + key, cap.min.y + key};
+        cap.color = keyFill;
+        cap.cornerRadius = shown.inputType == 2 ? key * 0.5f : 6.0f;
+        out.quads.push_back(cap);
+        if (shown.holdProgress > 0.0f) {
+            ui::DrawQuad fill;
+            fill.min = core::Vec2{cap.min.x, cap.max.y - 4.0f};
+            fill.max = core::Vec2{cap.min.x + key * std::min(1.0f, shown.holdProgress), cap.max.y};
+            fill.color = core::Color3{0.30f, 0.62f, 1.0f};
+            fill.cornerRadius = 2.0f;
+            out.quads.push_back(fill);
+        }
+        const std::string label = shown.inputType == 2   ? core::engineCatalog().format(ENG_TR("ui.prompt.tap"))
+                                  : shown.inputType == 1 ? keyName(prompt->gamepadKeyCode)
+                                                         : keyName(prompt->keyboardKeyCode);
+        ui::buildTextGeometry(label, "", label.size() > 2 ? 12.0f : 20.0f, 0.0f, core::Rect{cap.min, cap.max}, 1, 1,
+                              ink, 1.0f, 0, out.quads);
+
+        const core::Rect words{core::Vec2{cap.max.x + 10.0f, min.y + 6.0f}, core::Vec2{max.x - 8.0f, max.y - 6.0f}};
+        const std::string_view object = world.atoms().text(prompt->objectText);
+        const std::string_view action = world.atoms().text(prompt->actionText);
+        if (object.empty()) {
+            ui::buildTextGeometry(action, "", 18.0f, 0.0f, words, 0, 1, white, 1.0f, 0, out.quads);
+        }
+        else {
+            const f32 middle = (words.min.y + words.max.y) * 0.5f;
+            ui::buildTextGeometry(object, "", 13.0f, 0.0f, core::Rect{words.min, core::Vec2{words.max.x, middle}}, 0, 2,
+                                  muted, 1.0f, 0, out.quads);
+            ui::buildTextGeometry(action, "", 18.0f, 0.0f, core::Rect{core::Vec2{words.min.x, middle}, words.max}, 0, 0,
+                                  white, 1.0f, 0, out.quads);
+        }
+    }
+}
+
+// **How far a click or a prompt reaches** (ADR 0126), drawn round a selected
+// `ClickDetector` or `ProximityPrompt` -- or round the part holding one -- at
+// the part or attachment it hangs from.
+void submitDetectorVolumes(const scene::World& world, std::span<const core::InstanceId> selection,
+                           core::DVec3 cameraOrigin, render::DebugDraw& draw)
+{
+    const auto drawOne = [&](core::InstanceId id) {
+        f64 reach = 0.0;
+        render::DebugColor colour = render::DebugColor::fromLinear(0.30f, 0.62f, 1.0f);
+        if (const scene::ClickDetectorComponent* click = world.clickDetectors().find(id)) {
+            reach = click->maxActivationDistance;
+        }
+        else if (const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(id)) {
+            reach = prompt->maxActivationDistance;
+            colour = render::DebugColor::fromLinear(1.0f, 0.78f, 0.25f);
+        }
+        else {
+            return;
+        }
+        const core::InstanceId parent = world.parentOf(id);
+        core::DVec3 at;
+        if (const scene::PartComponent* part = world.parts().find(parent))
+            at = part->cframe.position;
+        else if (const scene::AttachmentComponent* attachment = world.attachments().find(parent))
+            at = attachment->worldCFrame.position;
+        else
+            return;
+        draw.wireSphere(core::toVec3(at - cameraOrigin), static_cast<f32>(reach), colour, 48);
+    };
+    for (const core::InstanceId selected : selection) {
+        drawOne(selected);
+        for (core::InstanceId child = world.firstChild(selected); child.valid(); child = world.nextSibling(child))
+            drawOne(child);
     }
 }
 
@@ -4472,6 +4596,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
 
             ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
+            // Prompts over the game's own screen, never under it (ADR 0126).
+            appendPrompts(host->world(), snapshot.camera, uiViewport, uiDrawList);
             // Index 0 is "no texture" and every entry after it is a texture the
             // UI can name. The glyph atlas is index 1 when a face has been
             // rasterised; images follow it.
@@ -4565,6 +4691,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     submitCameraVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, aspect,
                                         debugDraw);
                     submitLightVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
+                    submitDetectorVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
                 }
                 // The manipulator over the outline, because the outline says
                 // WHAT is selected and the manipulator is the thing being

@@ -581,6 +581,36 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Method },
     },
     {
+        Name = "ProximityPromptService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Every `ProximityPrompt` at once (ADR 0126): whether any show, how many at most, and a "
+            .. "signal for any of them triggered.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "False hides every prompt and triggers none -- a cutscene, a menu.",
+            },
+            {
+                Name = "MaxPromptsVisible",
+                Type = "number",
+                Default = "16",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most prompts shown at once, nearest first.",
+            },
+        } :: { Schema.Property },
+        Events = {
+            {
+                Name = "PromptTriggered",
+                Parameters = { { Name = "prompt", Type = "ProximityPrompt" }, { Name = "player", Type = "Player" } },
+                Doc = "Any prompt was triggered, with the player who triggered it.",
+            },
+        } :: { Schema.Event },
+    },
+    {
         Name = "SceneService",
         Extends = "Instance",
         Module = "scene",

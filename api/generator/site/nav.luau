@@ -120,6 +120,7 @@ local Sections: { Section } = {
         Pages = {
             { Slug = "actions", Title = "Actions, bindings and contexts" },
             { Slug = "rebinding", Title = "Rebinding and prompts" },
+            { Slug = "interactions", Title = "Clicks and proximity prompts" },
             { Slug = "raw", Title = "Raw input, and when to use it" },
         },
     },

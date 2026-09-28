@@ -373,6 +373,70 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "clickDetectors") {
+        const scene::ClickDetectorComponent* component = world.clickDetectors().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "MaxActivationDistance") {
+            setF32(out, static_cast<core::f32>(component->maxActivationDistance));
+            return true;
+        }
+        if (field.name == "CursorIcon") {
+            setU32(out, component->cursorIcon.id);
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "proximityPrompts") {
+        const scene::ProximityPromptComponent* component = world.proximityPrompts().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "ActionText") {
+            setU32(out, component->actionText.id);
+            return true;
+        }
+        if (field.name == "ObjectText") {
+            setU32(out, component->objectText.id);
+            return true;
+        }
+        if (field.name == "KeyboardKeyCode") {
+            setI32(out, component->keyboardKeyCode);
+            return true;
+        }
+        if (field.name == "GamepadKeyCode") {
+            setI32(out, component->gamepadKeyCode);
+            return true;
+        }
+        if (field.name == "HoldDuration") {
+            setF32(out, static_cast<core::f32>(component->holdDuration));
+            return true;
+        }
+        if (field.name == "MaxActivationDistance") {
+            setF32(out, static_cast<core::f32>(component->maxActivationDistance));
+            return true;
+        }
+        if (field.name == "RequiresLineOfSight") {
+            setBool(out, component->requiresLineOfSight);
+            return true;
+        }
+        if (field.name == "Exclusivity") {
+            setI32(out, component->exclusivity);
+            return true;
+        }
+        if (field.name == "Style") {
+            setI32(out, component->style);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            setBool(out, component->enabled);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "bloomEffects") {
         const scene::BloomEffectComponent* component = world.bloomEffects().find(id);
         if (component == nullptr) {
@@ -784,6 +848,70 @@ using generated::Source;
         scene::PostEffectComponent* component = world.postEffects().find(id);
         if (component == nullptr) {
             return false;
+        }
+        if (field.name == "Enabled") {
+            component->enabled = asBool(value);
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "clickDetectors") {
+        scene::ClickDetectorComponent* component = world.clickDetectors().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "MaxActivationDistance") {
+            component->maxActivationDistance = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "CursorIcon") {
+            component->cursorIcon = core::NameAtom{asU32(value)};
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "proximityPrompts") {
+        scene::ProximityPromptComponent* component = world.proximityPrompts().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "ActionText") {
+            component->actionText = core::NameAtom{asU32(value)};
+            return true;
+        }
+        if (field.name == "ObjectText") {
+            component->objectText = core::NameAtom{asU32(value)};
+            return true;
+        }
+        if (field.name == "KeyboardKeyCode") {
+            component->keyboardKeyCode = asI32(value);
+            return true;
+        }
+        if (field.name == "GamepadKeyCode") {
+            component->gamepadKeyCode = asI32(value);
+            return true;
+        }
+        if (field.name == "HoldDuration") {
+            component->holdDuration = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxActivationDistance") {
+            component->maxActivationDistance = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "RequiresLineOfSight") {
+            component->requiresLineOfSight = asBool(value);
+            return true;
+        }
+        if (field.name == "Exclusivity") {
+            component->exclusivity = asI32(value);
+            return true;
+        }
+        if (field.name == "Style") {
+            component->style = asI32(value);
+            return true;
         }
         if (field.name == "Enabled") {
             component->enabled = asBool(value);

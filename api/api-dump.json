@@ -582,6 +582,63 @@
       ]
     },
     {
+      "Name": "ClickDetector",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CursorIcon",
+          "Type": "Content",
+          "Default": "\"\"",
+          "Inert": true
+        },
+        {
+          "Name": "MaxActivationDistance",
+          "Type": "number",
+          "Default": "32"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "MouseClick",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "MouseHoverEnter",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "MouseHoverLeave",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "RightMouseClick",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "Name": "ClientScriptService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -2797,6 +2854,153 @@
       ],
       "Methods": [],
       "Events": []
+    },
+    {
+      "Name": "ProximityPrompt",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "ActionText",
+          "Type": "string",
+          "Default": "\"Interact\""
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Exclusivity",
+          "Type": "Enum.ProximityPromptExclusivity",
+          "Default": "Enum.ProximityPromptExclusivity.OnePerButton"
+        },
+        {
+          "Name": "GamepadKeyCode",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.ButtonWest"
+        },
+        {
+          "Name": "HoldDuration",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "KeyboardKeyCode",
+          "Type": "Enum.KeyCode",
+          "Default": "Enum.KeyCode.E"
+        },
+        {
+          "Name": "MaxActivationDistance",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "ObjectText",
+          "Type": "string",
+          "Default": "\"\""
+        },
+        {
+          "Name": "RequiresLineOfSight",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Style",
+          "Type": "Enum.ProximityPromptStyle",
+          "Default": "Enum.ProximityPromptStyle.Default"
+        },
+        {
+          "Name": "UIOffset",
+          "Type": "Vector2",
+          "Default": "Vector2.new(0, 0)"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "PromptButtonHoldBegan",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "PromptButtonHoldEnded",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "PromptHidden",
+          "Parameters": []
+        },
+        {
+          "Name": "PromptShown",
+          "Parameters": [
+            {
+              "Name": "inputType",
+              "Type": "Enum.ProximityPromptInputType"
+            }
+          ]
+        },
+        {
+          "Name": "TriggerEnded",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "Triggered",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "ProximityPromptService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "MaxPromptsVisible",
+          "Type": "number",
+          "Default": "16"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "PromptTriggered",
+          "Parameters": [
+            {
+              "Name": "prompt",
+              "Type": "ProximityPrompt"
+            },
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "Ragdoll",
@@ -9259,6 +9463,53 @@
         },
         {
           "Name": "Started",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "ProximityPromptExclusivity",
+      "Items": [
+        {
+          "Name": "AlwaysShow",
+          "Value": 2
+        },
+        {
+          "Name": "OneGlobally",
+          "Value": 1
+        },
+        {
+          "Name": "OnePerButton",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "ProximityPromptInputType",
+      "Items": [
+        {
+          "Name": "Gamepad",
+          "Value": 1
+        },
+        {
+          "Name": "Keyboard",
+          "Value": 0
+        },
+        {
+          "Name": "Touch",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ProximityPromptStyle",
+      "Items": [
+        {
+          "Name": "Custom",
+          "Value": 1
+        },
+        {
+          "Name": "Default",
           "Value": 0
         }
       ]

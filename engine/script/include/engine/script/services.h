@@ -38,6 +38,7 @@
 #include "engine/script/animation.h"
 #include "engine/script/binding.h"
 #include "engine/script/content_provider.h"
+#include "engine/script/detectors.h"
 #include "engine/script/reload_state.h"
 #include "engine/script/save_store.h"
 #include "engine/script/scenes.h"
@@ -170,6 +171,9 @@ public:
 
     // `ContentProvider:PreloadAsync` (ADR 0131 §3): the calls parked on it.
     PreloadState preloads;
+
+    // `ClickDetector` and `ProximityPrompt` on this machine (ADR 0126).
+    DetectorState detectors;
 
     std::vector<ChildWaiter> childWaiters;
 

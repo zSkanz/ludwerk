@@ -441,6 +441,35 @@ Where a `Promise` is in its life (ADR 0094). Settled once, and never again.
 | `Rejected` | 2 | Rejected, with the values its handlers receive. |
 | `Cancelled` | 3 | Cancelled before it settled: its executor stopped and its handlers will not run. |
 
+## Enum.ProximityPromptExclusivity
+
+Which of several `ProximityPrompt`s in reach show.
+
+| Item | Value | Description |
+|---|---|---|
+| `OnePerButton` | 0 | The nearest of those on the same key. |
+| `OneGlobally` | 1 | The nearest of all that are `OneGlobally`. |
+| `AlwaysShow` | 2 | This one whenever it is in reach. |
+
+## Enum.ProximityPromptInputType
+
+The input a shown `ProximityPrompt` is drawn for.
+
+| Item | Value | Description |
+|---|---|---|
+| `Keyboard` | 0 | A key. |
+| `Gamepad` | 1 | A gamepad button. |
+| `Touch` | 2 | A tap on the prompt. |
+
+## Enum.ProximityPromptStyle
+
+Who draws a `ProximityPrompt`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Default` | 0 | The engine: the key, the texts and a hold ring. |
+| `Custom` | 1 | The game, on `PromptShown` and `PromptHidden`. |
+
 ## Enum.RaycastFilterType
 
 Whether a `RaycastParams` filter list names what a cast may hit or what it must ignore (§2.3).

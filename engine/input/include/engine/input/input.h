@@ -230,6 +230,14 @@ public:
     void setSnapshot(const DeviceState& state) noexcept;
 
     [[nodiscard]] const DeviceState& snapshot() const noexcept { return m_state; }
+    // Whether the last dispatch gave this `Enum.KeyCode` to something above the
+    // engine's own uses of it -- the interface, or a context that sinks it. A
+    // `ProximityPrompt`'s key is the engine's, below every context a game
+    // makes (ADR 0126), and asks this before it acts.
+    [[nodiscard]] bool consumed(i32 keyCode) const noexcept
+    {
+        return keyCode >= 0 && static_cast<usize>(keyCode) < kKeyCodeCount && m_consumed[static_cast<usize>(keyCode)];
+    }
 
     // Whether one `Enum.KeyCode` is held, by the same rule a `Bool` action
     // applies -- an analogue source counts as down past half deflection. What

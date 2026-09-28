@@ -173,6 +173,48 @@ struct RemoteMessage
     u16 held = 0;
 };
 
+// ADR 0126: a click or a prompt's trigger, on its way from a replica to the
+// authority or arrived at one -- which checks it and fires it with the player.
+struct DetectorMessage
+{
+    // `Click`, `RightClick`, `Triggered`, `TriggerEnded`, `HoldBegan`,
+    // `HoldEnded`, in that order from 0.
+    enum class Kind : u8
+    {
+        Click,
+        RightClick,
+        Triggered,
+        TriggerEnded,
+        HoldBegan,
+        HoldEnded,
+    };
+    // The `ClickDetector` or the `ProximityPrompt`.
+    core::InstanceId detector;
+    // Arrived at an authority: the player who sent it.
+    core::InstanceId player;
+    Kind kind = Kind::Click;
+    // Sends waited through for the detector to get a network id.
+    u16 held = 0;
+};
+
+// The engine's look for a prompt, in pixels: the tick hit-tests a tap against
+// the same box the frame draws, centred this far above where it hangs.
+inline constexpr f32 PromptWidth = 200.0f;
+inline constexpr f32 PromptHeight = 56.0f;
+inline constexpr f32 PromptLift = 48.0f;
+
+// A prompt shown on this machine, for the frame to draw (ADR 0126).
+struct ShownPrompt
+{
+    core::InstanceId prompt;
+    // Where it hangs, in the world.
+    core::DVec3 anchor;
+    // How far a hold has got, 0 to 1.
+    f32 holdProgress = 0.0f;
+    // `Enum.ProximityPromptInputType`.
+    u8 inputType = 0;
+};
+
 struct EngineState
 {
     // Seconds, constant for the whole tick and advanced by the scheduler
@@ -298,6 +340,15 @@ struct EngineState
     // hold one of its own -- and how many it may run.
     bool subWorld = false;
     u32 maxSubWorlds = 2;
+
+    // `ProximityPromptService` (ADR 0126): whether any prompt shows, and how
+    // many at most; the prompts this machine shows now, nearest first; and the
+    // clicks and triggers crossing to the authority.
+    bool promptsEnabled = true;
+    f64 maxPromptsVisible = 16.0;
+    std::vector<ShownPrompt> shownPrompts;
+    std::vector<DetectorMessage> detectorOutbox;
+    std::vector<DetectorMessage> detectorInbox;
     // `Load()`ed and not `Unload()`ed, in the order they were asked for; and
     // those running now.
     std::vector<core::InstanceId> subWorldsWanted;
@@ -424,6 +475,8 @@ struct NameIndex
     X(AtmosphereComponent, atmospheres)                                                                                \
     X(FoliageLayerComponent, foliageLayers)                                                                            \
     X(FoliageMeshComponent, foliageMeshes)                                                                             \
+    X(ClickDetectorComponent, clickDetectors)                                                                          \
+    X(ProximityPromptComponent, proximityPrompts)                                                                      \
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
     X(AttributeMap, attributes)                                                                                        \
@@ -1075,6 +1128,16 @@ public:
     [[nodiscard]] const ComponentPool<FoliageLayerComponent>& foliageLayers() const noexcept { return m_foliageLayers; }
     [[nodiscard]] ComponentPool<FoliageMeshComponent>& foliageMeshes() noexcept { return m_foliageMeshes; }
     [[nodiscard]] const ComponentPool<FoliageMeshComponent>& foliageMeshes() const noexcept { return m_foliageMeshes; }
+    [[nodiscard]] ComponentPool<ClickDetectorComponent>& clickDetectors() noexcept { return m_clickDetectors; }
+    [[nodiscard]] const ComponentPool<ClickDetectorComponent>& clickDetectors() const noexcept
+    {
+        return m_clickDetectors;
+    }
+    [[nodiscard]] ComponentPool<ProximityPromptComponent>& proximityPrompts() noexcept { return m_proximityPrompts; }
+    [[nodiscard]] const ComponentPool<ProximityPromptComponent>& proximityPrompts() const noexcept
+    {
+        return m_proximityPrompts;
+    }
     [[nodiscard]] ComponentPool<SkyComponent>& skies() noexcept { return m_skies; }
     [[nodiscard]] const ComponentPool<SkyComponent>& skies() const noexcept { return m_skies; }
 

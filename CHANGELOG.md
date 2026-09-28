@@ -69,6 +69,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `game` and `scene` are mailboxes: `SendMessage(topic, ...)` and
   `BindToMessage(topic, fn)`, deferred, the values copied, and a binding goes
   with its script's scene.
+- **`ClickDetector` and `ProximityPrompt`** (ADR 0126). A part is clicked, or a
+  prompt near it triggered with a key, a gamepad button or a tap, with no input
+  code: the engine casts the pointer once a tick, measures reach from the
+  character, draws the prompt with its hold, and fires `MouseClick(player)` or
+  `Triggered(player)`. In a match the client fires at once and the server fires
+  after checking the player could reach it (protocol 21). The editor draws the
+  reach of a selected one; `examples/30-interactions` is a room with a button
+  and a door.
 - **`ContentProvider:PreloadAsync`** (ADR 0131). Loads a list of content names
   and instances -- every asset an instance names -- before anything shows them,
   and yields until each has arrived; a callback reports each item's

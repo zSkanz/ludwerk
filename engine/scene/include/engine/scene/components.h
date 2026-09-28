@@ -661,6 +661,35 @@ struct FoliageMeshComponent
     bool castShadow = true;
 };
 
+// ADR 0126: what makes a part or a model something a player clicks.
+struct ClickDetectorComponent
+{
+    f64 maxActivationDistance = 32.0;
+    // Atoms, as every string the wire carries is.
+    core::NameAtom cursorIcon;
+};
+
+// ADR 0126: a prompt shown near a part, an attachment or a model. What it is
+// doing on this machine -- shown, held -- is the script layer's, not a
+// property, and not the world's.
+struct ProximityPromptComponent
+{
+    // Atoms, as every string the wire carries is; `Interact` is set at attach.
+    core::NameAtom actionText;
+    core::NameAtom objectText;
+    // `Enum.KeyCode`: `E` and `ButtonWest`.
+    i32 keyboardKeyCode = 18;
+    i32 gamepadKeyCode = 76;
+    f64 holdDuration = 0.0;
+    f64 maxActivationDistance = 10.0;
+    bool requiresLineOfSight = true;
+    // `Enum.ProximityPromptExclusivity` and `Enum.ProximityPromptStyle`.
+    i32 exclusivity = 0;
+    core::Vec2 uiOffset{};
+    i32 style = 0;
+    bool enabled = true;
+};
+
 struct AtmosphereComponent
 {
     // 0 to 1: how thick the air is at the height of `offset`.

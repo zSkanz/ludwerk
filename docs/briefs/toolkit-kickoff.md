@@ -33,22 +33,33 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F1 — click, prompt, drag (ADR 0126)
 
-- [ ] `ClickDetector`: pointer and touch raycast once a frame; hover; the four
-  signals; `MaxActivationDistance`, `CursorIcon`.
-- [ ] `ProximityPrompt` and `ProximityPromptService`: the properties and signals
-  of ADR 0126 §2; the default look (glyph, texts, hold ring), themed and i18n'd;
-  `Custom` style; tap on touch; keys through an engine-owned `InputContext`.
+- [x] `ClickDetector`: pointer and touch raycast once a **tick** (not a frame:
+  from the camera and the viewport as the tick begins, so the answer is a
+  function of the input and replays); hover; the four signals;
+  `MaxActivationDistance`. **`CursorIcon` is stored and not drawn** (`Inert`).
+- [x] `ProximityPrompt` and `ProximityPromptService`: the properties and signals
+  of ADR 0126 §2; the default look (the key, the texts, a hold bar filling
+  under the key), drawn into the screen's draw list above the game's UI;
+  `Custom` style; tap on touch; the keys below every game context (a key a
+  game's context sank, or the interface took, is not the prompt's --
+  `InputSystem::consumed`). `GamepadKeyCode` defaults to `ButtonWest`: the
+  enum has no `ButtonX`.
 - [ ] `DragDetector`: the drag styles, limits, `Geometric`/`Physical`/`Custom`
   responses, signals.
-- [ ] In a match: local fire, authority validation (distance, line of sight),
-  fire on the authority with the player; a `Physical` drag takes network
-  ownership for its duration.
-- [ ] Editor: activation distances drawn when selected.
-- [ ] An example: a room with a button, a door opened by a prompt, a drawer and
-  a lever dragged.
-- [ ] Tests: a click out of range does not fire; a held prompt fires after
-  `HoldDuration`; two prompts with `OnePerButton` show one; a client's click
-  reaches the authority with its player; a forged click from too far is refused.
+- [~] In a match: local fire, authority validation (reach from the
+  character, with a part's size and a slack of 4 m; enabled), fire on the
+  authority with the connection's player -- `DetectorInput`, protocol 21 --
+  and both classes replicate. **Not checked on the authority: line of sight**
+  (a prompt's reach is). A `Physical` drag's ownership is F1b's.
+- [x] Editor: activation distances drawn when selected (the detector, or the
+  part holding it).
+- [~] An example: `examples/30-interactions`, a room with a button and a door
+  opened by a held prompt. The drawer and the lever come with F1b.
+- [x] Tests: a click out of range does not fire and one in range does, with
+  hover; a held prompt fires after `HoldDuration` and ends on release, and the
+  service sees it; two prompts on one key show one; both classes replicate and
+  a client's click and trigger reach the authority with its player
+  (`session_tests`); a forged click from too far is refused.
 
 ## Stage F2 — movers and constraints (ADR 0127)
 
