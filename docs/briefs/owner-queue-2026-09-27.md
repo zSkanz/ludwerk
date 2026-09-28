@@ -181,5 +181,8 @@ details included. After Q1, and before anything else; defects still come first.
 Views ([`views-kickoff.md`](views-kickoff.md), ADR 0107): V0 and V1 built on
 2026-09-27 -- more than one view a frame, `view://`, `CameraTexture` and
 `examples/26-security-cameras`, the owner's camera game. V2 (`ViewportFrame`),
-V3 (mirrors and portals) and V4 (`SubWorld`) next; then the AI panel
-([`ai-kickoff.md`](ai-kickoff.md), ADR 0108).
+V3 (mirrors and portals) and V4 (`SubWorld`) next; **then the game-ready
+plan** ([`game-ready-plan.md`](game-ready-plan.md), ADRs 0111 to 0123,
+approved by the owner on 2026-09-27: saves, HTTPS, terrain materials and rules,
+wind, foliage, water, the network service, encryption, editable primitives,
+video and parallel scripts); then the AI panel ([`ai-kickoff.md`](ai-kickoff.md), ADR 0108).

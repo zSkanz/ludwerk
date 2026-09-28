@@ -2,6 +2,13 @@
 
 - Status: accepted
 - Date: 2026-09-26
+- Amended by: [0124](0124-a-scene-closes-as-a-game-does-and-a-handler-dies-with-its-script.md)
+  (a scene closes as a game does: `scene:BindToClose`, the global `scene`,
+  `SceneService.CurrentScene` as an object, and a close handler dies with its
+  script)
+- Amended by: [0125](0125-a-scene-is-prepared-in-the-background-and-activated-when-the-game-says.md)
+  (`LoadSceneAsync`: a scene prepared in the background, with progress, and
+  activated when the game says)
 - Decided by: the owner, on 2026-09-26, in conversation. He asked whether a game
   could have a menu that is not multiplayer, a lobby, and the match itself as
   separate scenes. It could not: a project opens one scene and keeps it, and the
