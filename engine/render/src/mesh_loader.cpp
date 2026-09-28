@@ -549,6 +549,24 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
             map(material.properties.metallicRoughnessMap, false);
         }
     });
+    // A foliage mesh's material (ADR 0116), when it wears one of its own.
+    world.foliageMeshes().forEach([&](core::InstanceId, const scene::FoliageMeshComponent& mesh) {
+        if (!mesh.material.valid())
+            return;
+        const std::pair<core::NameAtom, u32> key{mesh.material, 0u};
+        if (std::find(visited.begin(), visited.end(), key) != visited.end())
+            return;
+        visited.push_back(key);
+        const asset::ResolvedMaterial material = world.resolveMaterial(mesh.material, 0);
+        const auto map = [&](const std::string& urn, bool srgb) {
+            if (!urn.empty())
+                load(world.atoms().intern(urn), srgb);
+        };
+        map(material.properties.colorMap, true);
+        map(material.properties.normalMap, false);
+        map(material.properties.metallicRoughnessMap, false);
+        map(material.properties.emissiveMap, true);
+    });
     // A sky's sun and moon (ADR 0096): colours. Its six faces are not here --
     // they are resampled on the CPU by `SkyLoader`, which reads them itself.
     world.skies().forEach([&](core::InstanceId, const scene::SkyComponent& sky) {
@@ -620,9 +638,8 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     u32 loaded = 0;
 
     core::u32 meshesThisCall = 0;
-    world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
-        (void)id;
-        const core::NameAtom content = meshPart.meshContent;
+    // One mesh content, loaded once whatever names it.
+    const auto load = [&](const core::NameAtom content) {
         if (content.id == 0 || library.find(content) != nullptr)
             return;
         if (std::binary_search(failed_.begin(), failed_.end(), content,
@@ -853,7 +870,12 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             core::I18nArg{"triangles", static_cast<core::i64>(triangles)},
         };
         core::log(core::LogLevel::Info, ENG_TR("render.info.mesh_loaded"), args);
-    });
+    };
+    world.meshParts().forEach(
+        [&](core::InstanceId, const scene::MeshPartComponent& meshPart) { load(meshPart.meshContent); });
+    // A foliage layer's meshes (ADR 0116), from the same feed and the same
+    // budget: a field of grass is one mesh, loaded once.
+    world.foliageMeshes().forEach([&](core::InstanceId, const scene::FoliageMeshComponent& mesh) { load(mesh.mesh); });
 
     return loaded;
 }

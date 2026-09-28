@@ -356,6 +356,58 @@ bool setSkyCloudColor(scene::World& world, core::InstanceId id, const scene::Val
 void attachSkyComponents(scene::World& world, core::InstanceId id);
 void detachSkyComponents(scene::World& world, core::InstanceId id);
 
+// FoliageLayer
+scene::Value getFoliageLayerEnabled(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerDensity(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerDensity(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerSlopeMin(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerSlopeMin(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerSlopeMax(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerSlopeMax(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerHeightMin(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerHeightMin(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerHeightMax(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerHeightMax(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerClumping(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerClumping(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerMinSpacing(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerMinSpacing(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerDrawDistance(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerDrawDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerFadeDistance(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerFadeDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageLayerSeed(const scene::World& world, core::InstanceId id);
+bool setFoliageLayerSeed(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachFoliageLayerComponents(scene::World& world, core::InstanceId id);
+void detachFoliageLayerComponents(scene::World& world, core::InstanceId id);
+
+// FoliageMesh
+scene::Value getFoliageMeshMesh(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshMesh(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshWeight(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshWeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshScaleMin(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshScaleMin(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshScaleMax(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshScaleMax(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshRandomRotation(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshRandomRotation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshAlignToNormal(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshAlignToNormal(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshSink(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshSink(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshWindResponse(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshWindResponse(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshStiffness(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshStiffness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshCastShadow(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshCastShadow(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getFoliageMeshMaterial(const scene::World& world, core::InstanceId id);
+bool setFoliageMeshMaterial(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachFoliageMeshComponents(scene::World& world, core::InstanceId id);
+void detachFoliageMeshComponents(scene::World& world, core::InstanceId id);
+
 // Lighting
 scene::Value getLightingClockTime(const scene::World& world, core::InstanceId id);
 bool setLightingClockTime(scene::World& world, core::InstanceId id, const scene::Value& value);

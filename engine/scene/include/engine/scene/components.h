@@ -600,6 +600,67 @@ struct SunRaysEffectComponent
     f32 spread = 0.5f;
 };
 
+// `FoliageLayer` (ADR 0116): where foliage grows over a terrain, and how
+// thickly. Visual only: no system but the renderer's foliage reads it, and it
+// is neither replicated nor hashed.
+struct FoliageMaterial
+{
+    core::u8 material = 0;
+    f32 density = 1.0f;
+    [[nodiscard]] bool operator==(const FoliageMaterial&) const noexcept = default;
+};
+
+// One chunk column of a layer's painted density: `ChunkEdge` squared bytes,
+// x fastest.
+struct FoliageMaskColumn
+{
+    core::i32 x = 0;
+    core::i32 z = 0;
+    std::vector<core::u8> density;
+    [[nodiscard]] bool operator==(const FoliageMaskColumn&) const = default;
+};
+
+struct FoliageLayerComponent
+{
+    bool enabled = true;
+    f32 density = 2.0f;
+    f32 slopeMin = 0.0f;
+    f32 slopeMax = 35.0f;
+    f32 heightMin = -10000.0f;
+    f32 heightMax = 10000.0f;
+    f32 clumping = 0.0f;
+    f32 minSpacing = 0.25f;
+    f32 drawDistance = 120.0f;
+    f32 fadeDistance = 20.0f;
+    f32 seed = 0.0f;
+    // The materials it grows on, each with a multiplier; empty is every
+    // material at 1 (`FoliageLayer:SetMaterials`).
+    std::vector<FoliageMaterial> materials;
+    // **The density painted by hand** (ADR 0116 §3): a byte per terrain
+    // column, 255 where the rules alone decide and 0 where nothing grows,
+    // kept only for the chunk columns a brush has touched -- a column with no
+    // entry is all 255. Saved with the scene.
+    std::vector<FoliageMaskColumn> mask;
+};
+
+// `FoliageMesh`: one mesh a layer grows.
+struct FoliageMeshComponent
+{
+    core::NameAtom mesh;
+    // A material asset's path, or none for the mesh's own. Never a runtime
+    // clone: every instance of a mesh shares one material.
+    core::NameAtom material;
+    f32 weight = 1.0f;
+    f32 scaleMin = 0.8f;
+    f32 scaleMax = 1.2f;
+    bool randomRotation = true;
+    f32 alignToNormal = 0.0f;
+    f32 sink = 0.05f;
+    f32 windResponse = 1.0f;
+    f32 stiffness = 1.0f;
+    bool castShadow = true;
+};
+
 struct AtmosphereComponent
 {
     // 0 to 1: how thick the air is at the height of `offset`.

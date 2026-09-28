@@ -90,6 +90,11 @@ struct RenderCounters
     core::u32 lodDraws = 0;
     // Triangles in the draws that were issued, at the level actually chosen.
     core::u32 triangles = 0;
+    // Foliage (ADR 0116): the tiles grown and resident, the instances they
+    // hold, and how many tiles grew this frame.
+    core::u32 foliageTiles = 0;
+    core::u32 foliageInstances = 0;
+    core::u32 foliageGrown = 0;
 };
 
 enum class Shell

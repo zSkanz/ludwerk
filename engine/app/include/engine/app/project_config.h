@@ -101,6 +101,17 @@ struct ProjectConfig
     core::u32 maxViewResolution = 1024;
     core::u32 maxSubWorlds = 2;
 
+    // **Foliage** (ADR 0116), `[render]`: the fraction of every layer drawn,
+    // and how far from the camera it casts shadows. Lower on a phone, where a
+    // field to the horizon costs a desktop's frame.
+#if defined(__ANDROID__)
+    core::f32 foliageDensity = 0.5f;
+    core::f32 foliageShadowDistance = 15.0f;
+#else
+    core::f32 foliageDensity = 1.0f;
+    core::f32 foliageShadowDistance = 30.0f;
+#endif
+
     // `[save]` (ADR 0111): how large one slot may grow, and how many a game
     // may keep.
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;

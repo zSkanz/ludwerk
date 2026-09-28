@@ -55,6 +55,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Foliage** (ADR 0116, the game-ready plan's B6). A `FoliageLayer` under a
+  `Terrain` says where things grow -- the materials it grows on, slope, height,
+  clumping, spacing, draw distance and seed, and never under a roof -- and its
+  `FoliageMesh` children say what, in what share, how large and how much the
+  wind moves them. No instance per blade: each tile of ground is grown on the
+  job threads as the camera nears it, from the same rules and seed on every
+  machine, and a compute pass on the GPU culls the field into indirect draws,
+  picking a level of detail and fading it out at its distance. Visual only:
+  not saved, replicated or hashed. The Terrain panel has a Foliage section and
+  a brush that paints a layer's density by hand; `[render] foliage_density`
+  and `foliage_shadow_distance` scale it (lower on Android). A field to the
+  horizon costs 1.5 ms at 1080p (`tests/perf/foliage`); `examples/29-meadow`
+  shows it, and the flagship's island grows grass. The RHI gained compute
+  pipelines, storage buffers and indirect draws for it.
 - **Wind** (ADR 0115, the game-ready plan's B5). `Workspace.GlobalWind`,
   `WindGusts` and `WindTurbulence`, and `Workspace:GetWindAt(position)`: one
   function of them and the simulation clock, the same in C++ and HLSL, so a

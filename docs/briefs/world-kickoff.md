@@ -112,34 +112,48 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage B6 — foliage (ADR 0116)
 
-- [ ] IDL: `FoliageLayer` (`Enabled`, `Materials` with multipliers, `Density`,
-  `SlopeMin/Max`, `HeightMin/Max`, `Clumping`, `MinSpacing`, `DrawDistance`,
-  `FadeDistance`, `Seed`) and `FoliageMesh` (`Mesh`, `Material`, `Weight`,
-  `ScaleMin/Max`, `RandomRotation`, `AlignToNormal`, `Sink`, `WindResponse`,
-  `Stiffness`, `CastShadow`).
-- [ ] Placement: a pure function of terrain, rules, seed and chunk; per chunk on
-  the job threads when a chunk streams in; only touched chunks regenerate after
-  an edit; never under a roof (sky visibility).
-- [ ] Not replicated, not hashed, nothing on a dedicated server; a test that the
-  world hash and the wire are unchanged with foliage on.
-- [ ] The GPU-driven path: per-chunk instance buffers, a compute cull by frustum
-  and distance writing indirect arguments per mesh and LOD; not through
-  `kMaxInstances`.
-- [ ] LODs at import with meshoptimizer; dithered fade; an optional card for the
-  farthest level.
-- [ ] Wind: the built-in sway (height-weighted bend, a phase per instance);
-  a surface shader's `surfaceVertex` receives `Wind` and the instance's random.
-- [ ] `[render] foliage_density`, `foliage_shadow_distance`; lower defaults on
-  Android; thinning in a stable order.
-- [ ] Editor: a **Foliage** tab — layers and meshes with thumbnails, live
-  preview, a density brush that writes a per-column mask saved and streamed with
-  the terrain.
-- [ ] F3 and Stats: instances drawn, chunks resident, cull and draw GPU time.
-- [ ] **The benchmark**: a dense field to the horizon with wind; a GPU budget
-  recorded on the reference machine; a soak like M8's. The flagship gains grass.
-- [ ] Tests: the same seed gives the same instances on every platform; a sculpt
-  regenerates only its chunks; density 0.5 keeps a subset of density 1.0.
-- [ ] Docs: a manual page *Foliage*.
+- [x] IDL: `FoliageLayer` (`Enabled`, `GetMaterials`/`SetMaterials` with
+  multipliers, `Density`, `SlopeMin/Max`, `HeightMin/Max`, `Clumping`,
+  `MinSpacing`, `DrawDistance`, `FadeDistance`, `Seed`) and `FoliageMesh`
+  (`Mesh`, `Material`, `Weight`, `ScaleMin/Max`, `RandomRotation`,
+  `AlignToNormal`, `Sink`, `WindResponse`, `Stiffness`, `CastShadow`).
+- [x] Placement (`asset::growFoliage`): a pure function of the tile's level-0
+  surface, the rules and the seed, from integer hashes; a tile is a chunk
+  column, grown on the job threads as it comes within the draw distance and
+  again only when its chunks, its painted mask or the layer change; never under
+  a roof (the mesher's sky term).
+- [x] Not replicated (both classes `Excluded` in the wire), not hashed (every
+  property `Presentation`); a test that the world hash does not move when any of
+  it changes. Nothing grows without a renderer, so a dedicated server grows none.
+- [x] The GPU-driven path: a buffer per tile, a compute cull by frustum, draw
+  distance and quality density into a list per mesh and level, a second pass
+  writing the indirect arguments; not through `kMaxInstances`. The RHI gained
+  compute pipelines, storage buffers, indirect draws and `readBuffer` on all
+  three backends.
+- [~] LODs: the cull picks the level whose error stops showing as a pixel from
+  the chain every compiled mesh already carries; a dithered fade at the draw
+  distance. **Not yet**: a dithered cross-fade between levels, and a card for
+  the farthest.
+- [~] Wind: the built-in sway (height-weighted bend, a phase per instance).
+  **Not yet**: a material's surface shader running its own `surfaceVertex` on
+  foliage.
+- [x] `[render] foliage_density`, `foliage_shadow_distance`; 0.5 and 15 m on
+  Android; thinning in the stable order `random` gives.
+- [~] Editor: a **Foliage** section in the Terrain panel -- layers, Add Layer,
+  Add Mesh, and a density brush (Paint and Thin) writing a per-column mask saved
+  with the scene. **Not yet**: thumbnails of the meshes, and the mask streamed
+  with a terrain saved as cells (it is saved in the scene).
+- [~] F3 and Stats: tiles resident, instances resident, tiles grown this frame.
+  **Not yet**: instances drawn and the cull's GPU time, which need a readback
+  and timestamps the RHI does not have.
+- [x] **The benchmark**: `tests/perf/foliage`, a field to the horizon in wind,
+  +1.50 ms at 1080p against a 2 ms budget (`docs/perf-baselines.md`). The
+  flagship grows grass, so `openworld_soak` walks through a streamed field.
+- [x] Tests: the same seed grows the same instances, another seed or tile
+  others; an edit regrows only the tiles it touched; a lower density keeps a
+  subset; a painted mask scales by column; the hash is untouched; the script API
+  in conformance; `examples/29-meadow` renders it with the GPU debug layer on.
+- [x] Docs: a manual page *Foliage*.
 
 ## Stage B3 — two materials a voxel, paint modes, the seam (ADR 0114)
 
@@ -238,3 +252,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - **A surface shader's block grew by 32 bytes** for the wind: every declared
   parameter's offset moved by that much, which only generated code and the
   reflection tests see.
+- **`SV_InstanceID` does not include the first instance on D3D12**, so an
+  indirect draw cannot find its slice of a shared list by `firstInstance`. Each
+  mesh-and-level list is found by a base the draw pushes as a uniform instead.
+- **The foliage pipelines are made the first frame a world has foliage**, like
+  the decals' and the world UI's: made at start-up they would have put four new
+  lines into every capture golden of every scene.
+- **The memory transport told a peer on close and ENet did not** -- found on
+  the way, as D217: the kind of gap only a real transport shows.
+- **A foliage tile is a chunk column**, and its fingerprint is the digests of
+  its chunks and its neighbours' -- the mesher reads two voxels past a side --
+  plus its painted mask, so a sculpt next door can regrow a tile whose own
+  ground did not change. Cheaper than keying on border digests, and a tile is a
+  few milliseconds on a worker.
+- **`Parents` in the IDL is the editor's hint, not a rule the engine enforces**:
+  a `FoliageMesh` can be parented anywhere, and grows only under a layer.

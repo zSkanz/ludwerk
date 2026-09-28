@@ -19,6 +19,7 @@
 #include <variant>
 
 #include "../generated/class_descriptors.gen.h"
+#include "engine/asset/material.h"
 #include "engine/core/math.h"
 #include "engine/render/lighting.h"
 #include "engine/scene/components.h"
@@ -2071,6 +2072,271 @@ Value getLightingAutoExposure(const scene::World& world, core::InstanceId id)
 bool setLightingAutoExposure(scene::World& world, core::InstanceId id, const Value& value)
 {
     return writeValue(world.lighting(), id, value, &scene::LightingComponent::autoExposure);
+}
+
+// FoliageLayer and FoliageMesh (ADR 0116)
+
+void attachFoliageLayerComponents(scene::World& world, core::InstanceId id)
+{
+    world.foliageLayers().add(id, scene::FoliageLayerComponent{});
+}
+
+void detachFoliageLayerComponents(scene::World& world, core::InstanceId id)
+{
+    world.foliageLayers().remove(id);
+}
+
+void attachFoliageMeshComponents(scene::World& world, core::InstanceId id)
+{
+    world.foliageMeshes().add(id, scene::FoliageMeshComponent{});
+}
+
+void detachFoliageMeshComponents(scene::World& world, core::InstanceId id)
+{
+    world.foliageMeshes().remove(id);
+}
+
+Value getFoliageLayerEnabled(const scene::World& world, core::InstanceId id)
+{
+    return readValue(world.foliageLayers(), id, &scene::FoliageLayerComponent::enabled);
+}
+
+bool setFoliageLayerEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeValue(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::enabled);
+}
+
+Value getFoliageLayerDensity(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::density);
+}
+
+bool setFoliageLayerDensity(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::density, 0.0f, kUnbounded);
+}
+
+Value getFoliageLayerSlopeMin(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::slopeMin);
+}
+
+bool setFoliageLayerSlopeMin(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::slopeMin, 0.0f, 90.0f);
+}
+
+Value getFoliageLayerSlopeMax(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::slopeMax);
+}
+
+bool setFoliageLayerSlopeMax(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::slopeMax, 0.0f, 90.0f);
+}
+
+Value getFoliageLayerHeightMin(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::heightMin);
+}
+
+bool setFoliageLayerHeightMin(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::heightMin, -kUnbounded,
+                       kUnbounded);
+}
+
+Value getFoliageLayerHeightMax(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::heightMax);
+}
+
+bool setFoliageLayerHeightMax(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::heightMax, -kUnbounded,
+                       kUnbounded);
+}
+
+Value getFoliageLayerClumping(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::clumping);
+}
+
+bool setFoliageLayerClumping(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::clumping, 0.0f, 1.0f);
+}
+
+Value getFoliageLayerMinSpacing(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::minSpacing);
+}
+
+bool setFoliageLayerMinSpacing(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::minSpacing, 0.0f, kUnbounded);
+}
+
+Value getFoliageLayerDrawDistance(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::drawDistance);
+}
+
+bool setFoliageLayerDrawDistance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::drawDistance,
+                       std::numeric_limits<f32>::min(), kUnbounded);
+}
+
+Value getFoliageLayerFadeDistance(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::fadeDistance);
+}
+
+bool setFoliageLayerFadeDistance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::fadeDistance, 0.0f, kUnbounded);
+}
+
+Value getFoliageLayerSeed(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageLayers(), id, &scene::FoliageLayerComponent::seed);
+}
+
+bool setFoliageLayerSeed(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageLayers(), id, value, &scene::FoliageLayerComponent::seed, -kUnbounded, kUnbounded);
+}
+
+Value getFoliageMeshMesh(const scene::World& world, core::InstanceId id)
+{
+    return readContent(world, world.foliageMeshes(), id, &scene::FoliageMeshComponent::mesh);
+}
+
+bool setFoliageMeshMesh(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeContent(world, world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::mesh);
+}
+
+Value getFoliageMeshWeight(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::weight);
+}
+
+bool setFoliageMeshWeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::weight, 0.0f, kUnbounded);
+}
+
+Value getFoliageMeshScaleMin(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::scaleMin);
+}
+
+bool setFoliageMeshScaleMin(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::scaleMin,
+                       std::numeric_limits<f32>::min(), kUnbounded);
+}
+
+Value getFoliageMeshScaleMax(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::scaleMax);
+}
+
+bool setFoliageMeshScaleMax(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::scaleMax,
+                       std::numeric_limits<f32>::min(), kUnbounded);
+}
+
+Value getFoliageMeshRandomRotation(const scene::World& world, core::InstanceId id)
+{
+    return readValue(world.foliageMeshes(), id, &scene::FoliageMeshComponent::randomRotation);
+}
+
+bool setFoliageMeshRandomRotation(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeValue(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::randomRotation);
+}
+
+Value getFoliageMeshAlignToNormal(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::alignToNormal);
+}
+
+bool setFoliageMeshAlignToNormal(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::alignToNormal, 0.0f, 1.0f);
+}
+
+Value getFoliageMeshSink(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::sink);
+}
+
+bool setFoliageMeshSink(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::sink, 0.0f, kUnbounded);
+}
+
+Value getFoliageMeshWindResponse(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::windResponse);
+}
+
+bool setFoliageMeshWindResponse(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::windResponse, 0.0f, 1.0f);
+}
+
+Value getFoliageMeshStiffness(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.foliageMeshes(), id, &scene::FoliageMeshComponent::stiffness);
+}
+
+bool setFoliageMeshStiffness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::stiffness,
+                       std::numeric_limits<f32>::min(), kUnbounded);
+}
+
+Value getFoliageMeshCastShadow(const scene::World& world, core::InstanceId id)
+{
+    return readValue(world.foliageMeshes(), id, &scene::FoliageMeshComponent::castShadow);
+}
+
+bool setFoliageMeshCastShadow(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeValue(world.foliageMeshes(), id, value, &scene::FoliageMeshComponent::castShadow);
+}
+
+Value getFoliageMeshMaterial(const scene::World& world, core::InstanceId id)
+{
+    const scene::FoliageMeshComponent* mesh = world.foliageMeshes().find(id);
+    if (mesh == nullptr || !mesh->material.valid())
+        return Value{};
+    return Value{scene::MaterialRef{std::string(world.atoms().text(mesh->material)), 0}};
+}
+
+// A material asset and nothing else -- never a runtime clone, since every
+// instance of the mesh shares the one material.
+bool setFoliageMeshMaterial(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::FoliageMeshComponent* mesh = world.foliageMeshes().find(id);
+    if (mesh == nullptr)
+        return false;
+    if (const auto* material = std::get_if<scene::MaterialRef>(&value); material != nullptr) {
+        if (material->clone != 0 || !asset::isMaterialPath(material->source))
+            return false;
+        mesh->material = world.atoms().intern(material->source);
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    mesh->material = core::NameAtom{};
+    return true;
 }
 
 } // namespace engine::render::native

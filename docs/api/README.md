@@ -71,6 +71,8 @@ guided tour.
 | [`DepthOfFieldEffect`](depthoffieldeffect.md) | [`PostEffect`](posteffect.md) | Focus by distance, as a camera lens has it: a band of the world in focus, and what is nearer or further softening away from it. |
 | [`FixedConstraint`](fixedconstraint.md) | [`Constraint`](constraint.md) | A joint with no freedom at all: two bodies the solver treats as one rigid assembly. |
 | [`Folder`](folder.md) | [`Instance`](instance.md) | A node with no behaviour of its own, for grouping instances; mounting a script folder under `src/` also builds one per subdirectory. |
+| [`FoliageLayer`](foliagelayer.md) | [`Instance`](instance.md) | Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and never simulated. |
+| [`FoliageMesh`](foliagemesh.md) | [`Instance`](instance.md) | One mesh a `FoliageLayer` grows (ADR 0116), with its share of the layer, its size, how it sits on the ground and how the wind moves it. |
 | [`Frame`](frame.md) | [`UIObject`](uiobject.md) | A rectangle and nothing else: a background, a border of children, and the layout it imposes on them. |
 | [`HingeConstraint`](hingeconstraint.md) | [`Constraint`](constraint.md) | A joint free to rotate about one axis: a door, a lid, an elbow. |
 | [`HingeConstraint2D`](hingeconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A point both parts turn about: a door, a wheel, a pendulum, a lever. |

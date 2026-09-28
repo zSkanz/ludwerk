@@ -963,6 +963,151 @@
       "Events": []
     },
     {
+      "Name": "FoliageLayer",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Clumping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Density",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "DrawDistance",
+          "Type": "number",
+          "Default": "120"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FadeDistance",
+          "Type": "number",
+          "Default": "20"
+        },
+        {
+          "Name": "HeightMax",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "HeightMin",
+          "Type": "number",
+          "Default": "-10000"
+        },
+        {
+          "Name": "MinSpacing",
+          "Type": "number",
+          "Default": "0.25"
+        },
+        {
+          "Name": "Seed",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "SlopeMax",
+          "Type": "number",
+          "Default": "35"
+        },
+        {
+          "Name": "SlopeMin",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetMaterials",
+          "Parameters": [],
+          "Returns": ["{ { Material: number, Density: number } }"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "SetMaterials",
+          "Parameters": [
+            {
+              "Name": "materials",
+              "Type": "{ { read Material: number, read Density: number? } }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "FoliageMesh",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AlignToNormal",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "CastShadow",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Material",
+          "Type": "Material?"
+        },
+        {
+          "Name": "Mesh",
+          "Type": "Content",
+          "Default": "\"\""
+        },
+        {
+          "Name": "RandomRotation",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "ScaleMax",
+          "Type": "number",
+          "Default": "1.2"
+        },
+        {
+          "Name": "ScaleMin",
+          "Type": "number",
+          "Default": "0.8"
+        },
+        {
+          "Name": "Sink",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Weight",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "WindResponse",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "Frame",
       "Extends": "UIObject",
       "Tags": [],

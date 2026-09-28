@@ -353,6 +353,46 @@ struct RenderTerrain
     std::vector<asset::TerrainRuleShape> rules;
 };
 
+// **One mesh a foliage layer grows, as the frame draws it** (ADR 0116): the
+// cull fills its list of visible instances, and each of its sections is one
+// indirect draw of that list.
+struct RenderFoliageBucket
+{
+    MeshHandle mesh;
+    // The most instances its list holds this frame: every resident instance of
+    // the mesh. The cull never writes past it.
+    u32 capacity = 0;
+    // `materials` indices, one per section of the mesh's first level.
+    std::vector<u32> sectionMaterials;
+    // The mesh's height, for the sway: a vertex bends by how far up it is.
+    f32 meshMinY = 0.0f;
+    f32 meshHeight = 1.0f;
+    // How far the mesh reaches from its origin, for the frustum test.
+    f32 radius = 1.0f;
+    f32 windResponse = 1.0f;
+    f32 stiffness = 1.0f;
+    bool castShadow = true;
+};
+
+// One run of instances the cull reads: a tile's instances of one mesh.
+struct RenderFoliageRun
+{
+    rhi::BufferHandle instances;
+    u32 first = 0;
+    u32 count = 0;
+    u32 bucket = 0;
+    // Where the tile's instances are measured from, in the world: the
+    // terrain's origin. The cull makes it camera-relative.
+    DVec3 origin;
+    f32 drawDistance = 120.0f;
+    f32 fadeDistance = 20.0f;
+    f32 scaleMin = 0.8f;
+    f32 scaleMax = 1.2f;
+    f32 sink = 0.05f;
+    f32 alignToNormal = 0.0f;
+    bool randomRotation = true;
+};
+
 // One node of a terrain's level-of-detail quadtree to draw this frame: the
 // terrain it belongs to and the URN its mesh is filed under in `MeshLibrary`.
 // Chosen by `TerrainLoader`, which knows where the camera is and which meshes
@@ -502,6 +542,14 @@ struct RenderWorld
     std::vector<Mat4> bones;
     // The GPU terrains, drawn by node rather than by `DrawItem`.
     std::vector<RenderTerrain> terrains;
+    // **This frame's foliage** (ADR 0116), appended by `FoliageSystem::append`:
+    // the runs of instances the cull reads and the meshes it fills.
+    std::vector<RenderFoliageRun> foliageRuns;
+    std::vector<RenderFoliageBucket> foliageBuckets;
+    // `[render] foliage_density` and `foliage_shadow_distance`, as the system
+    // that appended the runs was set.
+    f32 foliageDensity = 1.0f;
+    f32 foliageShadowDistance = 30.0f;
     // The block world's registry colours, by id minus one (id 0 is air): top,
     // sides and bottom. What the block shader turns a vertex's block id into.
     struct VoxelColors
@@ -571,6 +619,10 @@ struct RenderWorld
         draws.clear();
         bones.clear();
         terrains.clear();
+        foliageRuns.clear();
+        foliageBuckets.clear();
+        foliageDensity = 1.0f;
+        foliageShadowDistance = 30.0f;
         voxelColors.clear();
         voxelTextures.clear();
         particles.clear();
@@ -787,6 +839,12 @@ struct ViewOverride
     core::CFrameD clipPlane{};
     bool clipPlaneOn = false;
 };
+
+// **A material asset as the renderer binds it**, resolved and with its maps
+// looked up -- what a part wearing it draws with, before its own parameters.
+// For what wears a material without being a part: a `FoliageMesh` (ADR 0116).
+[[nodiscard]] RenderMaterial materialBlockOf(const scene::World& world, core::NameAtom material,
+                                             const TextureLibrary* textures);
 
 // Fills `out` from the world.
 //

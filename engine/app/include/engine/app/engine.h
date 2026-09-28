@@ -162,6 +162,9 @@ struct EngineOptions
     core::u32 maxViewResolution = 1024;
     // `[render] max_sub_worlds` (ADR 0107 §3).
     core::u32 maxSubWorlds = 2;
+    // `[render] foliage_density` and `foliage_shadow_distance` (ADR 0116).
+    core::f32 foliageDensity = 1.0f;
+    core::f32 foliageShadowDistance = 30.0f;
 
     // Where `SaveService` writes, and its limits (ADR 0111): decided in `main`
     // from what kind of run this is. Empty keeps saves in memory.

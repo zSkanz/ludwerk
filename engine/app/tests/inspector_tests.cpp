@@ -1129,15 +1129,15 @@ TEST_CASE("every Content property the engine ships says which files it accepts")
             CHECK_MESSAGE((kind == "Mesh" || kind == "Texture" || kind == "Audio" || kind == "Font"), where);
         }
     }
-    // Sixteen today: a mesh, two images, a font, a sound, a `Decal`'s image
-    // (F2), the 2D layer's sprite and tileset, and a `Sky`'s six faces, sun and
-    // moon (ADR 0096). A number rather than a list, so
+    // Seventeen today: a mesh, two images, a font, a sound, a `Decal`'s image
+    // (F2), the 2D layer's sprite and tileset, a `Sky`'s six faces, sun and
+    // moon (ADR 0096), and a `FoliageMesh`'s mesh (ADR 0116). A number rather than a list, so
     // adding one is a one-line change here and dropping one is a failure.
     //
     // **A material's four maps left with the `Material` class** (ADR 0090): a
     // material is an asset, its maps are fields of its file, and the material
     // panel edits them -- not the property grid.
-    CHECK(contentProperties == 16);
+    CHECK(contentProperties == 17);
 }
 
 TEST_CASE("a reference with a setter is editable, and one without is not")

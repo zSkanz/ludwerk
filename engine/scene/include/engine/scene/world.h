@@ -422,6 +422,8 @@ struct NameIndex
     X(DepthOfFieldEffectComponent, depthOfFieldEffects)                                                                \
     X(SunRaysEffectComponent, sunRaysEffects)                                                                          \
     X(AtmosphereComponent, atmospheres)                                                                                \
+    X(FoliageLayerComponent, foliageLayers)                                                                            \
+    X(FoliageMeshComponent, foliageMeshes)                                                                             \
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
     X(AttributeMap, attributes)                                                                                        \
@@ -1069,6 +1071,10 @@ public:
     }
     [[nodiscard]] ComponentPool<AtmosphereComponent>& atmospheres() noexcept { return m_atmospheres; }
     [[nodiscard]] const ComponentPool<AtmosphereComponent>& atmospheres() const noexcept { return m_atmospheres; }
+    [[nodiscard]] ComponentPool<FoliageLayerComponent>& foliageLayers() noexcept { return m_foliageLayers; }
+    [[nodiscard]] const ComponentPool<FoliageLayerComponent>& foliageLayers() const noexcept { return m_foliageLayers; }
+    [[nodiscard]] ComponentPool<FoliageMeshComponent>& foliageMeshes() noexcept { return m_foliageMeshes; }
+    [[nodiscard]] const ComponentPool<FoliageMeshComponent>& foliageMeshes() const noexcept { return m_foliageMeshes; }
     [[nodiscard]] ComponentPool<SkyComponent>& skies() noexcept { return m_skies; }
     [[nodiscard]] const ComponentPool<SkyComponent>& skies() const noexcept { return m_skies; }
 

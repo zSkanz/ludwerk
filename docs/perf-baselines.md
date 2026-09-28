@@ -997,3 +997,31 @@ changes -- so this is a hitch of a few milliseconds the first time a surface
 comes on screen, and nothing after. Compiling one is separate and never on a
 frame: a cold compile of the ocean is 882 ms on the editor's worker, and a warm
 one reads the cache in about 1 ms (`examples/11-ocean/README.md`).
+
+## Foliage (ADR 0116)
+
+What a field of grass to the horizon costs, and the budget it is held to.
+`tests/perf/foliage` is a 1,024 m square of flat terrain with one layer at ten
+instances a square metre drawn to 250 m -- about two million instances resident
+around the camera, all of them tested by the GPU cull every frame -- in a gusting
+wind, seen from a standing height while the camera turns. The control is the same
+scene with the layer's `Enabled` off. Measured 2026-09-28 on `win-msvc-dev`
+(D3D12, the GPU debug layer on), `engine-host tests/perf/foliage --headless
+--width=1920 --height=1080 --frames=300 --exit --frame-stats`; three runs each.
+
+| 1080p | Median frame | Worst frame | Draw calls |
+|---|---|---|---|
+| Layer off (the terrain alone) | 2.25, 2.32, 2.31 ms -- **2.31 ms** | 15.7 ms | 308 |
+| Layer on | 3.79, 3.89, 3.81 ms -- **3.81 ms** | 30.3 ms | 324 |
+| **Foliage** | **+1.50 ms** | | **+16** |
+
+**The budget is two milliseconds a frame for a field to the horizon at 1080p on
+the reference machine**, measured this way; the first measurement leaves a
+quarter of it spare. The sixteen draws are the cull's indirect draws -- one per
+section of each level of each mesh, whatever the number of instances -- and they
+do not grow with the field.
+
+The worst frame is the first frames' one-time work, not growth: halving the
+tiles grown per frame (8 to 4) left it where it was (31.3 and 32.7 ms), and the
+layer-off control has a worst frame of its own. A soak of a walk through a
+streamed field is the check that is still owed, as M8's was for the flagship.

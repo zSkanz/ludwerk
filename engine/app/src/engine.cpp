@@ -79,6 +79,7 @@
 #include "engine/platform/window.h"
 #include "engine/render/debug_draw.h"
 #include "engine/render/debug_renderer.h"
+#include "engine/render/foliage.h"
 #include "engine/render/lighting.h"
 #include "engine/render/mesh_loader.h"
 #include "engine/render/particles.h"
@@ -1108,6 +1109,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     render::VoxelLoader voxelLoader;
     // Particles (F2): simulated on the frame, because they are a picture.
     render::ParticleSystem particles;
+    // Foliage over terrain (ADR 0116), grown per tile around the camera.
+    render::FoliageSystem foliage;
+    foliage.setSettings(
+        {.density = options.foliageDensity, .shadowDistance = options.foliageShadowDistance, .growthsPerSync = 8});
     // **A `Sky`'s six pictures** (ADR 0096), read and resampled off the frame
     // thread; the previous sky draws until a new one is ready. A headless run
     // waits for it instead, for the reason the texture loader does: a capture
@@ -4224,6 +4229,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // under has to be the same atom `extract` looks up.
                 (void)terrainLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 (void)voxelLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
+                // Foliage over the terrain (ADR 0116), grown here for the
+                // reason the terrain is: an upload, before the extract.
+                foliage.sync(*device, *cmd, world);
             };
             loadFor(host->world(), host->workspace());
             if (Editor::Stage* const openStage = stageOf(); openStage != nullptr)
@@ -4322,6 +4330,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                              frame.renderDt);
             particles.append(snapshot);
+            // The foliage the tiles hold, as runs and buckets for the cull.
+            foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
             // The sky's pictures, for the sky the extract resolved: a bake
             // started, or a finished one uploaded -- before any render pass.
             if (renderer != nullptr && renderer->valid()) {
@@ -4345,6 +4355,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (snapshot.camera.valid) {
                 terrainLoader.setFocus(snapshot.camera.origin);
                 voxelLoader.setFocus(snapshot.camera.origin);
+                foliage.setFocus(snapshot.camera.origin);
             }
 
             const core::Vec2 uiViewport{static_cast<f32>(targetWidth), static_cast<f32>(targetHeight)};
@@ -4946,6 +4957,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     .instancedDraws = frameInstancedDraws,
                     .lodDraws = frameLodDraws,
                     .triangles = static_cast<core::u32>(frameTriangles),
+                    .foliageTiles = foliage.stats().tilesResident,
+                    .foliageInstances = foliage.stats().instancesResident,
+                    .foliageGrown = foliage.stats().tilesGrownLastSync,
                 });
                 overlay->render(*cmd, options.editor && present.valid() ? present : target, frame);
             }

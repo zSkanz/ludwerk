@@ -43,6 +43,15 @@ public:
     void blitTexture(TextureHandle, TextureHandle, u32) override {}
     void generateMipmaps(TextureHandle) override {}
 
+    void bindStorageBuffers(ShaderStage, u32, std::span<const BufferHandle>) override {}
+    void drawIndexedIndirect(BufferHandle, u32, u32) override {}
+    void beginComputePass(std::span<const BufferHandle>) override {}
+    void endComputePass() override {}
+    void setComputePipeline(ComputePipelineHandle) override {}
+    void bindComputeStorageBuffers(u32, std::span<const BufferHandle>) override {}
+    void bindComputeUniforms(u32, std::span<const std::byte>) override {}
+    void dispatch(u32, u32, u32) override {}
+
     void pushDebugGroup(std::string_view) override {}
     void popDebugGroup() override {}
 };
@@ -58,6 +67,7 @@ public:
         caps.shaderFormat = ShaderFormat::Unknown;
         caps.maxTextureSize = 16384;
         caps.rendersPixels = false;
+        caps.compute = true;
         return caps;
     }
 
@@ -69,12 +79,17 @@ public:
     [[nodiscard]] SamplerHandle createSampler(const SamplerDesc&) override { return {nextId()}; }
     [[nodiscard]] ShaderHandle createShader(const ShaderDesc&) override { return {nextId()}; }
     [[nodiscard]] PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc&) override { return {nextId()}; }
+    [[nodiscard]] ComputePipelineHandle createComputePipeline(const ComputePipelineDesc&) override
+    {
+        return {nextId()};
+    }
 
     void destroy(BufferHandle) override {}
     void destroy(TextureHandle) override {}
     void destroy(SamplerHandle) override {}
     void destroy(ShaderHandle) override {}
     void destroy(PipelineHandle) override {}
+    void destroy(ComputePipelineHandle) override {}
 
     [[nodiscard]] ICmdList* beginFrame() override { return &cmdList_; }
 
@@ -86,6 +101,7 @@ public:
     void waitIdle() override {}
 
     [[nodiscard]] bool readTexture(TextureHandle, std::span<std::byte>) override { return false; }
+    [[nodiscard]] bool readBuffer(BufferHandle, u32, std::span<std::byte>) override { return false; }
 
 private:
     // Ids start at 1 so that a default-constructed handle stays the null one.

@@ -128,4 +128,5 @@ add_subdirectory(samples)
 # list -- `engine_host` is simply the target that must not be considered built
 # until its shaders exist.
 engine_add_shaders(engine_host GLOB "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/*.hlsl"
-    SURFACES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/surface/*.surface.hlsl")
+    SURFACES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/surface/*.surface.hlsl"
+    COMPUTE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/compute/*.hlsl")

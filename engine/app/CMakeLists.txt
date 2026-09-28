@@ -291,6 +291,7 @@ engine_add_module_tests(app
         tests/pointer_ownership_tests.cpp
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp
+        tests/foliage_editor_tests.cpp
         tests/preserved_tests.cpp
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp
@@ -1014,7 +1015,7 @@ if(ENG_BUILD_TESTS)
     # must not turn "this machine has no graphics" into a red build.
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
-                    26-security-cameras 27-mirrors-and-portals 28-arcade)
+                    26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

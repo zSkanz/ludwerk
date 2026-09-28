@@ -101,6 +101,12 @@ namespace engine::rhi::sdlgpu {
         flags |= SDL_GPU_BUFFERUSAGE_INDEX;
     if (hasUsage(usage, BufferUsage::Indirect))
         flags |= SDL_GPU_BUFFERUSAGE_INDIRECT;
+    if (hasUsage(usage, BufferUsage::GraphicsStorageRead))
+        flags |= SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+    if (hasUsage(usage, BufferUsage::ComputeStorageRead))
+        flags |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+    if (hasUsage(usage, BufferUsage::ComputeStorageWrite))
+        flags |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
     return flags;
 }
 

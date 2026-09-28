@@ -158,6 +158,12 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("render.max_sub_worlds", 0, 8, config.maxSubWorlds);
     count("save.max_slots", 1, 4096, config.saveMaxSlots);
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
+    if (const std::optional<f64> value = document.number("render.foliage_density");
+        value.has_value() && *value >= 0.0 && *value <= 1.0)
+        config.foliageDensity = static_cast<core::f32>(*value);
+    if (const std::optional<f64> value = document.number("render.foliage_shadow_distance");
+        value.has_value() && *value >= 0.0 && *value <= 1000.0)
+        config.foliageShadowDistance = static_cast<core::f32>(*value);
     if (const std::optional<f64> value = document.number("save.max_slot_bytes");
         value.has_value() && *value >= 1024.0 && *value <= 1024.0 * 1024.0 * 1024.0)
         config.saveMaxSlotBytes = static_cast<core::u64>(*value);

@@ -49,6 +49,11 @@ public:
                                                   u32 samplers, u32 uniformBuffers,
                                                   core::EngineError* outError = nullptr) const;
 
+    // **A compute pipeline** (ADR 0116), from `shaders/compute/<name>.hlsl`,
+    // with the counts and thread-group size its reflection gives.
+    [[nodiscard]] rhi::ComputePipelineHandle createCompute(rhi::IDevice& device, std::string_view name,
+                                                           core::EngineError* outError = nullptr) const;
+
     // The source of a surface shader the engine ships, beside the blobs
     // (`content/shaders/surfaces/<name>.surface.hlsl`), or nothing.
     [[nodiscard]] std::optional<std::string> surfaceSource(std::string_view name) const;
@@ -67,6 +72,12 @@ private:
         std::filesystem::path blob;
         u32 samplerCount = 0;
         u32 uniformBufferCount = 0;
+        u32 storageBufferCount = 0;
+        // A compute entry's, from its reflection; zero for a graphics one.
+        bool compute = false;
+        u32 readonlyStorageBufferCount = 0;
+        u32 readwriteStorageBufferCount = 0;
+        u32 threadCount[3] = {1, 1, 1};
     };
 
     [[nodiscard]] const Entry* find(std::string_view name, rhi::ShaderStage stage) const noexcept;

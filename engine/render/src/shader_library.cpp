@@ -69,6 +69,7 @@ std::optional<core::EngineError> ShaderLibrary::load(const std::filesystem::path
     for (core::usize i = 0; i < shaders.size(); ++i) {
         const core::JsonValue shader = shaders.at(i);
 
+        const bool compute = shader["stage"].asString() == "compute";
         const std::optional<rhi::ShaderStage> stage = parseStage(shader["stage"].asString());
         const std::string_view name = shader["name"].asString();
         const std::string_view blob = shader["formats"][key].asString();
@@ -76,12 +77,13 @@ std::optional<core::EngineError> ShaderLibrary::load(const std::filesystem::path
         // A shader compiled for other formats but not this one is not an error
         // in itself -- it is only an error when something asks for it, and
         // create() reports that with the name the caller used.
-        if (!stage.has_value() || name.empty() || blob.empty())
+        if ((!stage.has_value() && !compute) || name.empty() || blob.empty())
             continue;
 
         Entry entry;
         entry.name = name;
-        entry.stage = *stage;
+        entry.stage = stage.value_or(rhi::ShaderStage::Vertex);
+        entry.compute = compute;
         entry.entryPoint = shader["entrypoint"].asString("main");
         entry.blob = root / blob;
 
@@ -103,6 +105,16 @@ std::optional<core::EngineError> ShaderLibrary::load(const std::filesystem::path
 
         entry.samplerCount = static_cast<u32>(reflect.root()["samplers"].asInteger(0));
         entry.uniformBufferCount = static_cast<u32>(reflect.root()["uniform_buffers"].asInteger(0));
+        entry.storageBufferCount = static_cast<u32>(reflect.root()["storage_buffers"].asInteger(0));
+        if (compute) {
+            entry.readonlyStorageBufferCount =
+                static_cast<u32>(reflect.root()["readonly_storage_buffers"].asInteger(0));
+            entry.readwriteStorageBufferCount =
+                static_cast<u32>(reflect.root()["readwrite_storage_buffers"].asInteger(0));
+            entry.threadCount[0] = static_cast<u32>(reflect.root()["threadcount_x"].asInteger(1));
+            entry.threadCount[1] = static_cast<u32>(reflect.root()["threadcount_y"].asInteger(1));
+            entry.threadCount[2] = static_cast<u32>(reflect.root()["threadcount_z"].asInteger(1));
+        }
 
         entries_.push_back(std::move(entry));
     }
@@ -118,10 +130,48 @@ std::optional<core::EngineError> ShaderLibrary::load(const std::filesystem::path
 const ShaderLibrary::Entry* ShaderLibrary::find(std::string_view name, rhi::ShaderStage stage) const noexcept
 {
     for (const Entry& entry : entries_) {
-        if (entry.name == name && entry.stage == stage)
+        if (!entry.compute && entry.name == name && entry.stage == stage)
             return &entry;
     }
     return nullptr;
+}
+
+rhi::ComputePipelineHandle ShaderLibrary::createCompute(rhi::IDevice& device, std::string_view name,
+                                                        core::EngineError* outError) const
+{
+    const Entry* entry = nullptr;
+    for (const Entry& candidate : entries_) {
+        if (candidate.compute && candidate.name == name)
+            entry = &candidate;
+    }
+    if (entry == nullptr) {
+        if (outError != nullptr) {
+            const std::array<I18nArg, 1> args{I18nArg{"name", name}};
+            *outError = core::makeError(ENG_TR("render.err.shader_not_found"), args);
+        }
+        return {};
+    }
+    std::vector<std::byte> code;
+    if (!platform::readFile(entry->blob, code)) {
+        if (outError != nullptr) {
+            const std::array<I18nArg, 1> args{I18nArg{"path", entry->blob.string()}};
+            *outError = core::makeError(ENG_TR("render.err.shader_blob_missing"), args);
+        }
+        return {};
+    }
+    return device.createComputePipeline({
+        .format = format_,
+        .code = code,
+        .entryPoint = entry->entryPoint,
+        .samplerCount = entry->samplerCount,
+        .readonlyStorageBufferCount = entry->readonlyStorageBufferCount,
+        .readwriteStorageBufferCount = entry->readwriteStorageBufferCount,
+        .uniformBufferCount = entry->uniformBufferCount,
+        .threadCountX = entry->threadCount[0],
+        .threadCountY = entry->threadCount[1],
+        .threadCountZ = entry->threadCount[2],
+        .debugName = entry->name,
+    });
 }
 
 rhi::ShaderHandle ShaderLibrary::create(rhi::IDevice& device, std::string_view name, rhi::ShaderStage stage,
@@ -170,6 +220,7 @@ rhi::ShaderHandle ShaderLibrary::createCounted(rhi::IDevice& device, std::string
         .entryPoint = entry->entryPoint,
         .samplerCount = samplers,
         .uniformBufferCount = uniformBuffers,
+        .storageBufferCount = entry->storageBufferCount,
         .debugName = entry->name,
     });
 }

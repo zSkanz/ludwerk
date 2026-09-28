@@ -1187,6 +1187,35 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         }
     }
 
+    // What a foliage layer grows on (ADR 0116), only when it names some.
+    if (const FoliageLayerComponent* layer = world.foliageLayers().find(id);
+        layer != nullptr && !layer->materials.empty()) {
+        out.key("foliageMaterials");
+        out.beginArray();
+        for (const FoliageMaterial& entry : layer->materials) {
+            out.beginObject();
+            out.field("material", static_cast<core::i64>(entry.material));
+            out.field("density", static_cast<core::f64>(entry.density));
+            out.endObject();
+        }
+        out.endArray();
+        ++report.properties;
+    }
+    // And the density painted by hand, a chunk column at a time.
+    if (const FoliageLayerComponent* layer = world.foliageLayers().find(id); layer != nullptr && !layer->mask.empty()) {
+        out.key("foliageMask");
+        out.beginArray();
+        for (const FoliageMaskColumn& column : layer->mask) {
+            out.beginObject();
+            out.field("x", static_cast<core::i64>(column.x));
+            out.field("z", static_cast<core::i64>(column.z));
+            out.field("density", core::base64Encode(column.density));
+            out.endObject();
+        }
+        out.endArray();
+        ++report.properties;
+    }
+
     if (world.firstChild(id).valid() || world.hasUnread(id)) {
         out.key("children");
         out.beginArray();
@@ -1752,6 +1781,38 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
             else {
                 ++report.droppedReferences;
             }
+        }
+    }
+
+    if (const JsonValue materials = json["foliageMaterials"]; materials.type() == core::JsonType::Array) {
+        if (FoliageLayerComponent* layer = world.foliageLayers().find(id); layer != nullptr) {
+            layer->materials.clear();
+            for (core::usize index = 0; index < materials.size() && index < 32; ++index) {
+                const JsonValue entry = materials.at(index);
+                FoliageMaterial read;
+                read.material = static_cast<core::u8>(std::clamp(entry["material"].asNumber(1.0), 1.0, 255.0));
+                read.density = static_cast<core::f32>(std::max(0.0, entry["density"].asNumber(1.0)));
+                layer->materials.push_back(read);
+            }
+            ++report.properties;
+        }
+    }
+    if (const JsonValue mask = json["foliageMask"]; mask.type() == core::JsonType::Array) {
+        if (FoliageLayerComponent* layer = world.foliageLayers().find(id); layer != nullptr) {
+            layer->mask.clear();
+            constexpr core::usize Bytes = static_cast<core::usize>(asset::ChunkEdge) * asset::ChunkEdge;
+            for (core::usize index = 0; index < mask.size(); ++index) {
+                const JsonValue entry = mask.at(index);
+                const std::optional<std::vector<core::u8>> bytes = core::base64Decode(entry["density"].asString());
+                // A column of the wrong size is somebody else's file, not ours.
+                if (!bytes.has_value() || bytes->size() != Bytes) {
+                    ++report.droppedReferences;
+                    continue;
+                }
+                layer->mask.push_back(FoliageMaskColumn{static_cast<core::i32>(entry["x"].asNumber(0.0)),
+                                                        static_cast<core::i32>(entry["z"].asNumber(0.0)), *bytes});
+            }
+            ++report.properties;
         }
     }
 

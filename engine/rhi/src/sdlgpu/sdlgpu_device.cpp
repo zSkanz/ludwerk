@@ -110,6 +110,15 @@ public:
     void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) override;
     void generateMipmaps(TextureHandle texture) override;
 
+    void bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::span<const BufferHandle> buffers) override;
+    void drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount) override;
+    void beginComputePass(std::span<const BufferHandle> writes) override;
+    void endComputePass() override;
+    void setComputePipeline(ComputePipelineHandle pipeline) override;
+    void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) override;
+    void bindComputeUniforms(u32 slot, std::span<const std::byte> data) override;
+    void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) override;
+
     void pushDebugGroup(std::string_view name) override;
     void popDebugGroup() override;
 
@@ -120,6 +129,7 @@ public:
     {
         renderPass_ = nullptr;
         copyPass_ = nullptr;
+        computePass_ = nullptr;
         buffer_ = nullptr;
         staging_ = nullptr;
         stagingCapacity_ = 0;
@@ -144,6 +154,7 @@ private:
     SDL_GPUCommandBuffer* buffer_ = nullptr;
     SDL_GPURenderPass* renderPass_ = nullptr;
     SDL_GPUCopyPass* copyPass_ = nullptr;
+    SDL_GPUComputePass* computePass_ = nullptr;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -182,6 +193,9 @@ public:
         for (SDL_GPUGraphicsPipeline* pipeline : pipelines_)
             if (pipeline != nullptr)
                 SDL_ReleaseGPUGraphicsPipeline(device_, pipeline);
+        for (SDL_GPUComputePipeline* pipeline : computePipelines_)
+            if (pipeline != nullptr)
+                SDL_ReleaseGPUComputePipeline(device_, pipeline);
         for (SDL_GPUShader* shader : shaders_)
             if (shader != nullptr)
                 SDL_ReleaseGPUShader(device_, shader);
@@ -209,6 +223,7 @@ public:
         caps.shaderFormat = shaderFormat_;
         caps.maxTextureSize = 16384;
         caps.rendersPixels = true;
+        caps.compute = true;
         return caps;
     }
 
@@ -372,7 +387,7 @@ public:
             .stage = toSdl(desc.stage),
             .num_samplers = desc.samplerCount,
             .num_storage_textures = 0,
-            .num_storage_buffers = 0,
+            .num_storage_buffers = desc.storageBufferCount,
             .num_uniform_buffers = desc.uniformBufferCount,
             .props = 0,
         };
@@ -383,6 +398,35 @@ public:
     }
 
     [[nodiscard]] PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
+
+    [[nodiscard]] ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override
+    {
+        if (lost_)
+            return {};
+        const std::string entryPoint(desc.entryPoint);
+        const SDL_GPUComputePipelineCreateInfo info{
+            .code_size = desc.code.size(),
+            .code = reinterpret_cast<const Uint8*>(desc.code.data()),
+            .entrypoint = entryPoint.c_str(),
+            .format = toSdl(desc.format),
+            .num_samplers = desc.samplerCount,
+            .num_readonly_storage_textures = 0,
+            .num_readonly_storage_buffers = desc.readonlyStorageBufferCount,
+            .num_readwrite_storage_textures = 0,
+            .num_readwrite_storage_buffers = desc.readwriteStorageBufferCount,
+            .num_uniform_buffers = desc.uniformBufferCount,
+            .threadcount_x = desc.threadCountX,
+            .threadcount_y = desc.threadCountY,
+            .threadcount_z = desc.threadCountZ,
+            .props = 0,
+        };
+        SDL_GPUComputePipeline* pipeline = SDL_CreateGPUComputePipeline(device_, &info);
+        if (pipeline == nullptr) {
+            noteFailure();
+            return {};
+        }
+        return {addSlot(computePipelines_, pipeline)};
+    }
 
     void destroy(BufferHandle handle) override
     {
@@ -435,6 +479,17 @@ public:
         }
     }
 
+    void destroy(ComputePipelineHandle handle) override
+    {
+        if (lost_)
+            return;
+        if (SDL_GPUComputePipeline** entry = slot(computePipelines_, handle.id);
+            entry != nullptr && *entry != nullptr) {
+            SDL_ReleaseGPUComputePipeline(device_, *entry);
+            *entry = nullptr;
+        }
+    }
+
     [[nodiscard]] ICmdList* beginFrame() override
     {
         // A lost device's frame is an empty one: every command a no-op.
@@ -469,6 +524,7 @@ public:
     }
 
     [[nodiscard]] bool readTexture(TextureHandle texture, std::span<std::byte> out) override;
+    [[nodiscard]] bool readBuffer(BufferHandle buffer, u32 offsetBytes, std::span<std::byte> out) override;
 
     // Used by the command list, which lives inside this file, and by the
     // interop accessors at the bottom of it.
@@ -500,6 +556,11 @@ public:
         SDL_GPUGraphicsPipeline** entry = slot(pipelines_, handle.id);
         return entry != nullptr ? *entry : nullptr;
     }
+    [[nodiscard]] SDL_GPUComputePipeline* computePipeline(ComputePipelineHandle handle) noexcept
+    {
+        SDL_GPUComputePipeline** entry = slot(computePipelines_, handle.id);
+        return entry != nullptr ? *entry : nullptr;
+    }
 
 private:
     using isize = std::ptrdiff_t;
@@ -520,6 +581,7 @@ private:
     std::vector<SDL_GPUSampler*> samplers_;
     std::vector<SDL_GPUShader*> shaders_;
     std::vector<SDL_GPUGraphicsPipeline*> pipelines_;
+    std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
 };
 
@@ -727,6 +789,57 @@ bool SdlGpuDevice::readTexture(TextureHandle texture, std::span<std::byte> out)
     return ok;
 }
 
+bool SdlGpuDevice::readBuffer(BufferHandle handle, u32 offsetBytes, std::span<std::byte> out)
+{
+    if (lost_ || out.empty())
+        return false;
+    SDL_GPUBuffer* source = buffer(handle);
+    if (source == nullptr)
+        return false;
+
+    const SDL_GPUTransferBufferCreateInfo transferInfo{
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+        .size = static_cast<Uint32>(out.size()),
+        .props = 0,
+    };
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &transferInfo);
+    if (transfer == nullptr) {
+        noteFailure();
+        return false;
+    }
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device_);
+    SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(commands);
+    const SDL_GPUBufferRegion region{
+        .buffer = source,
+        .offset = offsetBytes,
+        .size = static_cast<Uint32>(out.size()),
+    };
+    const SDL_GPUTransferBufferLocation destination{.transfer_buffer = transfer, .offset = 0};
+    SDL_DownloadFromGPUBuffer(pass, &region, &destination);
+    SDL_EndGPUCopyPass(pass);
+
+    // Blocking, as `readTexture` is: a test's question, never a frame's.
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+    if (fence == nullptr) {
+        noteFailure();
+        if (!lost_)
+            SDL_ReleaseGPUTransferBuffer(device_, transfer);
+        return false;
+    }
+    SDL_WaitForGPUFences(device_, true, &fence, 1);
+    SDL_ReleaseGPUFence(device_, fence);
+
+    bool ok = false;
+    if (const void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false); mapped != nullptr) {
+        std::memcpy(out.data(), mapped, out.size());
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+        ok = true;
+    }
+    SDL_ReleaseGPUTransferBuffer(device_, transfer);
+    return ok;
+}
+
 // --- command list -----------------------------------------------------------
 
 void SdlGpuCmdList::endOpenPass() noexcept
@@ -739,6 +852,10 @@ void SdlGpuCmdList::endOpenPass() noexcept
         SDL_EndGPUCopyPass(copyPass_);
         copyPass_ = nullptr;
     }
+    if (computePass_ != nullptr) {
+        SDL_EndGPUComputePass(computePass_);
+        computePass_ = nullptr;
+    }
 }
 
 SDL_GPUCopyPass* SdlGpuCmdList::ensureCopyPass() noexcept
@@ -749,6 +866,13 @@ SDL_GPUCopyPass* SdlGpuCmdList::ensureCopyPass() noexcept
         // driver-level crash three frames later.
         core::log(core::LogLevel::Error, ENG_TR("rhi.err.upload_inside_pass"));
         return nullptr;
+    }
+    // An upload between compute dispatches -- resetting the counters a cull
+    // accumulates into -- ends the compute pass; the copy lands before the
+    // next pass reads it.
+    if (computePass_ != nullptr) {
+        SDL_EndGPUComputePass(computePass_);
+        computePass_ = nullptr;
     }
     if (copyPass_ == nullptr && buffer_ != nullptr)
         copyPass_ = SDL_BeginGPUCopyPass(buffer_);
@@ -1159,6 +1283,89 @@ void SdlGpuCmdList::uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32
     // Not cycling: the rest of the texture is live and has to survive.
     SDL_UploadToGPUTexture(pass, &source, &region, false);
     releaseStaged(staged);
+}
+
+void SdlGpuCmdList::bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::span<const BufferHandle> buffers)
+{
+    if (renderPass_ == nullptr || buffers.empty())
+        return;
+    std::vector<SDL_GPUBuffer*> native;
+    native.reserve(buffers.size());
+    for (const BufferHandle handle : buffers)
+        native.push_back(device_.buffer(handle));
+    const auto count = static_cast<Uint32>(native.size());
+    switch (stage) {
+    case ShaderStage::Vertex:
+        SDL_BindGPUVertexStorageBuffers(renderPass_, firstSlot, native.data(), count);
+        break;
+    case ShaderStage::Fragment:
+        SDL_BindGPUFragmentStorageBuffers(renderPass_, firstSlot, native.data(), count);
+        break;
+    }
+}
+
+void SdlGpuCmdList::drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount)
+{
+    if (renderPass_ == nullptr || drawCount == 0)
+        return;
+    if (SDL_GPUBuffer* native = device_.buffer(buffer); native != nullptr)
+        SDL_DrawGPUIndexedPrimitivesIndirect(renderPass_, native, offsetBytes, drawCount);
+}
+
+void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes)
+{
+    endOpenPass();
+    if (buffer_ == nullptr)
+        return;
+    std::vector<SDL_GPUStorageBufferReadWriteBinding> bindings;
+    bindings.reserve(writes.size());
+    for (const BufferHandle handle : writes) {
+        SDL_GPUStorageBufferReadWriteBinding binding{};
+        binding.buffer = device_.buffer(handle);
+        // Never cycled: what a pass writes is what the draws after it read.
+        binding.cycle = false;
+        bindings.push_back(binding);
+    }
+    computePass_ = SDL_BeginGPUComputePass(buffer_, nullptr, 0, bindings.data(), static_cast<Uint32>(bindings.size()));
+}
+
+void SdlGpuCmdList::endComputePass()
+{
+    if (computePass_ != nullptr) {
+        SDL_EndGPUComputePass(computePass_);
+        computePass_ = nullptr;
+    }
+}
+
+void SdlGpuCmdList::setComputePipeline(ComputePipelineHandle pipeline)
+{
+    if (computePass_ == nullptr)
+        return;
+    if (SDL_GPUComputePipeline* native = device_.computePipeline(pipeline); native != nullptr)
+        SDL_BindGPUComputePipeline(computePass_, native);
+}
+
+void SdlGpuCmdList::bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers)
+{
+    if (computePass_ == nullptr || buffers.empty())
+        return;
+    std::vector<SDL_GPUBuffer*> native;
+    native.reserve(buffers.size());
+    for (const BufferHandle handle : buffers)
+        native.push_back(device_.buffer(handle));
+    SDL_BindGPUComputeStorageBuffers(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
+}
+
+void SdlGpuCmdList::bindComputeUniforms(u32 slot, std::span<const std::byte> data)
+{
+    if (buffer_ != nullptr)
+        SDL_PushGPUComputeUniformData(buffer_, slot, data.data(), static_cast<Uint32>(data.size()));
+}
+
+void SdlGpuCmdList::dispatch(u32 groupsX, u32 groupsY, u32 groupsZ)
+{
+    if (computePass_ != nullptr && groupsX != 0 && groupsY != 0 && groupsZ != 0)
+        SDL_DispatchGPUCompute(computePass_, groupsX, groupsY, groupsZ);
 }
 
 void SdlGpuCmdList::pushDebugGroup(std::string_view name)

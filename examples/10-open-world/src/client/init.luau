@@ -212,6 +212,43 @@ end
 lift(liftDown, liftUp)
 lift(liftUp, liftDown)
 
+-- --- Grass (ADR 0116) ---------------------------------------------------------
+
+-- **The island's grass, grown by rules rather than placed.** A layer under the
+-- sculpted ground says where -- gentle slopes of the grass material -- and two
+-- meshes say what; the engine grows each tile as the character comes near it
+-- and a GPU cull draws the field. Not in the scene, and not needing to be: the
+-- same rules and seed grow the same field on every run.
+local ground = workspace:FindFirstChild("Ground")
+if ground ~= nil and ground:IsA("Terrain") then
+    local meadow = Instance.new("FoliageLayer")
+    meadow.Name = "Meadow"
+    meadow.Density = 3
+    meadow.SlopeMax = 30
+    meadow.Clumping = 0.35
+    meadow.DrawDistance = 80
+    meadow.FadeDistance = 20
+    meadow.Seed = 16
+    meadow:SetMaterials({ { Material = 1, Density = 1 } })
+    meadow.Parent = ground
+
+    local grass = Instance.new("FoliageMesh")
+    grass.Name = "Grass"
+    grass.Mesh = "asset://models/grass.gltf"
+    grass.Weight = 14
+    grass.ScaleMin = 0.8
+    grass.ScaleMax = 1.4
+    grass.AlignToNormal = 0.5
+    grass.Parent = meadow
+
+    local flower = Instance.new("FoliageMesh")
+    flower.Name = "Flower"
+    flower.Mesh = "asset://models/flower.gltf"
+    flower.Weight = 1
+    flower.Stiffness = 1.5
+    flower.Parent = meadow
+end
+
 -- --- Camera and sky ----------------------------------------------------------
 
 -- The third-person rig from `@engine/camera`, which exists because three

@@ -4452,6 +4452,232 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Event },
     },
+    {
+        Name = "FoliageLayer",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("Terrain"),
+        Storage = "FoliageLayer",
+        Doc = "Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and "
+            .. "never simulated. Its `FoliageMesh` children say what grows; its rules say where, by the "
+            .. "ground's material, slope and height, never under a roof. **Visual only**: nothing collides "
+            .. "with it, a raycast passes through it, it is not replicated and it is not in the world "
+            .. "hash -- every machine grows the same field from the same terrain and seed.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "Whether it grows at all. Off hides every instance of it, and nothing is placed.",
+            },
+            {
+                Name = "Density",
+                Type = "number",
+                Default = "2",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Presentation = true,
+                Doc = "How many instances a square metre of ground holds where every rule allows it, before the "
+                    .. "material's multiplier, the painted mask and `[render] foliage_density` scale it.",
+            },
+            {
+                Name = "SlopeMin",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_slope_degrees",
+                Presentation = true,
+                Doc = "The flattest ground it grows on, in degrees from level.",
+            },
+            {
+                Name = "SlopeMax",
+                Type = "number",
+                Default = "35",
+                ErrorKey = "scene.err.number_slope_degrees",
+                Presentation = true,
+                Doc = "The steepest ground it grows on, in degrees: grass thins out before a cliff does.",
+            },
+            {
+                Name = "HeightMin",
+                Type = "number",
+                Default = "-10000",
+                ErrorKey = "scene.err.number_finite",
+                Presentation = true,
+                Doc = "The lowest ground it grows on, in metres of world height.",
+            },
+            {
+                Name = "HeightMax",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_finite",
+                Presentation = true,
+                Doc = "The highest ground it grows on, in metres: a tree line.",
+            },
+            {
+                Name = "Clumping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Presentation = true,
+                Doc = "How much it gathers into patches, from 0 to 1: 0 is even cover, 1 is tufts with bare "
+                    .. "ground between.",
+            },
+            {
+                Name = "MinSpacing",
+                Type = "number",
+                Default = "0.25",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Presentation = true,
+                Doc = "The least distance between two instances, in metres.",
+            },
+            {
+                Name = "DrawDistance",
+                Type = "number",
+                Default = "120",
+                ErrorKey = "scene.err.number_above_zero",
+                Presentation = true,
+                Doc = "How far from the camera it is drawn, in metres. Past it nothing of the layer costs a "
+                    .. "draw.",
+            },
+            {
+                Name = "FadeDistance",
+                Type = "number",
+                Default = "20",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Presentation = true,
+                Doc = "Over how many metres before `DrawDistance` it thins away, so the edge of the field is "
+                    .. "not a line.",
+            },
+            {
+                Name = "Seed",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_finite",
+                Presentation = true,
+                Doc = "Which of the endless arrangements the same rules give. The same seed grows the same "
+                    .. "field on every machine.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "GetMaterials",
+                Parameters = {},
+                Returns = { "{ { Material: number, Density: number } }" },
+                ThreadSafety = "Safe",
+                Doc = "The terrain materials it grows on, each with a multiplier of `Density`: material `n` is the "
+                    .. "terrain's layer `n` (`Terrain:GetLayers`). Empty is every material at 1.",
+            },
+            {
+                Name = "SetMaterials",
+                Parameters = {
+                    { Name = "materials", Type = "{ { read Material: number, read Density: number? } }" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sets the materials it grows on, as `GetMaterials` returns them: up to 32, `Density` 1 when "
+                    .. "left out. An empty list grows on every material. Saved with the scene.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "FoliageMesh",
+        Extends = "Instance",
+        Module = "render",
+        Parents = under("FoliageLayer"),
+        Storage = "FoliageMesh",
+        Doc = "One mesh a `FoliageLayer` grows (ADR 0116), with its share of the layer, its size, how it "
+            .. "sits on the ground and how the wind moves it.",
+        Properties = {
+            {
+                Name = "Mesh",
+                Type = "Content",
+                Default = '""',
+                ContentKind = "Mesh",
+                Presentation = true,
+                Doc = "The mesh that grows: any mesh asset of the project.",
+            },
+            {
+                Name = "Weight",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Presentation = true,
+                Doc = "Its share of the layer's instances against the other meshes of the layer: two meshes of "
+                    .. "weight 1 and 3 grow one to three.",
+            },
+            {
+                Name = "ScaleMin",
+                Type = "number",
+                Default = "0.8",
+                ErrorKey = "scene.err.number_above_zero",
+                Presentation = true,
+                Doc = "The smallest an instance is, as a multiple of the mesh.",
+            },
+            {
+                Name = "ScaleMax",
+                Type = "number",
+                Default = "1.2",
+                ErrorKey = "scene.err.number_above_zero",
+                Presentation = true,
+                Doc = "The largest an instance is, as a multiple of the mesh.",
+            },
+            {
+                Name = "RandomRotation",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "Whether each instance turns about its up axis at random, so a field is not rows of the "
+                    .. "same leaf.",
+            },
+            {
+                Name = "AlignToNormal",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Presentation = true,
+                Doc = "How much it leans with the ground, from 0 upright to 1 along the slope.",
+            },
+            {
+                Name = "Sink",
+                Type = "number",
+                Default = "0.05",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Presentation = true,
+                Doc = "How far below the ground its base goes, in metres, so a stem on a slope is not floating "
+                    .. "at one edge.",
+            },
+            {
+                Name = "WindResponse",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Presentation = true,
+                Doc = "How much the wind moves it, from 0 still to 1 full sway.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_above_zero",
+                Presentation = true,
+                Doc = "How hard it resists the wind: a reed 0.5, a bush 3.",
+            },
+            {
+                Name = "CastShadow",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "Whether it casts a shadow, near the camera: `[render] foliage_shadow_distance` is how near.",
+            },
+            {
+                Name = "Material",
+                Type = "Material?",
+                Presentation = true,
+                Doc = "What it is drawn with: a material asset, or nothing for the mesh's own. A material whose "
+                    .. "surface shader has a `surfaceVertex` moves it as it likes, with the wind and the "
+                    .. "instance's random value; otherwise the built-in sway bends it from its base.",
+            },
+        } :: { Schema.Property },
+    },
 }
 
 local Definition: Schema.Definition = {

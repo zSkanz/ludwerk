@@ -501,6 +501,8 @@ namespace {
         return "blocks";
     case Editor::Tool::Tiles:
         return "tiles";
+    case Editor::Tool::Foliage:
+        return "foliage";
     case Editor::Tool::Select:
         break;
     }
@@ -515,6 +517,8 @@ namespace {
     if (tool == Editor::Tool::Paint) {
         return "Paint Terrain";
     }
+    if (tool == Editor::Tool::Foliage)
+        return op == Editor::BrushOp::Subtract ? "Thin Foliage" : "Paint Foliage";
     switch (op) {
     case Editor::BrushOp::Subtract:
         return "Subtract";
@@ -542,6 +546,8 @@ namespace {
         return Editor::Tool::Blocks;
     if (name == "tiles")
         return Editor::Tool::Tiles;
+    if (name == "foliage")
+        return Editor::Tool::Foliage;
     return Editor::Tool::Select;
 }
 
@@ -4160,6 +4166,7 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
     const core::InstanceId terrainId = terrainUnder(world, root);
     scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
     m_hasTerrain = terrain != nullptr;
+    m_strokeWorld = &world;
 
     // **A stroke ends its undo gesture when it ends** (D168). The gesture is
     // what makes a stroke's hundred stamps one undo step; left open, the next
@@ -4403,6 +4410,17 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
     const auto side = static_cast<f32>(radius * 2.0);
     const core::Vec3 extent{side, side, side};
 
+    if (m_tool == Tool::Foliage) {
+        // The layer's painted density, not the ground: a stamp brings it back
+        // towards what the rules grow or thins it, by the brush's strength.
+        if (m_strokeWorld != nullptr) {
+            const f32 amount =
+                std::clamp(m_brush.strength, 0.0f, 1.0f) * 0.35f * (m_brush.op == BrushOp::Subtract ? -1.0f : 1.0f);
+            if (paintFoliage(*m_strokeWorld, m_foliageLayer, at, radius, amount, terrain.field.settings().voxelSize))
+                m_sceneDirty = true;
+        }
+        return;
+    }
     if (m_tool == Tool::Paint) {
         asset::paintBall(terrain.field, at, radius, m_brush.material);
     }
@@ -4801,6 +4819,102 @@ bool Editor::clearTerrain(scene::World& world, core::InstanceId root, Inspector&
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
     return true;
+}
+
+core::InstanceId Editor::createFoliageLayer(scene::World& world, core::InstanceId root, Inspector& inspector)
+{
+    const core::InstanceId terrain = terrainIn(world, root);
+    const scene::ClassId layerClass = world.classes().findId(world.atoms().intern("FoliageLayer"));
+    if (!terrain.valid() || layerClass == scene::InvalidClass)
+        return {};
+    m_history.record(world, "Add Foliage Layer");
+    const core::InstanceId id = world.create(layerClass);
+    if (!id.valid())
+        return {};
+    world.setName(id, world.atoms().intern("FoliageLayer"));
+    if (world.setParent(id, terrain).has_value()) {
+        world.destroy(id);
+        return {};
+    }
+    m_foliageLayer = id;
+    inspector.select(id);
+    m_sceneDirty = true;
+    return id;
+}
+
+core::InstanceId Editor::addFoliageMesh(scene::World& world, core::InstanceId layer, Inspector& inspector)
+{
+    const scene::ClassId meshClass = world.classes().findId(world.atoms().intern("FoliageMesh"));
+    if (world.foliageLayers().find(layer) == nullptr || meshClass == scene::InvalidClass)
+        return {};
+    m_history.record(world, "Add Foliage Mesh");
+    const core::InstanceId id = world.create(meshClass);
+    if (!id.valid())
+        return {};
+    world.setName(id, world.atoms().intern("FoliageMesh"));
+    if (world.setParent(id, layer).has_value()) {
+        world.destroy(id);
+        return {};
+    }
+    inspector.select(id);
+    m_sceneDirty = true;
+    return id;
+}
+
+bool Editor::paintFoliage(scene::World& world, core::InstanceId layerId, core::DVec3 fieldAt, double radius, f32 amount,
+                          f32 voxelSize)
+{
+    scene::FoliageLayerComponent* layer = world.foliageLayers().find(layerId);
+    if (layer == nullptr || !(radius > 0.0) || !(voxelSize > 0.0f) || amount == 0.0f)
+        return false;
+    constexpr auto edge = static_cast<core::i32>(asset::ChunkEdge);
+    const auto voxel = static_cast<double>(voxelSize);
+    const auto lowX = static_cast<core::i32>(std::floor((fieldAt.x - radius) / voxel));
+    const auto highX = static_cast<core::i32>(std::floor((fieldAt.x + radius) / voxel));
+    const auto lowZ = static_cast<core::i32>(std::floor((fieldAt.z - radius) / voxel));
+    const auto highZ = static_cast<core::i32>(std::floor((fieldAt.z + radius) / voxel));
+    bool changed = false;
+    for (core::i32 z = lowZ; z <= highZ; ++z) {
+        for (core::i32 x = lowX; x <= highX; ++x) {
+            const double dx = (static_cast<double>(x) + 0.5) * voxel - fieldAt.x;
+            const double dz = (static_cast<double>(z) + 0.5) * voxel - fieldAt.z;
+            const double distance = std::sqrt(dx * dx + dz * dz);
+            if (distance > radius)
+                continue;
+            // A smooth falloff, full at the centre and nothing at the rim.
+            const double t = 1.0 - distance / radius;
+            const double weight = t * t * (3.0 - 2.0 * t);
+            const core::i32 tileX = asset::floorDiv(x, edge);
+            const core::i32 tileZ = asset::floorDiv(z, edge);
+            scene::FoliageMaskColumn* column = nullptr;
+            for (scene::FoliageMaskColumn& candidate : layer->mask) {
+                if (candidate.x == tileX && candidate.z == tileZ)
+                    column = &candidate;
+            }
+            if (column == nullptr) {
+                // Thinning an untouched column makes its entry; restoring one
+                // that has none changes nothing.
+                if (amount > 0.0f)
+                    continue;
+                layer->mask.push_back(scene::FoliageMaskColumn{
+                    tileX, tileZ, std::vector<core::u8>(static_cast<core::usize>(edge * edge), 255)});
+                column = &layer->mask.back();
+            }
+            const auto at = static_cast<core::usize>(asset::floorMod(z, edge) * edge + asset::floorMod(x, edge));
+            const double next = std::clamp(
+                static_cast<double>(column->density[at]) + weight * static_cast<double>(amount) * 255.0, 0.0, 255.0);
+            const auto value = static_cast<core::u8>(std::lround(next));
+            if (value != column->density[at]) {
+                column->density[at] = value;
+                changed = true;
+            }
+        }
+    }
+    // A column painted back to full everywhere is no column at all.
+    std::erase_if(layer->mask, [](const scene::FoliageMaskColumn& column) {
+        return std::all_of(column.density.begin(), column.density.end(), [](core::u8 v) { return v == 255; });
+    });
+    return changed;
 }
 
 bool Editor::setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,

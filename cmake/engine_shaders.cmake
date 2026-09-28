@@ -30,7 +30,7 @@
 # recompiles of a handful of files.
 
 function(engine_add_shaders target)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "" "GLOB;SURFACES")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "" "GLOB;SURFACES;COMPUTE")
 
     set(stages "vertex" "fragment")
     set(entry_vertex "VertexMain")
@@ -200,6 +200,60 @@ ${format_block}
       }
     }")
         endforeach()
+    endforeach()
+
+    # --- Compute shaders (ADR 0116) --------------------------------------------
+    # One stage, `ComputeMain`; the reflection carries the storage-buffer counts
+    # and the thread-group size a compute pipeline is created with.
+    set(compute_sources "")
+    foreach(pattern IN LISTS arg_COMPUTE)
+        file(GLOB matched CONFIGURE_DEPENDS "${pattern}")
+        list(APPEND compute_sources ${matched})
+    endforeach()
+    list(SORT compute_sources)
+    foreach(source IN LISTS compute_sources)
+        get_filename_component(name "${source}" NAME_WLE)
+        if(name IN_LIST seen_names)
+            message(FATAL_ERROR "engine_add_shaders(${target}): two shaders are both named '${name}'.")
+        endif()
+        list(APPEND seen_names "${name}")
+        set(format_lines "")
+        foreach(format IN LISTS formats)
+            set(relative "${format}/${name}.compute.${ext_${format}}")
+            set(output "${out_dir}/${relative}")
+            add_custom_command(
+                OUTPUT "${output}"
+                COMMAND shadercross "${source}" -s HLSL -d ${dest_${format}} -t compute -e ComputeMain
+                        ${include_args} -o "${output}"
+                DEPENDS shadercross "${source}" ${headers}
+                COMMENT "Shader ${name}.compute -> ${format}"
+                VERBATIM)
+            list(APPEND outputs "${output}")
+            list(APPEND format_lines "        \"${format}\": \"${relative}\"")
+        endforeach()
+        set(reflect_relative "reflect/${name}.compute.json")
+        set(reflect_output "${out_dir}/${reflect_relative}")
+        add_custom_command(
+            OUTPUT "${reflect_output}"
+            COMMAND shadercross "${source}" -s HLSL -d JSON -t compute -e ComputeMain ${include_args}
+                    -o "${reflect_output}"
+            DEPENDS shadercross "${source}" ${headers}
+            COMMENT "Shader ${name}.compute -> reflection"
+            VERBATIM)
+        list(APPEND outputs "${reflect_output}")
+        file(RELATIVE_PATH source_relative "${CMAKE_SOURCE_DIR}" "${source}")
+        string(JOIN ",\n" format_block ${format_lines})
+        list(APPEND entries
+"    {
+      \"name\": \"${name}\",
+      \"stage\": \"compute\",
+      \"entrypoint\": \"ComputeMain\",
+      \"source\": \"${source_relative}\",
+      \"reflect\": \"${reflect_relative}\",
+      \"formats\": {
+${format_block}
+      }
+    }")
     endforeach()
 
     # --- The engine's headers, beside the blobs (ADR 0091) -------------------

@@ -2327,6 +2327,71 @@ declare extern type NavigationAgent extends Instance with
     read Reached: Signal<()>
 end
 
+declare extern type FoliageLayer extends Instance with
+    --- Whether it grows at all. Off hides every instance of it, and nothing is placed.
+    Enabled: boolean
+    --- How many instances a square metre of ground holds where every rule allows it, before the
+    --- material's multiplier, the painted mask and `[render] foliage_density` scale it.
+    Density: number
+    --- The flattest ground it grows on, in degrees from level.
+    SlopeMin: number
+    --- The steepest ground it grows on, in degrees: grass thins out before a cliff does.
+    SlopeMax: number
+    --- The lowest ground it grows on, in metres of world height.
+    HeightMin: number
+    --- The highest ground it grows on, in metres: a tree line.
+    HeightMax: number
+    --- How much it gathers into patches, from 0 to 1: 0 is even cover, 1 is tufts with bare ground
+    --- between.
+    Clumping: number
+    --- The least distance between two instances, in metres.
+    MinSpacing: number
+    --- How far from the camera it is drawn, in metres. Past it nothing of the layer costs a draw.
+    DrawDistance: number
+    --- Over how many metres before `DrawDistance` it thins away, so the edge of the field is not a
+    --- line.
+    FadeDistance: number
+    --- Which of the endless arrangements the same rules give. The same seed grows the same field on
+    --- every machine.
+    Seed: number
+    --- The terrain materials it grows on, each with a multiplier of `Density`: material `n` is the
+    --- terrain's layer `n` (`Terrain:GetLayers`). Empty is every material at 1.
+    function GetMaterials(self): { { Material: number, Density: number } }
+    --- Sets the materials it grows on, as `GetMaterials` returns them: up to 32, `Density` 1 when left
+    --- out. An empty list grows on every material. Saved with the scene.
+    function SetMaterials(self, materials: { { read Material: number, read Density: number? } }): ()
+end
+
+declare extern type FoliageMesh extends Instance with
+    --- The mesh that grows: any mesh asset of the project.
+    Mesh: Content
+    --- Its share of the layer's instances against the other meshes of the layer: two meshes of weight 1
+    --- and 3 grow one to three.
+    Weight: number
+    --- The smallest an instance is, as a multiple of the mesh.
+    ScaleMin: number
+    --- The largest an instance is, as a multiple of the mesh.
+    ScaleMax: number
+    --- Whether each instance turns about its up axis at random, so a field is not rows of the same
+    --- leaf.
+    RandomRotation: boolean
+    --- How much it leans with the ground, from 0 upright to 1 along the slope.
+    AlignToNormal: number
+    --- How far below the ground its base goes, in metres, so a stem on a slope is not floating at one
+    --- edge.
+    Sink: number
+    --- How much the wind moves it, from 0 still to 1 full sway.
+    WindResponse: number
+    --- How hard it resists the wind: a reed 0.5, a bush 3.
+    Stiffness: number
+    --- Whether it casts a shadow, near the camera: `[render] foliage_shadow_distance` is how near.
+    CastShadow: boolean
+    --- What it is drawn with: a material asset, or nothing for the mesh's own. A material whose surface
+    --- shader has a `surfaceVertex` moves it as it likes, with the wind and the instance's random
+    --- value; otherwise the built-in sway bends it from its base.
+    Material: Material?
+end
+
 declare extern type DataModel extends Instance with
     --- The version of the engine runtime executing this VM, as `project.toml` pins it. Read-only: the
     --- runtime is chosen before the VM exists, so nothing a script does can change it.
@@ -3838,6 +3903,8 @@ declare Instance: {
         & (("NavigationArea") -> NavigationArea)
         & (("NavigationLink") -> NavigationLink)
         & (("NavigationAgent") -> NavigationAgent)
+        & (("FoliageLayer") -> FoliageLayer)
+        & (("FoliageMesh") -> FoliageMesh)
         & (("Team") -> Team)
         & (("RemoteEvent") -> RemoteEvent)
         & (("RemoteFunction") -> RemoteFunction),

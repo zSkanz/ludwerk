@@ -704,6 +704,68 @@ public:
         stream_ += Line("generateMipmaps").num("texture", static_cast<u64>(texture.id)).finish();
     }
 
+    void bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::span<const BufferHandle> buffers) override
+    {
+        stream_ += Line("bindStorageBuffers")
+                       .str("stage", name(stage))
+                       .num("firstSlot", static_cast<u64>(firstSlot))
+                       .num("count", static_cast<u64>(buffers.size()))
+                       .finish();
+        for (const BufferHandle buffer : buffers)
+            stream_ += Line("storageBuffer").num("buffer", static_cast<u64>(buffer.id)).finish();
+    }
+
+    void drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount) override
+    {
+        stream_ += Line("drawIndexedIndirect")
+                       .num("buffer", static_cast<u64>(buffer.id))
+                       .num("offset", static_cast<u64>(offsetBytes))
+                       .num("draws", static_cast<u64>(drawCount))
+                       .finish();
+    }
+
+    void beginComputePass(std::span<const BufferHandle> writes) override
+    {
+        stream_ += Line("beginComputePass").num("writes", static_cast<u64>(writes.size())).finish();
+        for (const BufferHandle buffer : writes)
+            stream_ += Line("writtenBuffer").num("buffer", static_cast<u64>(buffer.id)).finish();
+    }
+
+    void endComputePass() override { stream_ += Line("endComputePass").finish(); }
+
+    void setComputePipeline(ComputePipelineHandle pipeline) override
+    {
+        stream_ += Line("setComputePipeline").num("pipeline", static_cast<u64>(pipeline.id)).finish();
+    }
+
+    void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) override
+    {
+        stream_ += Line("bindComputeStorageBuffers")
+                       .num("firstSlot", static_cast<u64>(firstSlot))
+                       .num("count", static_cast<u64>(buffers.size()))
+                       .finish();
+        for (const BufferHandle buffer : buffers)
+            stream_ += Line("storageBuffer").num("buffer", static_cast<u64>(buffer.id)).finish();
+    }
+
+    void bindComputeUniforms(u32 slot, std::span<const std::byte> data) override
+    {
+        stream_ += Line("bindComputeUniforms")
+                       .num("slot", static_cast<u64>(slot))
+                       .num("bytes", static_cast<u64>(data.size()))
+                       .str("digest", uniformDigest(data))
+                       .finish();
+    }
+
+    void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) override
+    {
+        stream_ += Line("dispatch")
+                       .num("x", static_cast<u64>(groupsX))
+                       .num("y", static_cast<u64>(groupsY))
+                       .num("z", static_cast<u64>(groupsZ))
+                       .finish();
+    }
+
     void pushDebugGroup(std::string_view groupName) override
     {
         stream_ += Line("pushDebugGroup").str("name", groupName).finish();
@@ -743,6 +805,7 @@ public:
         // That is a separate question from whether shaders can be created, and
         // conflating the two is what made this backend blind to the debug pass.
         caps.rendersPixels = false;
+        caps.compute = true;
         return caps;
     }
 
@@ -798,6 +861,13 @@ public:
                        .num("uniformBuffers", static_cast<u64>(desc.uniformBufferCount))
                        .str("name", desc.debugName)
                        .finish();
+        // Only when there are some: every shader before ADR 0116 had none, and
+        // its line is the one it always was.
+        if (desc.storageBufferCount != 0)
+            stream_ += Line("shaderStorage")
+                           .num("shader", static_cast<u64>(handle.id))
+                           .num("storageBuffers", static_cast<u64>(desc.storageBufferCount))
+                           .finish();
         return handle;
     }
 
@@ -838,6 +908,22 @@ public:
     void destroy(SamplerHandle handle) override { recordDestroy("sampler", handle.id); }
     void destroy(ShaderHandle handle) override { recordDestroy("shader", handle.id); }
     void destroy(PipelineHandle handle) override { recordDestroy("pipeline", handle.id); }
+    void destroy(ComputePipelineHandle handle) override { recordDestroy("computePipeline", handle.id); }
+
+    [[nodiscard]] ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override
+    {
+        const ComputePipelineHandle handle{nextComputePipeline_++};
+        stream_ += Line("createComputePipeline")
+                       .num("pipeline", static_cast<u64>(handle.id))
+                       .num("bytes", static_cast<u64>(desc.code.size()))
+                       .num("readonlyStorage", static_cast<u64>(desc.readonlyStorageBufferCount))
+                       .num("readwriteStorage", static_cast<u64>(desc.readwriteStorageBufferCount))
+                       .num("uniformBuffers", static_cast<u64>(desc.uniformBufferCount))
+                       .num("threads", static_cast<u64>(desc.threadCountX * desc.threadCountY * desc.threadCountZ))
+                       .str("name", desc.debugName)
+                       .finish();
+        return handle;
+    }
 
     [[nodiscard]] ICmdList* beginFrame() override
     {
@@ -864,6 +950,7 @@ public:
     void waitIdle() override {}
 
     [[nodiscard]] bool readTexture(TextureHandle, std::span<std::byte>) override { return false; }
+    [[nodiscard]] bool readBuffer(BufferHandle, u32, std::span<std::byte>) override { return false; }
 
     [[nodiscard]] const std::string& stream() const noexcept { return stream_; }
 
@@ -891,6 +978,7 @@ private:
     u32 nextSampler_ = 1;
     u32 nextShader_ = 1;
     u32 nextPipeline_ = 1;
+    u32 nextComputePipeline_ = 1;
     u64 frame_ = 0;
 };
 

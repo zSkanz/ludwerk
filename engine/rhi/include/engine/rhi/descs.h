@@ -58,9 +58,43 @@ struct ShaderDesc
     // counts these.
     u32 samplerCount = 0;
     u32 uniformBufferCount = 0;
+    // Storage buffers the stage reads (`StructuredBuffer`), after its
+    // textures in the binding order (ADR 0116).
+    u32 storageBufferCount = 0;
 
     std::string_view debugName{};
 };
+
+// **A compute pipeline** (ADR 0116): one shader, the counts its layout needs,
+// and the thread-group size it was compiled with -- all from reflection, as a
+// graphics shader's counts are.
+struct ComputePipelineDesc
+{
+    ShaderFormat format = ShaderFormat::Unknown;
+    std::span<const std::byte> code{};
+    std::string_view entryPoint = "ComputeMain";
+    u32 samplerCount = 0;
+    u32 readonlyStorageBufferCount = 0;
+    u32 readwriteStorageBufferCount = 0;
+    u32 uniformBufferCount = 0;
+    u32 threadCountX = 1;
+    u32 threadCountY = 1;
+    u32 threadCountZ = 1;
+    std::string_view debugName{};
+};
+
+// One indexed draw read from a buffer by `drawIndexedIndirect`: five words,
+// laid out as every backend reads them, so a compute shader writes it as a
+// `uint` array.
+struct DrawIndexedIndirectCommand
+{
+    u32 indexCount = 0;
+    u32 instanceCount = 0;
+    u32 firstIndex = 0;
+    i32 vertexOffset = 0;
+    u32 firstInstance = 0;
+};
+static_assert(sizeof(DrawIndexedIndirectCommand) == 20, "an indirect draw is five 32-bit words");
 
 struct VertexAttribute
 {

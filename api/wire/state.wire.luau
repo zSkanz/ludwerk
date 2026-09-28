@@ -1353,6 +1353,16 @@ local Classes: { Schema.Class } = {
 --- deliberately left out look identical in a schema.
 local Excluded: { Schema.Excluded } = {
     {
+        Name = "FoliageLayer",
+        Reason = "Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the "
+            .. "terrain, the layer and its seed, so every machine grows the same field from the scene it "
+            .. "already has, and the wire carries none of it.",
+    },
+    {
+        Name = "FoliageMesh",
+        Reason = "Part of a `FoliageLayer`, and excluded for its reason.",
+    },
+    {
         Name = "Terrain",
         Reason = "Its bulk is not a property and a field is megabytes. A world's ground arrives with "
             .. "the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, "

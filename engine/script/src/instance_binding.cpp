@@ -1513,6 +1513,62 @@ int methodTerrainGetRules(lua_State* L)
     return 1;
 }
 
+// `FoliageLayer:GetMaterials` and `SetMaterials` (ADR 0116).
+int methodFoliageLayerGetMaterials(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::FoliageLayerComponent* layer = world(L).foliageLayers().find(id);
+    const core::usize count = layer != nullptr ? layer->materials.size() : 0;
+    lua_createtable(L, static_cast<int>(count), 0);
+    for (core::usize index = 0; index < count; ++index) {
+        lua_createtable(L, 0, 2);
+        lua_pushnumber(L, static_cast<double>(layer->materials[index].material));
+        lua_setfield(L, -2, "Material");
+        lua_pushnumber(L, static_cast<double>(layer->materials[index].density));
+        lua_setfield(L, -2, "Density");
+        lua_rawseti(L, -2, static_cast<int>(index + 1));
+    }
+    return 1;
+}
+
+int methodFoliageLayerSetMaterials(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    const auto count = static_cast<core::usize>(lua_objlen(L, 2));
+    if (count > 32)
+        luaL_argerror(L, 2, "at most 32 materials");
+    std::vector<scene::FoliageMaterial> materials;
+    materials.reserve(count);
+    for (core::usize at = 0; at < count; ++at) {
+        lua_rawgeti(L, 2, static_cast<int>(at + 1));
+        if (!lua_istable(L, -1))
+            luaL_argerror(L, 2, "a list of { Material, Density } tables");
+        scene::FoliageMaterial entry;
+        lua_getfield(L, -1, "Material");
+        const double material = lua_tonumber(L, -1);
+        if (lua_isnumber(L, -1) == 0 || !std::isfinite(material) || material < 1.0 || material > 255.0)
+            luaL_argerror(L, 2, "Material");
+        entry.material = static_cast<core::u8>(material);
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "Density");
+        if (lua_isnumber(L, -1) != 0) {
+            const double density = lua_tonumber(L, -1);
+            if (!std::isfinite(density) || density < 0.0)
+                luaL_argerror(L, 2, "Density");
+            entry.density = static_cast<core::f32>(density);
+        }
+        else if (!lua_isnil(L, -1)) {
+            luaL_argerror(L, 2, "Density");
+        }
+        lua_pop(L, 2);
+        materials.push_back(entry);
+    }
+    if (scene::FoliageLayerComponent* layer = world(L).foliageLayers().find(id); layer != nullptr)
+        layer->materials = std::move(materials);
+    return 0;
+}
+
 int methodTerrainSetRules(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -1979,6 +2035,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Terrain", "GetLayers", methodTerrainGetLayers},
     {"Terrain", "SetLayers", methodTerrainSetLayers},
     {"Terrain", "GetRules", methodTerrainGetRules},
+    {"FoliageLayer", "GetMaterials", methodFoliageLayerGetMaterials},
+    {"FoliageLayer", "SetMaterials", methodFoliageLayerSetMaterials},
     {"Terrain", "SetRules", methodTerrainSetRules},
     {"Terrain", "ApplyRules", methodTerrainApplyRules},
     {"Terrain", "Compact", methodTerrainCompact},

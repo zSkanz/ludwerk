@@ -653,6 +653,8 @@ Every other concrete class is deliberately off the wire, and this is why.
 
 | Class | Reason |
 |---|---|
+| FoliageLayer | Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the terrain, the layer and its seed, so every machine grows the same field from the scene it already has, and the wire carries none of it. |
+| FoliageMesh | Part of a `FoliageLayer`, and excluded for its reason. |
 | Terrain | Its bulk is not a property and a field is megabytes. A world's ground arrives with the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, authored, and not a per-tick fact. ADR 0069 decides this by name so the next person does not have to work out whether it was considered. |
 | Player | Lives under `NetworkService`, which is not replicated, and each end makes its own: an authority one per peer, a replica one for itself and one for each player the `Players` roster names. What a replica knows of a player -- their number, their character and their team -- is the roster, not a snapshot of the instance. |
 | DataModel | The root. Every world has exactly one and it is created at boot on both sides, so there is nothing to spawn and nothing to reference by id. |

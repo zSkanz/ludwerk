@@ -76,6 +76,7 @@ local Sections: { Section } = {
             { Slug = "prefabs", Title = "Prefabs" },
             { Slug = "terrain", Title = "Terrain" },
             { Slug = "wind", Title = "Wind" },
+            { Slug = "foliage", Title = "Foliage" },
             { Slug = "blocks", Title = "Block worlds" },
             { Slug = "2d", Title = "2D games" },
             { Slug = "navigation", Title = "Navigation" },

@@ -1511,6 +1511,321 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     animationPlayerDesc.methods = animationPlayerMethods;
     classes.registerClass(animationPlayerDesc);
 
+    // --- FoliageLayer ---
+    static std::array<scene::PropertyDesc, 11> foliageLayerProperties;
+    foliageLayerProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether it grows at all. Off hides every instance of it, and nothing is placed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFoliageLayerEnabled,
+            .set = native::setFoliageLayerEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Density"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How many instances a square metre of ground holds where every rule allows it, before the material's multiplier, the painted mask and `[render] foliage_density` scale it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFoliageLayerDensity,
+            .set = native::setFoliageLayerDensity,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SlopeMin"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The flattest ground it grows on, in degrees from level.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_slope_degrees"),
+            .get = native::getFoliageLayerSlopeMin,
+            .set = native::setFoliageLayerSlopeMin,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SlopeMax"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The steepest ground it grows on, in degrees: grass thins out before a cliff does.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_slope_degrees"),
+            .get = native::getFoliageLayerSlopeMax,
+            .set = native::setFoliageLayerSlopeMax,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("HeightMin"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The lowest ground it grows on, in metres of world height.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getFoliageLayerHeightMin,
+            .set = native::setFoliageLayerHeightMin,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("HeightMax"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The highest ground it grows on, in metres: a tree line.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getFoliageLayerHeightMax,
+            .set = native::setFoliageLayerHeightMax,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Clumping"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much it gathers into patches, from 0 to 1: 0 is even cover, 1 is tufts with bare ground between.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getFoliageLayerClumping,
+            .set = native::setFoliageLayerClumping,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MinSpacing"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The least distance between two instances, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFoliageLayerMinSpacing,
+            .set = native::setFoliageLayerMinSpacing,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DrawDistance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far from the camera it is drawn, in metres. Past it nothing of the layer costs a draw.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getFoliageLayerDrawDistance,
+            .set = native::setFoliageLayerDrawDistance,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FadeDistance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Over how many metres before `DrawDistance` it thins away, so the edge of the field is not a line.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFoliageLayerFadeDistance,
+            .set = native::setFoliageLayerFadeDistance,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Seed"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Which of the endless arrangements the same rules give. The same seed grows the same field on every machine.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getFoliageLayerSeed,
+            .set = native::setFoliageLayerSeed,
+        },
+    }};
+    static std::array<scene::MethodDesc, 2> foliageLayerMethods;
+    foliageLayerMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetMaterials"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Safe,
+            .doc = "The terrain materials it grows on, each with a multiplier of `Density`: material `n` is the terrain's layer `n` (`Terrain:GetLayers`). Empty is every material at 1.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("SetMaterials"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Sets the materials it grows on, as `GetMaterials` returns them: up to 32, `Density` 1 when left out. An empty list grows on every material. Saved with the scene.",
+        },
+    }};
+    scene::ClassDescriptor foliageLayerDesc;
+    foliageLayerDesc.name = atoms.intern("FoliageLayer");
+    foliageLayerDesc.super = instanceClass;
+    foliageLayerDesc.flags = scene::ClassFlags::None;
+    foliageLayerDesc.defaultName = atoms.intern("FoliageLayer");
+    foliageLayerDesc.doc = "Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and never simulated. Its `FoliageMesh` children say what grows; its rules say where, by the ground's material, slope and height, never under a roof. **Visual only**: nothing collides with it, a raycast passes through it, it is not replicated and it is not in the world hash -- every machine grows the same field from the same terrain and seed.";
+    static constexpr std::array<std::string_view, 3> foliageLayerParents{{"Terrain", "ReplicatedStorage", "ServerStorage"}};
+    foliageLayerDesc.parents = foliageLayerParents;
+    foliageLayerDesc.properties = foliageLayerProperties;
+    foliageLayerDesc.methods = foliageLayerMethods;
+    foliageLayerDesc.attachComponents = native::attachFoliageLayerComponents;
+    foliageLayerDesc.detachComponents = native::detachFoliageLayerComponents;
+    classes.registerClass(foliageLayerDesc);
+
+    // --- FoliageMesh ---
+    static std::array<scene::PropertyDesc, 11> foliageMeshProperties;
+    foliageMeshProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Mesh"),
+            .type = scene::ValueType::String,
+            .contentKind = atoms.intern("Mesh"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The mesh that grows: any mesh asset of the project.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getFoliageMeshMesh,
+            .set = native::setFoliageMeshMesh,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Weight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Its share of the layer's instances against the other meshes of the layer: two meshes of weight 1 and 3 grow one to three.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFoliageMeshWeight,
+            .set = native::setFoliageMeshWeight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ScaleMin"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The smallest an instance is, as a multiple of the mesh.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getFoliageMeshScaleMin,
+            .set = native::setFoliageMeshScaleMin,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ScaleMax"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The largest an instance is, as a multiple of the mesh.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getFoliageMeshScaleMax,
+            .set = native::setFoliageMeshScaleMax,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("RandomRotation"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether each instance turns about its up axis at random, so a field is not rows of the same leaf.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFoliageMeshRandomRotation,
+            .set = native::setFoliageMeshRandomRotation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AlignToNormal"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much it leans with the ground, from 0 upright to 1 along the slope.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getFoliageMeshAlignToNormal,
+            .set = native::setFoliageMeshAlignToNormal,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Sink"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far below the ground its base goes, in metres, so a stem on a slope is not floating at one edge.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getFoliageMeshSink,
+            .set = native::setFoliageMeshSink,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WindResponse"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much the wind moves it, from 0 still to 1 full sway.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getFoliageMeshWindResponse,
+            .set = native::setFoliageMeshWindResponse,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How hard it resists the wind: a reed 0.5, a bush 3.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getFoliageMeshStiffness,
+            .set = native::setFoliageMeshStiffness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("CastShadow"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether it casts a shadow, near the camera: `[render] foliage_shadow_distance` is how near.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getFoliageMeshCastShadow,
+            .set = native::setFoliageMeshCastShadow,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Material"),
+            .type = scene::ValueType::Material,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "What it is drawn with: a material asset, or nothing for the mesh's own. A material whose surface shader has a `surfaceVertex` moves it as it likes, with the wind and the instance's random value; otherwise the built-in sway bends it from its base.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_material"),
+            .get = native::getFoliageMeshMaterial,
+            .set = native::setFoliageMeshMaterial,
+        },
+    }};
+    scene::ClassDescriptor foliageMeshDesc;
+    foliageMeshDesc.name = atoms.intern("FoliageMesh");
+    foliageMeshDesc.super = instanceClass;
+    foliageMeshDesc.flags = scene::ClassFlags::None;
+    foliageMeshDesc.defaultName = atoms.intern("FoliageMesh");
+    foliageMeshDesc.doc = "One mesh a `FoliageLayer` grows (ADR 0116), with its share of the layer, its size, how it sits on the ground and how the wind moves it.";
+    static constexpr std::array<std::string_view, 3> foliageMeshParents{{"FoliageLayer", "ReplicatedStorage", "ServerStorage"}};
+    foliageMeshDesc.parents = foliageMeshParents;
+    foliageMeshDesc.properties = foliageMeshProperties;
+    foliageMeshDesc.attachComponents = native::attachFoliageMeshComponents;
+    foliageMeshDesc.detachComponents = native::detachFoliageMeshComponents;
+    classes.registerClass(foliageMeshDesc);
+
     // --- Lighting ---
     static std::array<scene::PropertyDesc, 15> lightingProperties;
     lightingProperties = {{

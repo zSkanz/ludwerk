@@ -520,6 +520,12 @@ void obliqueNearPlane(core::Mat4& projection, const core::Mat4& view, const core
 
 } // namespace
 
+RenderMaterial materialBlockOf(const scene::World& world, core::NameAtom material, const TextureLibrary* textures)
+{
+    const asset::ResolvedMaterial resolved = world.resolveMaterial(material, 0);
+    return blockOf(world, resolved.properties, textures);
+}
+
 void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
              f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, f32 alpha,
              const TransformHistory* history, RenderWorld& out, const ViewOverride* view,

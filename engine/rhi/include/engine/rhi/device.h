@@ -45,6 +45,8 @@ struct Capabilities
     // False on backends that record or discard rather than rasterize, which is
     // how a caller knows a readback would be meaningless.
     bool rendersPixels = false;
+    // Compute passes, storage buffers and indirect draws (ADR 0116).
+    bool compute = false;
 };
 
 struct Swapchain
@@ -119,6 +121,24 @@ public:
 
     // Named regions in a GPU capture. Free in shipping builds, invaluable in
     // every other one.
+    // --- Storage buffers, indirect draws and compute (ADR 0116) --------------
+    //
+    // A graphics stage reads storage buffers bound here, after its textures.
+    virtual void bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::span<const BufferHandle> buffers) = 0;
+    // `drawCount` indexed draws, `DrawIndexedIndirectCommand`s read from
+    // `buffer` at `offsetBytes` -- the arguments a compute pass wrote.
+    virtual void drawIndexedIndirect(BufferHandle buffer, u32 offsetBytes, u32 drawCount) = 0;
+
+    // **A compute pass**, which writes the buffers it names here and no others;
+    // it ends any pass open, and a render or copy pass ends it.
+    virtual void beginComputePass(std::span<const BufferHandle> writes) = 0;
+    virtual void endComputePass() = 0;
+    virtual void setComputePipeline(ComputePipelineHandle pipeline) = 0;
+    // The buffers the compute shader only reads.
+    virtual void bindComputeStorageBuffers(u32 firstSlot, std::span<const BufferHandle> buffers) = 0;
+    virtual void bindComputeUniforms(u32 slot, std::span<const std::byte> data) = 0;
+    virtual void dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) = 0;
+
     virtual void pushDebugGroup(std::string_view name) = 0;
     virtual void popDebugGroup() = 0;
 };
@@ -145,12 +165,14 @@ public:
     [[nodiscard]] virtual SamplerHandle createSampler(const SamplerDesc& desc) = 0;
     [[nodiscard]] virtual ShaderHandle createShader(const ShaderDesc& desc) = 0;
     [[nodiscard]] virtual PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
+    [[nodiscard]] virtual ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) = 0;
 
     virtual void destroy(BufferHandle handle) = 0;
     virtual void destroy(TextureHandle handle) = 0;
     virtual void destroy(SamplerHandle handle) = 0;
     virtual void destroy(ShaderHandle handle) = 0;
     virtual void destroy(PipelineHandle handle) = 0;
+    virtual void destroy(ComputePipelineHandle handle) = 0;
 
     [[nodiscard]] virtual ICmdList* beginFrame() = 0;
     [[nodiscard]] virtual Swapchain acquireSwapchain(platform::Window& window) = 0;
@@ -165,6 +187,10 @@ public:
     // `out` must be at least width * height * bytesPerPixel of the texture's
     // format; false means the backend cannot read this texture back.
     [[nodiscard]] virtual bool readTexture(TextureHandle texture, std::span<std::byte> out) = 0;
+
+    // The same for a buffer: `out.size()` bytes from `offsetBytes`. Blocking
+    // and for tests and tools -- what a compute pass wrote, checked by value.
+    [[nodiscard]] virtual bool readBuffer(BufferHandle buffer, u32 offsetBytes, std::span<std::byte> out) = 0;
 
     // **Whether the device is gone**: the driver reset it, most often because
     // a shader ran past the time the operating system allows one. Once true

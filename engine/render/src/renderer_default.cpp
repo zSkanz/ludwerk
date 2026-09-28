@@ -206,6 +206,65 @@ constexpr f32 kOcclusionStrength = 1.0f;
     return std::span<const std::byte>(static_cast<const std::byte*>(data), size);
 }
 
+// --- Foliage (ADR 0116) ---------------------------------------------------------
+//
+// The blocks the foliage shaders read, laid out as `engine_foliage.hlsli` and
+// the two compute shaders declare them.
+
+// `GpuFoliageUniforms`, the vertex stage's second block, 64 bytes.
+struct GpuFoliageUniforms
+{
+    f32 wind[4]{};
+    f32 windParams[4]{};
+    f32 mesh[4]{};
+    f32 cameraOrigin[4]{};
+};
+static_assert(sizeof(GpuFoliageUniforms) == 64);
+
+// The most levels of detail a foliage mesh is drawn at: `FOLIAGE_MAX_LODS`.
+constexpr u32 kFoliageMaxLods = 4;
+
+// `GpuFoliageCull`, 192 bytes: the frustum, the run, its mesh and its levels.
+struct GpuFoliageCull
+{
+    f32 planes[6][4]{};
+    f32 originRadius[4]{};
+    u32 first = 0;
+    u32 count = 0;
+    u32 bucket = 0;
+    u32 bucketBase = 0;
+    u32 capacity = 0;
+    f32 density = 1.0f;
+    f32 drawDistance = 0.0f;
+    f32 fadeStart = 0.0f;
+    f32 scaleMin = 1.0f;
+    f32 scaleMax = 1.0f;
+    f32 sink = 0.0f;
+    f32 align = 0.0f;
+    f32 randomRotation = 1.0f;
+    u32 lodCount = 1;
+    f32 unused[2]{};
+    f32 lodDistances[4]{};
+};
+static_assert(sizeof(GpuFoliageCull) == 192);
+
+struct GpuFoliageFinalize
+{
+    u32 commandCount = 0;
+    u32 unused[3]{};
+};
+
+// One indirect draw's counter -- its bucket's level -- and the most instances
+// that level's list holds.
+struct GpuFoliageCommand
+{
+    u32 counter = 0;
+    u32 capacity = 0;
+};
+
+// The size of one entry of a visible list, `FoliageVisible`.
+constexpr u32 kFoliageVisibleBytes = 48;
+
 // A bloom level's size. Level zero is HALF the frame, so the chain starts one
 // halving in -- a full-resolution first level would be the frame's cost again
 // for a term that is about to be blurred.
@@ -621,6 +680,16 @@ private:
     // The sprite pipeline and its instance buffer (the 2D layer), on the same
     // lazy terms: a world with nothing on the plane builds neither.
     [[nodiscard]] bool ensureSprites(rhi::IDevice& device);
+    // **Foliage** (ADR 0116): its cull and draw pipelines, made the first frame
+    // a world has any -- so no other world's command stream grows a line.
+    [[nodiscard]] bool ensureFoliage(rhi::IDevice& device);
+    // The cull, outside any pass: counters cleared, every run culled into its
+    // mesh's list, and the indirect draws' instance counts written.
+    void cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes);
+    // Every bucket's indirect draws, into the open pass: the forward pass or,
+    // with `shadow`, a cascade.
+    void drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes, const Mat4& viewProjection,
+                     bool shadow);
 
     // **A pipeline the look needs (ADR 0096), made the first frame it is
     // used** -- as the decals' and the particles' are, and for their reason: a
@@ -825,6 +894,27 @@ private:
     rhi::BufferHandle worldUiBuffer_{};
     bool worldUiTried_ = false;
     u32 worldUiVertexCount_ = 0;
+    // Foliage (ADR 0116): the pipelines, and the buffers the cull writes --
+    // grown when a frame needs more and never shrunk within a run.
+    rhi::ComputePipelineHandle foliageCullPipeline_{};
+    rhi::ComputePipelineHandle foliageFinalizePipeline_{};
+    rhi::PipelineHandle foliagePipeline_{};
+    rhi::PipelineHandle foliageShadowPipeline_{};
+    bool foliageTried_ = false;
+    rhi::BufferHandle foliageVisible_{};
+    u32 foliageVisibleCapacity_ = 0;
+    rhi::BufferHandle foliageCounters_{};
+    rhi::BufferHandle foliageArguments_{};
+    rhi::BufferHandle foliageCommands_{};
+    u32 foliageCommandCapacity_ = 0;
+    u32 foliageBucketCapacity_ = 0;
+    // This frame's: each bucket's first slot in the visible list, how many
+    // levels it is drawn at, and each of its levels' first indirect draw
+    // (`bucket * kFoliageMaxLods + level`).
+    std::vector<u32> foliageBucketBase_;
+    std::vector<u32> foliageBucketLods_;
+    std::vector<u32> foliageLodCommand_;
+    bool foliageCulled_ = false;
     bool particleTried_ = false;
     std::vector<GpuParticle> particleStaging_;
     u32 particleCount_ = 0;
@@ -1847,6 +1937,26 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     particleTried_ = false;
     decalTried_ = false;
     worldUiTried_ = false;
+    for (rhi::PipelineHandle* pipeline : {&foliagePipeline_, &foliageShadowPipeline_}) {
+        if (pipeline->valid())
+            device.destroy(*pipeline);
+        *pipeline = {};
+    }
+    for (rhi::ComputePipelineHandle* pipeline : {&foliageCullPipeline_, &foliageFinalizePipeline_}) {
+        if (pipeline->valid())
+            device.destroy(*pipeline);
+        *pipeline = {};
+    }
+    for (rhi::BufferHandle* buffer : {&foliageVisible_, &foliageCounters_, &foliageArguments_, &foliageCommands_}) {
+        if (buffer->valid())
+            device.destroy(*buffer);
+        *buffer = {};
+    }
+    foliageVisibleCapacity_ = 0;
+    foliageBucketCapacity_ = 0;
+    foliageCommandCapacity_ = 0;
+    foliageTried_ = false;
+    foliageCulled_ = false;
     for (LookPipeline* look : lookPipelines()) {
         if (look->handle.valid())
             device.destroy(look->handle);
@@ -3339,6 +3449,303 @@ bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
     return particlePipeline_.valid() && particleBuffer_.valid();
 }
 
+bool DefaultRenderer::ensureFoliage(rhi::IDevice& device)
+{
+    if (foliageTried_)
+        return foliageCullPipeline_.valid() && foliageFinalizePipeline_.valid() && foliagePipeline_.valid() &&
+               foliageShadowPipeline_.valid();
+    foliageTried_ = true;
+    if (shaderLibrary_ == nullptr || !device.caps().compute)
+        return false;
+
+    core::EngineError error;
+    foliageCullPipeline_ = shaderLibrary_->createCompute(device, "foliage_cull", &error);
+    foliageFinalizePipeline_ = shaderLibrary_->createCompute(device, "foliage_finalize", &error);
+    const rhi::ShaderHandle vertex = shaderLibrary_->create(device, "foliage", rhi::ShaderStage::Vertex, &error);
+    const rhi::ShaderHandle fragment = shaderLibrary_->create(device, "foliage", rhi::ShaderStage::Fragment, &error);
+    const rhi::ShaderHandle shadowVertex =
+        shaderLibrary_->create(device, "foliage_shadow", rhi::ShaderStage::Vertex, &error);
+    const rhi::ShaderHandle shadowFragment =
+        shaderLibrary_->create(device, "foliage_shadow", rhi::ShaderStage::Fragment, &error);
+    for (const rhi::ShaderHandle handle : {vertex, fragment, shadowVertex, shadowFragment}) {
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+    }
+    if (!foliageCullPipeline_.valid() || !foliageFinalizePipeline_.valid() || !vertex.valid() || !fragment.valid() ||
+        !shadowVertex.valid() || !shadowFragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    // The mesh's own vertex, as every static mesh is drawn; the instance comes
+    // from the list the cull wrote. Both sides of a leaf, since a blade of grass
+    // is usually one quad.
+    const std::array<rhi::VertexBufferLayout, 1> buffers{rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48}};
+    const std::array<rhi::VertexAttribute, 4> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+    };
+    const std::array<rhi::VertexAttribute, 1> shadowAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+    };
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{.format = kHdrFormat}};
+    foliagePipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::None, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "foliage",
+    });
+    foliageShadowPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = shadowVertex,
+        .fragmentShader = shadowFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = shadowAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = {},
+        .depthStencilFormat = kShadowFormat,
+        .debugName = "foliage_shadow",
+    });
+    return foliagePipeline_.valid() && foliageShadowPipeline_.valid();
+}
+
+void DefaultRenderer::cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                  const MeshCache& meshes)
+{
+    foliageCulled_ = false;
+    if (world.foliageRuns.empty() || world.foliageBuckets.empty() || !world.camera.valid)
+        return;
+    if (!ensureFoliage(device))
+        return;
+
+    // Each bucket's slice of the visible list -- a list per level of detail,
+    // `capacity` long each -- and its indirect draws: one per section of each
+    // level. The level an instance is drawn at is the cull's choice, by where
+    // the coarser level's error stops showing as a pixel.
+    const auto bucketCount = static_cast<u32>(world.foliageBuckets.size());
+    foliageBucketBase_.assign(bucketCount, 0);
+    foliageBucketLods_.assign(bucketCount, 0);
+    foliageLodCommand_.assign(static_cast<usize>(bucketCount) * kFoliageMaxLods, 0);
+    std::vector<std::array<f32, 4>> lodDistances(bucketCount, std::array<f32, 4>{});
+    const f32 pixelsPerUnit = lodPixelsPerUnit(world.camera, height_);
+    std::vector<rhi::DrawIndexedIndirectCommand> arguments;
+    std::vector<GpuFoliageCommand> commands;
+    u32 total = 0;
+    for (u32 bucket = 0; bucket < bucketCount; ++bucket) {
+        const RenderFoliageBucket& entry = world.foliageBuckets[bucket];
+        foliageBucketBase_[bucket] = total;
+        const MeshCache::Resolved* resolved = meshes.resolve(entry.mesh);
+        if (resolved == nullptr || resolved->lods.empty())
+            continue;
+        const u32 levels = std::min(static_cast<u32>(resolved->lods.size()), kFoliageMaxLods);
+        foliageBucketLods_[bucket] = levels;
+        total += entry.capacity * levels;
+        for (u32 lod = 0; lod < levels; ++lod) {
+            // Where level `lod + 1` takes over, for a unit-scale instance.
+            if (lod + 1 < levels)
+                lodDistances[bucket][lod] = resolved->lods[lod + 1].error * pixelsPerUnit / LodPixelError;
+            foliageLodCommand_[bucket * kFoliageMaxLods + lod] = static_cast<u32>(arguments.size());
+            const MeshLodRange& level = resolved->lods[lod];
+            for (u32 section = 0; section < level.sectionCount; ++section) {
+                const MeshSection& geometry = resolved->sections[level.firstSection + section];
+                arguments.push_back(rhi::DrawIndexedIndirectCommand{
+                    .indexCount = geometry.indexCount,
+                    .instanceCount = 0,
+                    .firstIndex = resolved->firstIndex + geometry.firstIndex,
+                    .vertexOffset = resolved->vertexOffset,
+                    .firstInstance = 0,
+                });
+                commands.push_back(GpuFoliageCommand{bucket * kFoliageMaxLods + lod, entry.capacity});
+            }
+        }
+    }
+    if (total == 0 || arguments.empty())
+        return;
+
+    // Grown, never shrunk: a field walked through keeps its high-water mark.
+    const auto grow = [&device](rhi::BufferHandle& buffer, u32& capacity, u32 needed, u32 stride,
+                                rhi::BufferUsage usage, const char* name) {
+        if (buffer.valid() && capacity >= needed)
+            return;
+        if (buffer.valid())
+            device.destroy(buffer);
+        capacity = std::max(needed, capacity + capacity / 2);
+        buffer = device.createBuffer({.usage = usage, .sizeBytes = capacity * stride, .debugName = name});
+    };
+    grow(foliageVisible_, foliageVisibleCapacity_, total, kFoliageVisibleBytes,
+         rhi::BufferUsage::GraphicsStorageRead | rhi::BufferUsage::ComputeStorageWrite, "foliage.visible");
+    u32 bucketCapacity = foliageBucketCapacity_;
+    grow(foliageCounters_, bucketCapacity, bucketCount * kFoliageMaxLods, 4,
+         rhi::BufferUsage::ComputeStorageRead | rhi::BufferUsage::ComputeStorageWrite, "foliage.counters");
+    foliageBucketCapacity_ = bucketCapacity;
+    const auto commandCount = static_cast<u32>(arguments.size());
+    u32 argumentCapacity = foliageCommandCapacity_;
+    grow(foliageArguments_, argumentCapacity, commandCount, sizeof(rhi::DrawIndexedIndirectCommand),
+         rhi::BufferUsage::Indirect | rhi::BufferUsage::ComputeStorageWrite, "foliage.arguments");
+    u32 infoCapacity = foliageCommandCapacity_;
+    grow(foliageCommands_, infoCapacity, commandCount, sizeof(GpuFoliageCommand), rhi::BufferUsage::ComputeStorageRead,
+         "foliage.commands");
+    foliageCommandCapacity_ = std::min(argumentCapacity, infoCapacity);
+    if (!foliageVisible_.valid() || !foliageCounters_.valid() || !foliageArguments_.valid() ||
+        !foliageCommands_.valid())
+        return;
+
+    // The counters from zero, the draws' fixed words, and which bucket each is.
+    const std::vector<u32> zeros(static_cast<usize>(bucketCount) * kFoliageMaxLods, 0u);
+    cmd.upload(foliageCounters_, asBytes(zeros.data(), zeros.size() * sizeof(u32)), 0);
+    cmd.upload(foliageArguments_, asBytes(arguments.data(), arguments.size() * sizeof(arguments[0])), 0);
+    cmd.upload(foliageCommands_, asBytes(commands.data(), commands.size() * sizeof(commands[0])), 0);
+
+    cmd.pushDebugGroup("foliage-cull");
+    const std::array<rhi::BufferHandle, 2> written{foliageVisible_, foliageCounters_};
+    cmd.beginComputePass(written);
+    cmd.setComputePipeline(foliageCullPipeline_);
+    GpuFoliageCull cull;
+    for (u32 plane = 0; plane < core::Frustum::SideCount; ++plane) {
+        const core::Plane& side = world.camera.frustum.planes[plane];
+        cull.planes[plane][0] = side.normal.x;
+        cull.planes[plane][1] = side.normal.y;
+        cull.planes[plane][2] = side.normal.z;
+        cull.planes[plane][3] = side.distance;
+    }
+    cull.density = world.foliageDensity;
+    for (const RenderFoliageRun& run : world.foliageRuns) {
+        if (run.count == 0 || run.bucket >= bucketCount || foliageBucketLods_[run.bucket] == 0)
+            continue;
+        const RenderFoliageBucket& bucket = world.foliageBuckets[run.bucket];
+        cull.lodCount = foliageBucketLods_[run.bucket];
+        for (u32 lod = 0; lod < 4; ++lod)
+            cull.lodDistances[lod] = lodDistances[run.bucket][lod];
+        cull.originRadius[0] = static_cast<f32>(run.origin.x - world.camera.origin.x);
+        cull.originRadius[1] = static_cast<f32>(run.origin.y - world.camera.origin.y);
+        cull.originRadius[2] = static_cast<f32>(run.origin.z - world.camera.origin.z);
+        cull.originRadius[3] = bucket.radius;
+        cull.first = run.first;
+        cull.count = run.count;
+        cull.bucket = run.bucket;
+        cull.bucketBase = foliageBucketBase_[run.bucket];
+        cull.capacity = bucket.capacity;
+        cull.drawDistance = run.drawDistance;
+        cull.fadeStart = std::max(0.0f, run.drawDistance - run.fadeDistance);
+        cull.scaleMin = run.scaleMin;
+        cull.scaleMax = run.scaleMax;
+        cull.sink = run.sink;
+        cull.align = run.alignToNormal;
+        cull.randomRotation = run.randomRotation ? 1.0f : 0.0f;
+        const std::array<rhi::BufferHandle, 1> read{run.instances};
+        cmd.bindComputeStorageBuffers(0, read);
+        cmd.bindComputeUniforms(0, asBytes(&cull, sizeof(cull)));
+        cmd.dispatch((run.count + 63u) / 64u, 1, 1);
+    }
+    cmd.endComputePass();
+
+    const std::array<rhi::BufferHandle, 1> finalWrites{foliageArguments_};
+    cmd.beginComputePass(finalWrites);
+    cmd.setComputePipeline(foliageFinalizePipeline_);
+    const std::array<rhi::BufferHandle, 2> finalReads{foliageCommands_, foliageCounters_};
+    cmd.bindComputeStorageBuffers(0, finalReads);
+    const GpuFoliageFinalize finalize{commandCount, {}};
+    cmd.bindComputeUniforms(0, asBytes(&finalize, sizeof(finalize)));
+    cmd.dispatch((commandCount + 63u) / 64u, 1, 1);
+    cmd.endComputePass();
+    cmd.popDebugGroup();
+    foliageCulled_ = true;
+}
+
+void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes,
+                                  const Mat4& viewProjection, bool shadow)
+{
+    if (!foliageCulled_)
+        return;
+    cmd.setPipeline(shadow ? foliageShadowPipeline_ : foliagePipeline_);
+    const std::array<rhi::BufferHandle, 1> list{foliageVisible_};
+    cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, list);
+
+    for (u32 index = 0; index < world.foliageBuckets.size(); ++index) {
+        const RenderFoliageBucket& bucket = world.foliageBuckets[index];
+        if (shadow && !bucket.castShadow)
+            continue;
+        const MeshCache::Resolved* resolved = meshes.resolve(bucket.mesh);
+        if (resolved == nullptr || resolved->lods.empty())
+            continue;
+
+        if (shadow) {
+            const GpuShadowUniforms uniforms{viewProjection, Mat4{}};
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
+        }
+        else {
+            GpuObjectUniforms uniforms{viewProjection, Mat4{}, Mat4{}};
+            uniforms.instanceAlphaUnused[0] = 1.0f;
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
+        }
+        GpuFoliageUniforms foliage;
+        foliage.wind[0] = world.environment.wind.x;
+        foliage.wind[1] = world.environment.wind.y;
+        foliage.wind[2] = world.environment.wind.z;
+        foliage.wind[3] = static_cast<f32>(world.environment.surfaceTime);
+        foliage.windParams[0] = world.environment.windGusts;
+        foliage.windParams[1] = world.environment.windTurbulence;
+        foliage.windParams[2] = bucket.windResponse / std::max(bucket.stiffness, 1e-3f);
+        foliage.mesh[0] = bucket.meshMinY;
+        foliage.mesh[1] = bucket.meshHeight;
+        foliage.mesh[2] = world.foliageShadowDistance;
+        foliage.cameraOrigin[0] = static_cast<f32>(world.camera.origin.x);
+        foliage.cameraOrigin[1] = static_cast<f32>(world.camera.origin.y);
+        foliage.cameraOrigin[2] = static_cast<f32>(world.camera.origin.z);
+
+        const std::array<rhi::BufferHandle, 1> vertexBuffers{resolved->vertices};
+        cmd.bindVertexBuffers(0, vertexBuffers);
+        cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
+
+        const u32 levels = index < foliageBucketLods_.size() ? foliageBucketLods_[index] : 0u;
+        for (u32 lod = 0; lod < levels; ++lod) {
+            // This level's list, after the bucket's base.
+            foliage.windParams[3] = static_cast<f32>(foliageBucketBase_[index] + lod * bucket.capacity);
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&foliage, sizeof(foliage)));
+            const u32 sections = resolved->lods[lod].sectionCount;
+            const u32 firstCommand = foliageLodCommand_[index * kFoliageMaxLods + lod];
+            for (u32 section = 0; section < sections; ++section) {
+                if (!shadow && section < bucket.sectionMaterials.size() &&
+                    bucket.sectionMaterials[section] < world.materials.size()) {
+                    const RenderMaterial& material = world.materials[bucket.sectionMaterials[section]];
+                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 1,
+                                     asBytes(&material.uniforms, sizeof(material.uniforms)));
+                    const auto orDefault = [](rhi::TextureHandle handle, rhi::TextureHandle fallback) {
+                        return handle.valid() ? handle : fallback;
+                    };
+                    const std::array<rhi::TextureBinding, 13> textures{
+                        rhi::TextureBinding{orDefault(material.baseColor, whitePixel_), linearSampler_},
+                        rhi::TextureBinding{orDefault(material.normal, flatNormalPixel_), linearSampler_},
+                        rhi::TextureBinding{orDefault(material.metallicRoughness, whitePixel_), linearSampler_},
+                        rhi::TextureBinding{orDefault(material.emissive, blackPixel_), linearSampler_},
+                        rhi::TextureBinding{shadowMap_, shadowSampler_},
+                        rhi::TextureBinding{environmentMap_, environmentSampler_},
+                        rhi::TextureBinding{brdfLut_, environmentSampler_},
+                        rhi::TextureBinding{clusterGrid_, pointSampler_},
+                        rhi::TextureBinding{lightIndices_, pointSampler_},
+                        rhi::TextureBinding{lightData_, pointSampler_},
+                        rhi::TextureBinding{occlusion_, linearSampler_},
+                        rhi::TextureBinding{localShadowMap_, shadowSampler_},
+                        rhi::TextureBinding{contact_, pointSampler_},
+                    };
+                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
+                }
+                cmd.drawIndexedIndirect(
+                    foliageArguments_,
+                    (firstCommand + section) * static_cast<u32>(sizeof(rhi::DrawIndexedIndirectCommand)), 1);
+                ++stats_.drawCalls;
+            }
+        }
+    }
+}
+
 bool DefaultRenderer::ensureSprites(rhi::IDevice& device)
 {
     if (spriteTried_)
@@ -4047,6 +4454,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     shadowFit_ = cascades;
     shadowFitted_ = true;
 
+    // The foliage cull (ADR 0116), before any pass reads what it writes.
+    cullFoliage(device, cmd, world, meshes);
+
     // --- Shadow pass --------------------------------------------------------
     //
     // One pass, four viewports into one 2x2 atlas -- `shadow.h` says why an
@@ -4115,6 +4525,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             terrainShadowPush_ = push;
             drawGeometry(cmd, world, meshes, cascades.viewProjection[index], shadowPipeline_, shadowSkinnedPipeline_,
                          Selection::Shadow, &cull);
+            // Foliage casts only near the camera: the shader drops what lies
+            // past `foliage_shadow_distance`, so the far cascades get none.
+            if (splits[index] < world.foliageShadowDistance)
+                drawFoliage(cmd, world, meshes, cascades.viewProjection[index], true);
         }
     }
     cmd.endRenderPass();
@@ -4495,6 +4909,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
         drawGeometry(cmd, world, meshes, world.camera.viewProjection, pbrPipeline_, pbrSkinnedPipeline_,
                      Selection::Opaque);
+        // The foliage the cull kept (ADR 0116), with the opaque surfaces.
+        drawFoliage(cmd, world, meshes, world.camera.viewProjection, false);
 
         // **Decals, between the opaque surfaces and the transparent ones**
         // (F2). They read the depth the opaque surfaces wrote, which a pass

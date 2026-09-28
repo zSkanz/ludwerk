@@ -55,6 +55,9 @@ ENG_RHI_HANDLE(TextureHandle);
 ENG_RHI_HANDLE(SamplerHandle);
 ENG_RHI_HANDLE(ShaderHandle);
 ENG_RHI_HANDLE(PipelineHandle);
+// A compute pipeline (ADR 0116): its own type, because it binds in a compute
+// pass and a graphics pipeline never can.
+ENG_RHI_HANDLE(ComputePipelineHandle);
 
 #undef ENG_RHI_HANDLE
 
@@ -124,6 +127,12 @@ enum class BufferUsage : u32
     Vertex = 1u << 0,
     Index = 1u << 1,
     Indirect = 1u << 2,
+    // **Storage buffers** (ADR 0116): read by a vertex or fragment shader,
+    // read by a compute shader, written by one. The values are SDL_GPU's own,
+    // bit for bit.
+    GraphicsStorageRead = 1u << 3,
+    ComputeStorageRead = 1u << 4,
+    ComputeStorageWrite = 1u << 5,
 };
 
 [[nodiscard]] constexpr BufferUsage operator|(BufferUsage a, BufferUsage b) noexcept

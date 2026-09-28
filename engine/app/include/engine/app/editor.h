@@ -1951,6 +1951,9 @@ public:
         Blocks,
         // Paints and erases a `Tilemap2D`'s cells (the 2D layer).
         Tiles,
+        // Paints a foliage layer's density by hand (ADR 0116): `Add` brings it
+        // back towards what the rules grow, `Subtract` thins it to nothing.
+        Foliage,
     };
     [[nodiscard]] Tool tool() const noexcept { return m_tool; }
     // Refused mid-stroke, for the reason `setGizmoMode` is refused mid-drag:
@@ -2065,6 +2068,22 @@ public:
     // Empties the field. Records an undo step, so it is not the disaster it
     // sounds like.
     bool clearTerrain(scene::World& world, core::InstanceId root, Inspector& inspector);
+
+    // **Foliage** (ADR 0116), from the Terrain panel's Foliage section: a
+    // layer under the world's terrain, growing on every material; a mesh under
+    // a layer. Each is one undo step, and what it made is selected, so the
+    // Properties panel is where it is edited.
+    core::InstanceId createFoliageLayer(scene::World& world, core::InstanceId root, Inspector& inspector);
+    core::InstanceId addFoliageMesh(scene::World& world, core::InstanceId layer, Inspector& inspector);
+    // The layer the foliage brush paints.
+    void setFoliageLayer(core::InstanceId layer) noexcept { m_foliageLayer = layer; }
+    [[nodiscard]] core::InstanceId foliageLayer() const noexcept { return m_foliageLayer; }
+    // **Paints a layer's density** round a point of the terrain's field space:
+    // `amount` from -1 (thinned to nothing at the centre) to 1 (back to what the
+    // rules grow), falling off to nothing at `radius`. The columns it touches
+    // gain a mask entry the first time. Answers whether anything changed.
+    static bool paintFoliage(scene::World& world, core::InstanceId layer, core::DVec3 fieldAt, double radius,
+                             f32 amount, f32 voxelSize);
 
     // **What the terrain's material ids mean** (ADR 0113), as one undoable
     // step: the Paint section's add, remove, replace and reorder. At most 255.
@@ -2799,6 +2818,9 @@ private:
 
     Tool m_tool = Tool::Select;
     bool m_hasTerrain = false;
+    core::InstanceId m_foliageLayer;
+    // The world a stroke is in, for a brush that writes more than the field.
+    scene::World* m_strokeWorld = nullptr;
     bool m_terrainPanelShown = true;
     core::u64 m_worldRestores = 0;
     TerrainSaver m_terrainSaver;

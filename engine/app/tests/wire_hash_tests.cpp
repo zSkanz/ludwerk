@@ -208,3 +208,34 @@ TEST_CASE("every replicated field that is not a property is state the world hash
     // Every class the wire carries with state of its own was reached.
     CHECK(checked > 30);
 }
+
+TEST_CASE("foliage is outside the world hash: its rules can change and the simulation cannot tell")
+{
+    // ADR 0116: foliage is drawn and never simulated, so no machine's hash may
+    // depend on it -- a player who turned a meadow's density down is still in
+    // the same world as one who did not.
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    engine::render::generated::registerClasses(classes, atoms);
+    scene::World world(classes, enums, atoms, 7u);
+
+    const core::InstanceId layer = world.create(classes.findId(atoms.intern("FoliageLayer")));
+    const core::InstanceId mesh = world.create(classes.findId(atoms.intern("FoliageMesh")));
+    REQUIRE(layer.valid());
+    REQUIRE(mesh.valid());
+    REQUIRE_FALSE(world.setParent(mesh, layer).has_value());
+
+    const core::u64 before = world.worldHash();
+    for (const char* name : {"Density", "SlopeMax", "HeightMin", "Clumping", "DrawDistance", "Seed"})
+        CHECK(world.setProperty(layer, atoms.intern(name), scene::Value{0.5}) == scene::World::SetResult::Changed);
+    CHECK(world.setProperty(layer, atoms.intern("Enabled"), scene::Value{false}) == scene::World::SetResult::Changed);
+    for (const char* name : {"Weight", "ScaleMax", "WindResponse", "Stiffness"})
+        CHECK(world.setProperty(mesh, atoms.intern(name), scene::Value{0.5}) == scene::World::SetResult::Changed);
+    CHECK(world.setProperty(mesh, atoms.intern("Mesh"), scene::Value{std::string("asset://models/grass.gltf")}) ==
+          scene::World::SetResult::Changed);
+    world.foliageLayers().find(layer)->materials.push_back(scene::FoliageMaterial{2, 0.5f});
+    CHECK(world.worldHash() == before);
+}

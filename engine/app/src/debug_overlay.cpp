@@ -504,6 +504,15 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
         endSectionGrid();
     }
 
+    // **Foliage** (ADR 0116): what is grown around the camera. The instances
+    // DRAWN are the GPU cull's answer and never come back to the CPU; what is
+    // here is what the cull reads.
+    if (counters.foliageTiles > 0 && propertiesSection("Foliage") && beginSectionGrid("foliage")) {
+        statRow("Tiles", "%u resident, %u grown this frame", counters.foliageTiles, counters.foliageGrown);
+        statRow("Instances", "%s", formatCount(counters.foliageInstances).c_str());
+        endSectionGrid();
+    }
+
     // **Every view, with what it costs** (ADR 0107): a camera texture is the
     // world drawn again, and a wall of them is where a frame's time goes.
     if (g_views != nullptr && !g_views->views().empty() && propertiesSection("Views") && beginSectionGrid("views")) {
@@ -11203,6 +11212,70 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                               "turned off afterwards with nothing changing");
     }
 
+    // --- Foliage (ADR 0116) -----------------------------------------------
+    //
+    // The layers growing on this terrain, and a brush that paints a layer's
+    // density by hand. A layer and a mesh are instances, so what they are is
+    // edited in Properties: this section makes them and chooses which one the
+    // brush paints.
+    if (terrain != nullptr && section("Foliage", icons::ActionPaint, 0)) {
+        std::vector<core::InstanceId> layers;
+        for (core::InstanceId child = world.firstChild(terrainId); child.valid(); child = world.nextSibling(child)) {
+            if (world.foliageLayers().find(child) != nullptr)
+                layers.push_back(child);
+        }
+        if (layers.empty())
+            ImGui::TextWrapped("Nothing grows here yet. Add a layer, then give it a mesh.");
+        if (!layers.empty() && std::find(layers.begin(), layers.end(), editor.foliageLayer()) == layers.end())
+            editor.setFoliageLayer(layers.front());
+        for (core::usize index = 0; index < layers.size(); ++index) {
+            const core::InstanceId layer = layers[index];
+            core::usize meshes = 0;
+            for (core::InstanceId child = world.firstChild(layer); child.valid(); child = world.nextSibling(child))
+                meshes += world.foliageMeshes().find(child) != nullptr ? 1 : 0;
+            const std::string label = std::string(world.atoms().text(world.name(layer))) + "  (" +
+                                      std::to_string(meshes) + (meshes == 1 ? " mesh" : " meshes") +
+                                      ")###foliage-layer-" + std::to_string(index);
+            if (ImGui::Selectable(label.c_str(), layer == editor.foliageLayer())) {
+                editor.setFoliageLayer(layer);
+                inspector.select(layer);
+            }
+        }
+        if (labeledIconButton(icons, icons::ActionAdd, "Add Layer", ImVec2(-FLT_MIN, 0.0f)))
+            (void)editor.createFoliageLayer(world, root, inspector);
+        ImGui::SetItemTooltip("a layer that grows on every material of this terrain; set its rules in Properties");
+
+        const scene::FoliageLayerComponent* chosen = world.foliageLayers().find(editor.foliageLayer());
+        ImGui::BeginDisabled(chosen == nullptr);
+        if (labeledIconButton(icons, icons::ActionAdd, "Add Mesh", ImVec2(-FLT_MIN, 0.0f)))
+            (void)editor.addFoliageMesh(world, editor.foliageLayer(), inspector);
+        ImGui::SetItemTooltip("a mesh the chosen layer grows; pick its Mesh in Properties");
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Paint density");
+        const auto paintButton = [&](Editor::BrushOp op, std::string_view icon, const char* word, const char* tip) {
+            const bool on = editor.tool() == Editor::Tool::Foliage && editor.brush().op == op;
+            if (on)
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (labeledIconButton(icons, icon, word, ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 2.0f, 0.0f))) {
+                editor.setBrushOp(op);
+                editor.setTool(Editor::Tool::Foliage);
+            }
+            if (on)
+                ImGui::PopStyleColor();
+            ImGui::SetItemTooltip("%s", tip);
+        };
+        paintButton(Editor::BrushOp::Add, icons::ActionPaint, "Paint",
+                    "brings the chosen layer back towards what its rules grow");
+        ImGui::SameLine();
+        paintButton(Editor::BrushOp::Subtract, icons::ActionErase, "Thin", "thins the chosen layer, to nothing");
+        if (chosen != nullptr) {
+            ImGui::TextDisabled("%zu painted tile(s). The brush's size and strength are Sculpt's.",
+                                chosen->mask.size());
+        }
+        ImGui::EndDisabled();
+    }
+
     if (terrain == nullptr && editor.tool() != Editor::Tool::Select) {
         // Said rather than left to be discovered: the brush is selected,
         // the ring is not drawing, and the reason is above.
@@ -12194,6 +12267,9 @@ void drawStatusBar(Editor& editor, const Inspector* inspector, EditorPanels& pan
             break;
         case Editor::Tool::Tiles:
             brush = "Tiles";
+            break;
+        case Editor::Tool::Foliage:
+            brush = "Foliage";
             break;
         case Editor::Tool::Select:
             break;
