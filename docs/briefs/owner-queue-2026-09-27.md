@@ -75,6 +75,9 @@ repository. Each was reproduced by running before it was fixed.
 - [x] P2-8 `ludwerk check` and `fmt` skip `dist/` (D211).
 - [x] P2-9 The analyser names the engine's definitions `@engine` (D212).
 - [x] P2-10 A headless process that has had real time keeps it (D213).
+- [x] Found re-exporting the owner's test: `TextInput.FocusLost` delivers
+      `submitted`, so Enter submits (D215), and a focused, empty field shows its
+      caret rather than its placeholder (D216).
 
 ## Q1 — `UIGradient` and `UIStroke`, with the new features
 

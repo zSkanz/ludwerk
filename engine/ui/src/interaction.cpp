@@ -55,6 +55,15 @@ void fire(scene::World& world, core::InstanceId subject, const char* event)
         scene::Change{scene::ChangeKind::InstanceEventNoArgs, subject, {}, world.atoms().intern(event)});
 }
 
+// `FocusLost`, with whether Return left the field (D215).
+void focusLost(scene::World& world, core::InstanceId subject, bool submitted)
+{
+    if (!subject.valid() || !world.alive(subject))
+        return;
+    world.changes().push(scene::Change{scene::ChangeKind::InstanceEventBool, subject, scene::eventFlag(submitted),
+                                       world.atoms().intern("FocusLost")});
+}
+
 // Depth-first, in draw order, keeping the LAST hit: the element drawn on top is
 // the one the pointer is over, and draw order is `ZIndex` then document order.
 // Walking the tree twice -- once to draw and once to hit-test -- is what keeps
@@ -247,7 +256,7 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         if (wanted != g_state.focused) {
             if (scene::TextInputComponent* previous = world.textInputs().find(g_state.focused); previous != nullptr) {
                 previous->focused = false;
-                fire(world, g_state.focused, "FocusLost");
+                focusLost(world, g_state.focused, false);
             }
             g_state.focused = wanted;
             if (scene::TextInputComponent* next = world.textInputs().find(wanted); next != nullptr) {
@@ -306,7 +315,7 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         if (input.submit) {
             if (scene::TextInputComponent* field = world.textInputs().find(g_state.focused); field != nullptr)
                 field->focused = false;
-            fire(world, g_state.focused, "FocusLost");
+            focusLost(world, g_state.focused, true);
             g_state.focused = {};
         }
     }

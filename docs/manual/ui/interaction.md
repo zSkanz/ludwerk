@@ -70,15 +70,15 @@ field.Focused:Connect(function()
     -- keystrokes come here now
 end)
 
-field.FocusLost:Connect(function()
-    commit(field.Text)
+field.FocusLost:Connect(function(submitted: boolean)
+    if submitted then
+        commit(field.Text) -- Return, not a click elsewhere
+    end
 end)
 ```
 
-`FocusLost` is declared with a `submitted` boolean meaning "left by pressing
-Return rather than by clicking away". **That argument is not delivered in this
-release** — the event is raised with no arguments, so `submitted` arrives as
-`nil` either way. Treat it as the fact that focus ended.
+`submitted` is true when the field was left by pressing Return (or the
+keypad's Enter), and false when a press elsewhere took the focus.
 
 ## The UI and the rest of the input system
 

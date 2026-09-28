@@ -3236,11 +3236,7 @@ local Classes: { Schema.Class } = {
                 Parameters = { { Name = "submitted", Type = "boolean" } },
                 Doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return "
                     .. 'rather than by clicking away -- the difference between "the player finished" and '
-                    .. '"the player went somewhere else".'
-                    .. "\n\n**The argument is "
-                    .. "not delivered yet**: this release raises the event with no arguments, so a handler's "
-                    .. "`submitted` arrives as nil whichever way the field was left. Treat the event as the "
-                    .. "fact that focus ended until it carries the distinction.",
+                    .. '"the player went somewhere else".',
             },
         } :: { Schema.Event },
     },

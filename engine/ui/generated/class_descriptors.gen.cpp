@@ -698,7 +698,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
         scene::EventDesc{
             .name = atoms.intern("FocusLost"),
             .slot = 11,
-            .doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between \"the player finished\" and \"the player went somewhere else\".\012\012**The argument is not delivered yet**: this release raises the event with no arguments, so a handler's `submitted` arrives as nil whichever way the field was left. Treat the event as the fact that focus ended until it carries the distinction.",
+            .doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between \"the player finished\" and \"the player went somewhere else\".",
         },
     }};
     scene::ClassDescriptor textInputDesc;

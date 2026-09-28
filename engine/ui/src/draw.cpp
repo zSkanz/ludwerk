@@ -601,11 +601,20 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             // A focused-away, empty `TextInput` shows its placeholder. Dimmed
             // rather than coloured differently, because a placeholder that
             // looked like real text is a field people fail to fill in.
+            //
+            // **A focused one shows only its caret** (D216): the placeholder
+            // stayed under it, with the caret drawn in the middle of words
+            // that were not there -- and a field with no placeholder returned
+            // here, so it had no caret at all.
             const scene::TextInputComponent* input = world.textInputs().find(entry.id);
-            if (input == nullptr || input->placeholderText.empty())
+            if (input == nullptr)
                 return;
-            text = input->placeholderText;
-            color = core::Color3{color.r * 0.5f + 0.25f, color.g * 0.5f + 0.25f, color.b * 0.5f + 0.25f};
+            if (!input->focused) {
+                if (input->placeholderText.empty())
+                    return;
+                text = input->placeholderText;
+                color = core::Color3{color.r * 0.5f + 0.25f, color.g * 0.5f + 0.25f, color.b * 0.5f + 0.25f};
+            }
         }
 
         // `TextScaled` re-measures at the size that fills the box rather than
@@ -622,14 +631,17 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             }
         }
 
-        if (rich)
-            buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
+        // Empty here only for a focused, empty field, which draws its caret alone.
+        if (!text.empty()) {
+            if (rich)
+                buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
+                                      label->horizontalAlignment, label->verticalAlignment, color, textAlpha,
+                                      entry.scissor, out.quads, textStroke);
+            else
+                buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
                                   label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
                                   out.quads, textStroke);
-        else
-            buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
-                              label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
-                              out.quads, textStroke);
+        }
 
         // --- The caret (S6.7) -------------------------------------------------
         //

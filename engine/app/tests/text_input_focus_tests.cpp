@@ -3,6 +3,10 @@
 #include <optional>
 
 #include "engine/app/text_input_focus.h"
+#include "engine/app/world_host.h"
+#include "engine/scene/change_queue.h"
+#include "engine/scene/world.h"
+#include "project_fixture.h"
 
 using namespace engine;
 
@@ -27,4 +31,35 @@ TEST_CASE("letting go never switches off an editor field's typing")
     CHECK_FALSE(focus.follow(false, /*editorTyping=*/true).has_value());
     // And the next focus turns it on again.
     CHECK(focus.follow(true, false) == std::optional<bool>{true});
+}
+
+TEST_CASE("FocusLost tells a handler whether Return left the field")
+{
+    // **D215.** The event was raised with no arguments, so `submitted` was nil
+    // both ways and "press Enter to join" could not be written.
+    app::testing::Captured log;
+    app::testing::Project project;
+    project.write("src/client/field.luau", R"(
+        local field = Instance.new("TextInput")
+        field.Name = "Field"
+        field.Parent = game:GetService("Workspace")
+        field.FocusLost:Connect(function(submitted: boolean)
+            print(`focus-lost:{submitted}`)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(app::testing::bootOptions(project.root)).has_value());
+    host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId field = world.findFirstChild(host.workspace(), world.atoms().intern("Field"));
+    REQUIRE(field.valid());
+
+    world.changes().push(scene::Change{scene::ChangeKind::InstanceEventBool, field, scene::eventFlag(true),
+                                       world.atoms().intern("FocusLost")});
+    host.tick();
+    CHECK(log.contains("focus-lost:true"));
+    world.changes().push(scene::Change{scene::ChangeKind::InstanceEventBool, field, scene::eventFlag(false),
+                                       world.atoms().intern("FocusLost")});
+    host.tick();
+    CHECK(log.contains("focus-lost:false"));
 }

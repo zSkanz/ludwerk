@@ -429,6 +429,9 @@ What this section used to hold, resolved, for whoever remembers it:
 - [x] P2-8 `ludwerk check` and `fmt` skip `dist/` (D211).
 - [x] P2-9 The analyser names the engine's definitions `@engine` (D212).
 - [x] P2-10 A headless process that has had real time keeps it (D213).
+- [x] Found re-exporting the owner's test: `TextInput.FocusLost` delivers
+      `submitted`, so Enter submits (D215), and a focused, empty field shows its
+      caret rather than its placeholder (D216).
 
 **Next: scenes, the server/client split, and export**, ADRs 0104, 0105 and
 0106, from one ledger:

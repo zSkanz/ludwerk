@@ -1,3 +1,4 @@
+#include <cmath>
 #include <doctest/doctest.h>
 #include <optional>
 
@@ -1008,4 +1009,46 @@ TEST_CASE("TextTransparency fades the words and not the box")
     CHECK(static_cast<double>(list.quads[0].alpha) == doctest::Approx(1.0));
     for (std::size_t index = 1; index < list.quads.size(); ++index)
         CHECK(static_cast<double>(list.quads[index].alpha) == doctest::Approx(0.0));
+}
+
+TEST_CASE("an empty field shows its placeholder until it has focus, and then only its caret")
+{
+    // **D216.** Focused and empty, the placeholder stayed under the caret, with
+    // the caret in the middle of it; with no placeholder, there was no caret.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId field = fixture.child("TextInput", screen);
+    fixture.object(field).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 30.0f}};
+    fixture.run();
+
+    // What is not the field's own box: glyphs, and the caret.
+    const auto drawn = [&] {
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        int glyphs = 0;
+        int carets = 0;
+        for (const ui::DrawQuad& quad : list.quads) {
+            const core::f32 width = quad.max.x - quad.min.x;
+            if (std::abs(width - 200.0f) < 0.01f)
+                continue;
+            // The caret: a bar exactly 1.5 wide, as tall as a line.
+            if (std::abs(width - 1.5f) < 0.001f && quad.max.y - quad.min.y > 8.0f)
+                ++carets;
+            else
+                ++glyphs;
+        }
+        return std::pair{glyphs, carets};
+    };
+
+    fixture.world->textInputs().find(field)->placeholderText = "ex.: 26.123.45.67";
+    CHECK(drawn().first > 0);
+    CHECK(drawn().second == 0);
+
+    fixture.world->textInputs().find(field)->focused = true;
+    CHECK(drawn().first == 0);
+    CHECK(drawn().second == 1);
+
+    // And a field with no placeholder still has its caret.
+    fixture.world->textInputs().find(field)->placeholderText.clear();
+    CHECK(drawn().second == 1);
 }

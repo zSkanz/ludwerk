@@ -400,6 +400,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 - **Typing reaches a `TextInput` in an exported game**, and on a phone the
   on-screen keyboard opens with it (D204).
+- `TextInput.FocusLost` delivers `submitted`: true when Return left the field
+  (D215). A focused, empty field shows its caret, not its placeholder (D216).
 - **A client no longer fights the server over a character's speed**:
   `WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight` replicate, and
   a correction replays at the server's speeds (D205). Protocol version 20.

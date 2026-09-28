@@ -90,6 +90,10 @@ struct Fixture
         for (const scene::Change& change : world->changes().take()) {
             if (change.kind == scene::ChangeKind::InstanceEventNoArgs)
                 names.emplace_back(atoms.text(change.name));
+            // `FocusLost` carries how the field was left (D215).
+            if (change.kind == scene::ChangeKind::InstanceEventBool)
+                names.emplace_back(std::string(atoms.text(change.name)) +
+                                   (change.other.index != 0 ? "(true)" : "(false)"));
         }
         return names;
     }
@@ -286,7 +290,14 @@ TEST_CASE("Return submits and releases focus")
     fixture.interact(Vec2{10.0f, 10.0f}, false, false, {}, false, true);
     CHECK_FALSE(fixture.world->textInputs().find(field)->focused);
     const std::vector<std::string> after = fixture.events();
-    CHECK(std::ranges::find(after, "FocusLost") != after.end());
+    CHECK(std::ranges::find(after, "FocusLost(true)") != after.end());
+
+    // And a press elsewhere is not a submit.
+    fixture.interact(Vec2{10.0f, 10.0f}, true, false);
+    (void)fixture.events();
+    fixture.interact(Vec2{600.0f, 400.0f}, true, false);
+    const std::vector<std::string> away = fixture.events();
+    CHECK(std::ranges::find(away, "FocusLost(false)") != away.end());
 }
 
 // --- The caret (S6.7) ---------------------------------------------------------

@@ -68,7 +68,18 @@ enum class ChangeKind : u8
     // invalid `other` fires with one nil argument, which is right for a
     // character that landed on nothing and wrong for a button that was pressed.
     InstanceEventNoArgs,
+
+    // The same, carrying one boolean: `TextInput.FocusLost`'s `submitted`
+    // (D215). The value rides in `other.index` -- 1 or 0 -- with `other`'s
+    // generation zero, so it can never resolve as an instance.
+    InstanceEventBool,
 };
+
+// A boolean in the shape `InstanceEventBool` carries it.
+[[nodiscard]] constexpr core::InstanceId eventFlag(bool value) noexcept
+{
+    return core::InstanceId{value ? 1u : 0u, 0u};
+}
 
 // 16 bytes, trivially copyable, and deliberately not a variant: one shape means
 // the queue is a flat vector rather than a discriminated allocation per entry,

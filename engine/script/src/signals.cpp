@@ -1010,6 +1010,16 @@ void enqueueSceneChanges(lua_State* L, std::span<const scene::Change> changes)
             break;
         }
 
+        case scene::ChangeKind::InstanceEventBool: {
+            const SignalId id = eventSignal(change.name);
+            if (!id.valid())
+                break;
+            lua_pushboolean(L, change.other.index != 0 ? 1 : 0);
+            enqueueFire(L, id, lua_gettop(L), 1);
+            lua_pop(L, 1);
+            break;
+        }
+
         case scene::ChangeKind::InstanceEvent: {
             // The generic one-Instance-argument event: `Touched`, `TouchEnded`,
             // `Landed`. The name is in the change rather than in the enumerator,
