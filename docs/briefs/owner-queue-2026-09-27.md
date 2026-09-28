@@ -78,6 +78,8 @@ repository. Each was reproduced by running before it was fixed.
 - [x] Found re-exporting the owner's test: `TextInput.FocusLost` delivers
       `submitted`, so Enter submits (D215), and a focused, empty field shows its
       caret rather than its placeholder (D216).
+- [x] And: `NetworkService:Disconnect()` never told the server, which held the
+      player until its timeout (D217).
 
 ## Q1 — `UIGradient` and `UIStroke`, with the new features
 

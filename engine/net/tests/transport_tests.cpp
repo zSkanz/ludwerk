@@ -311,8 +311,8 @@ TEST_CASE("a peer that goes silent is gone within the timeout, not thirty second
         return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
     }));
 
-    // The server goes without saying so.
-    server->close();
+    // The server goes silent -- a crash, a pulled cable: still there, never
+    // answering. (A server that CLOSES says so now; D217.)
     clientEvents.clear();
     bool gone = false;
     // Four seconds of polling: past the one-second limit with room for a loaded
@@ -322,4 +322,34 @@ TEST_CASE("a peer that goes silent is gone within the timeout, not thirty second
         gone = has(clientEvents, TransportEvent::Kind::Disconnected);
     }
     CHECK(gone);
+}
+
+TEST_CASE("a peer that closes tells the other end at once")
+{
+    // **D217.** `close` reset its peers without a word, so a player who left a
+    // match from a script stayed on the server -- a statue for the others --
+    // until the timeout noticed, up to thirty seconds before D208.
+    seedCatalog();
+    auto server = createEnetTransport();
+    auto client = createEnetTransport();
+    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2}).has_value());
+    REQUIRE_FALSE(client->open({.port = 0, .maxPeers = 4, .channels = 2}).has_value());
+    PeerId toServer;
+    REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
+    std::vector<TransportEvent> serverEvents;
+    std::vector<TransportEvent> clientEvents;
+    REQUIRE(pumpUntil(*server, *client, serverEvents, clientEvents, [&] {
+        return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
+    }));
+
+    client->close();
+    serverEvents.clear();
+    // Half a second: a round trip on loopback, and far short of any timeout.
+    bool told = false;
+    for (int round = 0; round < 50 && !told; ++round) {
+        REQUIRE_FALSE(server->poll(serverEvents, 10).has_value());
+        told = has(serverEvents, TransportEvent::Kind::Disconnected);
+    }
+    CHECK(told);
+    CHECK(server->peerCount() == 0);
 }

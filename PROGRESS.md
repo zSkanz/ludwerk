@@ -432,6 +432,8 @@ What this section used to hold, resolved, for whoever remembers it:
 - [x] Found re-exporting the owner's test: `TextInput.FocusLost` delivers
       `submitted`, so Enter submits (D215), and a focused, empty field shows its
       caret rather than its placeholder (D216).
+- [x] And: `NetworkService:Disconnect()` never told the server, which held the
+      player until its timeout (D217).
 
 **Next: scenes, the server/client split, and export**, ADRs 0104, 0105 and
 0106, from one ledger:

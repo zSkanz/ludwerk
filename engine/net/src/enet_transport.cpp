@@ -135,12 +135,15 @@ public:
         if (m_host == nullptr) {
             return;
         }
-        // Peers are RESET rather than gracefully disconnected. A graceful close
-        // needs a round trip and this runs from a destructor: a caller that
-        // wants the peer told calls `disconnect` and pumps `poll`.
+        // **Every peer is told, and not waited for** (D217). A graceful
+        // disconnect needs a round trip and this runs from a destructor, so it
+        // used to reset them without a word -- and a player who left a match
+        // stayed on the server until its timeout. `enet_peer_disconnect_now`
+        // sends the notice and flushes it in one call, then resets: no round
+        // trip, and the other end hears it unless the packet itself is lost.
         for (const auto& entry : m_peers) {
             entry.second->data = nullptr;
-            enet_peer_reset(entry.second);
+            enet_peer_disconnect_now(entry.second, 0);
         }
         m_peers.clear();
         enet_host_destroy(m_host);
