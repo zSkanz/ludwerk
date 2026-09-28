@@ -3,6 +3,7 @@
 #include "engine/app/world_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/platform/platform.h"
 #include "engine/replication/extract.h"
 #include "engine/replication/replication.h"
 #include "engine/scene/players.h"
@@ -161,7 +162,7 @@ std::optional<core::EngineError> NetworkSession::start(replication::Topology top
         (void)replication::clearForReplica(host->world(), host->workspace());
 #endif
         m_connecting = true;
-        m_waited = 0;
+        m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
         m_address = address;
         setState(StateConnecting);
         break;
@@ -270,7 +271,7 @@ void NetworkSession::update()
             (void)replication::clearForReplica(host->world(), host->workspace());
 #endif
             m_connecting = true;
-            m_waited = 0;
+            m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
             m_address = request.address;
             setState(StateConnecting);
             const std::array<core::I18nArg, 2> args{core::I18nArg{"address", std::string_view{address}},
@@ -317,7 +318,11 @@ void NetworkSession::update()
             setState(StateConnected);
             script::fireNetworkEvent(host->runtime().state(), "Connected", std::nullopt);
         }
-        else if (status.lost || ++m_waited > m_joinTimeout) {
+        // A command-line join dials until the server answers; a script's
+        // gives up after its timeout, by the clock (audit A3).
+        else if (!m_redial &&
+                 (status.lost || static_cast<core::f64>((m_clock ? m_clock() : platform::nowNs()) - m_joinStartedNs) >
+                                     m_joinTimeoutSeconds * 1'000'000'000.0)) {
             const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{m_address}}};
             goSolo("JoinFailed", core::engineCatalog().format(ENG_TR("net.err.join_failed"), args), false);
         }

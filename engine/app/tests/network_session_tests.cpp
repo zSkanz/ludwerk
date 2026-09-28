@@ -42,7 +42,7 @@ struct Machine
         base.interpolationDelayTicks = 0;
         network = std::make_unique<app::NetworkSession>([this]() { return host.get(); }, base,
                                                         [wire]() { return net::createMemoryTransport(wire); });
-        network->setJoinTimeout(30);
+        network->setJoinTimeout(0.5);
     }
 
     void frame()
@@ -157,6 +157,52 @@ TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")
     CHECK(log.contains("join-failed:true state:Offline"));
     CHECK(client.topology() == scene::NetworkTopology::Solo);
     CHECK_FALSE(client.network->active());
+}
+
+TEST_CASE("a join waits by the clock, not by frames, and one from the command line keeps dialling (audit A3)")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    // Something listening that never welcomes: a server still starting.
+    auto silent = net::createMemoryTransport(wire);
+    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 47990, .maxPeers = 4, .channels = 4}).has_value());
+
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.JoinFailed:Connect(function()
+            print("join-failed")
+        end)
+        NetworkService:Join("memory:47990")
+    )");
+    client.boot(wire);
+    core::u64 now = 0;
+    client.network->setClock([&now] { return now; });
+    client.network->setJoinTimeout(10.0);
+    // A thousand frames in no time at all -- a minimised window's: counted in
+    // frames, the ten seconds were over after 600, in two milliseconds.
+    for (int at = 0; at < 1000; ++at)
+        client.frame();
+    CHECK_FALSE(log.contains("join-failed"));
+    now += 11'000'000'000ull;
+    // One frame to give up, and the next drains the deferred `JoinFailed`.
+    client.frame();
+    client.frame();
+    CHECK(log.contains("join-failed"));
+    CHECK(client.topology() == scene::NetworkTopology::Solo);
+
+    // From the command line it dials until the server answers.
+    Machine dialler;
+    dialler.boot(wire, scene::NetworkTopology::Replica);
+    core::u64 later = 0;
+    dialler.network->setClock([&later] { return later; });
+    dialler.network->setJoinTimeout(10.0);
+    REQUIRE_FALSE(dialler.network->start(replication::Topology::Replica, "memory", 47990).has_value());
+    for (int at = 0; at < 10; ++at) {
+        later += 5'000'000'000ull;
+        dialler.frame();
+    }
+    CHECK(dialler.topology() == scene::NetworkTopology::Replica);
 }
 
 TEST_CASE("a dedicated server cannot join, host or disconnect")

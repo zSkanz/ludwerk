@@ -4,6 +4,8 @@
 #include <cmath>
 #include <limits>
 
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/platform/platform.h"
 
 namespace engine::asset {
@@ -150,6 +152,14 @@ void StreamingManager::onChunkFailed(ChunkId id)
     Entry& entry = m_entries[static_cast<usize>(indexEntry - m_index.chunks.data())];
     if (entry.state == ChunkState::Loading && m_inFlight > 0) {
         m_inFlight -= 1;
+    }
+    // Said once, when it happens: `Failed` is never retried, and the world
+    // goes on without this cell, which somebody has to be told.
+    if (entry.state != ChunkState::Failed) {
+        const core::I18nArg args[] = {{"layer", static_cast<core::i64>(id.layer)},
+                                      {"x", static_cast<core::i64>(id.x)},
+                                      {"z", static_cast<core::i64>(id.z)}};
+        core::log(core::LogLevel::Error, ENG_TR("asset.err.stream_cell_failed"), args);
     }
     entry.state = ChunkState::Failed;
     m_stats.failed += 1;
@@ -384,8 +394,11 @@ bool StreamingManager::minimumRingResident() const noexcept
         for (const StreamingFocus& focus : m_foci) {
             const f64 minRadius = focus.minRadiusFor(m_index.chunks[i].id.layer);
             const f64 minSquared = minRadius * minRadius;
+            // **A cell that failed counts as settled** (audit A2): it is never
+            // retried, so waited for it held the simulation at zero ticks for
+            // good. The world goes on without it, and its failure was logged.
             if (core::distanceSquared(m_index.chunks[i].bounds, focus.position) <= minSquared &&
-                m_entries[i].state != ChunkState::Resident) {
+                m_entries[i].state != ChunkState::Resident && m_entries[i].state != ChunkState::Failed) {
                 return false;
             }
         }

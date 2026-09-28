@@ -376,6 +376,9 @@ constexpr usize MaxInvokeErrorText = 4096;
 int remoteInvokeServer(lua_State* L)
 {
     const core::InstanceId remote = checkInstance(L, 1);
+    // Before the question is sent: one that cannot wait for its answer is
+    // not asked.
+    requireYieldable(L, "InvokeServer");
     World& w = world(L);
     ServiceState& state = invokeState(L);
     scene::RemoteMessage message;
@@ -446,7 +449,6 @@ void deliverAnswer(lua_State* L, const scene::RemoteMessage& answer)
         return;
     }
     const int decoded = decodeRemoteArguments(co, answer.payload, answer.refs);
-    bool finished = false;
     if (answer.failed) {
         if (decoded != 1) {
             // A failure is one string; anything else is a payload somebody
@@ -455,14 +457,15 @@ void deliverAnswer(lua_State* L, const scene::RemoteMessage& answer)
                 lua_pop(co, decoded);
             lua_pushstring(co, "RemoteFunction: the answer could not be read");
         }
-        finished = resumeScheduledWithError(L, co);
+        (void)resumeScheduledWithError(L, co);
     }
     else {
-        finished = resumeScheduled(L, co, std::max(decoded, 0));
+        (void)resumeScheduled(L, co, std::max(decoded, 0));
     }
     lua_pop(L, 1);
-    if (finished)
-        (void)lua_unref(L, threadRef);
+    // Whatever the thread did (audit S3): one that parks again took its
+    // own reference where it waits.
+    (void)lua_unref(L, threadRef);
 }
 
 // Sends an answer to whoever asked: straight to the waiting caller when the

@@ -164,6 +164,22 @@ void StreamingHost::setWorld(scene::World* world, core::InstanceId streamRoot)
     m_manager.forgetResidency();
 }
 
+void StreamingHost::reset()
+{
+    if (m_glue != nullptr) {
+        for (const asset::StreamingManager::ChunkView& chunk : m_manager.view()) {
+            if (chunk.state == asset::ChunkState::Resident)
+                m_glue->evict(chunk.id);
+        }
+    }
+    for (const auto& read : m_reads)
+        platform::cancelIo(read.first);
+    m_reads.clear();
+    m_chunkPaths.clear();
+    m_manager.setIndex(asset::ChunkIndex{});
+    m_active = false;
+}
+
 void StreamingHost::setReferenceProbe(std::function<bool(core::InstanceId)> probe)
 {
     m_probe = std::move(probe);

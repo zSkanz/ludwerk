@@ -130,7 +130,7 @@ int instanceIndex(lua_State* L)
         raiseUnknownInstanceMember(L, id, key);
 
     World& w = world(L);
-    const core::NameAtom name = context(L).resolve(atom);
+    const core::NameAtom name = context(L).resolve(atom, key);
     const ClassId classId = w.classOf(id);
 
     if (const scene::PropertyDesc* property = w.classes().findProperty(classId, name)) {
@@ -201,7 +201,7 @@ int instanceNewIndex(lua_State* L)
         raiseUnknownInstanceMember(L, id, key);
 
     World& w = world(L);
-    const core::NameAtom name = context(L).resolve(atom);
+    const core::NameAtom name = context(L).resolve(atom, key);
     const ClassId classId = w.classOf(id);
 
     const scene::PropertyDesc* property = w.classes().findProperty(classId, name);
@@ -274,7 +274,7 @@ int instanceNamecall(lua_State* L)
         raiseUnknownInstanceMember(L, id, method);
 
     World& w = world(L);
-    const scene::MethodDesc* descriptor = w.classes().findMethod(w.classOf(id), context(L).resolve(atom));
+    const scene::MethodDesc* descriptor = w.classes().findMethod(w.classOf(id), context(L).resolve(atom, method));
     if (descriptor == nullptr)
         raiseUnknownInstanceMember(L, id, method);
 
@@ -601,7 +601,11 @@ int methodAddTag(lua_State* L)
 int methodRemoveTag(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    world(L).removeTag(id, checkTagName(L, 2));
+    // Looked up, not interned: a tag nothing ever carried is nothing to
+    // remove, and nothing for the table that never frees (audit S11).
+    if (lua_type(L, 2) != LUA_TSTRING)
+        luaL_typeerrorL(L, 2, "string");
+    world(L).removeTag(id, lookupAtom(L, 2));
     flushSceneChanges(L);
     return 0;
 }
@@ -1301,6 +1305,17 @@ int methodRagdollBuild(lua_State* L)
 // need the IDL to describe argument checking, which is a language nobody asked
 // for.
 
+// The count an edit changed, or `scene.err.terrain_brush_too_large` for one
+// refused for its size (audit S10).
+void pushTouched(lua_State* L, const asset::EditReport& report)
+{
+    if (report.refused) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(asset::MaxEditVoxels)}};
+        raise(L, ENG_TR("scene.err.terrain_brush_too_large"), args);
+    }
+    lua_pushinteger(L, static_cast<int>(report.touched));
+}
+
 int methodTerrainFillBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -1325,7 +1340,7 @@ int methodTerrainFillBall(lua_State* L)
     const asset::EditReport report = asset::fillBall(terrain->field, wide, radius, material);
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1353,7 +1368,7 @@ int methodTerrainRaiseBall(lua_State* L)
         asset::raiseBall(terrain->field, wide, radius, amount, static_cast<core::u8>(material));
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1377,7 +1392,7 @@ int methodTerrainFillBlock(lua_State* L)
     const asset::EditReport report = asset::fillBlock(terrain->field, wide, size, material);
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1443,7 +1458,7 @@ int methodTerrainWriteHeights(lua_State* L)
                                         static_cast<core::u8>(material));
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1659,7 +1674,7 @@ int methodTerrainApplyRules(lua_State* L)
         asset::applyRules(terrain->field, terrain->rules, local(low), local(high), terrain->origin.y);
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1713,7 +1728,7 @@ int methodTerrainPaintBall(lua_State* L)
     // rebuild every collider in range every tick.
     if (report.touched > 0)
         terrain->fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 
@@ -1750,7 +1765,7 @@ int finishEdit(lua_State* L, scene::TerrainComponent& terrain, const asset::Edit
 {
     if (report.touched > 0)
         terrain.fieldRevision += 1;
-    lua_pushinteger(L, static_cast<int>(report.touched));
+    pushTouched(L, report);
     return 1;
 }
 

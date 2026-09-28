@@ -90,11 +90,11 @@ int taskSpawn(lua_State* L)
     // The one non-deferred call, and deliberately so: it runs synchronously
     // while the caller's stack is still live. Its error still does not propagate
     // to that caller -- `task.spawn` returns normally either way (§3.1).
-    const bool finished = resumeScheduled(L, co, count);
-    if (finished)
-        threadRef = lua_unref(L, threadRef);
-    else
-        (void)threadRef; // parked; whatever it yielded on holds its own root
+    (void)resumeScheduled(L, co, count);
+    // The spawner's reference goes whatever the thread did (audit S3): one
+    // that parked took its own where it waits, and kept, this one pinned it
+    // for the VM's life.
+    threadRef = lua_unref(L, threadRef);
     return 1;
 }
 
@@ -145,6 +145,7 @@ int taskDelay(lua_State* L)
 
 int taskWait(lua_State* L)
 {
+    requireYieldable(L, "task.wait");
     const f64 duration = luaL_optnumber(L, 1, 0.0);
     const scene::EngineState& state = engineState(L);
 
@@ -282,10 +283,12 @@ void resumeDueTimers(lua_State* L, u64 tick)
             resumeCount = static_cast<int>(entry.argCount);
         }
 
-        const bool finished = resumeScheduled(L, co, resumeCount);
+        (void)resumeScheduled(L, co, resumeCount);
         lua_pop(L, 1);
-        if (finished)
-            (void)lua_unref(L, entry.threadRef);
+        // The timer's reference goes whatever the thread did (audit S3): a
+        // `while true do task.wait() end` took a new one each tick and this
+        // kept the old, one registry slot a tick for ever.
+        (void)lua_unref(L, entry.threadRef);
     }
 }
 

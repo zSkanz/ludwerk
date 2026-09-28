@@ -33,6 +33,7 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -157,9 +158,12 @@ int netRequest(lua_State* L)
         if (!(timeout > 0.0)) {
             raise(L, ENG_TR("scene.err.number_positive"));
         }
-        request.timeoutMs = static_cast<u32>(timeout * 1000.0);
+        // Held to a day before the cast (audit S10): a double past a `u32` is
+        // undefined behaviour to convert.
+        request.timeoutMs = static_cast<u32>(std::min(timeout, 86400.0) * 1000.0);
     }
 
+    requireYieldable(L, "request");
     const net::NetTicket ticket = client(L).submit(std::move(request));
     if (!ticket.valid()) {
         raise(L, ENG_TR("script.err.net_client_closed"));
@@ -279,11 +283,11 @@ void resumeNetWaiters(lua_State* L)
             continue;
         }
         pushResult(co, entry.result);
-        const bool finished = resumeScheduled(L, co, 1);
+        (void)resumeScheduled(L, co, 1);
         lua_pop(L, 1);
-        if (finished) {
-            (void)lua_unref(L, entry.threadRef);
-        }
+        // Whatever the thread did (audit S3): one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, entry.threadRef);
     }
 }
 

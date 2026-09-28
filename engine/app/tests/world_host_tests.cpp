@@ -412,6 +412,34 @@ TEST_CASE("a BindToClose handler that yields is waited for")
     CHECK(*flag);
 }
 
+TEST_CASE("a BindToClose handler that yields is waited for with the game paused (audit A1)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        game:BindToClose(function()
+            task.wait(0.1)
+            game:SetAttribute("ClosedCleanly", true)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    // Paused -- the editor's pause, a menu's -- a tick did nothing, and the
+    // close loop spun on it for the whole grace period, resuming nothing.
+    host.world().engineState().paused = true;
+
+    host.close(2.0);
+
+    const scene::Value closed =
+        host.world().getAttribute(host.runtime().dataModel(), host.world().atoms().lookup("ClosedCleanly"));
+    const auto* flag = std::get_if<bool>(&closed);
+    REQUIRE(flag != nullptr);
+    CHECK(*flag);
+    CHECK_FALSE(log.contains("still running after"));
+}
+
 TEST_CASE("a BindToClose handler that never finishes is cut off at the grace period")
 {
     Captured log;
@@ -1924,6 +1952,39 @@ TEST_CASE("a host loads a scene by path and it is the one path the editor takes 
     // A scene that is not there is refused, and the world stays where it was.
     CHECK(host.loadScene("scenes/missing.scene.json").has_value());
     CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+}
+
+TEST_CASE(
+    "a scene changed at run time is partitioned as the boot's was, and the old scene's cells are let go (audit A4)")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    app::WorldHostOptions options = sceneOptions(project);
+    // What the engine gives the host: the grid the boot scene meets, and the
+    // way to let every streamed cell go. Recorded here.
+    std::vector<std::string> partitioned;
+    int resets = 0;
+    options.partitionScene = [&](scene::World&, const std::filesystem::path& scene) {
+        partitioned.push_back(scene.filename().string());
+        return std::filesystem::path{};
+    };
+    options.resetStreaming = [&] { ++resets; };
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    REQUIRE(partitioned.size() == 1);
+    CHECK(partitioned[0] == "a.scene.json");
+    CHECK(resets == 0);
+
+    // Only the boot scene was ever partitioned, and its cells went on
+    // streaming into whatever scene came next -- a return to it doubled them.
+    REQUIRE_FALSE(host.loadScene("scenes/b.scene.json").has_value());
+    CHECK(resets == 1);
+    REQUIRE(partitioned.size() == 2);
+    CHECK(partitioned[1] == "b.scene.json");
+    REQUIRE_FALSE(host.loadScene("scenes/a.scene.json").has_value());
+    CHECK(resets == 2);
+    CHECK(partitioned.size() == 3);
 }
 
 // --- A scene closes as a game does (ADR 0124) -----------------------------------

@@ -61,6 +61,9 @@ public:
     // index leaves the streamer inactive, which every world without a large
     // field is.
     void setIndex(const asset::ChunkIndex& index, const CellResolver& resolve);
+    // Every cell let go and the index forgotten, as `StreamingHost::reset`
+    // does it (audit A4).
+    void reset();
     [[nodiscard]] bool active() const noexcept { return m_active; }
 
     // The world the cells go into, and the workspace whose `Terrain` and whose

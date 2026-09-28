@@ -139,6 +139,13 @@ struct WorldHostOptions
     // Tier-2 stage is for.
     std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> partitionScene = nullptr;
 
+    // **Every streamed cell let go** (audit A4): called when a scene is changed
+    // at run time, before the old scene is cleared, so its cells leave with
+    // it; the new scene then meets `partitionScene` as the boot's did. Unset,
+    // nothing streams, and there is nothing to let go. `= nullptr` for the
+    // reason above.
+    std::function<void()> resetStreaming = nullptr;
+
     scene::StampSource bootStamps;
     std::filesystem::path bootScene;
     // **The scene's text, when it came from a content pack** rather than a
@@ -540,7 +547,14 @@ public:
     // The cap is wall clock rather than sim time, because its job is to stop a
     // handler that never finishes from holding the process open, and a handler
     // that never finishes never advances sim time either.
-    void close(core::f64 graceSeconds = 30.0);
+    //
+    // **Paced to the tick, and never on a paused world** (audit A1): the loop
+    // unpauses the world it is closing, waits out each tick in wall time, and
+    // hands results from the HTTP worker to their threads, so a handler that
+    // saves, fetches or waits finishes as it would have while the game ran.
+    // `pump` is called once a tick -- the window's events, where there is a
+    // window, so the system does not call a closing game unresponsive.
+    void close(core::f64 graceSeconds = 30.0, const std::function<void()>& pump = {});
 
     // `HotReloadService.PreReload` on the outgoing world and `PostReload` on
     // the incoming one, each fired and then drained -- the drain is the point,
@@ -698,6 +712,8 @@ private:
     // How a scene named at run time is read, and its stamps (ADR 0106).
     std::function<std::optional<std::string>(std::string_view)> m_readContent;
     scene::StampSource m_stamps;
+    std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> m_partitionScene;
+    std::function<void()> m_resetStreaming;
     // The project was a directory, so "no scripts" is worth a warning; a lone
     // file named on the command line is the script.
     bool m_projectIsDirectory = false;

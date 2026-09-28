@@ -521,6 +521,7 @@ int instanceWaitForChild(lua_State* L)
         return 1;
     }
 
+    requireYieldable(L, "WaitForChild");
     ChildWaiter waiter;
     waiter.parent = self;
     waiter.name = atom;
@@ -588,6 +589,7 @@ int streamingLoadAreaAsync(lua_State* L)
     if (!(radius > 0.0))
         raise(L, ENG_TR("scene.err.number_positive"));
 
+    requireYieldable(L, "LoadAreaAsync");
     ServiceState& state = services(L);
     ServiceState::AreaWaiter waiter;
     waiter.position = core::toDVec3(position);
@@ -2403,10 +2405,11 @@ void resumeAreaWaiters(lua_State* L, const std::function<bool(core::DVec3, f64)>
             (void)lua_unref(L, waiter.threadRef);
             continue;
         }
-        const bool finished = resumeScheduled(L, co, 0);
+        (void)resumeScheduled(L, co, 0);
         lua_pop(L, 1);
-        if (finished)
-            (void)lua_unref(L, waiter.threadRef);
+        // Whatever the thread did (audit S3): one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, waiter.threadRef);
     }
 }
 
@@ -2510,10 +2513,11 @@ void resumeChildWaiters(lua_State* L)
         // Expiry returns nil -- no error, no warning.
         pushInstance(L, w.findFirstChild(waiter.parent, waiter.name));
         lua_xmove(L, co, 1);
-        const bool finished = resumeScheduled(L, co, 1);
+        (void)resumeScheduled(L, co, 1);
         lua_pop(L, 1);
-        if (finished)
-            (void)lua_unref(L, waiter.threadRef);
+        // Whatever the thread did (audit S3): one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, waiter.threadRef);
     }
 }
 

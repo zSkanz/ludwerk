@@ -42,15 +42,23 @@ int16_t internAtom(lua_State* L, const char* text, size_t length)
         return -1;
 
     VmContext& ctx = *static_cast<VmContext*>(stored);
+    // **Looked up, never interned** (audit S6, S11). Luau asks the first time a
+    // string names a member, and a key built at run time -- `workspace["x" ..
+    // i]` -- interned into the world's table, which never frees, one name a
+    // key for ever. A string naming nothing the world has is -1, and
+    // `resolve` looks it up by its text if it comes to name something later.
+    const core::NameAtom name = ctx.world->atoms().lookup(std::string_view{text, length});
+    if (!name.valid())
+        return -1;
+    if (const auto known = ctx.nameToAtom.find(name.id); known != ctx.nameToAtom.end())
+        return known->second;
+    // Luau's atom is an int16, so there are 32767 of them; past that a name is
+    // looked up by text each time, which is slower and still right.
     const auto atom = static_cast<int16_t>(ctx.atomToName.size());
-    // Luau's atom is an int16, so there are 32767 of them. A world that interned
-    // more distinct property and method names than that has other problems, but
-    // latching at -1 rather than wrapping is the difference between a slow
-    // dispatch and a wrong one.
     if (static_cast<usize>(atom) >= 32767u)
         return -1;
-
-    ctx.atomToName.push_back(ctx.world->atoms().intern(std::string_view{text, length}).id);
+    ctx.atomToName.push_back(name.id);
+    ctx.nameToAtom.emplace(name.id, atom);
     return atom;
 }
 

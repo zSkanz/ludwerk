@@ -78,8 +78,29 @@ struct Box
     i32 maxX = -1;
     i32 maxY = -1;
     i32 maxZ = -1;
+    // Past `MaxEditVoxels`, and so emptied.
+    bool refused = false;
 
     [[nodiscard]] bool empty() const noexcept { return maxX < minX || maxY < minY || maxZ < minZ; }
+
+    // Emptied and marked when it holds more than an edit may walk.
+    void bound() noexcept
+    {
+        if (empty())
+            return;
+        const auto extent = [](i32 low, i32 high) {
+            return static_cast<core::u64>(static_cast<core::i64>(high) - low + 1);
+        };
+        const core::u64 x = extent(minX, maxX);
+        const core::u64 y = extent(minY, maxY);
+        const core::u64 z = extent(minZ, maxZ);
+        // Multiplied only while it cannot overflow: each side is at most 2^31.
+        if (x > MaxEditVoxels || y > MaxEditVoxels || z > MaxEditVoxels || x * y > MaxEditVoxels ||
+            x * y * z > MaxEditVoxels) {
+            refused = true;
+            maxX = minX - 1;
+        }
+    }
 };
 
 [[nodiscard]] Box boxOf(const TerrainField& field, DVec3 low, DVec3 high) noexcept
@@ -93,6 +114,7 @@ struct Box
     box.maxX = field.voxelIndex(high.x + reach);
     box.maxY = std::min(field.voxelIndex(high.y + reach), band.high);
     box.maxZ = field.voxelIndex(high.z + reach);
+    box.bound();
     return box;
 }
 
@@ -116,8 +138,10 @@ template <class Distance>
 EditReport applyShape(TerrainField& field, const Box& box, u8 material, Distance&& distanceAt)
 {
     EditReport report;
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
     const double voxel = static_cast<double>(field.settings().voxelSize);
     FieldWriter writer(field);
     walk(box, [&](i32 x, i32 y, i32 z) {
@@ -369,6 +393,15 @@ EditReport fillFlat(TerrainField& field, DVec3 center, float size, float height,
     const i32 lastZ = field.voxelIndex(center.z + half) - 1;
     if (lastX < firstX || lastZ < firstZ)
         return {};
+    // Columns, not voxels, bound this one (audit S10): its columns are laid
+    // shared, so five kilometres of ground is cheap -- and a size a world
+    // does not have is not.
+    if ((static_cast<double>(lastX) - firstX + 1.0) * (static_cast<double>(lastZ) - firstZ + 1.0) >
+        static_cast<double>(MaxEditVoxels)) {
+        EditReport refused;
+        refused.refused = true;
+        return refused;
+    }
     // **Chunk column by chunk column, and every one that is whole and empty is
     // the SAME column.** Flat ground over empty columns comes out identical in
     // each (the slab's base and the slope are the same everywhere), so it is
@@ -577,8 +610,10 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
 
     // **A box blur a few voxels wide, separable, from a copy.** The occupancy
     // ramps over four voxels (`RampVoxels`), and the mean of a linear ramp is
@@ -676,8 +711,10 @@ EditReport flattenBall(TerrainField& field, DVec3 center, double radius, float h
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
     const double voxel = static_cast<double>(field.settings().voxelSize);
     // What ground laid under the plane is made of: whatever is under the brush.
     u8 fill = sampleField(field, DVec3{center.x, static_cast<double>(height) - voxel, center.z}).material;
@@ -716,8 +753,10 @@ EditReport raiseBall(TerrainField& field, DVec3 center, double radius, float amo
     const Band band = bandOf(field);
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - reach, center.z - radius},
                           DVec3{center.x + radius, center.y + reach, center.z + radius});
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
     const bool raising = amount > 0.0f;
 
     FieldWriter writer(field);
@@ -826,8 +865,10 @@ EditReport growBall(TerrainField& field, DVec3 center, double radius, float amou
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
     const double voxel = static_cast<double>(field.settings().voxelSize);
     const bool growing = amount > 0.0f;
     // **Capped at the ramp's outer half.** Past it the air holds no occupancy
@@ -932,8 +973,10 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
-    if (box.empty())
+    if (box.empty()) {
+        report.refused = box.refused;
         return report;
+    }
     FieldWriter writer(field);
     walk(box, [&](i32 x, i32 y, i32 z) {
         if (length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z) >
@@ -960,6 +1003,11 @@ EditReport replaceMaterial(TerrainField& field, DVec3 minCorner, DVec3 maxCorner
     box.maxX = field.voxelIndex(std::max(minCorner.x, maxCorner.x));
     box.maxY = field.voxelIndex(std::max(minCorner.y, maxCorner.y));
     box.maxZ = field.voxelIndex(std::max(minCorner.z, maxCorner.z));
+    box.bound();
+    if (box.empty()) {
+        report.refused = box.refused;
+        return report;
+    }
     FieldWriter writer(field);
     walk(box, [&](i32 x, i32 y, i32 z) {
         const Voxel old = writer.get(x, y, z);

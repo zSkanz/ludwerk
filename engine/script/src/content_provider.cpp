@@ -122,9 +122,9 @@ int contentProviderPreloadAsync(lua_State* L)
         lua_pop(L, 1);
     }
 
-    // The main thread cannot park: what it asked for still loads, and it is
-    // answered at once.
-    if (lua_pushthread(L)) {
+    // The main thread cannot park, nor can a caller inside a metamethod
+    // (audit S7): what it asked for still loads, and it is answered at once.
+    if (lua_pushthread(L) || !lua_isyieldable(L)) {
         lua_pop(L, 1);
         for (PreloadItem& item : request.items)
             (void)lua_unref(L, item.itemRef);
@@ -211,10 +211,12 @@ void resumePreloads(lua_State* L, const std::function<ContentState(std::string_v
             (void)lua_unref(L, request.callbackRef);
         lua_getref(L, request.threadRef);
         lua_State* co = lua_tothread(L, -1);
-        const bool finished = co == nullptr || resumeScheduled(L, co, 0);
+        if (co != nullptr)
+            (void)resumeScheduled(L, co, 0);
         lua_pop(L, 1);
-        if (finished)
-            (void)lua_unref(L, request.threadRef);
+        // Whatever the thread did (audit S3): one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, request.threadRef);
     }
     for (PreloadRequest& request : state.requests)
         waiting.push_back(std::move(request));

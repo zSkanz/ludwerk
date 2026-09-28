@@ -1,3 +1,5 @@
+#include <lua.h>
+
 #include <doctest/doctest.h>
 #include <ostream>
 
@@ -426,5 +428,83 @@ TEST_CASE("the script heap stops at its cap with a keyed error, and the VM goes 
         assert(workspace:GetAttribute("Survived") == true)
         local small = table.create(1000, 1)
         assert(#small == 1000)
+    )") == "");
+}
+
+namespace {
+
+// Threads the VM's registry holds. One that is never let go is a coroutine,
+// and everything it captured, pinned for the VM's life.
+int registryThreads(lua_State* L)
+{
+    int count = 0;
+    lua_pushnil(L);
+    while (lua_next(L, LUA_REGISTRYINDEX) != 0) {
+        if (lua_type(L, -1) == LUA_TTHREAD)
+            ++count;
+        lua_pop(L, 1);
+    }
+    return count;
+}
+
+} // namespace
+
+TEST_CASE("a deferred callback and a thread that parks again let go of their references (audit S2, S3)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    lua_State* L = fixture.runtime->state();
+    fixture.tick(2);
+    const int before = registryThreads(L);
+
+    CHECK(fixture.failure(R"(
+        for index = 1, 500 do
+            task.defer(function() end)
+        end
+        task.spawn(function()
+            while true do
+                task.wait()
+            end
+        end)
+    )") == "");
+    fixture.tick(2);
+    const int settled = registryThreads(L);
+    // The five hundred ran and finished; the loop holds one, where it waits.
+    CHECK(settled - before < 10);
+
+    // Three hundred ticks of the loop parking again add nothing.
+    fixture.tick(300);
+    CHECK(registryThreads(L) - settled < 3);
+    CHECK(fixture.errors() == "");
+}
+
+TEST_CASE("a wait where nothing can yield raises and leaves nothing registered to resume later (audit S7)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    CHECK(fixture.failure(R"(
+        -- A metamethod cannot yield, so the wait inside it fails. Its timer
+        -- used to stay, and resumed this thread a tick later wherever it was.
+        local lazy = setmetatable({}, {
+            __index = function()
+                task.wait()
+                return 1
+            end,
+        })
+        local ok = pcall(function()
+            return lazy.anything
+        end)
+        assert(not ok, "a wait inside a metamethod cannot succeed")
+        task.wait(0.5)
+        workspace:SetAttribute("Waited", true)
+    )") == "");
+    // Two ticks: the stale timer would have ended the half-second wait here.
+    fixture.tick(2);
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Waited") == nil, "a half-second wait ended after two ticks")
+    )") == "");
+    fixture.tick(40);
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Waited") == true)
     )") == "");
 }

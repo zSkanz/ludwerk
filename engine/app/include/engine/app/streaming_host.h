@@ -82,6 +82,12 @@ public:
     // never heard of them and does nothing. That was D032: a world that grew by
     // a thousand instances every fifteen seconds and never shrank.
     void setWorld(scene::World* world, core::InstanceId streamRoot);
+
+    // **Every cell let go, and the grid forgotten** (audit A4): what is
+    // resident evicted as the pump would evict it -- a husk where a script
+    // holds a part -- reads in flight cancelled, the index emptied. A scene
+    // changed at run time starts from here.
+    void reset();
     void setPhysics(scene::PhysicsSync* physics) noexcept { m_physics = physics; }
 
     // Asked before an instance is evicted: true keeps it as a husk. Kept here

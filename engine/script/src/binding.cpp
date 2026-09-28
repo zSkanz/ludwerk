@@ -6,17 +6,29 @@
 #include <cassert>
 #include <string>
 
+#include "engine/scene/world.h"
+
 namespace engine::script {
 
-core::NameAtom VmContext::resolve(int atom) const noexcept
+core::NameAtom VmContext::resolve(int atom, const char* text) const noexcept
 {
-    // -1 is Luau's "not interesting", and it is also what a string interned
-    // before the callback existed latches at permanently. Either way there is no
-    // engine name behind it, and answering atom 0 -- the empty name -- is the
-    // honest result rather than an index into whatever sits at the front.
-    if (atom < 0 || static_cast<usize>(atom) >= atomToName.size())
+    if (atom >= 0 && static_cast<usize>(atom) < atomToName.size())
+        return core::NameAtom{atomToName[static_cast<usize>(atom)]};
+    // -1 is Luau's "not interesting", which a string keeps for good once it
+    // has been asked: one made before the callback existed, one that named
+    // nothing when first used, one past the last slot. The text still says
+    // which name it is.
+    if (text == nullptr || world == nullptr)
         return {};
-    return core::NameAtom{atomToName[static_cast<usize>(atom)]};
+    return world->atoms().lookup(std::string_view{text});
+}
+
+void requireYieldable(lua_State* L, std::string_view call)
+{
+    if (lua_isyieldable(L))
+        return;
+    const core::I18nArg args[] = {{"call", call}};
+    raise(L, ENG_TR("script.err.cannot_yield"), args);
 }
 
 VmContext& context(lua_State* L) noexcept
@@ -146,7 +158,7 @@ int memberIndex(lua_State* L)
     const char* key = lua_tostringatom(L, 2, &atom);
     if (key != nullptr) {
         const VmContext& ctx = context(L);
-        const core::NameAtom name = ctx.resolve(atom);
+        const core::NameAtom name = ctx.resolve(atom, key);
         if (const MemberEntry* entry = findMember(ctx.getters[static_cast<usize>(tag)], name))
             return entry->fn(L);
 
@@ -171,7 +183,7 @@ int memberNamecall(lua_State* L)
     const char* method = lua_namecallatom(L, &atom);
     if (method != nullptr) {
         const VmContext& ctx = context(L);
-        if (const MemberEntry* entry = findMember(ctx.methods[static_cast<usize>(tag)], ctx.resolve(atom)))
+        if (const MemberEntry* entry = findMember(ctx.methods[static_cast<usize>(tag)], ctx.resolve(atom, method)))
             return entry->fn(L);
     }
 
@@ -190,7 +202,7 @@ int memberNewIndex(lua_State* L)
     const char* key = lua_tostringatom(L, 2, &atom);
     if (key != nullptr) {
         const VmContext& ctx = context(L);
-        if (const MemberEntry* entry = findMember(ctx.setters[static_cast<usize>(tag)], ctx.resolve(atom)))
+        if (const MemberEntry* entry = findMember(ctx.setters[static_cast<usize>(tag)], ctx.resolve(atom, key)))
             return entry->fn(L);
     }
 

@@ -628,3 +628,22 @@ TEST_CASE("the palette names what the field only numbers")
     CHECK(std::string(terrainMaterial(1)->name) == "Grass");
     CHECK(terrainPalette().size() == 8);
 }
+
+TEST_CASE("a brush no world has is refused whole, and fast (audit S10)")
+{
+    TerrainField field(settingsOf());
+    // Eight quadrillion voxels: walked in C++, where no watchdog reaches, until
+    // the process ran out of memory.
+    const EditReport ball = fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 1e5, 1);
+    CHECK(ball.refused);
+    CHECK(ball.touched == 0);
+    // Past an `i32` of voxels, which was undefined behaviour to convert.
+    CHECK(fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 1e30, 1).refused);
+    CHECK(paintBall(field, core::DVec3{1e300, 0.0, 0.0}, 1e300, 1).refused);
+    CHECK(fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 1e9f, 1.0f, 1).refused);
+    CHECK(replaceMaterial(field, core::DVec3{-1e6, -1e6, -1e6}, core::DVec3{1e6, 1e6, 1e6}, 1, 2).refused);
+    // What a person holds still works.
+    const EditReport small = fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
+    CHECK_FALSE(small.refused);
+    CHECK(small.touched > 0);
+}

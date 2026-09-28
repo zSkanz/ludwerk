@@ -819,3 +819,39 @@ TEST_CASE("a NaN or an infinity never reaches the simulation from a script (audi
         assert(not pcall(function() weld.C0 = CFrame.new(nan, 0, 0) end), "a weld took a NaN")
     )") == "");
 }
+
+TEST_CASE(
+    "a script's strings do not grow the name table, and a name made after 32767 others still resolves (audit S6, S11)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    CHECK(fixture.failure(R"(
+        -- A key built at run time takes one of Luau's 32767 name slots the
+        -- first time it indexes an instance -- and, before, a name in the
+        -- world's table for ever.
+        for index = 1, 40000 do
+            pcall(function()
+                return workspace["junk" .. index]
+            end)
+        end
+    )") == "");
+    // A chunk loaded after the slots would be spent -- a module required
+    // later, a hot reload: Luau gives its field names slots as it loads, and
+    // with none left each read as no name at all.
+    CHECK(fixture.failure(R"(
+        local folder = Instance.new("Folder")
+        folder.Name = "Fresh" .. "Child"
+        folder.Parent = workspace
+        assert(workspace["Fresh" .. "Child"] == folder, "a child named after the pool was spent")
+        -- A property and a method this chunk names for the first time now.
+        local part = Instance.new("Part")
+        part.Anchored = true
+        assert(part.Anchored == true, "a property first read after the pool was spent")
+        assert(part:IsA("BasePart"), "a method first called after the pool was spent")
+        workspace:SetAttribute("Seen", true)
+    )") == "");
+    // A key that named nothing is not a name, and the table that never
+    // frees does not keep it.
+    CHECK_FALSE(fixture.atoms.lookup("junk20000").valid());
+    CHECK(fixture.atoms.lookup("FreshChild").valid());
+}

@@ -180,6 +180,14 @@ EditReport applyRules(TerrainField& field, std::span<const TerrainRule> rules, c
     const core::i32 maxX = field.voxelIndex(std::max(minCorner.x, maxCorner.x));
     const core::i32 maxY = field.voxelIndex(std::max(minCorner.y, maxCorner.y));
     const core::i32 maxZ = field.voxelIndex(std::max(minCorner.z, maxCorner.z));
+    // The same bound every brush has (audit S10).
+    const auto extent = [](core::i32 low, core::i32 high) {
+        return high < low ? 0.0 : static_cast<double>(high) - static_cast<double>(low) + 1.0;
+    };
+    if (extent(minX, maxX) * extent(minY, maxY) * extent(minZ, maxZ) > static_cast<double>(MaxEditVoxels)) {
+        report.refused = true;
+        return report;
+    }
     const auto occupancy = [&](core::i32 x, core::i32 y, core::i32 z) { return occupancyOf(field.voxel(x, y, z)); };
 
     FieldWriter writer(field);

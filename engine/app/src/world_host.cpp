@@ -479,6 +479,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_sceneName = sceneFolderName(options.bootScene);
     m_readContent = options.readContent;
     m_stamps = options.bootStamps;
+    m_partitionScene = options.partitionScene;
+    m_resetStreaming = options.resetStreaming;
     m_world->engineState().currentScene = options.bootScenePath;
     m_world->engineState().defaultServer = options.defaultServer;
     if (!options.projectPath.empty()) {
@@ -1417,6 +1419,23 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     // The old scene's own code goes with it; the new scene's is mounted below.
     remountSceneScripts({});
 
+    // **The old scene's streamed cells go with it, and the new scene meets the
+    // grid as the boot's did** (audit A4). Only the boot scene was ever
+    // partitioned: a scene changed to loaded whole, while the boot scene's
+    // cells went on streaming into it -- and a return to the boot scene
+    // brought its parts twice, once from the file and once from the cells
+    // `clearScene` leaves, being the engine's. A scene prepared in the
+    // background was parsed whole, and loads whole.
+    if (m_resetStreaming)
+        m_resetStreaming();
+    if (prepared == nullptr && m_partitionScene && file.has_value()) {
+        if (const std::filesystem::path partitioned = m_partitionScene(w, *file); !partitioned.empty()) {
+            std::string cut;
+            if (readFile(partitioned, cut))
+                text = std::move(cut);
+        }
+    }
+
     scene::SceneIoReport report;
     const std::optional<core::EngineError> error = prepared != nullptr
                                                        ? scene::readScene(w, *prepared, &report, m_stamps)
@@ -1641,7 +1660,7 @@ bool WorldHost::shutdownRequested()
     return script::shutdownRequested(m_runtime->state());
 }
 
-void WorldHost::close(core::f64 graceSeconds)
+void WorldHost::close(core::f64 graceSeconds, const std::function<void()>& pump)
 {
     // What this world runs closes before it does.
     closeSubWorlds();
@@ -1660,8 +1679,20 @@ void WorldHost::close(core::f64 graceSeconds)
     // rather than being a signal, and cutting it off at the first drain made
     // the promise `architecture.md` §app carries untrue for five milestones
     // (D016).
+    //
+    // A paused world's `tick` does nothing, and the loop used to spin on it
+    // for the whole grace period without resuming a thing (audit A1): the
+    // world is closing, so it runs. The ticks are paced to the fixed step, so
+    // a `task.wait(1)` is a second as it would have been, and the CPU is not
+    // spent spinning; results from the HTTP worker reach their threads here
+    // as they do in the frame.
     const auto graceNs = static_cast<core::u64>(std::max(0.0, graceSeconds) * 1'000'000'000.0);
     const core::u64 started = platform::nowNs();
+    scene::EngineState& state = m_world->engineState();
+    state.paused = false;
+    const auto stepNs =
+        std::max<core::u64>(1'000'000, static_cast<core::u64>(std::max(0.0, state.fixedTimestep) * 1'000'000'000.0));
+    core::u64 due = started;
     while (script::closeHandlersPending(m_runtime->state())) {
         if (platform::nowNs() - started >= graceNs) {
             const std::array<core::I18nArg, 1> args{core::I18nArg{"seconds", static_cast<core::i64>(graceSeconds)}};
@@ -1669,7 +1700,16 @@ void WorldHost::close(core::f64 graceSeconds)
             script::abandonCloseHandlers(m_runtime->state());
             break;
         }
+        if (pump)
+            pump();
+        publishNetworkResults();
         tick();
+        due += stepNs;
+        const core::u64 now = platform::nowNs();
+        if (due > now)
+            platform::sleepNs(std::min(due - now, stepNs));
+        else
+            due = now; // behind: no burst of ticks to catch up
     }
     // Whatever the close handlers saved, on disk before the process goes.
     flushSaves();

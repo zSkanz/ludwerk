@@ -425,7 +425,9 @@ plan where it stopped.
         real input: the IP typed, the join made, the walk taken, and the
         reconnection after its server was killed and restarted.
 - [ ] **P1, failures and data loss**: S2 with S3, S6, S7, S10, A1 to A12,
-      A15, F6 to F9.
+      A15, F6 to F9. Done through A5 (D233 to D241). **Paused on 2026-09-28**
+      for the multiplayer smoothness brief, the owner's new first priority;
+      A6 is next when the audit resumes.
 - [ ] **P1, performance**: the frame statistics first (p95, the CPU and GPU
       split, time per phase), then each fix measured before and after.
 - [ ] **P2.**

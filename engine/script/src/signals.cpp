@@ -332,6 +332,7 @@ int signalOnce(lua_State* L)
 int signalWait(lua_State* L)
 {
     SignalRecord& record = checkSignal(L, 1);
+    requireYieldable(L, "Wait");
     const SignalId id = *toSignalId(L, 1);
 
     // A one-shot registration made at the moment of the call, which is why it
@@ -1143,6 +1144,12 @@ usize drainDeferred(lua_State* L)
                 dropArgumentsImpl(L, entry.argBase, entry.argCount);
             }
             lua_pop(L, 1);
+            // **The entry's reference goes with the entry** (audit S2), in
+            // every outcome: a thread that parked took its own where it
+            // waits, and one that finished or was suppressed has nothing left
+            // to be resumed for. Kept, it pinned every deferred coroutine and
+            // all it captured for the VM's life.
+            (void)lua_unref(L, entry.threadRef);
             sys.depth = previousDepth;
             break;
         }

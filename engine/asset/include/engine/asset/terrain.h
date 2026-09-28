@@ -418,7 +418,16 @@ struct EditReport
 {
     // Voxels whose value changed.
     core::u32 touched = 0;
+    // **Refused whole, for its size** (audit S10): a brush whose box holds
+    // more than `MaxEditVoxels` changes nothing. `FillBall(v, 1e5, 1)` walked
+    // eight quadrillion voxels in C++, where no watchdog reaches, until the
+    // machine ran out of memory.
+    bool refused = false;
 };
+
+// A box of 512 voxels a side: far past any brush a person holds, and small
+// enough that the worst edit is a pause rather than a hang.
+inline constexpr core::u64 MaxEditVoxels = 512ull * 512ull * 512ull;
 
 // Adds a ball of ground, or removes one when `material` is zero.
 EditReport fillBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material);

@@ -316,7 +316,14 @@ Voxel TerrainChunk::mip(u32 level, u32 x, u32 y, u32 z) const noexcept
 
 i32 TerrainField::voxelIndex(double metres) const noexcept
 {
-    return static_cast<i32>(std::floor(metres / static_cast<double>(m_settings.voxelSize)));
+    // **Clamped before the cast** (audit S10): a double past an `i32` is
+    // undefined behaviour to convert, and a NaN is nowhere. A quarter of the
+    // range either side leaves room for the arithmetic callers do on indices.
+    const double index = std::floor(metres / static_cast<double>(m_settings.voxelSize));
+    if (!(index == index))
+        return 0;
+    constexpr double Limit = 536870912.0;
+    return static_cast<i32>(std::clamp(index, -Limit, Limit));
 }
 
 const TerrainChunk* TerrainField::findChunk(ChunkKey key) const noexcept

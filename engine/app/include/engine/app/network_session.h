@@ -84,9 +84,15 @@ public:
     void setReferenceProbe(std::function<bool(core::InstanceId)> probe);
     void setCharacterReplay(scene::ICharacterReplay* replay);
 
-    // How long a join may wait for the server's welcome, in updates, before it
-    // is `JoinFailed`. Ten seconds at sixty frames; a test sets it shorter.
-    void setJoinTimeout(core::u64 updates) noexcept { m_joinTimeout = updates; }
+    // **How long a join a script made may wait for the server's welcome**, in
+    // seconds of wall time, before it is `JoinFailed` (audit A3). Counted in
+    // updates it was ten seconds at sixty frames, four at 144, and moments in
+    // a minimised window. A join from the command line has no limit: it dials
+    // until the server answers, as it does when a server goes away (ADR 0085).
+    void setJoinTimeout(core::f64 seconds) noexcept { m_joinTimeoutSeconds = seconds; }
+    // The clock the timeout is read from; `platform::nowNs` unless a test
+    // gives another.
+    void setClock(std::function<core::u64()> nowNs) { m_clock = std::move(nowNs); }
 
 private:
     [[nodiscard]] std::optional<core::EngineError> begin(replication::Topology topology, const std::string& address,
@@ -101,10 +107,11 @@ private:
     std::unique_ptr<replication::IReplication> m_replication;
     std::function<bool(core::InstanceId)> m_probe;
     scene::ICharacterReplay* m_replay = nullptr;
-    // A join waiting for its welcome, and how many updates it has waited.
+    // A join waiting for its welcome, and when it began.
     bool m_connecting = false;
-    core::u64 m_waited = 0;
-    core::u64 m_joinTimeout = 600;
+    core::u64 m_joinStartedNs = 0;
+    core::f64 m_joinTimeoutSeconds = 10.0;
+    std::function<core::u64()> m_clock;
     std::string m_address;
     // **Who this machine was on each server it joined** (D207), by
     // `address:port`: a script's `Join` after a drop presents the same token,

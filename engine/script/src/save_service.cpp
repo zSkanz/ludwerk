@@ -312,7 +312,9 @@ int slotSaveAsync(lua_State* L)
 {
     SaveSlotData& slot = checkSlot(L, 1);
     const core::u64 ticket = store(L).write(slot, gameVersion(L));
-    if (!lua_pushthread(L)) {
+    // A caller that cannot wait -- the main thread, or one inside a
+    // metamethod (audit S7) -- gets the write queued and an answer now.
+    if (!lua_pushthread(L) && lua_isyieldable(L)) {
         const int threadRef = lua_ref(L, -1);
         lua_pop(L, 1);
         services(L).saveWaiters.push_back(ServiceState::SaveWaiter{ticket, threadRef, slot.name});
@@ -393,8 +395,9 @@ int saveServiceGetSlotAsync(lua_State* L)
         slot->version = version;
     }
 
-    if (lua_pushthread(L)) {
-        // The main thread: answered now.
+    if (lua_pushthread(L) || !lua_isyieldable(L)) {
+        // The main thread, or a caller that cannot wait (audit S7): answered
+        // now.
         lua_pop(L, 1);
         pushSlot(L, *slot);
         return 1;
@@ -525,10 +528,11 @@ void resumeSaveWaiters(lua_State* L, core::f64 dt)
         lua_State* co = lua_tothread(L, -1);
         if (co != nullptr) {
             pushSlot(co, *waiter.slot);
-            const bool finished = resumeScheduled(L, co, 1);
+            (void)resumeScheduled(L, co, 1);
             lua_pop(L, 1);
-            if (finished)
-                (void)lua_unref(L, waiter.threadRef);
+            // Whatever the thread did (audit S3): one that parks again took its
+            // own reference where it waits.
+            (void)lua_unref(L, waiter.threadRef);
             continue;
         }
         lua_pop(L, 1);
@@ -548,21 +552,21 @@ void resumeSaveWaiters(lua_State* L, core::f64 dt)
     for (const auto& [waiter, succeeded] : readySaves) {
         lua_getref(L, waiter.threadRef);
         lua_State* co = lua_tothread(L, -1);
-        bool finished = true;
         if (co != nullptr) {
             if (succeeded) {
-                finished = resumeScheduled(L, co, 0);
+                (void)resumeScheduled(L, co, 0);
             }
             else {
                 const core::I18nArg args[] = {{"slot", std::string_view{waiter.slot}}};
                 const std::string message = core::formatKeyPrefixed(ENG_TR("script.err.save_write_failed"), args);
                 lua_pushlstring(co, message.data(), message.size());
-                finished = resumeScheduledWithError(L, co);
+                (void)resumeScheduledWithError(L, co);
             }
         }
         lua_pop(L, 1);
-        if (finished)
-            (void)lua_unref(L, waiter.threadRef);
+        // Whatever the thread did (audit S3): one that parks again took its
+        // own reference where it waits.
+        (void)lua_unref(L, waiter.threadRef);
     }
 }
 

@@ -108,6 +108,33 @@
 namespace engine::app {
 namespace {
 
+// **What was typed during play survives the stop** (the owner: a variable
+// changed while playing stayed changed in the tab, and the next play ran the
+// old text). The text went into the PLAYING world's `Source`, and the restore
+// put back the one from before play -- so the tabs, which are what is on the
+// screen, write it again. Only where it differs, so a stop with nothing typed
+// marks nothing unsaved.
+//
+// **Every way out of play** (audit A5): the Stop button and the device-lost
+// save did this, and a save-all or an open scene from play did not -- a save
+// wrote the text from before play over what was on the screen.
+void writeTypedSources(scene::World& world, const ScriptEditor& scripts, Editor& editor)
+{
+    const core::NameAtom sourceKey = world.atoms().intern("Source");
+    for (std::size_t index = 0; index < scripts.count(); ++index) {
+        const OpenScript* tab = scripts.at(index);
+        if (tab == nullptr || tab->origin != ScriptOrigin::Scene || !world.alive(tab->instance))
+            continue;
+        const std::optional<scene::Value> restored = world.getProperty(tab->instance, sourceKey);
+        const std::string* restoredText = restored.has_value() ? std::get_if<std::string>(&*restored) : nullptr;
+        const std::string typed = tab->document.text();
+        if (restoredText != nullptr && *restoredText == typed)
+            continue;
+        (void)world.setProperty(tab->instance, sourceKey, scene::Value{typed});
+        editor.touch();
+    }
+}
+
 // `scenes/arena.scene.json` is `arena`: the folder under `src/scenes/` whose
 // code is that scene's (ADR 0105).
 [[nodiscard]] std::string sceneStemOf(std::string_view path)
@@ -1492,6 +1519,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 }
                 return std::filesystem::path{};
             },
+        // A scene changed at run time lets every streamed cell go first, and
+        // is then partitioned by the lambda above (audit A4).
+        .resetStreaming =
+            [&streaming, &fields] {
+                streaming.reset();
+                fields.reset();
+            },
         // Where a stamp's text comes from. `contentRoot` is what the editor's
         // browser is rooted at too, so a scene names the same file whichever of
         // the two loads it.
@@ -2033,31 +2067,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             host->close();
                         editor.stop(host->world(), inspector);
                         ui::resetInteraction();
-
-                        // **What was typed during play survives the stop**
-                        // (the owner: a variable changed while playing stayed
-                        // changed in the tab, and the next play ran the old
-                        // text). The text went into the PLAYING world's
-                        // `Source`, and the restore just put back the one from
-                        // before play -- so the tabs, which are what is on the
-                        // screen, write it again. Only where it differs, so a
-                        // stop with nothing typed marks nothing unsaved.
-                        const core::NameAtom typedSourceKey = host->world().atoms().intern("Source");
-                        for (std::size_t typedIndex = 0; typedIndex < scripts.count(); ++typedIndex) {
-                            const OpenScript* typedTab = scripts.at(typedIndex);
-                            if (typedTab == nullptr || typedTab->origin != ScriptOrigin::Scene ||
-                                !host->world().alive(typedTab->instance))
-                                continue;
-                            const std::optional<scene::Value> restored =
-                                host->world().getProperty(typedTab->instance, typedSourceKey);
-                            const std::string* restoredText =
-                                restored.has_value() ? std::get_if<std::string>(&*restored) : nullptr;
-                            const std::string typed = typedTab->document.text();
-                            if (restoredText != nullptr && *restoredText == typed)
-                                continue;
-                            (void)host->world().setProperty(typedTab->instance, typedSourceKey, scene::Value{typed});
-                            editor.touch();
-                        }
+                        writeTypedSources(host->world(), scripts, editor);
 
                         // **And stop throws the VM away** (ADR 0058). The world
                         // is back where play was pressed, which is what the line
@@ -2611,6 +2621,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         if (!editor.debuggerParked())
                             host->close();
                         editor.stop(host->world(), inspector);
+                        // Or the save below writes the text from before play.
+                        writeTypedSources(host->world(), scripts, editor);
                         if (std::optional<core::EngineError> restart = host->restartRuntime(); restart.has_value())
                             core::logText(core::LogLevel::Error, restart->message);
                         if (overlay.has_value())
@@ -2660,6 +2672,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         if (!editor.debuggerParked())
                             host->close();
                         editor.stop(host->world(), inspector);
+                        writeTypedSources(host->world(), scripts, editor);
                         // The same teardown the stop button performs, and for
                         // the same reason: the scene about to be loaded must not
                         // arrive under a VM still holding the last session's
@@ -5212,18 +5225,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // is its own file, the open material and the open stamp.
                     if (editor.inPlayMode()) {
                         editor.stop(host->world(), inspector);
-                        // What was typed during play, written back into the
-                        // world the stop restored -- as the Stop button does --
-                        // or the save below would write the text from before.
-                        const core::NameAtom lostSourceKey = host->world().atoms().intern("Source");
-                        for (std::size_t index = 0; index < scripts.count(); ++index) {
-                            const OpenScript* tab = scripts.at(index);
-                            if (tab == nullptr || tab->origin != ScriptOrigin::Scene ||
-                                !host->world().alive(tab->instance))
-                                continue;
-                            (void)host->world().setProperty(tab->instance, lostSourceKey,
-                                                            scene::Value{tab->document.text()});
-                        }
+                        // Or the save below writes the text from before play.
+                        writeTypedSources(host->world(), scripts, editor);
                     }
                     (void)editor.saveOpenScene(host->world());
                     for (std::size_t index = 0; index < scripts.count(); ++index) {
@@ -5258,7 +5261,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     }
 
     control.stop();
-    host->close();
+    // The window's events while the close handlers run, so the system does
+    // not call a game that is saving on its way out unresponsive (audit A1).
+    host->close(30.0, [&] {
+        if (window != nullptr)
+            (void)platform::pumpEvents();
+    });
     device->waitIdle();
 
     if (!options.screenshotPath.empty() && offscreen.valid()) {

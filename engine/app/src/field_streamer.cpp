@@ -35,6 +35,23 @@ void FieldStreamer::setIndex(const asset::ChunkIndex& index, const CellResolver&
     installCallbacks();
 }
 
+void FieldStreamer::reset()
+{
+    for (const asset::StreamingManager::ChunkView& cell : m_manager.view()) {
+        if (cell.state == asset::ChunkState::Resident)
+            evict(cell.id);
+    }
+    for (const auto& read : m_reads)
+        platform::cancelIo(read.first);
+    m_reads.clear();
+    m_paths.clear();
+    m_terrainCells.clear();
+    m_voxelCells.clear();
+    m_manager.setIndex(asset::ChunkIndex{});
+    m_active = false;
+    m_primed = true;
+}
+
 void FieldStreamer::adoptTerrain(const asset::ChunkIndex& index, const CellResolver& resolve)
 {
     asset::ChunkIndex merged;

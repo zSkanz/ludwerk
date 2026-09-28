@@ -258,9 +258,13 @@ struct VmContext
     std::function<std::optional<std::string>(std::string_view)> stamps;
 
     // Indexed by Luau atom; holds the engine `NameAtom` id for the same text.
-    // Grown by `useratom` as the VM interns each name, and never shrunk: an
-    // atom is assigned once per string for the life of the state.
+    // Grown by `useratom` the first time a string names a member, and never
+    // shrunk. **One Luau atom a name, not a string** (audit S6): a key rebuilt
+    // after the last one was collected is a new string with the same text,
+    // and a slot for each spent the 32767 there are -- after which a property
+    // first used read as no member at all. `nameToAtom` is the way back.
     std::vector<u32> atomToName;
+    std::unordered_map<u32, int16_t> nameToAtom;
 
     // Per tag. Populated at boot, before the sandbox and before any script
     // loads, because a metatable registered later is one already-loaded chunks
@@ -316,9 +320,11 @@ struct VmContext
     // narrowing it at each of them is a cast per property access that can only
     // ever lose information.
     //
-    // Invalid for -1, which is what Luau returns for a string interned before
-    // the callback existed, and for an atom past the end of the table.
-    [[nodiscard]] core::NameAtom resolve(int atom) const noexcept;
+    // `text` is the string the atom came from: with no atom -- a string made
+    // before the callback existed, one naming nothing when it was first used,
+    // or one past the last slot -- the name is looked up by its text, so a
+    // lookup costs a hash and is never wrong.
+    [[nodiscard]] core::NameAtom resolve(int atom, const char* text) const noexcept;
 };
 
 // Never null after `ScriptRuntime::boot`; calling a binding on a state that has
@@ -354,6 +360,13 @@ void addMember(MemberTable& table, core::AtomTable& atoms, const char* name, lua
 // lets a conformance spec match on a stable identifier while the prose stays
 // free to be translated (`core::makeError`, ADR 0019). Never returns.
 [[noreturn]] void raise(lua_State* L, core::TextKey key, std::span<const core::I18nArg> args = {});
+
+// **A call that waits, made where nothing can wait** (audit S7): inside a
+// metamethod, a `table.sort` comparator, a `__tostring`. Raises
+// `script.err.cannot_yield` naming `call`, and is called before the caller is
+// registered anywhere or anything is sent: a waiter left behind by a yield
+// that failed resumed the thread a tick later, wherever it had gone on to.
+void requireYieldable(lua_State* L, std::string_view call);
 
 // The `__type` a tag's metatable reports, which is what `typeof` answers
 // (api-design.md §2.3). Shared so that the name a value reports and the name an

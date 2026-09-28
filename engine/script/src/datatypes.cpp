@@ -1047,7 +1047,7 @@ int enumObjectIndex(lua_State* L)
     int atom = -1;
     const char* key = lua_tostringatom(L, 2, &atom);
     if (key != nullptr) {
-        if (const scene::EnumItemDesc* item = enums(L).findItem(id, context(L).resolve(atom))) {
+        if (const scene::EnumItemDesc* item = enums(L).findItem(id, context(L).resolve(atom, key))) {
             pushEnumItemImpl(L, scene::EnumValue{id, item->value});
             return 1;
         }
@@ -1080,7 +1080,7 @@ int enumObjectNamecall(lua_State* L)
     if (method != nullptr) {
         const VmContext& ctx = context(L);
         if (const MemberEntry* entry =
-                findMember(ctx.methods[static_cast<usize>(UserdataTag::Enum)], ctx.resolve(atom)))
+                findMember(ctx.methods[static_cast<usize>(UserdataTag::Enum)], ctx.resolve(atom, method)))
             return entry->fn(L);
     }
     raiseUnknownMember(L, UserdataTag::Enum, method);
@@ -1106,7 +1106,7 @@ int enumsIndex(lua_State* L)
     int atom = -1;
     const char* key = lua_tostringatom(L, 2, &atom);
     if (key != nullptr) {
-        const scene::EnumId id = enums(L).findId(context(L).resolve(atom));
+        const scene::EnumId id = enums(L).findId(context(L).resolve(atom, key));
         if (id != scene::InvalidEnum) {
             pushEnumObject(L, id);
             return 1;

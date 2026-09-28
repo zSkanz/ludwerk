@@ -390,6 +390,25 @@ TEST_CASE("the minimum ring reports whether the world may be walked into")
     CHECK(harness.manager.minimumRingResident());
 }
 
+TEST_CASE("a cell that failed does not hold the world waiting for it (audit A2)")
+{
+    seedRealCatalog();
+    Harness harness(gridIndex(3));
+    const StreamingFocus foci[] = {focusAt(CellCentre, 300.0, 900.0)};
+    harness.manager.setFoci(foci);
+    StreamingBudget budget;
+    budget.milliseconds = 1000.0;
+    budget.maxInFlight = 64;
+    harness.settle(budget);
+    REQUIRE(harness.manager.minimumRingResident());
+
+    // A cell of the minimum ring whose read failed will not come, and it is
+    // never retried: waited for, it froze the simulation for good.
+    harness.manager.onChunkFailed(ChunkId{0, 0, 0});
+    REQUIRE(harness.manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Failed);
+    CHECK(harness.manager.minimumRingResident());
+}
+
 TEST_CASE("disabling stops new work without forgetting the world")
 {
     seedRealCatalog();
