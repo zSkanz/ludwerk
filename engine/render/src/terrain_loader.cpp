@@ -624,9 +624,9 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
             }
             entry.layers.push_back(layer);
         }
-        // The slope rule of old: steep ground turns to layer 3 when there is
-        // one (ADR 0113 B2 makes this a rule of the terrain's own).
-        entry.rockLayer = entry.layers.size() >= 3 ? 3u : 0u;
+        entry.rules.reserve(terrain.rules.size());
+        for (const asset::TerrainRule& rule : terrain.rules)
+            entry.rules.push_back(asset::shapeOf(rule));
         out.terrains.push_back(std::move(entry));
     });
 }

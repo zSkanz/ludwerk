@@ -147,8 +147,44 @@ terrain:SetLayers(layers)
   on terrain.
 - **Where layers meet**, a pixel blends the layers of its triangle's corners,
   so a painted edge is soft rather than stepped.
-- **Steep ground draws as layer 3**, rock by default, with a ragged edge,
-  except where it already is layer 3 or 7.
+
+## Rules: painting by slope and height
+
+A terrain also has **rules**, which draw a layer wherever the ground is steep
+enough, or high enough, whatever it was painted. A new terrain has one: steep
+ground is drawn as rock (layer 3), over every layer but rock and basalt, with
+a ragged edge.
+
+```luau
+--!strict
+local rock = terrain:GetRules()[1]
+rock.Enabled = false -- no automatic rock: steep grass stays grass
+terrain:SetRules({
+    rock,
+    { Material = 4, HeightMin = 120, Blend = 6, Noise = 0.3 }, -- snow above 120 m
+})
+```
+
+| Field | What it means |
+|---|---|
+| `Enabled` | Off draws nothing. |
+| `Material` | The layer the rule draws. |
+| `SlopeMin`, `SlopeMax` | Degrees from level, 0 to 90. |
+| `HeightMin`, `HeightMax` | World metres; -100000 and 100000 are open. |
+| `Blend` | How wide the edge is: degrees across a slope bound, metres across a height bound. |
+| `Noise` | How ragged the edge is; 0 is a clean line. |
+| `AppliesTo` | The layers it may cover; empty is every layer but its own. |
+
+- **In order**: each rule paints over what came before it. Up to 16.
+- **Drawn, not written.** The voxels keep their materials, so turning a rule
+  off undoes it. `ApplyRules(minCorner, maxCorner)` writes what the rules draw
+  into the voxels at the surface, after which the rule can be off with nothing
+  changing on screen.
+- **What the game sees is what is drawn**: the engine evaluates the rules on
+  the CPU the same way the shader does, so the ground under a steep slope drawn
+  as rock is rock to the game too.
+- An empty list turns the automatic rock off. The rules are saved with the
+  scene.
 
 ## In the editor
 
@@ -194,6 +230,11 @@ back.
 replaces the selected layer with another material -- one of the engine's or
 one of the project's -- adds one after the last, or removes the last. Each is
 one undo step.
+
+**Rules** lists the terrain's rules in order, each with its fields, a switch,
+and up, down and remove; every change shows at once, and a drag is one undo
+step. **Add Rule** adds a snow line above 40 m to start from. **Apply to
+Voxels** writes what the rules draw into the ground, one undo step.
 
 **Settings** holds the three numbers a terrain is decided at:
 - `VoxelSize`, which can change only while the terrain is empty;

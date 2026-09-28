@@ -8,7 +8,7 @@
 // interpolate into how far the pixel is from each. Each layer is sampled
 // triplanar, pinned to the field's own coordinates, at its own repeat. The
 // procedural variation of the old ground stays on top as a subtle macro
-// shading, and steep ground still turns to the rock layer.
+// shading, and the terrain's rules paint by slope and height over it.
 //
 // The vertex layout is `asset::Vertex`, the same 48 bytes every static mesh
 // uses, so a node travels through `MeshCache` like any other mesh: the
@@ -29,8 +29,16 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 LayerTint[256];
     // Roughness factor, metalness factor, normal scale, and 1 for triplanar.
     float4 LayerSurface[256];
-    // x: 1 when the arrays hold every layer; y: the layer steep ground turns
-    // to, or 0 for none; z: the layer count.
+    // The rules (ADR 0113 §2), as `asset::TerrainRuleShape` builds them: the
+    // slope band's four edges in `1 - normal.y`, the height band's in metres,
+    // then the layer, the noise, the height jitter and whether it is on, then
+    // the 256 layers it covers as bits.
+    float4 RuleSlope[16];
+    float4 RuleHeight[16];
+    float4 RuleMisc[16];
+    uint4 RuleApplies[32];
+    // x: 1 when the arrays hold every layer; y: the rule count; z: the layer
+    // count; w: the terrain's height in the world.
     float4 TerrainParams;
 };
 
@@ -81,6 +89,53 @@ TerrainInterpolants VertexMain(VertexInput input)
     const uint corner = uint(input.Uv.y + 0.5f);
     output.Corners = float3(corner == 0u ? 1.0f : 0.0f, corner == 1u ? 1.0f : 0.0f, corner == 2u ? 1.0f : 0.0f);
     return output;
+}
+
+// **The rules' noise, line for line `asset::terrainRuleNoise`**: an integer
+// hash on a 4.3 m lattice over the field's x and z, so the CPU's answer to
+// "what is drawn here" is this one.
+uint terrainRuleHash(int x, int z)
+{
+    uint h = uint(x) * 0x8DA6B343u ^ uint(z) * 0xD8163841u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+
+float terrainRuleUnit(uint h)
+{
+    return float(h & 0xFFFFFFu) / 16777215.0f;
+}
+
+float terrainRuleNoise(float x, float z)
+{
+    const float px = x * (1.0f / 4.3f);
+    const float pz = z * (1.0f / 4.3f);
+    const float cx = floor(px);
+    const float cz = floor(pz);
+    const float fx = px - cx;
+    const float fz = pz - cz;
+    const float ux = fx * fx * (3.0f - 2.0f * fx);
+    const float uz = fz * fz * (3.0f - 2.0f * fz);
+    const int ix = int(cx);
+    const int iz = int(cz);
+    const float a = terrainRuleUnit(terrainRuleHash(ix, iz));
+    const float b = terrainRuleUnit(terrainRuleHash(ix + 1, iz));
+    const float c = terrainRuleUnit(terrainRuleHash(ix, iz + 1));
+    const float d = terrainRuleUnit(terrainRuleHash(ix + 1, iz + 1));
+    const float nearRow = a + (b - a) * ux;
+    const float farRow = c + (d - c) * ux;
+    return nearRow + (farRow - nearRow) * uz;
+}
+
+bool ruleCovers(uint rule, uint id)
+{
+    const uint4 words = RuleApplies[rule * 2u + id / 128u];
+    const uint word = words[(id % 128u) / 32u];
+    return (word & (1u << (id % 32u))) != 0u;
 }
 
 struct LayerSample
@@ -250,24 +305,37 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     [branch] if (corners.z > 0.001f)
         mix = weighted(mix, layerAt(ids.z, input.Ground, dx, dy, normal, planes), corners.z);
 
-    // **Steep ground is the rock layer**, whatever it was painted, with the
-    // ragged edge the old ground had -- except where the layer already is rock
-    // or basalt. `TerrainParams.y` names the layer; zero turns it off.
+    // **The rules, in order** (ADR 0113 §2): each covers the pixel by how far
+    // it is inside the rule's slope and height bands, ragged by the rule's
+    // noise, and by how much of the pixel's triangle is a layer the rule may
+    // cover -- and paints its own layer over what came before by that much.
     const TerrainVariation variation = terrainVariation(input.Ground, normal);
-    const uint rockLayer = uint(TerrainParams.y + 0.5f);
-    if (rockLayer != 0u) {
-        const float keepsItself = (ids.x == ENG_TERRAIN_ROCK || ids.x == ENG_TERRAIN_BASALT ? corners.x : 0.0f) +
-                                  (ids.y == ENG_TERRAIN_ROCK || ids.y == ENG_TERRAIN_BASALT ? corners.y : 0.0f) +
-                                  (ids.z == ENG_TERRAIN_ROCK || ids.z == ENG_TERRAIN_BASALT ? corners.z : 0.0f);
-        const float rock = variation.Rockiness * (1.0f - keepsItself);
-        [branch] if (rock > 0.001f)
+    const uint ruleCount = min(uint(TerrainParams.y + 0.5f), 16u);
+    const float worldY = input.Ground.y + TerrainParams.w;
+    const float ruleNoise = terrainRuleNoise(input.Ground.x, input.Ground.z);
+    [loop] for (uint rule = 0u; rule < ruleCount; ++rule)
+    {
+        const float4 misc = RuleMisc[rule];
+        if (misc.w < 0.5f)
+            continue;
+        const float jitter = (ruleNoise - 0.5f) * misc.y;
+        const float slope = 1.0f - saturate(normal.y) + jitter;
+        const float height = worldY + jitter * misc.z;
+        const float4 slopeBand = RuleSlope[rule];
+        const float4 heightBand = RuleHeight[rule];
+        float cover = smoothstep(slopeBand.x, slopeBand.y, slope) * (1.0f - smoothstep(slopeBand.z, slopeBand.w, slope)) *
+                      smoothstep(heightBand.x, heightBand.y, height) *
+                      (1.0f - smoothstep(heightBand.z, heightBand.w, height));
+        cover *= (ruleCovers(rule, ids.x) ? corners.x : 0.0f) + (ruleCovers(rule, ids.y) ? corners.y : 0.0f) +
+                 (ruleCovers(rule, ids.z) ? corners.z : 0.0f);
+        [branch] if (cover > 0.001f)
         {
-            const LayerSample stone = layerAt(rockLayer, input.Ground, dx, dy, normal, planes);
-            mix.Albedo = lerp(mix.Albedo, stone.Albedo, rock);
-            mix.Normal = lerp(mix.Normal, stone.Normal, rock);
-            mix.Roughness = lerp(mix.Roughness, stone.Roughness, rock);
-            mix.Metalness = lerp(mix.Metalness, stone.Metalness, rock);
-            mix.Occlusion = lerp(mix.Occlusion, stone.Occlusion, rock);
+            const LayerSample painted = layerAt(uint(misc.x + 0.5f), input.Ground, dx, dy, normal, planes);
+            mix.Albedo = lerp(mix.Albedo, painted.Albedo, cover);
+            mix.Normal = lerp(mix.Normal, painted.Normal, cover);
+            mix.Roughness = lerp(mix.Roughness, painted.Roughness, cover);
+            mix.Metalness = lerp(mix.Metalness, painted.Metalness, cover);
+            mix.Occlusion = lerp(mix.Occlusion, painted.Occlusion, cover);
         }
     }
 

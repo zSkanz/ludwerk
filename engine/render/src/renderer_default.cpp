@@ -3560,8 +3560,23 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
             for (const rhi::TextureHandle map : layer.maps)
                 sources.push_back(map.id);
         }
-        block.params[1] = static_cast<f32>(terrain.rockLayer);
+        const auto ruleCount = static_cast<u32>(std::min<usize>(terrain.rules.size(), kTerrainRuleSlots));
+        for (u32 index = 0; index < ruleCount; ++index) {
+            const asset::TerrainRuleShape& rule = terrain.rules[index];
+            for (u32 channel = 0; channel < 4; ++channel) {
+                block.ruleSlope[index][channel] = rule.slope[channel];
+                block.ruleHeight[index][channel] = rule.height[channel];
+            }
+            block.ruleMisc[index][0] = rule.material;
+            block.ruleMisc[index][1] = rule.noise;
+            block.ruleMisc[index][2] = rule.heightJitter;
+            block.ruleMisc[index][3] = rule.enabled;
+            for (u32 word = 0; word < 8; ++word)
+                block.ruleApplies[index][word] = rule.appliesTo[word];
+        }
+        block.params[1] = static_cast<f32>(ruleCount);
         block.params[2] = static_cast<f32>(layerCount);
+        block.params[3] = static_cast<f32>(terrain.origin.y);
 
         // **The arrays, when every layer's maps have loaded and something
         // changed**: a blit per map into its slice, then the mips. Until then

@@ -1368,6 +1368,52 @@ local Classes: { Schema.Class } = {
                     .. "Saved with the scene.",
             },
             {
+                Name = "GetRules",
+                Parameters = {},
+                Returns = {
+                    "{ { Enabled: boolean, Material: number, SlopeMin: number, SlopeMax: number, HeightMin: number, HeightMax: number, Blend: number, Noise: number, AppliesTo: { number } } }",
+                },
+                ThreadSafety = "Safe",
+                Doc = "The rules that paint the ground by slope and height, in the order they paint: each draws "
+                    .. "`Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between "
+                    .. "`HeightMin` and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer "
+                    .. "but its own), with an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new "
+                    .. "terrain's one rule is the slope rock: steep ground drawn as layer 3.\n\n"
+                    .. "**Rules are drawn, not written**: the voxels keep their materials until `ApplyRules`. "
+                    .. "What a raycast reports is what is drawn.",
+            },
+            {
+                Name = "SetRules",
+                Parameters = {
+                    {
+                        Name = "rules",
+                        -- `read`: a rule from `GetRules` has every field, and one
+                        -- written by hand only some; read-only fields are
+                        -- covariant, so both are accepted.
+                        Type = "{ { read Enabled: boolean?, read Material: number?, read SlopeMin: number?, "
+                            .. "read SlopeMax: number?, read HeightMin: number?, read HeightMax: number?, "
+                            .. "read Blend: number?, read Noise: number?, read AppliesTo: { number }? } }",
+                    },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sets the rules, as `GetRules` returns them: up to 16, painted in order. A missing field "
+                    .. "keeps its default -- `Enabled` true, the slopes 0 and 90, the heights open, `Blend` 10, "
+                    .. "`Noise` 0.12. An empty list turns the automatic rock off. Saved with the scene.",
+            },
+            {
+                Name = "ApplyRules",
+                Parameters = {
+                    { Name = "minCorner", Type = "vector" },
+                    { Name = "maxCorner", Type = "vector" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Doc = "Writes what the rules draw into the voxels at the surface between the two corners, so "
+                    .. "the rules can be turned off afterwards with nothing changing on screen. Returns how "
+                    .. "many voxels changed.",
+            },
+            {
                 Name = "Compact",
                 Parameters = {},
                 Returns = { "number" },

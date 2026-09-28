@@ -4710,6 +4710,55 @@ bool Editor::setTerrainLayers(scene::World& world, core::InstanceId root, std::v
     return true;
 }
 
+bool Editor::setTerrainRules(scene::World& world, core::InstanceId root, std::vector<asset::TerrainRule> rules,
+                             std::string_view label, core::u64 coalesceKey)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || rules.size() > asset::MaxTerrainRules || terrain->rules == rules)
+        return false;
+    m_history.record(world, std::string(label), coalesceKey);
+    terrain->rules = std::move(rules);
+    m_sceneDirty = true;
+    return true;
+}
+
+bool Editor::applyTerrainRules(scene::World& world, core::InstanceId root)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || terrain->field.empty() || terrain->rules.empty())
+        return false;
+    // The whole field: its chunks' extent, in its own metres.
+    const std::vector<asset::ChunkKey> keys = terrain->field.chunkKeys();
+    core::i32 lowX = keys.front().x, lowY = keys.front().y, lowZ = keys.front().z;
+    core::i32 highX = lowX, highY = lowY, highZ = lowZ;
+    for (const asset::ChunkKey& key : keys) {
+        lowX = std::min(lowX, key.x);
+        lowY = std::min(lowY, key.y);
+        lowZ = std::min(lowZ, key.z);
+        highX = std::max(highX, key.x);
+        highY = std::max(highY, key.y);
+        highZ = std::max(highZ, key.z);
+    }
+    const double chunk =
+        static_cast<double>(asset::ChunkEdge) * static_cast<double>(terrain->field.settings().voxelSize);
+    const core::DVec3 low{lowX * chunk, lowY * chunk, lowZ * chunk};
+    const core::DVec3 high{(highX + 1) * chunk - 1.0e-3, (highY + 1) * chunk - 1.0e-3, (highZ + 1) * chunk - 1.0e-3};
+
+    m_history.record(world, "Apply Terrain Rules");
+    const asset::EditReport report = asset::applyRules(terrain->field, terrain->rules, low, high, terrain->origin.y);
+    if (report.touched == 0) {
+        (void)m_history.undo(world);
+        m_status = EditorStatus{"the voxels already are what the rules draw", false};
+        return false;
+    }
+    terrain->fieldRevision += 1;
+    m_sceneDirty = true;
+    m_status = EditorStatus{std::to_string(report.touched) + " voxel(s) now hold what the rules drew", false};
+    return true;
+}
+
 bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
                              const HeightmapImport& spec)
 {

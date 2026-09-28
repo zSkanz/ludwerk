@@ -1325,8 +1325,47 @@ TEST_CASE("a terrain's layers survive a save, and the engine's eight are not wri
     REQUIRE(after != nullptr);
     REQUIRE(after->layers.size() == 9);
     CHECK(after->layers[0] == "engine://terrain/grass");
+    // The default rule is not written either, and so reads back as itself.
+    CHECK(after->rules == asset::defaultTerrainRules());
     CHECK(after->layers[2] == "asset://materials/cliff.material.json");
     CHECK(after->layers[8] == "asset://materials/moss.material.json");
+}
+
+TEST_CASE("a terrain's rules survive a save, and turning the rock off is saved too")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    CHECK(scene::writeScene(fixture.world).find("terrainRules") == std::string::npos);
+
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    asset::TerrainRule snow;
+    snow.material = 4;
+    snow.heightMin = 30.0f;
+    snow.blend = 3.0f;
+    snow.appliesTo = {1, 2};
+    component->rules[0].enabled = false;
+    component->rules.push_back(snow);
+    const std::vector<asset::TerrainRule> written = component->rules;
+
+    const auto reload = [&](const std::string& text) {
+        Fixture reloaded;
+        const core::InstanceId target = makeWorkspace(reloaded);
+        REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+        std::vector<asset::TerrainRule> rules;
+        for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+             child = reloaded.world.nextSibling(child)) {
+            if (const scene::TerrainComponent* found = reloaded.world.terrains().find(child); found != nullptr)
+                rules = found->rules;
+        }
+        return rules;
+    };
+    CHECK(reload(scene::writeScene(fixture.world)) == written);
+
+    // An empty list is a list: the rock off, not the rock back.
+    component->rules.clear();
+    CHECK(reload(scene::writeScene(fixture.world)).empty());
 }
 
 TEST_CASE("a sculpted world survives a save and a load")

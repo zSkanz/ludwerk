@@ -1108,6 +1108,30 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
             out.endArray();
             ++report.properties;
         }
+        // The rules, likewise only when they are not the default slope rock.
+        if (terrain->rules != asset::defaultTerrainRules()) {
+            out.key("terrainRules");
+            out.beginArray();
+            for (const asset::TerrainRule& rule : terrain->rules) {
+                out.beginObject();
+                out.field("enabled", rule.enabled);
+                out.field("material", static_cast<core::i64>(rule.material));
+                out.field("slopeMin", static_cast<core::f64>(rule.slopeMin));
+                out.field("slopeMax", static_cast<core::f64>(rule.slopeMax));
+                out.field("heightMin", static_cast<core::f64>(rule.heightMin));
+                out.field("heightMax", static_cast<core::f64>(rule.heightMax));
+                out.field("blend", static_cast<core::f64>(rule.blend));
+                out.field("noise", static_cast<core::f64>(rule.noise));
+                out.key("appliesTo");
+                out.beginInlineArray();
+                for (const core::u8 layer : rule.appliesTo)
+                    out.value(static_cast<core::i64>(layer));
+                out.endArray();
+                out.endObject();
+            }
+            out.endArray();
+            ++report.properties;
+        }
     }
 
     if (world.firstChild(id).valid()) {
@@ -1632,6 +1656,34 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
                 read.emplace_back(layers.at(index).asString());
             component->layers = std::move(read);
             component->layersRevision += 1;
+            ++report.properties;
+        }
+    }
+
+    if (const JsonValue rules = json["terrainRules"]; rules.type() == core::JsonType::Array) {
+        if (TerrainComponent* component = world.terrains().find(id); component != nullptr) {
+            std::vector<asset::TerrainRule> read;
+            for (core::usize index = 0; index < rules.size() && read.size() < asset::MaxTerrainRules; ++index) {
+                const JsonValue entry = rules.at(index);
+                asset::TerrainRule rule;
+                const auto number = [&](std::string_view key, core::f32 fallback) {
+                    return static_cast<core::f32>(entry[key].asNumber(static_cast<core::f64>(fallback)));
+                };
+                rule.enabled = entry["enabled"].asBool(true);
+                rule.material = static_cast<core::u8>(std::clamp(entry["material"].asNumber(3.0), 1.0, 255.0));
+                rule.slopeMin = number("slopeMin", rule.slopeMin);
+                rule.slopeMax = number("slopeMax", rule.slopeMax);
+                rule.heightMin = number("heightMin", rule.heightMin);
+                rule.heightMax = number("heightMax", rule.heightMax);
+                rule.blend = number("blend", rule.blend);
+                rule.noise = number("noise", rule.noise);
+                const JsonValue applies = entry["appliesTo"];
+                for (core::usize at = 0; at < applies.size(); ++at)
+                    rule.appliesTo.push_back(
+                        static_cast<core::u8>(std::clamp(applies.at(at).asNumber(0.0), 0.0, 255.0)));
+                read.push_back(std::move(rule));
+            }
+            component->rules = std::move(read);
             ++report.properties;
         }
     }

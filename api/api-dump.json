@@ -3761,6 +3761,21 @@
       ],
       "Methods": [
         {
+          "Name": "ApplyRules",
+          "Parameters": [
+            {
+              "Name": "minCorner",
+              "Type": "vector"
+            },
+            {
+              "Name": "maxCorner",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "CellCenterToWorld",
           "Parameters": [
             {
@@ -3874,6 +3889,12 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "GetRules",
+          "Parameters": [],
+          "Returns": ["{ { Enabled: boolean, Material: number, SlopeMin: number, SlopeMax: number, HeightMin: number, HeightMax: number, Blend: number, Noise: number, AppliesTo: { number } } }"],
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "HeightAt",
           "Parameters": [
             {
@@ -3974,6 +3995,17 @@
             {
               "Name": "layers",
               "Type": "{ string }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetRules",
+          "Parameters": [
+            {
+              "Name": "rules",
+              "Type": "{ { read Enabled: boolean?, read Material: number?, read SlopeMin: number?, read SlopeMax: number?, read HeightMin: number?, read HeightMax: number?, read Blend: number?, read Noise: number?, read AppliesTo: { number }? } }"
             }
           ],
           "Returns": [],

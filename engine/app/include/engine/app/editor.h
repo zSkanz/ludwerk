@@ -2069,6 +2069,14 @@ public:
     bool setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
                           std::string_view label);
 
+    // **The rules that paint by slope and height** (ADR 0113 §2). A drag on
+    // one field is one undo step: `coalesceKey` joins the frames of it.
+    bool setTerrainRules(scene::World& world, core::InstanceId root, std::vector<asset::TerrainRule> rules,
+                         std::string_view label, core::u64 coalesceKey = 0);
+    // What the rules draw, written into the voxels of the whole terrain --
+    // one undo step. The status line says how many changed.
+    bool applyTerrainRules(scene::World& world, core::InstanceId root);
+
     // **Ground from a heightmap image**, the way every terrain editor starts a
     // real landscape: a square of `size` metres centred on the terrain's
     // origin, black at `low` and white at `high`, in world metres.

@@ -231,6 +231,38 @@ describe("terrain", function()
         end):ToThrow()
     end)
 
+    it("paints by rules that start as the slope rock, and writes them when asked", function()
+        local rules = terrain:GetRules()
+        expect(#rules):ToBe(1)
+        expect(rules[1].Material):ToBe(Rock)
+        expect(rules[1].Enabled):ToBe(true)
+
+        -- A snow line added after it, with the defaults filled in.
+        terrain:SetRules({ rules[1], { Material = 4, HeightMin = 20 } })
+        local read = terrain:GetRules()
+        expect(#read):ToBe(2)
+        expect(read[2].Material):ToBe(4)
+        expect(read[2].HeightMin):ToBe(20)
+        expect(read[2].SlopeMax):ToBe(90)
+        expect(#read[2].AppliesTo):ToBe(0)
+
+        -- A crater's walls are steep: applying writes rock into them.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Grass)
+        terrain:FillBall(vector.create(0, 0, 0), 8, 0)
+        expect(terrain:ApplyRules(vector.create(-12, -10, -12), vector.create(12, 10, 12)) > 0):ToBe(true)
+        expect(terrain:ApplyRules(vector.create(-12, -10, -12), vector.create(12, 10, 12))):ToBe(0)
+
+        -- No rules at all is the automatic rock turned off.
+        terrain:SetRules({})
+        expect(#terrain:GetRules()):ToBe(0)
+        expect(function()
+            terrain:SetRules({ { Material = 0 } })
+        end):ToThrow()
+        expect(function()
+            terrain:SetRules({ { SlopeMin = 120 } })
+        end):ToThrow()
+    end)
+
     it("raises new ground of a material where there was none", function()
         local changed = terrain:RaiseBall(vector.create(0, 0, 0), 4, 3, Sand)
         expect(changed > 0):ToBe(true)

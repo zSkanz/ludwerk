@@ -769,6 +769,9 @@ struct TerrainRayHit
     core::DVec3 position;
     core::Vec3 normal;
     f64 distance = std::numeric_limits<f64>::max();
+    // **What is drawn there** (ADR 0113 §2): the voxel's layer, or the one a
+    // rule paints over it -- what `RaycastResult.Material` reports (ADR 0117).
+    core::u8 material = 0;
 };
 
 [[nodiscard]] TerrainRayHit raycastTerrains(lua_State* L, core::InstanceId workspace, core::Vec3 origin,
@@ -800,6 +803,10 @@ struct TerrainRayHit
                                     hit->position.z + terrain.origin.z};
         best.normal = hit->normal;
         best.distance = hit->distance;
+        const core::Vec3 ground{static_cast<core::f32>(hit->position.x), static_cast<core::f32>(hit->position.y),
+                                static_cast<core::f32>(hit->position.z)};
+        best.material = asset::drawnMaterial(terrain.rules, hit->material, hit->normal, ground,
+                                             static_cast<core::f32>(best.position.y));
     });
     return best;
 }

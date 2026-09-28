@@ -11025,6 +11025,170 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::SetItemTooltip("changes what the ground is made of without moving it at all");
     }
 
+    // --- Rules ----------------------------------------------------
+    //
+    // **What the ground is drawn as by slope and height** (ADR 0113 §2),
+    // live: every change redraws at once, and a drag on one number is one
+    // undo step. Rules draw and do not write; Apply writes.
+    if (terrain != nullptr && section("Rules", icons::ActionGrid, 0)) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("paint by slope and height, in order; drawn, not written, until Apply");
+        ImGui::PopTextWrapPos();
+
+        std::vector<asset::TerrainRule> rules = terrain->rules;
+        const std::vector<std::string>& layers = terrain->layers;
+        const auto nameOf = [&](core::u8 id) {
+            std::string name = id >= 1 && id <= layers.size() ? layers[id - 1] : std::string("?");
+            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
+                name = name.substr(slash + 1);
+            if (name.ends_with(".material.json"))
+                name.resize(name.size() - std::string_view(".material.json").size());
+            return std::to_string(id) + "  " + name;
+        };
+        bool changed = false;
+        const char* label = "Edit Terrain Rule";
+        core::u64 coalesce = 0;
+        std::optional<std::size_t> remove;
+        std::optional<std::pair<std::size_t, std::size_t>> swap;
+
+        for (std::size_t index = 0; index < rules.size(); ++index) {
+            asset::TerrainRule& rule = rules[index];
+            ImGui::PushID(static_cast<int>(index));
+            const std::string title = std::to_string(index + 1) + ". " + nameOf(rule.material) + "###rule";
+            if (ImGui::Checkbox("##on", &rule.enabled)) {
+                changed = true;
+                label = rule.enabled ? "Enable Terrain Rule" : "Disable Terrain Rule";
+            }
+            ImGui::SetItemTooltip("on or off; off draws nothing, and turning the slope rock off is how steep "
+                                  "ground keeps its own layer");
+            ImGui::SameLine();
+            const bool open = ImGui::TreeNodeEx(title.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (open) {
+                const auto row = [&](const char* text) {
+                    ImGui::TextUnformatted(text);
+                    ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                };
+                // A drag's frames are one step: the key is the rule and field.
+                const auto edited = [&](bool moved, core::u64 field) {
+                    if (moved) {
+                        changed = true;
+                        coalesce = 0x52554C45000000ull | (static_cast<core::u64>(index) << 8) | field;
+                    }
+                };
+                row("Material");
+                if (ImGui::BeginCombo("##material", nameOf(rule.material).c_str())) {
+                    for (std::size_t id = 1; id <= layers.size(); ++id) {
+                        if (ImGui::Selectable(nameOf(static_cast<core::u8>(id)).c_str(), rule.material == id)) {
+                            rule.material = static_cast<core::u8>(id);
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                row("Slope");
+                float slope[2] = {rule.slopeMin, rule.slopeMax};
+                edited(ImGui::DragFloat2("##slope", slope, 0.25f, 0.0f, 90.0f, "%.1f deg"), 1);
+                rule.slopeMin = std::clamp(slope[0], 0.0f, 90.0f);
+                rule.slopeMax = std::clamp(slope[1], 0.0f, 90.0f);
+                ImGui::SetItemTooltip("from how steep to how steep, in degrees from level");
+                row("Height");
+                float height[2] = {rule.heightMin, rule.heightMax};
+                edited(ImGui::DragFloat2("##height", height, 0.25f, -100000.0f, 100000.0f, "%.1f m"), 2);
+                rule.heightMin = height[0];
+                rule.heightMax = height[1];
+                ImGui::SetItemTooltip("from how high to how high, in world metres; -100000 and 100000 are open");
+                row("Blend");
+                edited(ImGui::DragFloat("##blend", &rule.blend, 0.1f, 0.0f, 1000.0f, "%.1f"), 3);
+                rule.blend = std::max(rule.blend, 0.0f);
+                ImGui::SetItemTooltip("how wide the edge is: degrees across a slope bound, metres across a height "
+                                      "bound");
+                row("Noise");
+                edited(ImGui::DragFloat("##noise", &rule.noise, 0.005f, 0.0f, 2.0f, "%.3f"), 4);
+                rule.noise = std::max(rule.noise, 0.0f);
+                ImGui::SetItemTooltip("how ragged the edge is; 0 is a clean line");
+                row("Covers");
+                const std::string covers = rule.appliesTo.empty() ? std::string("every layer but its own")
+                                                                  : std::to_string(rule.appliesTo.size()) + " layer(s)";
+                if (ImGui::BeginCombo("##covers", covers.c_str())) {
+                    for (std::size_t id = 1; id <= layers.size(); ++id) {
+                        const auto layer = static_cast<core::u8>(id);
+                        const bool listed =
+                            std::find(rule.appliesTo.begin(), rule.appliesTo.end(), layer) != rule.appliesTo.end();
+                        bool on = rule.appliesTo.empty() ? layer != rule.material : listed;
+                        if (ImGui::Checkbox(nameOf(layer).c_str(), &on)) {
+                            // From "every layer but its own" to an explicit list
+                            // the first time one is unticked.
+                            if (rule.appliesTo.empty()) {
+                                for (std::size_t other = 1; other <= layers.size(); ++other) {
+                                    if (other != rule.material)
+                                        rule.appliesTo.push_back(static_cast<core::u8>(other));
+                                }
+                            }
+                            std::erase(rule.appliesTo, layer);
+                            if (on)
+                                rule.appliesTo.push_back(layer);
+                            std::sort(rule.appliesTo.begin(), rule.appliesTo.end());
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SetItemTooltip("the layers this rule may paint over");
+
+                if (ImGui::SmallButton("up") && index > 0)
+                    swap = std::pair{index, index - 1};
+                ImGui::SameLine();
+                if (ImGui::SmallButton("down") && index + 1 < rules.size())
+                    swap = std::pair{index, index + 1};
+                ImGui::SameLine();
+                if (ImGui::SmallButton("remove"))
+                    remove = index;
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        if (swap.has_value()) {
+            std::swap(rules[swap->first], rules[swap->second]);
+            changed = true;
+            label = "Reorder Terrain Rules";
+            coalesce = 0;
+        }
+        if (remove.has_value()) {
+            rules.erase(rules.begin() + static_cast<std::ptrdiff_t>(*remove));
+            changed = true;
+            label = "Remove Terrain Rule";
+            coalesce = 0;
+        }
+
+        ImGui::BeginDisabled(rules.size() >= asset::MaxTerrainRules);
+        if (labeledIconButton(icons, icons::ActionAdd, "Add Rule", ImVec2(-FLT_MIN, 0.0f))) {
+            // A height rule, which is the one people reach for after the slope
+            // rock: snow above a line.
+            asset::TerrainRule rule;
+            rule.material = layers.size() >= 4 ? 4 : 1;
+            rule.slopeMin = 0.0f;
+            rule.slopeMax = 90.0f;
+            rule.heightMin = 40.0f;
+            rule.blend = 4.0f;
+            rule.noise = 0.25f;
+            rules.push_back(std::move(rule));
+            changed = true;
+            label = "Add Terrain Rule";
+            coalesce = 0;
+        }
+        ImGui::EndDisabled();
+        if (changed)
+            (void)editor.setTerrainRules(world, root, std::move(rules), label, coalesce);
+
+        ImGui::BeginDisabled(terrain->rules.empty() || terrain->field.empty());
+        if (labeledIconButton(icons, icons::ActionPaint, "Apply to Voxels", ImVec2(-FLT_MIN, 0.0f)))
+            (void)editor.applyTerrainRules(world, root);
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("writes what the rules draw into the ground's own materials, so a rule can be "
+                              "turned off afterwards with nothing changing");
+    }
+
     if (terrain == nullptr && editor.tool() != Editor::Tool::Select) {
         // Said rather than left to be discovered: the brush is selected,
         // the ring is not drawing, and the reason is above.

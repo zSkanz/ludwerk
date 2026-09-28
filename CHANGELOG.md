@@ -55,6 +55,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Rules paint a terrain by slope and height** (ADR 0113 §2, the game-ready
+  plan's B2). `Terrain:GetRules()` / `SetRules()`: each rule draws a layer
+  where the ground is between two slopes and two heights, over the layers it
+  names, with an edge as wide and ragged as it says, in order. A new terrain's
+  one rule is the automatic rock it always had -- now something a project can
+  turn off, retune or follow with a snow line. Rules are drawn, not written;
+  `ApplyRules` and the editor's **Apply to Voxels** write them. The same
+  evaluation runs on the CPU with the shader's noise, so what the game reads
+  under a slope is what is drawn there. The editor's Terrain panel has a
+  **Rules** section, live.
 - **A terrain's layers are materials, with textures** (ADR 0113, the
   game-ready plan's B1). A voxel's material id is the terrain's layer of that
   number, a material asset; a new terrain's eight are the engine's own --

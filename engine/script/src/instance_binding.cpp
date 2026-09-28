@@ -1468,6 +1468,125 @@ int methodTerrainSetLayers(lua_State* L)
     return 0;
 }
 
+int methodTerrainGetRules(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::TerrainComponent* terrain = world(L).terrains().find(id);
+    const std::vector<asset::TerrainRule> fallback = asset::defaultTerrainRules();
+    const std::vector<asset::TerrainRule>& rules = terrain != nullptr ? terrain->rules : fallback;
+    lua_createtable(L, static_cast<int>(rules.size()), 0);
+    for (core::usize index = 0; index < rules.size(); ++index) {
+        const asset::TerrainRule& rule = rules[index];
+        lua_createtable(L, 0, 9);
+        lua_pushboolean(L, rule.enabled);
+        lua_setfield(L, -2, "Enabled");
+        const auto number = [&](const char* key, double value) {
+            lua_pushnumber(L, value);
+            lua_setfield(L, -2, key);
+        };
+        number("Material", static_cast<double>(rule.material));
+        number("SlopeMin", static_cast<double>(rule.slopeMin));
+        number("SlopeMax", static_cast<double>(rule.slopeMax));
+        number("HeightMin", static_cast<double>(rule.heightMin));
+        number("HeightMax", static_cast<double>(rule.heightMax));
+        number("Blend", static_cast<double>(rule.blend));
+        number("Noise", static_cast<double>(rule.noise));
+        lua_createtable(L, static_cast<int>(rule.appliesTo.size()), 0);
+        for (core::usize at = 0; at < rule.appliesTo.size(); ++at) {
+            lua_pushnumber(L, static_cast<double>(rule.appliesTo[at]));
+            lua_rawseti(L, -2, static_cast<int>(at + 1));
+        }
+        lua_setfield(L, -2, "AppliesTo");
+        lua_rawseti(L, -2, static_cast<int>(index + 1));
+    }
+    return 1;
+}
+
+int methodTerrainSetRules(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    const auto count = static_cast<core::usize>(lua_objlen(L, 2));
+    if (count > asset::MaxTerrainRules)
+        luaL_argerror(L, 2, "at most 16 rules");
+    std::vector<asset::TerrainRule> rules;
+    rules.reserve(count);
+    for (core::usize at = 0; at < count; ++at) {
+        lua_rawgeti(L, 2, static_cast<int>(at + 1));
+        if (!lua_istable(L, -1))
+            luaL_argerror(L, 2, "a list of rule tables");
+        asset::TerrainRule rule;
+        const auto number = [&](const char* key, core::f32& slot, double low, double high) {
+            lua_getfield(L, -1, key);
+            if (lua_isnumber(L, -1) != 0) {
+                const double value = lua_tonumber(L, -1);
+                if (!std::isfinite(value) || value < low || value > high)
+                    luaL_argerror(L, 2, key);
+                slot = static_cast<core::f32>(value);
+            }
+            else if (!lua_isnil(L, -1)) {
+                luaL_argerror(L, 2, key);
+            }
+            lua_pop(L, 1);
+        };
+        lua_getfield(L, -1, "Enabled");
+        if (lua_isboolean(L, -1))
+            rule.enabled = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        core::f32 material = static_cast<core::f32>(rule.material);
+        number("Material", material, 1.0, 255.0);
+        rule.material = static_cast<core::u8>(material);
+        number("SlopeMin", rule.slopeMin, 0.0, 90.0);
+        number("SlopeMax", rule.slopeMax, 0.0, 90.0);
+        number("HeightMin", rule.heightMin, -100000.0, 100000.0);
+        number("HeightMax", rule.heightMax, -100000.0, 100000.0);
+        number("Blend", rule.blend, 0.0, 100000.0);
+        number("Noise", rule.noise, 0.0, 10.0);
+        rule.appliesTo.clear();
+        lua_getfield(L, -1, "AppliesTo");
+        if (lua_istable(L, -1)) {
+            const auto ids = static_cast<core::usize>(lua_objlen(L, -1));
+            for (core::usize index = 0; index < ids; ++index) {
+                lua_rawgeti(L, -1, static_cast<int>(index + 1));
+                const double value = lua_isnumber(L, -1) != 0 ? lua_tonumber(L, -1) : -1.0;
+                lua_pop(L, 1);
+                if (value < 1.0 || value > 255.0)
+                    luaL_argerror(L, 2, "AppliesTo holds material ids from 1 to 255");
+                rule.appliesTo.push_back(static_cast<core::u8>(value));
+            }
+        }
+        lua_pop(L, 1);
+        lua_pop(L, 1); // the rule
+        rules.push_back(std::move(rule));
+    }
+    if (scene::TerrainComponent* terrain = world(L).terrains().find(id); terrain != nullptr)
+        terrain->rules = std::move(rules);
+    return 0;
+}
+
+int methodTerrainApplyRules(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 low = checkVector3(L, 2);
+    const core::Vec3 high = checkVector3(L, 3);
+    scene::TerrainComponent* terrain = world(L).terrains().find(id);
+    if (terrain == nullptr) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    // The field's own space, like every other verb's.
+    const auto local = [&](core::Vec3 at) {
+        return core::DVec3{static_cast<double>(at.x) - terrain->origin.x, static_cast<double>(at.y) - terrain->origin.y,
+                           static_cast<double>(at.z) - terrain->origin.z};
+    };
+    const asset::EditReport report =
+        asset::applyRules(terrain->field, terrain->rules, local(low), local(high), terrain->origin.y);
+    if (report.touched > 0)
+        terrain->fieldRevision += 1;
+    lua_pushinteger(L, static_cast<int>(report.touched));
+    return 1;
+}
+
 int methodTerrainHeightAt(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -1848,6 +1967,9 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Terrain", "Clear", methodTerrainClear},
     {"Terrain", "GetLayers", methodTerrainGetLayers},
     {"Terrain", "SetLayers", methodTerrainSetLayers},
+    {"Terrain", "GetRules", methodTerrainGetRules},
+    {"Terrain", "SetRules", methodTerrainSetRules},
+    {"Terrain", "ApplyRules", methodTerrainApplyRules},
     {"Terrain", "Compact", methodTerrainCompact},
     {"Terrain", "FillCylinder", methodTerrainFillCylinder},
     {"Terrain", "SmoothBall", methodTerrainSmoothBall},

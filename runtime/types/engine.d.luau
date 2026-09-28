@@ -1203,6 +1203,20 @@ declare extern type Terrain extends Instance with
     --- material `n`. The voxels keep their numbers, so replacing entry 3 repaints every rock at once;
     --- add a project material at the end to paint with it. Saved with the scene.
     function SetLayers(self, layers: { string }): ()
+    --- The rules that paint the ground by slope and height, in the order they paint: each draws
+    --- `Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between `HeightMin`
+    --- and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer but its own), with
+    --- an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new terrain's one rule is the
+    --- slope rock: steep ground drawn as layer 3. **Rules are drawn, not written**: the voxels keep
+    --- their materials until `ApplyRules`. What a raycast reports is what is drawn.
+    function GetRules(self): { { Enabled: boolean, Material: number, SlopeMin: number, SlopeMax: number, HeightMin: number, HeightMax: number, Blend: number, Noise: number, AppliesTo: { number } } }
+    --- Sets the rules, as `GetRules` returns them: up to 16, painted in order. A missing field keeps
+    --- its default -- `Enabled` true, the slopes 0 and 90, the heights open, `Blend` 10, `Noise` 0.12.
+    --- An empty list turns the automatic rock off. Saved with the scene.
+    function SetRules(self, rules: { { read Enabled: boolean?, read Material: number?, read SlopeMin: number?, read SlopeMax: number?, read HeightMin: number?, read HeightMax: number?, read Blend: number?, read Noise: number?, read AppliesTo: { number }? } }): ()
+    --- Writes what the rules draw into the voxels at the surface between the two corners, so the rules
+    --- can be turned off afterwards with nothing changing on screen. Returns how many voxels changed.
+    function ApplyRules(self, minCorner: vector, maxCorner: vector): number
     --- Does nothing and returns 0. It converted the old terrain's voxel columns back to heights. Every
     --- edit now leaves the voxels as compact as they can be, so there is nothing left for it to do. It
     --- stays so scripts that call it keep running.

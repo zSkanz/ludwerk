@@ -253,11 +253,12 @@ TEST_CASE("the render terrain carries its layers, and only for terrain in the wo
     REQUIRE(snapshot.terrains.size() == 1);
     CHECK(snapshot.terrains.front().id == fixture.terrain);
     // The engine's eight (ADR 0113), flat in the old palette's colours until
-    // their textures load, and rock the layer steep ground turns to.
+    // their textures load, and the one rule a new terrain has: steep rock.
     REQUIRE(snapshot.terrains.front().layers.size() == 8);
     const core::Vec3 grass = asset::terrainColorOf(1);
     CHECK(snapshot.terrains.front().layers[0].flat[1] == grass.y);
-    CHECK(snapshot.terrains.front().rockLayer == 3u);
+    REQUIRE(snapshot.terrains.front().rules.size() == 1);
+    CHECK(snapshot.terrains.front().rules[0].material == 3.0f);
 
     RenderWorld elsewhere;
     fixture.loader.appendRenderTerrains(fixture.world, core::InstanceId{}, elsewhere);

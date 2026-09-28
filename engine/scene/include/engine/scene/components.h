@@ -39,6 +39,7 @@
 #include "engine/asset/material.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_layers.h"
+#include "engine/asset/terrain_rules.h"
 #include "engine/asset/voxel.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
@@ -715,6 +716,11 @@ struct TerrainComponent
     // Bumped by every change to `layers`, so the renderer rebuilds its arrays
     // only when they are stale.
     core::u64 layersRevision = 0;
+
+    // **What the ground is drawn as, by slope and height** (ADR 0113 §2), in
+    // the order they paint. A new terrain's is the slope rock of old; a scene
+    // without a list reads that. At most 16.
+    std::vector<asset::TerrainRule> rules = asset::defaultTerrainRules();
 };
 
 // --- The 2D layer (post-v1 phase 3, docs/briefs/p3-2d-kickoff.md) ------------

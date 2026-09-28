@@ -475,6 +475,8 @@ static_assert(sizeof(GpuContactUniforms) == 48, "GpuContactUniforms is a cbuffer
 
 // One entry per material id a terrain can hold: 0 (air, unused) to 255.
 inline constexpr u32 kTerrainLayerSlots = 256;
+// The rules a terrain paints with (ADR 0113 §2), at most.
+inline constexpr u32 kTerrainRuleSlots = 16;
 
 // `b1` of the fragment stage, for `terrain` (ADR 0113): each layer's look,
 // by material id, for one terrain.
@@ -486,11 +488,20 @@ struct GpuTerrainSurfaceUniforms
     f32 layerTint[kTerrainLayerSlots][4]{};
     // Roughness factor, metalness factor, normal scale, 1 for triplanar.
     f32 layerSurface[kTerrainLayerSlots][4]{};
-    // 1 when the arrays hold every layer; the rock layer's id; the count.
+    // Each rule's slope band and height band (`asset::TerrainRuleShape`), its
+    // layer, noise, height jitter and whether it is on, and the layers it
+    // covers as 256 bits.
+    f32 ruleSlope[kTerrainRuleSlots][4]{};
+    f32 ruleHeight[kTerrainRuleSlots][4]{};
+    f32 ruleMisc[kTerrainRuleSlots][4]{};
+    u32 ruleApplies[kTerrainRuleSlots][8]{};
+    // 1 when the arrays hold every layer; the rule count; the layer count; the
+    // terrain's height in the world.
     f32 params[4]{};
 };
 
-static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 16, "GpuTerrainSurfaceUniforms is a cbuffer layout");
+static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 3 * 16 * 16 + 16 * 32 + 16,
+              "GpuTerrainSurfaceUniforms is a cbuffer layout");
 
 // Vertex stage, `b0 space1`, for `decal` (F2).
 struct GpuDecalUniforms

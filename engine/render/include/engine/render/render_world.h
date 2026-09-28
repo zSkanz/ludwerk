@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/asset/terrain_rules.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
@@ -344,8 +345,8 @@ struct RenderTerrain
     DVec3 origin;
     // One per layer, material id 1 first (ADR 0113).
     std::vector<RenderTerrainLayer> layers;
-    // The layer steep ground turns to, or 0 for none.
-    u32 rockLayer = 0;
+    // The rules, as the shader reads them, in the order they paint.
+    std::vector<asset::TerrainRuleShape> rules;
 };
 
 // One node of a terrain's level-of-detail quadtree to draw this frame: the
