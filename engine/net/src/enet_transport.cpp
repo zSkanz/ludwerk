@@ -288,6 +288,17 @@ public:
 
     [[nodiscard]] usize peerCount() const noexcept override { return m_peers.size(); }
 
+    [[nodiscard]] PeerLink link(PeerId peer) const noexcept override
+    {
+        const auto at = m_peers.find(peer.value);
+        if (at == m_peers.end())
+            return {};
+        const ENetPeer* const found = at->second;
+        return PeerLink{.roundTripMs = found->roundTripTime,
+                        .jitterMs = found->roundTripTimeVariance,
+                        .loss = static_cast<f32>(found->packetLoss) / static_cast<f32>(ENET_PEER_PACKET_LOSS_SCALE)};
+    }
+
 private:
     // The id lives in ENet's own per-peer `data` pointer rather than in a map
     // keyed by peer address. That is what keeps `idOf` correct after a peer

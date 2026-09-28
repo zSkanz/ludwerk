@@ -176,11 +176,20 @@ std::optional<core::EngineError> NetworkSession::start(replication::Topology top
     return std::nullopt;
 }
 
-void NetworkSession::receive()
+replication::VisualCorrection NetworkSession::visualCorrection() const
+{
+#if ENG_ENABLE_REPLICATION
+    if (m_replication != nullptr)
+        return m_replication->visualCorrection();
+#endif
+    return {};
+}
+
+void NetworkSession::receive([[maybe_unused]] bool ticking)
 {
 #if ENG_ENABLE_REPLICATION
     if (WorldHost* host = m_host(); host != nullptr && m_replication != nullptr)
-        m_replication->receive(host->world(), host->workspace());
+        m_replication->receive(host->world(), host->workspace(), ticking);
 #endif
 }
 
@@ -303,11 +312,43 @@ void NetworkSession::update()
     }
 
 #if ENG_ENABLE_REPLICATION
-    if (m_replication == nullptr)
+    if (m_replication == nullptr) {
+        state.networkStats = {};
+        m_rateStartedNs = 0;
         return;
+    }
     const replication::Status status = m_replication->status();
     state.networkServerTick = status.serverTick;
     state.networkPeerCount = status.peerCount;
+
+    // --- How the connection is doing (the multiplayer smoothness brief).
+    {
+        const replication::Stats stats = m_replication->stats();
+        scene::EngineState::NetworkStats& shown = state.networkStats;
+        shown.pingMs = static_cast<core::f64>(status.pingMs);
+        shown.jitterMs = static_cast<core::f64>(status.jitterMs);
+        shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
+        shown.lastCorrectionMetres = stats.lastCorrectionMetres;
+        shown.inputBufferDepth = stats.intentDepth;
+        shown.inputStarvations = stats.intentStarvations;
+        const core::u64 now = m_clock ? m_clock() : platform::nowNs();
+        const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
+        if (m_rateStartedNs == 0 || now < m_rateStartedNs) {
+            m_rateStartedNs = now;
+            m_rateSnapshots = snapshots;
+            m_rateCorrections = stats.corrections;
+        }
+        else if (now - m_rateStartedNs >= 1'000'000'000ull) {
+            const core::f64 seconds = static_cast<core::f64>(now - m_rateStartedNs) / 1e9;
+            shown.snapshotsPerSecond =
+                static_cast<core::f64>(snapshots - std::min(snapshots, m_rateSnapshots)) / seconds;
+            shown.correctionsPerSecond =
+                static_cast<core::f64>(stats.corrections - std::min(stats.corrections, m_rateCorrections)) / seconds;
+            m_rateStartedNs = now;
+            m_rateSnapshots = snapshots;
+            m_rateCorrections = stats.corrections;
+        }
+    }
 
     // --- A replica: did the join take, and is the server still there?
     if (state.networkTopology != scene::NetworkTopology::Replica)

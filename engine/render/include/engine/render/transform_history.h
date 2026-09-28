@@ -49,6 +49,18 @@ public:
 
     void clear() noexcept;
 
+    // **One instance drawn off where it is** (the multiplayer smoothness
+    // brief): a replica's own character, after a correction, sliding to where
+    // the simulation already is. Drawn, never simulated -- it is not the
+    // world's, for the reason this class is not.
+    void setVisualOffset(core::InstanceId id, core::DVec3 offset) noexcept
+    {
+        offsetId_ = id;
+        offset_ = offset;
+    }
+    [[nodiscard]] core::InstanceId visualOffsetId() const noexcept { return offsetId_; }
+    [[nodiscard]] core::DVec3 visualOffset() const noexcept { return offset_; }
+
 private:
     struct Entry
     {
@@ -65,6 +77,8 @@ private:
     // determinism smell even though nothing iterates it (R10).
     std::vector<Entry> entries_;
     core::u64 stamp_ = 0;
+    core::InstanceId offsetId_;
+    core::DVec3 offset_{};
 };
 
 // A part's own largest side, and never less than half a metre, so a small fast

@@ -249,6 +249,7 @@ struct BodyRecord
     bool alive = false;
     bool collidable = true;
     bool queryable = true;
+    bool passableForCharacters = false;
     MotionType motion = MotionType::Dynamic;
     CollisionGroup group = kDefaultCollisionGroup;
     u64 userData = 0;
@@ -1597,6 +1598,7 @@ public:
         record.layer = settings.mInnerBodyLayer;
         record.character = new JPH::CharacterVirtual(&settings, toLocal(desc.transform.position),
                                                      toJolt(desc.transform.rotation), desc.userData, &m_system);
+        record.character->SetListener(&m_characterContacts);
 
         return CharacterHandle{slot, record.generation};
     }
@@ -2177,6 +2179,7 @@ private:
         record.alive = true;
         record.collidable = desc.collidable;
         record.queryable = desc.queryable;
+        record.passableForCharacters = desc.passableForCharacters;
         record.group = desc.group;
         record.userData = desc.userData;
 
@@ -2513,6 +2516,30 @@ private:
         const QueryFilter& m_filter;
     };
 
+    // **A character's contacts, as the world decides them** (the multiplayer
+    // smoothness brief): a body marked passable holds a character up and
+    // does not stand in its way -- a contact whose normal is not mostly up is
+    // discarded. Everything else is Jolt's own answer.
+    class CharacterContacts final : public JPH::CharacterContactListener
+    {
+    public:
+        explicit CharacterContacts(const JoltWorld& world) : m_world(world) {}
+
+        [[nodiscard]] bool OnContactValidate(const JPH::CharacterVirtual*,
+                                             const JPH::CharacterContact& contact) override
+        {
+            const BodyRecord* body = m_world.resolve(unpackHandle(contact.mUserData));
+            if (body == nullptr || !body->passableForCharacters)
+                return true;
+            return contact.mContactNormal.GetY() > kPassableSupportNormal;
+        }
+
+    private:
+        // About 45 degrees: steeper than that is a side, not a floor.
+        static constexpr float kPassableSupportNormal = 0.7f;
+        const JoltWorld& m_world;
+    };
+
     CollisionMatrix m_matrix;
     BroadPhaseLayers m_broadPhaseLayers;
     ObjectVsBroadPhaseFilter m_objectVsBroadPhase;
@@ -2528,6 +2555,7 @@ private:
     JPH::JobSystemThreadPool m_jobs;
     core::DVec3 m_origin;
     JPH::PhysicsSystem m_system;
+    CharacterContacts m_characterContacts{*this};
 
     // Which body and character slots are alive, at which generation, and the
     // origin: what a restore must find unchanged (ADR 0101).

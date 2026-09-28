@@ -14096,6 +14096,40 @@ void drawLauncher(LauncherView* view, const IconAtlas* icons)
     ImGui::End();
 }
 
+// **How the connection is doing** (the multiplayer smoothness brief): what a
+// player feels as lag, in the numbers that say why -- the link, the snapshots,
+// how often and how far this machine's character was corrected, and the
+// authority's queue of this player's input.
+void drawNetwork(const scene::World& world)
+{
+    const scene::EngineState& state = world.engineState();
+    const scene::EngineState::NetworkStats& stats = state.networkStats;
+    if (ImGui::BeginTable("##network", 2, ImGuiTableFlags_SizingStretchProp)) {
+        const auto row = [](const char* name, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", name);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(value.c_str());
+        };
+        const auto number = [](double value, int decimals, const char* unit) {
+            char text[64];
+            (void)std::snprintf(text, sizeof(text), "%.*f%s", decimals, value, unit);
+            return std::string(text);
+        };
+        row("Ping", number(stats.pingMs, 0, " ms"));
+        row("Jitter", number(stats.jitterMs, 0, " ms"));
+        row("Loss", number(stats.lossPercent, 1, " %"));
+        row("Snapshots", number(stats.snapshotsPerSecond, 0, " /s"));
+        row("Corrections", number(stats.correctionsPerSecond, 1, " /s"));
+        row("Last correction", number(stats.lastCorrectionMetres * 100.0, 1, " cm"));
+        row("Input buffer", number(static_cast<double>(stats.inputBufferDepth), 0, " ticks"));
+        row("Input ran dry", number(static_cast<double>(stats.inputStarvations), 0, ""));
+        row("Peers", number(static_cast<double>(state.networkPeerCount), 0, ""));
+        ImGui::EndTable();
+    }
+}
+
 void drawShell(const Frame& frame, scene::World* world, core::InstanceId root, Inspector* inspector,
                script::ScriptRuntime* runtime, const StreamingHost* streaming, const RenderCounters& counters)
 {
@@ -14125,6 +14159,13 @@ void drawShell(const Frame& frame, scene::World* world, core::InstanceId root, I
         if (runtime != nullptr) {
             ImGui::SeparatorText("Memory");
             drawMemory(*runtime);
+        }
+
+        // Only in a match, for the reason the streaming panel below is only
+        // where something streams.
+        if (world != nullptr && world->engineState().networkTopology != scene::NetworkTopology::Solo) {
+            ImGui::SeparatorText("Network");
+            drawNetwork(*world);
         }
 
         // Only for a project that streams. A panel of zeroes on every example

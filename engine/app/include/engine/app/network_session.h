@@ -68,7 +68,8 @@ public:
                                                          core::u16 port);
 
     // The frame's traffic, as `IReplication` has it. No-ops while solo.
-    void receive();
+    // `ticking`: whether a simulation tick follows (`IReplication::receive`).
+    void receive(bool ticking = true);
     void send();
     void sendMessages();
 
@@ -78,6 +79,9 @@ public:
     void update();
 
     [[nodiscard]] bool active() const noexcept { return m_replication != nullptr; }
+    // The own character's drawn offset after a correction (a replica's), for
+    // the renderer's transform history.
+    [[nodiscard]] replication::VisualCorrection visualCorrection() const;
     [[nodiscard]] replication::IReplication* replication() noexcept { return m_replication.get(); }
 
     // Handed to every replication this session starts.
@@ -112,6 +116,11 @@ private:
     core::u64 m_joinStartedNs = 0;
     core::f64 m_joinTimeoutSeconds = 10.0;
     std::function<core::u64()> m_clock;
+    // The per-second figures of `EngineState::NetworkStats`, counted over the
+    // last whole second.
+    core::u64 m_rateStartedNs = 0;
+    core::u64 m_rateSnapshots = 0;
+    core::u64 m_rateCorrections = 0;
     std::string m_address;
     // **Who this machine was on each server it joined** (D207), by
     // `address:port`: a script's `Join` after a drop presents the same token,

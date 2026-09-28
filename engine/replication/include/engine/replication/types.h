@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "engine/core/id.h"
+#include "engine/core/math.h"
 #include "engine/core/types.h"
 
 namespace engine::replication {
@@ -138,8 +139,11 @@ struct Status
     u64 serverTick = 0;
     // Connected peers, not counting this process.
     u32 peerCount = 0;
-    // Round trip in milliseconds, on a replica. Zero elsewhere.
+    // The link as the transport measures it: on a replica, to its authority;
+    // on an authority, to its worst peer. Zero where nothing is measured.
     u32 pingMs = 0;
+    u32 jitterMs = 0;
+    core::f32 loss = 0.0f;
     // A replica: whether the authority has welcomed it, and whether the
     // connection went and has not come back (ADR 0106).
     bool welcomed = false;
@@ -164,6 +168,13 @@ struct Stats
     // Of those, the ones corrected by stepping the unanswered commands again
     // from where the authority put the character, rather than by the error.
     u64 replays = 0;
+    // How far the last correction moved the own character, in metres.
+    core::f64 lastCorrectionMetres = 0.0;
+    // **The input buffer** (the multiplayer smoothness brief): on an
+    // authority, the deepest peer's queue this tick and every tick any peer's
+    // ran dry, summed; on a replica, its own, as the authority's snapshots say.
+    u32 intentDepth = 0;
+    u64 intentStarvations = 0;
     u32 spawned = 0;
     u32 despawned = 0;
     // `RemoteEvent` messages (ADR 0077): sent, taken in, and refused -- a flood
@@ -172,6 +183,16 @@ struct Stats
     u64 messagesSent = 0;
     u64 messagesReceived = 0;
     u64 messagesDropped = 0;
+};
+
+// **Where the own character is drawn, against where it is** (the multiplayer
+// smoothness brief): a correction moves the simulation at once, and the
+// drawing slides there over about a tenth of a second -- a pop is what a
+// player sees. `offset` is added to the character's drawn position.
+struct VisualCorrection
+{
+    core::InstanceId character;
+    core::DVec3 offset{};
 };
 
 } // namespace engine::replication

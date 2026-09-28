@@ -606,6 +606,20 @@ u32 AuthoritySession::peerCount() const noexcept
         std::count_if(m_peers.begin(), m_peers.end(), [](const Peer& peer) { return peer.welcomed; }));
 }
 
+net::PeerLink AuthoritySession::worstLink() const noexcept
+{
+    net::PeerLink worst;
+    for (const Peer& peer : m_peers) {
+        if (!peer.welcomed)
+            continue;
+        const net::PeerLink link = m_transport.link(peer.id);
+        worst.roundTripMs = std::max(worst.roundTripMs, link.roundTripMs);
+        worst.jitterMs = std::max(worst.jitterMs, link.jitterMs);
+        worst.loss = std::max(worst.loss, link.loss);
+    }
+    return worst;
+}
+
 NetId AuthoritySession::netIdOf(InstanceId id) const noexcept
 {
     const auto found = m_netIds.find(packed(id));
@@ -848,15 +862,19 @@ void AuthoritySession::sendMessages(scene::World& world)
     }
 }
 
-void AuthoritySession::receive(scene::World& world, InstanceId root)
+void AuthoritySession::receive(scene::World& world, InstanceId root, bool ticking)
 {
     // Where players live. A world with no `NetworkService` -- a test's bare
     // tree -- still replicates; it just has nobody to name.
     const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
     // **A connection that never says hello is let go**: it holds a slot, and
     // a slot is what the next player needs.
+    // The per-tick limits count from one tick to the next, whatever the
+    // frames in between did.
     std::vector<net::PeerId> silent;
     for (Peer& peer : m_peers) {
+        if (!ticking)
+            continue;
         peer.messagesThisTick = 0;
         peer.intentsThisTick = 0;
         peer.ownedThisTick = 0;
@@ -894,9 +912,8 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
             Reader reader(event.payload);
             const auto type = static_cast<MessageType>(reader.u8v());
             if (event.channel == IntentChannel && type == MessageType::Intent && peer->welcomed) {
-                const u64 tick = reader.u64v();
                 scene::PlayerComponent* player = peer->player.valid() ? world.players().find(peer->player) : nullptr;
-                if (!reader.ok() || tick <= peer->intentTick || player == nullptr)
+                if (player == nullptr)
                     break;
                 // One a tick is what a replica sends; a few more is a burst
                 // after a stall. Past that, and past a count no input map
@@ -905,46 +922,68 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                     m_stats.messagesDropped += 1;
                     break;
                 }
-                std::vector<scene::PlayerIntent> intents;
-                const u16 count = reader.u16v();
-                if (!reader.ok() || count > MaxIntentEntries) {
+                // **Up to four ticks, oldest first** (protocol 22): read whole,
+                // then queued -- a tick already applied or already queued is a
+                // redundant copy, and nothing.
+                const u8 ticks = reader.u8v();
+                if (!reader.ok() || ticks == 0 || ticks > IntentRedundancy) {
                     m_stats.messagesDropped += 1;
                     break;
                 }
-                intents.reserve(count);
-                for (u16 at = 0; at < count && reader.ok(); ++at) {
-                    const std::string_view name = reader.text();
-                    scene::PlayerIntent intent;
-                    intent.type = static_cast<core::i32>(reader.u8v());
-                    intent.axis.x = floatOf(reader.u32v());
-                    intent.axis.y = floatOf(reader.u32v());
-                    intent.axis.z = floatOf(reader.u32v());
-                    intent.pressed = reader.u8v() != 0;
-                    if (!reader.ok())
+                std::vector<std::pair<u64, std::vector<scene::PlayerIntent>>> carried;
+                for (u8 slot = 0; slot < ticks && reader.ok(); ++slot) {
+                    const u64 tick = reader.u64v();
+                    std::vector<scene::PlayerIntent> intents;
+                    const u16 count = reader.u16v();
+                    if (!reader.ok() || count > MaxIntentEntries) {
+                        reader.fail();
                         break;
-                    // **A peer's numbers, made safe** (audit E3): a
-                    // non-finite axis is none, and every axis is bounded --
-                    // a direction is about 1, a pointer a few thousand pixels.
-                    intent.axis = core::sanitize(intent.axis, 1e6f);
-                    // `Enum.InputActionType`: Bool to ViewportPosition, 0 to 4.
-                    if (intent.type < 0 || intent.type > 4)
-                        continue;
-                    // **Looked up, never interned**: the atom table never
-                    // frees, and a peer naming a new action every packet would
-                    // grow it for ever. An action nothing on this machine has
-                    // named -- no `InputAction`, no `GetIntent` -- is nothing
-                    // anybody here reads.
-                    intent.action = world.atoms().lookup(name);
-                    if (!intent.action.valid())
-                        continue;
-                    intents.push_back(intent);
+                    }
+                    intents.reserve(count);
+                    for (u16 at = 0; at < count && reader.ok(); ++at) {
+                        const std::string_view name = reader.text();
+                        scene::PlayerIntent intent;
+                        intent.type = static_cast<core::i32>(reader.u8v());
+                        intent.axis.x = floatOf(reader.u32v());
+                        intent.axis.y = floatOf(reader.u32v());
+                        intent.axis.z = floatOf(reader.u32v());
+                        intent.pressed = reader.u8v() != 0;
+                        if (!reader.ok())
+                            break;
+                        // **A peer's numbers, made safe** (audit E3): a
+                        // non-finite axis is none, and every axis is bounded --
+                        // a direction is about 1, a pointer a few thousand pixels.
+                        intent.axis = core::sanitize(intent.axis, 1e6f);
+                        // `Enum.InputActionType`: Bool to ViewportPosition, 0 to 4.
+                        if (intent.type < 0 || intent.type > 4)
+                            continue;
+                        // **Looked up, never interned**: the atom table never
+                        // frees, and a peer naming a new action every packet would
+                        // grow it for ever. An action nothing on this machine has
+                        // named -- no `InputAction`, no `GetIntent` -- is nothing
+                        // anybody here reads.
+                        intent.action = world.atoms().lookup(name);
+                        if (!intent.action.valid())
+                            continue;
+                        intents.push_back(intent);
+                    }
+                    carried.emplace_back(tick, std::move(intents));
                 }
                 // Whole or not at all: half an intent is a player whose second
                 // key was released by a truncated packet.
-                if (reader.ok() && reader.done()) {
-                    player->intents = std::move(intents);
-                    peer->intentTick = tick;
+                if (!reader.ok() || !reader.done()) {
+                    m_stats.messagesDropped += 1;
+                    break;
                 }
+                for (auto& [tick, intents] : carried) {
+                    if ((peer->intentStarted && tick <= peer->appliedTick) || peer->intentQueue.contains(tick))
+                        continue;
+                    peer->intentQueue.emplace(tick, std::move(intents));
+                }
+                // Bounded: a peer that sends far ahead is caught up by
+                // `applyIntents`, and one that floods loses its oldest.
+                while (peer->intentQueue.size() > MaxQueuedIntents)
+                    peer->intentQueue.erase(peer->intentQueue.begin());
                 break;
             }
             if (event.channel == OwnershipChannel && type == MessageType::OwnedState && peer->welcomed) {
@@ -1156,6 +1195,76 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
         case net::TransportEvent::Kind::None:
             break;
         }
+    }
+    if (ticking)
+        applyIntents(world);
+}
+
+void AuthoritySession::applyIntents(scene::World& world)
+{
+    const auto idle = [](const std::vector<scene::PlayerIntent>& intents) {
+        return std::all_of(intents.begin(), intents.end(), [](const scene::PlayerIntent& intent) {
+            return !intent.pressed && intent.axis.x == 0.0f && intent.axis.y == 0.0f && intent.axis.z == 0.0f;
+        });
+    };
+    m_stats.intentDepth = 0;
+    for (Peer& peer : m_peers) {
+        scene::PlayerComponent* player =
+            peer.welcomed && peer.player.valid() ? world.players().find(peer.player) : nullptr;
+        if (player == nullptr)
+            continue;
+        if (!peer.intentStarted) {
+            if (peer.intentQueue.empty())
+                continue;
+            // **Started `intentDelay` ticks behind the first**, so the queue
+            // holds that many when the first is applied -- the room arrival
+            // jitter needs.
+            peer.intentStarted = true;
+            peer.firstIntentTick = peer.intentQueue.begin()->first;
+            peer.appliedTick = peer.firstIntentTick - std::min<u64>(peer.firstIntentTick, 1u + peer.intentDelay);
+        }
+        const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
+        const u64 depth = newest > peer.appliedTick ? newest - peer.appliedTick : 0;
+        m_stats.intentDepth = std::max(m_stats.intentDepth, static_cast<u32>(std::min<u64>(depth, 0xFFFF)));
+        const bool resting = idle(peer.lastIntents);
+        // **The delay adapts, and only while the player is idle**: holding a
+        // tick or skipping one then moves nothing, so the change is never a
+        // correction.
+        if (resting && depth + 1 < peer.intentDelay && !peer.intentQueue.empty()) {
+            player->intents = peer.lastIntents;
+            continue;
+        }
+        u64 next = peer.appliedTick + 1;
+        if (depth > static_cast<u64>(peer.intentDelay) + IntentCatchUp ||
+            (resting && depth > static_cast<u64>(peer.intentDelay) + 1)) {
+            // Too far behind the newest: caught up, what is skipped dropped.
+            next = newest - peer.intentDelay;
+        }
+        std::vector<scene::PlayerIntent>* found = nullptr;
+        if (const auto at = peer.intentQueue.find(next); at != peer.intentQueue.end())
+            found = &at->second;
+        if (found != nullptr) {
+            peer.lastIntents = std::move(*found);
+            peer.ticksSinceStarved += 1;
+            if (peer.ticksSinceStarved > IntentDelayRelaxTicks && peer.intentDelay > 1) {
+                peer.intentDelay -= 1;
+                peer.ticksSinceStarved = 0;
+            }
+        }
+        else if (next >= peer.firstIntentTick) {
+            // **Run dry: the last one stands in for this tick**, and the real
+            // one is dropped when it arrives. For a held key the two are the
+            // same, and nothing is corrected.
+            peer.starvations += 1;
+            m_stats.intentStarvations += 1;
+            peer.ticksSinceStarved = 0;
+            peer.intentDelay = std::min(peer.intentDelay + 1, MaxIntentDelay);
+        }
+        player->intents = peer.lastIntents;
+        peer.appliedTick = next;
+        if (next >= peer.firstIntentTick)
+            peer.intentTick = next;
+        peer.intentQueue.erase(peer.intentQueue.begin(), peer.intentQueue.upper_bound(next));
     }
 }
 
@@ -1589,6 +1698,13 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     // The last of this peer's intents the authority applied, for its
     // prediction to reconcile against (ADR 0076).
     snapshot.u64v(peer.intentTick);
+    // How this peer's input buffer stands (protocol 22): what its own overlay
+    // shows, which only the authority can see.
+    {
+        const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
+        snapshot.u8v(static_cast<u8>(std::min<u64>(newest > peer.appliedTick ? newest - peer.appliedTick : 0, 255)));
+        snapshot.u32v(static_cast<u32>(std::min<u64>(peer.starvations, 0xFFFFFFFFu)));
+    }
     // The names this message's fields mention, by the authority's atom. The
     // replica interns each once and keeps the mapping, so a name costs its
     // bytes on the wire when it changes rather than every tick.
@@ -1630,7 +1746,7 @@ const WorldState* ReplicaSession::stateAt(u64 tick) const noexcept
     return nullptr;
 }
 
-void ReplicaSession::receive(scene::World& world, InstanceId root)
+void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
 {
     std::vector<net::TransportEvent> events;
     (void)m_transport.poll(events, 0);
@@ -1749,8 +1865,20 @@ void ReplicaSession::receive(scene::World& world, InstanceId root)
         }
     }
     resolveCharacters(world, root);
+    if (!ticking)
+        return;
     m_serverClock += 1;
     interpolate(world);
+    decayVisualOffset();
+}
+
+void ReplicaSession::decayVisualOffset() noexcept
+{
+    m_visualOffset = core::DVec3{m_visualOffset.x * VisualDecayPerTick, m_visualOffset.y * VisualDecayPerTick,
+                                 m_visualOffset.z * VisualDecayPerTick};
+    const core::DVec3& o = m_visualOffset;
+    if (o.x * o.x + o.y * o.y + o.z * o.z < 1e-8)
+        m_visualOffset = core::DVec3{};
 }
 
 void ReplicaSession::sendMessages(scene::World& world)
@@ -1912,7 +2040,12 @@ void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
                 ? team->second
                 : InstanceId{};
         if (player->local) {
-            m_owned = named != m_characters.end() && local != m_locals.end() ? named->second : 0u;
+            const u32 owned = named != m_characters.end() && local != m_locals.end() ? named->second : 0u;
+            if (owned != m_owned) {
+                m_ownedSynced = false;
+                m_predicted.clear();
+            }
+            m_owned = owned;
             // What was buffered for it before this machine knew it was its
             // own: the newest of it is where it starts being predicted from.
             if (const auto buffered = m_owned != 0 ? m_samples.find(m_owned) : m_samples.end();
@@ -2127,7 +2260,7 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
         return;
     // What this replica predicted for its own character at this tick, for the
     // snapshot that answers this intent to be compared against.
-    if (m_owned != 0) {
+    if (m_owned != 0 && m_ownedSynced) {
         const auto local = m_locals.find(m_owned);
         const scene::PartComponent* part =
             local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
@@ -2142,21 +2275,31 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
     const scene::PlayerComponent* player = local.valid() ? world.players().find(local) : nullptr;
     if (player == nullptr)
         return;
-    Writer intent;
-    intent.u8v(static_cast<u8>(MessageType::Intent));
-    intent.u64v(tick);
-    intent.u16v(static_cast<u16>(std::min<usize>(player->intents.size(), 0xFFFF)));
-    for (usize at = 0; at < player->intents.size() && at < 0xFFFF; ++at) {
-        const scene::PlayerIntent& one = player->intents[at];
+    Writer one;
+    one.u64v(tick);
+    const usize count = std::min<usize>(player->intents.size(), MaxIntentEntries);
+    one.u16v(static_cast<u16>(count));
+    for (usize at = 0; at < count; ++at) {
+        const scene::PlayerIntent& each = player->intents[at];
         // **By name**: the authority's atom numbers are not this world's, and
         // an action is what both ends' scripts call it.
-        intent.text(world.atoms().text(one.action));
-        intent.u8v(static_cast<u8>(one.type));
-        intent.u32v(bitsOf(one.axis.x));
-        intent.u32v(bitsOf(one.axis.y));
-        intent.u32v(bitsOf(one.axis.z));
-        intent.u8v(one.pressed ? 1 : 0);
+        one.text(world.atoms().text(each.action));
+        one.u8v(static_cast<u8>(each.type));
+        one.u32v(bitsOf(each.axis.x));
+        one.u32v(bitsOf(each.axis.y));
+        one.u32v(bitsOf(each.axis.z));
+        one.u8v(each.pressed ? 1 : 0);
     }
+    m_sentIntents.emplace_back(tick, std::move(one.bytes));
+    while (m_sentIntents.size() > IntentRedundancy)
+        m_sentIntents.pop_front();
+    // **This tick and the three before it** (protocol 22): a lost message is
+    // a tick of input the next one still carries.
+    Writer intent;
+    intent.u8v(static_cast<u8>(MessageType::Intent));
+    intent.u8v(static_cast<u8>(m_sentIntents.size()));
+    for (const auto& [sentTick, bytes] : m_sentIntents)
+        intent.bytes.insert(intent.bytes.end(), bytes.begin(), bytes.end());
     sendBytes(m_transport, m_authority, intent.bytes, net::Delivery::UnreliableSequenced, IntentChannel, m_stats);
     sendOwned(world, tick);
 }
@@ -2320,7 +2463,9 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_teams.clear();
     m_ownedParts.clear();
     m_predicted.clear();
+    m_sentIntents.clear();
     m_owned = 0;
+    m_ownedSynced = false;
     m_ackedIntent = 0;
     m_reconciledAck = 0;
     m_applied = 0;
@@ -2364,10 +2509,14 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     const u64 baseTick = reader.u64v();
     const u64 checksum = reader.u64v();
     const u64 intentTick = reader.u64v();
+    const u8 intentDepth = reader.u8v();
+    const u32 intentStarvations = reader.u32v();
     // Older than what the world already shows: a reordered straggler, and
     // applying it would move the world backwards.
     if (!reader.ok() || tick <= m_applied)
         return;
+    m_stats.intentDepth = intentDepth;
+    m_stats.intentStarvations = intentStarvations;
 
     const WorldState* base = baseTick != 0 ? stateAt(baseTick) : nullptr;
     if (baseTick != 0 && base == nullptr)
@@ -2488,14 +2637,29 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
     // such prediction -- the authority has applied none of this replica's
     // intents yet, or it answered one this replica no longer remembers -- is
     // nothing to reconcile against, so the authority is simply right.
+    //
+    // **An answer with no prediction is not a reason to throw the whole
+    // history away**: the authority applies intents a few ticks behind the
+    // newest (the multiplayer smoothness brief), so it answers ticks older
+    // than the one this replica is on. Cleared whole, the history was one
+    // every later answer found empty -- snapped, and cleared again, for ever.
     const Sample* predicted = nullptr;
     for (const Sample& sample : m_predicted) {
         if (sample.tick == m_ackedIntent)
             predicted = &sample;
     }
-    if (m_ackedIntent == 0 || predicted == nullptr) {
+    if (m_ackedIntent == 0 || !m_ownedSynced) {
+        // None of this replica's intents applied yet, or a character that has
+        // just become this machine's: the authority is right, and the
+        // prediction starts from it.
         part->cframe = authority;
         m_predicted.clear();
+        m_ownedSynced = true;
+        return;
+    }
+    if (predicted == nullptr) {
+        part->cframe = authority;
+        std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick <= m_ackedIntent; });
         return;
     }
 
@@ -2688,7 +2852,27 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                         else if (motion->name == "JumpSpeed")
                             start.jumpSpeed = asF32(entity.fields[other]);
                     }
+                    // **Corrected at once, drawn sliding** (the multiplayer
+                    // smoothness brief): what the correction moved is kept
+                    // as an offset the drawing decays over a tenth of a
+                    // second, unless it is a teleport.
+                    const scene::PartComponent* drawn = world.parts().find(local->second);
+                    const core::DVec3 before = drawn != nullptr ? drawn->cframe.position : core::DVec3{};
+                    const u64 counted = m_stats.corrections;
                     reconcile(world, local->second, start);
+                    if (drawn != nullptr) {
+                        const core::DVec3 moved = before - drawn->cframe.position;
+                        const f64 distance = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
+                        if (m_visualCharacter != local->second)
+                            m_visualOffset = core::DVec3{};
+                        m_visualCharacter = local->second;
+                        m_visualOffset = m_visualOffset + moved;
+                        const core::DVec3& o = m_visualOffset;
+                        if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
+                            m_visualOffset = core::DVec3{};
+                        if (m_stats.corrections != counted)
+                            m_stats.lastCorrectionMetres = distance;
+                    }
                     m_reconciledAck = m_ackedIntent;
                 }
                 // The MOTION state is the local simulation's; the settings it

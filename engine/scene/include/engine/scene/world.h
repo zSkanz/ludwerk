@@ -306,6 +306,22 @@ struct EngineState
     u64 networkServerTick = 0;
     u32 networkPeerCount = 0;
 
+    // **How the connection is doing** (the multiplayer smoothness brief), for
+    // `NetworkService:GetStats` and the overlay's Network panel. Facts about
+    // the process, as the three above; zero solo.
+    struct NetworkStats
+    {
+        f64 pingMs = 0.0;
+        f64 jitterMs = 0.0;
+        f64 lossPercent = 0.0;
+        f64 snapshotsPerSecond = 0.0;
+        f64 correctionsPerSecond = 0.0;
+        f64 lastCorrectionMetres = 0.0;
+        u32 inputBufferDepth = 0;
+        u64 inputStarvations = 0;
+    };
+    NetworkStats networkStats;
+
     // `RemoteEvent` messages (N2): those a script sent, waiting for the
     // replication engine, and those that arrived, waiting for the tick that
     // fires them. Transport, not world state, so neither reaches the hash.

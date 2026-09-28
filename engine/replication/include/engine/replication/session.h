@@ -77,8 +77,31 @@ inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
 // sane count in either; what is over these is dropped, and a count over them
 // is a refusal of the whole message. The byte budget is what `RemoteEvent`
 // payloads may add up to, on top of the message count above.
-inline constexpr u32 MaxIntentsPerTick = 2;
+inline constexpr u32 MaxIntentsPerTick = 8;
 inline constexpr u16 MaxIntentEntries = 256;
+
+// **Intents, buffered and applied one a tick** (the multiplayer smoothness
+// brief, protocol 22). An `Intent` message carries the newest tick and up to
+// three before it, so one lost message loses no input; the authority queues
+// them by tick and applies exactly one a tick, in order, a few ticks behind
+// the newest so arrival jitter never leaves it without one.
+inline constexpr u8 IntentRedundancy = 4;
+// Where the delay starts, and the bounds it adapts between: a tick more for
+// every tick the queue ran dry, a tick less after `IntentDelayRelaxTicks`
+// without one -- changed only while the player is idle, so the change itself
+// moves nothing.
+inline constexpr u32 InitialIntentDelay = 2;
+inline constexpr u32 MaxIntentDelay = 6;
+inline constexpr u32 IntentDelayRelaxTicks = 600;
+// Queued past the delay by more than this, the queue is caught up at once: a
+// replica that stalled and then sent a burst is not replayed a second late.
+inline constexpr u32 IntentCatchUp = 8;
+inline constexpr usize MaxQueuedIntents = 64;
+
+// The visual slide of a correction: what is left of it after each tick, and
+// the distance past which a correction is a teleport and drawn as one.
+inline constexpr core::f64 VisualDecayPerTick = 0.6;
+inline constexpr core::f64 VisualSnapMetres = 2.0;
 inline constexpr u32 MaxOwnedStatesPerTick = 2;
 inline constexpr u16 MaxOwnedRecords = 4096;
 inline constexpr u16 MaxRemoteRefs = 1024;
@@ -156,7 +179,7 @@ public:
     // stops being one, so this is where the authority's world gains and loses
     // players -- and where what they did lands, before the tick that reads it.
     // `root`'s parent is the data model the players are found under.
-    void receive(scene::World& world, core::InstanceId root);
+    void receive(scene::World& world, core::InstanceId root, bool ticking = true);
 
     // Captures `root`'s subtree as it stands at `tick` and sends every
     // welcomed peer what it lacks: spawns, despawns, then the snapshot.
@@ -169,6 +192,8 @@ public:
 
     [[nodiscard]] Stats stats() const noexcept { return m_stats; }
     [[nodiscard]] u32 peerCount() const noexcept;
+    // The worst of the welcomed peers' links: what an authority's overlay shows.
+    [[nodiscard]] net::PeerLink worstLink() const noexcept;
     // The network id an instance travels under, or an invalid id when it has
     // never been captured. For tests and for `Player` mapping.
     [[nodiscard]] NetId netIdOf(core::InstanceId id) const noexcept;
@@ -196,7 +221,22 @@ private:
         // Who that player is, across connections (ADR 0085).
         PlayerToken token;
         core::InstanceId player;
+        // **The intent tick whose step the world now holds** -- what a
+        // snapshot acknowledges, so the replica compares the position with the
+        // prediction that produced it (the multiplayer smoothness brief). Zero
+        // until the first of the replica's own is applied.
         u64 intentTick = 0;
+        // Received and not yet applied, by tick; the last applied, which
+        // stands in for a tick that has not arrived; and the delay the queue
+        // is kept at.
+        std::map<u64, std::vector<scene::PlayerIntent>> intentQueue;
+        std::vector<scene::PlayerIntent> lastIntents;
+        bool intentStarted = false;
+        u64 appliedTick = 0;
+        u64 firstIntentTick = 0;
+        u32 intentDelay = InitialIntentDelay;
+        u32 ticksSinceStarved = 0;
+        u64 starvations = 0;
         // The roster this peer was last sent, so it is sent again only when it
         // changes.
         std::vector<u32> roster;
@@ -262,6 +302,8 @@ private:
     // Every owner's attributes against what was last sent (ADR 0106), into
     // `m_attributeEdits`.
     void diffAttributes(const scene::World& world, core::InstanceId root);
+    // One intent a peer, the next in tick order, as this tick's.
+    void applyIntents(scene::World& world);
     void sendAttributes(Peer& peer, const std::vector<u32>& entering);
 
     using TileBlock = std::pair<scene::TileChunkKey, scene::TileChunk>;
@@ -326,7 +368,7 @@ public:
 
     // Applies everything that arrived, in arrival order, under `root`, and
     // acknowledges what it reconstructed.
-    void receive(scene::World& world, core::InstanceId root);
+    void receive(scene::World& world, core::InstanceId root, bool ticking = true);
 
     // Sends what the player at this machine did this tick: their intents, as
     // this world's `captureLocalIntents` left them. Unreliable and sequenced,
@@ -338,6 +380,8 @@ public:
     void sendMessages(scene::World& world);
 
     [[nodiscard]] bool welcomed() const noexcept { return m_welcomed; }
+    // The link to the authority, as the transport measures it.
+    [[nodiscard]] net::PeerLink link() const noexcept { return m_transport.link(m_authority); }
     [[nodiscard]] bool connected() const noexcept { return m_connected; }
     // Whether the connection went and has not come back: the host's cue to
     // dial again (`rebind`).
@@ -377,8 +421,14 @@ public:
     // Snapshots refused because the reconstruction did not match what the
     // authority described. Zero in a correct build; a test asserts it.
     [[nodiscard]] u64 checksumFailures() const noexcept { return m_checksumFailures; }
+    // The own character's drawn offset (`VisualCorrection`).
+    [[nodiscard]] VisualCorrection visualCorrection() const noexcept
+    {
+        return VisualCorrection{m_visualCharacter, m_visualOffset};
+    }
 
 private:
+    void decayVisualOffset() noexcept;
     void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void onSpawn(scene::World& world, std::span<const u8> bytes);
     void onDespawn(scene::World& world, std::span<const u8> bytes);
@@ -438,6 +488,15 @@ private:
     std::map<u32, u32> m_teams;
     // The NetId of this machine's own player's character, or zero.
     u32 m_owned = 0;
+    // Whether the own character has taken the authority's state since it
+    // became this machine's: until it has, nothing is predicted from it. The
+    // roster that names it is reliable and the snapshots that place it are
+    // not, so a character could be predicted from where it was spawned --
+    // the origin -- and corrected the moment the first answer came.
+    bool m_ownedSynced = false;
+    // What is left to slide of the corrections so far, and whose.
+    core::InstanceId m_visualCharacter;
+    core::DVec3 m_visualOffset{};
     // The parts this replica owns (ADR 0099): simulated here, sent up, and
     // never overwritten by a snapshot.
     std::set<u32> m_ownedParts;
@@ -455,6 +514,9 @@ private:
     // intent tick that produced it, and the last intent the authority applied.
     std::deque<Sample> m_predicted;
     u64 m_ackedIntent = 0;
+    // The last `IntentRedundancy` intents sent, encoded, oldest first: each
+    // message carries them all (protocol 22).
+    std::deque<std::pair<u64, std::vector<u8>>> m_sentIntents;
     // The answer the own character was last compared against.
     u64 m_reconciledAck = 0;
     // Interpolation: every remote part's last few snapshot transforms, by

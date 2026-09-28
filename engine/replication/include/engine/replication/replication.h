@@ -53,7 +53,16 @@ public:
     // `root` is what is replicated -- the `Workspace` -- passed rather than
     // looked up, so the module never has to know how a world is arranged above
     // the part of it that travels.
-    virtual void receive(scene::World& world, core::InstanceId root) = 0;
+    //
+    // **`ticking`: whether a simulation tick follows this call.** A frame that
+    // runs no tick still services the connection, and what happens once a
+    // tick -- an authority applying each peer's next intent, a replica's
+    // clock and interpolation -- must not happen then too: at a thousand
+    // frames a second a server consumed input a thousand times a second, and
+    // a replica drawn at 144 Hz ran its clock at more than twice the tick
+    // rate and was snapped back at every snapshot (the multiplayer smoothness
+    // brief).
+    virtual void receive(scene::World& world, core::InstanceId root, bool ticking = true) = 0;
 
     // Extracts, diffs and sends this tick's state.
     //
@@ -89,6 +98,10 @@ public:
     using SceneChanger = std::function<void(scene::World&, const std::string&, std::vector<core::u8>)>;
     virtual void setSceneChanger(SceneChanger changer) = 0;
     [[nodiscard]] virtual std::vector<core::InstanceId> drainStreamedOut() = 0;
+
+    // A replica's own character's drawn offset (`VisualCorrection`); nothing
+    // on an authority.
+    [[nodiscard]] virtual VisualCorrection visualCorrection() const { return {}; }
 
     // Closes every connection and stops listening. Idempotent.
     virtual void shutdown() = 0;

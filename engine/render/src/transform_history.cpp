@@ -44,8 +44,10 @@ core::f64 teleportReach(core::Vec3 size) noexcept
     return static_cast<core::f64>(std::fmax(largest, 0.5f));
 }
 
-core::CFrameD interpolatedCFrame(const TransformHistory* history, core::InstanceId id, const core::CFrameD& current,
-                                 core::f32 alpha, core::f64 teleport)
+namespace {
+
+core::CFrameD betweenTicks(const TransformHistory* history, core::InstanceId id, const core::CFrameD& current,
+                           core::f32 alpha, core::f64 teleport)
 {
     using core::CFrameD;
     using core::DVec3;
@@ -81,6 +83,17 @@ core::CFrameD interpolatedCFrame(const TransformHistory* history, core::Instance
     }
 
     return core::lerp(*earlier, current, static_cast<core::f64>(alpha));
+}
+
+} // namespace
+
+core::CFrameD interpolatedCFrame(const TransformHistory* history, core::InstanceId id, const core::CFrameD& current,
+                                 core::f32 alpha, core::f64 teleport)
+{
+    core::CFrameD drawn = betweenTicks(history, id, current, alpha, teleport);
+    if (history != nullptr && id.valid() && id == history->visualOffsetId())
+        drawn.position = drawn.position + history->visualOffset();
+    return drawn;
 }
 
 } // namespace engine::render

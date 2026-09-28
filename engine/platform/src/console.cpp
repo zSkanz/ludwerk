@@ -45,6 +45,17 @@ bool consoleHandle(ConsoleStream stream, HANDLE& out)
 
 } // namespace
 
+bool consoleClosesWithProcess() noexcept
+{
+#ifdef _WIN32
+    // One process on the console is this one: nobody started it from a shell.
+    DWORD processes[2] = {};
+    return GetConsoleProcessList(processes, 2) == 1;
+#else
+    return false;
+#endif
+}
+
 void writeConsole(ConsoleStream stream, std::string_view utf8)
 {
     if (utf8.empty())

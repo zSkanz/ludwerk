@@ -98,6 +98,8 @@
   "platform.window.title": "{brand} {version}",
   "engine.frame.warn.catch_up_clamped": "Frame took {ms} ms; dropped simulated time after {ticks} catch-up ticks.",
   "engine.frame.info.stats": "{frames} measured frames: median {median} ms, worst {worst} ms, {draws} draws for {objects} visible objects, {triangles} triangles.",
+  "engine.server.err.title": "The server did not start",
+  "engine.server.ok": "OK",
   "engine.err.tick_exception": "A tick ended early on an error that escaped the script runtime; the game goes on. {message}",
   "engine.close.warn.grace_expired": "A BindToClose handler was still running after {seconds} s; the shutdown is going ahead without it.",
   "scene.warn.close_grace_expired": "A scene:BindToClose handler was still running after {seconds} s; the scene is changing without it.",

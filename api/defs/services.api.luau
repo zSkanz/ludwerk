@@ -813,6 +813,23 @@ local Classes: { Schema.Class } = {
                     .. "-- so a game that loops over its players is already a multiplayer game.",
             },
             {
+                Name = "GetStats",
+                Parameters = {},
+                Returns = {
+                    "{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, "
+                        .. "CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, "
+                        .. "InputStarvations: number }",
+                },
+                ThreadSafety = "Unsafe",
+                Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
+                    .. "round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets "
+                    .. "lost in percent (`Loss`), snapshots a second, corrections of this machine's own "
+                    .. "character a second and how far the last one moved it in metres (`LastCorrection`), and "
+                    .. "the authority's queue of this player's input -- how many ticks it holds "
+                    .. "(`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On an "
+                    .. "authority, the worst peer's link and the deepest queue. All zero solo.",
+            },
+            {
                 Name = "Join",
                 Parameters = { { Name = "address", Type = "string?", Default = "nil" } },
                 Returns = {},

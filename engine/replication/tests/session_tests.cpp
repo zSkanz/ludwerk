@@ -491,8 +491,10 @@ TEST_CASE("a joined replica is a player on the authority, and what it does arriv
         scene::PlayerIntent{client.atoms.intern("Jump"), 0, core::Vec3{}, true},
         scene::PlayerIntent{client.atoms.intern("Move"), 2, core::Vec3{0.5f, -1.0f, 0.0f}, false},
     };
-    step(4);
-    step(5);
+    // A few ticks: the authority applies a replica's intents a few ticks
+    // behind the newest, so arrival jitter never leaves it without one.
+    for (core::u64 tick = 4; tick <= 10; ++tick)
+        step(tick);
     const scene::PlayerComponent* seen = server.world.players().find(remote);
     REQUIRE(seen != nullptr);
     REQUIRE(seen->intents.size() == 2);
@@ -569,11 +571,13 @@ struct PlayedMatch
     net::PeerId toServer;
     core::u64 tick = 0;
 
-    explicit PlayedMatch(const net::LossConfig* loss = nullptr)
+    explicit PlayedMatch(const net::LossConfig* loss = nullptr, const net::LossConfig* clientLoss = nullptr)
     {
         seedCatalog();
         serverTransport = loss != nullptr ? net::createLossyTransport(net::createMemoryTransport(network), *loss)
                                           : net::createMemoryTransport(network);
+        if (clientLoss != nullptr)
+            clientTransport = net::createLossyTransport(net::createMemoryTransport(network), *clientLoss);
         REQUIRE_FALSE(
             serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
         REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
@@ -1059,6 +1063,102 @@ TEST_CASE("a character's speeds reach the replica that predicts it, so a faster 
     const core::u64 settled = match.replica->stats().corrections;
     play(60);
     CHECK(match.replica->stats().corrections == settled);
+}
+
+TEST_CASE("a replica walking through jitter, reordering and loss is never corrected (multiplayer smoothness)")
+{
+    // **A real connection, both ways**: each message held 0 to 2 ticks, some
+    // delivered out of order, two in a hundred lost. The owner's match over a
+    // VPN: every player's character flicked while walking, because the
+    // authority applied whatever intent had arrived last -- none on one tick,
+    // two on the next -- and acknowledged the last received rather than the
+    // one its step came from.
+    net::LossConfig serverLoss;
+    serverLoss.seed = 11;
+    serverLoss.dropPerMille = 20;
+    serverLoss.reorderPerMille = 50;
+    serverLoss.jitterPolls = 2;
+    net::LossConfig clientLoss = serverLoss;
+    clientLoss.seed = 23;
+    PlayedMatch match(&serverLoss, &clientLoss);
+    const core::InstanceId racer =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(racer.valid());
+    match.server.world.setName(racer, match.server.atoms.intern("Racer"));
+    match.server.world.parts().find(racer)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(racer, match.server.workspace).has_value());
+    match.server.world.characterBodies().find(racer)->walkSpeed = 8.0f;
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(10);
+    core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    // Ten seconds of a held key, every tick read and sent as a game does.
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, true}};
+    double last = match.server.world.parts().find(racer)->cframe.position.x;
+    int uneven = 0;
+    for (int frame = 1; frame <= 600; ++frame) {
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents) {
+            if (intent.pressed)
+                walk(match.server.world, racer);
+        }
+        // Once walking, the authority steps exactly one tick of walk a tick:
+        // what the other players see.
+        const double x = match.server.world.parts().find(racer)->cframe.position.x;
+        if (x > 0.0 && last > 0.0 && std::abs((x - last) - 8.0 / 60.0) > 1e-6)
+            ++uneven;
+        last = x;
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+        match.replica->receive(match.client.world, match.client.workspace);
+        walk(match.client.world, mine);
+        match.replica->sendIntent(match.client.world, match.tick);
+    }
+    CHECK(match.server.world.parts().find(racer)->cframe.position.x > 70.0);
+    CHECK(uneven == 0);
+    // Not one correction past a centimetre.
+    CHECK(match.replica->stats().corrections == 0);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a correction is drawn sliding over a tenth of a second, and a teleport where it lands")
+{
+    PlayedMatch match;
+    const core::InstanceId racer = match.part("Racer", core::DVec3{0.0, 1.0, 0.0});
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(10);
+    const core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    CHECK(match.replica->visualCorrection().offset == core::DVec3{});
+
+    // Half a metre the replica did not predict: the simulation takes it at
+    // once, and the drawing starts where the character was.
+    match.server.world.parts().find(racer)->cframe.position.x += 0.5;
+    const core::u64 before = match.replica->stats().corrections;
+    for (int at = 0; at < 10 && match.replica->stats().corrections == before; ++at)
+        match.step();
+    REQUIRE(match.replica->stats().corrections == before + 1);
+    CHECK(match.client.world.parts().find(mine)->cframe.position.x == doctest::Approx(0.5));
+    CHECK(match.replica->stats().lastCorrectionMetres == doctest::Approx(0.5));
+    const replication::VisualCorrection slide = match.replica->visualCorrection();
+    CHECK(slide.character == mine);
+    CHECK(slide.offset.x < -0.2);
+    CHECK(slide.offset.x >= -0.5);
+    // A tenth of a second later it is there.
+    match.run(6);
+    CHECK(std::abs(match.replica->visualCorrection().offset.x) < 0.02);
+
+    // Thirty metres is a teleport, and drawn as one.
+    match.server.world.parts().find(racer)->cframe.position.z = 30.0;
+    const core::u64 again = match.replica->stats().corrections;
+    for (int at = 0; at < 10 && match.replica->stats().corrections == again; ++at)
+        match.step();
+    CHECK(match.client.world.parts().find(mine)->cframe.position.z == doctest::Approx(30.0));
+    CHECK(match.replica->visualCorrection().offset == core::DVec3{});
 }
 
 TEST_CASE("another player's part is drawn between snapshots rather than stepping at their rate")
@@ -2120,7 +2220,7 @@ TEST_CASE("a hostile authority's message is refused whole, and never sizes the r
     // Records out of order are refused before anything is built from them:
     // inserted one at a time, a descending snapshot cost its size squared.
     Bytes snapshot;
-    snapshot.u8v(5).u64v(1).u64v(0).u64v(0).u64v(0).u16v(0).u32v(2);
+    snapshot.u8v(5).u64v(1).u64v(0).u64v(0).u64v(0).u8v(0).u32v(0).u16v(0).u32v(2);
     snapshot.u32v(9).u8v(0).u8v(1).u16v(0);
     snapshot.u32v(8).u8v(0).u8v(1).u16v(0);
     fake.deliver(snapshot);
@@ -2139,12 +2239,14 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     REQUIRE(ballNet.valid());
     (void)match.server.atoms.intern("Move");
 
-    // Ten intents in one tick, each newer than the last: two a tick are
-    // taken -- the replica's own from the last step, and the first of these
-    // -- and the rest are a peer making the authority parse.
-    for (core::u32 at = 1; at <= 10; ++at) {
+    // Twenty intent messages in one tick: eight are read -- the replica's own
+    // from the last step among them -- and the rest are a peer making the
+    // authority parse.
+    const core::u64 droppedBefore = match.authority->stats().messagesDropped;
+    for (core::u32 at = 1; at <= 20; ++at) {
         Bytes intent;
         intent.u8v(7)
+            .u8v(1)
             .u64v(100000 + at)
             .u16v(1)
             .text("Move")
@@ -2157,20 +2259,22 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
     match.authority->receive(match.server.world, match.server.workspace);
-    const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
-    REQUIRE(player != nullptr);
-    REQUIRE(player->intents.size() == 1);
-    CHECK(static_cast<double>(player->intents[0].axis.x) == doctest::Approx(1.0));
+    CHECK(match.authority->stats().messagesDropped == droppedBefore + 13);
 
-    // A count no input map has is refused whole.
+    // More ticks than a message carries, or more entries than an input map
+    // has, is refused whole.
+    Bytes five;
+    five.u8v(7).u8v(5);
+    for (core::u64 at = 0; at < 5; ++at)
+        five.u64v(200000 + at).u16v(0);
     Bytes many;
-    many.u8v(7).u64v(200000).u16v(300);
+    many.u8v(7).u8v(1).u64v(300000).u16v(300);
     for (int at = 0; at < 300; ++at)
         many.text("Move").u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, five.data, net::Delivery::Unreliable, 2).has_value());
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, many.data, net::Delivery::Unreliable, 2).has_value());
     match.authority->receive(match.server.world, match.server.workspace);
-    CHECK(player->intents.size() == 1);
-    CHECK((player->intents.empty() || static_cast<double>(player->intents[0].axis.x) == doctest::Approx(1.0)));
+    CHECK(match.authority->stats().messagesDropped == droppedBefore + 15);
 
     // An owned state whose second record is cut short moves nothing -- and
     // does not make the whole one after it, at the same tick, look old.

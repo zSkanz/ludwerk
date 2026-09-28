@@ -3747,9 +3747,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // editor, or a frame that arrived early, must not look like a peer
         // that stopped answering.
         if (network.active() && simTicks == 0)
-            network.receive();
+            network.receive(false);
         // What a script asked of the network, and what the connection did.
         network.update();
+        // The own character drawn sliding after a correction, never popping
+        // (the multiplayer smoothness brief).
+        {
+            const replication::VisualCorrection slide = network.visualCorrection();
+            transformHistory.setVisualOffset(slide.character, slide.offset);
+        }
         // A windowless server would otherwise spin a core waiting for its next
         // tick. A millisecond is far below a tick and far above a spin.
         if (network.active() && options.headless && simTicks == 0)

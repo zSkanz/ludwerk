@@ -26,4 +26,10 @@ enum class ConsoleStream : core::u8
 // state belonging to the user's console rather than to us.
 void writeConsole(ConsoleStream stream, std::string_view utf8);
 
+// **Whether the console this process writes to goes when it does**: true on
+// Windows for a program started by a double click, whose console window is
+// its own and closes as it exits -- so a last error printed there is one
+// nobody reads. False from a terminal, and everywhere else.
+[[nodiscard]] bool consoleClosesWithProcess() noexcept;
+
 } // namespace engine::platform

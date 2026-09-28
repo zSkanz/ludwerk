@@ -361,6 +361,15 @@ struct BodyDesc
     // nothing else.
     bool queryable = true;
 
+    // **Walked through from the side by a character, stood on from above**
+    // (the multiplayer smoothness brief): a loose part a replica only follows.
+    // The authority simulates it, and a character there pushes it out of the
+    // way; the replica has it where the authority did four ticks ago, where
+    // it did not give way -- so a predicting character stopped against it,
+    // and was corrected every time it touched one. A contact from below still
+    // holds a character up.
+    bool passableForCharacters = false;
+
     CollisionGroup group = kDefaultCollisionGroup;
 
     // Opaque to this module. The glue stores an instance identity here.

@@ -60,13 +60,13 @@ public:
         return std::nullopt;
     }
 
-    void receive(scene::World& world, core::InstanceId root) override
+    void receive(scene::World& world, core::InstanceId root, bool ticking) override
     {
         if (m_authority.has_value()) {
-            m_authority->receive(world, root);
+            m_authority->receive(world, root, ticking);
         }
         else if (m_replica.has_value()) {
-            m_replica->receive(world, root);
+            m_replica->receive(world, root, ticking);
             if (m_config.redial)
                 redial();
         }
@@ -101,6 +101,10 @@ public:
         if (m_authority.has_value()) {
             status.serverTick = m_tick;
             status.peerCount = m_authority->peerCount();
+            const net::PeerLink worst = m_authority->worstLink();
+            status.pingMs = worst.roundTripMs;
+            status.jitterMs = worst.jitterMs;
+            status.loss = worst.loss;
         }
         else if (m_replica.has_value()) {
             status.serverTick = m_replica->appliedTick();
@@ -108,6 +112,10 @@ public:
             status.welcomed = m_replica->welcomed();
             status.lost = m_replica->lost();
             status.token = m_replica->playerToken();
+            const net::PeerLink link = m_replica->link();
+            status.pingMs = link.roundTripMs;
+            status.jitterMs = link.jitterMs;
+            status.loss = link.loss;
         }
         return status;
     }
@@ -136,6 +144,11 @@ public:
     [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut() override
     {
         return m_replica.has_value() ? m_replica->drainStreamedOut() : std::vector<core::InstanceId>{};
+    }
+
+    [[nodiscard]] VisualCorrection visualCorrection() const override
+    {
+        return m_replica.has_value() ? m_replica->visualCorrection() : VisualCorrection{};
     }
 
     [[nodiscard]] Stats stats() const override

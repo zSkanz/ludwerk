@@ -2362,6 +2362,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetStats",
+          "Parameters": [],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number }"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "Host",
           "Parameters": [
             {

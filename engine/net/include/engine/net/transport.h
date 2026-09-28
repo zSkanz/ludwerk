@@ -33,6 +33,7 @@
 
 namespace engine::net {
 
+using core::f32;
 using core::u16;
 using core::u32;
 using core::u8;
@@ -134,6 +135,16 @@ struct TransportConfig
     usize maxPeersPerAddress = 0;
 };
 
+// **What a connection is like, as the transport measured it** (the multiplayer
+// smoothness brief): the round trip, how much it varies, and the share of
+// packets lost. Zero where the transport measures nothing -- the memory one.
+struct PeerLink
+{
+    u32 roundTripMs = 0;
+    u32 jitterMs = 0;
+    f32 loss = 0.0f;
+};
+
 // **Poll-driven, never callback-driven**, and this is the R10 decision in the
 // interface rather than a note about it. A callback fires whenever a packet
 // arrives, which is a wall-clock-driven entry into game code and therefore a
@@ -166,6 +177,13 @@ public:
     [[nodiscard]] virtual std::optional<core::EngineError> poll(std::vector<TransportEvent>& out, u32 timeoutMs) = 0;
 
     [[nodiscard]] virtual usize peerCount() const noexcept = 0;
+
+    // How the link to `peer` is doing; nothing measured by default.
+    [[nodiscard]] virtual PeerLink link(PeerId peer) const noexcept
+    {
+        (void)peer;
+        return {};
+    }
 };
 
 // The one implementation (ADR 0012). Named as a factory rather than a class so

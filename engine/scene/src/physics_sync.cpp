@@ -254,6 +254,10 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     desc.density = body.density;
     desc.collidable = body.canCollide;
     desc.queryable = body.canQuery;
+    // What this replica only follows (the multiplayer smoothness brief): its
+    // own character pushes through it as the authority's does, instead of
+    // stopping against where it was four ticks ago.
+    desc.passableForCharacters = replicated;
     const u16 group = m_scene.collisionGroups().find(body.collisionGroup);
     desc.group = group == CollisionGroups::kInvalid ? CollisionGroups::kDefault : group;
     desc.userData = packInstance(id);

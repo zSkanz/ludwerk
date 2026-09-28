@@ -119,3 +119,34 @@ loss figure either. Diagnosing this took an instrumented build.
   listens nowhere; a client then silently joins whatever already listens on that
   port. A dedicated server whose transport cannot open should exit with a
   non-zero code (and say so in a window-less message a person will see).
+
+## Findings
+
+What the fix found that the brief did not say, or said differently. The
+defects are D242 to D246.
+
+- **A sixth cause.** The frame loop calls `receive` on every frame that runs
+  no tick, and the replica advanced its server clock and interpolated there
+  too. A client drawing at 144 Hz ran that clock at more than twice the tick
+  rate and was snapped back at every snapshot, which is what the other
+  players' characters stepping looks like (D243).
+- **The replica threw its prediction history away** whenever an answer named
+  a tick it had no sample for. With the input buffer the answers lag, so the
+  history was found empty, snapped, and cleared again for ever. That
+  covered up the corrections at join, so a character is now predicted only
+  after it has taken the authority's state.
+- **Collisions, measured before choosing**, with the owner's test game, a
+  virtual key, and two headless clients on one machine:
+  - loose crates caused the corrections: up to 30 a second, up to 22 cm;
+  - another player standing still caused none.
+
+  The crates a replica only follows are now passable from the side for its
+  own character and still stood on. Through them: up to 19 a second, mostly
+  2 to 5 cm, which the visual slide hides. A second player **walking** into
+  the first was not measured.
+- **Note 1, the virtual key**, did not reproduce. A project that holds
+  `Virtual1` every tick read it pressed on 99 ticks of 100 in a window and
+  without one. A window **with focus** was not tried, because giving it focus
+  needs the machine's owner.
+- **Note 2**: the second server exits with code 1 in this build; what was
+  missing was a message a person would see (D246).

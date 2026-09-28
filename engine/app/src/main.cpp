@@ -915,6 +915,15 @@ int main(int argc, char** argv)
         engine::core::logText(LogLevel::Error, error->message);
         if (!error->detail.empty())
             engine::core::logText(LogLevel::Error, error->detail);
+        // **A server that did not start says so where it can be read** (the
+        // multiplayer smoothness brief): opened with a double click, its
+        // console closes as it exits, and the reason with it.
+        if (options.network.topology == engine::replication::Topology::Dedicated &&
+            engine::platform::consoleClosesWithProcess()) {
+            const engine::core::Catalog& text = engine::core::engineCatalog();
+            (void)engine::platform::askChoice(nullptr, text.format(ENG_TR("engine.server.err.title")), error->message,
+                                              {text.format(ENG_TR("engine.server.ok"))});
+        }
         if (error->key.hash == ENG_TR("engine.err.device_lost").hash)
             return kExitDeviceLost;
 

@@ -409,6 +409,12 @@ What this section used to hold, resolved, for whoever remembers it:
 
 ## Now
 
+**The multiplayer smoothness brief** (2026-09-28, the owner's first priority
+over the audit; [`multiplayer-smoothness-2026-09-28.md`](docs/briefs/multiplayer-smoothness-2026-09-28.md)):
+the input buffer, redundant intents, the visual slide, passable loose parts,
+the Network panel and `GetStats`, D242 to D246, protocol 22. The owner's test
+over the VPN, with the Network panel open, is what closes it.
+
 **The audit of 2026-09-28 comes first**
 ([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's
 priority, band by band. After it: F1b, `DragDetector`, and the game-ready

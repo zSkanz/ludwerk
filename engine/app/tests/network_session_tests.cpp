@@ -205,6 +205,41 @@ TEST_CASE("a join waits by the clock, not by frames, and one from the command li
     CHECK(dialler.topology() == scene::NetworkTopology::Replica);
 }
 
+TEST_CASE("a script reads how the connection is doing (multiplayer smoothness)")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        game:GetService("NetworkService"):Host(47102)
+    )");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService:Join("memory:47102")
+        game:GetService("RunService").Heartbeat:Connect(function()
+            local stats = NetworkService:GetStats()
+            if stats.SnapshotsPerSecond > 0 then
+                print(`stats:{typeof(stats.Ping)} {stats.CorrectionsPerSecond} {stats.InputBufferDepth >= 0}`)
+            end
+        end)
+    )");
+    client.boot(wire);
+    // A second of the match by the session's clock, a tick at a time.
+    core::u64 now = 1;
+    client.network->setClock([&now] { return now; });
+    for (int at = 0; at < 90; ++at) {
+        now += 16'666'667ull;
+        run(server, client, 1);
+    }
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(client.state() == Connected);
+    CHECK(log.contains("stats:number 0 true"));
+}
+
 TEST_CASE("a dedicated server cannot join, host or disconnect")
 {
     Captured log;

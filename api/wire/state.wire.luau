@@ -1848,7 +1848,20 @@ local Messages: { Schema.Message } = {
             {
                 Name = "intentTick",
                 Type = "u64",
-                Doc = "The newest of this replica's `Intent` ticks the authority has applied.",
+                Doc = "The `Intent` tick whose step this state holds (protocol 22): what the replica's "
+                    .. "prediction for that tick is compared with. Zero before the first.",
+            },
+            {
+                Name = "intentDepth",
+                Type = "u8",
+                Doc = "How many of this replica's intents the authority holds unapplied (protocol 22), for "
+                    .. "its network overlay.",
+            },
+            {
+                Name = "intentStarvations",
+                Type = "u32",
+                Doc = "How many ticks the authority has found none of this replica's intents to apply "
+                    .. "(protocol 22), for its network overlay.",
             },
             { Name = "atomCount", Type = "u16" },
             {
@@ -1914,28 +1927,44 @@ local Messages: { Schema.Message } = {
         Channel = "Intent",
         Direction = "ToAuthority",
         Layout = {
-            { Name = "tick", Type = "u64", Doc = "The replica's tick. Not newer than the last one applied: dropped." },
-            { Name = "count", Type = "u16" },
             {
-                Name = "intents",
+                Name = "tickCount",
+                Type = "u8",
+                Doc = "How many ticks this message carries, 1 to 4: the newest and the ones before it "
+                    .. "(protocol 22), so one lost message loses no input.",
+            },
+            {
+                Name = "ticks",
                 Type = "repeat",
-                Count = "count",
+                Count = "tickCount",
+                Doc = "Oldest first. A tick already applied or already queued is a copy, and dropped.",
                 Each = {
-                    { Name = "action", Type = "text", Doc = "The input action's name." },
+                    { Name = "tick", Type = "u64", Doc = "The replica's tick." },
+                    { Name = "count", Type = "u16" },
                     {
-                        Name = "type",
-                        Type = "u8",
-                        Doc = "0 Bool, 1 Direction1D, 2 Direction2D, 3 Direction3D, 4 ViewportPosition.",
+                        Name = "intents",
+                        Type = "repeat",
+                        Count = "count",
+                        Each = {
+                            { Name = "action", Type = "text", Doc = "The input action's name." },
+                            {
+                                Name = "type",
+                                Type = "u8",
+                                Doc = "0 Bool, 1 Direction1D, 2 Direction2D, 3 Direction3D, 4 ViewportPosition.",
+                            },
+                            { Name = "x", Type = "f32" },
+                            { Name = "y", Type = "f32" },
+                            { Name = "z", Type = "f32" },
+                            { Name = "pressed", Type = "u8" },
+                        },
                     },
-                    { Name = "x", Type = "f32" },
-                    { Name = "y", Type = "f32" },
-                    { Name = "z", Type = "f32" },
-                    { Name = "pressed", Type = "u8" },
                 },
             },
         },
-        Doc = "One tick of a client's input, as actions rather than as results. The client says what "
-            .. "it did; a client that could assert what happened is a client that always hits.",
+        Doc = "A client's input, as actions rather than as results. The client says what it did; a "
+            .. "client that could assert what happened is a client that always hits. The authority "
+            .. "queues it by tick and applies one tick a tick, in order, a few behind the newest "
+            .. "(protocol 22).",
     },
     {
         Name = "Players",

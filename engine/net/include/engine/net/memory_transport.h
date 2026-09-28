@@ -46,6 +46,11 @@ struct LossConfig
     // Chance an unreliable message is held back and delivered after the next
     // one -- which is what reordering looks like from the receiving end.
     core::u32 reorderPerMille = 0;
+    // **Jitter**: each unreliable message is held for 0 to this many of the
+    // sender's polls, drawn per message -- so two sent a tick apart can arrive
+    // together, or in the other order. At one poll a tick, 1 is about +-8 ms
+    // and 2 about +-17 ms of a 60 Hz match.
+    core::u32 jitterPolls = 0;
 };
 
 // Wraps a transport so its unreliable traffic is lost and reordered, from a

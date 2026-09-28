@@ -189,6 +189,7 @@ public:
     void close() override
     {
         m_held.reset();
+        m_delayed.clear();
         m_inner->close();
     }
     std::optional<core::EngineError> connect(std::string_view host, u16 port, PeerId& outPeer) override
@@ -209,6 +210,16 @@ public:
         const bool reorder = m_random.nextU32() % 1000u < m_config.reorderPerMille;
         if (drop)
             return std::nullopt;
+        // A third draw only where jitter was asked for, so a seed that made a
+        // run before this existed makes the same run now.
+        if (m_config.jitterPolls > 0) {
+            const u32 wait = m_random.nextU32() % (m_config.jitterPolls + 1);
+            if (wait > 0) {
+                m_delayed.push_back(
+                    Delayed{wait, peer, std::vector<u8>(payload.begin(), payload.end()), delivery, channel});
+                return std::nullopt;
+            }
+        }
         if (reorder && !m_held.has_value()) {
             m_held = Held{peer, std::vector<u8>(payload.begin(), payload.end()), delivery, channel};
             return std::nullopt;
@@ -223,10 +234,22 @@ public:
         // A message held back and never followed would otherwise be held for
         // ever, which is a drop the configuration did not ask for.
         releaseHeld();
+        // What jitter held, sent as its wait runs out, in the order it was
+        // held among those going together.
+        for (auto at = m_delayed.begin(); at != m_delayed.end();) {
+            if (--at->polls == 0) {
+                (void)m_inner->send(at->peer, at->payload, at->delivery, at->channel);
+                at = m_delayed.erase(at);
+            }
+            else {
+                ++at;
+            }
+        }
         return m_inner->poll(out, timeoutMs);
     }
 
     [[nodiscard]] usize peerCount() const noexcept override { return m_inner->peerCount(); }
+    [[nodiscard]] PeerLink link(PeerId peer) const noexcept override { return m_inner->link(peer); }
 
 private:
     struct Held
@@ -246,10 +269,20 @@ private:
         (void)m_inner->send(held.peer, held.payload, held.delivery, held.channel);
     }
 
+    struct Delayed
+    {
+        u32 polls = 0;
+        PeerId peer;
+        std::vector<u8> payload;
+        Delivery delivery = Delivery::Unreliable;
+        u8 channel = 0;
+    };
+
     std::unique_ptr<ITransport> m_inner;
     LossConfig m_config;
     core::Pcg32 m_random;
     std::optional<Held> m_held;
+    std::vector<Delayed> m_delayed;
 };
 
 } // namespace

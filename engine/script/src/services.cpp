@@ -1208,6 +1208,28 @@ int networkServiceGetPlayers(lua_State* L)
     return 1;
 }
 
+// **How the connection is doing** (the multiplayer smoothness brief), as the
+// host wrote it this frame.
+int networkServiceGetStats(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState::NetworkStats& stats = world(L).engineState().networkStats;
+    lua_createtable(L, 0, 8);
+    const auto field = [L](const char* name, double value) {
+        lua_pushnumber(L, value);
+        lua_setfield(L, -2, name);
+    };
+    field("Ping", stats.pingMs);
+    field("Jitter", stats.jitterMs);
+    field("Loss", stats.lossPercent);
+    field("SnapshotsPerSecond", stats.snapshotsPerSecond);
+    field("CorrectionsPerSecond", stats.correctionsPerSecond);
+    field("LastCorrection", stats.lastCorrectionMetres);
+    field("InputBufferDepth", static_cast<double>(stats.inputBufferDepth));
+    field("InputStarvations", static_cast<double>(stats.inputStarvations));
+    return 1;
+}
+
 // Players on one side, in join order -- `NetworkService`'s child order.
 int teamGetPlayers(lua_State* L)
 {
@@ -2039,6 +2061,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
 
     {"InputAction", "GetState", inputActionGetState},
     {"NetworkService", "GetPlayers", networkServiceGetPlayers},
+    {"NetworkService", "GetStats", networkServiceGetStats},
     {"Team", "GetPlayers", teamGetPlayers},
     {"TeamService", "GetTeams", teamServiceGetTeams},
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
