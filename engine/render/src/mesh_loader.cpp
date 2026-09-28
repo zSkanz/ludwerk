@@ -11,6 +11,7 @@
 #include "engine/asset/image.h"
 #include "engine/asset/mesh_format.h"
 #include "engine/asset/primitives.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/asset/texture.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -389,6 +390,19 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 library.set(urn, viewBlack_, 1, 1);
             return;
         }
+        // **The engine's own terrain textures are drawn, not read** (ADR
+        // 0113): from noise, once, and uploaded like a loose image.
+        if (asset::isEngineTexture(world.atoms().text(urn))) {
+            const std::optional<asset::Image> drawn = asset::engineTexture(world.atoms().text(urn));
+            if (drawn.has_value()) {
+                const rhi::TextureHandle handle = uploadImage(device, cmd, *drawn, "engine-terrain", srgb);
+                if (handle.valid()) {
+                    library.set(urn, handle, drawn->width, drawn->height);
+                    ++loaded;
+                }
+            }
+            return;
+        }
         if (std::binary_search(failed_.begin(), failed_.end(), urn,
                                [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; })) {
             return;
@@ -518,6 +532,21 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
         for (const asset::ShaderParameter& parameter : material.properties.shaderParameters) {
             if (parameter.isTexture())
                 map(parameter.texture, !parameter.linear);
+        }
+    });
+    // A terrain's layers (ADR 0113): the maps its arrays are built from.
+    world.terrains().forEach([&](core::InstanceId, const scene::TerrainComponent& terrain) {
+        for (const std::string& layer : terrain.layers) {
+            if (layer.empty())
+                continue;
+            const asset::ResolvedMaterial material = world.resolveMaterial(world.atoms().intern(layer), 0);
+            const auto map = [&](const std::string& urn, bool srgb) {
+                if (!urn.empty())
+                    load(world.atoms().intern(urn), srgb);
+            };
+            map(material.properties.colorMap, true);
+            map(material.properties.normalMap, false);
+            map(material.properties.metallicRoughnessMap, false);
         }
     });
     // A sky's sun and moon (ADR 0096): colours. Its six faces are not here --

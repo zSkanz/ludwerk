@@ -55,6 +55,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A terrain's layers are materials, with textures** (ADR 0113, the
+  game-ready plan's B1). A voxel's material id is the terrain's layer of that
+  number, a material asset; a new terrain's eight are the engine's own --
+  grass, sand, rock, snow, mud, sandstone, basalt, ice -- built in, with
+  colour, normal, surface and height textures drawn from noise, so id 3 is
+  still rock and an old world opens as it was, now textured. `GetLayers` and
+  `SetLayers` change the list (saved with the scene; the editor's Paint
+  section replaces, adds and removes); layers are sampled triplanar at their
+  material's `TileSize`, and a pixel blends the layers of its triangle's
+  corners. Materials gain `HeightMap`, `Triplanar` and `BlendSharpness`.
+  `RaiseBall` takes a material, and `WriteHeights` one per column. Each
+  terrain now draws its own layers, where every terrain used to share the
+  first one's palette.
 - **An exported game carries bytecode, not source** (ADR 0112, the
   game-ready plan's A3). `ludwerk build` compiles every script in `game/src/`
   with the engine's own compiler -- `init.luau` ships as `init.luauc` -- and

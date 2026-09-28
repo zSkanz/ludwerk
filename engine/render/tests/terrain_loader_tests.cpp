@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/asset/terrain.h"
+#include "engine/asset/terrain_palette.h"
 #include "engine/render/mesh_cache.h"
 #include "engine/render/render_world.h"
 #include "engine/render/terrain_loader.h"
@@ -244,14 +245,19 @@ TEST_CASE("the mesh a node is drawn with is its ground, with skirts under its si
     CHECK(nothing.mesh.indices.empty());
 }
 
-TEST_CASE("the render terrain carries the palette, and only for terrain in the world")
+TEST_CASE("the render terrain carries its layers, and only for terrain in the world")
 {
     LoaderFixture fixture;
     RenderWorld snapshot;
     fixture.loader.appendRenderTerrains(fixture.world, fixture.root, snapshot);
     REQUIRE(snapshot.terrains.size() == 1);
     CHECK(snapshot.terrains.front().id == fixture.terrain);
-    CHECK(snapshot.terrains.front().palette[1][3] == 1.0f);
+    // The engine's eight (ADR 0113), flat in the old palette's colours until
+    // their textures load, and rock the layer steep ground turns to.
+    REQUIRE(snapshot.terrains.front().layers.size() == 8);
+    const core::Vec3 grass = asset::terrainColorOf(1);
+    CHECK(snapshot.terrains.front().layers[0].flat[1] == grass.y);
+    CHECK(snapshot.terrains.front().rockLayer == 3u);
 
     RenderWorld elsewhere;
     fixture.loader.appendRenderTerrains(fixture.world, core::InstanceId{}, elsewhere);

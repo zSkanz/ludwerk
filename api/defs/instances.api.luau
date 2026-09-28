@@ -1070,8 +1070,9 @@ local Classes: { Schema.Class } = {
             .. "surface is wherever the occupancy crosses one half, found by interpolating between "
             .. "neighbouring voxels, so a ball carved out of a hillside lands where you put it rather than "
             .. "on a grid line. Caves, arches, overhangs and flat ground are all the same data.\n\n"
-            .. "Materials are numbered: 0 is air, and 1 to 8 are Grass, Sand, Rock, Snow, Mud, Sandstone, "
-            .. "Basalt and Ice.\n\n"
+            .. "Materials are numbered: 0 is air, and `n` is the terrain's layer `n` -- a material asset "
+            .. "(`GetLayers`). A new terrain's eight layers are the engine's own, so 1 to 8 are Grass, Sand, "
+            .. "Rock, Snow, Mud, Sandstone, Basalt and Ice until you change them.\n\n"
             .. "There is one per `Workspace`, reached as `workspace.Terrain`, because a world has one "
             .. "ground. Creating a second is legal and it simply is not the one the workspace names.\n\n"
             .. "**Every verb here is a write to the voxels**, and the voxels are part of the world -- so a "
@@ -1183,6 +1184,7 @@ local Classes: { Schema.Class } = {
                     { Name = "center", Type = "vector" },
                     { Name = "radius", Type = "number" },
                     { Name = "amount", Type = "number" },
+                    { Name = "material", Type = "number?" },
                 },
                 Returns = { "number" },
                 ThreadSafety = "Unsafe",
@@ -1192,7 +1194,9 @@ local Classes: { Schema.Class } = {
                     .. "**It moves the surface rather than adding a ball**: the ground within `radius` "
                     .. "above and below `center` is pushed up, so a hill rises without an overhang at its "
                     .. "rim, and a tunnel further down stays where it is. This is the verb for shaping hills "
-                    .. "and valleys; `FillBall` is the one for a boulder or a tunnel.",
+                    .. "and valleys; `FillBall` is the one for a boulder or a tunnel.\n\n"
+                    .. "Where a column within reach has no ground at all and `material` is given, raising "
+                    .. "lays new ground of it from `center`'s height up.",
             },
             {
                 Name = "SmoothBall",
@@ -1319,7 +1323,7 @@ local Classes: { Schema.Class } = {
                     { Name = "corner", Type = "vector" },
                     { Name = "columns", Type = "number" },
                     { Name = "heights", Type = "{ number }" },
-                    { Name = "material", Type = "number?" },
+                    { Name = "material", Type = "(number | { number })?" },
                 },
                 Returns = { "number" },
                 ThreadSafety = "Unsafe",
@@ -1329,7 +1333,9 @@ local Classes: { Schema.Class } = {
                     .. "**This is the verb for ground that comes from somewhere** -- a generator's noise, an "
                     .. "image, another tool -- where a brush per column would be a quarter of a million "
                     .. "calls. Heights are in world metres and clamped between `MinHeight` and `MaxHeight`; "
-                    .. "`material` (default 1) is what new ground is made of. Each column's top moves to its "
+                    .. "`material` (default 1) is what new ground is made of -- one id for all of it, or a "
+                    .. "table of ids parallel to `heights`, where 0 leaves that column alone. Each column's top "
+                    .. "moves to its "
                     .. "height -- ground added from the old top up, or taken from it down -- and a cave under "
                     .. "the top stays. A column with no ground at all is laid as a slab 32 metres deep under "
                     .. "the table's lowest height. A height that is not a number is skipped.",
@@ -1341,6 +1347,25 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Removes every voxel. The terrain is empty afterwards and `VoxelSize` becomes "
                     .. "settable again.",
+            },
+            {
+                Name = "GetLayers",
+                Parameters = {},
+                Returns = { "{ string }" },
+                ThreadSafety = "Safe",
+                Doc = "What each material id is: a list of material URNs, where entry `n` is what voxels of "
+                    .. "material `n` are drawn with. A new terrain's are the engine's eight, "
+                    .. "`engine://terrain/grass` to `engine://terrain/ice`.",
+            },
+            {
+                Name = "SetLayers",
+                Parameters = { { Name = "layers", Type = "{ string }" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sets what each material id is, as `GetLayers` returns it: up to 255 material URNs, "
+                    .. "entry `n` for material `n`. The voxels keep their numbers, so replacing entry 3 "
+                    .. "repaints every rock at once; add a project material at the end to paint with it. "
+                    .. "Saved with the scene.",
             },
             {
                 Name = "Compact",

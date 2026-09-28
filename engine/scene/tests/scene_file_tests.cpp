@@ -1296,6 +1296,39 @@ TEST_CASE("a terrain larger than a streamed cell survives a save and a load")
     CHECK(after->field.digest() == digest);
 }
 
+TEST_CASE("a terrain's layers survive a save, and the engine's eight are not written")
+{
+    // ADR 0113: a scene that kept the default layers carries no list, so one
+    // written before layers existed and one written after read the same.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    CHECK(scene::writeScene(fixture.world).find("terrainLayers") == std::string::npos);
+
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    REQUIRE(component->layers.size() == 8);
+    component->layers[2] = "asset://materials/cliff.material.json";
+    component->layers.push_back("asset://materials/moss.material.json");
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("terrainLayers") != std::string::npos);
+
+    Fixture reloaded;
+    const core::InstanceId target = makeWorkspace(reloaded);
+    REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
+    const scene::TerrainComponent* after = nullptr;
+    for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
+         child = reloaded.world.nextSibling(child)) {
+        if (const scene::TerrainComponent* found = reloaded.world.terrains().find(child); found != nullptr)
+            after = found;
+    }
+    REQUIRE(after != nullptr);
+    REQUIRE(after->layers.size() == 9);
+    CHECK(after->layers[0] == "engine://terrain/grass");
+    CHECK(after->layers[2] == "asset://materials/cliff.material.json");
+    CHECK(after->layers[8] == "asset://materials/moss.material.json");
+}
+
 TEST_CASE("a sculpted world survives a save and a load")
 {
     // **The defect this exists for**: for one commit the editor could sculpt and

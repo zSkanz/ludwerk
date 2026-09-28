@@ -185,6 +185,15 @@ void hashMaterialFields(Hasher& hasher, asset::MaterialFieldMask set, const asse
         case asset::MaterialField::TileSize:
             hasher.number(values.tileSize);
             break;
+        case asset::MaterialField::HeightMap:
+            hasher.text(values.heightMap);
+            break;
+        case asset::MaterialField::Triplanar:
+            hasher.flag(values.triplanar);
+            break;
+        case asset::MaterialField::BlendSharpness:
+            hasher.number(values.blendSharpness);
+            break;
         case asset::MaterialField::Count:
             break;
         }

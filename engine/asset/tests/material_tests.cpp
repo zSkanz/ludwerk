@@ -52,7 +52,10 @@ TEST_CASE("a base material writes every field, in a fixed order, and reads back 
     "AlphaMode": "Mask",
     "AlphaCutoff": 0.25,
     "DoubleSided": false,
-    "TileSize": 4
+    "TileSize": 4,
+    "HeightMap": "",
+    "Triplanar": true,
+    "BlendSharpness": 0.5
   }
 }
 )");

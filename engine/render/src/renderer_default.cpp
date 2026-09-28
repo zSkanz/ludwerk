@@ -730,6 +730,11 @@ private:
     rhi::TextureHandle whitePixel_{};
     rhi::TextureHandle flatNormalPixel_{};
     rhi::TextureHandle blackPixel_{};
+    // The terrain's array slots while a terrain's own arrays are not built:
+    // an array type there is what the shader declares, and it reads flat
+    // colours instead until they are (ADR 0113).
+    rhi::TextureHandle whiteArray_{};
+    rhi::TextureHandle flatNormalArray_{};
     // The prefiltered environment and the split-sum BRDF table: image-based
     // lighting's two textures (ADR 0038, environment.h). Octahedral rather than
     // a cubemap because the frozen RHI has no cube type, and CPU-prefiltered
@@ -830,8 +835,23 @@ private:
     bool spriteTried_ = false;
     std::vector<GpuSprite> spriteStaging_;
     u32 spriteCount_ = 0;
-    // The palette the terrain shader reads, filled once a frame.
-    GpuTerrainSurfaceUniforms terrainSurface_{};
+    // **Each terrain's layers** (ADR 0113): three arrays with a slice per
+    // layer, built by blitting the layers' own textures when every one has
+    // loaded, and rebuilt only when the set of textures changes; and the block
+    // its shader reads.
+    struct TerrainArrays
+    {
+        core::InstanceId id;
+        std::vector<u32> sources;
+        std::array<rhi::TextureHandle, 3> arrays{};
+        bool ready = false;
+        bool seen = false;
+        GpuTerrainSurfaceUniforms uniforms{};
+    };
+    std::vector<TerrainArrays> terrainArrays_;
+    void updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world);
+    void releaseTerrainArrays(rhi::IDevice& device, TerrainArrays& entry);
+    [[nodiscard]] const TerrainArrays* terrainArraysOf(core::InstanceId id) const noexcept;
 
     // --- The look (ADR 0096) --------------------------------------------------
     //
@@ -1776,6 +1796,8 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                         &whitePixel_,
                                         &flatNormalPixel_,
                                         &blackPixel_,
+                                        &whiteArray_,
+                                        &flatNormalArray_,
                                         &environmentMap_,
                                         &brdfLut_,
                                         &clusterGrid_,
@@ -1804,6 +1826,9 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     }
     terrainTried_ = false;
     terrainValid_ = false;
+    for (TerrainArrays& entry : terrainArrays_)
+        releaseTerrainArrays(device, entry);
+    terrainArrays_.clear();
     voxelTried_ = false;
     if (particleBuffer_.valid())
         device.destroy(particleBuffer_);
@@ -2508,6 +2533,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
     // never reorders. Grouping is `extract`'s job and re-deriving it here would
     // be the backend doing work bgfx would have to repeat.
     u32 boundMaterial = 0xFFFFFFFFu;
+    core::InstanceId boundTerrain{};
 
     for (core::usize drawIndex = 0; drawIndex < world.draws.size(); ++drawIndex) {
         const DrawItem& draw = world.draws[drawIndex];
@@ -2678,12 +2704,20 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                 }
             }
             else if (terrainDraw) {
-                // The palette at the material slot, and the standard textures
-                // bound to their neutral stand-ins -- once per run of terrain.
-                if (boundMaterial != kTerrainBinding) {
-                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&terrainSurface_, sizeof(terrainSurface_)));
-                    cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&terrainSurface_, sizeof(terrainSurface_)));
-                    const std::array<rhi::TextureBinding, 13> textures{
+                // The terrain's layers at the material slot, its arrays after
+                // the standard textures, and those bound to their neutral
+                // stand-ins -- once per run of one terrain's draws.
+                if (boundMaterial != kTerrainBinding || !(draw.terrainId == boundTerrain)) {
+                    const TerrainArrays* layers = terrainArraysOf(draw.terrainId);
+                    static const GpuTerrainSurfaceUniforms flat{};
+                    const GpuTerrainSurfaceUniforms& block = layers != nullptr ? layers->uniforms : flat;
+                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
+                    const auto layerArray = [&](usize slot, rhi::TextureHandle fallback) {
+                        return layers != nullptr && layers->ready
+                                   ? rhi::TextureBinding{layers->arrays[slot], linearSampler_}
+                                   : rhi::TextureBinding{fallback, linearSampler_};
+                    };
+                    const std::array<rhi::TextureBinding, 16> textures{
                         rhi::TextureBinding{whitePixel_, linearSampler_},
                         rhi::TextureBinding{flatNormalPixel_, linearSampler_},
                         rhi::TextureBinding{whitePixel_, linearSampler_},
@@ -2697,9 +2731,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                         rhi::TextureBinding{occlusion_, linearSampler_},
                         rhi::TextureBinding{localShadowMap_, shadowSampler_},
                         rhi::TextureBinding{contact_, pointSampler_},
+                        layerArray(0, whiteArray_),
+                        layerArray(1, flatNormalArray_),
+                        layerArray(2, whiteArray_),
                     };
                     cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
                     boundMaterial = kTerrainBinding;
+                    boundTerrain = draw.terrainId;
                 }
             }
             else if (draw.material != boundMaterial && draw.material < world.materials.size()) {
@@ -3449,6 +3487,135 @@ bool DefaultRenderer::ensureVoxel(rhi::IDevice& device)
     return voxelPipeline_.valid();
 }
 
+void DefaultRenderer::releaseTerrainArrays(rhi::IDevice& device, TerrainArrays& entry)
+{
+    for (rhi::TextureHandle& array : entry.arrays) {
+        if (array.valid())
+            device.destroy(array);
+        array = {};
+    }
+    entry.ready = false;
+    entry.sources.clear();
+}
+
+const DefaultRenderer::TerrainArrays* DefaultRenderer::terrainArraysOf(core::InstanceId id) const noexcept
+{
+    for (const TerrainArrays& entry : terrainArrays_) {
+        if (entry.id == id)
+            return &entry;
+    }
+    return nullptr;
+}
+
+void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world)
+{
+    for (TerrainArrays& entry : terrainArrays_)
+        entry.seen = false;
+
+    // The stand-ins, the first frame a terrain is drawn rather than at
+    // creation: a world with no ground never makes them. Two layers, because
+    // one is a plain 2D texture to a backend.
+    if (!world.terrains.empty() && !whiteArray_.valid()) {
+        const auto oneArray = [&](const char* name) {
+            return device.createTexture({
+                .format = rhi::TextureFormat::Rgba8Unorm,
+                .usage = rhi::TextureUsage::Sampled,
+                .width = 1,
+                .height = 1,
+                .layers = 2,
+                .debugName = name,
+            });
+        };
+        whiteArray_ = oneArray("terrain-white-array");
+        flatNormalArray_ = oneArray("terrain-normal-array");
+    }
+
+    for (const RenderTerrain& terrain : world.terrains) {
+        auto found = std::find_if(terrainArrays_.begin(), terrainArrays_.end(),
+                                  [&](const TerrainArrays& entry) { return entry.id == terrain.id; });
+        if (found == terrainArrays_.end()) {
+            terrainArrays_.emplace_back();
+            found = terrainArrays_.end() - 1;
+            found->id = terrain.id;
+        }
+        TerrainArrays& entry = *found;
+        entry.seen = true;
+
+        // The block, every frame: a material's colour is cheap to change and
+        // must show at once, textures or not.
+        const auto layerCount = static_cast<u32>(std::min<usize>(terrain.layers.size(), kTerrainLayerSlots - 1));
+        GpuTerrainSurfaceUniforms& block = entry.uniforms;
+        block = GpuTerrainSurfaceUniforms{};
+        bool waiting = false;
+        std::vector<u32> sources;
+        sources.reserve(static_cast<usize>(layerCount) * 3u);
+        for (u32 index = 0; index < layerCount; ++index) {
+            const RenderTerrainLayer& layer = terrain.layers[index];
+            for (u32 channel = 0; channel < 4; ++channel) {
+                block.layerFlat[index + 1][channel] = layer.flat[channel];
+                block.layerTint[index + 1][channel] = layer.tint[channel];
+                block.layerSurface[index + 1][channel] = layer.surface[channel];
+            }
+            waiting = waiting || layer.waiting;
+            for (const rhi::TextureHandle map : layer.maps)
+                sources.push_back(map.id);
+        }
+        block.params[1] = static_cast<f32>(terrain.rockLayer);
+        block.params[2] = static_cast<f32>(layerCount);
+
+        // **The arrays, when every layer's maps have loaded and something
+        // changed**: a blit per map into its slice, then the mips. Until then
+        // the terrain draws flat, as it did before it had textures.
+        if (!waiting && layerCount > 0 && (!entry.ready || entry.sources != sources)) {
+            releaseTerrainArrays(device, entry);
+            constexpr std::array<rhi::TextureFormat, 3> Formats{
+                rhi::TextureFormat::Rgba8UnormSrgb, rhi::TextureFormat::Rgba8Unorm, rhi::TextureFormat::Rgba8Unorm};
+            constexpr std::array<const char*, 3> Names{"terrain-color", "terrain-normal", "terrain-surface"};
+            constexpr u32 Size = 512;
+            constexpr u32 Mips = 10;
+            bool made = true;
+            for (usize slot = 0; slot < 3; ++slot) {
+                entry.arrays[slot] = device.createTexture({
+                    .format = Formats[slot],
+                    .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget,
+                    .width = Size,
+                    .height = Size,
+                    // At least two: one layer is a plain 2D texture to a
+                    // backend, and the shader reads an array.
+                    .layers = std::max(layerCount, 2u),
+                    .mipLevels = Mips,
+                    .debugName = Names[slot],
+                });
+                made = made && entry.arrays[slot].valid();
+            }
+            if (made) {
+                const std::array<rhi::TextureHandle, 3> neutral{whitePixel_, flatNormalPixel_, whitePixel_};
+                for (u32 index = 0; index < layerCount; ++index) {
+                    for (usize slot = 0; slot < 3; ++slot) {
+                        const rhi::TextureHandle source = terrain.layers[index].maps[slot];
+                        cmd.blitTexture(source.valid() ? source : neutral[slot], entry.arrays[slot], index);
+                    }
+                }
+                for (const rhi::TextureHandle array : entry.arrays)
+                    cmd.generateMipmaps(array);
+                entry.sources = std::move(sources);
+                entry.ready = true;
+            }
+            else {
+                releaseTerrainArrays(device, entry);
+            }
+        }
+        block.params[0] = entry.ready && !waiting ? 1.0f : 0.0f;
+    }
+
+    // A terrain gone from the world gives its arrays back.
+    for (TerrainArrays& entry : terrainArrays_) {
+        if (!entry.seen)
+            releaseTerrainArrays(device, entry);
+    }
+    std::erase_if(terrainArrays_, [](const TerrainArrays& entry) { return !entry.seen; });
+}
+
 bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
 {
     if (terrainTried_)
@@ -3474,13 +3641,13 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
     }
 
     // `asset::Vertex`, 48 bytes, the layout every static mesh has -- a terrain
-    // node is filed in `MeshCache` like one. Three attributes, not four: the
-    // terrain shader has no use for the UV, and a pipeline that declares an
-    // input its vertex shader does not read is one D3D12 refuses to build.
-    const std::array<rhi::VertexAttribute, 3> attributes{
+    // node is filed in `MeshCache` like one. All four attributes: the UV is
+    // where the mesher puts a triangle's three layers and the corner (ADR 0113).
+    const std::array<rhi::VertexAttribute, 4> attributes{
         rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
         rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
         rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
     };
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
@@ -3757,15 +3924,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         (void)ensureVoxel(device);
     }
 
-    // The terrain's palette, and its pipelines the first frame it is drawn --
-    // before any pass, because a pipeline made mid-pass is not.
-    if (!world.terrains.empty()) {
-        for (u32 id = 0; id < kTerrainPaletteSize; ++id) {
-            for (u32 channel = 0; channel < 4; ++channel)
-                terrainSurface_.palette[id][channel] = world.terrains.front().palette[id][channel];
-        }
+    // Each terrain's layers, and the pipelines the first frame one is drawn --
+    // before any pass, because a pipeline made mid-pass is not, and a blit is
+    // a pass of its own.
+    updateTerrainArrays(device, cmd, world);
+    if (!world.terrains.empty())
         (void)ensureTerrain(device);
-    }
 
     // The light budget, applied where the lights enter the frame. Truncation
     // rather than selection: extraction order is deterministic (R10), so which

@@ -42,7 +42,10 @@ plain part has always looked like.
     "AlphaMode": "Opaque",
     "AlphaCutoff": 0.5,
     "DoubleSided": false,
-    "TileSize": 4
+    "TileSize": 4,
+    "HeightMap": "",
+    "Triplanar": true,
+    "BlendSharpness": 0.5
   }
 }
 ```
@@ -59,6 +62,9 @@ plain part has always looked like.
 | `AlphaMode`, `AlphaCutoff` | `Opaque`, `Mask` (tested against `AlphaCutoff`) or `Blend`. |
 | `DoubleSided` | Whether back faces are drawn. |
 | `TileSize` | How big one repeat of the textures is on a part's faces, in metres (4 by default). A part's faces are textured by their size in the world, so a long, thin slab shows the texture at the same scale on its top and on its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. |
+| `HeightMap` | A height image for a terrain layer, white high; where two layers meet, the higher shows through. Read only by a terrain ([Terrain](manual:world/terrain)). |
+| `Triplanar` | Whether a terrain layer is projected from three axes, so a cliff is textured rather than smeared. On by default; read only by a terrain. |
+| `BlendSharpness` | How hard the edge is where a terrain layer meets another, 0 (a wide fade) to 1 (a sharp line along the height map). Read only by a terrain. |
 
 The editor writes the file for you: right-click in the content browser and
 choose **New Material**, then edit it in the **Material** panel.

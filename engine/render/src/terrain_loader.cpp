@@ -5,6 +5,7 @@
 #include <limits>
 #include <string>
 
+#include "engine/asset/terrain_layers.h"
 #include "engine/asset/terrain_mesher.h"
 #include "engine/asset/terrain_palette.h"
 #include "engine/core/log.h"
@@ -575,21 +576,57 @@ std::vector<TerrainNodeDraw> TerrainLoader::draws(const scene::World& world) con
     return out;
 }
 
-void TerrainLoader::appendRenderTerrains(const scene::World& world, core::InstanceId root, RenderWorld& out) const
+void TerrainLoader::appendRenderTerrains(const scene::World& world, core::InstanceId root, RenderWorld& out,
+                                         const TextureLibrary* textures) const
 {
+    const std::vector<std::string> engineLayers = asset::defaultTerrainLayers();
     world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
         if (terrain.field.empty() || !inWorld(world, id, root))
             return;
         RenderTerrain entry;
         entry.id = id;
         entry.origin = terrain.origin;
-        for (u32 material = 0; material < kTerrainPaletteSize; ++material) {
-            const core::Vec3 color = asset::terrainColorOf(static_cast<core::u8>(material));
-            entry.palette[material][0] = color.x;
-            entry.palette[material][1] = color.y;
-            entry.palette[material][2] = color.z;
-            entry.palette[material][3] = 1.0f;
+        entry.layers.reserve(terrain.layers.size());
+        for (const std::string& urn : terrain.layers) {
+            RenderTerrainLayer layer;
+            const core::NameAtom atom = world.atoms().lookup(urn);
+            const asset::ResolvedMaterial material =
+                atom.id != 0 ? world.resolveMaterial(atom, 0) : asset::ResolvedMaterial{};
+            const asset::MaterialProperties& p = material.properties;
+            // Flat, the engine's own are the old palette's colours -- what a
+            // world looked like before it had textures, and what it looks like
+            // for the frame or two before they load. Anything else is its
+            // colour factor.
+            const auto engineIndex = std::find(engineLayers.begin(), engineLayers.end(), urn);
+            const core::Vec3 flat =
+                engineIndex != engineLayers.end()
+                    ? asset::terrainColorOf(static_cast<core::u8>(engineIndex - engineLayers.begin() + 1))
+                    : core::Vec3{p.color.r, p.color.g, p.color.b};
+            layer.flat[0] = flat.x;
+            layer.flat[1] = flat.y;
+            layer.flat[2] = flat.z;
+            layer.flat[3] = 1.0f;
+            layer.tint[0] = p.color.r;
+            layer.tint[1] = p.color.g;
+            layer.tint[2] = p.color.b;
+            layer.tint[3] = 1.0f / (p.tileSize > 0.0f ? p.tileSize : 4.0f);
+            layer.surface[0] = p.roughness;
+            layer.surface[1] = p.metalness;
+            layer.surface[2] = p.normalScale;
+            layer.surface[3] = p.triplanar ? 1.0f : 0.0f;
+            const std::array<const std::string*, 3> maps{&p.colorMap, &p.normalMap, &p.metallicRoughnessMap};
+            for (usize slot = 0; slot < maps.size(); ++slot) {
+                if (maps[slot]->empty())
+                    continue;
+                const core::NameAtom map = world.atoms().lookup(*maps[slot]);
+                layer.maps[slot] = textures != nullptr && map.id != 0 ? textures->find(map) : rhi::TextureHandle{};
+                layer.waiting = layer.waiting || !layer.maps[slot].valid();
+            }
+            entry.layers.push_back(layer);
         }
+        // The slope rule of old: steep ground turns to layer 3 when there is
+        // one (ADR 0113 B2 makes this a rule of the terrain's own).
+        entry.rockLayer = entry.layers.size() >= 3 ? 3u : 0u;
         out.terrains.push_back(std::move(entry));
     });
 }

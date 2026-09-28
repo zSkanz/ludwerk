@@ -636,8 +636,18 @@ declare extern type Material with
     DoubleSided: boolean
     --- How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats
     --- as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0
-    --- stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs.
+    --- stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. A terrain
+    --- layer repeats at this size too.
     TileSize: number
+    --- A height image for a terrain layer, white high: where two layers meet, the higher one shows
+    --- through. Read only by a terrain.
+    HeightMap: string
+    --- Whether a terrain layer is projected from three axes, so a cliff is textured rather than
+    --- smeared. On by default; read only by a terrain.
+    Triplanar: boolean
+    --- How hard the edge is where this terrain layer meets another, from 0 (a wide fade) to 1 (a sharp
+    --- line along the height map). Read only by a terrain.
+    BlendSharpness: number
     --- A writable runtime copy: the same properties, the same `Source`, owned by nobody and never
     --- saved. Put it on a part with `part.Material = copy`, then change it -- every part wearing this
     --- copy changes with it, and nothing else does.
@@ -1133,8 +1143,9 @@ declare extern type Terrain extends Instance with
     --- moves the surface rather than adding a ball**: the ground within `radius` above and below
     --- `center` is pushed up, so a hill rises without an overhang at its rim, and a tunnel further down
     --- stays where it is. This is the verb for shaping hills and valleys; `FillBall` is the one for a
-    --- boulder or a tunnel.
-    function RaiseBall(self, center: vector, radius: number, amount: number): number
+    --- boulder or a tunnel. Where a column within reach has no ground at all and `material` is given,
+    --- raising lays new ground of it from `center`'s height up.
+    function RaiseBall(self, center: vector, radius: number, amount: number, material: number?): number
     --- Softens the ground in a ball: every voxel moves towards the average of its neighbours by
     --- `strength` (0 to 1, default 0.5), less towards the rim. Returns how many voxels it changed.
     function SmoothBall(self, center: vector, radius: number, strength: number?): number
@@ -1176,13 +1187,22 @@ declare extern type Terrain extends Instance with
     --- many voxels it changed. **This is the verb for ground that comes from somewhere** -- a
     --- generator's noise, an image, another tool -- where a brush per column would be a quarter of a
     --- million calls. Heights are in world metres and clamped between `MinHeight` and `MaxHeight`;
-    --- `material` (default 1) is what new ground is made of. Each column's top moves to its height --
-    --- ground added from the old top up, or taken from it down -- and a cave under the top stays. A
+    --- `material` (default 1) is what new ground is made of -- one id for all of it, or a table of ids
+    --- parallel to `heights`, where 0 leaves that column alone. Each column's top moves to its height
+    --- -- ground added from the old top up, or taken from it down -- and a cave under the top stays. A
     --- column with no ground at all is laid as a slab 32 metres deep under the table's lowest height. A
     --- height that is not a number is skipped.
-    function WriteHeights(self, corner: vector, columns: number, heights: { number }, material: number?): number
+    function WriteHeights(self, corner: vector, columns: number, heights: { number }, material: (number | { number })?): number
     --- Removes every voxel. The terrain is empty afterwards and `VoxelSize` becomes settable again.
     function Clear(self): ()
+    --- What each material id is: a list of material URNs, where entry `n` is what voxels of material
+    --- `n` are drawn with. A new terrain's are the engine's eight, `engine://terrain/grass` to
+    --- `engine://terrain/ice`.
+    function GetLayers(self): { string }
+    --- Sets what each material id is, as `GetLayers` returns it: up to 255 material URNs, entry `n` for
+    --- material `n`. The voxels keep their numbers, so replacing entry 3 repaints every rock at once;
+    --- add a project material at the end to paint with it. Saved with the scene.
+    function SetLayers(self, layers: { string }): ()
     --- Does nothing and returns 0. It converted the old terrain's voxel columns back to heights. Every
     --- edit now leaves the voxels as compact as they can be, so there is nothing left for it to do. It
     --- stays so scripts that call it keep running.

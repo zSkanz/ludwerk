@@ -285,10 +285,8 @@ struct MaterialMap
 };
 
 constexpr MaterialMap kMaterialMaps[] = {
-    {"ColorMap", true},
-    {"EmissiveMap", true},
-    {"NormalMap", false},
-    {"MetallicRoughnessMap", false},
+    {"ColorMap", true},   {"EmissiveMap", true}, {"NormalMap", false}, {"MetallicRoughnessMap", false},
+    {"HeightMap", false},
 };
 
 // What the project's materials say each image is for, by URN. Ordered rather
@@ -1056,9 +1054,10 @@ CompileResult compile(const CompileOptions& options)
         }
         asset::CompiledMaterial compiled;
         compiled.asset = std::move(*read);
-        const std::array<const std::string*, 4> maps{
+        const std::array<const std::string*, 5> maps{
             &compiled.asset.properties.colorMap, &compiled.asset.properties.normalMap,
-            &compiled.asset.properties.metallicRoughnessMap, &compiled.asset.properties.emissiveMap};
+            &compiled.asset.properties.metallicRoughnessMap, &compiled.asset.properties.emissiveMap,
+            &compiled.asset.properties.heightMap};
         for (usize index = 0; index < maps.size(); ++index) {
             for (const ManifestEntry& entry : manifest) {
                 if (entry.kind == AssetKind::Texture && entry.urn == *maps[index]) {

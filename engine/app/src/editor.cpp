@@ -4696,6 +4696,20 @@ bool Editor::clearTerrain(scene::World& world, core::InstanceId root, Inspector&
     return true;
 }
 
+bool Editor::setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
+                              std::string_view label)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || layers.size() > asset::MaxTerrainLayers || terrain->layers == layers)
+        return false;
+    m_history.record(world, std::string(label));
+    terrain->layers = std::move(layers);
+    terrain->layersRevision += 1;
+    m_sceneDirty = true;
+    return true;
+}
+
 bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
                              const HeightmapImport& spec)
 {

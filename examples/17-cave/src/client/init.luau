@@ -16,7 +16,8 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
---- Palette ids (`engine/asset/src/terrain_palette.cpp`); zero removes.
+--- Material ids: the terrain's layers, which start as the engine's eight (ADR
+--- 0113); zero removes.
 local Grass = 1
 local Sand = 2
 local Rock = 3

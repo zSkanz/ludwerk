@@ -89,7 +89,10 @@ public:
 
     // Appends one `RenderTerrain` per terrain in `world` under `root`: its
     // palette, which the terrain shader reads.
-    void appendRenderTerrains(const scene::World& world, core::InstanceId root, RenderWorld& out) const;
+    // `textures` resolves each layer's maps; null leaves them unresolved, and
+    // the terrain flat.
+    void appendRenderTerrains(const scene::World& world, core::InstanceId root, RenderWorld& out,
+                              const TextureLibrary* textures = nullptr) const;
 
     // **Where the viewer is**, which decides every level. Set once a frame from
     // the camera the last frame was drawn through. With no focus nothing is

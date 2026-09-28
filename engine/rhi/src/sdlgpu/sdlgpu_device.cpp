@@ -63,6 +63,7 @@ struct TextureEntry
     TextureFormat format = TextureFormat::Undefined;
     u32 width = 0;
     u32 height = 0;
+    u32 layers = 1;
     // Swapchain textures belong to SDL and must not be released. Their slot is
     // reused every frame, which is also what keeps the table from growing once
     // per frame forever.
@@ -106,6 +107,8 @@ public:
     void uploadTexture(TextureHandle texture, std::span<const std::byte> data, u32 mipLevel) override;
     void uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,
                              std::span<const std::byte> data) override;
+    void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) override;
+    void generateMipmaps(TextureHandle texture) override;
 
     void pushDebugGroup(std::string_view name) override;
     void popDebugGroup() override;
@@ -299,7 +302,7 @@ public:
         if (lost_)
             return {};
         const SDL_GPUTextureCreateInfo info{
-            .type = SDL_GPU_TEXTURETYPE_2D,
+            .type = desc.layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D,
             .format = toSdl(desc.format),
             .usage = toSdl(desc.usage),
             .width = desc.width,
@@ -323,6 +326,7 @@ public:
                                        .format = desc.format,
                                        .width = desc.width,
                                        .height = desc.height,
+                                       .layers = desc.layers,
                                        .owned = true,
                                    })};
     }
@@ -1077,6 +1081,44 @@ void SdlGpuCmdList::uploadTexture(TextureHandle texture, std::span<const std::by
     };
     SDL_UploadToGPUTexture(pass, &source, &region, false);
     releaseStaged(staged);
+}
+
+void SdlGpuCmdList::blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer)
+{
+    TextureEntry* from = device_.texture(source);
+    TextureEntry* to = device_.texture(destination);
+    if (from == nullptr || to == nullptr || from->texture == nullptr || to->texture == nullptr ||
+        destinationLayer >= to->layers || buffer_ == nullptr)
+        return;
+    // A blit is a pass of its own in SDL: nothing may be open around it.
+    endOpenPass();
+    SDL_GPUBlitInfo info{};
+    info.source = SDL_GPUBlitRegion{.texture = from->texture,
+                                    .mip_level = 0,
+                                    .layer_or_depth_plane = 0,
+                                    .x = 0,
+                                    .y = 0,
+                                    .w = from->width,
+                                    .h = from->height};
+    info.destination = SDL_GPUBlitRegion{.texture = to->texture,
+                                         .mip_level = 0,
+                                         .layer_or_depth_plane = destinationLayer,
+                                         .x = 0,
+                                         .y = 0,
+                                         .w = to->width,
+                                         .h = to->height};
+    info.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    info.filter = SDL_GPU_FILTER_LINEAR;
+    SDL_BlitGPUTexture(buffer_, &info);
+}
+
+void SdlGpuCmdList::generateMipmaps(TextureHandle texture)
+{
+    TextureEntry* entry = device_.texture(texture);
+    if (entry == nullptr || entry->texture == nullptr || buffer_ == nullptr)
+        return;
+    endOpenPass();
+    SDL_GenerateMipmapsForGPUTexture(buffer_, entry->texture);
 }
 
 void SdlGpuCmdList::uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,

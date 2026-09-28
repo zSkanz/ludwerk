@@ -3868,6 +3868,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetLayers",
+          "Parameters": [],
+          "Returns": ["{ string }"],
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "HeightAt",
           "Parameters": [
             {
@@ -3915,6 +3921,10 @@
             {
               "Name": "amount",
               "Type": "number"
+            },
+            {
+              "Name": "material",
+              "Type": "number?"
             }
           ],
           "Returns": ["number"],
@@ -3956,6 +3966,17 @@
             }
           ],
           "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetLayers",
+          "Parameters": [
+            {
+              "Name": "layers",
+              "Type": "{ string }"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -4005,7 +4026,7 @@
             },
             {
               "Name": "material",
-              "Type": "number?"
+              "Type": "(number | { number })?"
             }
           ],
           "Returns": ["number"],
@@ -5907,6 +5928,11 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "BlendSharpness",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "Color",
           "Type": "Color3",
           "ThreadSafety": "Safe"
@@ -5929,6 +5955,11 @@
         {
           "Name": "EmissiveMap",
           "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "HeightMap",
+          "Type": "string",
           "ThreadSafety": "Safe"
         },
         {
@@ -5970,6 +6001,11 @@
         {
           "Name": "Transparency",
           "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Triplanar",
+          "Type": "boolean",
           "ThreadSafety": "Safe"
         }
       ],

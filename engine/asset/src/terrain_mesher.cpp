@@ -667,24 +667,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                 Vertex vertex;
                 vertex.position = position;
                 vertex.normal = normal;
-                // The world position on the two axes the normal is least
-                // aligned with. The terrain shader lays its own triplanar
-                // detail; this is for whatever reads a mesh's UVs.
-                const float ax = std::abs(normal.x);
-                const float ay = std::abs(normal.y);
-                const float az = std::abs(normal.z);
-                if (ay >= ax && ay >= az) {
-                    vertex.uv[0] = position.x;
-                    vertex.uv[1] = position.z;
-                }
-                else if (ax >= az) {
-                    vertex.uv[0] = position.z;
-                    vertex.uv[1] = position.y;
-                }
-                else {
-                    vertex.uv[0] = position.x;
-                    vertex.uv[1] = position.y;
-                }
+                // The UVs carry the triangle's materials, not a position (ADR
+                // 0113): filled in below, once the triangles are known.
                 // **The material rides in the tangent's x and the sky in its
                 // y.** A terrain has no tangent frame of its own -- its shader
                 // builds one -- and `Vertex` is a GPU layout whose size is
@@ -891,6 +875,45 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             }
         }
     }
+
+    // --- The materials a pixel blends between (ADR 0113) --------------------
+    //
+    // **Every vertex carries its triangle's three materials and which corner it
+    // is**, so the shader can weigh the three layers by where in the triangle a
+    // pixel is: `uv[0]` is the three ids packed as `a + b * 256 + c * 65536`
+    // (exact in a float) and `uv[1]` the corner, 0 to 2. A vertex inside one
+    // material says that material three times and needs nothing more. A
+    // triangle whose corners differ gets three vertices of its own -- only
+    // along the seams, so a field of one material costs nothing.
+    constexpr float PackB = 256.0f;
+    constexpr float PackC = 65536.0f;
+    for (usize index = 0; index < out.mesh.vertices.size(); ++index) {
+        const auto own = static_cast<float>(vertexMaterial[index]);
+        out.mesh.vertices[index].uv[0] = own + own * PackB + own * PackC;
+        out.mesh.vertices[index].uv[1] = 0.0f;
+    }
+    const auto separate = [&](std::vector<u32>& list) {
+        for (usize at = 0; at + 2 < list.size(); at += 3) {
+            const u8 ma = vertexMaterial[list[at]];
+            const u8 mb = vertexMaterial[list[at + 1]];
+            const u8 mc = vertexMaterial[list[at + 2]];
+            if (ma == mb && mb == mc)
+                continue;
+            const float packed =
+                static_cast<float>(ma) + static_cast<float>(mb) * PackB + static_cast<float>(mc) * PackC;
+            for (usize corner = 0; corner < 3; ++corner) {
+                Vertex copy = out.mesh.vertices[list[at + corner]];
+                copy.uv[0] = packed;
+                copy.uv[1] = static_cast<float>(corner);
+                list[at + corner] = static_cast<u32>(out.mesh.vertices.size());
+                out.mesh.vertices.push_back(copy);
+            }
+        }
+    };
+    for (auto& entry : buckets)
+        separate(entry.second);
+    for (auto& entry : skirts)
+        separate(entry.second);
 
     if (!out.mesh.vertices.empty()) {
         Vec3 min = out.mesh.vertices.front().position;

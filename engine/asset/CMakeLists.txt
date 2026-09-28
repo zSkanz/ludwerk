@@ -20,6 +20,7 @@ engine_add_module(asset
         src/terrain_cell.cpp
         src/field_cells.cpp
         src/terrain_palette.cpp
+        src/terrain_layers.cpp
         src/terrain_edit.cpp
         src/voxel.cpp
         src/voxel_mesher.cpp
@@ -72,6 +73,7 @@ engine_add_module_tests(asset
         tests/content_tests.cpp
         tests/terrain_tests.cpp
         tests/terrain_mesher_tests.cpp
+        tests/terrain_layers_tests.cpp
         tests/terrain_mesh_validation_tests.cpp
         tests/terrain_cell_tests.cpp
         tests/field_cells_tests.cpp

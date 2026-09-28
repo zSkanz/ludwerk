@@ -34,9 +34,11 @@
 #include <array>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "engine/asset/material.h"
 #include "engine/asset/terrain.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/asset/voxel.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
@@ -705,6 +707,14 @@ struct TerrainComponent
     // no business moving, and not simulation state, so the world hash leaves
     // it out as it leaves out a mesh's file name.
     std::string cellIndex;
+
+    // **What each material byte means** (ADR 0113): byte `n` is
+    // `layers[n - 1]`, a material URN. A new terrain has the engine's eight, so
+    // id 3 is still rock; a scene without a list reads those. At most 255.
+    std::vector<std::string> layers = asset::defaultTerrainLayers();
+    // Bumped by every change to `layers`, so the renderer rebuilds its arrays
+    // only when they are stale.
+    core::u64 layersRevision = 0;
 };
 
 // --- The 2D layer (post-v1 phase 3, docs/briefs/p3-2d-kickoff.md) ------------

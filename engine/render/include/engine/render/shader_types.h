@@ -473,19 +473,24 @@ static_assert(sizeof(GpuContactUniforms) == 48, "GpuContactUniforms is a cbuffer
 
 // --- Terrain (ADR 0082) ------------------------------------------------------
 
-// The number of palette entries the terrain shader carries. Material ids past
-// it wrap, which the palette's own size makes unreachable today.
-inline constexpr u32 kTerrainPaletteSize = 32;
+// One entry per material id a terrain can hold: 0 (air, unused) to 255.
+inline constexpr u32 kTerrainLayerSlots = 256;
 
-// `b1` of both stages, for `terrain`: a colour per material id. The vertex
-// stage turns a vertex's material into its colour; the fragment stage reads
-// the rock's for the slope rule.
+// `b1` of the fragment stage, for `terrain` (ADR 0113): each layer's look,
+// by material id, for one terrain.
 struct GpuTerrainSurfaceUniforms
 {
-    f32 palette[kTerrainPaletteSize][4]{};
+    // What a layer is before its textures arrive: its colour, flat.
+    f32 layerFlat[kTerrainLayerSlots][4]{};
+    // The material's colour factor, and one over its repeat in metres.
+    f32 layerTint[kTerrainLayerSlots][4]{};
+    // Roughness factor, metalness factor, normal scale, 1 for triplanar.
+    f32 layerSurface[kTerrainLayerSlots][4]{};
+    // 1 when the arrays hold every layer; the rock layer's id; the count.
+    f32 params[4]{};
 };
 
-static_assert(sizeof(GpuTerrainSurfaceUniforms) == 32 * 16, "GpuTerrainSurfaceUniforms is a cbuffer layout");
+static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 16, "GpuTerrainSurfaceUniforms is a cbuffer layout");
 
 // Vertex stage, `b0 space1`, for `decal` (F2).
 struct GpuDecalUniforms

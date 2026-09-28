@@ -1315,6 +1315,9 @@ int methodTerrainRaiseBall(lua_State* L)
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
     const auto amount = static_cast<float>(luaL_checknumber(L, 4));
+    const lua_Integer material = luaL_optinteger(L, 5, 0);
+    if (material < 0 || material > 255)
+        luaL_argerror(L, 5, "a material id from 1 to 255");
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -1326,7 +1329,8 @@ int methodTerrainRaiseBall(lua_State* L)
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
                            static_cast<double>(center.y) - terrain->origin.y,
                            static_cast<double>(center.z) - terrain->origin.z};
-    const asset::EditReport report = asset::raiseBall(terrain->field, wide, radius, amount);
+    const asset::EditReport report =
+        asset::raiseBall(terrain->field, wide, radius, amount, static_cast<core::u8>(material));
     if (report.touched > 0)
         terrain->fieldRevision += 1;
     lua_pushinteger(L, static_cast<int>(report.touched));
@@ -1363,7 +1367,9 @@ int methodTerrainWriteHeights(lua_State* L)
     const core::Vec3 corner = checkVector3(L, 2);
     const lua_Integer columns = luaL_checkinteger(L, 3);
     luaL_checktype(L, 4, LUA_TTABLE);
-    const lua_Integer material = luaL_optinteger(L, 5, 1);
+    // One id for every column, or a table of them parallel to the heights.
+    const bool perColumn = lua_istable(L, 5);
+    const lua_Integer material = perColumn ? 1 : luaL_optinteger(L, 5, 1);
     const auto count = static_cast<core::usize>(lua_objlen(L, 4));
     // A 4096-column square is sixteen million heights and the largest thing
     // this is for; past it a script has a loop that did not stop.
@@ -1375,6 +1381,20 @@ int methodTerrainWriteHeights(lua_State* L)
     }
     if (material < 1 || material > 255)
         luaL_argerror(L, 5, "a material id from 1 to 255");
+    std::vector<core::u8> materials;
+    if (perColumn) {
+        if (static_cast<core::usize>(lua_objlen(L, 5)) != count)
+            luaL_argerror(L, 5, "one material per height");
+        materials.resize(count);
+        for (core::usize at = 0; at < count; ++at) {
+            lua_rawgeti(L, 5, static_cast<int>(at + 1));
+            const lua_Integer value = lua_isnumber(L, -1) != 0 ? static_cast<lua_Integer>(lua_tointeger(L, -1)) : -1;
+            lua_pop(L, 1);
+            if (value < 0 || value > 255)
+                luaL_argerror(L, 5, "material ids from 0 to 255");
+            materials[at] = static_cast<core::u8>(value);
+        }
+    }
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -1396,12 +1416,56 @@ int methodTerrainWriteHeights(lua_State* L)
     const double voxel = static_cast<double>(terrain->field.settings().voxelSize);
     const auto firstX = static_cast<core::i32>(std::floor((static_cast<double>(corner.x) - terrain->origin.x) / voxel));
     const auto firstZ = static_cast<core::i32>(std::floor((static_cast<double>(corner.z) - terrain->origin.z) / voxel));
-    const asset::EditReport report = asset::writeHeights(
-        terrain->field, firstX, firstZ, static_cast<core::u32>(columns), heights, static_cast<core::u8>(material));
+    const asset::EditReport report =
+        perColumn ? asset::writeHeights(terrain->field, firstX, firstZ, static_cast<core::u32>(columns), heights,
+                                        std::span<const core::u8>(materials))
+                  : asset::writeHeights(terrain->field, firstX, firstZ, static_cast<core::u32>(columns), heights,
+                                        static_cast<core::u8>(material));
     if (report.touched > 0)
         terrain->fieldRevision += 1;
     lua_pushinteger(L, static_cast<int>(report.touched));
     return 1;
+}
+
+int methodTerrainGetLayers(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::TerrainComponent* terrain = world(L).terrains().find(id);
+    const std::vector<std::string> fallback = asset::defaultTerrainLayers();
+    const std::vector<std::string>& layers = terrain != nullptr ? terrain->layers : fallback;
+    lua_createtable(L, static_cast<int>(layers.size()), 0);
+    for (core::usize index = 0; index < layers.size(); ++index) {
+        lua_pushlstring(L, layers[index].data(), layers[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index + 1));
+    }
+    return 1;
+}
+
+int methodTerrainSetLayers(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    const auto count = static_cast<core::usize>(lua_objlen(L, 2));
+    if (count > asset::MaxTerrainLayers)
+        luaL_argerror(L, 2, "at most 255 layers");
+    std::vector<std::string> layers;
+    layers.reserve(count);
+    for (core::usize at = 0; at < count; ++at) {
+        lua_rawgeti(L, 2, static_cast<int>(at + 1));
+        // The type first: `lua_tolstring` turns a number into a string in place.
+        if (lua_type(L, -1) != LUA_TSTRING)
+            luaL_argerror(L, 2, "a list of material URNs");
+        size_t length = 0;
+        const char* text = lua_tolstring(L, -1, &length);
+        layers.emplace_back(text, length);
+        lua_pop(L, 1);
+    }
+    scene::TerrainComponent* terrain = world(L).terrains().find(id);
+    if (terrain != nullptr && terrain->layers != layers) {
+        terrain->layers = std::move(layers);
+        terrain->layersRevision += 1;
+    }
+    return 0;
 }
 
 int methodTerrainHeightAt(lua_State* L)
@@ -1782,6 +1846,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Terrain", "HeightAt", methodTerrainHeightAt},
     {"Terrain", "WriteHeights", methodTerrainWriteHeights},
     {"Terrain", "Clear", methodTerrainClear},
+    {"Terrain", "GetLayers", methodTerrainGetLayers},
+    {"Terrain", "SetLayers", methodTerrainSetLayers},
     {"Terrain", "Compact", methodTerrainCompact},
     {"Terrain", "FillCylinder", methodTerrainFillCylinder},
     {"Terrain", "SmoothBall", methodTerrainSmoothBall},

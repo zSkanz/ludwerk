@@ -318,17 +318,34 @@ struct DrawItem
     // Kept out of the depth prepass, which has no image to test and would
     // write the holes as solid.
     bool cutout = false;
+    // Which terrain a terrain draw belongs to, so its layers are the ones
+    // bound (ADR 0113): the `RenderTerrain` with this id.
+    core::InstanceId terrainId{};
 };
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its
 // shader reads (ADR 0082). Filled by `TerrainLoader::appendRenderTerrains`.
+struct RenderTerrainLayer
+{
+    f32 flat[4]{};
+    f32 tint[4]{};
+    f32 surface[4]{};
+    // Colour, normal and surface maps; invalid for a map the material does
+    // not name, which the renderer fills with a neutral one.
+    std::array<rhi::TextureHandle, 3> maps{};
+    // A map named but not loaded yet: the arrays wait for it.
+    bool waiting = false;
+};
+
 struct RenderTerrain
 {
     core::InstanceId id;
     // The terrain's origin in world space.
     DVec3 origin;
-    // Linear colour per material id.
-    f32 palette[kTerrainPaletteSize][4]{};
+    // One per layer, material id 1 first (ADR 0113).
+    std::vector<RenderTerrainLayer> layers;
+    // The layer steep ground turns to, or 0 for none.
+    u32 rockLayer = 0;
 };
 
 // One node of a terrain's level-of-detail quadtree to draw this frame: the

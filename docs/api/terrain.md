@@ -9,7 +9,7 @@ A sculpted, collidable landscape: ground you dig into rather than a floor made o
 
 **It is a grid of voxels.** Space is cut into cubes `VoxelSize` on a side, and each one holds a material and an occupancy -- how full of that material it is, from 0 to 1. The surface is wherever the occupancy crosses one half, found by interpolating between neighbouring voxels, so a ball carved out of a hillside lands where you put it rather than on a grid line. Caves, arches, overhangs and flat ground are all the same data.
 
-Materials are numbered: 0 is air, and 1 to 8 are Grass, Sand, Rock, Snow, Mud, Sandstone, Basalt and Ice.
+Materials are numbered: 0 is air, and `n` is the terrain's layer `n` -- a material asset (`GetLayers`). A new terrain's eight layers are the engine's own, so 1 to 8 are Grass, Sand, Rock, Snow, Mud, Sandstone, Basalt and Ice until you change them.
 
 There is one per `Workspace`, reached as `workspace.Terrain`, because a world has one ground. Creating a second is legal and it simply is not the one the workspace names.
 
@@ -64,6 +64,10 @@ The same, as an upright cylinder `height` tall. Returns how many voxels it chang
 
 Pulls the ground in a ball towards a level plane at `height` -- taking away what is above it and filling what is below it -- by `strength` (0 to 1, default 1), less towards the rim. Returns how many voxels it changed.
 
+### `GetLayers(): { string }`
+
+What each material id is: a list of material URNs, where entry `n` is what voxels of material `n` are drawn with. A new terrain's are the engine's eight, `engine://terrain/grass` to `engine://terrain/ice`.
+
 ### `HeightAt(x: number, z: number): number`
 
 The height of the top of the ground here, in metres, or nil where there is none.
@@ -76,11 +80,13 @@ Changes what the ground is MADE OF in a ball, without moving it. Returns how man
 
 A `material` of zero is refused rather than treated as erase. Zero means erase to `FillBall`, and picking the first entry of a material list must not delete the ground you were about to paint.
 
-### `RaiseBall(center: vector, radius: number, amount: number): number`
+### `RaiseBall(center: vector, radius: number, amount: number, material: number?): number`
 
 Raises the ground around `center` by `amount` metres at the middle, falling smoothly to nothing at `radius` -- or lowers it, when `amount` is negative. Returns how many voxels it changed.
 
 **It moves the surface rather than adding a ball**: the ground within `radius` above and below `center` is pushed up, so a hill rises without an overhang at its rim, and a tunnel further down stays where it is. This is the verb for shaping hills and valleys; `FillBall` is the one for a boulder or a tunnel.
+
+Where a column within reach has no ground at all and `material` is given, raising lays new ground of it from `center`'s height up.
 
 ### `ReadVoxels(minCorner: vector, maxCorner: vector): ({ number }, { number }, vector)`
 
@@ -92,6 +98,10 @@ Reads every voxel the box between the two corners touches, snapped outward to th
 
 Every voxel of material `from` in the box between the two corners becomes `to`. Returns how many it changed. Zero for either is refused: this changes what ground is made of, never whether it is there.
 
+### `SetLayers(layers: { string })`
+
+Sets what each material id is, as `GetLayers` returns it: up to 255 material URNs, entry `n` for material `n`. The voxels keep their numbers, so replacing entry 3 repaints every rock at once; add a project material at the end to paint with it. Saved with the scene.
+
 ### `SmoothBall(center: vector, radius: number, strength: number?): number`
 
 Softens the ground in a ball: every voxel moves towards the average of its neighbours by `strength` (0 to 1, default 0.5), less towards the rim. Returns how many voxels it changed.
@@ -100,11 +110,11 @@ Softens the ground in a ball: every voxel moves towards the average of its neigh
 
 Which voxel a world position falls in, as its whole-number index on each axis.
 
-### `WriteHeights(corner: vector, columns: number, heights: { number }, material: number?): number`
+### `WriteHeights(corner: vector, columns: number, heights: { number }, material: (number | { number })?): number`
 
 Writes a heightmap in one call: one height per column of voxels, `columns` to a row, row after row along +Z, starting at the column `corner` falls in (its X and Z; Y is not read). Returns how many voxels it changed.
 
-**This is the verb for ground that comes from somewhere** -- a generator's noise, an image, another tool -- where a brush per column would be a quarter of a million calls. Heights are in world metres and clamped between `MinHeight` and `MaxHeight`; `material` (default 1) is what new ground is made of. Each column's top moves to its height -- ground added from the old top up, or taken from it down -- and a cave under the top stays. A column with no ground at all is laid as a slab 32 metres deep under the table's lowest height. A height that is not a number is skipped.
+**This is the verb for ground that comes from somewhere** -- a generator's noise, an image, another tool -- where a brush per column would be a quarter of a million calls. Heights are in world metres and clamped between `MinHeight` and `MaxHeight`; `material` (default 1) is what new ground is made of -- one id for all of it, or a table of ids parallel to `heights`, where 0 leaves that column alone. Each column's top moves to its height -- ground added from the old top up, or taken from it down -- and a cave under the top stays. A column with no ground at all is laid as a slab 32 metres deep under the table's lowest height. A height that is not a number is skipped.
 
 ### `WriteVoxels(corner: vector, size: vector, materials: { number }, occupancies: { number }): number`
 

@@ -690,6 +690,20 @@ public:
                        .finish();
     }
 
+    void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) override
+    {
+        stream_ += Line("blitTexture")
+                       .num("source", static_cast<u64>(source.id))
+                       .num("destination", static_cast<u64>(destination.id))
+                       .num("layer", static_cast<u64>(destinationLayer))
+                       .finish();
+    }
+
+    void generateMipmaps(TextureHandle texture) override
+    {
+        stream_ += Line("generateMipmaps").num("texture", static_cast<u64>(texture.id)).finish();
+    }
+
     void pushDebugGroup(std::string_view groupName) override
     {
         stream_ += Line("pushDebugGroup").str("name", groupName).finish();

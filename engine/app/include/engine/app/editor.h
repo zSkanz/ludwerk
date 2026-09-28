@@ -2064,6 +2064,11 @@ public:
     // sounds like.
     bool clearTerrain(scene::World& world, core::InstanceId root, Inspector& inspector);
 
+    // **What the terrain's material ids mean** (ADR 0113), as one undoable
+    // step: the Paint section's add, remove, replace and reorder. At most 255.
+    bool setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
+                          std::string_view label);
+
     // **Ground from a heightmap image**, the way every terrain editor starts a
     // real landscape: a square of `size` metres centred on the terrain's
     // origin, black at `low` and white at `high`, in world metres.

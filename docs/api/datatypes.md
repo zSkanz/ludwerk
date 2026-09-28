@@ -346,19 +346,22 @@ The shared, read-only handle for a material asset: `Material.load("asset://mater
 |---|---|---|---|---|
 | `AlphaCutoff` | `number` | — | read/write | What `Mask` tests against. Read only in that mode. |
 | `AlphaMode` | `Enum.AlphaMode` | — | read/write | How alpha is read: `Opaque` ignores it, `Mask` is a coverage test against `AlphaCutoff`, and `Blend` blends. |
+| `BlendSharpness` | `number` | — | read/write | How hard the edge is where this terrain layer meets another, from 0 (a wide fade) to 1 (a sharp line along the height map). Read only by a terrain. |
 | `Color` | `Color3` | — | read/write | The base tint, multiplied into `ColorMap` if there is one. White with no map is a plain white surface. |
 | `ColorMap` | `Content` | — | read/write | The base-colour image, sampled and multiplied by `Color`. Colour data, encoded through the sRGB curve -- unlike the maps below, which are numbers. |
 | `DoubleSided` | `boolean` | — | read/write | Whether the back faces are drawn. Leaves and cloth want this; anything solid does not. |
 | `Emissive` | `Color3` | — | read/write | Light the surface gives off on its own. It lights nothing else -- that is a `PointLight` -- it only makes this surface bright. |
 | `EmissiveMap` | `Content` | — | read/write | What the surface glows with, multiplied by `Emissive`. Colour data. |
+| `HeightMap` | `string` | — | read/write | A height image for a terrain layer, white high: where two layers meet, the higher one shows through. Read only by a terrain. |
 | `MetallicRoughnessMap` | `Content` | — | read/write | Occlusion, roughness and metalness in one image's R, G and B -- glTF's packing, and one property because they are one file. Linear data, not colour. |
 | `Metalness` | `number` | — | read/write | 0 is a dielectric -- plastic, stone, wood -- and 1 is bare metal. |
 | `NormalMap` | `Content` | — | read/write | A tangent-space normal map. Linear data, not colour. |
 | `NormalScale` | `number` | — | read/write | Scales the sampled normal's XY. One is the map as authored; zero is a flat surface. |
 | `Roughness` | `number` | — | read/write | 0 is a mirror and 1 is chalk. The default is 0.7, what an untextured building block looks like. |
 | `Source` | `Content` | — | read-only | The material asset this handle is, or the asset a clone was copied from -- a clone of a clone included. Always an asset's `Content`: a clone has nothing else to be named by. |
-| `TileSize` | `number` | — | read/write | How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. |
+| `TileSize` | `number` | — | read/write | How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. A terrain layer repeats at this size too. |
 | `Transparency` | `number` | — | read/write | How see-through the surface is, 0 opaque and 1 invisible. |
+| `Triplanar` | `boolean` | — | read/write | Whether a terrain layer is projected from three axes, so a cliff is textured rather than smeared. On by default; read only by a terrain. |
 
 ## Material — methods
 

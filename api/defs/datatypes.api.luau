@@ -2368,7 +2368,28 @@ local Datatypes: { Schema.Datatype } = {
                 Doc = "How big one repeat of the textures is on a part's faces, in metres: a face shows as many "
                     .. "repeats as it is long, so a long, thin slab has the texture at one scale on its top and "
                     .. "its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's "
-                    .. "own UVs.",
+                    .. "own UVs. A terrain layer repeats at this size too.",
+            },
+            {
+                Name = "HeightMap",
+                Type = "string",
+                ThreadSafety = "Safe",
+                Doc = "A height image for a terrain layer, white high: where two layers meet, the higher one "
+                    .. "shows through. Read only by a terrain.",
+            },
+            {
+                Name = "Triplanar",
+                Type = "boolean",
+                ThreadSafety = "Safe",
+                Doc = "Whether a terrain layer is projected from three axes, so a cliff is textured rather than "
+                    .. "smeared. On by default; read only by a terrain.",
+            },
+            {
+                Name = "BlendSharpness",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How hard the edge is where this terrain layer meets another, from 0 (a wide fade) to 1 "
+                    .. "(a sharp line along the height map). Read only by a terrain.",
             },
         } :: { Schema.Property },
         Methods = {

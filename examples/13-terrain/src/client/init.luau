@@ -15,11 +15,13 @@
 
 local Workspace = game:GetService("Workspace")
 
---- A material id. Zero means "remove", so every non-zero value is some kind of
---- ground; the palette is a game's business and one is enough to show a shape.
-local Rock = 1
---- A second material, so painting has somewhere to go. What a palette means is
---- a game's business; two is enough to show that changing one is not a sculpt.
+--- A material id: the terrain's layer of that number (ADR 0113). A new
+--- terrain's layers are the engine's, so 1 is grass and 2 is sand; zero means
+--- "remove", so every non-zero value is some kind of ground. Steep ground draws
+--- as rock whatever it was painted.
+local Grass = 1
+--- A second material, so painting has somewhere to go: changing one is not a
+--- sculpt.
 local Sand = 2
 
 local terrain = Instance.new("Terrain")
@@ -40,14 +42,14 @@ terrain.Parent = Workspace
 --
 -- The rule, once: a fill that reaches the floor makes ground, and one that does
 -- not makes a slab. Both are legal and the second costs voxels.
-terrain:FillBlock(vector.create(0, -40, 0), vector.create(48, 80, 48), Rock)
+terrain:FillBlock(vector.create(0, -40, 0), vector.create(48, 80, 48), Grass)
 
 -- A hill on top of it, as three overlapping balls. Still cheap, for the same
 -- reason: adding to the top of ground moves the surface up and leaves one
 -- surface.
-terrain:FillBall(vector.create(0, 2, 0), 9, Rock)
-terrain:FillBall(vector.create(6, 1, 4), 6, Rock)
-terrain:FillBall(vector.create(-5, 1, -3), 7, Rock)
+terrain:FillBall(vector.create(0, 2, 0), 9, Grass)
+terrain:FillBall(vector.create(6, 1, 4), 6, Grass)
+terrain:FillBall(vector.create(-5, 1, -3), 7, Grass)
 
 -- **And the cave, which is the whole reason this is a volume.** Removing a ball
 -- from INSIDE the hill leaves air with ground above it, so those columns stop

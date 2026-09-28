@@ -105,6 +105,18 @@ public:
     virtual void uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,
                                      std::span<const std::byte> data) = 0;
 
+    // **A texture copied into one layer of another, scaled to fit** (ADR
+    // 0113): mip 0 to mip 0, filtered linearly. What builds a terrain's layer
+    // arrays out of textures already on the GPU, whatever size or compression
+    // they arrived in, so nothing is decoded twice. Outside a render pass; the
+    // destination needs `ColorTarget` usage.
+    virtual void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) = 0;
+
+    // Every mip level after the first, filtered down from the first, on every
+    // layer. Outside a render pass; the texture needs `Sampled` and
+    // `ColorTarget` usage.
+    virtual void generateMipmaps(TextureHandle texture) = 0;
+
     // Named regions in a GPU capture. Free in shipping builds, invaluable in
     // every other one.
     virtual void pushDebugGroup(std::string_view name) = 0;

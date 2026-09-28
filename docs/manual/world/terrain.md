@@ -46,12 +46,12 @@ below `MinHeight`. `VoxelSize` can only change while the terrain is empty.
 | `FillBall(center, radius, material)` | Adds a ball, or removes one with material 0. Near its rim a ball overhangs, which makes it the verb for a boulder or a tunnel. |
 | `FillBlock(center, size, material)` | The same, as a box. |
 | `FillCylinder(center, height, radius, material)` | The same, as an upright cylinder: a pillar, a well. |
-| `RaiseBall(center, radius, amount)` | Pushes the surface up under a disc, falling smoothly to nothing at the rim, or down for a negative amount. It never makes an overhang, which makes it the verb for a hill. |
+| `RaiseBall(center, radius, amount, material?)` | Pushes the surface up under a disc, falling smoothly to nothing at the rim, or down for a negative amount. It never makes an overhang, which makes it the verb for a hill. Given a material, it lays new ground of it where there was none. |
 | `SmoothBall(center, radius, strength?)` | Softens the ground in a ball. |
 | `FlattenBall(center, radius, height, strength?)` | Pulls the ground in a ball towards a level plane. |
 | `PaintBall(center, radius, material)` | Changes what the ground is made of and leaves it where it is. |
 | `ReplaceMaterial(minCorner, maxCorner, from, to)` | Every voxel of one material in a box becomes another. |
-| `WriteHeights(corner, columns, heights, material)` | Writes a heightmap in one call, one height per column of voxels, row after row along +Z. It is the verb for ground from a generator or an image. |
+| `WriteHeights(corner, columns, heights, material)` | Writes a heightmap in one call, one height per column of voxels, row after row along +Z. It is the verb for ground from a generator or an image. `material` is one id, or a table of ids beside `heights` (0 leaves a column alone). |
 | `ReadVoxels(minCorner, maxCorner)` | Materials and occupancies of a box of voxels, and how many there are on each axis. |
 | `WriteVoxels(corner, size, materials, occupancies)` | Puts them back, or writes new ones. |
 | `WorldToCell(position)` / `CellCenterToWorld(cell)` | Between a world position and a voxel's index. |
@@ -104,20 +104,51 @@ consequences:
 
 The surface, where occupancy crosses one half, is where the brush put it.
 
-## Materials
+## Materials are layers
 
-| Id | Material |
+A voxel's material is a number, and **the number means the terrain's layer
+of that number**: a material asset, like the ones parts wear
+([Materials](manual:world/materials)). A new terrain has the engine's eight
+layers:
+
+| Id | Layer |
 |---|---|
-| 1 | Grass |
-| 2 | Sand |
-| 3 | Rock |
-| 4 | Snow |
-| 5 | Mud |
-| 6 | Sandstone |
-| 7 | Basalt |
-| 8 | Ice |
+| 1 | `engine://terrain/grass` |
+| 2 | `engine://terrain/sand` |
+| 3 | `engine://terrain/rock` |
+| 4 | `engine://terrain/snow` |
+| 5 | `engine://terrain/mud` |
+| 6 | `engine://terrain/sandstone` |
+| 7 | `engine://terrain/basalt` |
+| 8 | `engine://terrain/ice` |
 
 Material 0 is not ground: it is what digging writes.
+
+The engine's eight are built in, with colour, normal, roughness and height
+textures, and need no file. A project changes the list with
+`GetLayers` and `SetLayers`, or in the editor's Paint section:
+
+```luau
+--!strict
+local layers = terrain:GetLayers()
+layers[3] = "asset://materials/cliff.material.json" -- every rock is now cliff
+table.insert(layers, "asset://materials/moss.material.json") -- id 9
+terrain:SetLayers(layers)
+```
+
+- **The voxels keep their numbers.** Replacing layer 3 repaints every voxel
+  of it at once; adding a layer gives you a new id to paint with.
+- **The list is saved with the scene**, up to 255 layers.
+- **What a layer reads from its material**: `ColorMap`, `NormalMap`,
+  `MetallicRoughnessMap`, the colour, roughness and metalness factors,
+  `NormalScale`, `TileSize` (metres per repeat), and `Triplanar` (projected
+  from three axes, on by default, so a cliff is not a smear). `HeightMap` and
+  `BlendSharpness` are for where two layers meet. A surface shader is not read
+  on terrain.
+- **Where layers meet**, a pixel blends the layers of its triangle's corners,
+  so a painted edge is soft rather than stepped.
+- **Steep ground draws as layer 3**, rock by default, with a ragged edge,
+  except where it already is layer 3 or 7.
 
 ## In the editor
 
@@ -158,6 +189,11 @@ back.
 - **Ground under the square.** Each column's top moves to the image's height,
   and a cave under the top stays where it is. Where there was no ground, the
   image is laid as a slab 32 m deep under its lowest point.
+
+**Paint** shows the terrain's layers as swatches, in id order. **Layers...**
+replaces the selected layer with another material -- one of the engine's or
+one of the project's -- adds one after the last, or removes the last. Each is
+one undo step.
 
 **Settings** holds the three numbers a terrain is decided at:
 - `VoxelSize`, which can change only while the terrain is empty;

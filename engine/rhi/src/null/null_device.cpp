@@ -40,6 +40,8 @@ public:
     void upload(BufferHandle, std::span<const std::byte>, u32) override {}
     void uploadTexture(TextureHandle, std::span<const std::byte>, u32) override {}
     void uploadTextureRegion(TextureHandle, u32, u32, u32, u32, std::span<const std::byte>) override {}
+    void blitTexture(TextureHandle, TextureHandle, u32) override {}
+    void generateMipmaps(TextureHandle) override {}
 
     void pushDebugGroup(std::string_view) override {}
     void popDebugGroup() override {}

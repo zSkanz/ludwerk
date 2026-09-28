@@ -12,10 +12,13 @@ local testing = require("@engine/testing")
 local describe, it, expect = testing.describe, testing.it, testing.expect
 local beforeEach, afterEach = testing.beforeEach, testing.afterEach
 
---- A material id. Zero means "remove" to `FillBall` and `FillBlock`, so every
---- non-zero value is some kind of ground.
-local Rock = 1
+--- A material id: the terrain's layer of that number (ADR 0113), and a new
+--- terrain's first eight are the engine's -- 1 is grass, 2 sand, 3 rock. Zero
+--- means "remove" to `FillBall` and `FillBlock`, so every non-zero value is some
+--- kind of ground.
+local Grass = 1
 local Sand = 2
+local Rock = 3
 
 describe("terrain", function()
     local terrain: Terrain
@@ -206,5 +209,46 @@ describe("terrain", function()
 
         local params = RaycastParams.new({ Filter = { terrain } :: { Instance } })
         expect(workspace:Raycast(vector.create(3, 50, 3), vector.create(0, -100, 0), params)):ToBe(nil)
+    end)
+
+    it("starts with the engine's eight layers, and a list set is the list read", function()
+        local layers = terrain:GetLayers()
+        expect(#layers):ToBe(8)
+        expect(layers[Grass]):ToBe("engine://terrain/grass")
+        expect(layers[Rock]):ToBe("engine://terrain/rock")
+
+        -- Replacing a layer and adding one: the voxels keep their numbers.
+        layers[Rock] = "engine://terrain/basalt"
+        table.insert(layers, "engine://terrain/snow")
+        terrain:SetLayers(layers)
+        local read = terrain:GetLayers()
+        expect(#read):ToBe(9)
+        expect(read[Rock]):ToBe("engine://terrain/basalt")
+        expect(read[9]):ToBe("engine://terrain/snow")
+
+        expect(function()
+            terrain:SetLayers({ 1 } :: any)
+        end):ToThrow()
+    end)
+
+    it("raises new ground of a material where there was none", function()
+        local changed = terrain:RaiseBall(vector.create(0, 0, 0), 4, 3, Sand)
+        expect(changed > 0):ToBe(true)
+        local materials = terrain:ReadVoxels(vector.create(0.2, 0.2, 0.2), vector.create(0.8, 0.8, 0.8))
+        expect(materials[1]):ToBe(Sand)
+    end)
+
+    it("writes a heightmap with a material per column", function()
+        terrain:WriteHeights(vector.create(0, 0, 0), 2, { 2, 2, 2, 2 }, { Grass, Sand, Rock, Grass })
+        local grass = terrain:ReadVoxels(vector.create(0.2, 1.2, 0.2), vector.create(0.8, 1.8, 0.8))
+        local sand = terrain:ReadVoxels(vector.create(1.2, 1.2, 0.2), vector.create(1.8, 1.8, 0.8))
+        local rock = terrain:ReadVoxels(vector.create(0.2, 1.2, 1.2), vector.create(0.8, 1.8, 1.8))
+        expect(grass[1]):ToBe(Grass)
+        expect(sand[1]):ToBe(Sand)
+        expect(rock[1]):ToBe(Rock)
+
+        expect(function()
+            terrain:WriteHeights(vector.create(0, 0, 0), 2, { 2, 2, 2, 2 }, { Grass })
+        end):ToThrow()
     end)
 end)

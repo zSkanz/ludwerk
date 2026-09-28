@@ -137,4 +137,48 @@ TerrainDetail terrainDetail(float3 albedo, float3 ground, float3 normal, bool ro
     return detail;
 }
 
+// **The same variation, apart from any colour** (ADR 0113): what a textured
+// layer is multiplied by, how steep-and-rocky the point is, and the grain's
+// nudge -- so layers with real textures keep the large-scale break-up the flat
+// palette had, at a third of its strength, since a texture brings its own.
+struct TerrainVariation
+{
+    float3 Shade;
+    float Rockiness;
+    float2 NormalNudge;
+};
+
+TerrainVariation terrainVariation(float3 ground, float3 normal)
+{
+    const float3 span = fwidth(ground);
+    const float footprint = max(span.x, max(span.y, span.z));
+    const float grainFade = saturate(1.0f - footprint / 0.25f);
+
+    float3 weights = abs(normal);
+    weights *= weights;
+    weights *= weights;
+    weights /= max(weights.x + weights.y + weights.z, 1e-5f);
+
+    TerrainOctaves blended = (TerrainOctaves)0;
+    [branch] if (weights.y > 0.01f)
+        blended = terrainWeighted(blended, terrainOctaves(ground.xz), weights.y);
+    [branch] if (weights.x > 0.01f)
+        blended = terrainWeighted(blended, terrainOctaves(ground.zy), weights.x);
+    [branch] if (weights.z > 0.01f)
+        blended = terrainWeighted(blended, terrainOctaves(ground.xy), weights.z);
+    const float kept = (weights.y > 0.01f ? weights.y : 0.0f) + (weights.x > 0.01f ? weights.x : 0.0f) +
+                       (weights.z > 0.01f ? weights.z : 0.0f);
+    const float scale = 1.0f / max(kept, 1e-5f);
+    const float macro = blended.Macro * scale;
+    const float clump = blended.Clump * scale;
+
+    TerrainVariation variation;
+    const float slope = 1.0f - saturate(normal.y);
+    variation.Rockiness = smoothstep(0.24f, 0.36f, slope + (clump - 0.5f) * 0.12f);
+    variation.Shade = (1.0f + (macro - 0.5f) * 0.12f) *
+                      lerp(float3(1.02f, 0.99f, 0.98f), float3(0.98f, 1.01f, 1.01f), macro);
+    variation.NormalNudge = blended.GrainSlope * scale * (0.3f * grainFade);
+    return variation;
+}
+
 #endif // ENG_TERRAIN_SURFACE_HLSLI

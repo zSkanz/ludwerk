@@ -4,6 +4,7 @@
 #include "engine/app/streaming_host.h"
 #include "engine/app/view_host.h"
 #include "engine/app/world_panels.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/asset/terrain_palette.h"
 #include "engine/audio/audio.h"
 #include "engine/core/brand.h"
@@ -3833,6 +3834,28 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
                     ImGui::SetItemTooltip("how big one repeat of the textures is on a part's faces; 0 stretches "
                                           "each texture over the whole face; a MeshPart keeps its own UVs");
                     row.end(F::TileSize, edited);
+                }
+                endSectionGrid();
+            }
+            // What only a terrain reads (ADR 0113), so a material worn by
+            // parts alone can leave the section closed.
+            if (section("Terrain", "terrain")) {
+                {
+                    asset::MaterialProperties& p = row.begin(F::HeightMap);
+                    row.end(F::HeightMap, drawMapField(p.heightMap, editor.content()));
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::Triplanar);
+                    const bool edited = ImGui::Checkbox("##value", &p.triplanar);
+                    ImGui::SetItemTooltip("projected from three axes, so a cliff is textured rather than smeared");
+                    row.end(F::Triplanar, edited);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::BlendSharpness);
+                    const bool edited = ImGui::SliderFloat("##value", &p.blendSharpness, 0.0f, 1.0f, "%.2f");
+                    ImGui::SetItemTooltip("where this layer meets another: 0 a wide fade, 1 a sharp line along "
+                                          "the height map");
+                    row.end(F::BlendSharpness, edited);
                 }
                 endSectionGrid();
             }
@@ -10739,10 +10762,13 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::DragFloat("##ground-height", &groundHeight, 0.25f, -256.0f, 256.0f, "%.1f m");
         ImGui::SetItemTooltip("the height the ground's surface ends up at");
-        if (const asset::TerrainMaterial* fill = asset::terrainMaterial(editor.brush().material); fill != nullptr) {
+        if (const core::u8 fill = editor.brush().material;
+            terrain != nullptr && fill >= 1 && fill <= terrain->layers.size()) {
+            std::string name = terrain->layers[fill - 1];
+            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
+                name = name.substr(slash + 1);
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("made of %.*s -- pick another under Paint", static_cast<int>(fill->name.size()),
-                                fill->name.data());
+            ImGui::TextDisabled("made of %s -- pick another under Paint", name.c_str());
             ImGui::PopTextWrapPos();
         }
 
@@ -10871,39 +10897,127 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
         // **Swatches, because a material is a colour before it is a
         // number.** Every editor here shows a palette rather than an id
         // field, and this one has to: the field stores a `u8` and a
-        // person cannot recognise 4 as snow.
+        // person cannot recognise 4 as snow. The swatches are the
+        // terrain's own layers (ADR 0113), id order.
+        const std::vector<std::string> engineLayers = asset::defaultTerrainLayers();
+        const std::vector<std::string>& layers = terrain != nullptr ? terrain->layers : engineLayers;
+        const auto layerName = [](const std::string& urn) {
+            std::string name = urn;
+            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
+                name = name.substr(slash + 1);
+            if (name.ends_with(".material.json"))
+                name.resize(name.size() - std::string_view(".material.json").size());
+            if (!name.empty())
+                name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+            return name;
+        };
+        // The engine's own in their old palette colours; a project's in its
+        // material's colour.
+        const auto layerColor = [&](const std::string& urn) {
+            const auto at = std::find(engineLayers.begin(), engineLayers.end(), urn);
+            if (at != engineLayers.end()) {
+                const core::Vec3 c = asset::terrainColorOf(static_cast<core::u8>(at - engineLayers.begin() + 1));
+                return ImVec4(c.x, c.y, c.z, 1.0f);
+            }
+            const asset::ResolvedMaterial material = world.resolveMaterial(world.atoms().intern(urn), 0);
+            return ImVec4(material.properties.color.r, material.properties.color.g, material.properties.color.b, 1.0f);
+        };
+
         const core::u8 selected = editor.brush().material;
         const f32 swatch = ImGui::GetFrameHeight() * 1.4f;
         const int columns =
             std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) /
                                          (swatch + ImGui::GetStyle().ItemSpacing.x)));
-        int column = 0;
-        for (const asset::TerrainMaterial& material : asset::terrainPalette()) {
-            if (column > 0 && column % columns != 0)
+        for (std::size_t index = 0; index < layers.size(); ++index) {
+            if (index > 0 && index % static_cast<std::size_t>(columns) != 0)
                 ImGui::SameLine();
-            ++column;
-
-            ImGui::PushID(static_cast<int>(material.id));
-            const ImVec4 tint(material.color.x, material.color.y, material.color.z, 1.0f);
-            const bool on = selected == material.id;
+            const auto id = static_cast<core::u8>(index + 1);
+            ImGui::PushID(static_cast<int>(id));
+            const bool on = selected == id;
             if (on) {
                 ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
             }
-            if (ImGui::ColorButton("##swatch", tint, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha,
+            if (ImGui::ColorButton("##swatch", layerColor(layers[index]),
+                                   ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha,
                                    ImVec2(swatch, swatch))) {
-                editor.setBrushMaterial(material.id);
+                editor.setBrushMaterial(id);
             }
             if (on) {
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
             }
-            ImGui::SetItemTooltip("%.*s", static_cast<int>(material.name.size()), material.name.data());
+            ImGui::SetItemTooltip("%d  %s\n%s", static_cast<int>(id), layerName(layers[index]).c_str(),
+                                  layers[index].c_str());
             ImGui::PopID();
         }
+        if (selected >= 1 && selected <= layers.size()) {
+            ImGui::TextDisabled("%d  %s", static_cast<int>(selected), layerName(layers[selected - 1]).c_str());
+            // A surface shader is not read on terrain (ADR 0113): said here,
+            // where somebody picked the material, rather than left to a
+            // layer that silently looks built in.
+            const asset::ResolvedMaterial wearing =
+                world.resolveMaterial(world.atoms().intern(layers[selected - 1]), 0);
+            if (!wearing.properties.shader.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().warning));
+                ImGui::TextWrapped("its surface shader is not drawn on terrain; the layer uses the built-in surface");
+                ImGui::PopStyleColor();
+            }
+        }
 
-        if (const asset::TerrainMaterial* current = asset::terrainMaterial(selected); current != nullptr) {
-            ImGui::TextDisabled("%.*s", static_cast<int>(current->name.size()), current->name.data());
+        // **The list itself**: a project material in place of a layer, or
+        // added after the last. Voxels keep their numbers, so replacing a
+        // layer repaints every voxel of it at once -- which is the point --
+        // and only the last can be removed, since removing another would
+        // renumber the ones after it under the voxels' feet.
+        if (terrain != nullptr) {
+            static std::vector<std::string> choices;
+            if (ImGui::Button("Layers...", ImVec2(-FLT_MIN, 0.0f))) {
+                choices = engineLayers;
+                for (const std::string& file : editor.content().filesOfKind(ContentKind::Material))
+                    choices.push_back(std::string(asset::AssetScheme) + file);
+                ImGui::OpenPopup("terrain-layers");
+            }
+            ImGui::SetItemTooltip("replace the selected layer with another material, add one, or remove the last");
+            if (ImGui::BeginPopup("terrain-layers")) {
+                ImGui::TextDisabled("replace layer %d, or add a layer", static_cast<int>(selected));
+                ImGui::Separator();
+                for (const std::string& choice : choices) {
+                    ImGui::PushID(choice.c_str());
+                    ImGui::TextUnformatted(layerName(choice).c_str());
+                    ImGui::SetItemTooltip("%s", choice.c_str());
+                    ImGui::SameLine(ImGui::GetFontSize() * 10.0f);
+                    const bool canReplace = selected >= 1 && selected <= layers.size();
+                    ImGui::BeginDisabled(!canReplace);
+                    if (ImGui::SmallButton("replace")) {
+                        std::vector<std::string> next = layers;
+                        next[selected - 1] = choice;
+                        (void)editor.setTerrainLayers(world, root, std::move(next), "Replace Terrain Layer");
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(layers.size() >= asset::MaxTerrainLayers);
+                    if (ImGui::SmallButton("add")) {
+                        std::vector<std::string> next = layers;
+                        next.push_back(choice);
+                        if (editor.setTerrainLayers(world, root, std::move(next), "Add Terrain Layer"))
+                            editor.setBrushMaterial(static_cast<core::u8>(layers.size()));
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::PopID();
+                }
+                ImGui::Separator();
+                ImGui::BeginDisabled(layers.size() <= 1);
+                if (ImGui::Selectable("Remove the last layer")) {
+                    std::vector<std::string> next = layers;
+                    next.pop_back();
+                    (void)editor.setTerrainLayers(world, root, std::move(next), "Remove Terrain Layer");
+                }
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+            }
         }
 
         if (labeledIconButton(icons, icons::ActionPaint, "Paint Material", ImVec2(-FLT_MIN, 0.0f)))

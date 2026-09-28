@@ -39,7 +39,8 @@
 namespace engine::asset {
 
 // The fields, in the order the file writes them -- which is ADR 0090's order,
-// and the order the old class declared them in, with `TileSize` after them.
+// and the order the old class declared them in, with `TileSize` and the three
+// a terrain reads (ADR 0113) after them.
 enum class MaterialField : core::u8
 {
     Color,
@@ -56,13 +57,16 @@ enum class MaterialField : core::u8
     AlphaCutoff,
     DoubleSided,
     TileSize,
+    HeightMap,
+    Triplanar,
+    BlendSharpness,
     Count,
 };
 
 inline constexpr core::usize MaterialFieldCount = static_cast<core::usize>(MaterialField::Count);
 
 // One bit per field, bit N for `MaterialField` N.
-using MaterialFieldMask = core::u16;
+using MaterialFieldMask = core::u32;
 
 [[nodiscard]] constexpr MaterialFieldMask fieldBit(MaterialField field) noexcept
 {
@@ -147,6 +151,19 @@ struct MaterialProperties
     // would be. Zero stretches the whole texture over each face, as before. A
     // `MeshPart` always uses its file's own UVs.
     core::f32 tileSize = 4.0f;
+
+    // **What a terrain reads, and nothing else does** (ADR 0113). A layer's
+    // repeat is `tileSize` above, in metres as on a part.
+    //
+    // A height image (white is high), for the height blend where two layers
+    // meet (ADR 0114); empty is flat.
+    std::string heightMap;
+    // Projected from three axes rather than from the ground plane alone, so a
+    // cliff is not a smear. On by default, since only a terrain reads it.
+    bool triplanar = true;
+    // How hard the edge is where this layer meets another: zero a wide fade,
+    // one a sharp line along the height map.
+    core::f32 blendSharpness = 0.5f;
 
     // **The surface shader** (ADR 0091): a URN, or empty for the built-in
     // surface. `readsSceneColor` asks the renderer for what is behind.
@@ -363,8 +380,8 @@ private:
 struct CompiledMaterial
 {
     MaterialAsset asset;
-    // ColorMap, NormalMap, MetallicRoughnessMap, EmissiveMap.
-    std::array<core::ContentHash, 4> mapHashes{};
+    // ColorMap, NormalMap, MetallicRoughnessMap, EmissiveMap, HeightMap.
+    std::array<core::ContentHash, 5> mapHashes{};
 };
 
 [[nodiscard]] std::vector<std::byte> encodeMaterial(const CompiledMaterial& material);

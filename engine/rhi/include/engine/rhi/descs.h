@@ -28,6 +28,7 @@ struct TextureDesc
     TextureUsage usage = TextureUsage::None;
     u32 width = 0;
     u32 height = 0;
+    // More than one makes an ARRAY texture, sampled as `Texture2DArray`.
     u32 layers = 1;
     u32 mipLevels = 1;
     std::string_view debugName{};

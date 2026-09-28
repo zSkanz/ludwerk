@@ -4135,8 +4135,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
             // The terrains' palettes, which their shader reads, for the same
             // world and the same root.
-            terrainLoader.appendRenderTerrains(
-                authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot);
+            terrainLoader.appendRenderTerrains(authored(),
+                                               stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                               snapshot, &textureLibrary);
             // **Particles, on the render clock** (F2): advanced by this frame's
             // own length -- which a headless run fixes at one tick, so a golden
             // with sparks in it is still one picture -- and appended for the
@@ -4614,7 +4615,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                     static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
                                     host->animation(), renderAlpha, &transformHistory, viewSnapshot, &lens, {},
                                     &textureLibrary, terrainNodes);
-                    terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot);
+                    terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
                     particles.append(viewSnapshot);
                     skyLoader.append(viewSnapshot);
                     viewSnapshot.worldUiGradients = uiRenderer.gradientTable();

@@ -407,6 +407,15 @@ void pushMaterialField(lua_State* L, MaterialField field, const asset::MaterialP
     case MaterialField::TileSize:
         lua_pushnumber(L, static_cast<double>(values.tileSize));
         return;
+    case MaterialField::HeightMap:
+        lua_pushlstring(L, values.heightMap.data(), values.heightMap.size());
+        return;
+    case MaterialField::Triplanar:
+        lua_pushboolean(L, values.triplanar);
+        return;
+    case MaterialField::BlendSharpness:
+        lua_pushnumber(L, static_cast<double>(values.blendSharpness));
+        return;
     case MaterialField::Count:
         break;
     }
@@ -484,6 +493,15 @@ bool readMaterialParameter(lua_State* L, int index, MaterialField field, asset::
     case MaterialField::TileSize:
         // Metres, and zero for the stretched face.
         return number(into.tileSize) && into.tileSize >= 0.0f;
+    case MaterialField::HeightMap:
+        return map(into.heightMap);
+    case MaterialField::Triplanar:
+        if (!lua_isboolean(L, index))
+            return false;
+        into.triplanar = lua_toboolean(L, index) != 0;
+        return true;
+    case MaterialField::BlendSharpness:
+        return number(into.blendSharpness) && into.blendSharpness >= 0.0f && into.blendSharpness <= 1.0f;
     case MaterialField::Count:
         break;
     }

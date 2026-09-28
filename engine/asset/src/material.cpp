@@ -6,6 +6,7 @@
 #include <cstring>
 #include <utility>
 
+#include "engine/asset/terrain_layers.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
@@ -17,8 +18,9 @@ namespace engine::asset {
 namespace {
 
 constexpr std::array<std::string_view, MaterialFieldCount> FieldNames{
-    "Color",     "Transparency", "ColorMap",    "NormalMap", "MetallicRoughnessMap", "Emissive",    "EmissiveMap",
-    "Metalness", "Roughness",    "NormalScale", "AlphaMode", "AlphaCutoff",          "DoubleSided", "TileSize",
+    "Color",     "Transparency", "ColorMap",       "NormalMap", "MetallicRoughnessMap", "Emissive",    "EmissiveMap",
+    "Metalness", "Roughness",    "NormalScale",    "AlphaMode", "AlphaCutoff",          "DoubleSided", "TileSize",
+    "HeightMap", "Triplanar",    "BlendSharpness",
 };
 
 constexpr std::array<std::string_view, 3> AlphaModeNames{"Opaque", "Mask", "Blend"};
@@ -42,10 +44,12 @@ enum class FieldShape : core::u8
     case MaterialField::NormalMap:
     case MaterialField::MetallicRoughnessMap:
     case MaterialField::EmissiveMap:
+    case MaterialField::HeightMap:
         return FieldShape::Map;
     case MaterialField::AlphaMode:
         return FieldShape::AlphaMode;
     case MaterialField::DoubleSided:
+    case MaterialField::Triplanar:
         return FieldShape::Flag;
     default:
         return FieldShape::Number;
@@ -76,9 +80,17 @@ template <class Properties>
         return &p.alphaCutoff;
     case MaterialField::TileSize:
         return &p.tileSize;
+    case MaterialField::BlendSharpness:
+        return &p.blendSharpness;
     default:
         return static_cast<decltype(&p.transparency)>(nullptr);
     }
+}
+
+template <class Properties>
+[[nodiscard]] auto* flagField(MaterialField field, Properties& p) noexcept
+{
+    return field == MaterialField::Triplanar ? &p.triplanar : &p.doubleSided;
 }
 
 template <class Properties>
@@ -93,6 +105,8 @@ template <class Properties>
         return &p.metallicRoughnessMap;
     case MaterialField::EmissiveMap:
         return &p.emissiveMap;
+    case MaterialField::HeightMap:
+        return &p.heightMap;
     default:
         return static_cast<decltype(&p.colorMap)>(nullptr);
     }
@@ -145,7 +159,7 @@ template <class Properties>
     case FieldShape::Flag:
         if (json.type() != core::JsonType::Boolean)
             return false;
-        into.doubleSided = json.asBool();
+        *flagField(field, into) = json.asBool();
         return true;
     }
     return false;
@@ -176,7 +190,7 @@ void writeField(core::JsonWriter& out, MaterialField field, const MaterialProper
         return;
     }
     case FieldShape::Flag:
-        out.value(from.doubleSided);
+        out.value(*flagField(field, from));
         return;
     }
 }
@@ -307,7 +321,7 @@ void copyMaterialField(MaterialField field, const MaterialProperties& from, Mate
         into.alphaMode = from.alphaMode;
         return;
     case FieldShape::Flag:
-        into.doubleSided = from.doubleSided;
+        *flagField(field, into) = *flagField(field, from);
         return;
     }
 }
@@ -324,7 +338,7 @@ bool sameMaterialField(MaterialField field, const MaterialProperties& a, const M
     case FieldShape::AlphaMode:
         return a.alphaMode == b.alphaMode;
     case FieldShape::Flag:
-        return a.doubleSided == b.doubleSided;
+        return *flagField(field, a) == *flagField(field, b);
     }
     return false;
 }
@@ -645,7 +659,12 @@ const MaterialAsset* MaterialLibrary::asset(std::string_view urn)
         return found->second.asset.has_value() ? &*found->second.asset : nullptr;
 
     Loaded loaded;
-    if (m_source) {
+    // The engine's own (ADR 0113) are answered here, before any mount: they
+    // are built in, and no project file can stand in for one.
+    if (isEngineMaterial(urn)) {
+        loaded.asset = engineMaterial(urn);
+    }
+    else if (m_source) {
         MaterialReadNotes notes;
         loaded.asset = m_source(urn, notes);
         // Said once per load -- the entry below is what stops it being said
@@ -720,8 +739,9 @@ namespace {
 constexpr std::array<char, 4> CompiledMagic{'L', 'M', 'A', 'T'};
 // 2: the surface shader and its parameters (ADR 0091).
 // 3: the shader parameters a part may override, by name. 2 is still read.
-// 4 carries `tileSize`, at the end so a 3 reads as it did.
-constexpr core::u32 CompiledVersion = 4;
+// 4 carries `tileSize`, at the end so a 3 reads as it did; 5 the height map,
+// `triplanar` and `blendSharpness` a terrain reads (ADR 0113).
+constexpr core::u32 CompiledVersion = 5;
 
 class ByteWriter
 {
@@ -861,6 +881,11 @@ std::vector<std::byte> encodeMaterial(const CompiledMaterial& material)
     for (const std::string& name : asset.instanceShaderParameters)
         out.text(name);
     out.real(p.tileSize);
+    out.text(p.heightMap);
+    const std::array<std::byte, 16> heightHash = core::toBytes(material.mapHashes[4]);
+    out.raw(heightHash.data(), heightHash.size());
+    out.word(p.triplanar ? 1u : 0u);
+    out.real(p.blendSharpness);
     return out.take();
 }
 
@@ -875,8 +900,8 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
     core::u32 version = 0;
     core::u32 written = 0;
     core::u32 declared = 0;
-    if (!in.word(version) || (version != CompiledVersion && version != 3 && version != 2) || !in.word(written) ||
-        !in.word(declared) || !in.text(asset.parent))
+    if (!in.word(version) || version < 2 || version > CompiledVersion || !in.word(written) || !in.word(declared) ||
+        !in.text(asset.parent))
         return std::nullopt;
     asset.written = static_cast<MaterialFieldMask>(written & AllMaterialFields);
     asset.instanceParameters = static_cast<MaterialFieldMask>(declared & DeclarableParameters);
@@ -934,6 +959,14 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
     }
     if (version >= 4 && !in.real(p.tileSize))
         return std::nullopt;
+    if (version >= 5) {
+        std::array<std::byte, 16> hash{};
+        core::u32 triplanar = 0;
+        if (!in.text(p.heightMap) || !in.bytes(hash) || !in.word(triplanar) || !in.real(p.blendSharpness))
+            return std::nullopt;
+        out.mapHashes[4] = core::fromBytes(std::span<const std::byte, 16>(hash));
+        p.triplanar = triplanar != 0;
+    }
     if (!in.done())
         return std::nullopt;
     return out;

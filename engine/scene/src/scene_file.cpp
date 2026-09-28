@@ -1097,6 +1097,17 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                                      reinterpret_cast<const core::u8*>(encoded.data()), encoded.size()}));
             ++report.properties;
         }
+        // **The layers, only when they are not the engine's eight** (ADR
+        // 0113): a scene written before them and one that kept them read the
+        // same, and neither carries a list it does not need.
+        if (terrain->layers != asset::defaultTerrainLayers()) {
+            out.key("terrainLayers");
+            out.beginInlineArray();
+            for (const std::string& layer : terrain->layers)
+                out.value(layer);
+            out.endArray();
+            ++report.properties;
+        }
     }
 
     if (world.firstChild(id).valid()) {
@@ -1609,6 +1620,19 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
             else {
                 ++report.droppedReferences;
             }
+        }
+    }
+
+    // What the terrain's material bytes mean (ADR 0113). Absent is the engine's
+    // eight, which the component already holds.
+    if (const JsonValue layers = json["terrainLayers"]; layers.type() == core::JsonType::Array) {
+        if (TerrainComponent* component = world.terrains().find(id); component != nullptr) {
+            std::vector<std::string> read;
+            for (core::usize index = 0; index < layers.size() && read.size() < asset::MaxTerrainLayers; ++index)
+                read.emplace_back(layers.at(index).asString());
+            component->layers = std::move(read);
+            component->layersRevision += 1;
+            ++report.properties;
         }
     }
 
