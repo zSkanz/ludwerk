@@ -22,7 +22,13 @@ offers is on the base's page, which is what keeps one added member on
 
 ### `BindToClose(callback: () -> ())`
 
-Registers a function to run while the game is shutting down, for work that has to happen before the process ends. The callbacks run against a capped timeout and the shutdown proceeds when it expires, finished or not: a close handler is a chance to finish, never a veto.
+Registers a function to run while the game is shutting down, for work that has to happen before the process ends. The callbacks run against a capped timeout and the shutdown proceeds when it expires, finished or not: a close handler is a chance to finish, never a veto. The editor's Stop is the game closing too.
+
+**For the game, not a level** (ADR 0124): the open scene's `scene:BindToClose` handlers run first, then these. One registered by a scene's script is dropped when that scene closes, without running -- with a warning in the editor -- because it asked for a close its scene did not live to see; `scene:BindToClose` is the one for a level. Every call adds one, in order, each in its own thread; one that errors does not stop the others.
+
+### `BindToMessage(topic: string, callback: (...any) -> ())`
+
+Runs `callback` with a message's values each time one is sent to `game` under `topic`. It belongs to the script that bound it: a scene script's binding goes with its scene.
 
 ### `FindService(name: string): Instance?`
 
@@ -33,6 +39,10 @@ Returns the service of this name, or `nil` for a name that is not a service at a
 ### `GetService(name: string): Instance`
 
 Returns the service of this name. Services are singletons and all of them exist from boot, so this is a lookup rather than a creation and every call returns the same ordinary child of `game`. A string literal gives an exactly typed result; a name computed at runtime gives the general `Instance`, which is the honest cost of not knowing the name at analysis time. An unknown name raises `scene.err.unknown_service`.
+
+### `SendMessage(topic: string, arguments: ...any)`
+
+Sends a message to the game (ADR 0124): every function bound to `topic` on `game` runs, deferred, in send order, each in its own thread. **Send to the mailbox of whom you want to reach** -- a level tells the game's HUD `game:SendMessage("CoinCollected", 1)` -- and listen on your own. The values are `Scene:SendMessage`'s: copied, never a function or a live object. Local to this machine.
 
 ### `Shutdown()`
 

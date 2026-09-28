@@ -19,6 +19,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **`SceneService.CurrentScene` is a `Scene`, not a path** (ADR 0124). Read
+  `SceneService.CurrentScene.Path` where the path was compared.
+- **A scene's scripts' close handlers go with the scene** (ADR 0124). A
+  `game:BindToClose` registered by a scene's script is dropped when that scene
+  closes, without running, and the editor warns; `scene:BindToClose` is the one
+  for a level. The editor's Stop now runs the game's close handlers.
+
 - **`luaug build` writes `dist/windows/`**, not `dist/win64/`, and the zip
   beside it. `--target=win64` still works. `scripts/android-player.ps1` is a
   wrapper around `luaug build --target=android`; its APK is
@@ -55,6 +62,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A scene closes as a game does, and talks to the game by message** (ADR
+  0124). The global `scene` is the scene open now; `scene:BindToClose` runs
+  when it closes and a `LoadScene` waits for it (`[scene]
+  close_grace_seconds`, 5 by default), so a level saves before the next opens.
+  `game` and `scene` are mailboxes: `SendMessage(topic, ...)` and
+  `BindToMessage(topic, fn)`, deferred, the values copied, and a binding goes
+  with its script's scene.
+- **A scene prepared in the background** (ADR 0125).
+  `SceneService:LoadSceneAsync(path, { Activate = false })` returns a
+  `SceneLoad` at once: the file is read and parsed off the main thread and its
+  meshes loaded while the current scene plays, `Progress` fills a bar, `Ready`
+  fires, and `Activate()` switches. `examples/24-scenes` prepares its arena so.
 - **Foliage** (ADR 0116, the game-ready plan's B6). A `FoliageLayer` under a
   `Terrain` says where things grow -- the materials it grows on, slope, height,
   clumping, spacing, draw distance and seed, and never under a roof -- and its

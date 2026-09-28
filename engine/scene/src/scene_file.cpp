@@ -2546,21 +2546,91 @@ std::optional<core::EngineError> readGlobal(World& world, std::string_view json,
     return std::nullopt;
 }
 
-std::optional<core::EngineError> readScene(World& world, std::string_view json, SceneIoReport* report,
-                                           const StampSource& stamps)
-{
-    SceneIoReport local;
-    SceneIoReport& out = report != nullptr ? *report : local;
+namespace {
 
-    core::JsonDocument document;
+// The half of reading a scene that needs no world: parsed, and its format and
+// version checked.
+[[nodiscard]] std::optional<core::EngineError> parseSceneText(core::JsonDocument& document, std::string_view json)
+{
     if (const core::JsonDocument::ParseResult parsed = document.parse(json); !parsed.ok)
         return core::makeError(ENG_TR("scene.err.scene_parse"), {}, parsed.diagnostic);
-
     const JsonValue root = document.root();
     if (root["format"].asString() != kFormat)
         return core::makeError(ENG_TR("scene.err.scene_format"));
     if (!readableVersion(root["version"].asInteger()))
         return core::makeError(ENG_TR("scene.err.scene_version"));
+    return std::nullopt;
+}
+
+std::optional<core::EngineError> applyScene(World& world, const JsonValue root, SceneIoReport& out,
+                                            const StampSource& stamps);
+
+} // namespace
+
+std::unique_ptr<ParsedScene> parseScene(std::string text)
+{
+    auto parsed = std::make_unique<ParsedScene>();
+    parsed->text = std::move(text);
+    parsed->error = parseSceneText(parsed->document, parsed->text);
+    return parsed;
+}
+
+std::vector<std::string> sceneContent(const ParsedScene& parsed)
+{
+    std::vector<std::string> names;
+    if (parsed.error.has_value())
+        return names;
+    // A walk over the text's values rather than a list of which properties
+    // name content: any property that holds a name is one to warm.
+    std::vector<JsonValue> stack{parsed.document.root()};
+    while (!stack.empty()) {
+        const JsonValue value = stack.back();
+        stack.pop_back();
+        switch (value.type()) {
+        case core::JsonType::String:
+            if (const std::string_view text = value.asString(); text.starts_with("asset://")) {
+                if (std::find(names.begin(), names.end(), text) == names.end())
+                    names.emplace_back(text);
+            }
+            break;
+        case core::JsonType::Array:
+        case core::JsonType::Object:
+            // Pushed backwards, so the walk meets them in the file's order.
+            for (core::usize index = value.size(); index > 0; --index)
+                stack.push_back(value.type() == core::JsonType::Array ? value.at(index - 1)
+                                                                      : value[value.keyAt(index - 1)]);
+            break;
+        default:
+            break;
+        }
+    }
+    return names;
+}
+
+std::optional<core::EngineError> readScene(World& world, const ParsedScene& parsed, SceneIoReport* report,
+                                           const StampSource& stamps)
+{
+    if (parsed.error.has_value())
+        return parsed.error;
+    SceneIoReport local;
+    return applyScene(world, parsed.document.root(), report != nullptr ? *report : local, stamps);
+}
+
+std::optional<core::EngineError> readScene(World& world, std::string_view json, SceneIoReport* report,
+                                           const StampSource& stamps)
+{
+    core::JsonDocument document;
+    if (std::optional<core::EngineError> error = parseSceneText(document, json); error.has_value())
+        return error;
+    SceneIoReport local;
+    return applyScene(world, document.root(), report != nullptr ? *report : local, stamps);
+}
+
+namespace {
+
+std::optional<core::EngineError> applyScene(World& world, const JsonValue root, SceneIoReport& out,
+                                            const StampSource& stamps)
+{
     const ReadingVersion reading(root["version"].asInteger());
 
     const core::InstanceId workspace = workspaceOf(world);
@@ -2633,6 +2703,8 @@ std::optional<core::EngineError> readScene(World& world, std::string_view json, 
 
     return std::nullopt;
 }
+
+} // namespace
 
 core::InstanceId readSceneNode(World& world, std::string_view nodeJson, core::InstanceId parent, SceneIoReport* report,
                                const StampSource& stamps)

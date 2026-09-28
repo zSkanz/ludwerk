@@ -2432,7 +2432,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 4> dataModelMethods;
+    static std::array<MethodDesc, 6> dataModelMethods;
     dataModelMethods = {{
         MethodDesc{
             .name = atoms.intern("GetService"),
@@ -2450,7 +2450,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("BindToClose"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Registers a function to run while the game is shutting down, for work that has to happen before the process ends. The callbacks run against a capped timeout and the shutdown proceeds when it expires, finished or not: a close handler is a chance to finish, never a veto.",
+            .doc = "Registers a function to run while the game is shutting down, for work that has to happen before the process ends. The callbacks run against a capped timeout and the shutdown proceeds when it expires, finished or not: a close handler is a chance to finish, never a veto. The editor's Stop is the game closing too.\012\012**For the game, not a level** (ADR 0124): the open scene's `scene:BindToClose` handlers run first, then these. One registered by a scene's script is dropped when that scene closes, without running -- with a warning in the editor -- because it asked for a close its scene did not live to see; `scene:BindToClose` is the one for a level. Every call adds one, in order, each in its own thread; one that errors does not stop the others.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SendMessage"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends a message to the game (ADR 0124): every function bound to `topic` on `game` runs, deferred, in send order, each in its own thread. **Send to the mailbox of whom you want to reach** -- a level tells the game's HUD `game:SendMessage(\"CoinCollected\", 1)` -- and listen on your own. The values are `Scene:SendMessage`'s: copied, never a function or a live object. Local to this machine.",
+        },
+        MethodDesc{
+            .name = atoms.intern("BindToMessage"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `callback` with a message's values each time one is sent to `game` under `topic`. It belongs to the script that bound it: a scene script's binding goes with its scene.",
         },
         MethodDesc{
             .name = atoms.intern("Shutdown"),
@@ -2724,29 +2736,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(teamDesc);
 
     // --- SceneService ---
-    static std::array<PropertyDesc, 1> sceneServiceProperties;
-    sceneServiceProperties = {{
-        PropertyDesc{
-            .name = atoms.intern("CurrentScene"),
-            .type = ValueType::String,
-            .threadSafety = ThreadSafety::Safe,
-            .readOnly = true,
-            .inert = false,
-            .hostFact = true,
-            .transient = true,
-            .doc = "The content-relative path of the scene loaded now, such as `scenes/arena.scene.json`. Empty for a world that no scene file made.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
-            .get = native::getSceneServiceCurrentScene,
-            .set = nullptr,
-        },
-    }};
-    static std::array<MethodDesc, 4> sceneServiceMethods;
+    static std::array<MethodDesc, 5> sceneServiceMethods;
     sceneServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("LoadScene"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Unloads this scene and loads `path` (content-relative). **Returns at once**: the change happens at the next safe point between ticks, after `SceneLoading` has run. The old scene goes whole -- its world, its services' contents and settings, and its scripts, whose threads stop -- and the new one opens from the engine's settings, reads its file, mounts its own `src/scenes/<scene>/` code and starts its scripts.\012\012`data` is handed to the new scene through `GetLoadData`: plain values only, the same a `RemoteEvent` argument takes, and no instance, since the old scene's are gone. A client connected to a match may not call it: the scene is the server's.",
+        },
+        MethodDesc{
+            .name = atoms.intern("LoadSceneAsync"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Starts preparing the scene at `path` (content-relative) while this one keeps running, and returns at once with a `SceneLoad` to watch (ADR 0125): its `Progress` for a loading bar, `Ready` when it is prepared, `Activate()` to switch. `options.Activate` (true by default) switches as soon as it is ready; false waits for `Activate()` -- a fade, a button. `options.Data` is `LoadScene`'s `data`.\012\012The switch itself is `LoadScene`'s, with the file already parsed and its meshes loaded. One load at a time: a second call cancels the first. A client connected to a match may not call it.",
         },
         MethodDesc{
             .name = atoms.intern("GetLoadData"),
@@ -2791,7 +2793,6 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     sceneServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
     sceneServiceDesc.defaultName = atoms.intern("SceneService");
     sceneServiceDesc.doc = "Which scene the game is in, and the way to go to another (ADR 0106). A scene is a complete place -- its world, its lighting, its UI, its storages and its own script services -- and `LoadScene` swaps the whole of it for another, between two ticks. **`GlobalScriptService` stays**, with its scripts, their variables and their connections: that is what it is for.\012\012In a match the scene is the authority's: a host or a server changes it, and every client follows without dropping the connection.";
-    sceneServiceDesc.properties = sceneServiceProperties;
     sceneServiceDesc.methods = sceneServiceMethods;
     sceneServiceDesc.events = sceneServiceEvents;
     classes.registerClass(sceneServiceDesc);
@@ -5611,6 +5612,46 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     viewQualityDesc.docKey = {};
     viewQualityDesc.items = viewQualityItems;
     enums.registerEnum(viewQualityDesc);
+
+    // --- SceneLoadStatus ---
+    static std::array<EnumItemDesc, 6> sceneLoadStatusItems;
+    sceneLoadStatusItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Preparing"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ready"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Activating"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Done"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Failed"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Cancelled"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor sceneLoadStatusDesc;
+    sceneLoadStatusDesc.name = atoms.intern("SceneLoadStatus");
+    sceneLoadStatusDesc.docKey = {};
+    sceneLoadStatusDesc.items = sceneLoadStatusItems;
+    enums.registerEnum(sceneLoadStatusDesc);
 }
 
 } // namespace engine::scene::generated

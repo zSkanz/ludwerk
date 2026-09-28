@@ -161,6 +161,12 @@ enum class UserdataTag : int
     // keeps for its own lifetime -- the payload is a pointer into it.
     SaveSlot = 26,
 
+    // ADR 0124: a scene, by its serial -- or the `scene` global, which is
+    // whichever is open when it is read. Four bytes, no destructor.
+    Scene = 27,
+    // ADR 0125: the handle `LoadSceneAsync` returns, by its load's id.
+    SceneLoad = 28,
+
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.
     Count,

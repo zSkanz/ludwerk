@@ -20,6 +20,7 @@
 #include "engine/script/instance_binding.h"
 #include "engine/script/materials.h"
 #include "engine/script/save_service.h"
+#include "engine/script/scenes.h"
 #include "engine/script/sequences.h"
 #include "engine/script/tweens.h"
 
@@ -1780,6 +1781,7 @@ void registerDatatypes(lua_State* L)
     registerEnumTypes(L, ctx, atoms);
     registerTweenTypes(L);
     registerSaveTypes(L);
+    registerSceneTypes(L);
     registerAnimationTypes(L);
     registerInputTypes(L);
     registerMaterialTypes(L);

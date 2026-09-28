@@ -80,6 +80,13 @@ status.TextColor = Color3.fromRGB(232, 236, 244)
 status.BackgroundTransparency = 1
 status.Parent = screen
 
+-- **What the arena does when it ends** (ADR 0124): the change back to the
+-- menu waits for this. A `game:BindToClose` here would be dropped with the
+-- arena, since it asks for a close the arena does not live to see.
+scene:BindToClose(function()
+    print(`arena: closing after round {round}`)
+end)
+
 InputService.InputBegan:Connect(function(input: InputObject, uiConsumed: boolean)
     if uiConsumed or input.KeyCode ~= Enum.KeyCode.Escape then
         return

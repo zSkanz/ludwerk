@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <fstream>
 #include <sstream>
 
@@ -13,6 +14,7 @@
 #include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/input/scene_types.h"
+#include "engine/jobs/jobs.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
 #include "engine/render/debug_draw.h"
@@ -24,6 +26,7 @@
 #include "engine/script/instance_binding.h"
 #include "engine/script/net_module.h"
 #include "engine/script/remote.h"
+#include "engine/script/scenes.h"
 #include "engine/ui/scene_types.h"
 
 namespace engine::app {
@@ -277,7 +280,41 @@ struct WorldHostLoader
 };
 
 WorldHost::WorldHost() = default;
-WorldHost::~WorldHost() = default;
+// A scene read and parsed off the main thread (ADR 0125 §2). Shared between
+// the host and the job, and never touched by the host until `done` says the
+// job has let go of it.
+struct WorldHost::PrepareTask
+{
+    std::string path;
+    std::function<std::optional<std::string>(std::string_view)> read;
+    std::filesystem::path contentRoot;
+    std::unique_ptr<scene::ParsedScene> parsed;
+    bool found = false;
+    jobs::JobHandle handle;
+    std::atomic<bool> done{false};
+
+    void run() noexcept
+    {
+        std::string text;
+        if (read) {
+            if (std::optional<std::string> got = read(path); got.has_value())
+                text = std::move(*got);
+        }
+        if (text.empty())
+            (void)platform::readTextFile(contentRoot / std::filesystem::path(path), text);
+        found = !text.empty();
+        if (found)
+            parsed = scene::parseScene(std::move(text));
+        done.store(true, std::memory_order_release);
+    }
+
+    static void entry(void* user) noexcept { static_cast<PrepareTask*>(user)->run(); }
+};
+
+WorldHost::~WorldHost()
+{
+    dropPrepared();
+}
 
 void WorldHost::setContentMounts(const asset::ContentMounts* mounts)
 {
@@ -338,10 +375,16 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         .maxSlotBytes = options.saveMaxSlotBytes,
         .maxSlots = options.saveMaxSlots,
     });
+    m_developer = options.developer;
+    m_sceneCloseGrace = options.sceneCloseGrace;
+    m_prepareInBackground = !options.headless;
+    m_warmContent = options.warmContent;
+    m_warmProgress = options.warmProgress;
     m_runtime.emplace(*m_world);
     m_runtime->setSaveStore(m_saves.get());
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
         return error;
+    script::setDeveloperWarnings(m_runtime->state(), m_developer);
 
     // **The player at this machine, before any script runs** (N1). A script's
     // file scope reaches for `NetworkService.LocalPlayer`, so it has to be
@@ -640,6 +683,10 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
     m_runtime->setSaveStore(m_saves.get());
     if (std::optional<core::EngineError> error = m_runtime->boot(dataModel); error.has_value())
         return error;
+    script::setDeveloperWarnings(m_runtime->state(), m_developer);
+    m_sceneClose.reset();
+    dropPrepared();
+    m_activationPending = false;
 
     m_runtime->setModuleLoader(script::ModuleLoader{
         .user = this,
@@ -1118,6 +1165,7 @@ void WorldHost::tick()
     // **The safe point for a scene change** (ADR 0106): every phase of this
     // tick has drained, `SceneLoading` handlers included, and nothing of the
     // next has started.
+    stepSceneLoad();
     (void)applyPendingScene();
 
     // **Then the sub-worlds' tick** (ADR 0107 §3): one of theirs for one of
@@ -1128,26 +1176,155 @@ void WorldHost::tick()
 bool WorldHost::applyPendingScene()
 {
     scene::EngineState& state = m_world->engineState();
-    if (!state.pendingSceneLoad.has_value())
+    // **A scene closes before the next opens** (ADR 0124 §4): its
+    // `scene:BindToClose` handlers run, and the change waits for them -- a
+    // tick at a time, so the old scene goes on running under whatever loading
+    // screen `SceneLoading` put up -- up to `[scene] close_grace_seconds` of
+    // simulated time. Simulated, not wall clock: the tick the change lands on
+    // is part of what a replay reproduces (R10).
+    if (state.pendingSceneLoad.has_value()) {
+        scene::EngineState::PendingSceneLoad pending = std::move(*state.pendingSceneLoad);
+        state.pendingSceneLoad.reset();
+        if (m_sceneClose.has_value()) {
+            // Another `LoadScene` while this scene closes: the close goes on,
+            // and ends in the scene asked for last.
+            m_sceneClose->path = std::move(pending.path);
+            m_sceneClose->data = std::move(pending.data);
+        }
+        else {
+            m_sceneClose = SceneClose{std::move(pending.path), std::move(pending.data), state.tick, nullptr, 0};
+            script::runSceneCloseHandlers(m_runtime->state());
+        }
+    }
+    // A prepared scene's activation, whose `SceneLoading` has run by now.
+    if (m_activationPending && !m_sceneClose.has_value()) {
+        m_activationPending = false;
+        if (script::SceneLoadRecord* record = script::activeSceneLoad(m_runtime->state());
+            record != nullptr && m_prepared.has_value() && record->id == m_prepared->id) {
+            m_sceneClose = SceneClose{record->path, record->data, state.tick, m_prepared->task, record->scene};
+            script::runSceneCloseHandlers(m_runtime->state());
+        }
+    }
+    if (!m_sceneClose.has_value())
         return false;
-    scene::EngineState::PendingSceneLoad pending = std::move(*state.pendingSceneLoad);
-    state.pendingSceneLoad.reset();
-    if (const std::optional<core::EngineError> error = loadScene(pending.path, std::move(pending.data));
+
+    const bool waiting = script::closeHandlersPending(m_runtime->state());
+    const double waited = static_cast<double>(state.tick - m_sceneClose->startedTick) * state.fixedTimestep;
+    if (waiting && waited < m_sceneCloseGrace)
+        return false;
+    if (waiting) {
+        const std::array<I18nArg, 1> args{I18nArg{"seconds", m_sceneCloseGrace}};
+        core::log(LogLevel::Warn, ENG_TR("scene.warn.close_grace_expired"), args);
+        script::abandonCloseHandlers(m_runtime->state());
+    }
+    SceneClose close = std::move(*m_sceneClose);
+    m_sceneClose.reset();
+    const scene::ParsedScene* parsed = close.prepared != nullptr ? close.prepared->parsed.get() : nullptr;
+    if (const std::optional<core::EngineError> error =
+            loadScene(close.path, std::move(close.data), true, parsed, close.preparedScene);
         error.has_value()) {
         core::logText(LogLevel::Error, error->message);
+        if (close.prepared != nullptr)
+            script::sceneLoadFailed(m_runtime->state(), error->message);
+        dropPrepared();
         return false;
+    }
+    if (close.prepared != nullptr) {
+        script::sceneLoadDone(m_runtime->state());
+        dropPrepared();
     }
     return true;
 }
 
-std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, std::vector<core::u8> data)
+void WorldHost::dropPrepared()
+{
+    if (!m_prepared.has_value())
+        return;
+    // The job holds a raw pointer to the task: it is let go only once done.
+    if (m_prepared->task != nullptr && m_prepared->task->handle.valid() &&
+        !m_prepared->task->done.load(std::memory_order_acquire))
+        jobs::wait(m_prepared->task->handle);
+    if (m_prepared->warming && m_warmContent && m_world.has_value())
+        m_warmContent(*m_world, {});
+    m_prepared.reset();
+}
+
+void WorldHost::stepSceneLoad()
+{
+    lua_State* L = m_runtime->state();
+    if (std::optional<script::SceneLoadRequest> request = script::takeSceneLoadRequest(L)) {
+        dropPrepared();
+        auto task = std::make_shared<PrepareTask>();
+        task->path = request->path;
+        task->read = m_readContent;
+        task->contentRoot = m_root / "content";
+        m_prepared = Prepared{request->id, task, false};
+        if (m_prepareInBackground && jobs::initialized())
+            task->handle = jobs::schedule("scene.prepare", jobs::Domain::AssetIo, &PrepareTask::entry, task.get());
+        else
+            task->run();
+    }
+    if (!m_prepared.has_value())
+        return;
+    script::SceneLoadRecord* record = script::activeSceneLoad(L);
+    if (record == nullptr || record->id != m_prepared->id) {
+        // Cancelled, or given way to a plain `LoadScene`.
+        if (!m_sceneClose.has_value() || m_sceneClose->prepared != m_prepared->task)
+            dropPrepared();
+        return;
+    }
+
+    if (record->status == script::SceneLoadStatus::Preparing) {
+        PrepareTask& task = *m_prepared->task;
+        if (!task.done.load(std::memory_order_acquire))
+            return;
+        if (!task.found || task.parsed == nullptr || task.parsed->error.has_value()) {
+            std::string message;
+            if (!task.found) {
+                const std::array<I18nArg, 1> args{I18nArg{"path", task.path}};
+                message = core::makeError(ENG_TR("scene.err.scene_not_found"), args).message;
+            }
+            else if (task.parsed != nullptr && task.parsed->error.has_value()) {
+                message = task.parsed->error->message;
+            }
+            core::logText(LogLevel::Error, message);
+            script::sceneLoadFailed(L, message);
+            dropPrepared();
+            return;
+        }
+        // Parsed: half. Then what it names, as it arrives.
+        if (!m_prepared->warming) {
+            m_prepared->warming = true;
+            if (m_warmContent)
+                m_warmContent(*m_world, scene::sceneContent(*task.parsed));
+        }
+        const core::f64 warmed = m_warmProgress ? std::clamp(m_warmProgress(), 0.0, 1.0) : 1.0;
+        script::setSceneLoadProgress(L, 0.5 + 0.5 * warmed);
+        if (warmed < 1.0)
+            return;
+        script::sceneLoadReady(L);
+    }
+    if (record->status == script::SceneLoadStatus::Ready && record->activate && !m_activationPending &&
+        !m_sceneClose.has_value()) {
+        script::sceneLoadActivating(L);
+        script::fireSceneLoading(L, record->path);
+        m_activationPending = true;
+    }
+}
+
+std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, std::vector<core::u8> data,
+                                                      bool closeHandlersRan, const scene::ParsedScene* prepared,
+                                                      core::u32 preparedScene)
 {
     std::string text;
-    if (m_readContent) {
+    if (prepared != nullptr) {
+        // Read and parsed already, off the main thread (ADR 0125).
+    }
+    else if (m_readContent) {
         if (std::optional<std::string> read = m_readContent(path); read.has_value())
             text = std::move(*read);
     }
-    if (text.empty() && !readFile(m_root / "content" / std::filesystem::path(path), text)) {
+    if (prepared == nullptr && text.empty() && !readFile(m_root / "content" / std::filesystem::path(path), text)) {
         const std::array<I18nArg, 1> args{I18nArg{"path", path}};
         return core::makeError(ENG_TR("scene.err.scene_not_found"), args);
     }
@@ -1168,11 +1345,24 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     for (const core::InstanceId screen : kept)
         (void)w.setParent(screen, core::InstanceId{});
 
+    // **The old scene closes** (ADR 0124): its `scene:BindToClose` handlers
+    // have run -- waited for when a script asked, given one pass when a match
+    // follows its authority, which has already moved on -- what it saved is
+    // written, and what its scripts registered anywhere goes with them.
+    if (!closeHandlersRan) {
+        script::runSceneCloseHandlers(m_runtime->state());
+        script::abandonCloseHandlers(m_runtime->state());
+    }
+    flushSaves();
+    (void)script::closeScene(m_runtime->state(), preparedScene);
+
     // The old scene's own code goes with it; the new scene's is mounted below.
     remountSceneScripts({});
 
     scene::SceneIoReport report;
-    const std::optional<core::EngineError> error = scene::readScene(w, text, &report, m_stamps);
+    const std::optional<core::EngineError> error = prepared != nullptr
+                                                       ? scene::readScene(w, *prepared, &report, m_stamps)
+                                                       : scene::readScene(w, text, &report, m_stamps);
     // Retired rather than only destroyed, so the old scene leaves the pools now
     // and not at a drain nothing may be running (the editor's own reason).
     w.retireDestroyed();
@@ -1195,6 +1385,9 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     const core::InstanceId global =
         w.findFirstChildOfClass(dataModel, w.classes().findId(w.atoms().lookup("GlobalScriptService")));
     script::startScriptsExcept(m_runtime->state(), global);
+    // What was sent to it while it was prepared, behind its scripts' first
+    // resumption and ahead of `SceneLoaded` (ADR 0124 §6).
+    script::deliverHeldMessages(m_runtime->state());
     script::fireSceneLoaded(m_runtime->state(), path);
     const std::array<I18nArg, 2> args{I18nArg{"path", path},
                                       I18nArg{"count", static_cast<core::i64>(report.instances)}};
@@ -1394,6 +1587,12 @@ void WorldHost::close(core::f64 graceSeconds)
 {
     // What this world runs closes before it does.
     closeSubWorlds();
+    // Inside to outside (ADR 0124 §4): the open scene's handlers, then the
+    // game's, under one grace period. A scene still closing is closed by this.
+    m_sceneClose.reset();
+    m_activationPending = false;
+    dropPrepared();
+    script::runSceneCloseHandlers(m_runtime->state());
     script::runCloseHandlers(m_runtime->state());
     // One drain, so anything a close handler deferred already runs.
     m_runtime->drain(core::Phase::Heartbeat);

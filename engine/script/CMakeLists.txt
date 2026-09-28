@@ -28,6 +28,7 @@ engine_add_module(script
         src/print_tree.cpp
         src/save_store.cpp
         src/save_service.cpp
+        src/scenes.cpp
         src/services.cpp
         src/remote.cpp
         src/signals.cpp

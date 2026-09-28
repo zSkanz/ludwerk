@@ -513,6 +513,13 @@ end
 declareGlobalIfPresent("game", "DataModel")
 declareGlobalIfPresent("workspace", "Workspace")
 declareGlobalIfPresent("script", "Script")
+-- `scene`, the scene open when it is read (ADR 0124), is a value type rather
+-- than a class.
+for _, datatype in Datatypes do
+    if datatype.Name == "Scene" then
+        table.insert(Lines, "declare scene: Scene")
+    end
+end
 table.insert(Lines, "")
 
 if not fs.exists("runtime/types") then

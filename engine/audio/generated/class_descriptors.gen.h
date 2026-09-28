@@ -80,6 +80,7 @@ inline constexpr scene::EnumId LineJoinModeEnumId = 37;
 inline constexpr scene::EnumId StrokeSizingModeEnumId = 38;
 inline constexpr scene::EnumId BorderStrokePositionEnumId = 39;
 inline constexpr scene::EnumId ViewQualityEnumId = 40;
+inline constexpr scene::EnumId SceneLoadStatusEnumId = 41;
 
 } // namespace generated
 

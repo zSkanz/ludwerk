@@ -20,6 +20,23 @@ once a second while something changed, when the game closes, and when a phone
 puts it in the background. `slot:SaveAsync()` writes now and waits, for the
 moment a player presses "Save".
 
+## Saving at a close
+
+What is set is written when the game closes whatever you do, and when a scene
+changes. For work to do at that moment -- a score to total, a position to
+record -- register a handler on the close it belongs to:
+
+- **`scene:BindToClose`** for what belongs to a level. A `LoadScene` away from
+  it waits for the handler, so a `SaveAsync` in it finishes before the next
+  scene opens.
+- **`game:BindToClose`** for what belongs to the whole game, from a script in
+  `GlobalScriptService`. One registered by a scene's script is dropped when
+  that scene closes -- the editor says so -- because its scene is gone by the
+  time the game closes.
+
+The editor's Stop is the game closing, so both run when a test ends. See
+[When a scene closes](manual:guides/scenes#when-a-scene-closes).
+
 ## What a slot holds
 
 Strings, numbers, booleans, vectors, `CFrame`s, `Color3`s, `Vector2`s,

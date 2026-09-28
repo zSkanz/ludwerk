@@ -577,7 +577,13 @@ local function generate(target: Module)
         emit(`    // --- {class.Name} ---`)
 
         local prefix = lowerFirst(class.Name)
-        local properties = orEmpty(class.Properties)
+        -- A `Scripted` property is the binding's to answer, and has no descriptor.
+        local properties: { Schema.Property } = {}
+        for _, property in orEmpty(class.Properties) do
+            if property.Scripted ~= true then
+                table.insert(properties, property)
+            end
+        end
         local methods = orEmpty(class.Methods)
         local events = orEmpty(class.Events)
         local declared: { string } = {}

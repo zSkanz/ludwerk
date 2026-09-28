@@ -1401,6 +1401,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .saveDirectory = options.saveDirectory,
         .saveMaxSlotBytes = options.saveMaxSlotBytes,
         .saveMaxSlots = options.saveMaxSlots,
+        .sceneCloseGrace = options.sceneCloseGrace,
+        .developer = options.developerWarnings,
+        // A prepared scene's meshes (ADR 0125), through the loader that draws
+        // them. Headless, nothing loads meshes, so nothing is warmed.
+        .warmContent = options.headless ? std::function<void(scene::World&, const std::vector<std::string>&)>{}
+                                        : [&meshLoader](scene::World& world, const std::vector<std::string>& names) {
+                                              std::vector<core::NameAtom> meshes;
+                                              for (const std::string& name : names) {
+                                                  if (name.ends_with(".gltf") || name.ends_with(".glb"))
+                                                      meshes.push_back(world.atoms().intern(name));
+                                              }
+                                              meshLoader.warm(std::move(meshes));
+                                          },
+        .warmProgress = options.headless ? std::function<core::f64()>{}
+                                         : [&meshLoader, &meshLibrary]() {
+                                               return meshLoader.warmedFraction(meshLibrary);
+                                           },
     };
 
     auto host = std::make_unique<WorldHost>();
@@ -1864,6 +1881,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         }
                     }
                     else {
+                        // **Stop is the game closing** (ADR 0124 §4), as it is for a
+                        // player: the open scene's `scene:BindToClose` handlers, then the
+                        // game's, the grace period, the saves -- in the world that played,
+                        // before the restore replaces it. Not from a breakpoint: the VM is
+                        // parked inside a call and cannot run anything else.
+                        if (!editor.debuggerParked())
+                            host->close();
                         editor.stop(host->world(), inspector);
                         ui::resetInteraction();
 
@@ -2440,6 +2464,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 if (editorCommands.saveAll) {
                     bool failed = false;
                     if (editor.inPlayMode()) {
+                        // The game closes first, as the Stop button's does (ADR 0124).
+                        if (!editor.debuggerParked())
+                            host->close();
                         editor.stop(host->world(), inspector);
                         if (std::optional<core::EngineError> restart = host->restartRuntime(); restart.has_value())
                             core::logText(core::LogLevel::Error, restart->message);
@@ -2486,6 +2513,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // would leave the snapshot describing a world that no longer
                     // exists, and stop would restore into it.
                     if (editor.inPlayMode()) {
+                        // The game closes first, as the Stop button's does (ADR 0124).
+                        if (!editor.debuggerParked())
+                            host->close();
                         editor.stop(host->world(), inspector);
                         // The same teardown the stop button performs, and for
                         // the same reason: the scene about to be loaded must not

@@ -4,8 +4,10 @@
 	`ClientScriptService`, from `src/scenes/menu/client/`. It exists only while
 	the menu is loaded -- its screen and its key handler go with it.
 
-	- Space plays alone: straight to the arena, with the round in
-	  `LoadScene`'s data, which the arena reads with `GetLoadData`.
+	- Space plays alone: to the arena, with the round in the load's data,
+	  which the arena reads with `GetLoadData`. The menu asks the game for it
+	  (`game:SendMessage("GoTo", ...)`, ADR 0124), and the game's own code
+	  prepares it behind a progress bar (`LoadSceneAsync`, ADR 0125).
 	- H hosts a match (`NetworkService:Host`) and opens the lobby.
 	- J joins one on this machine (`NetworkService:Join`): the server's scene --
 	  its lobby -- replaces this one.
@@ -54,7 +56,9 @@ InputService.InputBegan:Connect(function(input: InputObject, uiConsumed: boolean
         return
     end
     if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.Return then
-        SceneService:LoadScene("scenes/arena.scene.json", { Round = round })
+        -- The game prepares the arena behind a loading bar (`Loading.luau`):
+        -- asked for by message, since the menu goes with its scene.
+        game:SendMessage("GoTo", "scenes/arena.scene.json", { Round = round })
     elseif input.KeyCode == Enum.KeyCode.H then
         NetworkService:Host()
         SceneService:LoadScene("scenes/lobby.scene.json")

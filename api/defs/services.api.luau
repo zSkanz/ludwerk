@@ -95,7 +95,34 @@ local Classes: { Schema.Class } = {
                 Doc = "Registers a function to run while the game is shutting down, for work that has to happen "
                     .. "before the process ends. The callbacks run against a capped timeout and the shutdown "
                     .. "proceeds when it expires, finished or not: a close handler is a chance to finish, never a "
-                    .. "veto.",
+                    .. "veto. The editor's Stop is the game closing too.\n\n"
+                    .. "**For the game, not a level** (ADR 0124): the open scene's `scene:BindToClose` handlers "
+                    .. "run first, then these. One registered by a scene's script is dropped when that scene "
+                    .. "closes, without running -- with a warning in the editor -- because it asked for a close "
+                    .. "its scene did not live to see; `scene:BindToClose` is the one for a level. Every call adds "
+                    .. "one, in order, each in its own thread; one that errors does not stop the others.",
+            },
+            {
+                Name = "SendMessage",
+                Parameters = { { Name = "topic", Type = "string" }, { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends a message to the game (ADR 0124): every function bound to `topic` on `game` runs, "
+                    .. "deferred, in send order, each in its own thread. **Send to the mailbox of whom you want to "
+                    .. 'reach** -- a level tells the game\'s HUD `game:SendMessage("CoinCollected", 1)` -- and '
+                    .. "listen on your own. The values are `Scene:SendMessage`'s: copied, never a function or a "
+                    .. "live object. Local to this machine.",
+            },
+            {
+                Name = "BindToMessage",
+                Parameters = {
+                    { Name = "topic", Type = "string" },
+                    { Name = "callback", Type = "(...any) -> ()" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `callback` with a message's values each time one is sent to `game` under `topic`. It "
+                    .. "belongs to the script that bound it: a scene script's binding goes with its scene.",
             },
             {
                 Name = "Shutdown",
@@ -526,15 +553,15 @@ local Classes: { Schema.Class } = {
         Properties = {
             {
                 Name = "CurrentScene",
-                Type = "string",
+                Type = "Scene",
                 ReadOnly = true,
                 Transient = true,
                 ThreadSafety = "Safe",
-                -- Which file the world came from, not what the world is: a trace
-                -- replays the same world whatever its scene was called.
-                HostFact = true,
-                Doc = "The content-relative path of the scene loaded now, such as `scenes/arena.scene.json`. "
-                    .. "Empty for a world that no scene file made.",
+                Scripted = true,
+                Doc = "The scene open now (ADR 0124), as an object that stays with it: its `Path` is the "
+                    .. "content-relative path of its file, such as `scenes/arena.scene.json` (empty for a world "
+                    .. "no scene file made), and once the scene closes `IsOpen()` says so. The global `scene` is "
+                    .. "the same scene while it is open.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -554,6 +581,24 @@ local Classes: { Schema.Class } = {
                     .. "`data` is handed to the new scene through `GetLoadData`: plain values only, the "
                     .. "same a `RemoteEvent` argument takes, and no instance, since the old scene's are "
                     .. "gone. A client connected to a match may not call it: the scene is the server's.",
+            },
+            {
+                Name = "LoadSceneAsync",
+                Parameters = {
+                    { Name = "path", Type = "string" },
+                    { Name = "options", Type = "{ Activate: boolean?, Data: any? }?", Default = "nil" },
+                },
+                Returns = { "SceneLoad" },
+                ReturnsHandle = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Starts preparing the scene at `path` (content-relative) while this one keeps running, and "
+                    .. "returns at once with a `SceneLoad` to watch (ADR 0125): its `Progress` for a loading "
+                    .. "bar, `Ready` when it is prepared, `Activate()` to switch. `options.Activate` (true by "
+                    .. "default) switches as soon as it is ready; false waits for `Activate()` -- a fade, a "
+                    .. "button. `options.Data` is `LoadScene`'s `data`.\n\n"
+                    .. "The switch itself is `LoadScene`'s, with the file already parsed and its meshes loaded. "
+                    .. "One load at a time: a second call cancels the first. A client connected to a match may "
+                    .. "not call it.",
             },
             {
                 Name = "GetLoadData",

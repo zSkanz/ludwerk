@@ -473,6 +473,19 @@ How an `ImageLabel` fits its image into its box (§2.2).
 | `Slice` | 1 | Nine-slice: the four corners are drawn at their own size, the four edges stretch along one axis and the middle stretches along both. `SliceCenter` says where the cuts are. This is how a panel or a button keeps its rounded corners at any size. |
 | `Tile` | 2 | Repeated at its own size until the box is full. |
 
+## Enum.SceneLoadStatus
+
+Where a `SceneLoad` is.
+
+| Item | Value | Description |
+|---|---|---|
+| `Preparing` | 0 | Its file is being read and its meshes loaded. |
+| `Ready` | 1 | Prepared, waiting for `Activate()`. |
+| `Activating` | 2 | The switch has begun: the old scene is closing. |
+| `Done` | 3 | The scene is open. |
+| `Failed` | 4 | It could not be prepared; `Error` says why. |
+| `Cancelled` | 5 | `Cancel()`, or another load, dropped it. |
+
 ## Enum.ScreenOrientation
 
 Which ways up a game may be held, on a device that turns (`UIService.ScreenOrientation`). The two landscapes are named for the side the device's top ends up on.

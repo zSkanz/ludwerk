@@ -56,11 +56,14 @@ two ticks:
 
 1. `SceneLoading(path)` fires while the old scene is still there. This is the
    moment to put a loading screen up.
-2. The old scene is torn down and the new one is read.
-3. The new scene's scripts start.
-4. `SceneLoaded(path)` fires after their first resumption.
+2. **The old scene closes**: its `scene:BindToClose` handlers run, and the
+   change waits for them — see [When a scene closes](manual:guides/scenes#when-a-scene-closes).
+   The old scene goes on running meanwhile, under the loading screen.
+3. What it saved is written, it is torn down, and the new one is read.
+4. The new scene's scripts start.
+5. `SceneLoaded(path)` fires after their first resumption.
 
-`SceneService.CurrentScene` says which scene is loaded now.
+A loading screen goes up on `SceneLoading` and comes down on `SceneLoaded`:
 
 ```luau
 --!strict
@@ -81,6 +84,132 @@ SceneService.SceneLoaded:Connect(function()
 end)
 ```
 
+## The scene
+
+`scene` is a global in every script, as `game` is: **the scene open when it is
+read**. `SceneService.CurrentScene` is the same scene as an object that stays
+with it — its `Name` (`arena`), its `Path` (`scenes/arena.scene.json`), and
+`IsOpen()`, which turns false when it closes.
+
+```luau
+--!strict
+local SceneService = game:GetService("SceneService")
+
+print(scene.Name) --> arena
+local here = SceneService.CurrentScene
+-- ...later, after a LoadScene:
+print(here:IsOpen()) --> false
+```
+
+Inside a `SubWorld`, `scene` is the sub-world's scene.
+
+## When a scene closes
+
+There are two closes, and a handler goes on the one it is about:
+
+| Call | Runs when |
+|---|---|
+| `scene:BindToClose(fn)` | the scene closes: a `LoadScene` away from it, or the game closing while it is open |
+| `game:BindToClose(fn)` | the game closes, whichever scene is open — and the editor's Stop is the game closing |
+
+A level saves what belongs to it on `scene:BindToClose`. The change waits for
+its handlers — each in its own thread, so it may yield on a `SaveAsync` — up to
+`[scene] close_grace_seconds` in `project.toml` (5 by default); then the saves
+are written and the scene goes.
+
+```luau
+--!strict
+local SaveService = game:GetService("SaveService")
+
+scene:BindToClose(function()
+    local slot = SaveService:GetSlotAsync("progress")
+    slot:Set("arenaBest", 42)
+    slot:SaveAsync()
+end)
+```
+
+**A handler belongs to the script that registered it.** When a scene closes,
+what its scripts registered goes with it: a scene script's `game:BindToClose`
+is dropped without running — it asked for the game's close, and its scene did
+not live to see it — and the editor says so once per script. A script in
+`GlobalScriptService` keeps its handlers until the game closes. What counts is
+the script that called, not where the function's code lives: a module in a
+scene's storage, required by a global script, registers for the global script.
+
+When the game closes, the open scene's handlers run first, then the game's,
+under one grace period; then the saves are written.
+
+## Messages between the game and a scene
+
+`game` and `scene` are mailboxes. **Send to the mailbox of whom you want to
+reach, and listen on your own**: a scene's coin tells the game's HUD, and a
+global script tells the level.
+
+```luau
+--!strict
+-- In the scene: a coin picked up.
+game:SendMessage("CoinCollected", 1)
+
+-- In the scene: the level listens for what the game tells it.
+scene:BindToMessage("OpenGate", function(side: string)
+    print(`opening the {side} gate`)
+end)
+```
+
+```luau
+--!strict
+-- In GlobalScriptService: the HUD, which lives across every scene.
+local coins = 0
+game:BindToMessage("CoinCollected", function(amount: number)
+    coins += amount
+end)
+scene:SendMessage("OpenGate", "north")
+```
+
+- **Deferred**, in send order, each handler in its own thread.
+- **A binding goes with its script's scene**, on either mailbox.
+- **A message to a closed scene is dropped**, and so is one nobody listens to;
+  the editor says so in both cases, and a game never raises for it.
+- **The values are copied.** What an attribute or a save holds arrives equal; a
+  table or a `buffer` arrives as the receiver's own copy, without its metatable;
+  an instance arrives as itself. A function, a thread, a table that holds itself
+  or a live object such as a `Signal` is an error at `SendMessage`, naming where
+  it was found. Send the data, not the object.
+- **Local to one machine.** Between machines, use a `RemoteEvent`.
+- Messages are for events; shared state stays in a module in
+  `GlobalScriptService.Shared`, or in attributes.
+
+## Loading in the background
+
+`LoadSceneAsync` prepares the next scene while this one plays — its file read
+and parsed off the main thread, the meshes it names loaded — and switches when
+the game says:
+
+```luau
+--!strict
+local SceneService = game:GetService("SceneService")
+
+local loading = SceneService:LoadSceneAsync("scenes/level2.scene.json", { Activate = false })
+loading.Scene:SendMessage("Difficulty", "hard") -- waits until level 2 opens
+while loading.Status == Enum.SceneLoadStatus.Preparing do
+    print(`loading {math.floor(loading.Progress * 100)}%`) -- a bar's width
+    task.wait()
+end
+-- ...a fade to black here...
+loading:Activate() -- the switch: SceneLoading, the old scene's close, level 2
+```
+
+- `Progress` goes from 0 to 1 and only rises: half for the file, the rest for
+  the meshes as they arrive. `Ready` fires when it is prepared.
+- `Activate()` switches at the next safe point, exactly as `LoadScene` does,
+  with the parse already done. `Activate = true` (the default) switches as soon
+  as the scene is ready.
+- `Cancel()` drops it, and `Finished` fires with false; so does a failure, with
+  `Error` saying why. A second `LoadSceneAsync`, or a `LoadScene`, cancels the
+  one in flight.
+- A message sent to `loading.Scene` waits until the scene opens and is
+  delivered after its scripts start, before `SceneLoaded`.
+
 ## In a match
 
 **The scene is the authority's.** A host or a server calls `LoadScene`, and
@@ -95,12 +224,16 @@ dropped.
 
 ## Limits
 
-- **Loading is not free.** `SceneLoading` gives a game a frame to put a loading
-  screen up. Loading the next scene in the background while the old one plays
-  is later, not now.
+- **The switch itself is still one tick's work.** `LoadSceneAsync` moves the
+  reading, the parsing and the meshes off it; building the new world from the
+  parse and starting its scripts stay on the main thread, between two ticks.
+  Textures, sounds and terrain are not warmed yet: they arrive after the
+  switch, as they do today.
+- **In a match, clients do not prepare ahead.** They load the scene the moment
+  the authority switches, as they do for `LoadScene`.
 - **A scene loaded at run time is read whole.** The streaming grid a boot scene
   is partitioned into is not rebuilt for a scene loaded afterwards, so a scene
   that needs streaming should be the one the game starts in, for now.
 
 `examples/24-scenes` is a menu and an arena, with a loading screen that stays
-across.
+across and fills a bar while the arena is prepared.

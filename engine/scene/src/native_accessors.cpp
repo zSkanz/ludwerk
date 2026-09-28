@@ -1807,11 +1807,6 @@ Value getDataModelLuauVersion(const World& world, core::InstanceId)
     return world.engineState().luauVersion;
 }
 
-Value getSceneServiceCurrentScene(const World& world, core::InstanceId)
-{
-    return Value{world.engineState().currentScene};
-}
-
 Value getNetworkServiceAuthority(const World& world, core::InstanceId)
 {
     // Every posture but a replica decides the world -- solo included, which is

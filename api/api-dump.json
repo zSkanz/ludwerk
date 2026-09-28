@@ -711,6 +711,21 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "BindToMessage",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "callback",
+              "Type": "(...any) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "FindService",
           "Parameters": [
             {
@@ -730,6 +745,21 @@
             }
           ],
           "Returns": ["Instance"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SendMessage",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -3049,7 +3079,7 @@
       "Properties": [
         {
           "Name": "CurrentScene",
-          "Type": "string",
+          "Type": "Scene",
           "ReadOnly": true,
           "ThreadSafety": "Safe",
           "Transient": true
@@ -3082,6 +3112,22 @@
             }
           ],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LoadSceneAsync",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "string"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Activate: boolean?, Data: any? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["SceneLoad"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -7047,6 +7093,139 @@
       "Operators": []
     },
     {
+      "Name": "Scene",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Name",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Path",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "BindToClose",
+          "Parameters": [
+            {
+              "Name": "callback",
+              "Type": "() -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "BindToMessage",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "callback",
+              "Type": "(...any) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsOpen",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "SendMessage",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "arguments",
+              "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "SceneLoad",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Error",
+          "Type": "string?",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Finished",
+          "Type": "Signal<boolean>",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Path",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Progress",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Ready",
+          "Type": "Signal<>",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Scene",
+          "Type": "Scene",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Status",
+          "Type": "Enum.SceneLoadStatus",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Activate",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Cancel",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
       "Name": "Signal",
       "Constructors": [
         {
@@ -9106,6 +9285,35 @@
         {
           "Name": "Tile",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "SceneLoadStatus",
+      "Items": [
+        {
+          "Name": "Activating",
+          "Value": 2
+        },
+        {
+          "Name": "Cancelled",
+          "Value": 5
+        },
+        {
+          "Name": "Done",
+          "Value": 3
+        },
+        {
+          "Name": "Failed",
+          "Value": 4
+        },
+        {
+          "Name": "Preparing",
+          "Value": 0
+        },
+        {
+          "Name": "Ready",
+          "Value": 1
         }
       ]
     },

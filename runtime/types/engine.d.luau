@@ -150,6 +150,9 @@ end
 declare extern type EnumViewQuality extends EnumItem with
 end
 
+declare extern type EnumSceneLoadStatus extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -533,6 +536,64 @@ declare extern type SaveSlot with
     function GetKeys(self): { string }
     --- Writes the slot now and yields until it is on disk. Raises when the write failed.
     function SaveAsync(self): ()
+end
+
+declare extern type Scene with
+    --- The scene file's name without its folder and `.scene.json`: `arena` for
+    --- `scenes/arena.scene.json`. Empty for a world no scene file made.
+    read Name: string
+    --- The content-relative path of the scene's file, such as `scenes/arena.scene.json`.
+    read Path: string
+    --- Whether this is the scene open now. False once it has closed, and for a scene still being
+    --- prepared (`SceneLoad.Scene`) until it opens. `scene:IsOpen()` is always true.
+    function IsOpen(self): boolean
+    --- Runs `callback` when this scene closes: a `LoadScene` away from it, or the game closing while it
+    --- is open. The change **waits for it** -- each in its own thread, so it may yield, as
+    --- `SaveSlot:SaveAsync` does -- up to the project's `[scene] close_grace_seconds` (5 by default);
+    --- then the saves are written and the scene goes. Every call adds one, in order; one that errors
+    --- does not stop the others. The place for what belongs to a level: `game:BindToClose` is for the
+    --- game, and a scene script's registration there is dropped when its scene closes, with a warning
+    --- in the editor. Raises on a scene that has closed.
+    function BindToClose(self, callback: () -> ()): ()
+    --- Sends a message to this scene: every function bound to `topic` on it runs, deferred, in send
+    --- order, each in its own thread. **Send to the mailbox of whom you want to reach**: a global
+    --- script tells the level `scene:SendMessage("OpenGate", "north")`. The values arrive as an
+    --- attribute or a save holds them -- a table as a copy the receiver owns, without its metatable, a
+    --- `buffer` copied, an instance as itself. A function, a thread, a table that holds itself or a
+    --- live object (a `Signal`, a `Connection`, a `Tween`) is an error that names where it was found.
+    --- To a closed scene the message is dropped; to a scene still being prepared it waits until its
+    --- scripts have started. A message never leaves this machine: between machines it is a
+    --- `RemoteEvent`.
+    function SendMessage(self, topic: string, ...: any): ()
+    --- Runs `callback` with a message's values each time one is sent to this scene under `topic`. It
+    --- belongs to the script that bound it and goes with that script's scene. A message nobody listens
+    --- to is dropped, with a warning in the editor. Raises on a scene that has closed.
+    function BindToMessage(self, topic: string, callback: (...any) -> ()): ()
+end
+
+declare extern type SceneLoad with
+    --- The scene being prepared. A message sent to it waits until it opens and its scripts have
+    --- started, and is delivered before `SceneLoaded`.
+    read Scene: Scene
+    --- The content-relative path of the scene's file.
+    read Path: string
+    --- From 0 to 1, and it only rises: half for the file read and parsed, the rest for the meshes it
+    --- names, as each is loaded. 1 when `Ready` fires.
+    read Progress: number
+    --- Where the load is: `Preparing`, `Ready`, `Activating`, then `Done` -- or `Failed` or
+    --- `Cancelled`.
+    read Status: EnumSceneLoadStatus
+    --- Why it failed, when `Status` is `Failed`; nil otherwise.
+    read Error: string?
+    --- Fires once, when the scene is prepared and waiting to be activated.
+    read Ready: Signal<>
+    --- Fires once, at the end: true when the scene opened, false when the load failed or was cancelled.
+    read Finished: Signal<boolean>
+    --- Switches to the scene now if it is ready, or as soon as it is. Raises on a load that failed or
+    --- was cancelled.
+    function Activate(self): ()
+    --- Drops what was prepared, and `Finished` fires with false. Nothing once the switch has begun.
+    function Cancel(self): ()
 end
 
 declare extern type InputObject with
@@ -2442,8 +2503,22 @@ declare extern type DataModel extends Instance with
     function FindService(self, name: string): Instance?
     --- Registers a function to run while the game is shutting down, for work that has to happen before
     --- the process ends. The callbacks run against a capped timeout and the shutdown proceeds when it
-    --- expires, finished or not: a close handler is a chance to finish, never a veto.
+    --- expires, finished or not: a close handler is a chance to finish, never a veto. The editor's Stop
+    --- is the game closing too. **For the game, not a level** (ADR 0124): the open scene's
+    --- `scene:BindToClose` handlers run first, then these. One registered by a scene's script is
+    --- dropped when that scene closes, without running -- with a warning in the editor -- because it
+    --- asked for a close its scene did not live to see; `scene:BindToClose` is the one for a level.
+    --- Every call adds one, in order, each in its own thread; one that errors does not stop the others.
     function BindToClose(self, callback: () -> ()): ()
+    --- Sends a message to the game (ADR 0124): every function bound to `topic` on `game` runs,
+    --- deferred, in send order, each in its own thread. **Send to the mailbox of whom you want to
+    --- reach** -- a level tells the game's HUD `game:SendMessage("CoinCollected", 1)` -- and listen on
+    --- your own. The values are `Scene:SendMessage`'s: copied, never a function or a live object. Local
+    --- to this machine.
+    function SendMessage(self, topic: string, ...: any): ()
+    --- Runs `callback` with a message's values each time one is sent to `game` under `topic`. It
+    --- belongs to the script that bound it: a scene script's binding goes with its scene.
+    function BindToMessage(self, topic: string, callback: (...any) -> ()): ()
     --- Ends the run. The registered `BindToClose` callbacks are given their timeout and the process
     --- then exits. This is how a game closes itself deliberately.
     function Shutdown(self): ()
@@ -2594,9 +2669,11 @@ declare extern type Team extends Instance with
 end
 
 declare extern type SceneService extends Instance with
-    --- The content-relative path of the scene loaded now, such as `scenes/arena.scene.json`. Empty for
-    --- a world that no scene file made.
-    read CurrentScene: string
+    --- The scene open now (ADR 0124), as an object that stays with it: its `Path` is the
+    --- content-relative path of its file, such as `scenes/arena.scene.json` (empty for a world no scene
+    --- file made), and once the scene closes `IsOpen()` says so. The global `scene` is the same scene
+    --- while it is open.
+    read CurrentScene: Scene
     --- The scene is about to change to `path`, and the old one is still here: the moment to put a
     --- loading screen up (a `ScreenGui` with `KeepOnSceneLoad` stays across).
     read SceneLoading: Signal<string>
@@ -2613,6 +2690,14 @@ declare extern type SceneService extends Instance with
     --- values only, the same a `RemoteEvent` argument takes, and no instance, since the old scene's are
     --- gone. A client connected to a match may not call it: the scene is the server's.
     function LoadScene(self, path: string, data: any?): ()
+    --- Starts preparing the scene at `path` (content-relative) while this one keeps running, and
+    --- returns at once with a `SceneLoad` to watch (ADR 0125): its `Progress` for a loading bar,
+    --- `Ready` when it is prepared, `Activate()` to switch. `options.Activate` (true by default)
+    --- switches as soon as it is ready; false waits for `Activate()` -- a fade, a button.
+    --- `options.Data` is `LoadScene`'s `data`. The switch itself is `LoadScene`'s, with the file
+    --- already parsed and its meshes loaded. One load at a time: a second call cancels the first. A
+    --- client connected to a match may not call it.
+    function LoadSceneAsync(self, path: string, options: { Activate: boolean?, Data: any? }?): SceneLoad
     --- The `data` the last `LoadScene` passed, decoded afresh, or nil.
     function GetLoadData(self): any
     --- Inside a `SubWorld` (ADR 0107): sends plain values out to the game that runs this one, where the
@@ -3593,6 +3678,15 @@ declare Enum: {
         Simple: EnumViewQuality,
         GetEnumItems: (self: any) -> { EnumViewQuality },
     },
+    SceneLoadStatus: {
+        Preparing: EnumSceneLoadStatus,
+        Ready: EnumSceneLoadStatus,
+        Activating: EnumSceneLoadStatus,
+        Done: EnumSceneLoadStatus,
+        Failed: EnumSceneLoadStatus,
+        Cancelled: EnumSceneLoadStatus,
+        GetEnumItems: (self: any) -> { EnumSceneLoadStatus },
+    },
 }
 
 declare Vector3: {
@@ -3914,3 +4008,4 @@ declare Instance: {
 declare game: DataModel
 declare workspace: Workspace
 declare script: Script
+declare scene: Scene

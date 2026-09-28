@@ -1111,6 +1111,19 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0125. At the END.
+        {
+            Name = "SceneLoadStatus",
+            Doc = "Where a `SceneLoad` is.",
+            Items = {
+                { Name = "Preparing", Value = 0, Doc = "Its file is being read and its meshes loaded." },
+                { Name = "Ready", Value = 1, Doc = "Prepared, waiting for `Activate()`." },
+                { Name = "Activating", Value = 2, Doc = "The switch has begun: the old scene is closing." },
+                { Name = "Done", Value = 3, Doc = "The scene is open." },
+                { Name = "Failed", Value = 4, Doc = "It could not be prepared; `Error` says why." },
+                { Name = "Cancelled", Value = 5, Doc = "`Cancel()`, or another load, dropped it." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

@@ -328,10 +328,27 @@ code lives, and where it is decides where it runs (ADR 0105, which retired
 into them. No properties or methods of their own; the tree *is* the API.
 
 **`SceneService`** — which scene the game is in, and the way to another (ADR
-0106): `CurrentScene`, `LoadScene(path, data?)`, `GetLoadData()`,
-`SceneLoading` and `SceneLoaded`. A scene is a complete place, every service
-but `GlobalScriptService` included; the change happens between two ticks, and
-in a match only the authority makes it and every client follows.
+0106): `CurrentScene`, `LoadScene(path, data?)`, `LoadSceneAsync(path,
+options?)`, `GetLoadData()`, `SceneLoading` and `SceneLoaded`. A scene is a
+complete place, every service but `GlobalScriptService` included; the change
+happens between two ticks, and in a match only the authority makes it and every
+client follows. `LoadSceneAsync` (ADR 0125) returns a `SceneLoad` at once --
+`Scene`, `Path`, `Progress`, `Status`, `Error`, `Ready`, `Finished`,
+`Activate()`, `Cancel()` -- and prepares the scene off the main thread until
+the game activates it.
+
+**`Scene`** and the global **`scene`** (ADR 0124) — the scene as an object:
+`Name`, `Path`, `IsOpen()`, `BindToClose(fn)`, `SendMessage(topic, ...)`,
+`BindToMessage(topic, fn)`. `scene` is the scene open when it is read;
+`SceneService.CurrentScene` is that scene as an object that stays with it and
+reads closed after. `scene:BindToClose` runs when the scene closes and the
+change waits for it; `game:BindToClose` runs when the game closes (the
+editor's Stop included), after the open scene's. **A handler belongs to the
+script whose thread registered it**, and a scene's scripts' handlers and
+bindings go with the scene -- its `game:BindToClose` dropped unrun. `game` and
+`scene` are mailboxes (`SendMessage`, `BindToMessage`): deferred, in send
+order, values copied as an attribute or a save holds them (instances by
+reference), local to the machine.
 
 **`SaveService`** — what a game keeps between runs (ADR 0111):
 `GetSlotAsync(name)` hands back a `SaveSlot` (`Get`, `Set`, `Update`,

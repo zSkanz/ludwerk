@@ -876,8 +876,25 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     // A foliage layer's meshes (ADR 0116), from the same feed and the same
     // budget: a field of grass is one mesh, loaded once.
     world.foliageMeshes().forEach([&](core::InstanceId, const scene::FoliageMeshComponent& mesh) { load(mesh.mesh); });
+    // And a prepared scene's (ADR 0125), after what is on screen.
+    for (const core::NameAtom content : warm_)
+        load(content);
 
     return loaded;
+}
+
+core::f64 MeshLoader::warmedFraction(const MeshLibrary& library) const
+{
+    if (warm_.empty())
+        return 1.0;
+    core::usize arrived = 0;
+    for (const core::NameAtom content : warm_) {
+        const bool gaveUp = std::binary_search(failed_.begin(), failed_.end(), content,
+                                               [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+        if (gaveUp || library.find(content) != nullptr)
+            ++arrived;
+    }
+    return static_cast<core::f64>(arrived) / static_cast<core::f64>(warm_.size());
 }
 
 bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Model& model, core::NameAtom urn,

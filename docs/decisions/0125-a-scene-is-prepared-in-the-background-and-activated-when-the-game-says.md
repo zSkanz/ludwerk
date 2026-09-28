@@ -1,6 +1,8 @@
 # 0125 — A scene is prepared in the background and activated when the game says
 
-- Status: accepted (to be built with 0124; see `docs/briefs/foundation-kickoff.md`, A2c)
+- Status: accepted, built 2026-09-28 with 0124 (`docs/briefs/foundation-kickoff.md`, A2c). As built:
+  meshes are warmed and nothing else yet, `[scene] max_prepared_bytes` is not read, clients in a match load
+  at the switch rather than preparing ahead, and `LoadScene` keeps its own path (same tick as before).
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, in conversation about loading screens,
   choosing this shape and asking for it to be built together with ADR 0124:

@@ -2,6 +2,7 @@
 
 #include <engine/core/error.h>
 #include <engine/core/id.h>
+#include <engine/core/json.h>
 #include <engine/core/name_atom.h>
 #include <engine/scene/value.h>
 #include <functional>
@@ -182,6 +183,28 @@ void clearScene(World& world);
 // "load a scene" would stop being idempotent.
 [[nodiscard]] std::optional<core::EngineError>
 readScene(World& world, std::string_view json, SceneIoReport* report = nullptr, const StampSource& stamps = {});
+
+// **A scene read and parsed, and nothing more** (ADR 0125): what a scene
+// prepared in the background holds until it is activated. Made on any thread,
+// because it touches no world; applied on the main one by the overload below.
+// Not movable, because the parse points into `text`.
+struct ParsedScene
+{
+    std::string text;
+    core::JsonDocument document;
+    // Set when the file is not a scene this build reads.
+    std::optional<core::EngineError> error;
+
+    ParsedScene() = default;
+    ParsedScene(const ParsedScene&) = delete;
+    ParsedScene& operator=(const ParsedScene&) = delete;
+};
+[[nodiscard]] std::unique_ptr<ParsedScene> parseScene(std::string text);
+// Every `asset://` name the parse holds, once each, in the order first met:
+// what a prepared scene warms before it opens.
+[[nodiscard]] std::vector<std::string> sceneContent(const ParsedScene& parsed);
+[[nodiscard]] std::optional<core::EngineError>
+readScene(World& world, const ParsedScene& parsed, SceneIoReport* report = nullptr, const StampSource& stamps = {});
 
 // Builds ONE scene node -- a plain instance or a stamped one -- under `parent`,
 // exactly as `readScene` would build it.

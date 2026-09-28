@@ -1847,13 +1847,13 @@ TEST_CASE("a game changes scene at run time, and the game's own code and a kept 
             local menu = UIService:FindFirstChild("MenuUI") ~= nil
             local kept = UIService:FindFirstChild("Loading") ~= nil
             print(`loaded:{path} changes:{changes} clock:{Lighting.ClockTime} round:{data.Round} `
-                .. `current:{SceneService.CurrentScene} menu:{menu} kept:{kept}`)
+                .. `current:{SceneService.CurrentScene.Path} menu:{menu} kept:{kept}`)
             if changes < 3 then
                 local next = if path == "scenes/a.scene.json" then "scenes/b.scene.json" else "scenes/a.scene.json"
                 SceneService:LoadScene(next, { Round = changes + 1 })
             end
         end)
-        print(`start current:{SceneService.CurrentScene} clock:{Lighting.ClockTime}`)
+        print(`start current:{SceneService.CurrentScene.Path} clock:{Lighting.ClockTime}`)
         SceneService:LoadScene("scenes/b.scene.json", { Round = 1 })
     )");
 
@@ -1921,5 +1921,282 @@ TEST_CASE("a host loads a scene by path and it is the one path the editor takes 
 
     // A scene that is not there is refused, and the world stays where it was.
     CHECK(host.loadScene("scenes/missing.scene.json").has_value());
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+}
+
+// --- A scene closes as a game does (ADR 0124) -----------------------------------
+
+namespace {
+
+// Where in the log a line containing `needle` first appears, or -1.
+[[nodiscard]] int lineOf(const Captured& log, std::string_view needle)
+{
+    for (std::size_t index = 0; index < log.lines.size(); ++index) {
+        if (log.lines[index].find(needle) != std::string::npos)
+            return static_cast<int>(index);
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST_CASE("a scene change waits for the old scene's close handlers and drops its game:BindToClose")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    // Scene A's own code: what it saves when it ends, and a registration for
+    // the game's close that it will not live to see.
+    project.write("src/scenes/a/client/level.luau", R"(
+        scene:BindToClose(function()
+            task.wait(0.25)
+            print("A scene close done")
+        end)
+        game:BindToClose(function()
+            print("A game close ran")
+        end)
+    )");
+    project.write("src/client/game.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local function onClose()
+            print("global game close")
+        end
+        -- The same function twice runs twice.
+        game:BindToClose(onClose)
+        game:BindToClose(onClose)
+        local a = SceneService.CurrentScene
+        print(`at boot: scene {scene.Name} path {a.Path} same {scene == a} open {a:IsOpen()}`)
+        SceneService.SceneLoaded:Connect(function(path: string)
+            local refused = not pcall(function()
+                a:BindToClose(function() end)
+            end)
+            print(`loaded {path}: a open {a:IsOpen()} scene {scene.Name} refused {refused}`)
+            scene:BindToClose(function()
+                print("B scene close")
+            end)
+        end)
+        task.defer(function()
+            SceneService:LoadScene("scenes/b.scene.json")
+        end)
+    )");
+
+    app::WorldHostOptions options = sceneOptions(project);
+    options.developer = true;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    // A quarter of a second is fifteen ticks: the change must not land before.
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+    CHECK_FALSE(log.contains("A scene close done"));
+    for (int tick = 0; tick < 20; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("at boot: scene a path scenes/a.scene.json same true open true"));
+    CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
+    const int done = lineOf(log, "A scene close done");
+    const int loaded = lineOf(log, "loaded scenes/b.scene.json: a open false scene b refused true");
+    CHECK(done >= 0);
+    CHECK(loaded > done);
+    // Dropped, with the editor's word for it, and never run.
+    CHECK(log.contains("registered game:BindToClose in scene a"));
+
+    // The game closing: the open scene's, then the game's.
+    host.close(1.0);
+    CHECK_FALSE(log.contains("A game close ran"));
+    const int sceneClose = lineOf(log, "B scene close");
+    CHECK(sceneClose >= 0);
+    CHECK(lineOf(log, "global game close") > sceneClose);
+    CHECK(occurrences(log, "global game close") == 2);
+}
+
+TEST_CASE("a scene close that outlasts its grace period is cut off and the change goes ahead")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/scenes/a/client/level.luau", R"(
+        scene:BindToClose(function()
+            task.wait(100)
+            print("never")
+        end)
+        task.defer(function()
+            game:GetService("SceneService"):LoadScene("scenes/b.scene.json")
+        end)
+    )");
+    app::WorldHostOptions options = sceneOptions(project);
+    options.sceneCloseGrace = 0.5;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 20; ++tick)
+        host.tick();
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+    for (int tick = 0; tick < 20; ++tick)
+        host.tick();
+    CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
+    CHECK(log.contains("still running after"));
+    CHECK_FALSE(log.contains("never"));
+}
+
+TEST_CASE("game and scene are mailboxes: messages cross between a scene and the game, copied")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/scenes/a/client/level.luau", R"(
+        scene:BindToMessage("OpenGate", function(side: string, info: { count: number })
+            print(`gate {side} {info.count}`)
+            info.count = 99
+            game:SendMessage("CoinCollected", 1, { nested = { value = 5 } })
+        end)
+        game:BindToMessage("Ping", function()
+            print("a heard ping")
+        end)
+    )");
+    project.write("src/client/hud.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local sent = { count = 3 }
+        game:BindToMessage("CoinCollected", function(amount: number, t: { nested: { value: number } })
+            print(`coin {amount} {t.nested.value}`)
+        end)
+        task.defer(function()
+            scene:SendMessage("OpenGate", "north", sent)
+            task.wait(0.1)
+            print(`sender kept {sent.count}`)
+            local ok, err = pcall(function()
+                scene:SendMessage("Gate", { a = { b = function() end } })
+            end)
+            print(`refused {not ok} {err}`)
+            game:SendMessage("Nobody")
+            SceneService:LoadScene("scenes/b.scene.json")
+        end)
+        SceneService.SceneLoaded:Connect(function()
+            -- Scene A's binding went with scene A.
+            game:SendMessage("Ping")
+        end)
+    )");
+    app::WorldHostOptions options = sceneOptions(project);
+    options.developer = true;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 30; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("gate north 3"));
+    CHECK(log.contains("coin 1 5"));
+    CHECK(log.contains("sender kept 3"));
+    CHECK(log.contains("refused true"));
+    CHECK(log.contains("argument 1.a.b"));
+    CHECK(log.contains("Nobody listens to Nobody in game"));
+    CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
+    CHECK_FALSE(log.contains("a heard ping"));
+    CHECK(log.contains("Nobody listens to Ping in game"));
+}
+
+// --- A scene prepared in the background (ADR 0125) -------------------------------
+
+TEST_CASE("LoadSceneAsync prepares a scene while this one runs, and switches when the game says")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/scenes/b/client/mail.luau", R"(
+        scene:BindToMessage("Hello", function(text: string)
+            print(`b got {text}`)
+        end)
+    )");
+    project.write("src/client/flow.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local loading = SceneService:LoadSceneAsync("scenes/b.scene.json", { Activate = false, Data = { Round = 7 } })
+        print(`status {loading.Status.Name} progress {loading.Progress} open {loading.Scene:IsOpen()}`)
+        loading.Ready:Connect(function()
+            print(`ready {loading.Progress} {loading.Status.Name} still {SceneService.CurrentScene.Name}`)
+            loading.Scene:SendMessage("Hello", "from the game")
+            task.wait(0.1)
+            print("activating")
+            loading:Activate()
+        end)
+        loading.Finished:Connect(function(opened: boolean)
+            print(`finished {opened} {loading.Status.Name} open {loading.Scene:IsOpen()}`)
+        end)
+        SceneService.SceneLoading:Connect(function(path: string)
+            print(`loading event {path}`)
+        end)
+        SceneService.SceneLoaded:Connect(function(path: string)
+            print(`loaded event {path} data {SceneService:GetLoadData().Round}`)
+            local second = SceneService:LoadSceneAsync("scenes/a.scene.json", { Activate = false })
+            local third = SceneService:LoadSceneAsync("scenes/missing.scene.json")
+            print(`second {second.Status.Name}`)
+            third.Finished:Connect(function(opened: boolean)
+                print(`third {opened} {third.Status.Name} {third.Error ~= nil}`)
+            end)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK(log.contains("status Preparing progress 0 open false"));
+    CHECK(log.contains("ready 1 Ready still a"));
+    // Prepared, not in: scene A goes on running until the game says.
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+    const int alive = occurrences(log, "A-alive");
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK(occurrences(log, "A-alive") > alive);
+    CHECK_FALSE(log.contains("activating"));
+
+    for (int tick = 0; tick < 12; ++tick)
+        host.tick();
+    // The one error is the missing scene's, which the last load asks for.
+    const bool onlyTheMissingScene = log.firstError().empty() || log.firstError().find("missing") != std::string::npos;
+    CHECK_MESSAGE(onlyTheMissingScene, log.firstError());
+    CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
+    const int activating = lineOf(log, "activating");
+    const int loadingEvent = lineOf(log, "loading event scenes/b.scene.json");
+    const int got = lineOf(log, "b got from the game");
+    const int loaded = lineOf(log, "loaded event scenes/b.scene.json data 7");
+    CHECK(activating >= 0);
+    CHECK(loadingEvent > activating);
+    // The message held for the prepared scene arrives after its scripts start
+    // and before `SceneLoaded`.
+    CHECK(got > loadingEvent);
+    CHECK(loaded > got);
+    CHECK(log.contains("finished true Done open true"));
+    // A second load cancels the first; a scene that is not there fails.
+    CHECK(log.contains("second Cancelled"));
+    CHECK(log.contains("third false Failed true"));
+    CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
+}
+
+TEST_CASE("a SceneLoad cancelled before it activates changes nothing")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/client/flow.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local loading = SceneService:LoadSceneAsync("scenes/b.scene.json", { Activate = false })
+        loading.Finished:Connect(function(opened: boolean)
+            print(`finished {opened} {loading.Status.Name}`)
+        end)
+        loading.Ready:Connect(function()
+            loading:Cancel()
+            local refused = not pcall(function()
+                loading:Activate()
+            end)
+            print(`activate refused {refused}`)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("finished false Cancelled"));
+    CHECK(log.contains("activate refused true"));
     CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
 }

@@ -78,6 +78,7 @@ inline constexpr EnumId LineJoinModeEnumId = 37;
 inline constexpr EnumId StrokeSizingModeEnumId = 38;
 inline constexpr EnumId BorderStrokePositionEnumId = 39;
 inline constexpr EnumId ViewQualityEnumId = 40;
+inline constexpr EnumId SceneLoadStatusEnumId = 41;
 
 } // namespace generated
 
@@ -474,9 +475,6 @@ Value getTeamAutoAssign(const World& world, core::InstanceId id);
 bool setTeamAutoAssign(World& world, core::InstanceId id, const Value& value);
 void attachTeamComponents(World& world, core::InstanceId id);
 void detachTeamComponents(World& world, core::InstanceId id);
-
-// SceneService
-Value getSceneServiceCurrentScene(const World& world, core::InstanceId id);
 
 // NetworkService
 Value getNetworkServiceAuthority(const World& world, core::InstanceId id);

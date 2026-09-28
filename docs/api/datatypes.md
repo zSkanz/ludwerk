@@ -700,6 +700,69 @@ Stores a copy of `value` under `key`; nil removes it. Raises for a value a save 
 
 Calls `transform` with what `key` holds and stores what it returns, which it also returns. The function must not yield.
 
+## Scene
+
+A scene as a game sees it (ADR 0124): the level, the menu, the arena -- the place the world came from, which closes when `SceneService:LoadScene` goes to another. **`scene` is a global** in every script, as `game` is, and it is always the scene open when it is read; `SceneService.CurrentScene` is the same scene as an object that stays with it.
+
+A `Scene` kept past its close is closed: `IsOpen()` is false, `BindToClose` and `BindToMessage` on it raise, and a message sent to it is dropped. Inside a `SubWorld`, `scene` is the sub-world's.
+
+## Scene — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Name` | `string` | — | read-only | The scene file's name without its folder and `.scene.json`: `arena` for `scenes/arena.scene.json`. Empty for a world no scene file made. |
+| `Path` | `string` | — | read-only | The content-relative path of the scene's file, such as `scenes/arena.scene.json`. |
+
+## Scene — methods
+
+### `BindToClose(callback: () -> ())`
+
+Runs `callback` when this scene closes: a `LoadScene` away from it, or the game closing while it is open. The change **waits for it** -- each in its own thread, so it may yield, as `SaveSlot:SaveAsync` does -- up to the project's `[scene] close_grace_seconds` (5 by default); then the saves are written and the scene goes. Every call adds one, in order; one that errors does not stop the others.
+
+The place for what belongs to a level: `game:BindToClose` is for the game, and a scene script's registration there is dropped when its scene closes, with a warning in the editor. Raises on a scene that has closed.
+
+### `BindToMessage(topic: string, callback: (...any) -> ())`
+
+Runs `callback` with a message's values each time one is sent to this scene under `topic`. It belongs to the script that bound it and goes with that script's scene. A message nobody listens to is dropped, with a warning in the editor. Raises on a scene that has closed.
+
+### `IsOpen(): boolean`
+
+Whether this is the scene open now. False once it has closed, and for a scene still being prepared (`SceneLoad.Scene`) until it opens. `scene:IsOpen()` is always true.
+
+### `SendMessage(topic: string, arguments: ...any)`
+
+Sends a message to this scene: every function bound to `topic` on it runs, deferred, in send order, each in its own thread. **Send to the mailbox of whom you want to reach**: a global script tells the level `scene:SendMessage("OpenGate", "north")`.
+
+The values arrive as an attribute or a save holds them -- a table as a copy the receiver owns, without its metatable, a `buffer` copied, an instance as itself. A function, a thread, a table that holds itself or a live object (a `Signal`, a `Connection`, a `Tween`) is an error that names where it was found. To a closed scene the message is dropped; to a scene still being prepared it waits until its scripts have started. A message never leaves this machine: between machines it is a `RemoteEvent`.
+
+## SceneLoad
+
+A scene being prepared while the current one plays, returned by `SceneService:LoadSceneAsync` (ADR 0125). Its file is read and parsed off the main thread and the meshes it names are loaded; then, when the game says -- `Activate()`, or at once for a load started with `Activate = true` -- the switch happens between two ticks, as `LoadScene`'s does: `SceneLoading` fires, the old scene's `scene:BindToClose` handlers run and are waited for, and the prepared scene opens.
+
+One load at a time: a second `LoadSceneAsync`, or a `LoadScene`, cancels this one.
+
+## SceneLoad — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Error` | `string?` | — | read-only | Why it failed, when `Status` is `Failed`; nil otherwise. |
+| `Finished` | `Signal<boolean>` | — | read-only | Fires once, at the end: true when the scene opened, false when the load failed or was cancelled. |
+| `Path` | `string` | — | read-only | The content-relative path of the scene's file. |
+| `Progress` | `number` | — | read-only | From 0 to 1, and it only rises: half for the file read and parsed, the rest for the meshes it names, as each is loaded. 1 when `Ready` fires. |
+| `Ready` | `Signal<>` | — | read-only | Fires once, when the scene is prepared and waiting to be activated. |
+| `Scene` | `Scene` | — | read-only | The scene being prepared. A message sent to it waits until it opens and its scripts have started, and is delivered before `SceneLoaded`. |
+| `Status` | `Enum.SceneLoadStatus` | — | read-only | Where the load is: `Preparing`, `Ready`, `Activating`, then `Done` -- or `Failed` or `Cancelled`. |
+
+## SceneLoad — methods
+
+### `Activate()`
+
+Switches to the scene now if it is ready, or as soon as it is. Raises on a load that failed or was cancelled.
+
+### `Cancel()`
+
+Drops what was prepared, and `Finished` fires with false. Nothing once the switch has begun.
+
 ## Signal
 
 THE signal type, spelled `Signal<T...>` where the pack is what handlers receive and `Wait` returns. Delivery is **deferred only** (ADR 0015): a fire enqueues, and handlers run at the next drain in the order they were raised, with connection order guaranteed within one fire. A script makes its own with `Signal.new`, and there is no separate event object to parent into the tree. Handler errors are contained: each runs on its own coroutine, and an error stops neither the other handlers, nor the drain, nor the firing script.

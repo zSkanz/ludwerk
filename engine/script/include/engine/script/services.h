@@ -39,6 +39,7 @@
 #include "engine/script/binding.h"
 #include "engine/script/reload_state.h"
 #include "engine/script/save_store.h"
+#include "engine/script/scenes.h"
 #include "engine/script/tweens.h"
 
 struct lua_State;
@@ -153,13 +154,18 @@ public:
     // reaches here, because `ShowPanel` raises on one.
     std::vector<core::NameAtom> openPanels;
 
-    // `BindToClose` callbacks, by registry ref, in registration order.
-    std::vector<int> closeHandlers;
+    // `game:BindToClose` callbacks, in registration order, each with the
+    // script that registered it: a scene's scripts' go with the scene (ADR 0124).
+    std::vector<OwnedHandler> closeHandlers;
 
     // The close handlers that yielded and are still parked, as thread refs.
     // Held only between `runCloseHandlers` and the end of the grace period.
     std::vector<int> closePending;
     bool shutdown = false;
+
+    // Scenes as scripts see them: which is open, `scene:BindToClose`, and the
+    // two mailboxes (ADR 0124).
+    SceneState scenes;
 
     std::vector<ChildWaiter> childWaiters;
 
@@ -344,6 +350,9 @@ void fireStreamedOut(lua_State* L, core::InstanceId instance);
 // is in place and its scripts are started -- deferred, so it runs after their
 // first resumption.
 void fireSceneLoaded(lua_State* L, std::string_view path);
+// `SceneLoading`, fired by the host when a prepared scene's switch begins
+// (ADR 0125 §3); `LoadScene` fires it at the call.
+void fireSceneLoading(lua_State* L, std::string_view path);
 
 // **What crossed between two worlds** (ADR 0107 §3), fired once a tick at its
 // start beside the network's messages: each `SubWorld`'s `Received`, with what

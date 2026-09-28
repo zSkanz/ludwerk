@@ -117,6 +117,10 @@ struct ProjectConfig
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
 
+    // `[scene] close_grace_seconds` (ADR 0124): how long a scene change waits
+    // for the old scene's `scene:BindToClose` handlers.
+    core::f64 sceneCloseGrace = 5.0;
+
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and
     // left empty rather than stamped wrong -- and `[project] company` is who

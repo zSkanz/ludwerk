@@ -179,6 +179,12 @@ export type Property = {
     --- sets it must hash as it did before it existed. A script that branches on
     --- it still moves the world through what the branch writes.
     Presentation: boolean?,
+    --- **Answered by the script layer with an object that is not a scene
+    --- value** (ADR 0124: `SceneService.CurrentScene` is a `Scene`). No
+    --- accessor, no storage, never saved, replicated or hashed: the generator
+    --- emits no descriptor for it, and the binding answers it by name. Read-only
+    --- always.
+    Scripted: boolean?,
     Doc: string,
 }
 
@@ -191,6 +197,11 @@ export type Method = {
     --- directions -- a non-yielding `Async` is as much a lie as a yielding one
     --- without it.
     Yields: boolean?,
+    --- **Returns at once with a handle to work that finishes later** -- a
+    --- `SceneLoad` (ADR 0125). The other honest meaning of `Async`: the caller
+    --- does not park, and the name still warns that what it asked for is not
+    --- done when the call returns. The owner named `LoadSceneAsync` so.
+    ReturnsHandle: boolean?,
     ThreadSafety: ThreadSafety?,
     Doc: string,
 }
@@ -455,6 +466,9 @@ local function checkProperty(errors: { string }, owner: string, property: Proper
     if property.Doc == "" then
         table.insert(errors, `{where}: every member carries doc text, which becomes its i18n key (§5)`)
     end
+    if property.Scripted == true and property.ReadOnly ~= true then
+        table.insert(errors, `{where}: a Scripted property has nothing to write to, so it is ReadOnly`)
+    end
     -- A read-only property is never set, so an override on one is a key nothing
     -- can raise -- and it reads, to the next person, as though the property has
     -- a domain somebody has to satisfy.
@@ -500,7 +514,7 @@ local function checkMethod(errors: { string }, owner: string, method: Method, na
     local saysSoAlready = string.sub(lowered, 1, 4) == "wait" or string.sub(lowered, 1, 5) == "await"
     if yields and not (named or saysSoAlready) then
         table.insert(errors, `{where}: a yielding method's name ends in Async (§9)`)
-    elseif named and not yields then
+    elseif named and not yields and method.ReturnsHandle ~= true then
         table.insert(errors, `{where}: named Async but does not yield -- the suffix is a promise (§9)`)
     end
 
@@ -628,7 +642,9 @@ function Schema.validate(definition: Definition): { string }
         end
         -- Singular, because `Enum.EasingStyles.Quad` reads as a set of styles
         -- rather than one style.
-        if string.sub(enum.Name, -1) == "s" and string.sub(enum.Name, -2) ~= "ss" then
+        -- `Status` is singular, like `Class`: `-us` and `-ss` are not plurals.
+        local ending = string.sub(enum.Name, -2)
+        if string.sub(enum.Name, -1) == "s" and ending ~= "ss" and ending ~= "us" then
             table.insert(errors, `Enum.{enum.Name}: enum names are singular (§9)`)
         end
         local seenValues: { [number]: string } = {}

@@ -171,6 +171,10 @@ struct EngineOptions
     std::filesystem::path saveDirectory;
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
+    // `[scene] close_grace_seconds` (ADR 0124).
+    core::f64 sceneCloseGrace = 5.0;
+    // The editor, `dev` and a match's windows: warnings a player never reads.
+    bool developerWarnings = false;
 
     // The returning-focus soak check (D066's successor). Zero asserts nothing,
     // like every other soak threshold: only the caller running a particular

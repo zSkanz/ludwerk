@@ -25,8 +25,10 @@
 #include "engine/scene/world.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
+#include "engine/script/modules.h"
 #include "engine/script/remote.h"
 #include "engine/script/save_service.h"
+#include "engine/script/scenes.h"
 #include "engine/script/signals.h"
 #include "engine/script/tweens.h"
 
@@ -130,7 +132,7 @@ int dataModelBindToClose(lua_State* L)
     luaL_checktype(L, 2, LUA_TFUNCTION);
 
     lua_pushvalue(L, 2);
-    services(L).closeHandlers.push_back(lua_ref(L, -1));
+    services(L).closeHandlers.push_back(OwnedHandler{lua_ref(L, -1), scriptOfThread(L)});
     lua_pop(L, 1);
     return 0;
 }
@@ -1274,6 +1276,8 @@ int sceneServiceLoadScene(lua_State* L)
         if (!refs.empty())
             raise(L, ENG_TR("scene.err.load_data_instance"));
     }
+    // One change at a time: a load being prepared gives way to this one.
+    cancelSceneLoad(L);
     w.engineState().pendingSceneLoad = scene::EngineState::PendingSceneLoad{path, std::move(data)};
     fireSceneEvent(L, "SceneLoading", path);
     return 0;
@@ -1975,6 +1979,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"DataModel", "GetService", dataModelGetService},
     {"DataModel", "FindService", dataModelFindService},
     {"DataModel", "BindToClose", dataModelBindToClose},
+    {"DataModel", "SendMessage", dataModelSendMessage},
+    {"DataModel", "BindToMessage", dataModelBindToMessage},
     {"DataModel", "Shutdown", dataModelShutdown},
 
     {"RunService", "Pause", runServicePause},
@@ -1993,6 +1999,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "Disconnect", networkServiceDisconnect},
 
     {"SceneService", "LoadScene", sceneServiceLoadScene},
+    {"SceneService", "LoadSceneAsync", sceneServiceLoadSceneAsync},
     {"SceneService", "GetLoadData", sceneServiceGetLoadData},
     {"SceneService", "SendToHost", sceneServiceSendToHost},
     {"SceneService", "IsSubWorld", sceneServiceIsSubWorld},
@@ -2248,6 +2255,11 @@ void publishMessage(lua_State* L, core::LogLevel level, std::string_view text)
 void fireSceneLoaded(lua_State* L, std::string_view path)
 {
     fireSceneEvent(L, "SceneLoaded", path);
+}
+
+void fireSceneLoading(lua_State* L, std::string_view path)
+{
+    fireSceneEvent(L, "SceneLoading", path);
 }
 
 void fireSubWorldMessages(lua_State* L)
@@ -2506,10 +2518,11 @@ void runCloseHandlers(lua_State* L)
     // Copied, because a handler may register another and the vector it would
     // push onto is the one being walked. A callback registered during shutdown
     // does not run for this shutdown, which is the same rule a fire follows.
-    const std::vector<int> handlers = state.closeHandlers;
+    const std::vector<OwnedHandler> handlers = state.closeHandlers;
     state.closeHandlers.clear();
 
-    for (const int ref : handlers) {
+    for (const OwnedHandler& handler : handlers) {
+        const int ref = handler.functionRef;
         // Its own coroutine, like a signal handler: a close handler must be
         // allowed to yield, and one that errors must not stop the others.
         lua_State* co = lua_newthread(L);

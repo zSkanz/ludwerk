@@ -2088,6 +2088,171 @@ local Datatypes: { Schema.Datatype } = {
         } :: { Schema.Method },
     },
     {
+        Name = "Scene",
+        Module = "script",
+        Doc = "A scene as a game sees it (ADR 0124): the level, the menu, the arena -- the place the world "
+            .. "came from, which closes when `SceneService:LoadScene` goes to another. **`scene` is a global** "
+            .. "in every script, as `game` is, and it is always the scene open when it is read; "
+            .. "`SceneService.CurrentScene` is the same scene as an object that stays with it.\n\n"
+            .. "A `Scene` kept past its close is closed: `IsOpen()` is false, `BindToClose` and "
+            .. "`BindToMessage` on it raise, and a message sent to it is dropped. Inside a `SubWorld`, "
+            .. "`scene` is the sub-world's.",
+        Properties = {
+            {
+                Name = "Name",
+                Type = "string",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The scene file's name without its folder and `.scene.json`: `arena` for "
+                    .. "`scenes/arena.scene.json`. Empty for a world no scene file made.",
+            },
+            {
+                Name = "Path",
+                Type = "string",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The content-relative path of the scene's file, such as `scenes/arena.scene.json`.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "IsOpen",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Safe",
+                Doc = "Whether this is the scene open now. False once it has closed, and for a scene still being "
+                    .. "prepared (`SceneLoad.Scene`) until it opens. `scene:IsOpen()` is always true.",
+            },
+            {
+                Name = "BindToClose",
+                Parameters = { { Name = "callback", Type = "() -> ()" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `callback` when this scene closes: a `LoadScene` away from it, or the game closing "
+                    .. "while it is open. The change **waits for it** -- each in its own thread, so it may "
+                    .. "yield, as `SaveSlot:SaveAsync` does -- up to the project's `[scene] "
+                    .. "close_grace_seconds` (5 by default); then the saves are written and the scene goes. "
+                    .. "Every call adds one, in order; one that errors does not stop the others.\n\n"
+                    .. "The place for what belongs to a level: `game:BindToClose` is for the game, and a "
+                    .. "scene script's registration there is dropped when its scene closes, with a warning "
+                    .. "in the editor. Raises on a scene that has closed.",
+            },
+            {
+                Name = "SendMessage",
+                Parameters = { { Name = "topic", Type = "string" }, { Name = "arguments", Type = "...any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Sends a message to this scene: every function bound to `topic` on it runs, deferred, "
+                    .. "in send order, each in its own thread. **Send to the mailbox of whom you want to "
+                    .. 'reach**: a global script tells the level `scene:SendMessage("OpenGate", "north")`.\n\n'
+                    .. "The values arrive as an attribute or a save holds them -- a table as a copy the "
+                    .. "receiver owns, without its metatable, a `buffer` copied, an instance as itself. A "
+                    .. "function, a thread, a table that holds itself or a live object (a `Signal`, a "
+                    .. "`Connection`, a `Tween`) is an error that names where it was found. To a closed scene "
+                    .. "the message is dropped; to a scene still being prepared it waits until its scripts "
+                    .. "have started. A message never leaves this machine: between machines it is a "
+                    .. "`RemoteEvent`.",
+            },
+            {
+                Name = "BindToMessage",
+                Parameters = {
+                    { Name = "topic", Type = "string" },
+                    { Name = "callback", Type = "(...any) -> ()" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `callback` with a message's values each time one is sent to this scene under "
+                    .. "`topic`. It belongs to the script that bound it and goes with that script's scene. A "
+                    .. "message nobody listens to is dropped, with a warning in the editor. Raises on a scene "
+                    .. "that has closed.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "SceneLoad",
+        Module = "script",
+        Doc = "A scene being prepared while the current one plays, returned by "
+            .. "`SceneService:LoadSceneAsync` (ADR 0125). Its file is read and parsed off the main thread and "
+            .. "the meshes it names are loaded; then, when the game says -- `Activate()`, or at once for a "
+            .. "load started with `Activate = true` -- the switch happens between two ticks, as `LoadScene`'s "
+            .. "does: `SceneLoading` fires, the old scene's `scene:BindToClose` handlers run and are waited "
+            .. "for, and the prepared scene opens.\n\n"
+            .. "One load at a time: a second `LoadSceneAsync`, or a `LoadScene`, cancels this one.",
+        Properties = {
+            {
+                Name = "Scene",
+                Type = "Scene",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The scene being prepared. A message sent to it waits until it opens and its scripts "
+                    .. "have started, and is delivered before `SceneLoaded`.",
+            },
+            {
+                Name = "Path",
+                Type = "string",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "The content-relative path of the scene's file.",
+            },
+            {
+                Name = "Progress",
+                Type = "number",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "From 0 to 1, and it only rises: half for the file read and parsed, the rest for the "
+                    .. "meshes it names, as each is loaded. 1 when `Ready` fires.",
+            },
+            {
+                Name = "Status",
+                Type = "Enum.SceneLoadStatus",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Where the load is: `Preparing`, `Ready`, `Activating`, then `Done` -- or `Failed` or "
+                    .. "`Cancelled`.",
+            },
+            {
+                Name = "Error",
+                Type = "string?",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Why it failed, when `Status` is `Failed`; nil otherwise.",
+            },
+            {
+                Name = "Ready",
+                Type = "Signal<>",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Fires once, when the scene is prepared and waiting to be activated.",
+            },
+            {
+                Name = "Finished",
+                Type = "Signal<boolean>",
+                ReadOnly = true,
+                ThreadSafety = "Safe",
+                Doc = "Fires once, at the end: true when the scene opened, false when the load failed or was "
+                    .. "cancelled.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Activate",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Switches to the scene now if it is ready, or as soon as it is. Raises on a load that "
+                    .. "failed or was cancelled.",
+            },
+            {
+                Name = "Cancel",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Drops what was prepared, and `Finished` fires with false. Nothing once the switch has "
+                    .. "begun.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "InputObject",
         Module = "script",
         Doc = "One raw input, as `InputService.InputBegan`, `InputChanged` and `InputEnded` carry it (§2.4, "

@@ -18,7 +18,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `CurrentScene` | `string` | — | read-only | The content-relative path of the scene loaded now, such as `scenes/arena.scene.json`. Empty for a world that no scene file made. |
+| `CurrentScene` | `Scene` | — | read-only | The scene open now (ADR 0124), as an object that stays with it: its `Path` is the content-relative path of its file, such as `scenes/arena.scene.json` (empty for a world no scene file made), and once the scene closes `IsOpen()` says so. The global `scene` is the same scene while it is open. |
 
 ## Methods
 
@@ -35,6 +35,12 @@ Whether this world runs inside another game's `SubWorld`.
 Unloads this scene and loads `path` (content-relative). **Returns at once**: the change happens at the next safe point between ticks, after `SceneLoading` has run. The old scene goes whole -- its world, its services' contents and settings, and its scripts, whose threads stop -- and the new one opens from the engine's settings, reads its file, mounts its own `src/scenes/<scene>/` code and starts its scripts.
 
 `data` is handed to the new scene through `GetLoadData`: plain values only, the same a `RemoteEvent` argument takes, and no instance, since the old scene's are gone. A client connected to a match may not call it: the scene is the server's.
+
+### `LoadSceneAsync(path: string, options: { Activate: boolean?, Data: any? }? = nil): SceneLoad`
+
+Starts preparing the scene at `path` (content-relative) while this one keeps running, and returns at once with a `SceneLoad` to watch (ADR 0125): its `Progress` for a loading bar, `Ready` when it is prepared, `Activate()` to switch. `options.Activate` (true by default) switches as soon as it is ready; false waits for `Activate()` -- a fade, a button. `options.Data` is `LoadScene`'s `data`.
+
+The switch itself is `LoadScene`'s, with the file already parsed and its meshes loaded. One load at a time: a second call cancels the first. A client connected to a match may not call it.
 
 ### `SendToHost(arguments: ...any)`
 

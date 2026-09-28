@@ -194,6 +194,22 @@ struct WorldHostOptions
     // `[save] max_slot_bytes` and `max_slots`.
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
+
+    // `[scene] close_grace_seconds` (ADR 0124 §4): how long a `LoadScene`
+    // waits for the old scene's `scene:BindToClose` handlers, in simulated
+    // seconds.
+    f64 sceneCloseGrace = 5.0;
+    // **The warnings a person testing a game wants** and a player never reads:
+    // a close handler dropped with its scene, a message nobody listens to. The
+    // editor, `dev` and a match's windows; never an exported game.
+    bool developer = false;
+
+    // **What a scene being prepared warms** (ADR 0125 §2): the host hands the
+    // content names its parse holds to whoever loads assets -- the mesh loader
+    // in a windowed run -- and asks how much of it has arrived, from 0 to 1.
+    // Absent, nothing is warmed and a prepared scene is ready once parsed.
+    std::function<void(scene::World&, const std::vector<std::string>&)> warmContent = nullptr;
+    std::function<core::f64()> warmProgress = nullptr;
 };
 
 // What the conformance run reported. Read after the loop, because the run ends
@@ -299,7 +315,16 @@ public:
     //
     // Per host, with no state anywhere else: a second host beside this one
     // loads its own scenes the same way.
-    [[nodiscard]] std::optional<core::EngineError> loadScene(const std::string& path, std::vector<core::u8> data = {});
+    //
+    // **The old scene closes first** (ADR 0124): its `scene:BindToClose`
+    // handlers, then its saves, then what its scripts registered goes.
+    // `closeHandlersRan` says the handlers already ran and were waited for,
+    // which is `applyPendingScene`'s path; a direct call -- a match following
+    // its authority -- gives them one pass and does not wait.
+    [[nodiscard]] std::optional<core::EngineError> loadScene(const std::string& path, std::vector<core::u8> data = {},
+                                                             bool closeHandlersRan = false,
+                                                             const scene::ParsedScene* prepared = nullptr,
+                                                             core::u32 preparedScene = 0);
     // Mounts the code of the scene at `path` from `src/scenes/<scene>/`, after
     // taking out what the scene before it mounted. What `loadScene` does
     // between reading and starting, exposed for the editor's own scene opening.
@@ -307,6 +332,12 @@ public:
     // Takes a `LoadScene` a script asked for and carries it out. Called at the
     // safe point between ticks, which is the end of `tick`.
     bool applyPendingScene();
+    // **A scene prepared in the background** (ADR 0125): a `LoadSceneAsync`
+    // started, its parse polled, its content warmed, `Ready` fired, and its
+    // activation handed to the close above. At the same safe point, before it.
+    void stepSceneLoad();
+    // Lets go of the scene being prepared, waiting for its job if it runs.
+    void dropPrepared();
 
     // **Server code starts again, fresh** (ADR 0105 §2): what `src/server/`
     // and the current scene's `src/scenes/<scene>/server/` mount, put back and
@@ -555,6 +586,40 @@ private:
     // Before the runtime, so it outlives every VM that holds a slot of it.
     std::unique_ptr<script::SaveStore> m_saves;
     std::optional<script::ScriptRuntime> m_runtime;
+    // A scene read and parsed off the main thread (ADR 0125).
+    struct PrepareTask;
+    // A scene closing (ADR 0124 §4): where the change goes once its handlers
+    // finish or the grace runs out, and the tick it started on.
+    struct SceneClose
+    {
+        std::string path;
+        std::vector<core::u8> data;
+        core::u64 startedTick = 0;
+        // A prepared scene's parse and serial, when the change is its activation.
+        std::shared_ptr<PrepareTask> prepared;
+        core::u32 preparedScene = 0;
+    };
+    std::optional<SceneClose> m_sceneClose;
+
+    // The scene being prepared (ADR 0125), read and parsed by `task`.
+    struct Prepared
+    {
+        core::u32 id = 0;
+        std::shared_ptr<PrepareTask> task;
+        bool warming = false;
+    };
+    std::optional<Prepared> m_prepared;
+    // An activation begun: `SceneLoading` has been fired, and the next safe
+    // point starts the close.
+    bool m_activationPending = false;
+    // Off the main thread in a windowed run; at the safe point, whole, in a
+    // headless one -- where the tick `Ready` fires on is part of what a replay
+    // reproduces (R10).
+    bool m_prepareInBackground = false;
+    std::function<void(scene::World&, const std::vector<std::string>&)> m_warmContent;
+    std::function<core::f64()> m_warmProgress;
+    f64 m_sceneCloseGrace = 5.0;
+    bool m_developer = false;
     // Instances reparented to nil because a script held them when they
     // streamed out, in the order they left.
     std::vector<core::InstanceId> m_husks;

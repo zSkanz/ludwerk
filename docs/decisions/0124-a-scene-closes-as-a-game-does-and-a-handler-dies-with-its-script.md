@@ -1,6 +1,8 @@
 # 0124 — A scene closes as a game does, and a close handler dies with its script
 
-- Status: accepted (to be built; see `docs/briefs/foundation-kickoff.md`, A2b)
+- Status: accepted, built 2026-09-28 (`docs/briefs/foundation-kickoff.md`, A2b). As built: `IsOpen` is a
+  method, `IsOpen()` (§9 gives an `Is` prefix to methods), and `BindToClose` returns nothing -- the open
+  question below stays open.
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, in conversation, after a save written
   in a `BindToClose` handler never ran under the editor's Stop. The owner
