@@ -128,13 +128,20 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
         // have ground written into its square (Generate Flat Ground over a
         // large square reaches past what is loaded). The file is the rest of
         // it, and what the field holds wins, because it is newer.
+        //
+        // **A file that will not read is not written over** (audit A12): the
+        // cell kept only its loaded part, and everything else the file held
+        // was gone. It stays as it is on disk, its row with it, and the save
+        // says not everything was written.
         if (held == m_terrainCells.end()) {
             if (const auto row = rows.find(id); row != rows.end() && writer.read) {
-                if (const std::optional<std::vector<std::byte>> bytes = writer.read(row->second); bytes.has_value()) {
-                    asset::TerrainCell onDisk;
-                    if (!asset::decodeTerrainCell(*bytes, onDisk).has_value())
-                        cell.field.shareFrom(onDisk.field);
+                const std::optional<std::vector<std::byte>> bytes = writer.read(row->second);
+                asset::TerrainCell onDisk;
+                if (!bytes.has_value() || asset::decodeTerrainCell(*bytes, onDisk).has_value()) {
+                    report.ok = false;
+                    continue;
                 }
+                cell.field.shareFrom(onDisk.field);
             }
         }
         cell.settings = settings;
@@ -167,9 +174,12 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
             ++held;
             continue;
         }
+        // Its file goes only once the index that no longer names it is on
+        // disk (audit A12): the caller removes what `emptied` lists after
+        // writing the index, so a save that stops half way never leaves an
+        // index naming files that are gone.
         if (const auto row = rows.find(held->first); row != rows.end()) {
-            if (writer.remove)
-                writer.remove(row->second);
+            report.emptied.push_back(row->second);
             rows.erase(row);
             report.removed += 1;
         }

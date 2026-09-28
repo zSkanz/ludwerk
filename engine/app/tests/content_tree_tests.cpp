@@ -768,3 +768,46 @@ TEST_CASE("deleting in the content browser moves to the project's trash, never d
     CHECK(kept);
     std::filesystem::remove_all(scratch.root().parent_path() / ".engine", ec);
 }
+
+TEST_CASE("a move whose references cannot all be rewritten leaves every file as it was, and says which (audit A6)")
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "engine-retarget-a6";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root, ec);
+    const std::string original = R"({"root": {"stamp": "Model/tree.stamp.json"}})";
+    for (const char* name : {"a.scene.json", "b.scene.json"}) {
+        std::ofstream out(root / name, std::ios::binary);
+        out << original;
+    }
+    const auto read = [&](const char* name) {
+        std::ifstream in(root / name, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+
+    // The second file cannot be written -- a full disk, a file another program
+    // holds. Before, the first was already rewritten, the second counted as
+    // "no references", and nothing said anything.
+    const engine::app::RetargetWriter failing = [](const std::filesystem::path& file, std::string_view text) {
+        if (file.filename() == "b.scene.json")
+            return false;
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << text;
+        return static_cast<bool>(out);
+    };
+    const engine::app::RetargetOutcome refused =
+        engine::app::retargetContentReferencesAll(root, {}, "Model", "Props", failing);
+    CHECK(refused.changed == 0);
+    REQUIRE(refused.failed.size() == 1);
+    CHECK(refused.failed[0].filename() == "b.scene.json");
+    CHECK(read("a.scene.json") == original);
+    CHECK(read("b.scene.json") == original);
+
+    // With a disk that answers, both follow.
+    const engine::app::RetargetOutcome done = engine::app::retargetContentReferencesAll(root, {}, "Model", "Props");
+    CHECK(done.changed == 2);
+    CHECK(done.failed.empty());
+    CHECK(read("a.scene.json").find("Props/tree.stamp.json") != std::string::npos);
+    CHECK(read("b.scene.json").find("Props/tree.stamp.json") != std::string::npos);
+    std::filesystem::remove_all(root, ec);
+}

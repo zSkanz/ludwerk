@@ -2,6 +2,7 @@
 
 #include <engine/core/types.h>
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -310,5 +311,24 @@ private:
 std::size_t retargetContentReferences(const std::filesystem::path& contentRoot,
                                       const std::filesystem::path& projectFile, std::string_view from,
                                       std::string_view to);
+
+// **All of them or none** (audit A6): every file read and every new text
+// worked out before anything is written; each written durably; and when one
+// cannot be read or written, the ones already written are put back and the
+// file named -- rather than, as before, a truncated file, the rest left
+// pointing at the old path, and the failure counted as "no references".
+struct RetargetOutcome
+{
+    std::size_t changed = 0;
+    // What could not be read or written. Not empty: nothing was left changed.
+    std::vector<std::filesystem::path> failed;
+};
+// How a file's new text is written. Empty: `platform::writeFileDurable`. A
+// test hands a disk that says no.
+using RetargetWriter = std::function<bool(const std::filesystem::path&, std::string_view)>;
+[[nodiscard]] RetargetOutcome retargetContentReferencesAll(const std::filesystem::path& contentRoot,
+                                                           const std::filesystem::path& projectFile,
+                                                           std::string_view from, std::string_view to,
+                                                           const RetargetWriter& write = {});
 
 } // namespace engine::app

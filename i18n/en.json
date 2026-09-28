@@ -288,6 +288,8 @@
   "engine.lost.game": "The graphics card stopped responding and was reset, so the game has to close.",
   "engine.lost.save_restart": "Save and restart",
   "engine.lost.restart": "Restart without saving",
+  "engine.lost.save_failed": "Not everything could be saved: {files}. What was not saved is lost when the editor closes -- copy anything you need from it first, if you can still see it.",
+  "engine.lost.restart_anyway": "Restart anyway",
   "engine.lost.quit": "Quit",
   "rhi.err.device_create_failed": "Could not create a graphics device.",
   "rhi.err.device_lost": "The graphics device was lost ({reason}). Nothing more can be drawn with it; the usual cause is a shader that ran longer than the driver allows.",

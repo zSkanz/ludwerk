@@ -505,40 +505,77 @@ std::size_t retargetText(std::string& text, std::string_view from, std::string_v
     return count;
 }
 
-bool retargetFile(const std::filesystem::path& file, std::string_view from, std::string_view to)
+bool writeDurably(const std::filesystem::path& file, std::string_view text)
 {
-    std::string text;
-    if (!platform::readTextFile(file, text))
-        return false;
-    if (retargetText(text, from, to, file.extension() == ".toml") == 0)
-        return false;
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out << text;
-    return static_cast<bool>(out);
+    return platform::writeFileDurable(
+        file, std::span<const std::byte>(reinterpret_cast<const std::byte*>(text.data()), text.size()));
 }
 
 } // namespace
 
-std::size_t retargetContentReferences(const std::filesystem::path& contentRoot,
-                                      const std::filesystem::path& projectFile, std::string_view from,
-                                      std::string_view to)
+RetargetOutcome retargetContentReferencesAll(const std::filesystem::path& contentRoot,
+                                             const std::filesystem::path& projectFile, std::string_view from,
+                                             std::string_view to, const RetargetWriter& write)
 {
+    RetargetOutcome outcome;
     if (from.empty() || from == to)
-        return 0;
-    std::size_t changed = 0;
+        return outcome;
+    const RetargetWriter writer = write ? write : RetargetWriter(writeDurably);
+
+    // Every file that names it, read and rewritten in memory first.
+    std::vector<std::filesystem::path> files;
     std::error_code ec;
     for (std::filesystem::recursive_directory_iterator walk(contentRoot, ec), done; !ec && walk != done;
          walk.increment(ec)) {
         if (!walk->is_regular_file(ec))
             continue;
         const std::string name = walk->path().filename().string();
-        if (name.size() < 5 || name.compare(name.size() - 5, 5, ".json") != 0)
-            continue;
-        changed += retargetFile(walk->path(), from, to) ? 1 : 0;
+        if (name.size() >= 5 && name.compare(name.size() - 5, 5, ".json") == 0)
+            files.push_back(walk->path());
     }
     if (!projectFile.empty() && std::filesystem::exists(projectFile, ec))
-        changed += retargetFile(projectFile, from, to) ? 1 : 0;
-    return changed;
+        files.push_back(projectFile);
+    struct Rewrite
+    {
+        std::filesystem::path file;
+        std::string before;
+        std::string after;
+    };
+    std::vector<Rewrite> rewrites;
+    for (const std::filesystem::path& file : files) {
+        std::string text;
+        if (!platform::readTextFile(file, text)) {
+            outcome.failed.push_back(file);
+            continue;
+        }
+        std::string after = text;
+        if (retargetText(after, from, to, file.extension() == ".toml") > 0)
+            rewrites.push_back(Rewrite{file, std::move(text), std::move(after)});
+    }
+    // A file that could not be read might have named it: nothing is written.
+    if (!outcome.failed.empty())
+        return outcome;
+
+    // Then written, and put back as they were at the first that will not go.
+    for (std::size_t at = 0; at < rewrites.size(); ++at) {
+        if (writer(rewrites[at].file, rewrites[at].after))
+            continue;
+        outcome.failed.push_back(rewrites[at].file);
+        for (std::size_t back = 0; back < at; ++back) {
+            if (!writer(rewrites[back].file, rewrites[back].before))
+                outcome.failed.push_back(rewrites[back].file);
+        }
+        return outcome;
+    }
+    outcome.changed = rewrites.size();
+    return outcome;
+}
+
+std::size_t retargetContentReferences(const std::filesystem::path& contentRoot,
+                                      const std::filesystem::path& projectFile, std::string_view from,
+                                      std::string_view to)
+{
+    return retargetContentReferencesAll(contentRoot, projectFile, from, to).changed;
 }
 
 std::string ContentTree::duplicate(const ContentEntry& entry)

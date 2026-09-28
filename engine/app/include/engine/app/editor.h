@@ -946,8 +946,10 @@ public:
 
     // What a move does after the file has moved, for a rename too: the
     // references in the project's files and in the worlds, and the paths of
-    // what is open. How many references it changed.
-    std::size_t followContent(scene::World& world, std::string_view from, std::string_view to);
+    // what is open. How many references it changed -- or nothing, when a file
+    // naming it could not be rewritten: then no file was left changed, the
+    // move itself is undone, and the status line says which (audit A6).
+    std::optional<std::size_t> followContent(scene::World& world, std::string_view from, std::string_view to);
 
     // Writes a new entry script under `<project>/src/scripts/<name>.luau` and
     // returns whether it landed.

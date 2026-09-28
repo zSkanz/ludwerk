@@ -6,6 +6,7 @@
 // becomes cells, a reopened one streams around the camera rather than loading
 // whole, a save writes the cells that changed and no others, and an undo that
 // puts back a field from before a load does not leave holes.
+#include <algorithm>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <string>
@@ -191,4 +192,40 @@ TEST_CASE("an undo that puts back a field from before a load leaves no hole wher
     // around the camera is there again.
     editor.cells.frame(editor.world, editor.workspace, 1, core::DVec3{8.0, 10.0, 400.0});
     CHECK(editor.holds(0, 6));
+}
+
+TEST_CASE("a cell whose file could not be read is not written over with only what is loaded (audit A12)")
+{
+    ContentDirectory content;
+    Editing editor(content.path);
+    // Ground in the square of a cell the index names and nothing has loaded:
+    // the file is the rest of that cell.
+    (void)asset::fillFlat(editor.terrain().field, core::DVec3{8.0, 0.0, 8.0}, 16.0f, 4.0f, 1);
+    asset::ChunkIndex index;
+    index.chunkSize = static_cast<core::f32>(asset::FieldCellMetres);
+    asset::ChunkIndexEntry row;
+    row.id = asset::ChunkId{0, 0, asset::FieldLayerTerrain};
+    row.urn = "terrain/cell_0_0.lterrain";
+    index.chunks.push_back(row);
+    editor.fields.adoptTerrain(index, [&](const asset::ChunkIndexEntry& entry) -> std::optional<std::filesystem::path> {
+        return content.path / std::filesystem::path(entry.urn);
+    });
+
+    // The file cannot be read: before, the cell was written anyway, with only
+    // the loaded part -- and everything else the file held was gone.
+    std::vector<asset::ChunkId> written;
+    app::FieldStreamer::TerrainCellWriter writer;
+    writer.read = [](const asset::ChunkIndexEntry&) -> std::optional<std::vector<std::byte>> { return std::nullopt; };
+    writer.write = [&](asset::ChunkId id, std::span<const std::byte>) -> std::optional<std::string> {
+        written.push_back(id);
+        return std::string("terrain/written.lterrain");
+    };
+    const app::FieldStreamer::TerrainSaveReport report = editor.fields.saveTerrain(writer);
+    CHECK_FALSE(report.ok);
+    CHECK(std::find(written.begin(), written.end(), row.id) == written.end());
+    // And its row is still the file it was.
+    bool kept = false;
+    for (const asset::ChunkIndexEntry& entry : report.index.chunks)
+        kept = kept || (entry.id == row.id && entry.urn == row.urn);
+    CHECK(kept);
 }

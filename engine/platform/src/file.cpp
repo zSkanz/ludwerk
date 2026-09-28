@@ -103,6 +103,12 @@ bool writeFileDurable(const std::filesystem::path& path, std::span<const std::by
     return true;
 }
 
+bool writeTextFileDurable(const std::filesystem::path& path, std::string_view text)
+{
+    return writeFileDurable(path,
+                            std::span<const std::byte>(reinterpret_cast<const std::byte*>(text.data()), text.size()));
+}
+
 bool renameFile(const std::filesystem::path& from, const std::filesystem::path& to)
 {
     return SDL_RenamePath(toUtf8(from).c_str(), toUtf8(to).c_str());

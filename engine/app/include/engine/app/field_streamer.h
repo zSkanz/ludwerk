@@ -112,7 +112,8 @@ public:
         std::function<std::optional<std::string>(asset::ChunkId, std::span<const std::byte>)> write;
         // Reads a cell as it is on disk, for merging ground that is not resident.
         std::function<std::optional<std::vector<std::byte>>(const asset::ChunkIndexEntry&)> read;
-        // Removes the file of a cell nothing is left in.
+        // Removes the file of a cell nothing is left in -- the caller's, once
+        // the new index is written (`TerrainSaveReport::emptied`).
         std::function<void(const asset::ChunkIndexEntry&)> remove;
         // How a written URN resolves for a later load.
         CellResolver resolve;
@@ -124,6 +125,8 @@ public:
         u64 removed = 0;
         u64 unchanged = 0;
         bool ok = true;
+        // The cells emptied by this save, whose files go after the index.
+        std::vector<asset::ChunkIndexEntry> emptied;
         // The terrain's whole index after the save, to be written beside the
         // cells: every cell the terrain has, resident or not.
         asset::ChunkIndex index;

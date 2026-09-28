@@ -10477,6 +10477,14 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
             for (const std::string& name : unsaved)
                 list += (list.empty() ? "" : ", ") + name;
             ImGui::TextWrapped("Save changes to %s?", list.empty() ? "this project" : list.c_str());
+            // **Named, because Save cannot keep it** (audit A5): with a stamp
+            // open, the untitled scene under it has nowhere to be written, and
+            // it went without a word. Cancel, close the stamp, Save As.
+            if (stampOpen && sceneUntitled && sceneChanged) {
+                ImGui::Spacing();
+                ImGui::TextWrapped("The untitled scene under this stamp has never been saved, and Save cannot keep "
+                                   "it: cancel, close the stamp and use Save As to keep it.");
+            }
         }
         ImGui::Spacing();
         ImGui::TextWrapped("Unsaved edits will be lost if you continue without saving.");

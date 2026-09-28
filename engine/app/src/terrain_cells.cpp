@@ -140,10 +140,16 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
     };
     writer.resolve = resolver();
     const FieldStreamer::TerrainSaveReport saved = m_fields.saveTerrain(writer);
-    if (!platform::writeTextFile(m_contentRoot / std::filesystem::path(wanted), asset::writeChunkIndex(saved.index))) {
+    const std::string indexText = asset::writeChunkIndex(saved.index);
+    if (!platform::writeFileDurable(
+            m_contentRoot / std::filesystem::path(wanted),
+            std::span<const std::byte>(reinterpret_cast<const std::byte*>(indexText.data()), indexText.size()))) {
         note = "could not write " + wanted;
         return false;
     }
+    // Emptied cells go now that no index names them (audit A12).
+    for (const asset::ChunkIndexEntry& entry : saved.emptied)
+        writer.remove(entry);
     if (!saved.ok) {
         note = "some of the terrain's cells could not be written";
         return false;

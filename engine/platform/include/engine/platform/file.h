@@ -130,6 +130,9 @@ namespace engine::platform {
 // flush is `SDL_FlushIO`, which asks the OS to write its buffers out where the
 // platform can.
 [[nodiscard]] bool writeFileDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
+// The same for text: what the editor saves a document with (audit A5) --
+// a scene, a stamp, a material is somebody's work, and it is a save.
+[[nodiscard]] bool writeTextFileDurable(const std::filesystem::path& path, std::string_view text);
 
 // Renames `from` over `to`, replacing it. False when either is not there to
 // take part, or the OS refused.

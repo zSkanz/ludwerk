@@ -135,6 +135,21 @@ void writeTypedSources(scene::World& world, const ScriptEditor& scripts, Editor&
     }
 }
 
+// **An open content file follows its file** (audit A5): a shader's tab kept
+// the old path, and its next save wrote the file back where it had been.
+void followOpenFiles(ScriptEditor& scripts, std::string_view from, std::string_view to)
+{
+    for (std::size_t index = 0; index < scripts.count(); ++index) {
+        OpenScript* tab = scripts.at(index);
+        if (tab == nullptr || tab->origin != ScriptOrigin::File)
+            continue;
+        if (tab->file == from)
+            tab->file = std::string(to);
+        else if (tab->file.size() > from.size() && tab->file.starts_with(from) && tab->file[from.size()] == '/')
+            tab->file = std::string(to) + tab->file.substr(from.size());
+    }
+}
+
 // `scenes/arena.scene.json` is `arena`: the folder under `src/scenes/` whose
 // code is that scene's (ADR 0105).
 [[nodiscard]] std::string sceneStemOf(std::string_view path)
@@ -3163,8 +3178,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                     editorCommands.newStampName);
                 }
                 // Moved by a drag onto a folder, with every reference to it.
-                if (!editorCommands.moveContent.empty())
-                    (void)editor.moveContent(host->world(), editorCommands.moveContent, editorCommands.moveContentInto);
+                if (!editorCommands.moveContent.empty()) {
+                    if (const std::string moved = editor.moveContent(host->world(), editorCommands.moveContent,
+                                                                     editorCommands.moveContentInto);
+                        !moved.empty())
+                        followOpenFiles(scripts, editorCommands.moveContent, moved);
+                }
                 if (!editorCommands.deleteContent.empty() || !editorCommands.renameContent.empty() ||
                     !editorCommands.duplicateContent.empty()) {
                     const std::string& wanted = !editorCommands.deleteContent.empty() ? editorCommands.deleteContent
@@ -3201,8 +3220,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                               "would point everything back away from",
                                               true);
                             }
-                            else if (editor.content().rename(entry, editorCommands.renameContentTo, &after)) {
-                                (void)editor.followContent(host->world(), before, after);
+                            else if (editor.content().rename(entry, editorCommands.renameContentTo, &after) &&
+                                     editor.followContent(host->world(), before, after).has_value()) {
+                                followOpenFiles(scripts, before, after);
                                 // A renamed scene takes its own code with it.
                                 if (after.ends_with(".scene.json") && before.ends_with(".scene.json")) {
                                     const app::ScriptFileSync followed = app::followSceneScripts(
@@ -5225,16 +5245,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     window.get(), text.format(ENG_TR("engine.lost.title")), text.format(ENG_TR("engine.lost.editor")),
                     {text.format(ENG_TR("engine.lost.save_restart")), text.format(ENG_TR("engine.lost.restart")),
                      text.format(ENG_TR("engine.lost.quit"))});
+                bool restart = choice == 0 || choice == 1;
                 if (choice == 0) {
                     // What Ctrl+S saves: the scene -- and every script it
                     // holds -- out of play mode, each script and shader that
                     // is its own file, the open material and the open stamp.
+                    //
+                    // **And what did not save, said before anything is
+                    // restarted** (audit A5): every result was dropped, and a
+                    // restart after a failed save is the unsaved work gone.
+                    std::vector<std::string> failed;
                     if (editor.inPlayMode()) {
                         editor.stop(host->world(), inspector);
                         // Or the save below writes the text from before play.
                         writeTypedSources(host->world(), scripts, editor);
                     }
-                    (void)editor.saveOpenScene(host->world());
+                    if (!editor.openScenePath().empty() && !editor.saveOpenScene(host->world()))
+                        failed.push_back(editor.openScenePath());
                     for (std::size_t index = 0; index < scripts.count(); ++index) {
                         const OpenScript* tab = scripts.at(index);
                         if (tab == nullptr || !tab->dirty() || tab->file.empty())
@@ -5243,17 +5270,28 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             tab->origin == ScriptOrigin::File
                                 ? editor.content().root() / std::filesystem::path(tab->file)
                                 : options.scriptPath / tab->file;
-                        (void)platform::writeTextFile(file, tab->document.text());
+                        if (!platform::writeTextFileDurable(file, tab->document.text()))
+                            failed.push_back(tab->file);
                     }
-                    if (editor.materialSession().open() && editor.materialSession().dirty())
-                        (void)editor.saveMaterial();
-                    if (editor.stampSession().open())
-                        (void)editor.saveStamp(host->world(), host->runtime().dataModel());
+                    if (editor.materialSession().open() && editor.materialSession().dirty() && !editor.saveMaterial())
+                        failed.push_back(editor.materialSession().path);
+                    if (editor.stampSession().open() && !editor.saveStamp(host->world(), host->runtime().dataModel()))
+                        failed.push_back(editor.stampSession().path);
+                    if (!failed.empty()) {
+                        std::string list;
+                        for (const std::string& name : failed)
+                            list += (list.empty() ? "" : ", ") + name;
+                        const std::array<core::I18nArg, 1> args{core::I18nArg{"files", std::string_view{list}}};
+                        restart = platform::askChoice(window.get(), text.format(ENG_TR("engine.lost.title")),
+                                                      text.format(ENG_TR("engine.lost.save_failed"), args),
+                                                      {text.format(ENG_TR("engine.lost.quit")),
+                                                       text.format(ENG_TR("engine.lost.restart_anyway"))}) == 1;
+                    }
                 }
-                if (choice == 0 || choice == 1) {
-                    std::vector<std::string> restart{hostExecutablePath().string()};
-                    restart.insert(restart.end(), options.arguments.begin(), options.arguments.end());
-                    (void)platform::startDetached(restart);
+                if (restart) {
+                    std::vector<std::string> command{hostExecutablePath().string()};
+                    command.insert(command.end(), options.arguments.begin(), options.arguments.end());
+                    (void)platform::startDetached(command);
                 }
             }
             else {

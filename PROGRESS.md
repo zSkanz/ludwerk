@@ -412,8 +412,11 @@ What this section used to hold, resolved, for whoever remembers it:
 **The multiplayer smoothness brief** (2026-09-28, the owner's first priority
 over the audit; [`multiplayer-smoothness-2026-09-28.md`](docs/briefs/multiplayer-smoothness-2026-09-28.md)):
 the input buffer, redundant intents, the visual slide, passable loose parts,
-the Network panel and `GetStats`, D242 to D246, protocol 22. The owner's test
-over the VPN, with the Network panel open, is what closes it.
+the Network panel and `GetStats`, D242 to D246, protocol 22 (`b45df720`).
+**Approved by the owner on 2026-09-28** after the windowed measurement on his
+machine: 68 ticks of a held key, every one exactly 8/60 m but the one that
+met a wall, and no correction. His match over the VPN, with the Network panel
+open, is the check still to come.
 
 **The audit of 2026-09-28 comes first**
 ([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's

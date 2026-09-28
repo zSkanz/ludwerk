@@ -229,7 +229,7 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     scene::StampLibrary stamps(world, stampSource());
     const std::string text = scene::writeScene(world, &report, &stamps);
 
-    if (!platform::createDirectories(path.parent_path()) || !platform::writeTextFile(path, text)) {
+    if (!platform::createDirectories(path.parent_path()) || !platform::writeTextFileDurable(path, text)) {
         m_status = EditorStatus{"could not write " + path.string(), true};
         return false;
     }
@@ -249,7 +249,7 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     else if (!m_content.root().empty()) {
         const std::filesystem::path global = m_content.root() / "global.json";
         if (const std::string globalText = scene::writeGlobal(world, nullptr, &stamps); !globalText.empty()) {
-            if (!platform::writeTextFile(global, globalText)) {
+            if (!platform::writeTextFileDurable(global, globalText)) {
                 m_status = EditorStatus{"could not write " + global.string(), true};
                 return false;
             }
@@ -1527,7 +1527,10 @@ std::string Editor::moveContent(scene::World& world, std::string_view from, std:
         return moved;
 
     m_undoClearedByMove = false;
-    const std::size_t references = followContent(world, from, moved);
+    const std::optional<std::size_t> followed = followContent(world, from, moved);
+    if (!followed.has_value())
+        return {};
+    const std::size_t references = *followed;
     std::string said = "moved to " + moved;
     if (references > 0)
         said += " -- " + std::to_string(references) + " reference(s) follow it";
@@ -1537,12 +1540,26 @@ std::string Editor::moveContent(scene::World& world, std::string_view from, std:
     return moved;
 }
 
-std::size_t Editor::followContent(scene::World& world, std::string_view from, std::string_view to)
+std::optional<std::size_t> Editor::followContent(scene::World& world, std::string_view from, std::string_view to)
 {
     if (from == to)
         return 0;
-    const std::size_t files =
-        retargetContentReferences(m_content.root(), m_content.root().parent_path() / "project.toml", from, to);
+    const RetargetOutcome rewritten =
+        retargetContentReferencesAll(m_content.root(), m_content.root().parent_path() / "project.toml", from, to);
+    if (!rewritten.failed.empty()) {
+        // **All or none** (audit A6): the files are as they were, so the move
+        // goes back too -- a file where nothing names it is the break this
+        // exists to prevent.
+        const bool undone = platform::renameFile(m_content.root() / std::filesystem::path(std::string(to)),
+                                                 m_content.root() / std::filesystem::path(std::string(from)));
+        (void)m_content.refresh();
+        report("could not rewrite " + rewritten.failed.front().filename().string() + (undone ? ", so " : ", and ") +
+                   std::string(from) +
+                   (undone ? " stayed where it was" : " could not be moved back -- move it back by hand"),
+               true);
+        return std::nullopt;
+    }
+    const std::size_t files = rewritten.changed;
     // The scene's world, and the stamp open over it, which is a world of its own.
     std::size_t instances = retargetWorld(world, from, to);
     if (m_stage != nullptr)
@@ -1552,9 +1569,20 @@ std::size_t Editor::followContent(scene::World& world, std::string_view from, st
     // wrote the resident cells back where they had been and pointed the scene
     // there -- the rest left behind in the folder that moved. With the index
     // followed, the save copies every cell into the scene's own folder.
+    // **And its layers' materials** (audit A5): URNs in the component, not in
+    // a property, so the walk above never saw them, and a moved material left
+    // a terrain painted with nothing.
+    const std::string oldUrn = std::string(asset::AssetScheme) + std::string(from);
+    const std::string newUrn = std::string(asset::AssetScheme) + std::string(to);
     world.terrains().forEach([&](core::InstanceId, scene::TerrainComponent& terrain) {
         if (const std::optional<std::string> followed = movedPath(terrain.cellIndex, from, to); followed.has_value())
             terrain.cellIndex = *followed;
+        for (std::string& layer : terrain.layers) {
+            if (const std::optional<std::string> followed = movedPath(layer, oldUrn, newUrn); followed.has_value()) {
+                layer = *followed;
+                instances += 1;
+            }
+        }
     });
     // What is open here follows it, so the next save writes where it now is
     // rather than bringing the old path back.
@@ -1755,7 +1783,7 @@ namespace {
 [[nodiscard]] bool writeMaterialFile(const std::filesystem::path& absolute, const asset::MaterialAsset& material)
 {
     return platform::createDirectories(absolute.parent_path()) &&
-           platform::writeTextFile(absolute, asset::writeMaterialAsset(material));
+           platform::writeTextFileDurable(absolute, asset::writeMaterialAsset(material));
 }
 
 } // namespace
@@ -2290,7 +2318,7 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     scene::SceneIoReport wrote;
     const std::string after = scene::writeStamp(scratch, scratchRoot, &wrote);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(path);
-    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFile(absolute, after)) {
+    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, after)) {
         m_status = EditorStatus{"could not write " + path, true};
         return false;
     }
@@ -2339,7 +2367,7 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     scene::StampLibrary stamps(m_stage->world(), stampSource());
     const std::string text = scene::writeStamp(m_stage->world(), m_stamp.root, &report, &stamps);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_stamp.path);
-    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFile(absolute, text)) {
+    if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
         m_status = EditorStatus{"could not write " + m_stamp.path, true};
         return false;
     }
@@ -2560,7 +2588,7 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // In full: a stamp is a file of its own, and a script from `src/` in it is
     // code the stamp has to carry.
     const std::string text = scene::writeCopy(world, id, &report);
-    if (!platform::writeTextFile(absolute, text)) {
+    if (!platform::writeTextFileDurable(absolute, text)) {
         m_status = EditorStatus{"could not write that stamp", true};
         return false;
     }
@@ -3440,7 +3468,7 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
     (void)disk.setProperty(target, sourceKey, scene::Value{*text});
     scene::SceneIoReport report;
     const std::string patched = scene::writeScene(disk, &report, &stamps);
-    if (!platform::writeTextFile(path, patched)) {
+    if (!platform::writeTextFileDurable(path, patched)) {
         m_status = EditorStatus{"could not write " + path.string(), true};
         return ScriptSave::Failed;
     }
