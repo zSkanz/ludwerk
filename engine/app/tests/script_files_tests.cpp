@@ -18,6 +18,7 @@
 #include "engine/app/script_files.h"
 #include "engine/app/world_host.h"
 #include "engine/platform/file.h"
+#include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "project_fixture.h"
 
@@ -422,4 +423,122 @@ TEST_CASE("saving twice with nothing changed writes nothing and trashes nothing"
     CHECK(sync.problems.empty());
     CHECK(trashed(project).empty());
     CHECK(readFile(project, "src/client/Still.luau") == "print('still')");
+}
+
+TEST_CASE("a file script edited in the editor is written by the scene's save, and the save is remembered")
+{
+    // An audit finding: typing into a `src/` script's tab and saving the scene
+    // wrote nothing, and quitting did not ask.
+    Captured log;
+    Project project;
+    seedScene(project);
+    project.write("src/client/Edited.luau", "print('before')");
+    Opened open(project);
+    const core::InstanceId edited = open.one(open.global("Client"), "Edited");
+    (void)open.world().setProperty(edited, open.world().atoms().intern("Source"),
+                                   scene::Value{std::string("print('after')")});
+    REQUIRE(open.save());
+    CHECK(readFile(project, "src/client/Edited.luau") == "print('after')");
+    // Saving again writes nothing: the file is what the editor holds.
+    CHECK_FALSE(app::syncScriptFiles(*open.host, "main").changedAnything());
+}
+
+TEST_CASE("a file changed outside the editor and in it keeps both: the disk as it is, the editor's text aside")
+{
+    Captured log;
+    Project project;
+    seedScene(project);
+    project.write("src/client/Shared.luau", "print('original')");
+    Opened open(project);
+    const core::InstanceId script = open.one(open.global("Client"), "Shared");
+    (void)open.world().setProperty(script, open.world().atoms().intern("Source"),
+                                   scene::Value{std::string("print('from the editor')")});
+    project.write("src/client/Shared.luau", "print('from outside')");
+    REQUIRE(open.save());
+    CHECK(readFile(project, "src/client/Shared.luau") == "print('from outside')");
+    bool keptAside = false;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(project.root / ".engine" / "conflicts", ec), end;
+         it != end && !ec; it.increment(ec)) {
+        if (it->is_regular_file(ec)) {
+            std::string text;
+            (void)platform::readTextFile(it->path(), text);
+            keptAside = keptAside || text == "print('from the editor')";
+        }
+    }
+    CHECK(keptAside);
+}
+
+TEST_CASE("a save during play is refused, and Save As never writes over another scene")
+{
+    Captured log;
+    Project project;
+    seedScene(project);
+    project.write("content/scenes/other.scene.json",
+                  R"({"format": "scene", "version": 2, "root": {"class": "Workspace", "name": "Workspace"}})");
+    Opened open(project);
+
+    open.editor.play(open.world());
+    CHECK_FALSE(open.save());
+    CHECK(open.editor.status().message.find("stop the game") != std::string::npos);
+    open.editor.stop(open.world(), open.inspector);
+    CHECK(open.save());
+
+    const std::string before = readFile(project, "content/scenes/other.scene.json");
+    CHECK_FALSE(open.editor.saveSceneAs(open.world(), "scenes/other.scene.json"));
+    CHECK(readFile(project, "content/scenes/other.scene.json") == before);
+    // Its own name is fine: that is Save.
+    CHECK(open.editor.saveSceneAs(open.world(), std::string(SceneFile)));
+}
+
+TEST_CASE("a global.json that could not be read is never written over or deleted")
+{
+    Captured log;
+    Project project;
+    seedScene(project);
+    project.write("content/global.json", "{ this is not json");
+    Opened open(project);
+    open.editor.setGlobalUnreadable(open.host->globalUnreadable());
+    CHECK(open.host->globalUnreadable());
+    REQUIRE(open.save());
+    CHECK(readFile(project, "content/global.json") == "{ this is not json");
+}
+
+TEST_CASE("the local Player takes nothing, because a scene never saves what is inside it")
+{
+    Captured log;
+    Project project;
+    seedScene(project);
+    Opened open(project);
+    const core::InstanceId player = scene::localPlayerOf(open.world());
+    REQUIRE(player.valid());
+    CHECK_FALSE(app::Editor::canParentInto(open.world(), player, open.root()));
+}
+
+TEST_CASE("a scene renamed or duplicated takes its own code with it")
+{
+    Captured log;
+    Project project;
+    seedScene(project);
+    project.write("src/scenes/main/server/Round.luau", "print('round')");
+    Opened open(project);
+    const app::ScriptFileSync copied = app::followSceneScripts(*open.host, "main", "main 2", /*copy=*/true);
+    CHECK(copied.problems.empty());
+    CHECK(readFile(project, "src/scenes/main 2/server/Round.luau") == "print('round')");
+    CHECK(readFile(project, "src/scenes/main/server/Round.luau") == "print('round')");
+
+    // A rename of the open scene moves the folder, and the next save sees
+    // nothing to move: the mount table followed.
+    const app::ScriptFileSync moved = app::followSceneScripts(*open.host, "main", "arena", /*copy=*/false);
+    CHECK(moved.problems.empty());
+    CHECK(readFile(project, "src/scenes/arena/server/Round.luau") == "print('round')");
+    CHECK_FALSE(exists(project, "src/scenes/main/server/Round.luau"));
+    CHECK(open.host->sceneName() == "arena");
+    const app::ScriptFileSync after = app::syncScriptFiles(*open.host, "arena");
+    CHECK_FALSE(after.changedAnything());
+
+    // Never into a folder that is already there.
+    const app::ScriptFileSync refused = app::followSceneScripts(*open.host, "arena", "main 2", /*copy=*/false);
+    CHECK_FALSE(refused.problems.empty());
+    CHECK(readFile(project, "src/scenes/arena/server/Round.luau") == "print('round')");
 }

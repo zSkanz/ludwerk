@@ -1463,3 +1463,36 @@ TEST_CASE("a terrain with nothing in it writes nothing")
     const std::string text = scene::writeScene(fixture.world);
     CHECK(text.find("\"terrain\"") == std::string::npos);
 }
+
+TEST_CASE("what a scene read could not build is written back by the next save, as it was")
+{
+    // The audit of 2026-09-28: a class this build does not have, or a stamp
+    // whose file is gone, was left out of the world -- and so out of the next
+    // save, for good.
+    const std::string text = R"json({
+  "format": "scene",
+  "version": 2,
+  "root": {"class": "Workspace", "name": "Workspace", "children": [
+    {"class": "Part", "name": "Kept"},
+    {"class": "FromAFutureBuild", "name": "Gizmo", "properties": {"Power": 3}},
+    {"class": "Model", "name": "Lamp", "stamp": "stamps/gone.stamp.json"}
+  ]}
+})json";
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    scene::SceneIoReport report;
+    REQUIRE_FALSE(scene::readScene(fixture.world, text, &report).has_value());
+    CHECK(report.unknownClasses == 1);
+
+    const std::string written = scene::writeScene(fixture.world);
+    CHECK(written.find("FromAFutureBuild") != std::string::npos);
+    CHECK(written.find("\"Power\"") != std::string::npos);
+    CHECK(written.find("stamps/gone.stamp.json") != std::string::npos);
+    CHECK(written.find("Kept") != std::string::npos);
+
+    // And again: kept across any number of saves.
+    Fixture again;
+    (void)makeWorkspace(again);
+    REQUIRE_FALSE(scene::readScene(again.world, written).has_value());
+    CHECK(scene::writeScene(again.world).find("FromAFutureBuild") != std::string::npos);
+}

@@ -281,6 +281,13 @@ public:
     // caller needs the difference, because an editor only adopts a scene it
     // actually has.
     [[nodiscard]] bool bootSceneApplied() const noexcept { return m_bootSceneApplied; }
+    // Whether `content/global.json` was there and could not be read: then
+    // nothing may write over it, or a save would delete what it held.
+    [[nodiscard]] bool globalUnreadable() const noexcept { return m_globalUnreadable; }
+    // The scene whose own code is mounted (`src/scenes/<name>/`): renamed with
+    // its file in the editor, so restarting the server code finds it.
+    [[nodiscard]] const std::string& sceneName() const noexcept { return m_sceneName; }
+    void setSceneName(std::string name) { m_sceneName = std::move(name); }
 
     // **Replaces the scene with the one at `path`** (ADR 0106), content-
     // relative. The old scene goes whole -- its world, its services' contents
@@ -611,6 +618,7 @@ private:
     PreserveReport m_preserveReport;
     scene::SceneIoReport m_bootSceneReport;
     bool m_bootSceneApplied = false;
+    bool m_globalUnreadable = false;
     // How a scene named at run time is read, and its stamps (ADR 0106).
     std::function<std::optional<std::string>(std::string_view)> m_readContent;
     scene::StampSource m_stamps;

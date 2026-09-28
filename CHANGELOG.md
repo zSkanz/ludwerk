@@ -398,6 +398,34 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Nothing a person made is lost or doubled by saving, moving or closing** (an
+  audit of every way the editor writes, after the tester's report below):
+  - The unsaved-changes dialog's **Save** saves everything unsaved -- the stamp,
+    the scene, the material, a shader's tab -- *before* opening another scene or
+    starting a new one, which it used to do after (losing the work); a save
+    that fails stops the change. It names what it will save.
+  - A `src/` script edited in its tab is written by the scene's save, a changed
+    tab counts as unsaved work, and closing one keeps its text in the scene.
+    A file changed outside the editor as well is never written over: the disk
+    is kept and the editor's text goes to `.engine/conflicts/`.
+  - **Saving during play is refused** (it saved the running game); **Save As
+    never writes over another scene**.
+  - Moving or renaming content rewrites only the paths that name it -- a folder
+    called `terrain`, `Model` or `Tree` no longer rewrites a scene's ground key,
+    a class or an instance's name.
+  - A class this build does not have, and a stamp whose file is gone, are kept
+    as they were written and saved back, rather than dropped for good; a
+    `global.json` that could not be read is never written over or deleted.
+  - **Deleting in the Content browser moves to `.engine/trash/`.**
+  - A terrain's cells follow their folder; a scene renamed or duplicated takes
+    its `src/scenes/<name>/` code with it; opening another material saves the
+    one being edited first.
+  - Nothing can be put inside the local `Player`, which a scene never saves;
+    content cannot be moved during play, and a move ends the undo history
+    rather than leaving steps that point at files that moved; a stamp cannot be
+    pasted into itself or made from scripts that are files; a value the running
+    game sets says it is not saved; text typed during play survives a
+    lost-device save.
 - **Scripts copied, pasted or moved between the script services no longer lose
   their code or come back twice** (reported by a tester: scripts dragged and
   pasted between client and server would not save, and were doubled after

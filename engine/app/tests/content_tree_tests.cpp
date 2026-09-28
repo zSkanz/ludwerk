@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -679,4 +680,69 @@ TEST_CASE("a property picker is offered the project, not the build output")
     REQUIRE(found.size() == 2);
     CHECK(found[0] == "textures/brick.png");
     CHECK(found[1] == "textures/deep/tile.png");
+}
+
+TEST_CASE("moving content rewrites the paths that name it and nothing that only looks like one")
+{
+    // An audit finding: the rewrite replaced any quoted word equal to the moved
+    // path, so a top-level folder called `terrain` renamed the key that holds a
+    // scene's ground, one called `Model` the class of every model, and one
+    // called `Tree` every instance of that name.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "engine-retarget-test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "scenes", ec);
+    const std::string scene = R"json({
+  "format": "scene",
+  "root": {"class": "Workspace", "name": "Workspace", "children": [
+    {"class": "Model", "name": "Tree", "stamp": "Model/tree.stamp.json"},
+    {"class": "MeshPart", "name": "Model", "properties": {"MeshContent": "asset://Model/rock.glb"}},
+    {"class": "Script", "name": "Loader", "properties": {"Source": "print(\"Model\")"}},
+    {"class": "Terrain", "name": "Ground", "terrain": "AAAA", "terrainCells": {"index": "terrain/index.json"}}
+  ]}
+})json";
+    {
+        std::ofstream out(root / "scenes" / "main.scene.json", std::ios::binary);
+        out << scene;
+    }
+
+    CHECK(engine::app::retargetContentReferences(root, {}, "Model", "Props") == 1);
+    CHECK(engine::app::retargetContentReferences(root, {}, "terrain", "ground") == 1);
+    std::string text;
+    {
+        std::ifstream in(root / "scenes" / "main.scene.json", std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    // The paths moved...
+    CHECK(text.find(R"("stamp": "Props/tree.stamp.json")") != std::string::npos);
+    CHECK(text.find(R"("MeshContent": "asset://Props/rock.glb")") != std::string::npos);
+    CHECK(text.find(R"("index": "ground/index.json")") != std::string::npos);
+    // ...and nothing that only looks like one.
+    CHECK(text.find(R"("class": "Model")") != std::string::npos);
+    CHECK(text.find(R"("name": "Model")") != std::string::npos);
+    CHECK(text.find(R"("terrain": "AAAA")") != std::string::npos);
+    CHECK(text.find(R"x(print(\"Model\"))x") != std::string::npos);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("deleting in the content browser moves to the project's trash, never deletes")
+{
+    const Scratch scratch("deleting-to-trash");
+    scratch.file("stamps/lamp.stamp.json", "{\"format\": \"stamp\"}");
+    ContentTree tree;
+    REQUIRE(tree.open(scratch.root()));
+    REQUIRE(tree.enter("stamps"));
+    REQUIRE(tree.entries().size() == 1);
+    REQUIRE(tree.remove(tree.entries().front()));
+    CHECK_FALSE(std::filesystem::exists(scratch.root() / "stamps" / "lamp.stamp.json"));
+
+    // Somewhere under `.engine/trash/`, with its path.
+    bool kept = false;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(scratch.root().parent_path() / ".engine" / "trash", ec), end;
+         it != end && !ec; it.increment(ec)) {
+        kept = kept || it->path().generic_string().ends_with("stamps/lamp.stamp.json");
+    }
+    CHECK(kept);
+    std::filesystem::remove_all(scratch.root().parent_path() / ".engine", ec);
 }

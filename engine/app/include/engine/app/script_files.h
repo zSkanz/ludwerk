@@ -32,6 +32,11 @@ struct ScriptFileSync
     std::vector<std::string> written;
     std::vector<std::string> moved;
     std::vector<std::string> trashed;
+    // Scripts edited in the editor whose files were brought up to date.
+    std::vector<std::string> updated;
+    // Changed on disk AND in the editor since the last read: the disk is kept,
+    // and the editor's text written under `.engine/conflicts/`.
+    std::vector<std::string> conflicts;
     // Instances renamed so their file's name could be theirs.
     std::vector<core::InstanceId> renamed;
     // What could not be done, said to the person.
@@ -41,7 +46,8 @@ struct ScriptFileSync
 
     [[nodiscard]] bool changedAnything() const noexcept
     {
-        return !written.empty() || !moved.empty() || !trashed.empty() || !renamed.empty();
+        return !written.empty() || !moved.empty() || !trashed.empty() || !renamed.empty() || !updated.empty() ||
+               !conflicts.empty();
     }
     // One line for the status bar, empty when nothing happened.
     [[nodiscard]] std::string summary() const;
@@ -51,5 +57,12 @@ struct ScriptFileSync
 // always, and the scene's own two when `sceneName` (the scene file's name
 // without `.scene.json`) is not empty.
 ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName);
+
+// **A scene's own code goes with it** (the audit of 2026-09-28): a scene
+// renamed in the browser moves `src/scenes/<from>/` to `src/scenes/<to>/`, and
+// one duplicated copies it. Never into a folder that is already there -- that
+// is reported and nothing moves. For the scene that is open, the mount table
+// and the host follow, so the next save does not see every script as moved.
+ScriptFileSync followSceneScripts(WorldHost& host, std::string_view fromScene, std::string_view toScene, bool copy);
 
 } // namespace engine::app

@@ -5305,6 +5305,10 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
                     ImGui::TextDisabled("%s", descriptor->readOnly ? "read-only"
                                                                    : "stored; nothing in this build acts on it yet");
                 }
+                // A value the running game sets, which a scene does not keep:
+                // said, so an edit here is not mistaken for one that saves.
+                if (descriptor->transient && !descriptor->readOnly)
+                    ImGui::TextDisabled("not saved with the scene -- the running game sets it");
                 if (descriptor->doc[0] != 0) {
                     ImGui::Separator();
                     ImGui::TextUnformatted(descriptor->doc);
@@ -10406,7 +10410,7 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         // answer; the path is what tells somebody whether they meant it.
         ImGui::TextWrapped("Delete content/%s?", dialogs.deleteContentPath.c_str());
         ImGui::Spacing();
-        ImGui::TextWrapped("This permanently deletes the file or folder and its contents.");
+        ImGui::TextWrapped("It is moved to the project's .engine/trash folder, where it can be got back.");
         ImGui::Spacing();
 
         if (dialogButton("Delete", ImVec2(120.0f, 0.0f))) {
@@ -10436,18 +10440,32 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
             editor.clearCloseRequest();
         })) {
         const bool stampOpen = editor.stampSession().open();
-        const bool haveSomewhereToSave = stampOpen || !editor.openScenePath().empty();
+        // **Everything that would be lost, named** -- the stamp, the scene, the
+        // material, a shader -- and Save saves every one of them. It used to
+        // save the stamp OR the scene, and a material's edits went unasked.
+        const bool sceneUntitled = editor.openScenePath().empty();
+        const bool sceneChanged = editor.sceneDirty();
+        const bool haveSomewhereToSave = !(sceneUntitled && sceneChanged && !stampOpen);
+        std::vector<std::string> unsaved;
+        if (stampOpen && editor.stampSession().dirty)
+            unsaved.push_back(editor.stampSession().path);
+        if (sceneChanged && !sceneUntitled)
+            unsaved.push_back(editor.openScenePath());
+        if (editor.materialSession().dirty())
+            unsaved.push_back(editor.materialSession().path);
+        if (editor.fileTabsUnsaved())
+            unsaved.emplace_back("an open shader");
 
-        if (stampOpen) {
-            ImGui::TextWrapped("Save changes to %s?", editor.stampSession().path.c_str());
-        }
-        else if (!editor.openScenePath().empty()) {
-            ImGui::TextWrapped("Save changes to %s?", editor.openScenePath().c_str());
-        }
-        else {
+        if (!haveSomewhereToSave) {
             // An untitled scene has nowhere to go, so the honest question is a
             // different one and the buttons below say so.
             ImGui::TextWrapped("This scene has never been saved.");
+        }
+        else {
+            std::string list;
+            for (const std::string& name : unsaved)
+                list += (list.empty() ? "" : ", ") + name;
+            ImGui::TextWrapped("Save changes to %s?", list.empty() ? "this project" : list.c_str());
         }
         ImGui::Spacing();
         ImGui::TextWrapped("Unsaved edits will be lost if you continue without saving.");
@@ -10468,12 +10486,8 @@ void drawEditorDialogs(Editor& editor, EditorCommands& commands, EditorDialogs& 
         };
 
         if (dialogButton(haveSomewhereToSave ? "Save" : "Save As...", ImVec2(130.0f, 0.0f))) {
-            if (stampOpen) {
-                commands.saveStamp = true;
-                proceed();
-            }
-            else if (haveSomewhereToSave) {
-                commands.save = true;
+            if (haveSomewhereToSave) {
+                commands.saveAll = true;
                 proceed();
             }
             else {

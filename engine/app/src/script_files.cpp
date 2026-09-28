@@ -141,6 +141,8 @@ std::string ScriptFileSync::summary() const
     part(moved.size(), "moved");
     part(trashed.size(), "moved to " + (trash.empty() ? std::string(".engine/trash") : trash));
     part(renamed.size(), "renamed to a free file name");
+    part(updated.size(), "script file(s) saved");
+    part(conflicts.size(), "changed on disk too -- kept, with the editor's text in .engine/conflicts");
     for (const std::string& problem : problems)
         out += (out.empty() ? "" : "; ") + problem;
     return out;
@@ -254,6 +256,7 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
     // --- Where each belongs --------------------------------------------------
     std::map<std::string, core::InstanceId> claims;
     std::vector<Candidate*> placing;
+    std::vector<Candidate*> kept;
     for (Candidate& candidate : candidates) {
         // Read from wherever it is now, if that is one of its tree's folders:
         // a project still in `src/scripts` stays there.
@@ -267,6 +270,7 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
         if (!candidate.current.empty() && candidate.current == wanted && !claims.contains(claimKey(wanted))) {
             candidate.target = wanted;
             claims[claimKey(wanted)] = candidate.id;
+            kept.push_back(&candidate);
         }
         else {
             placing.push_back(&candidate);
@@ -276,14 +280,14 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
     // **What gives its file up**: a script deleted, or moved out of the file
     // trees, and every script about to move. Trashed first, so a script put
     // where another was can take its name rather than a number after it.
-    std::set<std::string> kept;
+    std::set<std::string> staying;
     for (const Candidate& candidate : candidates) {
         if (!candidate.target.empty())
-            kept.insert(candidate.target);
+            staying.insert(candidate.target);
     }
     std::vector<std::string> vacating;
     for (const script::ModuleRegistry::Entry& entry : script::mountedEntries(L)) {
-        if (!inRoots(entry.path) || kept.contains(entry.path))
+        if (!inRoots(entry.path) || staying.contains(entry.path))
             continue;
         vacating.push_back(entry.path);
     }
@@ -368,11 +372,55 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
             world.setName(candidate->id, world.atoms().intern(chosen));
             report.renamed.push_back(candidate->id);
         }
-        script::setMountedPath(L, candidate->id, target);
+        script::setMountedPath(L, candidate->id, target, script::scriptTextHash(*text));
         world.setMounted(candidate->id, true);
         claims[claimKey(target)] = candidate->id;
         candidate->target = target;
         (candidate->current.empty() ? report.written : report.moved).push_back(target);
+    }
+
+    // **A script that stayed where it is, edited in the editor**: its file is
+    // brought up to date -- unless the file changed on disk as well since it
+    // was read, and then the disk is kept and the editor's text put beside
+    // the trash, so neither is lost.
+    std::map<std::string, core::u64> hashOf;
+    for (const script::ModuleRegistry::Entry& entry : script::mountedEntries(L))
+        hashOf[entry.path] = entry.diskHash;
+    for (Candidate* candidate : kept) {
+        const std::optional<scene::Value> source = world.getProperty(candidate->id, sourceKey);
+        const auto* text = source.has_value() ? std::get_if<std::string>(&*source) : nullptr;
+        if (text == nullptr)
+            continue;
+        const core::u64 edited = script::scriptTextHash(*text);
+        const core::u64 known = hashOf[candidate->target];
+        if (edited == known)
+            continue;
+        const std::filesystem::path file = projectRoot / std::filesystem::path(candidate->target);
+        std::string disk;
+        const bool read = platform::readTextFile(file, disk);
+        const core::u64 onDisk = read ? script::scriptTextHash(disk) : 0;
+        if (read && onDisk == edited) {
+            // Saved already -- a tab's `Ctrl+S` -- so only remembered.
+            script::setMountedHash(L, candidate->target, edited);
+            continue;
+        }
+        if (read && onDisk != known) {
+            std::filesystem::path aside =
+                projectRoot / ".engine" / "conflicts" / stamp / std::filesystem::path(candidate->target);
+            std::filesystem::create_directories(aside.parent_path(), ec);
+            ec.clear();
+            if (platform::writeTextFile(aside, *text))
+                report.conflicts.push_back(candidate->target);
+            else
+                report.problems.push_back("could not keep the editor's text of " + candidate->target);
+            continue;
+        }
+        if (!platform::writeTextFile(file, *text)) {
+            report.problems.push_back("could not write " + candidate->target);
+            continue;
+        }
+        script::setMountedHash(L, candidate->target, edited);
+        report.updated.push_back(candidate->target);
     }
 
     // **The folders on the way are the mount's**, as opening the project would
@@ -383,6 +431,51 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
             continue;
         for (const core::InstanceId folder : candidate.folders)
             world.setMounted(folder, true);
+    }
+    return report;
+}
+
+ScriptFileSync followSceneScripts(WorldHost& host, std::string_view fromScene, std::string_view toScene, bool copy)
+{
+    ScriptFileSync report;
+    const std::filesystem::path projectRoot = host.projectRoot();
+    if (projectRoot.empty() || fromScene.empty() || toScene.empty() || fromScene == toScene)
+        return report;
+    const std::string fromRoot = "src/scenes/" + std::string(fromScene);
+    const std::string toRoot = "src/scenes/" + std::string(toScene);
+    const std::filesystem::path from = projectRoot / std::filesystem::path(fromRoot);
+    const std::filesystem::path to = projectRoot / std::filesystem::path(toRoot);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(from, ec))
+        return report;
+    if (std::filesystem::exists(to, ec)) {
+        report.problems.push_back(toRoot + " is already there, so " + fromRoot + " was left where it is");
+        return report;
+    }
+    std::filesystem::create_directories(to.parent_path(), ec);
+    ec.clear();
+    if (copy)
+        std::filesystem::copy(from, to, std::filesystem::copy_options::recursive, ec);
+    else
+        std::filesystem::rename(from, to, ec);
+    if (ec) {
+        report.problems.push_back("could not " + std::string(copy ? "copy " : "move ") + fromRoot + ": " +
+                                  ec.message());
+        return report;
+    }
+    (copy ? report.written : report.moved).push_back(toRoot);
+
+    // The open scene's scripts now come from the new folder.
+    if (!copy && host.sceneName() == fromScene) {
+        lua_State* L = host.runtime().state();
+        if (L != nullptr) {
+            for (const script::ModuleRegistry::Entry& entry : script::mountedEntries(L)) {
+                if (under(entry.path, fromRoot))
+                    script::setMountedPath(L, entry.instance, toRoot + entry.path.substr(fromRoot.size()),
+                                           entry.diskHash);
+            }
+        }
+        host.setSceneName(std::string(toScene));
     }
     return report;
 }

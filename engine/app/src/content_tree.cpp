@@ -1,10 +1,13 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <engine/app/content_tree.h>
 #include <engine/core/json.h>
 #include <engine/platform/file.h>
 #include <fstream>
+#include <optional>
 #include <system_error>
 
 namespace engine::app {
@@ -417,27 +420,87 @@ std::string ContentTree::move(std::string_view from, std::string_view intoFolder
 
 namespace {
 
-// Replaces every `needle` in `text` with `replacement`; how many it replaced.
-std::size_t replaceAll(std::string& text, std::string_view needle, std::string_view replacement)
+// Whether `value` names `from` -- the whole of it, or something inside it --
+// and if so, `value` pointed at `to`.
+[[nodiscard]] std::optional<std::string> movedTo(std::string_view value, std::string_view from, std::string_view to)
 {
-    std::size_t count = 0;
-    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + replacement.size())) {
-        text.replace(at, needle.size(), replacement);
-        ++count;
-    }
-    return count;
+    if (value == from)
+        return std::string(to);
+    if (value.size() > from.size() && value.starts_with(from) && value[from.size()] == '/')
+        return std::string(to) + std::string(value.substr(from.size()));
+    return std::nullopt;
 }
 
-// The references to `from` in one file's text, pointed at `to`. Quoted, so a
-// path is only ever replaced whole: `a/b` must not rewrite `a/bc`.
-std::size_t retargetText(std::string& text, std::string_view from, std::string_view to)
+// **The references to `from` in one file's text, pointed at `to`, and nothing
+// else.** Read as JSON strings rather than searched as text: the search it
+// replaced rewrote any quoted word equal to the moved path -- a top-level folder
+// called `terrain` renamed the key that holds a scene's ground, one called
+// `Model` the class of every model, one called `Tree` every instance of that
+// name. Now:
+//
+// - a KEY is never touched;
+// - a value that is an `asset://` URN into `from` is moved;
+// - a bare content path is moved only where the file keeps one: a stamp mark
+//   (`stamp`), a terrain's cell index (`index`), a material's `parent` and
+//   `shader` -- or, in `project.toml`, a value that is a whole path.
+//
+// A script's source is a string value like any other, and it is left as the
+// person wrote it.
+std::size_t retargetText(std::string& text, std::string_view from, std::string_view to, bool toml)
 {
+    static constexpr std::string_view PathKeys[] = {"stamp", "index", "parent", "shader"};
+    constexpr std::string_view Scheme = "asset://";
+    std::string out;
+    out.reserve(text.size());
     std::size_t count = 0;
-    for (const std::string_view scheme : {std::string_view("asset://"), std::string_view()}) {
-        const std::string head = "\"" + std::string(scheme);
-        count += replaceAll(text, head + std::string(from) + "\"", head + std::string(to) + "\"");
-        count += replaceAll(text, head + std::string(from) + "/", head + std::string(to) + "/");
+    std::string lastKey;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        if (text[at] != '"') {
+            out.push_back(text[at++]);
+            continue;
+        }
+        // One string token, escapes kept as they are.
+        std::size_t end = at + 1;
+        while (end < text.size() && text[end] != '"') {
+            if (text[end] == '\\')
+                ++end;
+            ++end;
+        }
+        if (end >= text.size()) {
+            out.append(text, at, std::string::npos);
+            break;
+        }
+        const std::string_view raw(text.data() + at + 1, end - at - 1);
+        std::size_t next = end + 1;
+        while (next < text.size() &&
+               (text[next] == ' ' || text[next] == '\t' || text[next] == '\r' || text[next] == '\n'))
+            ++next;
+        const bool key = !toml && next < text.size() && text[next] == ':';
+        std::optional<std::string> moved;
+        if (key) {
+            lastKey.assign(raw);
+        }
+        else if (raw.starts_with(Scheme)) {
+            if (std::optional<std::string> inner = movedTo(raw.substr(Scheme.size()), from, to))
+                moved = std::string(Scheme) + *inner;
+        }
+        else if (toml || std::find(std::begin(PathKeys), std::end(PathKeys), lastKey) != std::end(PathKeys)) {
+            moved = movedTo(raw, from, to);
+        }
+        out.push_back('"');
+        if (moved.has_value()) {
+            out.append(*moved);
+            ++count;
+        }
+        else {
+            out.append(raw);
+        }
+        out.push_back('"');
+        at = end + 1;
     }
+    if (count > 0)
+        text = std::move(out);
     return count;
 }
 
@@ -446,7 +509,7 @@ bool retargetFile(const std::filesystem::path& file, std::string_view from, std:
     std::string text;
     if (!platform::readTextFile(file, text))
         return false;
-    if (retargetText(text, from, to) == 0)
+    if (retargetText(text, from, to, file.extension() == ".toml") == 0)
         return false;
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     out << text;
@@ -536,10 +599,31 @@ bool ContentTree::remove(const ContentEntry& entry)
         return false;
 
     std::error_code ec;
-    // `remove_all` because a folder means the folder, and a delete that left
-    // the contents behind would be a folder somebody cannot get rid of.
-    const std::uintmax_t removed = std::filesystem::remove_all(absolute(entry), ec);
-    if (ec || removed == 0)
+    // **Moved to the project's trash, never deleted** (the audit of
+    // 2026-09-28): `.engine/trash/<when>/content/<path>`, the whole folder
+    // with it -- a stamp a closed scene still names, or a terrain's cells, is
+    // one move back rather than gone.
+    const std::filesystem::path from = absolute(entry);
+    if (!std::filesystem::exists(from, ec))
+        return false;
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#if defined(_WIN32)
+    (void)localtime_s(&local, &now);
+#else
+    (void)localtime_r(&now, &local);
+#endif
+    char stamp[32]{};
+    (void)std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &local);
+    const std::filesystem::path relative = std::filesystem::relative(from, m_root.parent_path(), ec);
+    std::filesystem::path to = m_root.parent_path() / ".engine" / "trash" / stamp / relative;
+    for (int suffix = 2; std::filesystem::exists(to, ec) && suffix < 1000; ++suffix)
+        to =
+            m_root.parent_path() / ".engine" / "trash" / (std::string(stamp) + "-" + std::to_string(suffix)) / relative;
+    std::filesystem::create_directories(to.parent_path(), ec);
+    ec.clear();
+    std::filesystem::rename(from, to, ec);
+    if (ec)
         return false;
 
     return refresh();

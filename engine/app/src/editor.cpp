@@ -200,6 +200,14 @@ void Editor::stop(scene::World& world, Inspector& inspector)
 
 bool Editor::save(scene::World& world, const std::filesystem::path& path)
 {
+    // **Never the running game.** What is on screen during play is what the
+    // game did -- parts its scripts made, parts it destroyed -- and saving it
+    // made every one of those the scene's: duplicated at the next run, or gone.
+    if (m_run != RunState::Editing) {
+        m_status = EditorStatus{"stop the game first -- what is on screen is the game running, not the scene", true};
+        return false;
+    }
+
     // The terrain's cells first: the scene names where they are, so a scene
     // written before them would name cells that are not there yet.
     std::string terrainNote;
@@ -229,7 +237,15 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // `GlobalScriptService` belongs to no scene, so it is written to the
     // content root's `global.json` on every save -- and the file goes when there
     // is nothing left to keep in it.
-    if (!m_content.root().empty()) {
+    if (!m_content.root().empty() && m_globalUnreadable) {
+        // **Left alone.** It could not be read when the project opened, so what
+        // this world holds of it is not what it holds, and writing -- or
+        // deleting it for being empty -- would lose the difference.
+        terrainNote += (terrainNote.empty() ? "" : " -- ") +
+                       std::string("content/global.json could not be read when the project opened, so it was not "
+                                   "written; fix it and reopen");
+    }
+    else if (!m_content.root().empty()) {
         const std::filesystem::path global = m_content.root() / "global.json";
         if (const std::string globalText = scene::writeGlobal(world, nullptr, &stamps); !globalText.empty()) {
             if (!platform::writeTextFile(global, globalText)) {
@@ -1175,6 +1191,12 @@ bool Editor::canParentInto(const scene::World& world, core::InstanceId id, core:
     for (core::InstanceId walk = id; walk.valid(); walk = world.parentOf(walk)) {
         if (world.generated(walk))
             return false;
+        // **A `Player` is the engine's, made for whoever is taking part**, and
+        // a scene never writes one or anything inside it -- so putting
+        // something there was losing it at the next save (the audit of
+        // 2026-09-28). The same rule `scene_file.cpp`'s `engineMade` follows.
+        if (isClass(world, walk, "Player"))
+            return false;
         if (walk == root) {
             if (isClass(world, walk, "DataModel"))
                 return walk != id;
@@ -1326,6 +1348,18 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
         m_status = EditorStatus{"nothing authored can live in that", true};
         return false;
     }
+    // **Not a stamp inside itself**, as placing one refuses: an instance of
+    // the stamp being edited, pasted into it, is a file that contains itself.
+    if (m_stamp.open()) {
+        for (const std::vector<ClipboardMark>& marks : m_clipboardMarks) {
+            for (const ClipboardMark& mark : marks) {
+                if (mark.stamp == m_stamp.path) {
+                    m_status = EditorStatus{"that is an instance of this stamp, which cannot go inside itself", true};
+                    return false;
+                }
+            }
+        }
+    }
 
     // Recorded before the first one, so a paste of four is one press of ctrl-Z.
     m_history.record(world, m_clipboard.size() == 1 ? "Paste" : "Paste " + std::to_string(m_clipboard.size()));
@@ -1469,6 +1503,13 @@ std::size_t retargetWorld(scene::World& world, std::string_view from, std::strin
 
 std::string Editor::moveContent(scene::World& world, std::string_view from, std::string_view intoFolder)
 {
+    // **Not during play**: the stop puts back the world as it was before play,
+    // with every path the move just rewrote pointing at where the file was.
+    if (inPlayMode()) {
+        report("stop the game first -- a file moved during play is one the stop would point everything back away from",
+               true);
+        return {};
+    }
     std::string why;
     const std::string moved = m_content.move(from, intoFolder, &why);
     if (moved.empty()) {
@@ -1478,10 +1519,13 @@ std::string Editor::moveContent(scene::World& world, std::string_view from, std:
     if (moved == from)
         return moved;
 
+    m_undoClearedByMove = false;
     const std::size_t references = followContent(world, from, moved);
     std::string said = "moved to " + moved;
     if (references > 0)
         said += " -- " + std::to_string(references) + " reference(s) follow it";
+    if (m_undoClearedByMove)
+        said += "; what came before it can no longer be undone";
     report(std::move(said), false);
     return moved;
 }
@@ -1496,11 +1540,28 @@ std::size_t Editor::followContent(scene::World& world, std::string_view from, st
     std::size_t instances = retargetWorld(world, from, to);
     if (m_stage != nullptr)
         instances += retargetWorld(m_stage->world(), from, to);
+    // **A terrain's cells follow their folder** (the audit of 2026-09-28): the
+    // index is not a property, so nothing above moved it, and the next save
+    // wrote the resident cells back where they had been and pointed the scene
+    // there -- the rest left behind in the folder that moved. With the index
+    // followed, the save copies every cell into the scene's own folder.
+    world.terrains().forEach([&](core::InstanceId, scene::TerrainComponent& terrain) {
+        if (const std::optional<std::string> followed = movedPath(terrain.cellIndex, from, to); followed.has_value())
+            terrain.cellIndex = *followed;
+    });
     // What is open here follows it, so the next save writes where it now is
     // rather than bringing the old path back.
     for (std::string* path : {&m_openScene, &m_stamp.path, &m_material.path}) {
         if (const std::optional<std::string> followed = movedPath(*path, from, to))
             *path = *followed;
+    }
+    // **Undo stops here.** Every step before this move holds the old paths,
+    // and undoing one would point the world back at files that are not there
+    // any more -- for the next save to write down. The steps go; the status
+    // says so.
+    if (files + instances > 0 && m_history.canUndo()) {
+        m_history.clear();
+        m_undoClearedByMove = true;
     }
     return files + instances;
 }
@@ -1958,6 +2019,18 @@ bool Editor::assignMaterialTo(scene::World& world, std::string_view path, std::s
 bool Editor::openMaterial(std::string_view path)
 {
     const std::string relative = normalizeMaterialPath(path);
+    // **The one being edited is never thrown away by opening another**: its
+    // edits are saved first, and if they cannot be it stays open. The same one
+    // asked for again keeps its edits rather than re-reading the file.
+    if (m_material.open() && m_material.dirty()) {
+        if (m_material.path == relative)
+            return true;
+        const std::string previous = m_material.path;
+        if (!saveMaterial()) {
+            m_status = EditorStatus{"could not save " + previous + ", so it stays open", true};
+            return false;
+        }
+    }
     std::string text;
     if (relative.empty() || !platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
         m_status = EditorStatus{"could not read " + relative, true};
@@ -2432,6 +2505,23 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
         while (child.valid() && child != id && !world.nextSibling(child).valid())
             child = world.parentOf(child);
         child = child == id ? core::InstanceId{} : world.nextSibling(child);
+    }
+
+    // **Nor from code that is files** (the audit of 2026-09-28): the stamp
+    // would carry the scripts and `src/` would mount them again beside it --
+    // two of each at the next open.
+    {
+        std::vector<core::InstanceId> subtree{id};
+        world.collectDescendants(id, subtree);
+        for (const core::InstanceId each : subtree) {
+            if (world.mounted(each)) {
+                m_status = EditorStatus{
+                    "that holds scripts that are files in src/ -- copy them into a folder outside the script "
+                    "services, and make the stamp from that",
+                    true};
+                return false;
+            }
+        }
     }
 
     // Nor inside one: the outer file owns what is under it, and a mark in
@@ -3149,6 +3239,14 @@ bool Editor::saveSceneAs(scene::World& world, std::string_view relativePath)
     const std::string path = normalizeScenePath(relativePath);
     if (!sceneNameIsUsable(path)) {
         m_status = EditorStatus{"\"" + std::string(relativePath) + "\" is not a path inside content/", true};
+        return false;
+    }
+    // **Never over another scene.** Every other create path refuses a name
+    // that is taken; this one wrote the other scene, its terrain's cells and
+    // its scripts' folder over without a word.
+    std::error_code taken;
+    if (path != m_openScene && std::filesystem::exists(m_content.root() / std::filesystem::path(path), taken)) {
+        m_status = EditorStatus{"a scene is already called that -- choose another name, or open it", true};
         return false;
     }
 

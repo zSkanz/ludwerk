@@ -168,6 +168,10 @@ public:
     {
         std::string path;
         core::InstanceId instance;
+        // **A hash of what the file held when it was last read or written**,
+        // so a save can tell a script edited in the editor from a file edited
+        // outside it -- and never write the one over the other.
+        core::u64 diskHash = 0;
     };
     std::vector<Entry> entries;
 
@@ -195,7 +199,12 @@ public:
 // **The mount table, for the editor that keeps `src/` in step with the tree**
 // (ADR 0105), read with `mountedEntries` below. Records that `instance` is the script `path` holds -- a pasted script
 // whose file was just written, or a moved one whose file moved -- replacing whatever the table said about either.
-void setMountedPath(lua_State* L, core::InstanceId instance, std::string path);
+void setMountedPath(lua_State* L, core::InstanceId instance, std::string path, core::u64 diskHash);
+// Records that the file at `path` now holds what hashes to `diskHash`: a tab's
+// `Ctrl+S`, or a save that wrote it.
+void setMountedHash(lua_State* L, std::string_view path, core::u64 diskHash);
+// The hash `setMountedPath` and the mount record, of a script's text.
+[[nodiscard]] core::u64 scriptTextHash(std::string_view text) noexcept;
 // Forgets the file at `path`: its script left the file tree.
 void forgetMountedPath(lua_State* L, std::string_view path);
 

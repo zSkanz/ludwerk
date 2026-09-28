@@ -104,6 +104,16 @@
 namespace engine::app {
 namespace {
 
+// `scenes/arena.scene.json` is `arena`: the folder under `src/scenes/` whose
+// code is that scene's (ADR 0105).
+[[nodiscard]] std::string sceneStemOf(std::string_view path)
+{
+    std::string name = std::filesystem::path(std::string(path)).filename().string();
+    if (constexpr std::string_view Suffix = ".scene.json"; name.ends_with(Suffix))
+        name.resize(name.size() - Suffix.size());
+    return name;
+}
+
 using core::f32;
 using core::f64;
 using core::I18nArg;
@@ -1492,6 +1502,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // to that one rather than refusing for want of an open scene.
     if (options.editor && host->bootSceneApplied())
         editor.adoptOpenScene(sceneRelative);
+    editor.setGlobalUnreadable(host->globalUnreadable());
     // **The project's tree as types, from the moment it opens** (ADR 0078), so
     // a script editor pointed at this project types `workspace.Player` before
     // anybody has saved. Every Save rewrites it.
@@ -1789,7 +1800,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // all of it, and none of those may happen while a panel is drawing
             // from the same world.
             if (overlay.has_value()) {
-                const EditorCommands editorCommands = overlay->takeCommands();
+                // Not const: a Save the unsaved-changes dialog asked for is taken off it once
+                // done, before the scene change it guarded (see below).
+                EditorCommands editorCommands = overlay->takeCommands();
                 if (editorCommands.play.has_value()) {
                     if (*editorCommands.play) {
                         const bool wasEditing = editing(editor.runState());
@@ -2146,10 +2159,18 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     bool sceneScriptUnsaved = false;
                     for (std::size_t index = 0; index < scripts.count() && !sceneScriptUnsaved; ++index) {
                         const OpenScript* tab = scripts.at(index);
-                        sceneScriptUnsaved =
-                            tab != nullptr && tab->origin == ScriptOrigin::Scene && tab->file.empty() && tab->dirty();
+                        // A file script's tab too: a scene save writes its
+                        // file now (`script_files.h`), so quitting with one
+                        // changed is work to lose like any other.
+                        sceneScriptUnsaved = tab != nullptr && tab->origin == ScriptOrigin::Scene && tab->dirty();
                     }
                     editor.setSceneScriptsUnsaved(sceneScriptUnsaved);
+                    bool fileTabUnsaved = false;
+                    for (std::size_t index = 0; index < scripts.count() && !fileTabUnsaved; ++index) {
+                        const OpenScript* tab = scripts.at(index);
+                        fileTabUnsaved = tab != nullptr && tab->origin == ScriptOrigin::File && tab->dirty();
+                    }
+                    editor.setFileTabsUnsaved(fileTabUnsaved);
                 }
 
                 // **A surface shader's compile errors, on its lines** (ADR
@@ -2265,8 +2286,43 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                 break;
                             }
                         }
-                        else if (platform::writeTextFile(options.scriptPath / tab->file, tab->document.text())) {
-                            scripts.markSaved(index);
+                        else {
+                            // **Never over a file changed outside the editor**
+                            // since it was read (a second editor, VS Code): the
+                            // disk is kept and this text is put beside it, in
+                            // `.engine/conflicts/`, so neither is lost.
+                            lua_State* state = host->runtime().state();
+                            const std::filesystem::path file = options.scriptPath / tab->file;
+                            const std::string text = tab->document.text();
+                            core::u64 known = 0;
+                            for (const script::ModuleRegistry::Entry& entry : script::mountedEntries(state)) {
+                                if (entry.path == tab->file)
+                                    known = entry.diskHash;
+                            }
+                            std::string disk;
+                            const bool read = platform::readTextFile(file, disk);
+                            const core::u64 onDisk = read ? script::scriptTextHash(disk) : 0;
+                            if (read && known != 0 && onDisk != known && disk != text) {
+                                const std::filesystem::path aside =
+                                    options.scriptPath / ".engine" / "conflicts" / std::filesystem::path(tab->file);
+                                std::error_code ec;
+                                std::filesystem::create_directories(aside.parent_path(), ec);
+                                if (platform::writeTextFile(aside, text))
+                                    editor.report(tab->file +
+                                                      " changed on disk since it was opened -- kept; this "
+                                                      "version is in .engine/conflicts/" +
+                                                      tab->file,
+                                                  true);
+                                else
+                                    editor.report("could not keep " + tab->file + " aside; nothing was written", true);
+                            }
+                            else if (platform::writeTextFile(file, text)) {
+                                script::setMountedHash(state, tab->file, script::scriptTextHash(text));
+                                scripts.markSaved(index);
+                            }
+                            else {
+                                editor.report("could not write " + tab->file, true);
+                            }
                         }
                         // **And nothing else happens, which is the whole of it.**
                         //
@@ -2287,8 +2343,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     }
                 }
 
-                if (scriptCommands.close.has_value())
+                if (scriptCommands.close.has_value()) {
+                    // **Closing a changed tab loses nothing**: its text is in
+                    // the script already, typed through. The scene is marked
+                    // changed so a save writes it and quitting asks.
+                    if (const OpenScript* closing = scripts.at(*scriptCommands.close);
+                        closing != nullptr && closing->dirty() && closing->origin == ScriptOrigin::Scene)
+                        editor.touchAs(false);
                     (void)scripts.close(*scriptCommands.close);
+                }
 
                 // **What the panel draws, copied out of the VM.** A view rather
                 // than a pointer: the panel outlives a reload and the snapshot
@@ -2338,6 +2401,57 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             scripts.setActive(index);
                             break;
                         }
+                    }
+                }
+
+                // **What the unsaved-changes dialog said to save, saved FIRST**:
+                // everything unsaved -- the stamp, the scene, the material, a
+                // shader's tab. Its Save and the verb it was guarding arrive in
+                // one frame, and opening or clearing the scene before the save
+                // wrote the new scene over itself, or refused for want of one --
+                // the work lost either way. A save that fails stops the verb,
+                // so nothing is thrown away because a disk said no.
+                if (editorCommands.saveAll) {
+                    bool failed = false;
+                    if (editor.inPlayMode()) {
+                        editor.stop(host->world(), inspector);
+                        if (std::optional<core::EngineError> restart = host->restartRuntime(); restart.has_value())
+                            core::logText(core::LogLevel::Error, restart->message);
+                        if (overlay.has_value())
+                            overlay->setScriptTarget(&host->runtime());
+                    }
+                    if (editor.stampSession().open() && editor.stampSession().dirty) {
+                        if (editor.saveStamp(host->world(), host->runtime().dataModel()))
+                            scripts.markSavedWhere(ScriptOrigin::Stamp);
+                        else
+                            failed = true;
+                    }
+                    if (!failed && editor.sceneDirty() && !editor.openScenePath().empty()) {
+                        if (editor.saveOpenScene(host->world()))
+                            scripts.markSavedWhere(ScriptOrigin::Scene);
+                        else
+                            failed = true;
+                    }
+                    if (!failed && editor.materialSession().dirty() && !editor.saveMaterial())
+                        failed = true;
+                    for (std::size_t index = 0; index < scripts.count() && !failed; ++index) {
+                        const OpenScript* tab = scripts.at(index);
+                        if (tab == nullptr || tab->origin != ScriptOrigin::File || !tab->dirty())
+                            continue;
+                        if (platform::writeTextFile(editor.content().root() / std::filesystem::path(tab->file),
+                                                    tab->document.text()))
+                            scripts.markSaved(index);
+                        else
+                            failed = true;
+                    }
+                    if (failed) {
+                        editorCommands.openScene.clear();
+                        editorCommands.newScene = false;
+                        editorCommands.quit = false;
+                        editorCommands.newProject = false;
+                        editorCommands.openProject = false;
+                        editor.report("not everything saved, so nothing was closed -- " + editor.status().message,
+                                      true);
                     }
                 }
 
@@ -2858,13 +2972,35 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             const std::string made = editor.content().duplicate(entry);
                             editor.report(made.empty() ? "could not duplicate " + entry.name : "duplicated to " + made,
                                           made.empty());
+                            // A duplicated scene gets its own copy of its code.
+                            if (!made.empty() && made.ends_with(".scene.json")) {
+                                const app::ScriptFileSync followed = app::followSceneScripts(
+                                    *host, sceneStemOf(entry.path), sceneStemOf(made), /*copy=*/true);
+                                if (!followed.problems.empty())
+                                    editor.report(followed.summary(), true);
+                            }
                         }
                         else {
                             // With every reference to it, as a move is.
                             const std::string before = entry.path;
                             std::string after;
-                            if (editor.content().rename(entry, editorCommands.renameContentTo, &after))
+                            if (editor.inPlayMode()) {
+                                editor.report("stop the game first -- a file moved during play is one the stop "
+                                              "would point everything back away from",
+                                              true);
+                            }
+                            else if (editor.content().rename(entry, editorCommands.renameContentTo, &after)) {
                                 (void)editor.followContent(host->world(), before, after);
+                                // A renamed scene takes its own code with it.
+                                if (after.ends_with(".scene.json") && before.ends_with(".scene.json")) {
+                                    const app::ScriptFileSync followed = app::followSceneScripts(
+                                        *host, sceneStemOf(before), sceneStemOf(after), /*copy=*/false);
+                                    if (!followed.problems.empty())
+                                        editor.report(followed.summary(), true);
+                                    if (editor.openScenePath() == after)
+                                        host->world().engineState().currentScene = after;
+                                }
+                            }
                         }
                         break;
                     }
@@ -4847,8 +4983,21 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // What Ctrl+S saves: the scene -- and every script it
                     // holds -- out of play mode, each script and shader that
                     // is its own file, the open material and the open stamp.
-                    if (editor.inPlayMode())
+                    if (editor.inPlayMode()) {
                         editor.stop(host->world(), inspector);
+                        // What was typed during play, written back into the
+                        // world the stop restored -- as the Stop button does --
+                        // or the save below would write the text from before.
+                        const core::NameAtom lostSourceKey = host->world().atoms().intern("Source");
+                        for (std::size_t index = 0; index < scripts.count(); ++index) {
+                            const OpenScript* tab = scripts.at(index);
+                            if (tab == nullptr || tab->origin != ScriptOrigin::Scene ||
+                                !host->world().alive(tab->instance))
+                                continue;
+                            (void)host->world().setProperty(tab->instance, lostSourceKey,
+                                                            scene::Value{tab->document.text()});
+                        }
+                    }
                     (void)editor.saveOpenScene(host->world());
                     for (std::size_t index = 0; index < scripts.count(); ++index) {
                         const OpenScript* tab = scripts.at(index);

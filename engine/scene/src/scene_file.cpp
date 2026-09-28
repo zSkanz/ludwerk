@@ -176,6 +176,8 @@ constexpr std::array<std::string_view, 3> FirstServices{"ReplicatedStorage", "Se
         return false;
     if (world.mounted(id) && carriesOwn(world, id))
         return false;
+    if (world.hasUnread(id))
+        return false;
     for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
         if (!mountedScriptTree(world, child))
             return false;
@@ -206,6 +208,8 @@ thread_local bool t_mountedInFull = false;
 // Whether a storage holds anything a scene would write.
 [[nodiscard]] bool holdsAuthored(const World& world, core::InstanceId service) noexcept
 {
+    if (world.hasUnread(service))
+        return true;
     for (core::InstanceId child = world.firstChild(service); child.valid(); child = world.nextSibling(child)) {
         if (!engineMade(world, child))
             return true;
@@ -973,6 +977,8 @@ void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, cor
 // exactly one situation with one: writing the stamp FILE, whose root is an
 // instance of the stamp it is being written from. Every other stamped instance
 // collapses to its mark.
+void writeUnread(JsonWriter& out, const World& world, core::InstanceId parent);
+
 void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                    const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report,
                    core::InstanceId expandStamped = core::InstanceId{}, StampLibrary* stamps = nullptr)
@@ -1007,6 +1013,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
             if (!engineMade(world, child))
                 writeInstance(out, world, child, paths, report, expandStamped, stamps);
         }
+        writeUnread(out, world, id);
         out.endArray();
         out.endObject();
         return;
@@ -1180,7 +1187,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         }
     }
 
-    if (world.firstChild(id).valid()) {
+    if (world.firstChild(id).valid() || world.hasUnread(id)) {
         out.key("children");
         out.beginArray();
         // Sibling order, which is observable through `GetChildren` and is
@@ -1193,10 +1200,65 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                 continue;
             writeInstance(out, world, child, paths, report, expandStamped, stamps);
         }
+        writeUnread(out, world, id);
         out.endArray();
     }
 
     out.endObject();
+}
+
+// --- what could not be read, kept -----------------------------------------------
+
+void writeJsonValue(JsonWriter& out, const JsonValue& value)
+{
+    switch (value.type()) {
+    case core::JsonType::Object:
+        out.beginObject();
+        for (core::usize index = 0; index < value.size(); ++index) {
+            const std::string_view key = value.keyAt(index);
+            out.key(key);
+            writeJsonValue(out, value[key]);
+        }
+        out.endObject();
+        return;
+    case core::JsonType::Array:
+        out.beginArray();
+        for (core::usize index = 0; index < value.size(); ++index)
+            writeJsonValue(out, value.at(index));
+        out.endArray();
+        return;
+    case core::JsonType::String:
+        out.value(value.asString());
+        return;
+    case core::JsonType::Number:
+        out.value(value.asNumber());
+        return;
+    case core::JsonType::Boolean:
+        out.value(value.asBool());
+        return;
+    default:
+        out.nullValue();
+        return;
+    }
+}
+
+// The JSON of one node, as text a later write can put back.
+[[nodiscard]] std::string jsonText(const JsonValue& value)
+{
+    JsonWriter writer;
+    writeJsonValue(writer, value);
+    return writer.text();
+}
+
+// What a read of this parent left out, written back where it was.
+void writeUnread(JsonWriter& out, const World& world, core::InstanceId parent)
+{
+    for (const std::string_view text : world.unreadUnder(parent)) {
+        core::JsonDocument document;
+        if (!document.parse(text).ok)
+            continue;
+        writeJsonValue(out, document.root());
+    }
 }
 
 // --- reading ---------------------------------------------------------------
@@ -1812,8 +1874,10 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
         if (!placed.valid()) {
             // Counted rather than fatal, for the same reason an unknown class
             // is: a scene that names a stamp somebody deleted should still
-            // open, minus what is gone.
+            // open, minus what is gone -- and KEPT, so the next save writes the
+            // mark back and a stamp restored brings it back.
             ++report.missingStamps;
+            world.keepUnread(parent, jsonText(json));
             return {};
         }
         world.setName(placed, world.atoms().intern(json["name"].asString()));
@@ -1875,6 +1939,9 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
         // children under it would be parented to something that is not what
         // they were authored against.
         ++report.unknownClasses;
+        // Kept as it was written, so a save by this build does not delete what
+        // a build that has the class made.
+        world.keepUnread(parent, jsonText(json));
         return {};
     }
 

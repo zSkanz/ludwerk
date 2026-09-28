@@ -183,8 +183,10 @@ void ScriptEditor::markSaved(std::size_t index)
 
 void ScriptEditor::markSavedWhere(ScriptOrigin origin)
 {
+    // Every tab of that origin: a scene save writes the scene's own scripts
+    // and, since `script_files.h`, every file script's file as well.
     for (OpenScript& tab : m_tabs) {
-        if (tab.origin == origin && tab.file.empty())
+        if (tab.origin == origin)
             tab.markSavedNow();
     }
 }

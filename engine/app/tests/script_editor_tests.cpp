@@ -383,7 +383,7 @@ TEST_CASE("an absurd run of digits is refused rather than wrapping into a plausi
     CHECK_FALSE(parseSourceLocation("a.luau:99999999999999: nope").has_value());
 }
 
-TEST_CASE("saving the scene saves every script the scene carries, and not a file's")
+TEST_CASE("saving the scene saves every script the scene carries, a file's included")
 {
     // **Reported with a screenshot**: one scene script saved, and the others
     // kept the floppy -- although the scene they live in had just been written
@@ -399,8 +399,9 @@ TEST_CASE("saving the scene saves every script the scene carries, and not a file
 
     editor.markSavedWhere(app::ScriptOrigin::Scene);
     CHECK_FALSE(editor.at(0)->dirty());
-    // Its own file under src/client is not in the scene, so it is not saved.
-    CHECK(editor.at(1)->dirty());
+    // Its own file under src/client is written by the same save now
+    // (`script_files.h`): leaving its tab marked would be a lie the other way.
+    CHECK_FALSE(editor.at(1)->dirty());
 }
 
 TEST_CASE("the minimap shows a short file whole and a long one scrolling with the code")

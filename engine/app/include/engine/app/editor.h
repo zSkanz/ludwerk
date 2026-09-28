@@ -478,6 +478,11 @@ struct EditorCommands
     // Close the editor. The menu's File > Exit, which is the one every
     // application has and the one people reach for before the window button.
     bool quit = false;
+    // **Save everything unsaved**: the unsaved-changes dialog's Save. The
+    // stamp, the scene, the material being edited and every changed tab of a
+    // content file -- before the verb the dialog was guarding, and instead of
+    // it when anything fails to write.
+    bool saveAll = false;
     // **Leave this project for another one.** Both start the project browser as
     // a new process and close this editor, which is what a project being a
     // PROCESS makes them (ADR 0055): the browser is where a project is made and
@@ -2175,6 +2180,9 @@ public:
     // well. Returns a note for the status line, empty for none.
     using ScriptFileSaver = std::function<std::string(scene::World& world, const std::filesystem::path& scenePath)>;
     void setScriptFileSaver(ScriptFileSaver saver) { m_scriptFileSaver = std::move(saver); }
+    // `content/global.json` could not be read when the project opened: a save
+    // leaves it alone rather than writing what little was read over it.
+    void setGlobalUnreadable(bool unreadable) noexcept { m_globalUnreadable = unreadable; }
     // How many stamps the last finished stroke laid down. Zero before the first
     // one. For the status line, and for the test that a drag cut into forty
     // frames edits the ground the same number of times as the same drag cut
@@ -2469,7 +2477,7 @@ public:
     [[nodiscard]] bool sceneDirty() const noexcept { return m_sceneDirty || m_sceneScriptsUnsaved; }
     [[nodiscard]] bool hasUnsavedWork() const noexcept
     {
-        return m_sceneDirty || m_sceneScriptsUnsaved || m_stamp.dirty;
+        return m_sceneDirty || m_sceneScriptsUnsaved || m_stamp.dirty || m_material.dirty() || m_fileTabsUnsaved;
     }
 
     // **Whether a script that lives in the scene differs from what was
@@ -2478,6 +2486,10 @@ public:
     // be saved). A script's text is compared; the rest of the scene is not,
     // and stays a flag.
     void setSceneScriptsUnsaved(bool unsaved) noexcept { m_sceneScriptsUnsaved = unsaved; }
+    // Whether a tab of a content file -- a surface shader -- has unsaved text,
+    // asked of the tabs every frame like the scene's scripts are.
+    void setFileTabsUnsaved(bool unsaved) noexcept { m_fileTabsUnsaved = unsaved; }
+    [[nodiscard]] bool fileTabsUnsaved() const noexcept { return m_fileTabsUnsaved; }
 
     // Marks whatever is being edited as changed: the STAGE when one is open,
     // and the scene otherwise. One call at the frame's safe point rather than a
@@ -2791,6 +2803,8 @@ private:
     core::u64 m_worldRestores = 0;
     TerrainSaver m_terrainSaver;
     ScriptFileSaver m_scriptFileSaver;
+    bool m_globalUnreadable = false;
+    bool m_undoClearedByMove = false;
     bool m_brushPlaneLock = true;
     std::filesystem::path m_heightmapSource;
     core::u32 m_lastStrokeStamps = 0;
@@ -2833,6 +2847,7 @@ private:
 
     bool m_sceneDirty = false;
     bool m_sceneScriptsUnsaved = false;
+    bool m_fileTabsUnsaved = false;
     bool m_debuggerParked = false;
     bool m_closeRequested = false;
     core::CFrameD m_cameraCFrame;

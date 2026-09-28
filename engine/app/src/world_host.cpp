@@ -485,8 +485,10 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         scene::SceneIoReport globalReport;
         if (const std::optional<core::EngineError> globalError = scene::readGlobal(
                 *m_world, options.bootGlobalText, &globalReport, options.bootStamps ? &options.bootStamps : nullptr);
-            globalError.has_value())
+            globalError.has_value()) {
             core::logText(LogLevel::Error, globalError->message);
+            m_globalUnreadable = true;
+        }
     }
 
     if (!options.bootScene.empty()) {

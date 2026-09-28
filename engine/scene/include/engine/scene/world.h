@@ -550,6 +550,16 @@ public:
     // Unlike `generated` it is NOT inherited by a subtree: a file's script may
     // hold instances somebody authored, and those are saved.
     void setMounted(core::InstanceId id, bool mounted) noexcept;
+
+    // **What a scene put here that this world could not build** -- a stamp
+    // whose file is gone, a class this build does not have -- kept as the
+    // JSON the file held, and written back under the same parent at the next
+    // save. Reading a scene is allowed to leave something out; saving it is
+    // not allowed to make that permanent (the audit of 2026-09-28). Not the
+    // world's state: never hashed, never replicated, never in a snapshot.
+    void keepUnread(core::InstanceId parent, std::string json);
+    [[nodiscard]] std::vector<std::string_view> unreadUnder(core::InstanceId parent) const;
+    [[nodiscard]] bool hasUnread(core::InstanceId parent) const noexcept;
     [[nodiscard]] bool mounted(core::InstanceId id) const noexcept;
 
     // Marks an instance the engine made to stay where it is (ADR 0105).
@@ -1172,6 +1182,9 @@ private:
     PartShaderParameters m_partShaderParameters;
     std::map<u32, u32> m_materialHolds;
     bool m_sweepMaterials = false;
+
+private:
+    std::vector<std::pair<core::InstanceId, std::string>> m_unread;
 };
 
 } // namespace engine::scene

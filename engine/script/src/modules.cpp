@@ -519,7 +519,7 @@ std::vector<core::InstanceId> mountScripts(lua_State* L, std::span<const Mounted
         // one script is exactly the disagreement this milestone exists to end.
         (void)w.setProperty(instance, sourceProperty, scene::Value{entry.source});
 
-        modules.entries.push_back(ModuleRegistry::Entry{entry.path, instance});
+        modules.entries.push_back(ModuleRegistry::Entry{entry.path, instance, scriptTextHash(entry.source)});
         made.push_back(instance);
     }
 
@@ -545,7 +545,27 @@ std::string treePathOf(const scene::World& w, core::InstanceId id)
     return out;
 }
 
-void setMountedPath(lua_State* L, core::InstanceId instance, std::string path)
+core::u64 scriptTextHash(std::string_view text) noexcept
+{
+    // FNV-1a: stable across runs and machines, which a `std::hash` is not
+    // promised to be -- and it only has to tell two texts apart.
+    core::u64 hash = 0xCBF29CE484222325ull;
+    for (const char c : text) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 0x100000001B3ull;
+    }
+    return hash;
+}
+
+void setMountedHash(lua_State* L, std::string_view path, core::u64 diskHash)
+{
+    for (ModuleRegistry::Entry& entry : registry(L).entries) {
+        if (entry.path == path)
+            entry.diskHash = diskHash;
+    }
+}
+
+void setMountedPath(lua_State* L, core::InstanceId instance, std::string path, core::u64 diskHash)
 {
     std::vector<ModuleRegistry::Entry>& entries = registry(L).entries;
     std::erase_if(entries,
@@ -555,7 +575,7 @@ void setMountedPath(lua_State* L, core::InstanceId instance, std::string path)
     const auto at = std::lower_bound(
         entries.begin(), entries.end(), path,
         [](const ModuleRegistry::Entry& entry, const std::string& wanted) { return entry.path < wanted; });
-    entries.insert(at, ModuleRegistry::Entry{std::move(path), instance});
+    entries.insert(at, ModuleRegistry::Entry{std::move(path), instance, diskHash});
 }
 
 void forgetMountedPath(lua_State* L, std::string_view path)

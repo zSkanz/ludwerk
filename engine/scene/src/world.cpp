@@ -221,6 +221,26 @@ bool World::generated(core::InstanceId id) const noexcept
     return record != nullptr && record->generated;
 }
 
+void World::keepUnread(core::InstanceId parent, std::string json)
+{
+    m_unread.emplace_back(parent, std::move(json));
+}
+
+std::vector<std::string_view> World::unreadUnder(core::InstanceId parent) const
+{
+    std::vector<std::string_view> out;
+    for (const auto& [owner, json] : m_unread) {
+        if (owner == parent)
+            out.emplace_back(json);
+    }
+    return out;
+}
+
+bool World::hasUnread(core::InstanceId parent) const noexcept
+{
+    return std::any_of(m_unread.begin(), m_unread.end(), [&](const auto& entry) { return entry.first == parent; });
+}
+
 void World::setMounted(core::InstanceId id, bool mounted) noexcept
 {
     if (InstanceRecord* record = m_instances.find(id); record != nullptr)
