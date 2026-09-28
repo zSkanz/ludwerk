@@ -209,6 +209,8 @@ public:
     core::NameAtom destroying;
 
     u32 depth = 0;
+    // Resumes running inside one another right now (audit S4).
+    u32 nestedResumes = 0;
     // Set while a drain is running, so an enqueue can tell "raised by a handler"
     // from "raised by a script" without inspecting the stack.
     bool draining = false;
@@ -226,6 +228,25 @@ public:
     // cycle breaker: a message raised while reporting goes to the console only.
     bool reporting = false;
 };
+
+// **How deep resumes may run inside one another** (audit S4). A resume made
+// while another runs -- `task.spawn`, a `require`, a thread resumed at once --
+// is native frames on top of the ones that made it, and Luau's own C-call
+// count starts again at every `lua_resume`, so a function that spawns itself
+// used to run until the process's stack ran out. Past this, the resume does
+// not happen and the thread that asked is told why.
+inline constexpr u32 MaxNestedResumes = 100;
+
+// Brackets one resume: false, having counted nothing, when it would nest past
+// the limit.
+//
+// The outermost one also arms the watchdog (audit S5), and leaving it warns
+// when it ran past the warning budget -- naming `co`'s script, when given.
+[[nodiscard]] bool enterResume(lua_State* L) noexcept;
+void leaveResume(lua_State* L, lua_State* co = nullptr) noexcept;
+
+// Monotonic nanoseconds, for the watchdog.
+[[nodiscard]] u64 watchdogNow() noexcept;
 
 // Installs the `Signal` and `Connection` metatables and the `Signal` global.
 // Runs during boot with everything else, before the sandbox.

@@ -36,10 +36,11 @@ struct CliCommand
 
 // An installation keeps `lute` and `tools/cli/main.luau` beside the editor
 // host; a build of this repository runs from a tree the host is not inside, so
-// the project's own ancestors are searched for the repository too, and `lute`
-// is the one on PATH. Nothing when neither is found.
+// `repository` names the one it was built from (`ENG_SOURCE_DIR`, a dev build's
+// own), and `lute` is the one on PATH. **Never the project's ancestors** (audit
+// T1): a project is somebody's download. Nothing when neither is found.
 [[nodiscard]] std::optional<CliCommand> locateCli(const std::filesystem::path& executableDir,
-                                                  const std::filesystem::path& projectRoot);
+                                                  const std::filesystem::path& repository);
 
 struct ExportStep
 {

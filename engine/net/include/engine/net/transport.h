@@ -121,6 +121,17 @@ struct TransportConfig
     // whose server vanished watched a frozen world for all of them. Ten is long
     // enough for a phone changing networks and short enough to say so.
     u32 timeoutMs = 10000;
+
+    // **The largest message this host takes, and so how much one peer may
+    // hold half-reassembled** (audit N1's review). Zero keeps the transport's
+    // own ceiling -- thirty-two megabytes a message and a peer for ENet, which
+    // a replica needs for a large world's first snapshot and an authority
+    // never does: what a client sends up is small, and sixty-four clients each
+    // allowed thirty-two megabytes in flight is two gigabytes.
+    usize maxMessageBytes = 0;
+
+    // Connections one address may hold at once. Zero: no limit.
+    usize maxPeersPerAddress = 0;
 };
 
 // **Poll-driven, never callback-driven**, and this is the R10 decision in the

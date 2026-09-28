@@ -228,6 +228,15 @@ struct VmContext
 {
     scene::World* world = nullptr;
 
+    // **The watchdog** (audit S5): when the outermost resume running now began,
+    // and how long one may run before it is warned about and before it is
+    // stopped -- 0 for never. Armed by `enterResume`, read by the VM's interrupt.
+    u64 resumeStartedNs = 0;
+    u64 warnAfterNs = 0;
+    u64 killAfterNs = 0;
+    u64 lastLongFrameWarnNs = 0;
+    u32 interruptTicks = 0;
+
     // Owned by `ScriptRuntime`, whose lifetime is the only one that brackets the
     // `lua_State`. Pointers rather than values so that `binding.h` -- which
     // every binding includes -- does not have to carry the queue's definition.

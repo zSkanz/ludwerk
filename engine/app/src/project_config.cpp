@@ -158,6 +158,7 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("render.max_sub_worlds", 0, 8, config.maxSubWorlds);
     count("save.max_slots", 1, 4096, config.saveMaxSlots);
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
+    count("script.max_memory_mb", 16, 65536, config.scriptMemoryMb);
     if (const std::optional<f64> value = document.number("render.foliage_density");
         value.has_value() && *value >= 0.0 && *value <= 1.0)
         config.foliageDensity = static_cast<core::f32>(*value);

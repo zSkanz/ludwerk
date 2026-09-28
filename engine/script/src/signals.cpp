@@ -3,6 +3,7 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -482,7 +483,12 @@ void reportHandlerError(lua_State* L, lua_State* co, int status)
     // untranslatable text (U-32).
     std::string text;
     if (status == LUA_ERRMEM) {
-        text = "not enough memory";
+        // The heap's cap, most likely (audit S8): said as what it is. And what
+        // the thread held is let go at once -- its stack cleared and the heap
+        // collected -- or the next allocation, anybody's, fails the same way.
+        text = core::formatKeyPrefixed(ENG_TR("script.err.out_of_memory"));
+        lua_resetthread(co);
+        lua_gc(L, LUA_GCCOLLECT, 0);
     }
     else {
         const char* message = lua_tostring(co, -1);
@@ -509,10 +515,17 @@ void reportHandlerError(lua_State* L, lua_State* co, int status)
 // finished with, so the caller can drop its root.
 [[nodiscard]] bool resumeHandler(lua_State* L, lua_State* co, int argCount)
 {
+    if (!enterResume(L)) {
+        lua_pushstring(co, core::formatKeyPrefixed(ENG_TR("script.err.resume_too_deep")).c_str());
+        reportHandlerError(L, co, LUA_ERRRUN);
+        return true;
+    }
     // `from = nullptr` resets the coroutine's C-call accounting to zero, which
     // is both the cheapest option and the one that keeps a drain from inheriting
-    // a deep resume chain's budget (research §2.3).
+    // a deep resume chain's budget (research §2.3) -- which is why the nesting
+    // is counted above instead.
     const int status = lua_resume(co, nullptr, argCount);
+    leaveResume(L, co);
     if (status == LUA_OK)
         return true;
     if (status == LUA_YIELD) {
@@ -720,10 +733,60 @@ bool resumeScheduledWithError(lua_State* L, lua_State* co)
 
 int startScheduled(lua_State* L, lua_State* co, int argCount)
 {
+    if (!enterResume(L)) {
+        lua_pushstring(co, core::formatKeyPrefixed(ENG_TR("script.err.resume_too_deep")).c_str());
+        reportHandlerError(L, co, LUA_ERRRUN);
+        return LUA_ERRRUN;
+    }
     const int status = lua_resume(co, nullptr, argCount);
+    leaveResume(L, co);
     if (status != LUA_OK && status != LUA_YIELD && status != LUA_BREAK)
         reportHandlerError(L, co, status);
     return status;
+}
+
+u64 watchdogNow() noexcept
+{
+    return static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+bool enterResume(lua_State* L) noexcept
+{
+    SignalSystem& sys = system(L);
+    if (sys.nestedResumes >= MaxNestedResumes)
+        return false;
+    if (sys.nestedResumes == 0)
+        context(L).resumeStartedNs = watchdogNow();
+    ++sys.nestedResumes;
+    return true;
+}
+
+void leaveResume(lua_State* L, lua_State* co) noexcept
+{
+    SignalSystem& sys = system(L);
+    if (sys.nestedResumes > 0)
+        --sys.nestedResumes;
+    if (sys.nestedResumes != 0)
+        return;
+    VmContext& ctx = context(L);
+    const u64 now = watchdogNow();
+    const u64 took = ctx.resumeStartedNs != 0 ? now - ctx.resumeStartedNs : 0;
+    ctx.resumeStartedNs = 0;
+    // **A hitch, said once a second at most**: a world built in one file scope
+    // is slow once and says so once, not once per tick of a slow loop.
+    if (ctx.warnAfterNs == 0 || took < ctx.warnAfterNs || now - ctx.lastLongFrameWarnNs < 1'000'000'000ull)
+        return;
+    ctx.lastLongFrameWarnNs = now;
+    const core::InstanceId script = co != nullptr ? scriptOfThread(co) : core::InstanceId{};
+    const std::string source = script.valid() && ctx.world->alive(script)
+                                   ? std::string(ctx.world->atoms().text(ctx.world->name(script)))
+                                   : std::string{};
+    const core::I18nArg args[] = {{"ms", static_cast<core::i64>(took / 1'000'000ull)},
+                                  {"budgetMs", static_cast<core::i64>(ctx.warnAfterNs / 1'000'000ull)},
+                                  {"source", std::string_view{source}}};
+    report(L, core::LogLevel::Warn, core::formatKeyPrefixed(ENG_TR("script.warn.long_frame"), args));
 }
 
 void registerSignals(lua_State* L)

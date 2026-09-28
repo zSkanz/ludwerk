@@ -18,6 +18,7 @@ engine_add_module(core
     SOURCES
         src/base64.cpp
         src/content_hash.cpp
+        src/content_path.cpp
         src/i18n.cpp
         src/json.cpp
         src/json_writer.cpp
@@ -43,6 +44,7 @@ engine_add_module_tests(core
     SOURCES
         tests/base64_tests.cpp
         tests/content_hash_tests.cpp
+        tests/content_path_tests.cpp
         tests/dmath_tests.cpp
         tests/text_key_tests.cpp
         tests/i18n_tests.cpp

@@ -121,6 +121,15 @@ struct ProjectConfig
     // for the old scene's `scene:BindToClose` handlers.
     core::f64 sceneCloseGrace = 5.0;
 
+    // `[script] max_memory_mb` (audit S8): the cap on the scripts' heap. The
+    // owner's defaults, 2026-09-28: generous, so no ordinary game meets it,
+    // and a table growing without end stops before the machine does.
+#if defined(__ANDROID__)
+    core::u32 scriptMemoryMb = 512;
+#else
+    core::u32 scriptMemoryMb = 1024;
+#endif
+
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and
     // left empty rather than stamped wrong -- and `[project] company` is who

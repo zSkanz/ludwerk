@@ -351,6 +351,28 @@ TEST_CASE("a glTF whose buffer is not beside it says so rather than importing qu
     CHECK(report.failed.empty());
 }
 
+TEST_CASE("a glTF companion named outside the model's folder is neither read nor written (audit F3)")
+{
+    Scratch scratch("import-gltf-escape");
+    scratch.folder("content");
+    scratch.folder("downloaded/deep");
+    // A file of the person's beside the download, and a model whose URI climbs
+    // out to it -- which the copy would have written outside the project too.
+    scratch.file("downloaded/private.txt", "secret");
+    scratch.file("downloaded/deep/scene.gltf", R"({"buffers": [{"uri": "../private.txt"}]})");
+
+    app::ContentTree tree;
+    REQUIRE(tree.open(scratch.root() / "content"));
+    const std::array<std::filesystem::path, 1> sources{scratch.root() / "downloaded" / "deep" / "scene.gltf"};
+    const app::ContentTree::ImportReport report = tree.import(sources);
+
+    CHECK(report.imported.size() == 1);
+    CHECK(report.companions.empty());
+    REQUIRE(report.failed.size() == 1);
+    CHECK(report.failed[0] == "../private.txt");
+    CHECK_FALSE(std::filesystem::exists(scratch.root() / "private.txt"));
+}
+
 TEST_CASE("a file that names nothing brings nothing")
 {
     // A `.glb` has its buffers inside it and a `.png` names nothing at all.

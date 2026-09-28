@@ -1,7 +1,9 @@
 #include <lua.h>
 
 #include <algorithm>
+#include <bit>
 #include <doctest/doctest.h>
+#include <limits>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -883,4 +885,40 @@ TEST_CASE("Promise and Collector are globals, and work (ADR 0094)")
         assert(part.Parent == nil)
         assert(not pcall(function() c:Add(function() end) end), "a destroyed Collector refuses")
     )") == "");
+}
+
+TEST_CASE("a remote payload whose table key is NaN is dropped, not a thrown error (audit N1)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    lua_State* L = fixture.runtime->state();
+    const int top = lua_gettop(L);
+
+    // One argument: a table of one pair, keyed by a NaN number -- what a peer
+    // can put on the wire and Luau refuses to index by.
+    const auto nanBits = std::bit_cast<core::u64>(std::numeric_limits<double>::quiet_NaN());
+    std::vector<core::u8> numberKey{1, 7, 1, 0, 0, 0, 3};
+    for (int byte = 0; byte < 8; ++byte)
+        numberKey.push_back(static_cast<core::u8>(nanBits >> (8 * byte)));
+    numberKey.push_back(2);
+    CHECK(engine::script::decodeRemoteArguments(L, numberKey, {}) == -1);
+    CHECK(lua_gettop(L) == top);
+
+    // The same through a vector key with a NaN in it.
+    const auto nanFloat = std::bit_cast<core::u32>(std::numeric_limits<float>::quiet_NaN());
+    std::vector<core::u8> vectorKey{1, 7, 1, 0, 0, 0, 5};
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int byte = 0; byte < 4; ++byte)
+            vectorKey.push_back(static_cast<core::u8>((axis == 1 ? nanFloat : 0u) >> (8 * byte)));
+    }
+    vectorKey.push_back(2);
+    CHECK(engine::script::decodeRemoteArguments(L, vectorKey, {}) == -1);
+    CHECK(lua_gettop(L) == top);
+
+    // A NaN VALUE is a number like any other and arrives.
+    std::vector<core::u8> nanValue{1, 3};
+    for (int byte = 0; byte < 8; ++byte)
+        nanValue.push_back(static_cast<core::u8>(nanBits >> (8 * byte)));
+    CHECK(engine::script::decodeRemoteArguments(L, nanValue, {}) == 1);
+    lua_settop(L, top);
 }

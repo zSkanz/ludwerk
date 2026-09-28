@@ -67,14 +67,18 @@ struct Fixture
         REQUIRE(cmd != nullptr);
     }
 
-    // Makes the part `id` wear a new material whose base colour is `image`. The
-    // map's URN is the path itself, which is what `resolve` falls back to when
-    // no mount answers -- exactly the dev-mode path ADR 0010 keeps forever.
+    // Where the test images are, as a project's `content/` would be: a map is
+    // named under it, never by an absolute path (audit F4).
+    std::filesystem::path contentRoot = std::filesystem::path(ENG_RENDER_TEST_IMAGE).parent_path();
+
+    // Makes the part `id` wear a new material whose base colour is `image`,
+    // named by its place under `contentRoot` -- resolved through no mount,
+    // which is the dev-mode path ADR 0010 keeps forever.
     void wearMap(scene::World& world, core::InstanceId id, const std::filesystem::path& image)
     {
         const std::string urn = "asset://tests/" + std::to_string(++materialCount) + ".material.json";
         asset::MaterialAsset material;
-        material.properties.colorMap = image.generic_string();
+        material.properties.colorMap = "asset://" + image.lexically_relative(contentRoot).generic_string();
         material.written = asset::AllMaterialFields;
         materials.put(urn, material);
         world.setMaterialLibrary(&materials);
@@ -106,6 +110,7 @@ TEST_CASE("a texture is on the GPU before the frame that asked for it ends")
 
     scene::World world = fixture.worldNaming(image);
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
     render::TextureLibrary library;
 
     CHECK(loader.syncTextures(*fixture.device, *fixture.cmd, world, library) == 1);
@@ -123,6 +128,7 @@ TEST_CASE("a deferred texture costs the frame that asked for it nothing")
 
     scene::World world = fixture.worldNaming(image);
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
     loader.setDeferredTextures(true);
     render::TextureLibrary library;
 
@@ -160,6 +166,7 @@ TEST_CASE("a map that is not there is refused once, in either mode")
     for (const bool deferred : {false, true}) {
         scene::World world = fixture.worldNaming(absent);
         render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
         loader.setDeferredTextures(deferred);
         render::TextureLibrary library;
 
@@ -202,6 +209,7 @@ TEST_CASE("a world naming more maps than the pipeline holds still loads them all
     REQUIRE(named > 0);
 
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
     loader.setDeferredTextures(true);
     render::TextureLibrary library;
 
@@ -234,6 +242,7 @@ TEST_CASE("tearing down while a texture is on its way in leaves nothing behind")
     scene::World world = fixture.worldNaming(image);
     {
         render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
         loader.setDeferredTextures(true);
         render::TextureLibrary library;
 
@@ -248,6 +257,7 @@ TEST_CASE("tearing down while a texture is on its way in leaves nothing behind")
     // which is what a stack unwind does.
     {
         render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
         loader.setDeferredTextures(true);
         render::TextureLibrary library;
         CHECK(loader.syncTextures(*fixture.device, *fixture.cmd, world, library) == 0);
@@ -285,6 +295,7 @@ TEST_CASE("the pipeline works with real threads, and with the queue growing unde
     REQUIRE_FALSE(images.empty());
 
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
     loader.setDeferredTextures(true);
     render::TextureLibrary library;
 
@@ -327,6 +338,7 @@ TEST_CASE("the loader says WHICH meshes it loaded, not just how many")
     render::MeshCache cache;
     render::MeshLibrary library;
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
     std::vector<core::NameAtom> completed;
 
     // A world with no MeshParts loads nothing and appends nothing.
@@ -478,6 +490,7 @@ TEST_CASE("meshes arrive one frame at a time, or all at once, and it is a decisi
         render::MeshCache cache;
         render::MeshLibrary library;
         render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
         loader.setContentMounts(&mounts);
 
         (void)loader.sync(*fixture.device, *fixture.cmd, world, workspace, cache, library);
@@ -497,6 +510,7 @@ TEST_CASE("meshes arrive one frame at a time, or all at once, and it is a decisi
         render::MeshCache cache;
         render::MeshLibrary library;
         render::MeshLoader loader;
+        loader.setContentRoot(fixture.contentRoot);
         loader.setContentMounts(&mounts);
         loader.setDeferredMeshes(true);
 
@@ -555,6 +569,7 @@ TEST_CASE("forgetting a mesh forgets that it failed, so a fixed file loads")
     render::MeshLibrary library;
     render::TextureLibrary textures;
     render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
 
     // **First, with no mounts at all**, so the URN cannot resolve and is
     // blacklisted -- which is the state a broken file leaves behind.

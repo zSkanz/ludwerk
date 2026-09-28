@@ -133,7 +133,13 @@ namespace {
         return false;
     }
 
+    // A `require` chain is resumes inside resumes too (audit S4).
+    if (!enterResume(L)) {
+        lua_remove(L, rooted);
+        raise(L, ENG_TR("script.err.resume_too_deep"));
+    }
     const int status = lua_resume(co, nullptr, 0);
+    leaveResume(L, co);
     // **A break is not a yield**, and saying so is the difference between a
     // breakpoint inside a `ModuleScript` working and reporting a false error
     // about a module that did nothing wrong. The thread is parked and the

@@ -6,8 +6,10 @@
 // test never produces on purpose, and they are where a hand-written parser goes
 // wrong. The one live case at the bottom uses the loopback server the WebSocket
 // tests already carry.
+#include <chrono>
 #include <doctest/doctest.h>
 #include <string>
+#include <thread>
 
 #include "engine/core/i18n.h"
 #include "engine/net/http.h"
@@ -228,4 +230,61 @@ TEST_CASE("a real request over the loopback gets a real response")
     CHECK(response.ok);
     CHECK(response.statusCode == 200);
     CHECK(response.body == "pong");
+}
+
+TEST_CASE("a chunk size past what the body can hold is refused, not wrapped (audit N1 review)")
+{
+    seedCatalog();
+
+    // Sixteen hex digits: a size that, added to what was read, wrapped to a
+    // small number and passed both bounds -- and moved the cursor to one byte
+    // past where the chunk began, so what followed was read twice, once as
+    // body and once as the last chunk, and the response came back whole.
+    HttpResponse response;
+    const auto error = parseHttpResponse("HTTP/1.1 200 OK\r\n"
+                                         "Transfer-Encoding: chunked\r\n"
+                                         "\r\n"
+                                         "5\r\nhello\r\n"
+                                         "ffffffffffffffff\r\n"
+                                         "x0\r\n\r\n",
+                                         1024, response);
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("net.err.http_body_too_large") != std::string::npos);
+}
+
+TEST_CASE("a server that sends a byte at a time is timed out as a whole request (audit N1 review)")
+{
+    seedCatalog();
+
+    // Each byte well inside the read timeout, the whole far past it: the
+    // request's `timeoutMs` is whole-request, as `HttpRequest` says.
+    testing::LoopbackServer server;
+    server.serve([](testing::Connection& connection) {
+        (void)connection.readUntil("\r\n\r\n");
+        connection.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        // The client leaves partway, so a write into its closed socket is
+        // the expected end rather than a failure.
+        try {
+            for (int at = 0; at < 30; ++at) {
+                connection.write("x");
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        } catch (const std::runtime_error&) {
+        }
+        connection.close();
+    });
+
+    HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/drip";
+    request.timeoutMs = 800;
+
+    HttpResponse response;
+    const auto started = std::chrono::steady_clock::now();
+    const auto error = performHttp(request, response);
+    const auto took = std::chrono::steady_clock::now() - started;
+    server.join();
+
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("net.err.http_response_timeout") != std::string::npos);
+    CHECK(took < std::chrono::milliseconds(2000));
 }

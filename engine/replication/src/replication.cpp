@@ -51,6 +51,9 @@ public:
         }
         transport.port = m_config.port;
         transport.maxPeers = m_config.maxPeers;
+        // What a client sends up is small, and a client is not trusted.
+        transport.maxMessageBytes = MaxAuthorityMessageBytes;
+        transport.maxPeersPerAddress = MaxPeersPerAddress;
         if (auto error = m_transport->open(transport); error.has_value())
             return error;
         m_authority.emplace(*m_transport);

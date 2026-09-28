@@ -445,3 +445,68 @@ TEST_CASE("an index that names a vertex the file does not contain is refused")
     REQUIRE(error.has_value());
     CHECK(error->message.find("asset.mesh.err.malformed") != std::string::npos);
 }
+
+TEST_CASE("an animation channel or a skin index the skeleton cannot hold is refused (audit F1, F15)")
+{
+    seedRealCatalog();
+
+    // A valid skinned mesh with one clip, then one field of it broken at a
+    // time -- encoded, so each is what a malformed file looks like.
+    const auto build = [] {
+        Model model = gridModel(4);
+        model.skin.resize(model.mesh.vertices.size());
+        for (SkinVertex& vertex : model.skin)
+            vertex.weights[0] = 1.0f;
+        Joint root;
+        root.name = "root";
+        model.joints.push_back(root);
+        AnimationClip clip;
+        clip.name = "idle";
+        clip.duration = 1.0f;
+        AnimationChannel channel;
+        channel.joint = 0;
+        channel.target = AnimationChannel::Target::Translation;
+        channel.stride = 3;
+        channel.times = {0.0f, 1.0f};
+        channel.values = {0, 0, 0, 0, 1, 0};
+        clip.channels.push_back(channel);
+        model.clips.push_back(clip);
+        CompiledMesh compiled;
+        REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+        return compiled;
+    };
+    const auto refused = [](const CompiledMesh& mesh) {
+        CompiledMesh decoded;
+        const auto error = decodeMesh(encodeMesh(mesh), decoded);
+        return error.has_value() && error->message.find("asset.mesh.err.malformed") != std::string::npos;
+    };
+
+    CompiledMesh good = build();
+    CompiledMesh decoded;
+    CHECK_FALSE(decodeMesh(encodeMesh(good), decoded).has_value());
+
+    // A stride the target does not have: sampled into a four-float buffer.
+    CompiledMesh wide = build();
+    wide.clips[0].channels[0].stride = 64;
+    CHECK(refused(wide));
+
+    // A rotation with a translation's stride.
+    CompiledMesh narrow = build();
+    narrow.clips[0].channels[0].target = AnimationChannel::Target::Rotation;
+    CHECK(refused(narrow));
+
+    // Fewer values than the keys need.
+    CompiledMesh shortValues = build();
+    shortValues.clips[0].channels[0].values.resize(4);
+    CHECK(refused(shortValues));
+
+    // A channel for a joint the skeleton does not have.
+    CompiledMesh ghostJoint = build();
+    ghostJoint.clips[0].channels[0].joint = 7;
+    CHECK(refused(ghostJoint));
+
+    // A skin vertex naming a joint past the skeleton.
+    CompiledMesh farIndex = build();
+    farIndex.skin[0].joints[0] = 5.0f;
+    CHECK(refused(farIndex));
+}

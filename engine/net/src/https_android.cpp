@@ -87,6 +87,7 @@ struct LocalFrame
 
 std::optional<core::EngineError> performHttps(const HttpRequest& request, const ParsedUrl&, HttpResponse& response)
 {
+    const Deadline deadline = deadlineAfter(request.timeoutMs);
     auto* env = static_cast<JNIEnv*>(platform::androidJavaEnv());
     if (env == nullptr) {
         const I18nArg args[] = {{"url", request.url}};
@@ -184,6 +185,10 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
         const jmethodID read = env->GetMethodID(inputClass, "read", "([B)I");
         jbyteArray chunk = env->NewByteArray(8192);
         while (true) {
+            // The connection's timeouts are a read's; the request's is
+            // checked between them.
+            if (msLeft(deadline) == 0)
+                return core::makeError(ENG_TR("net.err.http_response_timeout"));
             const jint got = env->CallIntMethod(in, read, chunk);
             if (std::string thrown = takeException(env); !thrown.empty())
                 return failure(thrown, request.url);

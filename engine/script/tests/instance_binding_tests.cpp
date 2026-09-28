@@ -789,3 +789,33 @@ TEST_CASE("two scripts get two categories, and a reload reuses one")
             CHECK(row.category == first);
     }
 }
+
+TEST_CASE("a NaN or an infinity never reaches the simulation from a script (audit E3)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    // Refused at the write, by the property's own key, and the part is where
+    // it was.
+    CHECK(fixture.failure(R"(
+        local part = Instance.new("Part")
+        part.Parent = workspace
+        local nan = 0 / 0
+        local inf = math.huge
+        for _, write in {
+            function() part.CFrame = CFrame.new(nan, 0, 0) end,
+            function() part.CFrame = CFrame.new(0, inf, 0) end,
+            function() part.Position = vector.create(nan, 0, 0) end,
+            function() part.Orientation = vector.create(0, inf, 0) end,
+            function() part.Size = vector.create(1, nan, 1) end,
+            function() part:ApplyImpulse(vector.create(nan, 0, 0)) end,
+        } do
+            assert(not pcall(write), "a non-finite write was accepted")
+        end
+        assert(part.Position == vector.create(0, 0, 0), "the part moved")
+        local body = Instance.new("CharacterBody")
+        body.Parent = workspace
+        assert(not pcall(function() body:Move(vector.create(inf, 0, 0)) end), "Move took an infinity")
+        local weld = Instance.new("Weld")
+        assert(not pcall(function() weld.C0 = CFrame.new(nan, 0, 0) end), "a weld took a NaN")
+    )") == "");
+}

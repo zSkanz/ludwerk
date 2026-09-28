@@ -95,6 +95,11 @@ public:
     };
     using ViewLookup = std::function<bool(std::string_view name, ViewPicture& out)>;
     void setViewLookup(ViewLookup lookup) { viewLookup_ = std::move(lookup); }
+    // Every view picture's texture as it is now, into the table the frame hands
+    // the renderer: called after the views are made each frame, so a picture
+    // nothing asked for this frame -- a world's UI laid out once -- never names
+    // a texture its view destroyed. One that stopped drawing names none.
+    void refreshViews();
 
     // Invalid until something has been rasterised, which is the state a build
     // with no font file stays in -- there the built-in vector face draws solid

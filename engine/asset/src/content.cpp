@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
@@ -103,21 +104,11 @@ bool isValidUrn(std::string_view urn)
     // rather than at the filesystem, because a shipped game resolving against a
     // pack has no filesystem to refuse it -- and because `..` inside a pack key
     // would silently never match, which reads as "missing asset" rather than as
-    // "you wrote something that cannot work".
-    if (path.find('\\') != std::string_view::npos) {
-        return false;
-    }
-    usize segmentStart = 0;
-    for (usize i = 0; i <= path.size(); ++i) {
-        if (i == path.size() || path[i] == '/') {
-            const std::string_view segment = path.substr(segmentStart, i - segmentStart);
-            if (segment.empty() || segment == "." || segment == "..") {
-                return false;
-            }
-            segmentStart = i + 1;
-        }
-    }
-    return true;
+    // "you wrote something that cannot work". **The one check** every outside
+    // path goes through (audit F4), and already in its folded form: a drive, a
+    // share, a `:` or a device name is not a name in any mount.
+    const std::optional<std::string> safe = core::safeRelativePath(path);
+    return safe.has_value() && *safe == path;
 }
 
 std::string_view urnPath(std::string_view urn)

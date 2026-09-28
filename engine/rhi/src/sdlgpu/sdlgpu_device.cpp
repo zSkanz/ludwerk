@@ -208,6 +208,10 @@ public:
         for (SDL_GPUBuffer* buffer : buffers_)
             if (buffer != nullptr)
                 SDL_ReleaseGPUBuffer(device_, buffer);
+        if (fallbackTexture_ != nullptr)
+            SDL_ReleaseGPUTexture(device_, fallbackTexture_);
+        if (fallbackSampler_ != nullptr)
+            SDL_ReleaseGPUSampler(device_, fallbackSampler_);
 
         for (const ClaimedWindow& claimed : windows_)
             SDL_ReleaseWindowFromGPUDevice(device_, claimed.window);
@@ -546,6 +550,42 @@ public:
         SDL_GPUSampler** entry = slot(samplers_, handle.id);
         return entry != nullptr ? *entry : nullptr;
     }
+
+    // **What a binding of a handle that names nothing gets instead** -- a
+    // texture destroyed while something still held its handle, a sampler never
+    // made. SDL dereferences what it is given, so a null there is the process
+    // ending inside the backend (the 26-security-cameras crash). A 1x1 texture
+    // and a plain sampler draw wrong instead, and the first one is said.
+    [[nodiscard]] SDL_GPUTexture* fallbackTexture() noexcept
+    {
+        if (fallbackTexture_ == nullptr && device_ != nullptr) {
+            SDL_GPUTextureCreateInfo info{};
+            info.type = SDL_GPU_TEXTURETYPE_2D;
+            info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            info.width = 1;
+            info.height = 1;
+            info.layer_count_or_depth = 1;
+            info.num_levels = 1;
+            fallbackTexture_ = SDL_CreateGPUTexture(device_, &info);
+        }
+        return fallbackTexture_;
+    }
+    [[nodiscard]] SDL_GPUSampler* fallbackSampler() noexcept
+    {
+        if (fallbackSampler_ == nullptr && device_ != nullptr) {
+            const SDL_GPUSamplerCreateInfo info{};
+            fallbackSampler_ = SDL_CreateGPUSampler(device_, &info);
+        }
+        return fallbackSampler_;
+    }
+    void noteStaleBinding() noexcept
+    {
+        if (staleBindingSaid_)
+            return;
+        staleBindingSaid_ = true;
+        core::log(core::LogLevel::Error, ENG_TR("rhi.err.stale_binding"));
+    }
     [[nodiscard]] SDL_GPUShader* shader(ShaderHandle handle) noexcept
     {
         SDL_GPUShader** entry = slot(shaders_, handle.id);
@@ -579,6 +619,9 @@ private:
     std::vector<SDL_GPUBuffer*> buffers_;
     std::vector<TextureEntry> textures_;
     std::vector<SDL_GPUSampler*> samplers_;
+    SDL_GPUTexture* fallbackTexture_ = nullptr;
+    SDL_GPUSampler* fallbackSampler_ = nullptr;
+    bool staleBindingSaid_ = false;
     std::vector<SDL_GPUShader*> shaders_;
     std::vector<SDL_GPUGraphicsPipeline*> pipelines_;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
@@ -1117,10 +1160,18 @@ void SdlGpuCmdList::bindTextures(ShaderStage stage, u32 firstSlot, std::span<con
     native.reserve(bindings.size());
     for (const TextureBinding& binding : bindings) {
         const TextureEntry* entry = device_.texture(binding.texture);
-        native.push_back({
-            .texture = entry != nullptr ? entry->texture : nullptr,
-            .sampler = device_.sampler(binding.sampler),
-        });
+        SDL_GPUTexture* texture = entry != nullptr ? entry->texture : nullptr;
+        SDL_GPUSampler* sampler = device_.sampler(binding.sampler);
+        if (texture == nullptr || sampler == nullptr) {
+            device_.noteStaleBinding();
+            if (texture == nullptr)
+                texture = device_.fallbackTexture();
+            if (sampler == nullptr)
+                sampler = device_.fallbackSampler();
+            if (texture == nullptr || sampler == nullptr)
+                return;
+        }
+        native.push_back({.texture = texture, .sampler = sampler});
     }
 
     const auto count = static_cast<Uint32>(native.size());

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <doctest/doctest.h>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -600,6 +601,24 @@ TEST_CASE("a long ray crosses empty chunks and still meets the ground beyond the
     REQUIRE(hit.has_value());
     CHECK(hit->position.x == doctest::Approx(496.0).epsilon(0.001));
     CHECK(static_cast<double>(hit->normal.x) < -0.99);
+}
+
+TEST_CASE("a ray with no end, or one a million metres long, ends (audit E2)")
+{
+    const TerrainField field = flatField(0.0f);
+    const double forever = std::numeric_limits<double>::infinity();
+    // At the sky: nothing, at once, whatever its length.
+    CHECK_FALSE(raycastField(field, core::DVec3{0.0, 5.0, 0.0}, core::Vec3{0.0f, 1.0f, 0.0f}, forever).has_value());
+    CHECK_FALSE(raycastField(field, core::DVec3{0.0, 5.0, 0.0}, core::Vec3{0.0f, 1.0f, 0.0f}, 1e12).has_value());
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(raycastField(field, core::DVec3{0.0, 5.0, 0.0}, core::Vec3{1.0f, nan, 0.0f}, 10.0).has_value());
+    // Down, a million metres: the ground, found as a short ray finds it.
+    const std::optional<TerrainHit> hit =
+        raycastField(field, core::DVec3{0.5, 20.0, 0.5}, core::Vec3{0.0f, -1.0f, 0.0f}, 1e6);
+    REQUIRE(hit.has_value());
+    CHECK(hit->position.y == doctest::Approx(0.0).epsilon(0.005));
+    // Sideways past the edge of the field, far: nothing.
+    CHECK_FALSE(raycastField(field, core::DVec3{0.0, 5.0, 0.0}, core::Vec3{1.0f, 0.0f, 0.0f}, 1e9).has_value());
 }
 
 TEST_CASE("the palette names what the field only numbers")

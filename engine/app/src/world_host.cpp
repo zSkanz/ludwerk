@@ -11,6 +11,7 @@
 #include "engine/asset/mesh_format.h"
 #include "engine/audio/scene_types.h"
 #include "engine/core/build_info.h"
+#include "engine/core/content_path.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/input/scene_types.h"
@@ -86,36 +87,16 @@ constexpr std::string_view ConformanceRunnerPath = "runtime/conformance/runner.l
 
 // Resolves `.` and `..` without touching the filesystem, so a specifier cannot
 // escape the project root by spelling enough `..`s and so the answer does not
-// depend on what happens to exist.
+// depend on what happens to exist -- by the one check every path from outside
+// the engine goes through (audit F5): a backslash, a drive or a share is not a
+// module name.
 [[nodiscard]] bool normalisePath(std::string_view input, std::string& out)
 {
-    std::vector<std::string_view> stack;
-    std::string::size_type start = 0;
-    for (std::string::size_type index = 0; index <= input.size(); ++index) {
-        if (index != input.size() && input[index] != '/')
-            continue;
-
-        const std::string_view segment = input.substr(start, index - start);
-        start = index + 1;
-
-        if (segment.empty() || segment == ".")
-            continue;
-        if (segment == "..") {
-            if (stack.empty())
-                return false; // above the project root, which is not a place
-            stack.pop_back();
-            continue;
-        }
-        stack.push_back(segment);
-    }
-
-    out.clear();
-    for (std::string_view segment : stack) {
-        if (!out.empty())
-            out.push_back('/');
-        out.append(segment);
-    }
-    return !out.empty();
+    std::optional<std::string> safe = core::safeRelativePath(input);
+    if (!safe.has_value())
+        return false;
+    out = std::move(*safe);
+    return true;
 }
 
 // `init.luauc` is `init.luau` compiled (ADR 0112): mounted, named and
@@ -300,8 +281,10 @@ struct WorldHost::PrepareTask
             if (std::optional<std::string> got = read(path); got.has_value())
                 text = std::move(*got);
         }
-        if (text.empty())
-            (void)platform::readTextFile(contentRoot / std::filesystem::path(path), text);
+        if (text.empty()) {
+            if (const std::optional<std::filesystem::path> file = core::resolveUnder(contentRoot, path))
+                (void)platform::readTextFile(*file, text);
+        }
         found = !text.empty();
         if (found)
             parsed = scene::parseScene(std::move(text));
@@ -377,6 +360,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     });
     m_developer = options.developer;
     m_sceneCloseGrace = options.sceneCloseGrace;
+    m_scriptMemoryMb = options.scriptMemoryMb;
     m_prepareInBackground = !options.headless;
     m_warmContent = options.warmContent;
     m_warmedContent = options.warmedContent;
@@ -385,6 +369,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
         return error;
     script::setDeveloperWarnings(m_runtime->state(), m_developer);
+    configureRuntime();
 
     // **The player at this machine, before any script runs** (N1). A script's
     // file scope reaches for `NetworkService.LocalPlayer`, so it has to be
@@ -684,6 +669,7 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
     if (std::optional<core::EngineError> error = m_runtime->boot(dataModel); error.has_value())
         return error;
     script::setDeveloperWarnings(m_runtime->state(), m_developer);
+    configureRuntime();
     m_sceneClose.reset();
     dropPrepared();
     m_activationPending = false;
@@ -1271,10 +1257,25 @@ script::ContentState WorldHost::contentState(std::string_view content)
     std::string_view relative = content;
     if (relative.starts_with("asset://"))
         relative.remove_prefix(8);
+    // Under `content/` or nowhere (audit F5): a name is not a path to probe.
+    const std::optional<std::filesystem::path> file = core::resolveUnder(m_root / "content", relative);
     std::error_code error;
-    return std::filesystem::exists(m_root / "content" / std::filesystem::path(std::string(relative)), error)
-               ? script::ContentState::Loaded
-               : script::ContentState::Failed;
+    return file.has_value() && std::filesystem::exists(*file, error) ? script::ContentState::Loaded
+                                                                     : script::ContentState::Failed;
+}
+
+void WorldHost::configureRuntime()
+{
+    // **The owner's watchdog** (audit S5, 2026-09-28): where a person is
+    // testing, a hitch past 10 ms is said and a script stuck for a second is
+    // stopped; in a player's game nothing is said and the limit is five
+    // seconds -- a slow phone loading a level is not a stuck script, and a
+    // stuck script is never a frozen game.
+    if (m_developer)
+        m_runtime->setWatchdog(0.010, 1.0);
+    else
+        m_runtime->setWatchdog(0.0, 5.0);
+    m_runtime->setMemoryLimit(static_cast<core::usize>(m_scriptMemoryMb) * 1024u * 1024u);
 }
 
 void WorldHost::dropPrepared()
@@ -1366,6 +1367,12 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
                                                       bool closeHandlersRan, const scene::ParsedScene* prepared,
                                                       core::u32 preparedScene)
 {
+    // **Under `content/` or refused** (audit F5), whoever asked: a script, the
+    // editor, or an authority whose scene a replica follows.
+    if (!core::safeRelativePath(path).has_value()) {
+        const std::array<I18nArg, 1> args{I18nArg{"path", path}};
+        return core::makeError(ENG_TR("scene.err.scene_path_invalid"), args);
+    }
     std::string text;
     if (prepared != nullptr) {
         // Read and parsed already, off the main thread (ADR 0125).
@@ -1374,7 +1381,8 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
         if (std::optional<std::string> read = m_readContent(path); read.has_value())
             text = std::move(*read);
     }
-    if (prepared == nullptr && text.empty() && !readFile(m_root / "content" / std::filesystem::path(path), text)) {
+    const std::optional<std::filesystem::path> file = core::resolveUnder(m_root / "content", path);
+    if (prepared == nullptr && text.empty() && (!file.has_value() || !readFile(*file, text))) {
         const std::array<I18nArg, 1> args{I18nArg{"path", path}};
         return core::makeError(ENG_TR("scene.err.scene_not_found"), args);
     }

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <engine/app/content_tree.h>
+#include <engine/core/content_path.h>
 #include <engine/core/json.h>
 #include <engine/platform/file.h>
 #include <fstream>
@@ -816,8 +817,17 @@ ContentTree::ImportReport ContentTree::import(std::span<const std::filesystem::p
             continue;
 
         for (const std::string& relative : referencedFiles(source)) {
-            const std::filesystem::path companionSource = source.parent_path() / std::filesystem::path(relative);
-            if (!std::filesystem::is_regular_file(companionSource, ec)) {
+            // **Beside the model on both ends, or not at all** (audit F3): a
+            // URI is the model's word, and `../../x` would read a file of the
+            // person's and write one outside the project.
+            const std::optional<std::filesystem::path> companionSource =
+                core::resolveUnder(source.parent_path(), relative);
+            const std::optional<std::filesystem::path> companionTarget = core::resolveUnder(folder, relative);
+            if (!companionSource.has_value() || !companionTarget.has_value()) {
+                report.failed.push_back(relative);
+                continue;
+            }
+            if (!std::filesystem::is_regular_file(*companionSource, ec)) {
                 ec.clear();
                 report.missing.push_back(relative);
                 continue;
@@ -825,15 +835,14 @@ ContentTree::ImportReport ContentTree::import(std::span<const std::filesystem::p
 
             // Into the same relative place, because the URIs inside the file are
             // relative and rewriting them would be editing somebody's asset.
-            const std::filesystem::path companionTarget = folder / std::filesystem::path(relative);
-            if (std::filesystem::exists(companionTarget, ec)) {
+            if (std::filesystem::exists(*companionTarget, ec)) {
                 ec.clear();
                 report.skipped.push_back(relative);
                 continue;
             }
-            std::filesystem::create_directories(companionTarget.parent_path(), ec);
+            std::filesystem::create_directories(companionTarget->parent_path(), ec);
             ec.clear();
-            std::filesystem::copy_file(companionSource, companionTarget, std::filesystem::copy_options::none, ec);
+            std::filesystem::copy_file(*companionSource, *companionTarget, std::filesystem::copy_options::none, ec);
             if (ec) {
                 ec.clear();
                 report.failed.push_back(relative);

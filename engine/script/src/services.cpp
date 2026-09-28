@@ -17,6 +17,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/voxel_mesher.h"
+#include "engine/core/content_path.h"
 #include "engine/input/input.h"
 #include "engine/platform/event.h"
 #include "engine/scene/players.h"
@@ -1266,6 +1267,10 @@ int sceneServiceLoadScene(lua_State* L)
         const core::I18nArg args[] = {{"path", std::string_view{path}}};
         raise(L, ENG_TR("scene.err.scene_path_empty"), args);
     }
+    if (!core::safeRelativePath(path).has_value()) {
+        const core::I18nArg args[] = {{"path", std::string_view{path}}};
+        raise(L, ENG_TR("scene.err.scene_path_invalid"), args);
+    }
 
     // Plain values, encoded now -- at the call, where a mistake is reported --
     // and never an instance: the old scene's are gone by the time the new one
@@ -1481,9 +1486,12 @@ int playerGetIntent(lua_State* L)
     const core::InstanceId self = checkInstance(L, 1);
     size_t length = 0;
     const char* text = luaL_checklstring(L, 2, &length);
-    const World& w = world(L);
+    World& w = world(L);
     const scene::PlayerComponent* player = w.players().find(self);
-    const core::NameAtom name = w.atoms().lookup(std::string_view{text, length});
+    // **Interned here, by the code that reads it** (audit E3): the session
+    // only looks a peer's action names up, so a server whose own scripts name
+    // an action is what makes a peer's intent for it arrive.
+    const core::NameAtom name = w.atoms().intern(std::string_view{text, length});
     if (player != nullptr && name.id != 0) {
         for (const scene::PlayerIntent& intent : player->intents) {
             if (!(intent.action == name))

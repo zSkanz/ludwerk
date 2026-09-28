@@ -700,9 +700,10 @@ dependency graph (who required whom) — used for bytecode-cache invalidation.
 
 **Timeouts/interrupts:** `lua_callbacks->interrupt` armed every resumption;
 per-resumption watchdog — dev: warn at 10 ms (`script.warn.long_frame`),
-hard-kill a runaway script at 1 s with a full traceback; ship: no hard kill by
-default, hitch telemetry only. `BindToClose` handlers get their own capped
-budget.
+stop a runaway thread at 1 s with an error in it; ship: no warning, and the
+thread stopped at 5 s (the owner, 2026-09-28, audit S5 -- a stuck script is
+never a frozen game, and a slow phone loading a level is not a stuck script).
+`BindToClose` handlers get their own capped budget.
 
 **Memory categories (256):** 0 engine-misc/stdlib, 1 require/module registry,
 2 bindings/userdata, 3 signals + task scheduler, 4 UI, 5 net buffers,

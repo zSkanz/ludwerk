@@ -167,6 +167,20 @@ void World::retireDestroyed()
             }
         }
 
+        // A live child of a record going away -- nothing should be one, but a
+        // stale link here is a walk that never ends (audit E1) -- is unparented
+        // first, with its links cleared.
+        for (core::InstanceId child = record->firstChild; child.valid();) {
+            InstanceRecord* childRecord = m_instances.find(child);
+            const core::InstanceId next = childRecord != nullptr ? childRecord->nextSibling : core::InstanceId{};
+            if (childRecord != nullptr && !childRecord->destroyed) {
+                unindexName(id, child);
+                unlinkChild(child);
+            }
+            child = next;
+        }
+        record = m_instances.find(id);
+
         m_attributes.remove(id);
         m_tags.remove(id);
         m_nameIndices.remove(id);
@@ -370,8 +384,14 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
     if (newParent.valid()) {
         if (newParent == id || isAncestorOf(id, newParent))
             return ENG_TR("scene.err.parent_cycle");
-        if (m_instances.find(newParent) == nullptr)
+        const InstanceRecord* target = m_instances.find(newParent);
+        if (target == nullptr)
             return ENG_TR("script.err.instance_dead");
+        // **Destroyed is not a place** (audit E1): its children are on their
+        // way out with it, and one added now would outlive it with links into
+        // a record that is about to be gone.
+        if (target->destroyed)
+            return ENG_TR("scene.err.parent_locked");
     }
 
     // The subtree is captured once and reused for both the removing and the
@@ -922,8 +942,15 @@ void World::unlinkChild(core::InstanceId childId)
 {
     InstanceRecord* child = m_instances.find(childId);
     InstanceRecord* parent = m_instances.find(child->parent);
-    if (parent == nullptr)
+    if (parent == nullptr) {
+        // The parent is gone already: the child's own links go all the same,
+        // or they name records that no longer exist (audit E1).
+        child->parent = core::InstanceId{};
+        child->prevSibling = core::InstanceId{};
+        child->nextSibling = core::InstanceId{};
+        child->nextSameName = core::InstanceId{};
         return;
+    }
 
     if (child->prevSibling.valid())
         m_instances.find(child->prevSibling)->nextSibling = child->nextSibling;
@@ -1011,12 +1038,18 @@ void World::unindexName(core::InstanceId parentId, core::InstanceId childId)
 {
     const core::NameAtom childName = name(childId);
     NameIndex* index = m_nameIndices.find(parentId);
-    if (index == nullptr || !childName.valid())
+    if (index == nullptr || !childName.valid()) {
+        if (InstanceRecord* orphan = m_instances.find(childId))
+            orphan->nextSameName = core::InstanceId{};
         return;
+    }
 
     const auto found = index->firstByName.find(childName.id);
-    if (found == index->firstByName.end())
+    if (found == index->firstByName.end()) {
+        if (InstanceRecord* orphan = m_instances.find(childId))
+            orphan->nextSameName = core::InstanceId{};
         return;
+    }
 
     InstanceRecord* child = m_instances.find(childId);
     if (found->second == childId) {

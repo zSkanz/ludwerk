@@ -154,8 +154,58 @@ constexpr core::u32 kReplCategory = 7;
 constexpr core::u32 kFirstScriptCategory = 32;
 constexpr core::u32 kCategoryCount = 256;
 
+// **The script heap, counted and capped** (audit S8): Luau's own allocator
+// underneath, and the one place every byte a script holds passes through. An
+// allocation that would cross the cap fails, which Luau turns into
+// `LUA_ERRMEM` in the thread that asked -- the game goes on without that
+// thread's work rather than the machine running out.
+struct ScriptHeap
+{
+    core::usize used = 0;
+    core::usize cap = 0;
+};
+
+void* cappedAlloc(void* user, void* block, size_t oldSize, size_t newSize)
+{
+    auto* heap = static_cast<ScriptHeap*>(user);
+    const core::usize had = block != nullptr ? oldSize : 0;
+    if (newSize == 0) {
+        std::free(block);
+        heap->used -= std::min(heap->used, had);
+        return nullptr;
+    }
+    if (heap->cap != 0 && newSize > had && heap->used - std::min(heap->used, had) + newSize > heap->cap)
+        return nullptr;
+    void* grown = std::realloc(block, newSize);
+    if (grown == nullptr)
+        return nullptr;
+    heap->used = heap->used - std::min(heap->used, had) + newSize;
+    return grown;
+}
+
+// **The watchdog's check** (audit S5), at the VM's safepoints: a resume that
+// has run past its limit is stopped by an error in the thread running now --
+// the one that never yields. Read every 256 safepoints, because a clock read
+// at every loop back edge is a cost a correct script would pay.
+void watchdogInterrupt(lua_State* L, int gc)
+{
+    if (gc >= 0)
+        return;
+    VmContext& ctx = context(L);
+    if (ctx.killAfterNs == 0 || ctx.resumeStartedNs == 0 || (++ctx.interruptTicks & 255u) != 0)
+        return;
+    const u64 now = watchdogNow();
+    if (now - ctx.resumeStartedNs < ctx.killAfterNs)
+        return;
+    // The next thread gets a whole budget: this one is the runaway.
+    ctx.resumeStartedNs = now;
+    const core::I18nArg args[] = {{"seconds", static_cast<f64>(ctx.killAfterNs) / 1e9}};
+    raise(L, ENG_TR("script.err.script_timeout"), args);
+}
+
 struct ScriptRuntime::Impl
 {
+    ScriptHeap heap;
     lua_State* state = nullptr;
     // Reached from every binding through `lua_callbacks(L)->userdata`. Owned
     // here, and by a stable address: the callbacks hold a pointer to it for the
@@ -223,7 +273,7 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
     if (m_impl->state != nullptr)
         return std::nullopt;
 
-    lua_State* L = luaL_newstate();
+    lua_State* L = lua_newstate(cappedAlloc, &m_impl->heap);
     if (L == nullptr)
         return core::makeError(ENG_TR("script.err.vm_create_failed"));
 
@@ -235,6 +285,7 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
     // silently stops using its atom -- slower, still correct, and invisible.
     lua_callbacks(L)->userdata = &m_impl->context;
     lua_callbacks(L)->useratom = internAtom;
+    lua_callbacks(L)->interrupt = watchdogInterrupt;
 
     // Beside the other two, and before anything loads: the hooks are read by
     // the VM at every `BREAK` instruction, so they have to be there before a
@@ -458,7 +509,12 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
         return error;
     }
 
+    if (!enterResume(L)) {
+        lua_pop(L, 1); // the thread
+        return core::makeError(ENG_TR("script.err.resume_too_deep"));
+    }
     const int resumeStatus = lua_resume(thread, nullptr, 0);
+    leaveResume(L, thread);
     // LUA_YIELD is the normal outcome for anything that calls `task.wait`: the
     // script has not finished, it is parked, and the scheduler will resume it.
     if (resumeStatus != LUA_OK && resumeStatus != LUA_YIELD) {
@@ -472,6 +528,22 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
 
     lua_pop(L, 1); // the thread
     return std::nullopt;
+}
+
+void ScriptRuntime::setWatchdog(core::f64 warnSeconds, core::f64 killSeconds) noexcept
+{
+    m_impl->context.warnAfterNs = static_cast<core::u64>(std::max(0.0, warnSeconds) * 1e9);
+    m_impl->context.killAfterNs = static_cast<core::u64>(std::max(0.0, killSeconds) * 1e9);
+}
+
+void ScriptRuntime::setMemoryLimit(core::usize bytes) noexcept
+{
+    m_impl->heap.cap = bytes;
+}
+
+core::usize ScriptRuntime::memoryInUse() const noexcept
+{
+    return m_impl->heap.used;
 }
 
 void ScriptRuntime::stepTweens(f64 fixedDt)

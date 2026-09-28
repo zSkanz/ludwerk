@@ -33,7 +33,9 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -69,6 +71,46 @@ inline constexpr u32 MaxRemoteMessagesPerTick = 256;
 inline constexpr u16 MaxRemoteHeldSends = 300;
 // The script module's own payload ceiling, plus the few bytes of its header.
 inline constexpr usize MaxRemoteWirePayload = 64u * 1024u + 16u;
+
+// **What one peer may cost an authority in one tick** (audit N1's review). A
+// client is not trusted to send one intent and one owned state a tick, or a
+// sane count in either; what is over these is dropped, and a count over them
+// is a refusal of the whole message. The byte budget is what `RemoteEvent`
+// payloads may add up to, on top of the message count above.
+inline constexpr u32 MaxIntentsPerTick = 2;
+inline constexpr u16 MaxIntentEntries = 256;
+inline constexpr u32 MaxOwnedStatesPerTick = 2;
+inline constexpr u16 MaxOwnedRecords = 4096;
+inline constexpr u16 MaxRemoteRefs = 1024;
+inline constexpr usize MaxRemoteBytesPerTick = 1024u * 1024u;
+// Messages held for a peer until it knows the event they name, whatever their
+// age: past either, the oldest is dropped.
+inline constexpr usize MaxHeldMessages = 4096;
+inline constexpr usize MaxHeldBytes = 16u * 1024u * 1024u;
+// **A connection that never says hello is let go**, in authority receives --
+// ten seconds at sixty. A handshake is one reliable round trip.
+inline constexpr u32 MaxUnwelcomedReceives = 600;
+// Players this authority remembers across connections (ADR 0085). Past it,
+// the longest-known one not connected now is forgotten: its next visit is a
+// new player, which is what an authority that restarted would say too.
+inline constexpr usize MaxKnownIdentities = 65536;
+// The largest message an authority accepts from a peer: an owned state of
+// `MaxOwnedRecords` parts, a `RemoteEvent` at its ceiling, with room.
+inline constexpr usize MaxAuthorityMessageBytes = 1024u * 1024u;
+// Connections one address may hold on an authority: a household behind one
+// router is a few players, and a flood from one machine is not a crowd.
+inline constexpr usize MaxPeersPerAddress = 8;
+
+// **What an authority may cost a replica** -- a server a player joined is not
+// trusted with that player's machine either. A message naming more than these
+// is refused whole.
+inline constexpr u32 MaxReplicaRemotesPerTick = 4096;
+inline constexpr usize MaxReplicaNames = 1u << 20;
+inline constexpr usize MaxReplicaInstances = 1u << 20;
+inline constexpr u32 MaxRosterPlayers = 4096;
+// How long, in applied ticks, a departed id is still filtered out of a
+// snapshot: longer than any baseline a state history can hold.
+inline constexpr u64 DepartedMemoryTicks = 600;
 
 // Where the services whose properties travel are numbered from: one fixed id
 // per wire class, far above any instance's, so a service is never mistaken for
@@ -171,18 +213,26 @@ private:
         u64 ownedTick = 0;
         // What it held at each of the last `StateHistory` sends.
         std::deque<PeerInterest> interest;
-        // `RemoteEvent` messages this tick, against the flood limit.
+        // `RemoteEvent` messages this tick, against the flood limit, and what
+        // this tick's intents, owned states and payload bytes came to.
         u32 messagesThisTick = 0;
+        u32 intentsThisTick = 0;
+        u32 ownedThisTick = 0;
+        usize remoteBytesThisTick = 0;
+        // Receives since it connected without a hello.
+        u32 unwelcomedReceives = 0;
         // Messages for it naming an event it has not been told about yet, in
-        // the order they were sent: the event's network id, how many sends it
-        // has waited, and the bytes.
+        // the order they were sent: the event's network id, the flush it was
+        // held at, and the bytes. Held in order, so the front is the oldest.
         struct Held
         {
             u32 remote = 0;
-            u16 sends = 0;
+            u64 heldAt = 0;
             std::vector<u8> bytes;
         };
         std::deque<Held> held;
+        usize heldBytes = 0;
+        u64 flushes = 0;
     };
 
     // One captured instance, in the walk's pre-order: its id, which instance
@@ -245,8 +295,10 @@ private:
     std::deque<std::shared_ptr<const WorldState>> m_history;
     // The world's atom table, for the strings a message carries. Captured by
     // `send`, which is the only caller that can need it.
-    // The last capture's walk, in pre-order.
+    // The last capture's walk, in pre-order, and each network id's place in
+    // it -- a peer names ids, and a lookup must not walk the world.
     std::vector<Captured> m_order;
+    std::unordered_map<u32, u32> m_orderOfNet;
     std::map<u32, TilemapShadow> m_tilemapShadows;
     // This send's changed blocks, by tilemap network id; an emptied block
     // is all zeros.
@@ -330,9 +382,10 @@ private:
     void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void onSpawn(scene::World& world, std::span<const u8> bytes);
     void onDespawn(scene::World& world, std::span<const u8> bytes);
-    // Every record of `id` this session keeps, gone: the local mapping, what
-    // was written, the samples, and the id in every remembered state.
-    void forget(u32 id);
+    // Every record of these ids this session keeps, gone: the local mapping,
+    // what was written, the samples, and the ids in every remembered state --
+    // each state copied once for all of them, not once an id.
+    void forget(std::span<const u32> ids);
     // **A welcome after a lost connection starts the world again.** The new
     // connection's baseline is empty on the authority's side, so everything
     // is sent afresh; what this replica held from the old one leaves as a
@@ -368,9 +421,10 @@ private:
     // What the world was last given, per id, in the authority's terms -- so an
     // apply writes only what changed.
     std::map<u32, FieldSet> m_written;
-    // Ids that have left. Never reused, so this only grows, by one id per
-    // despawn: a filter a reconstructed state must pass.
-    std::set<u32> m_departed;
+    // Ids that have left, and the applied tick they left at: a filter a
+    // reconstructed state must pass, for as long as a baseline could still
+    // hold them (`DepartedMemoryTicks`), and then forgotten.
+    std::map<u32, u64> m_departed;
     std::function<bool(core::InstanceId)> m_probe;
     std::function<void(scene::World&, const std::string&, std::vector<core::u8>)> m_sceneChanger;
     // Husks made since the host last drained them.

@@ -5,6 +5,7 @@
 #include "engine/app/network_session.h"
 #include "engine/app/script_editor.h"
 #include "engine/core/brand.h"
+#include "engine/core/content_path.h"
 #if ENG_DEBUG_UI
 #include "engine/app/surface_compiler.h"
 #else
@@ -1497,8 +1498,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // A file first, and the pack when there is none -- the same rule the
         // scene is found by.
         .bootStamps = [contentRoot, packed](std::string_view stamp) -> std::optional<std::string> {
+            // A stamp's name is a scene file's word, and under `content/` or
+            // nothing (audit F5).
+            const std::optional<std::filesystem::path> file = core::resolveUnder(contentRoot, stamp);
+            if (!file.has_value())
+                return std::nullopt;
             std::string text;
-            if (platform::readTextFile(contentRoot / std::filesystem::path(stamp), text))
+            if (platform::readTextFile(*file, text))
                 return text;
             return packed(std::string(stamp));
         },
@@ -1509,10 +1515,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // A scene named at run time (ADR 0106), found as the boot scene is: a
         // file first, and the pack when there is none.
         .readContent = [contentRoot, packed](std::string_view relative) -> std::optional<std::string> {
+            // Under `content/` or nothing (audit F5).
+            const std::optional<std::string> safe = core::safeRelativePath(relative);
+            if (!safe.has_value())
+                return std::nullopt;
             std::string text;
-            if (platform::readTextFile(contentRoot / std::filesystem::path(std::string(relative)), text))
+            if (platform::readTextFile(contentRoot / std::filesystem::path(std::u8string(safe->begin(), safe->end())),
+                                       text))
                 return text;
-            return packed(std::string(relative));
+            return packed(*safe);
         },
         .defaultServer = options.defaultServer,
         // **The editor mounts and does not start** (ADR 0058). Every other way
@@ -1526,6 +1537,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .saveMaxSlotBytes = options.saveMaxSlotBytes,
         .saveMaxSlots = options.saveMaxSlots,
         .sceneCloseGrace = options.sceneCloseGrace,
+        .scriptMemoryMb = options.scriptMemoryMb,
         .developer = options.developerWarnings,
         // A prepared scene's meshes (ADR 0125), through the loader that draws
         // them. Headless, nothing loads meshes, so nothing is warmed.
@@ -3694,14 +3706,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // What arrived is input to the tick that follows it, and what is
             // sent is the tick's result -- reversed, both directions cost a
             // tick of latency and nothing in a loopback test would show it.
-            network.receive();
-            // BEFORE the tick, so that once the loop is done the history holds
-            // where everything was one tick ago and the world holds where it is
-            // now -- the two ends `render::extract` interpolates between (D047).
-            transformHistory.capture(host->world());
-            host->tick();
-            network.send();
-            network.sendMessages();
+            // **The last line, not the defence** (audit N1): what a peer sends
+            // is decoded under protected calls, and an error that still
+            // escapes the VM ends this tick, logged, rather than the process
+            // -- a server that terminates on one bad message is everybody's
+            // game ended by one player.
+            try {
+                network.receive();
+                // BEFORE the tick, so that once the loop is done the history
+                // holds where everything was one tick ago and the world holds
+                // where it is now -- the two ends `render::extract`
+                // interpolates between (D047).
+                transformHistory.capture(host->world());
+                host->tick();
+                network.send();
+                network.sendMessages();
+            } catch (const std::exception& error) {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"message", std::string_view{error.what()}}};
+                core::log(core::LogLevel::Error, ENG_TR("engine.err.tick_exception"), args);
+            }
             // **Answered at the tick, not at the frame** (D214): a loaded
             // machine runs several ticks a frame, and a sample asked for tick
             // 240 came back from 241 because the frame went from 239 past it.
@@ -4295,8 +4318,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 (void)meshLoader.syncTextures(*device, *cmd, world, textureLibrary);
                 // The camera textures of the game's own world -- not of a stamp
                 // being edited, which has no game running in it.
-                if (&world == &host->world() && stageOf() == nullptr)
+                if (&world == &host->world() && stageOf() == nullptr) {
                     viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get());
+                    // The pictures the UI lends from those views, remade or
+                    // gone, before anything copies the table.
+                    uiText.refreshViews();
+                }
                 // The palette's picture: the tileset of the tilemap the Tiles
                 // tool would paint, as loaded (the 2D layer).
                 if (options.editor && &world == &authored()) {

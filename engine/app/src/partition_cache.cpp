@@ -6,6 +6,7 @@
 
 #include "engine/asset/field_cells.h"
 #include "engine/core/content_hash.h"
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
@@ -192,8 +193,10 @@ PartitionOutcome partitionProject(scene::World& registries, const std::filesyste
     // stamps this world depends on rather than every stamp the project holds.
     std::map<std::string, std::string> stampHashes;
     const scene::StampSource stamps = [&](std::string_view stamp) -> std::optional<std::string> {
+        // Under `content/` or nothing (audit F5).
+        const std::optional<std::filesystem::path> file = core::resolveUnder(contentRoot, stamp);
         std::string text;
-        if (!platform::readTextFile(contentRoot / std::filesystem::path(stamp), text)) {
+        if (!file.has_value() || !platform::readTextFile(*file, text)) {
             return std::nullopt;
         }
         stampHashes.emplace(std::string(stamp), core::hashText(text).toHex());

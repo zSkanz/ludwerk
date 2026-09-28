@@ -416,10 +416,19 @@ struct CharacterPair
     // degenerate hull Jolt refuses, and a script writing `Size = Vector3.zero`
     // must produce a very small part rather than an error the frame cannot
     // recover from.
+    //
+    // **And NaN-safe** (audit E3): `std::max(NaN, k)` is NaN, and a NaN extent
+    // is a shape Jolt builds wrong. What is not finite is the smallest part;
+    // what is past a million metres is held there.
     constexpr f32 kMinHalfExtent = 0.005f;
-    const f32 hx = std::max(desc.size.x * 0.5f, kMinHalfExtent);
-    const f32 hy = std::max(desc.size.y * 0.5f, kMinHalfExtent);
-    const f32 hz = std::max(desc.size.z * 0.5f, kMinHalfExtent);
+    constexpr f32 kMaxHalfExtent = 5.0e5f;
+    const auto half = [&](f32 full) {
+        const f32 value = full * 0.5f;
+        return std::isfinite(value) ? std::clamp(value, kMinHalfExtent, kMaxHalfExtent) : kMinHalfExtent;
+    };
+    const f32 hx = half(desc.size.x);
+    const f32 hy = half(desc.size.y);
+    const f32 hz = half(desc.size.z);
 
     switch (desc.type) {
     case ShapeType::Box: {

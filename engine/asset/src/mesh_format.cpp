@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <meshoptimizer.h>
@@ -958,6 +959,15 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
         }
     }
 
+    // **A skin weight names a joint the skeleton has** (audit F15): the
+    // palette is indexed by it on the GPU and in the pose.
+    for (const SkinVertex& vertex : out.skin) {
+        for (const f32 joint : vertex.joints) {
+            if (!std::isfinite(joint) || joint < 0.0f || joint >= static_cast<f32>(out.joints.size()))
+                return malformed();
+        }
+    }
+
     const Section* const floatSection = findSection(sections, TagAnimationFloats);
     const std::span<const std::byte> floatBytes =
         floatSection != nullptr ? sectionSpan(*floatSection) : std::span<const std::byte>{};
@@ -997,6 +1007,16 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             channel.target = static_cast<AnimationChannel::Target>(target);
             if (!readFloats(timesOffset, timesCount, channel.times) ||
                 !readFloats(valuesOffset, valuesCount, channel.values)) {
+                return malformed();
+            }
+            // **The stride is the target's, and every key has its values**
+            // (audit F1): a sample is written into four floats, so a stride
+            // past four, or a key past the values, is memory the file does
+            // not own. And the joint is one the skeleton has.
+            const u32 stride = channel.target == AnimationChannel::Target::Rotation ? 4u : 3u;
+            if (channel.stride != stride ||
+                channel.values.size() < static_cast<usize>(channel.times.size()) * static_cast<usize>(stride) ||
+                channel.joint >= out.joints.size()) {
                 return malformed();
             }
             allChannels.push_back(std::move(channel));

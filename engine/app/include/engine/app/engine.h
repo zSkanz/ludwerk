@@ -173,6 +173,8 @@ struct EngineOptions
     core::u32 saveMaxSlots = 64;
     // `[scene] close_grace_seconds` (ADR 0124).
     core::f64 sceneCloseGrace = 5.0;
+    // `[script] max_memory_mb` (audit S8); 0 for no cap.
+    core::u32 scriptMemoryMb = 0;
     // The editor, `dev` and a match's windows: warnings a player never reads.
     bool developerWarnings = false;
 

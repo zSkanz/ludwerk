@@ -169,6 +169,14 @@ endif()
 # in. The header itself never reads this -- the class has the same shape in
 # every profile, which is what keeps the frame loop free of #ifdefs.
 target_compile_definitions(engine_app PUBLIC ENG_DEBUG_UI=$<BOOL:${ENG_DEBUG_UI}>)
+# **The repository this build came from** (audit T1): where a development
+# editor finds the CLI its Export window runs. Empty in the profiles that ship,
+# which find theirs beside the executable.
+if(ENG_DEBUG_UI)
+    target_compile_definitions(engine_app PRIVATE ENG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+else()
+    target_compile_definitions(engine_app PRIVATE ENG_SOURCE_DIR="")
+endif()
 
 
 if(ANDROID)

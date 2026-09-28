@@ -199,6 +199,8 @@ struct WorldHostOptions
     // waits for the old scene's `scene:BindToClose` handlers, in simulated
     // seconds.
     f64 sceneCloseGrace = 5.0;
+    // `[script] max_memory_mb` (audit S8): the scripts' heap cap; 0 for none.
+    core::u32 scriptMemoryMb = 0;
     // **The warnings a person testing a game wants** and a player never reads:
     // a close handler dropped with its scene, a message nobody listens to. The
     // editor, `dev` and a match's windows; never an exported game.
@@ -626,6 +628,9 @@ private:
     [[nodiscard]] script::ContentState contentState(std::string_view content);
     f64 m_sceneCloseGrace = 5.0;
     bool m_developer = false;
+    core::u32 m_scriptMemoryMb = 0;
+    // The watchdog and the heap cap onto a runtime just made (audit S5, S8).
+    void configureRuntime();
     // Instances reparented to nil because a script held them when they
     // streamed out, in the order they left.
     std::vector<core::InstanceId> m_husks;

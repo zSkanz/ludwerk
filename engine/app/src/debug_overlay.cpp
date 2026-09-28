@@ -9222,7 +9222,9 @@ void openExportWindow(Editor& editor)
     if (ui.root != root) {
         ui.root = root;
         ui.finished.clear();
-        ui.cli = locateCli(platform::paths().executableDir, root);
+        // The repository this build was compiled from, and never the
+        // project's own folders (audit T1).
+        ui.cli = locateCli(platform::paths().executableDir, std::filesystem::path(ENG_SOURCE_DIR));
     }
     readExportSettings(ui);
     ui.recent = loadRecentExports(recentExportsFile(), root);

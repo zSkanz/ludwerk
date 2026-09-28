@@ -85,11 +85,13 @@ constexpr std::string_view HeaderTerminator = "\r\n\r\n";
         if (size == 0) {
             return std::nullopt;
         }
-        if (out.size() + size > maxBodyBytes) {
+        // Compared against what is left, never summed: a size of sixteen hex
+        // digits wrapped the sum to a small number that passed both bounds.
+        if (size > maxBodyBytes - std::min(out.size(), maxBodyBytes)) {
             const I18nArg args[] = {{"limit", static_cast<core::i64>(maxBodyBytes)}};
             return core::makeError(ENG_TR("net.err.http_body_too_large"), args);
         }
-        if (cursor + size > encoded.size()) {
+        if (size > encoded.size() - cursor) {
             return core::makeError(ENG_TR("net.err.http_chunk_truncated"));
         }
         out.append(encoded.substr(cursor, static_cast<core::usize>(size)));
@@ -281,14 +283,18 @@ std::optional<core::EngineError> checkHeader(const HttpHeader& header)
 }
 
 std::optional<core::EngineError> readUntilClosed(
-    const std::function<std::optional<core::EngineError>(std::span<u8> chunk, core::usize& received)>& receive,
-    core::usize maxBodyBytes, std::string& raw)
+    const std::function<std::optional<core::EngineError>(std::span<u8> chunk, core::usize& received, u32 waitMs)>&
+        receive,
+    core::usize maxBodyBytes, std::string& raw, Deadline deadline)
 {
     raw.clear();
     std::array<u8, 8192> chunk{};
     while (true) {
+        const u32 left = msLeft(deadline);
+        if (left == 0)
+            return core::makeError(ENG_TR("net.err.http_response_timeout"));
         core::usize received = 0;
-        const auto error = receive(chunk, received);
+        const auto error = receive(chunk, received, left);
         if (error.has_value()) {
             // An orderly close is how a `Connection: close` response ends, so it
             // is the SUCCESS path here and not a failure. Anything else is real.
@@ -320,6 +326,7 @@ namespace {
         return error;
     }
 
+    const Deadline deadline = deadlineAfter(request.timeoutMs);
     TcpStream stream;
     if (auto error = stream.connect(url.host, url.port, request.timeoutMs); error.has_value()) {
         return error;
@@ -330,10 +337,10 @@ namespace {
     }
 
     std::string raw;
-    const auto receive = [&](std::span<u8> chunk, core::usize& received) {
-        return stream.receive(chunk, received, request.timeoutMs);
+    const auto receive = [&](std::span<u8> chunk, core::usize& received, u32 waitMs) {
+        return stream.receive(chunk, received, waitMs);
     };
-    if (auto error = readUntilClosed(receive, request.maxBodyBytes, raw); error.has_value()) {
+    if (auto error = readUntilClosed(receive, request.maxBodyBytes, raw, deadline); error.has_value()) {
         return error;
     }
     return parseHttpResponse(raw, request.maxBodyBytes, response);

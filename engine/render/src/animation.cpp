@@ -37,11 +37,15 @@ using core::Vec3;
 }
 
 // Linear interpolation between two keys of a channel, into `out`.
-void sampleChannel(const asset::AnimationChannel& channel, f32 time, f32* out) noexcept
+[[nodiscard]] bool sampleChannel(const asset::AnimationChannel& channel, f32 time, f32* out) noexcept
 {
+    const usize stride = channel.stride;
+    // `decodeMesh` refuses anything else (audit F1); a channel built in memory
+    // is not decoded, and a sample past these four floats is somebody's stack.
+    if ((stride != 3 && stride != 4) || channel.times.empty() || channel.values.size() < channel.times.size() * stride)
+        return false;
     const usize key = keyBefore(channel.times, time);
     const f32 alpha = fractionBetween(channel.times, key, time);
-    const usize stride = channel.stride;
     const f32* from = &channel.values[key * stride];
     const f32* to = key + 1 < channel.times.size() ? &channel.values[(key + 1) * stride] : from;
 
@@ -68,15 +72,16 @@ void sampleChannel(const asset::AnimationChannel& channel, f32 time, f32* out) n
         if (length <= 0.0f) {
             out[0] = out[1] = out[2] = 0.0f;
             out[3] = 1.0f;
-            return;
+            return true;
         }
         for (usize lane = 0; lane < 4; ++lane)
             out[lane] /= length;
-        return;
+        return true;
     }
 
     for (usize lane = 0; lane < stride; ++lane)
         out[lane] = from[lane] + (to[lane] - from[lane]) * alpha;
+    return true;
 }
 
 // Translation, rotation and scale into one column-major matrix. Written out
@@ -452,7 +457,8 @@ void AnimationSystem::rebuildPose(core::InstanceId meshPart, const SkeletonLibra
             const asset::AnimationChannel& channel = *resolved;
             if (channel.joint >= jointCount || channel.times.empty())
                 continue;
-            sampleChannel(channel, time, sample);
+            if (!sampleChannel(channel, time, sample))
+                continue;
 
             switch (channel.target) {
             case asset::AnimationChannel::Target::Translation:

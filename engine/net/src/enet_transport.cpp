@@ -21,6 +21,11 @@ namespace {
 using core::I18nArg;
 using core::LogLevel;
 
+// What one `poll` hands up at most: far more than a tick of any match, and
+// small enough that a flood costs a frame a slice rather than the frame.
+constexpr usize MaxEventsPerPoll = 8192;
+constexpr usize MaxBytesPerPoll = 64u * 1024u * 1024u;
+
 // ENet is initialised once per process and deinitialised never.
 //
 // Never, deliberately. `enet_deinitialize` calls `WSACleanup` on Windows, and
@@ -127,6 +132,15 @@ public:
             const I18nArg args[] = {{"port", static_cast<core::i64>(config.port)}};
             return core::makeError(ENG_TR("net.err.transport_open_failed"), args);
         }
+        // ENet's own ceilings are its defaults, and both are generous: a
+        // message it reassembles and a peer's waiting data are each bounded
+        // by them, per peer.
+        if (config.maxMessageBytes != 0) {
+            m_host->maximumPacketSize = config.maxMessageBytes;
+            m_host->maximumWaitingData = config.maxMessageBytes * 2;
+        }
+        if (config.maxPeersPerAddress != 0)
+            m_host->duplicatePeers = config.maxPeersPerAddress;
         return std::nullopt;
     }
 
@@ -227,8 +241,15 @@ public:
         // thing, and a loop that re-waited would block for the whole timeout
         // once per event on a busy connection.
         enet_uint32 wait = timeoutMs;
-        while (enet_host_service(m_host, &event, wait) > 0) {
+        // **Bounded a poll** (audit N1's review): a peer sending as fast as
+        // the link carries kept this loop draining, and the frame that called
+        // it never ended. What is over the bound waits in ENet's queue for the
+        // next poll, in order.
+        usize events = 0;
+        usize bytes = 0;
+        while (events < MaxEventsPerPoll && bytes < MaxBytesPerPoll && enet_host_service(m_host, &event, wait) > 0) {
             wait = 0;
+            events += 1;
             switch (event.type) {
             case ENET_EVENT_TYPE_CONNECT:
                 // A peer that dialled in is held to the same silence limit as
@@ -251,8 +272,9 @@ public:
                 TransportEvent message{
                     .kind = TransportEvent::Kind::Message, .peer = idOf(event.peer), .payload = {}, .channel = 0};
                 message.channel = event.channelID;
-                const auto* const bytes = reinterpret_cast<const u8*>(event.packet->data);
-                message.payload.assign(bytes, bytes + event.packet->dataLength);
+                const auto* const data = reinterpret_cast<const u8*>(event.packet->data);
+                message.payload.assign(data, data + event.packet->dataLength);
+                bytes += event.packet->dataLength;
                 enet_packet_destroy(event.packet);
                 out.push_back(std::move(message));
                 break;

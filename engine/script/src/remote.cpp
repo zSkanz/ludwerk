@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -159,6 +160,18 @@ struct Encoder
     }
 };
 
+// Whether a value can index a table: NaN, or a vector with NaN in it, cannot.
+[[nodiscard]] bool indexable(lua_State* L, int index)
+{
+    if (lua_type(L, index) == LUA_TNUMBER)
+        return !std::isnan(lua_tonumber(L, index));
+    if (lua_type(L, index) == LUA_TVECTOR) {
+        const float* axes = lua_tovector(L, index);
+        return axes != nullptr && !std::isnan(axes[0]) && !std::isnan(axes[1]) && !std::isnan(axes[2]);
+    }
+    return true;
+}
+
 struct Decoder
 {
     lua_State* L;
@@ -244,6 +257,13 @@ struct Decoder
                 if (lua_isnil(L, -2)) {
                     lua_pop(L, 2);
                     continue;
+                }
+                // **A NaN cannot be a key** (audit N1): Luau raises on one, and
+                // a raise here is a peer's message ending the process. A
+                // malformed payload, like any other.
+                if (!indexable(L, -2)) {
+                    lua_settop(L, top);
+                    return false;
                 }
                 lua_rawset(L, -3);
             }
@@ -601,24 +621,55 @@ void encodeRemoteArguments(lua_State* L, int first, int count, std::vector<u8>& 
         encoder.value(first + at, 0, false);
 }
 
+namespace {
+
+struct DecodeJob
+{
+    std::span<const u8> payload;
+    std::span<const core::InstanceId> refs;
+    int count = -1;
+};
+
+int decodeProtected(lua_State* L)
+{
+    auto* job = static_cast<DecodeJob*>(lua_tolightuserdata(L, 1));
+    lua_settop(L, 0);
+    const int count = job->payload[0];
+    Decoder decoder{L, job->payload, job->refs, 1};
+    for (int at = 0; at < count; ++at) {
+        if (!decoder.value(0))
+            return 0;
+    }
+    // Trailing bytes are a payload somebody else wrote; nothing here did.
+    if (decoder.at != job->payload.size())
+        return 0;
+    job->count = count;
+    return count;
+}
+
+} // namespace
+
 int decodeRemoteArguments(lua_State* L, std::span<const u8> payload, std::span<const core::InstanceId> refs)
 {
     if (payload.empty())
         return -1;
-    const int top = lua_gettop(L);
-    const int count = payload[0];
-    Decoder decoder{L, payload, refs, 1};
-    for (int at = 0; at < count; ++at) {
-        if (!decoder.value(0)) {
-            lua_settop(L, top);
-            return -1;
-        }
+    // **On a thread of its own, under a protected call** (audit N1): the bytes
+    // are a peer's, and whatever they make Luau raise -- a key it refuses, an
+    // allocation it cannot make -- is a message dropped, never an exception
+    // through the host. Its own thread because `L` may be a coroutine parked
+    // on a yield, where a call cannot run; the values are moved to it after.
+    lua_State* scratch = lua_newthread(L);
+    const int anchor = lua_gettop(L);
+    DecodeJob job{payload, refs};
+    lua_pushcfunction(scratch, decodeProtected, "decode");
+    lua_pushlightuserdata(scratch, &job);
+    const int status = lua_pcall(scratch, 1, LUA_MULTRET, 0);
+    int count = -1;
+    if (status == LUA_OK && job.count >= 0 && lua_gettop(scratch) == job.count && lua_checkstack(L, job.count)) {
+        count = job.count;
+        lua_xmove(scratch, L, count);
     }
-    // Trailing bytes are a payload somebody else wrote; nothing here did.
-    if (decoder.at != payload.size()) {
-        lua_settop(L, top);
-        return -1;
-    }
+    lua_remove(L, anchor);
     return count;
 }
 

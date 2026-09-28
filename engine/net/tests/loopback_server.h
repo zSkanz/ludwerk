@@ -85,6 +85,11 @@ public:
         timeout.tv_sec = 10;
         timeout.tv_usec = 0;
         ::setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#if defined(SO_NOSIGPIPE)
+        // Where `send` takes no MSG_NOSIGNAL, the socket says it instead.
+        const int on = 1;
+        ::setsockopt(m_socket, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#endif
 #endif
     }
 
@@ -123,7 +128,14 @@ public:
             const int written = ::send(m_socket, reinterpret_cast<const char*>(data.data() + sent),
                                        static_cast<int>(data.size() - sent), 0);
 #else
-            const auto written = static_cast<int>(::send(m_socket, data.data() + sent, data.size() - sent, 0));
+            // No SIGPIPE for a client that left: a test that times one out
+            // writes into its closed socket, and the signal would end the run.
+#if defined(MSG_NOSIGNAL)
+            constexpr int flags = MSG_NOSIGNAL;
+#else
+            constexpr int flags = 0;
+#endif
+            const auto written = static_cast<int>(::send(m_socket, data.data() + sent, data.size() - sent, flags));
 #endif
             if (written <= 0)
                 throw std::runtime_error("loopback server: the client went away mid-write");

@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 
+#include "engine/core/finite.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/players.h"
@@ -119,6 +120,7 @@ public:
 
     [[nodiscard]] bool ok() const noexcept { return m_ok; }
     [[nodiscard]] bool done() const noexcept { return m_at == m_bytes.size(); }
+    [[nodiscard]] usize remaining() const noexcept { return m_bytes.size() - m_at; }
     [[nodiscard]] std::span<const u8> bytes() const noexcept { return m_bytes; }
     [[nodiscard]] usize& at() noexcept { return m_at; }
     void fail() noexcept { m_ok = false; }
@@ -538,6 +540,11 @@ struct RemoteOnWire
     out.call = in.u32v();
     out.flags = in.u8v();
     const u16 count = in.u16v();
+    // Four bytes a reference, so a count the message cannot hold is refused
+    // before anything is kept for it.
+    if (!in.ok() || count > MaxRemoteRefs || in.remaining() < static_cast<usize>(count) * 4u)
+        return false;
+    out.refs.reserve(count);
     for (u16 at = 0; at < count && in.ok(); ++at)
         out.refs.push_back(in.u32v());
     const u32 size = in.u32v();
@@ -607,11 +614,13 @@ NetId AuthoritySession::netIdOf(InstanceId id) const noexcept
 
 InstanceId AuthoritySession::instanceOfNet(const scene::World& world, u32 netId) const noexcept
 {
-    for (const Captured& captured : m_order) {
-        if (captured.netId == netId)
-            return world.alive(captured.id) ? captured.id : InstanceId{};
-    }
-    return {};
+    // By the index the capture built: a peer names ids by the thousand, and a
+    // walk of the world for each was the cost it could make the authority pay.
+    const auto found = m_orderOfNet.find(netId);
+    if (found == m_orderOfNet.end())
+        return {};
+    const InstanceId id = m_order[found->second].id;
+    return world.alive(id) ? id : InstanceId{};
 }
 
 namespace {
@@ -770,19 +779,30 @@ void AuthoritySession::sendMessages(scene::World& world)
 
     // What each peer was already waiting on goes first, in order, as far as
     // it now knows the events named: a message never overtakes an earlier one.
+    //
+    // **Aged by when each was held, not by how long it waited at the front**:
+    // counted at the front, a queue of k messages behind one the peer never
+    // learns about waited k times the limit, and grew for as long as a script
+    // kept firing. Held in order, so the front is always the oldest.
+    const auto dropFront = [&](Peer& peer) {
+        peer.heldBytes -= peer.held.front().bytes.size();
+        peer.held.pop_front();
+        m_stats.messagesDropped += 1;
+    };
     const auto flush = [&](Peer& peer) {
+        peer.flushes += 1;
         while (!peer.held.empty()) {
             Peer::Held& next = peer.held.front();
             if (!std::binary_search(peer.known.begin(), peer.known.end(), next.remote)) {
-                if (++next.sends > MaxRemoteHeldSends) {
-                    peer.held.pop_front();
-                    m_stats.messagesDropped += 1;
+                if (peer.flushes - next.heldAt > MaxRemoteHeldSends) {
+                    dropFront(peer);
                     continue;
                 }
                 return;
             }
             sendBytes(m_transport, peer.id, next.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
             m_stats.messagesSent += 1;
+            peer.heldBytes -= next.bytes.size();
             peer.held.pop_front();
         }
     };
@@ -818,7 +838,11 @@ void AuthoritySession::sendMessages(scene::World& world)
                 m_stats.messagesSent += 1;
             }
             else {
-                peer.held.push_back(Peer::Held{remote.value, 0, out.bytes});
+                while (!peer.held.empty() &&
+                       (peer.held.size() >= MaxHeldMessages || peer.heldBytes + out.bytes.size() > MaxHeldBytes))
+                    dropFront(peer);
+                peer.heldBytes += out.bytes.size();
+                peer.held.push_back(Peer::Held{remote.value, peer.flushes, out.bytes});
             }
         }
     }
@@ -829,8 +853,21 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
     // Where players live. A world with no `NetworkService` -- a test's bare
     // tree -- still replicates; it just has nobody to name.
     const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
-    for (Peer& peer : m_peers)
+    // **A connection that never says hello is let go**: it holds a slot, and
+    // a slot is what the next player needs.
+    std::vector<net::PeerId> silent;
+    for (Peer& peer : m_peers) {
         peer.messagesThisTick = 0;
+        peer.intentsThisTick = 0;
+        peer.ownedThisTick = 0;
+        peer.remoteBytesThisTick = 0;
+        if (!peer.welcomed && ++peer.unwelcomedReceives > MaxUnwelcomedReceives)
+            silent.push_back(peer.id);
+    }
+    for (const net::PeerId gone : silent) {
+        m_transport.disconnect(gone);
+        std::erase_if(m_peers, [&](const Peer& peer) { return peer.id == gone; });
+    }
     std::vector<net::TransportEvent> events;
     (void)m_transport.poll(events, 0);
     for (const net::TransportEvent& event : events) {
@@ -861,8 +898,20 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                 scene::PlayerComponent* player = peer->player.valid() ? world.players().find(peer->player) : nullptr;
                 if (!reader.ok() || tick <= peer->intentTick || player == nullptr)
                     break;
+                // One a tick is what a replica sends; a few more is a burst
+                // after a stall. Past that, and past a count no input map
+                // has, it is a peer making the authority parse.
+                if (++peer->intentsThisTick > MaxIntentsPerTick) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
                 std::vector<scene::PlayerIntent> intents;
                 const u16 count = reader.u16v();
+                if (!reader.ok() || count > MaxIntentEntries) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                intents.reserve(count);
                 for (u16 at = 0; at < count && reader.ok(); ++at) {
                     const std::string_view name = reader.text();
                     scene::PlayerIntent intent;
@@ -873,7 +922,21 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                     intent.pressed = reader.u8v() != 0;
                     if (!reader.ok())
                         break;
-                    intent.action = world.atoms().intern(name);
+                    // **A peer's numbers, made safe** (audit E3): a
+                    // non-finite axis is none, and every axis is bounded --
+                    // a direction is about 1, a pointer a few thousand pixels.
+                    intent.axis = core::sanitize(intent.axis, 1e6f);
+                    // `Enum.InputActionType`: Bool to ViewportPosition, 0 to 4.
+                    if (intent.type < 0 || intent.type > 4)
+                        continue;
+                    // **Looked up, never interned**: the atom table never
+                    // frees, and a peer naming a new action every packet would
+                    // grow it for ever. An action nothing on this machine has
+                    // named -- no `InputAction`, no `GetIntent` -- is nothing
+                    // anybody here reads.
+                    intent.action = world.atoms().lookup(name);
+                    if (!intent.action.valid())
+                        continue;
                     intents.push_back(intent);
                 }
                 // Whole or not at all: half an intent is a player whose second
@@ -888,8 +951,28 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                 const u64 tick = reader.u64v();
                 if (!reader.ok() || tick <= peer->ownedTick || peer->userId == 0)
                     break;
-                peer->ownedTick = tick;
+                if (++peer->ownedThisTick > MaxOwnedStatesPerTick) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
                 const u16 count = reader.u16v();
+                if (!reader.ok() || count > MaxOwnedRecords) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                // **Read whole, then applied** -- and the tick taken only from
+                // a message that read: a truncated one moved half the parts,
+                // and still made the next good one look old.
+                struct OwnedRecord
+                {
+                    scene::PartComponent* part = nullptr;
+                    scene::RigidBodyComponent* body = nullptr;
+                    core::CFrameD frame;
+                    core::Vec3 speed;
+                    core::Vec3 spin;
+                };
+                std::vector<OwnedRecord> records;
+                records.reserve(count);
                 for (u16 at = 0; at < count && reader.ok(); ++at) {
                     const u32 netId = reader.u32v();
                     FieldValue cframe;
@@ -909,9 +992,28 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                     scene::PartComponent* part = id.valid() ? world.parts().find(id) : nullptr;
                     if (body == nullptr || part == nullptr || body->networkOwner != peer->userId)
                         continue;
-                    part->cframe = asCFrame(cframe);
-                    body->linearVelocity = asVec3(linear);
-                    body->angularVelocity = asVec3(angular);
+                    // **Where an owner says its part is, only if a world can
+                    // hold it** (audit E3): a non-finite value would corrupt
+                    // this simulation and replicate to everyone, and a
+                    // rotation that is not one is a body the solver cannot
+                    // reason about.
+                    const core::CFrameD frame = asCFrame(cframe);
+                    const core::Vec3 speed = asVec3(linear);
+                    const core::Vec3 spin = asVec3(angular);
+                    if (!core::isWorldPosition(frame.position) || !core::isRotation(frame.rotation) ||
+                        !core::isFinite(speed) || !core::isFinite(spin))
+                        continue;
+                    records.push_back(OwnedRecord{part, body, frame, speed, spin});
+                }
+                if (!reader.ok() || !reader.done()) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                peer->ownedTick = tick;
+                for (const OwnedRecord& record : records) {
+                    record.part->cframe = record.frame;
+                    record.body->linearVelocity = core::sanitize(record.speed, core::MaxSpeed);
+                    record.body->angularVelocity = core::sanitize(record.spin, core::MaxSpeed);
                 }
                 break;
             }
@@ -959,6 +1061,21 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                 else {
                     userId = m_nextUserId++;
                     token = freshToken();
+                    // **Bounded**: a peer that throws its token away and
+                    // dials again is a new player each time. Past the limit
+                    // the longest-known one not connected now is forgotten.
+                    if (m_identities.size() >= MaxKnownIdentities) {
+                        auto oldest = m_identities.end();
+                        for (auto at = m_identities.begin(); at != m_identities.end(); ++at) {
+                            const bool connected = std::any_of(m_peers.begin(), m_peers.end(), [&](const Peer& other) {
+                                return other.welcomed && other.token == at->first;
+                            });
+                            if (!connected && (oldest == m_identities.end() || at->second < oldest->second))
+                                oldest = at;
+                        }
+                        if (oldest != m_identities.end())
+                            m_identities.erase(oldest);
+                    }
                     m_identities[token] = userId;
                 }
                 peer->welcomed = true;
@@ -989,10 +1106,12 @@ void AuthoritySession::receive(scene::World& world, InstanceId root)
                 }
                 peer->messagesThisTick += 1;
                 RemoteOnWire wire;
-                if (!readRemote(reader, wire)) {
+                if (!readRemote(reader, wire) ||
+                    peer->remoteBytesThisTick + event.payload.size() > MaxRemoteBytesPerTick) {
                     m_stats.messagesDropped += 1;
                     break;
                 }
+                peer->remoteBytesThisTick += event.payload.size();
                 const InstanceId remote = instanceOfNet(world, wire.remote);
                 // A client asks and never answers: a reply from one is not a
                 // thing, and neither is a failure.
@@ -1137,6 +1256,10 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
         }
     }
     m_netIds = std::move(seen);
+    m_orderOfNet.clear();
+    m_orderOfNet.reserve(m_order.size());
+    for (usize at = 0; at < m_order.size(); ++at)
+        m_orderOfNet.emplace(m_order[at].netId, static_cast<u32>(at));
 
     std::sort(state->entities.begin(), state->entities.end(),
               [](const EntityState& a, const EntityState& b) { return a.id.value < b.id.value; });
@@ -1511,6 +1634,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root)
 {
     std::vector<net::TransportEvent> events;
     (void)m_transport.poll(events, 0);
+    u32 remotesThisTick = 0;
     for (const net::TransportEvent& event : events) {
         if (!(event.peer == m_authority))
             continue;
@@ -1592,7 +1716,7 @@ void ReplicaSession::receive(scene::World& world, InstanceId root)
             Reader reader(event.payload);
             (void)reader.u8v();
             RemoteOnWire wire;
-            if (!readRemote(reader, wire)) {
+            if (++remotesThisTick > MaxReplicaRemotesPerTick || !readRemote(reader, wire)) {
                 m_stats.messagesDropped += 1;
                 break;
             }
@@ -1852,13 +1976,15 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
         return;
 
     // **Exactly these**: what the authority has now, and nothing it removed.
+    // Looked up in a set: a scan of the message for each attribute held was
+    // sixty-five thousand squared for one message.
+    std::set<std::string_view> kept;
+    for (const auto& entry : incoming)
+        kept.insert(entry.first);
     scene::AttributeMap current;
     world.collectAttributes(target, current);
     for (const auto& [name, value] : current) {
-        const std::string_view text = world.atoms().text(name);
-        const bool kept =
-            std::any_of(incoming.begin(), incoming.end(), [&](const auto& entry) { return entry.first == text; });
-        if (!kept)
+        if (!kept.contains(world.atoms().text(name)))
             (void)world.setAttribute(target, name, scene::Value{});
     }
     for (const auto& [name, value] : incoming)
@@ -1871,12 +1997,13 @@ void ReplicaSession::onSceneChange(scene::World& world, std::span<const u8> byte
     (void)reader.u8v();
     std::string path(reader.text());
     const u32 length = reader.u32v();
-    std::vector<u8> data;
-    data.reserve(length);
-    for (u32 at = 0; at < length && reader.ok(); ++at)
-        data.push_back(reader.u8v());
-    if (!reader.ok() || !reader.done())
+    // **The bytes the message has, never the count it claims**: reserved from
+    // the claim, seven bytes asked for four gigabytes and the allocation that
+    // failed took the process with it (audit N1's review).
+    if (!reader.ok() || reader.remaining() != length)
         return;
+    const std::span<const u8> rest = reader.bytes().subspan(reader.at(), length);
+    std::vector<u8> data(rest.begin(), rest.end());
     // **Already there** is what a replica that joined into the scene it booted
     // hears, and it is not a reason to load it again.
     if (path.empty() || path == world.engineState().currentScene || !m_sceneChanger)
@@ -1892,6 +2019,9 @@ void ReplicaSession::onTilemapBlocks(scene::World& world, std::span<const u8> by
     const u16 count = reader.u16v();
     // Read whole before any is applied: a message cut short changes nothing.
     std::vector<std::pair<scene::TileChunkKey, scene::TileChunk>> blocks;
+    constexpr usize BlockBytes = 4 + 4 + 2 + TileBlockCells * 2;
+    if (!reader.ok() || reader.remaining() != static_cast<usize>(count) * BlockBytes)
+        return;
     blocks.reserve(count);
     for (u16 at = 0; at < count && reader.ok(); ++at) {
         scene::TileChunkKey key{static_cast<core::i32>(reader.u32v()), static_cast<core::i32>(reader.u32v())};
@@ -2036,6 +2166,8 @@ void ReplicaSession::onPlayers(scene::World& world, InstanceId root, std::span<c
     Reader reader(bytes);
     (void)reader.u8v();
     const u32 count = reader.u32v();
+    if (!reader.ok() || count > MaxRosterPlayers)
+        return;
     std::vector<u32> roster;
     std::map<u32, u32> characters;
     std::map<u32, u32> teams;
@@ -2085,12 +2217,16 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
         const std::string_view className = reader.text();
         if (!reader.ok() || m_locals.contains(id))
             continue;
+        if (m_locals.size() >= MaxReplicaInstances)
+            break;
         // An id that left this replica's interest and has come back into it.
         m_departed.erase(id);
         // **By name, not by the authority's class number**: the two ends build
         // their registries from the same generated tables, but a name is the
-        // fact the protocol version vouches for and a number is not.
-        const scene::ClassId classId = world.classes().findId(world.atoms().intern(className));
+        // fact the protocol version vouches for and a number is not. Looked
+        // up, never interned: every class this build has is named already,
+        // and a name it does not have is nothing to intern for ever.
+        const scene::ClassId classId = world.classes().findId(world.atoms().lookup(className));
         if (classId == scene::InvalidClass)
             continue;
         const InstanceId local = world.create(classId);
@@ -2141,10 +2277,9 @@ void ReplicaSession::onDespawn(scene::World& world, std::span<const u8> bytes)
             (void)world.destroy(gone);
     }
 
-    for (const std::vector<u32>* list : {&destroyed, &streamed}) {
-        for (const u32 id : *list)
-            forget(id);
-    }
+    std::vector<u32> gone = std::move(destroyed);
+    gone.insert(gone.end(), streamed.begin(), streamed.end());
+    forget(gone);
 }
 
 void ReplicaSession::resetForRejoin(scene::World& world)
@@ -2154,6 +2289,13 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     std::vector<InstanceId> removed;
     for (const auto& [id, local] : m_locals) {
         if (!world.alive(local))
+            continue;
+        // **A service is this machine's own**, mapped to the authority's and
+        // never spawned: the `Workspace` has been on the wire since protocol
+        // 19, and destroying it here left every instance of the rejoined world
+        // parented under a destroyed one (found by audit E1's refusal).
+        if (const scene::ClassDescriptor* descriptor = world.classes().find(world.classOf(local));
+            descriptor != nullptr && scene::hasFlag(descriptor->flags, scene::ClassFlags::Service))
             continue;
         if (m_probe && m_probe(local)) {
             (void)world.setParent(local, InstanceId{});
@@ -2184,21 +2326,32 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_applied = 0;
 }
 
-void ReplicaSession::forget(u32 id)
+void ReplicaSession::forget(std::span<const u32> ids)
 {
-    m_departed.insert(id);
-    m_samples.erase(id);
-    m_samples2d.erase(id);
-    m_ownedParts.erase(id);
-    m_locals.erase(id);
-    m_written.erase(id);
+    if (ids.empty())
+        return;
+    for (const u32 id : ids) {
+        m_departed[id] = m_applied;
+        m_samples.erase(id);
+        m_samples2d.erase(id);
+        m_ownedParts.erase(id);
+        m_locals.erase(id);
+        m_written.erase(id);
+    }
     // Out of every remembered state too, so a diff against one of them
-    // reconstructs what the authority has -- which no longer includes it.
+    // reconstructs what the authority has -- which no longer includes them.
+    // **One copy a state for the whole despawn**: a copy per id was a
+    // despawn of n ids costing n whole states each.
+    std::vector<u32> sorted(ids.begin(), ids.end());
+    std::sort(sorted.begin(), sorted.end());
+    const auto leaving = [&sorted](const EntityState& entity) {
+        return std::binary_search(sorted.begin(), sorted.end(), entity.id.value);
+    };
     for (std::shared_ptr<const WorldState>& state : m_states) {
-        if (findEntity(*state, id) == nullptr)
+        if (std::none_of(state->entities.begin(), state->entities.end(), leaving))
             continue;
         auto copy = std::make_shared<WorldState>(*state);
-        std::erase_if(copy->entities, [id](const EntityState& entity) { return entity.id.value == id; });
+        std::erase_if(copy->entities, leaving);
         state = std::move(copy);
     }
 }
@@ -2224,6 +2377,10 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     for (u16 at = 0; at < atomCount && reader.ok(); ++at) {
         const u32 atom = reader.u32v();
         const std::string_view text = reader.text();
+        // The atom table never frees: past the bound, a server naming new
+        // strings every snapshot is refused rather than kept for ever.
+        if (!m_names.contains(atom) && m_names.size() >= MaxReplicaNames)
+            reader.fail();
         if (reader.ok())
             m_names[atom] = world.atoms().intern(text);
     }
@@ -2233,30 +2390,39 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     if (base != nullptr)
         state->entities = base->entities;
 
+    // **Records in ascending id order, as the authority writes them**, and the
+    // new ones kept aside and merged once: inserted one by one into the sorted
+    // state, a snapshot of new ids cost the square of its size.
+    std::vector<EntityState> added;
+    u32 previous = 0;
     const u32 recordCount = reader.u32v();
     for (u32 record = 0; record < recordCount && reader.ok(); ++record) {
         const u32 id = reader.u32v();
         const u8 schema = reader.u8v();
         const u8 flags = reader.u8v();
         const u16 fields = reader.u16v();
-        if (!reader.ok() || schema >= schemaCount()) {
+        if (!reader.ok() || schema >= schemaCount() || (record != 0 && id <= previous)) {
             reader.fail();
             break;
         }
+        previous = id;
         const generated::ClassDesc& desc = generated::Classes[schema];
-        auto at = findEntity(state->entities, id);
-        if (at == state->entities.end() || at->id.value != id) {
-            if ((flags & FullRecord) == 0) {
+        EntityState* at = nullptr;
+        if (const auto held = findEntity(state->entities, id); held != state->entities.end() && held->id.value == id) {
+            at = &*held;
+            if ((flags & FullRecord) != 0)
+                *at = EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))};
+        }
+        else {
+            if ((flags & FullRecord) == 0 || state->entities.size() + added.size() >= MaxReplicaInstances) {
                 // A diff for an instance the baseline does not have: the two
                 // ends disagree about the baseline, which the checksum would
                 // catch anyway -- refused here, where the cause is plain.
                 reader.fail();
                 break;
             }
-            at = state->entities.insert(at, EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))});
-        }
-        else if ((flags & FullRecord) != 0) {
-            *at = EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))};
+            added.push_back(EntityState{NetId{id}, schema, FieldSet(fieldCount(desc))});
+            at = &added.back();
         }
         for (u16 field = 0; field < fields && reader.ok(); ++field) {
             const u16 wireId = reader.u16v();
@@ -2275,7 +2441,16 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     }
     if (!reader.ok() || !reader.done())
         return;
+    if (!added.empty()) {
+        const auto middle = static_cast<std::ptrdiff_t>(state->entities.size());
+        state->entities.insert(state->entities.end(), std::make_move_iterator(added.begin()),
+                               std::make_move_iterator(added.end()));
+        std::inplace_merge(state->entities.begin(), state->entities.begin() + middle, state->entities.end(),
+                           [](const EntityState& a, const EntityState& b) { return a.id.value < b.id.value; });
+    }
 
+    // Departed ids leave the filter once no baseline can still hold them.
+    std::erase_if(m_departed, [&](const auto& entry) { return tick > entry.second + DepartedMemoryTicks; });
     std::erase_if(state->entities, [this](const EntityState& entity) { return m_departed.contains(entity.id.value); });
     if (checksumOf(*state) != checksum) {
         m_checksumFailures += 1;

@@ -1200,3 +1200,43 @@ TEST_CASE("what an import costs" * doctest::skip())
                                      << model.mesh.vertices.size() << " primitives=" << model.mesh.submeshes.size()
                                      << " joints=" << model.joints.size() << " images=" << model.images.size());
 }
+
+TEST_CASE_FIXTURE(CatalogFixture,
+                  "gltf: a file named outside the model's folder, or larger than it says, is refused (audit F2)")
+{
+    const std::vector<std::byte> quad = readFixture("quad.gltf");
+    const std::string original(reinterpret_cast<const char*>(quad.data()), quad.size());
+    const std::string::size_type start = original.find("data:application/octet-stream;base64,");
+    REQUIRE(start != std::string::npos);
+    const std::string::size_type end = original.find('"', start);
+    const auto naming = [&](const std::string& uri) {
+        const std::string text = original.substr(0, start) + uri + original.substr(end);
+        std::vector<std::byte> bytes(text.size());
+        std::memcpy(bytes.data(), text.data(), text.size());
+        return bytes;
+    };
+
+    std::error_code error;
+    const std::filesystem::path folder = std::filesystem::temp_directory_path(error) / "engine-gltf-f2";
+    std::filesystem::create_directories(folder, error);
+    {
+        // Far past the few dozen bytes the buffer declares.
+        std::ofstream big(folder / "big.bin", std::ios::binary);
+        const std::string megabyte(1024 * 1024, 'x');
+        big << megabyte;
+    }
+
+    for (const std::string uri : {"../outside.bin", "C:/Windows/win.ini", "//host/share/x.bin", "file:///etc/passwd",
+                                  "sub\\..\\..\\x.bin", "big.bin"}) {
+        CAPTURE(uri);
+        Model model;
+        const auto refused = importGltf(naming(uri), folder, unoptimized(), model);
+        REQUIRE(refused.has_value());
+        // A backslash is not a URI at all, and the parser says so first.
+        const bool named = refused->message.find("asset.gltf.err.external_file") != std::string::npos ||
+                           (uri.find('\\') != std::string::npos &&
+                            refused->message.find("asset.gltf.err.parse_failed") != std::string::npos);
+        CHECK(named);
+    }
+    std::filesystem::remove_all(folder, error);
+}

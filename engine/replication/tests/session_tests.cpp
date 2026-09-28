@@ -6,7 +6,9 @@
 // most needs and a socket least provides.
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <doctest/doctest.h>
+#include <limits>
 #include <span>
 #include <string>
 
@@ -480,7 +482,11 @@ TEST_CASE("a joined replica is a player on the authority, and what it does arriv
     CHECK(scene::localPlayerOf(client.world) == me);
 
     // The replica's player jumps and walks; the authority's copy of that player
-    // reads it, by action NAME, in its own atoms.
+    // reads it, by action NAME, in its own atoms -- names the authority's own
+    // code has used (a `GetIntent`, an `InputAction`), never ones a peer
+    // invents (audit E3).
+    (void)server.atoms.intern("Jump");
+    (void)server.atoms.intern("Move");
     client.world.players().find(me)->intents = {
         scene::PlayerIntent{client.atoms.intern("Jump"), 0, core::Vec3{}, true},
         scene::PlayerIntent{client.atoms.intern("Move"), 2, core::Vec3{0.5f, -1.0f, 0.0f}, false},
@@ -753,6 +759,8 @@ TEST_CASE("a player who drops and comes back is the same player, and gets the wo
             ++racers;
     }
     CHECK(racers == 1);
+    // The replica's own services are not the rejoined world's to destroy.
+    CHECK_FALSE(match.client.world.destroyed(match.client.workspace));
     CHECK(match.replica->checksumFailures() == 0);
 }
 
@@ -1943,4 +1951,286 @@ TEST_CASE("a detector replicates, and a replica's click reaches the authority fr
     CHECK(arrived[0].player == match.remote());
     CHECK(arrived[1].detector == prompt);
     CHECK(arrived[1].kind == scene::DetectorMessage::Kind::Triggered);
+}
+
+TEST_CASE("a peer's non-finite state and invented intents do not reach the authority (audit E3)")
+{
+    PlayedMatch match;
+    const core::InstanceId ball = match.part("Ball", core::DVec3{0.0, 1.0, 0.0});
+    match.run(3);
+    const core::InstanceId mine = match.copyOf(ball);
+    REQUIRE(mine.valid());
+    match.server.world.rigidBodies().find(ball)->networkOwner = 2;
+    match.run(3);
+
+    // The owner reports a NaN position, then an infinite speed: neither is
+    // taken, and the ball stays a ball in a world.
+    const double before = match.server.world.parts().find(ball)->cframe.position.x;
+    match.client.world.parts().find(mine)->cframe.position.x = std::numeric_limits<double>::quiet_NaN();
+    match.run(2);
+    CHECK(std::isfinite(match.server.world.parts().find(ball)->cframe.position.x));
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(before));
+    match.client.world.parts().find(mine)->cframe.position.x = 2.0;
+    match.client.world.rigidBodies().find(mine)->linearVelocity =
+        core::Vec3{std::numeric_limits<float>::infinity(), 0.0f, 0.0f};
+    match.run(2);
+    CHECK(std::isfinite(match.server.world.rigidBodies().find(ball)->linearVelocity.x));
+
+    // An action the authority never named is dropped, not interned; a known
+    // one with a NaN axis arrives with the NaN made 0.
+    (void)match.server.atoms.intern("Move");
+    const core::usize atomsBefore = match.server.atoms.size();
+    match.client.world.players().find(match.me)->intents = {
+        scene::PlayerIntent{match.client.atoms.intern("Invented1234"), 0, core::Vec3{}, true},
+        scene::PlayerIntent{match.client.atoms.intern("Move"), 2,
+                            core::Vec3{std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.0f}, false},
+    };
+    match.run(3);
+    CHECK_FALSE(match.server.atoms.lookup("Invented1234").valid());
+    CHECK(match.server.atoms.size() == atomsBefore);
+    const scene::PlayerComponent* seen = match.server.world.players().find(match.remote());
+    REQUIRE(seen != nullptr);
+    REQUIRE(seen->intents.size() == 1);
+    CHECK(seen->intents[0].axis.x == 0.0f);
+    CHECK(seen->intents[0].axis.y == 1.0f);
+}
+
+// --- Hostile peers (audit N1's review) -----------------------------------------------------
+
+namespace {
+
+// A message as a hostile peer writes it: little-endian, whatever it likes.
+struct Bytes
+{
+    std::vector<core::u8> data;
+
+    Bytes& u8v(core::u8 value)
+    {
+        data.push_back(value);
+        return *this;
+    }
+    Bytes& u16v(core::u16 value)
+    {
+        for (int at = 0; at < 2; ++at)
+            data.push_back(static_cast<core::u8>(value >> (8 * at)));
+        return *this;
+    }
+    Bytes& u32v(core::u32 value)
+    {
+        for (int at = 0; at < 4; ++at)
+            data.push_back(static_cast<core::u8>(value >> (8 * at)));
+        return *this;
+    }
+    Bytes& u64v(core::u64 value)
+    {
+        for (int at = 0; at < 8; ++at)
+            data.push_back(static_cast<core::u8>(value >> (8 * at)));
+        return *this;
+    }
+    Bytes& f32v(float value)
+    {
+        core::u32 bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return u32v(bits);
+    }
+    Bytes& f64v(double value)
+    {
+        core::u64 bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return u64v(bits);
+    }
+    Bytes& text(std::string_view value)
+    {
+        u16v(static_cast<core::u16>(value.size()));
+        data.insert(data.end(), value.begin(), value.end());
+        return *this;
+    }
+    // A `CFrameD` on the wire: three f64 of position, nine f32 of rotation.
+    Bytes& cframe(core::DVec3 at, float scale = 1.0f)
+    {
+        f64v(at.x).f64v(at.y).f64v(at.z);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column)
+                f32v(row == column ? scale : 0.0f);
+        }
+        return *this;
+    }
+};
+
+// A replica joined to a fake authority: the test is the server, and writes
+// whatever bytes it likes to the replica.
+struct FakeAuthority
+{
+    std::shared_ptr<net::MemoryNetwork> network = net::createMemoryNetwork();
+    std::unique_ptr<net::ITransport> server = net::createMemoryTransport(network);
+    std::unique_ptr<net::ITransport> clientTransport = net::createMemoryTransport(network);
+    std::optional<ReplicaSession> replica;
+    Side client;
+    net::PeerId peer;
+
+    FakeAuthority()
+    {
+        seedCatalog();
+        REQUIRE_FALSE(server->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
+        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+        net::PeerId toServer;
+        REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
+        replica.emplace(*clientTransport, toServer);
+        replica->receive(client.world(), client.root);
+        std::vector<net::TransportEvent> events;
+        (void)server->poll(events, 0);
+        for (const net::TransportEvent& event : events) {
+            if (event.kind == net::TransportEvent::Kind::Connected)
+                peer = event.peer;
+        }
+        REQUIRE(peer.valid());
+    }
+
+    void deliver(const Bytes& message)
+    {
+        REQUIRE_FALSE(server->send(peer, message.data, net::Delivery::Reliable, 0).has_value());
+        replica->receive(client.world(), client.root);
+    }
+};
+
+} // namespace
+
+TEST_CASE("a hostile authority's message is refused whole, and never sizes the replica's memory")
+{
+    FakeAuthority fake;
+    bool changed = false;
+    fake.replica->setSceneChanger([&](scene::World&, const std::string&, std::vector<core::u8>) { changed = true; });
+
+    // Seven bytes claiming four gigabytes of scene data: reserved from the
+    // claim, the allocation failed and took the process with it.
+    fake.deliver(Bytes{}.u8v(14).text("x").u32v(0xFFFFFFFFu));
+    CHECK_FALSE(changed);
+    // The same message telling the truth still changes the scene.
+    fake.deliver(Bytes{}.u8v(14).text("x").u32v(2).u8v(7).u8v(9));
+    CHECK(changed);
+
+    // Sixty-five thousand tile blocks, none of them there.
+    fake.deliver(Bytes{}.u8v(13).u32v(5).u16v(0xFFFF));
+
+    // A class this build has never heard of is not interned for ever.
+    fake.deliver(Bytes{}.u8v(3).u32v(1).u32v(5000).text("NoSuchClassFromAPeer"));
+    CHECK_FALSE(fake.client.world().atoms().lookup("NoSuchClassFromAPeer").valid());
+    CHECK_FALSE(fake.replica->localOf(NetId{5000}).valid());
+
+    // Records out of order are refused before anything is built from them:
+    // inserted one at a time, a descending snapshot cost its size squared.
+    Bytes snapshot;
+    snapshot.u8v(5).u64v(1).u64v(0).u64v(0).u64v(0).u16v(0).u32v(2);
+    snapshot.u32v(9).u8v(0).u8v(1).u16v(0);
+    snapshot.u32v(8).u8v(0).u8v(1).u16v(0);
+    fake.deliver(snapshot);
+    CHECK(fake.replica->appliedTick() == 0);
+    CHECK(fake.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned state is taken whole or not at all")
+{
+    PlayedMatch match;
+    const core::InstanceId ball = match.part("Ball", core::DVec3{0.0, 1.0, 0.0});
+    match.run(3);
+    match.server.world.rigidBodies().find(ball)->networkOwner = 2;
+    match.run(3);
+    const NetId ballNet = match.authority->netIdOf(ball);
+    REQUIRE(ballNet.valid());
+    (void)match.server.atoms.intern("Move");
+
+    // Ten intents in one tick, each newer than the last: two a tick are
+    // taken -- the replica's own from the last step, and the first of these
+    // -- and the rest are a peer making the authority parse.
+    for (core::u32 at = 1; at <= 10; ++at) {
+        Bytes intent;
+        intent.u8v(7)
+            .u64v(100000 + at)
+            .u16v(1)
+            .text("Move")
+            .u8v(2)
+            .f32v(static_cast<float>(at))
+            .f32v(0.0f)
+            .f32v(0.0f)
+            .u8v(1);
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    }
+    match.authority->receive(match.server.world, match.server.workspace);
+    const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
+    REQUIRE(player != nullptr);
+    REQUIRE(player->intents.size() == 1);
+    CHECK(static_cast<double>(player->intents[0].axis.x) == doctest::Approx(1.0));
+
+    // A count no input map has is refused whole.
+    Bytes many;
+    many.u8v(7).u64v(200000).u16v(300);
+    for (int at = 0; at < 300; ++at)
+        many.text("Move").u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, many.data, net::Delivery::Unreliable, 2).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(player->intents.size() == 1);
+    CHECK((player->intents.empty() || static_cast<double>(player->intents[0].axis.x) == doctest::Approx(1.0)));
+
+    // An owned state whose second record is cut short moves nothing -- and
+    // does not make the whole one after it, at the same tick, look old.
+    Bytes cut;
+    cut.u8v(12).u64v(500000).u16v(2);
+    cut.u32v(ballNet.value).cframe({5.0, 1.0, 0.0}).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f);
+    cut.u32v(ballNet.value).u8v(1).u8v(2);
+    Bytes whole;
+    whole.u8v(12).u64v(500000).u16v(1);
+    whole.u32v(ballNet.value).cframe({6.0, 1.0, 0.0}).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f).f32v(0.0f);
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, cut.data, net::Delivery::Unreliable, 3).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(0.0));
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, whole.data, net::Delivery::Unreliable, 3).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(6.0));
+
+    // A rotation that is a scale is not a rotation.
+    Bytes scaled;
+    scaled.u8v(12).u64v(500001).u16v(1);
+    scaled.u32v(ballNet.value)
+        .cframe({9.0, 1.0, 0.0}, 2.0f)
+        .f32v(0.0f)
+        .f32v(0.0f)
+        .f32v(0.0f)
+        .f32v(0.0f)
+        .f32v(0.0f)
+        .f32v(0.0f);
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, scaled.data, net::Delivery::Unreliable, 3).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.server.world.parts().find(ball)->cframe.position.x == doctest::Approx(6.0));
+}
+
+TEST_CASE("a connection that never says hello is let go, and a message naming too many instances is refused")
+{
+    PlayedMatch match;
+    auto silent = net::createMemoryTransport(match.network);
+    REQUIRE_FALSE(silent->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    net::PeerId toServer;
+    REQUIRE_FALSE(silent->connect("memory", Port, toServer).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.serverTransport->peerCount() == 2);
+    for (core::u32 at = 0; at <= MaxUnwelcomedReceives; ++at)
+        match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.serverTransport->peerCount() == 1);
+    CHECK(match.authority->peerCount() == 1);
+
+    // A `RemoteEvent` message naming more instances than any call passes.
+    const core::InstanceId remote =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("RemoteEvent")));
+    REQUIRE_FALSE(match.server.world.setParent(remote, match.server.workspace).has_value());
+    match.run(3);
+    const NetId remoteNet = match.authority->netIdOf(remote);
+    REQUIRE(remoteNet.valid());
+    Bytes flood;
+    flood.u8v(9).u32v(remoteNet.value).u32v(0).u8v(0).u16v(static_cast<core::u16>(MaxRemoteRefs + 1));
+    for (core::u32 at = 0; at <= MaxRemoteRefs; ++at)
+        flood.u32v(remoteNet.value);
+    flood.u32v(0);
+    REQUIRE_FALSE(match.clientTransport->send(match.toServer, flood.data, net::Delivery::Reliable, 0).has_value());
+    match.authority->receive(match.server.world, match.server.workspace);
+    CHECK(match.server.world.engineState().remoteInbox.empty());
 }

@@ -132,6 +132,7 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
 
     DWORD redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     (void)::WinHttpSetOption(exchange.value, WINHTTP_OPTION_REDIRECT_POLICY, &redirects, sizeof(redirects));
+    const Deadline deadline = deadlineAfter(request.timeoutMs);
     const int timeout = static_cast<int>(request.timeoutMs);
     (void)::WinHttpSetTimeouts(exchange.value, timeout, timeout, timeout, timeout);
 
@@ -175,6 +176,10 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
     // client's is.
     std::array<char, 8192> chunk{};
     while (true) {
+        // WinHTTP's timeouts are a read's; the request's is checked between
+        // them, so a stall costs at most one more read past it.
+        if (msLeft(deadline) == 0)
+            return core::makeError(ENG_TR("net.err.http_response_timeout"));
         DWORD read = 0;
         if (!::WinHttpReadData(exchange.value, chunk.data(), static_cast<DWORD>(chunk.size()), &read))
             return failure(::GetLastError(), request.url);

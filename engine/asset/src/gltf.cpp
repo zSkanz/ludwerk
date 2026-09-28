@@ -4,12 +4,15 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <fastgltf/core.hpp>
 #include <fastgltf/math.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <filesystem>
 #include <limits>
 #include <meshoptimizer.h>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -17,6 +20,7 @@
 #include <vector>
 
 #include "engine/asset/image.h"
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/text_key.h"
 
@@ -139,6 +143,48 @@ struct Staging
 [[nodiscard]] std::string describe(fg::Error error)
 {
     return std::string(fg::getErrorName(error)) + ": " + std::string(fg::getErrorMessage(error));
+}
+
+// The largest image file a model may name beside itself. A texture is tens of
+// megabytes at most; a file past this is not one.
+constexpr std::uintmax_t MaxExternalImageBytes = 256ull * 1024ull * 1024ull;
+
+// **Every file a document names beside itself, checked before any is read**
+// (audit F2): a relative path under the model's own folder -- never a drive, a
+// share, a `file://` or a `..` above it -- and no larger than it can be: a
+// buffer's declared length, an image's cap. A URI to anywhere else, or to a
+// file of gigabytes, would otherwise be opened and read whole by the parser.
+[[nodiscard]] bool externalFilesAllowed(const fg::Asset& asset, const std::filesystem::path& base)
+{
+    const auto allowed = [&base](const fg::URI& uri, std::uintmax_t limit) {
+        // Inline data, and a GLB's own binary chunk, which names no file.
+        if (uri.isDataUri() || uri.string().empty())
+            return true;
+        if (!uri.scheme().empty() || !uri.host().empty())
+            return false;
+        std::string relative(uri.path());
+        fg::URI::decodePercents(relative);
+        const std::optional<std::filesystem::path> file = core::resolveUnder(base, relative);
+        if (!file.has_value())
+            return false;
+        // A file that is not there fails the load with the parser's own error.
+        std::error_code error;
+        const std::uintmax_t size = std::filesystem::file_size(*file, error);
+        return error || size <= limit;
+    };
+    for (const fg::Buffer& buffer : asset.buffers) {
+        if (const auto* uri = std::get_if<fg::sources::URI>(&buffer.data)) {
+            if (!allowed(uri->uri, uri->fileByteOffset + buffer.byteLength))
+                return false;
+        }
+    }
+    for (const fg::Image& image : asset.images) {
+        if (const auto* uri = std::get_if<fg::sources::URI>(&image.data)) {
+            if (!allowed(uri->uri, MaxExternalImageBytes))
+                return false;
+        }
+    }
+    return true;
 }
 
 // The bytes a buffer actually holds, or nothing when the parser left it
@@ -1364,6 +1410,18 @@ std::optional<core::EngineError> importGltf(std::span<const std::byte> bytes,
     fg::Options parseOptions = fg::Options::LoadExternalBuffers | fg::Options::GenerateMeshIndices;
     if (!options.skeletonOnly)
         parseOptions |= fg::Options::LoadExternalImages;
+
+    // First without the files beside it, to see what it names (audit F2).
+    {
+        fg::Parser peek(fg::Extensions::KHR_materials_pbrSpecularGlossiness);
+        auto named = peek.loadGltf(data.get(), baseDirectory, fg::Options::None);
+        if (!named)
+            return core::makeError(ENG_TR("asset.gltf.err.parse_failed"), {}, describe(named.error()));
+        if (!externalFilesAllowed(named.get(), baseDirectory))
+            return core::makeError(ENG_TR("asset.gltf.err.external_file"));
+    }
+    // A GLB's chunks were read to the end by that pass.
+    data.get().reset();
 
     auto parsed = parser.loadGltf(data.get(), baseDirectory, parseOptions);
     if (!parsed)

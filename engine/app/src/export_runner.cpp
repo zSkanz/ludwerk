@@ -48,8 +48,7 @@ std::vector<std::string> CliCommand::command(const std::vector<std::string>& arg
     return out;
 }
 
-std::optional<CliCommand> locateCli(const std::filesystem::path& executableDir,
-                                    const std::filesystem::path& projectRoot)
+std::optional<CliCommand> locateCli(const std::filesystem::path& executableDir, const std::filesystem::path& repository)
 {
     std::error_code ec;
 #if defined(_WIN32)
@@ -62,9 +61,19 @@ std::optional<CliCommand> locateCli(const std::filesystem::path& executableDir,
     if (std::filesystem::exists(installed, ec) && std::filesystem::exists(executableDir / kLute, ec))
         return CliCommand{(executableDir / kLute).string(), installed, executableDir};
 
-    // A repository: the first ancestor of the host, then of the project, that
-    // holds the CLI -- with the `lute` on PATH, which rokit resolves from there.
-    for (const std::filesystem::path& start : {executableDir, projectRoot}) {
+    // **The repository this build came from, by name** (audit T1): its CLI,
+    // with the `lute` on PATH, which rokit resolves from there. Never a folder
+    // above the project -- a project is somebody's download, and a
+    // `tools/cli/main.luau` in it would be run unsandboxed the moment the Export
+    // window opened.
+    if (!repository.empty()) {
+        const std::filesystem::path script = repository / "tools" / "cli" / "main.luau";
+        if (std::filesystem::exists(script, ec))
+            return CliCommand{"lute", script, repository};
+    }
+
+    // Or the host's own ancestors: a build laid out inside its repository.
+    for (const std::filesystem::path& start : {executableDir}) {
         std::filesystem::path current = std::filesystem::weakly_canonical(start, ec);
         for (int depth = 0; depth < 12 && !current.empty(); ++depth) {
             const std::filesystem::path script = current / "tools" / "cli" / "main.luau";

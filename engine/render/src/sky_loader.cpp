@@ -8,6 +8,7 @@
 
 #include "engine/asset/content.h"
 #include "engine/asset/texture.h"
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/platform/file.h"
@@ -107,7 +108,8 @@ void SkyLoader::start(const scene::World& world, const Key& key)
             std::string_view relative = source.urn;
             if (relative.substr(0, kAssetScheme.size()) == kAssetScheme)
                 relative.remove_prefix(kAssetScheme.size());
-            source.path = contentRoot_ / std::filesystem::path(relative);
+            // Under `content/` or no file at all (audit F4).
+            source.path = core::resolveUnder(contentRoot_, relative).value_or(std::filesystem::path{});
         }
     }
 

@@ -357,3 +357,74 @@ TEST_CASE("SimTime advances with the tick and is what a script reads the clock f
     CHECK(fixture.world->engineState().tick == 30);
     CHECK(fixture.world->engineState().simTime == doctest::Approx(0.5).epsilon(1e-9));
 }
+
+TEST_CASE("a function that spawns itself stops at the nesting limit instead of overflowing the stack (audit S4)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    CHECK(fixture.failure(R"(
+        local depth = 0
+        local function again()
+            depth += 1
+            task.spawn(again)
+        end
+        again()
+        assert(depth >= 90 and depth <= 101, `stopped at {depth}`)
+        -- And the limit is a count of what is running now, not a total: the
+        -- next chain starts from nothing.
+        local second = 0
+        local function more()
+            second += 1
+            if second < 50 then
+                task.spawn(more)
+            end
+        end
+        more()
+        assert(second == 50, `the second chain stopped at {second}`)
+    )") == "");
+}
+
+TEST_CASE("a script that never yields is stopped by the watchdog, and the game goes on (audit S5)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    fixture.runtime->setWatchdog(0.0, 0.05);
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            while true do
+            end
+        end)
+        -- Reached only because the loop above was stopped.
+        workspace:SetAttribute("After", true)
+    )") == "");
+    CHECK(fixture.errors().find("script.err.script_timeout") != std::string::npos);
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("After") == true, "the script went on past the stopped thread")
+    )") == "");
+}
+
+TEST_CASE("the script heap stops at its cap with a keyed error, and the VM goes on (audit S8)")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    const std::size_t used = fixture.runtime->memoryInUse();
+    CHECK(used > 0);
+    fixture.runtime->setMemoryLimit(used + 8u * 1024u * 1024u);
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            local hoard = {}
+            for index = 1, 50000000 do
+                hoard[index] = { index }
+            end
+        end)
+        workspace:SetAttribute("Survived", true)
+    )") == "");
+    CHECK(fixture.errors().find("script.err.out_of_memory") != std::string::npos);
+    // What the thread held is garbage now, and a new script runs.
+    fixture.runtime->setMemoryLimit(0);
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Survived") == true)
+        local small = table.create(1000, 1)
+        assert(#small == 1000)
+    )") == "");
+}

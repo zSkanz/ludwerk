@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../generated/class_descriptors.gen.h"
+#include "engine/core/finite.h"
 #include "engine/physics/types.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/world.h"
@@ -643,7 +644,7 @@ bool setAttachmentCFrame(World& world, core::InstanceId id, const Value& value)
 {
     const auto* frame = std::get_if<core::CFrameD>(&value);
     AttachmentComponent* attachment = world.attachments().find(id);
-    if (frame == nullptr || attachment == nullptr)
+    if (frame == nullptr || attachment == nullptr || !core::isFinite(*frame))
         return false;
     attachment->cframe = *frame;
     return true;
@@ -1148,7 +1149,8 @@ bool setBasePartCFrame(World& world, core::InstanceId id, const Value& value)
 {
     const auto* cframe = std::get_if<core::CFrameD>(&value);
     PartComponent* part = writePart(world, id);
-    if (cframe == nullptr || part == nullptr)
+    // Finite, and a place a world has (audit E3).
+    if (cframe == nullptr || part == nullptr || !core::isFinite(*cframe) || !core::isWorldPosition(cframe->position))
         return false;
     part->cframe = *cframe;
     return true;
@@ -1167,7 +1169,7 @@ bool setBasePartPosition(World& world, core::InstanceId id, const Value& value)
 {
     const auto* position = std::get_if<core::Vec3>(&value);
     PartComponent* part = writePart(world, id);
-    if (position == nullptr || part == nullptr)
+    if (position == nullptr || part == nullptr || !core::isFinite(*position))
         return false;
     // Widened rather than replaced: the rotation is untouched, and the f32 the
     // script supplied becomes the f64 of record.
@@ -1191,7 +1193,7 @@ bool setBasePartOrientation(World& world, core::InstanceId id, const Value& valu
 {
     const auto* degrees = std::get_if<core::Vec3>(&value);
     PartComponent* part = writePart(world, id);
-    if (degrees == nullptr || part == nullptr)
+    if (degrees == nullptr || part == nullptr || !core::isFinite(*degrees))
         return false;
     part->cframe.rotation =
         core::fromEulerYxz(core::Vec3{static_cast<f32>(static_cast<f64>(degrees->x) * DegreesToRadians),
@@ -1210,7 +1212,7 @@ bool setBasePartSize(World& world, core::InstanceId id, const Value& value)
 {
     const auto* size = std::get_if<core::Vec3>(&value);
     PartComponent* part = writePart(world, id);
-    if (size == nullptr || part == nullptr)
+    if (size == nullptr || part == nullptr || !core::isFinite(*size))
         return false;
     part->size = *size;
     return true;
@@ -1690,7 +1692,7 @@ bool setWeldC0(World& world, core::InstanceId id, const Value& value)
 {
     const auto* cframe = std::get_if<core::CFrameD>(&value);
     WeldComponent* weld = writeWeld(world, id);
-    if (cframe == nullptr || weld == nullptr)
+    if (cframe == nullptr || weld == nullptr || !core::isFinite(*cframe))
         return false;
     weld->c0 = *cframe;
     return true;
@@ -1706,7 +1708,7 @@ bool setWeldC1(World& world, core::InstanceId id, const Value& value)
 {
     const auto* cframe = std::get_if<core::CFrameD>(&value);
     WeldComponent* weld = writeWeld(world, id);
-    if (cframe == nullptr || weld == nullptr)
+    if (cframe == nullptr || weld == nullptr || !core::isFinite(*cframe))
         return false;
     weld->c1 = *cframe;
     return true;

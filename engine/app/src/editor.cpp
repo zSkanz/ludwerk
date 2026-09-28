@@ -5,6 +5,7 @@
 #include <engine/app/editor.h>
 #include <engine/app/scene_definitions.h>
 #include <engine/asset/image.h>
+#include <engine/core/content_path.h>
 #include <engine/core/json.h>
 #include <engine/core/json_writer.h>
 #include <engine/platform/file.h>
@@ -1590,8 +1591,10 @@ scene::StampSource Editor::stampSource() const
     const std::filesystem::path root = m_content.root();
     const std::shared_ptr<std::unordered_map<std::string, std::string>> built = m_stampTexts;
     return [root, built](std::string_view stamp) -> std::optional<std::string> {
+        // Under `content/` or nothing (audit F5): the name is the scene's word.
+        const std::optional<std::filesystem::path> file = core::resolveUnder(root, stamp);
         std::string text;
-        if (!platform::readTextFile(root / std::filesystem::path(stamp), text))
+        if (!file.has_value() || !platform::readTextFile(*file, text))
             return std::nullopt;
         // The first reading is what the world was built from; a later one of
         // the same stamp is the same file unless something changed it, and

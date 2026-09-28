@@ -730,6 +730,7 @@ int main(int argc, char** argv)
         options.saveMaxSlotBytes = config.saveMaxSlotBytes;
         options.saveMaxSlots = config.saveMaxSlots;
         options.sceneCloseGrace = config.sceneCloseGrace;
+        options.scriptMemoryMb = config.scriptMemoryMb;
         options.developerWarnings =
             isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
         if (!options.conformanceRoot.empty()) {

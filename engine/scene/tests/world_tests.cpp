@@ -665,6 +665,33 @@ TEST_CASE("a destroyed instance cannot be re-parented")
     CHECK_FALSE(fixture.world.destroy(victim));
 }
 
+TEST_CASE("nothing can be parented under a destroyed instance, and retiring one leaves no stale link (audit E1)")
+{
+    Fixture fixture;
+    const InstanceId root = fixture.folder("Root");
+    const InstanceId doomed = fixture.folder("Doomed");
+    const InstanceId orphan = fixture.folder("Orphan");
+    const InstanceId twin = fixture.folder("Orphan");
+    REQUIRE_FALSE(fixture.world.setParent(doomed, root).has_value());
+    REQUIRE(fixture.world.destroy(doomed));
+
+    // Destroyed, not yet retired: still in the pool, and not a place.
+    const auto error = fixture.world.setParent(orphan, doomed);
+    REQUIRE(error.has_value());
+    CHECK(error->hash == ENG_TR("scene.err.parent_locked").hash);
+    CHECK_FALSE(fixture.world.parentOf(orphan).valid());
+
+    // After retirement the tree still reads: a same-name sibling walk and a
+    // child walk under the root find the live one and end.
+    fixture.world.retireDestroyed();
+    REQUIRE_FALSE(fixture.world.setParent(twin, root).has_value());
+    REQUIRE_FALSE(fixture.world.setParent(orphan, root).has_value());
+    CHECK(fixture.world.findFirstChild(root, fixture.atom("Orphan")).valid());
+    CHECK(fixture.world.childCount(root) == 2);
+    REQUIRE_FALSE(fixture.world.setParent(orphan, InstanceId{}).has_value());
+    CHECK(fixture.world.findFirstChild(root, fixture.atom("Orphan")) == twin);
+}
+
 // --- The change queue -------------------------------------------------------
 
 TEST_CASE("one reparent raises its fires in the documented order")

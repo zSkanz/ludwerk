@@ -1,6 +1,8 @@
 // What `http.cpp` shares with the platforms' HTTPS backends (ADR 0063).
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <span>
@@ -20,10 +22,31 @@ namespace engine::net {
 // value -- refused, and named.
 [[nodiscard]] std::optional<core::EngineError> checkHeader(const HttpHeader& header);
 
-// Reads a response that ends when the peer closes, bounded by `maxBodyBytes`.
-[[nodiscard]] std::optional<core::EngineError> readUntilClosed(
-    const std::function<std::optional<core::EngineError>(std::span<core::u8> chunk, core::usize& received)>& receive,
-    core::usize maxBodyBytes, std::string& raw);
+// **When an exchange must be over** (audit N1's review). `HttpRequest::timeoutMs`
+// is whole-request, and a read timeout alone let a server that sends a byte
+// inside each one hold a request for as long as it liked. Each exchange of a
+// redirect chain has its own, and the chain is bounded in hops.
+using Deadline = std::chrono::steady_clock::time_point;
+
+[[nodiscard]] inline Deadline deadlineAfter(core::u32 ms)
+{
+    return std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+}
+
+// Milliseconds left before `deadline`; zero once it has passed.
+[[nodiscard]] inline core::u32 msLeft(Deadline deadline)
+{
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+    return left <= 0 ? 0u : static_cast<core::u32>(std::min<long long>(left, 0xFFFFFFFFll));
+}
+
+// Reads a response that ends when the peer closes, bounded by `maxBodyBytes`
+// and by `deadline`: each read is given what is left of it.
+[[nodiscard]] std::optional<core::EngineError>
+readUntilClosed(const std::function<std::optional<core::EngineError>(std::span<core::u8> chunk, core::usize& received,
+                                                                     core::u32 waitMs)>& receive,
+                core::usize maxBodyBytes, std::string& raw, Deadline deadline);
 
 // One `https://` exchange on this platform's own TLS stack, following no
 // redirect (`performHttp` does). Verifies the certificate against the

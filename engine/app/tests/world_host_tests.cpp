@@ -2438,3 +2438,43 @@ TEST_CASE("the authority fires a client's click with its player only within reac
     host.tick();
     CHECK(log.contains("lever pulled by player 1"));
 }
+
+// --- Paths from scripts stay in the project (audit F5) ----------------------------
+
+TEST_CASE("require and LoadScene refuse a path that is not a path under the project (audit F5)")
+{
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    // A module a backslash spelling would reach on Windows, where the old check
+    // saw `src\shared\Secret` as one harmless segment.
+    project.write("src/shared/Secret.luau", "return 'the module'");
+    project.write("src/client/escape.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        for _, name in { "src\\shared\\Secret", "C:/Windows/win", "//host/share/x" } do
+            local ok = pcall(require, name)
+            print(`require {name} refused {not ok}`)
+        end
+        for _, path in { "C:/Windows/win.ini", "../outside.scene.json", "scenes\\b.scene.json", "//host/x.json" } do
+            local ok = pcall(function()
+                SceneService:LoadScene(path)
+            end)
+            print(`scene {path} refused {not ok}`)
+        end
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    host.tick();
+    CHECK(log.contains("require src\\shared\\Secret refused true"));
+    CHECK(log.contains("require C:/Windows/win refused true"));
+    CHECK(log.contains("require //host/share/x refused true"));
+    CHECK(log.contains("scene C:/Windows/win.ini refused true"));
+    CHECK(log.contains("scene ../outside.scene.json refused true"));
+    CHECK(log.contains("scene scenes\\b.scene.json refused true"));
+    CHECK(log.contains("scene //host/x.json refused true"));
+
+    // The host refuses it too, for a path that did not come through a script --
+    // an authority's scene a replica follows.
+    CHECK(host.loadScene("..\\..\\x.scene.json").has_value());
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+}

@@ -127,6 +127,29 @@ void UiText::setMounts(const asset::ContentMounts* mounts)
     ui::setImageProvider(mounts != nullptr ? &UiText::requestImageThunk : nullptr, this);
 }
 
+void UiText::refreshViews()
+{
+    for (core::usize slot = 0; slot < imageEntries_.size(); ++slot) {
+        Image& image = imageEntries_[slot];
+        if (!image.borrowed)
+            continue;
+        ViewPicture picture;
+        const bool drawn =
+            viewLookup_ && viewLookup_(std::string_view(image.urn).substr(7), picture) && picture.texture.valid();
+        const rhi::TextureHandle now = drawn ? picture.texture : rhi::TextureHandle{};
+        if (drawn) {
+            image.width = picture.width;
+            image.height = picture.height;
+        }
+        if (image.texture == now)
+            continue;
+        image.texture = now;
+        imagesChanged_ = true;
+        if (slot < images_.size())
+            images_[slot] = now;
+    }
+}
+
 bool UiText::requestImageThunk(void* user, std::string_view urn, ui::ResolvedImage& out)
 {
     return static_cast<UiText*>(user)->requestImage(urn, out);
@@ -156,6 +179,12 @@ bool UiText::requestImage(std::string_view urn, ui::ResolvedImage& out)
         if (!(entry->texture == picture.texture)) {
             entry->texture = picture.texture;
             imagesChanged_ = true;
+            // **Into the table at once**, not at the next `sync`: the frame
+            // copies the table before that, and the texture this replaces was
+            // destroyed when its view was remade -- a renderer given it binds a
+            // texture that is gone (the 26-security-cameras crash).
+            if (const auto slot = static_cast<core::usize>(entry - imageEntries_.begin()); slot < images_.size())
+                images_[slot] = picture.texture;
         }
         entry->width = picture.width;
         entry->height = picture.height;

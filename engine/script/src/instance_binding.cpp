@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "engine/core/finite.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
@@ -852,6 +853,9 @@ int methodApplyImpulse(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 impulse = checkVector3(L, 2);
+    // Finite, or refused (audit E3): the 2D one always checked.
+    if (!core::isFinite(impulse))
+        raise(L, ENG_TR("script.err.not_finite"));
 
     // Accumulated into the component and applied by the mirror at the start of
     // the next tick. A script may run at any point in the frame and the solver
@@ -1137,6 +1141,8 @@ int methodCharacterMove(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 direction = checkVector3(L, 2);
+    if (!core::isFinite(direction))
+        raise(L, ENG_TR("script.err.not_finite"));
 
     if (scene::CharacterBodyComponent* character = world(L).characterBodies().find(id); character != nullptr)
         character->moveDirection = direction;

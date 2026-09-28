@@ -13,6 +13,7 @@
 #include "engine/asset/primitives.h"
 #include "engine/asset/terrain_layers.h"
 #include "engine/asset/texture.h"
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
@@ -32,12 +33,16 @@ constexpr std::string_view kAssetScheme = "asset://";
 // URN with no scheme is taken as a path relative to the same root rather than
 // rejected: the error a developer gets from a mistyped scheme should be "no such
 // file", naming the path that was tried, and not a lecture about URNs.
+//
+// **Under the root or nowhere** (audit F4): a name that is not a path under it
+// -- a drive, a share, a `..` above it -- resolves to no file, and reads as
+// missing.
 [[nodiscard]] std::filesystem::path resolve(const std::filesystem::path& root, std::string_view urn)
 {
     std::string_view relative = urn;
     if (relative.substr(0, kAssetScheme.size()) == kAssetScheme)
         relative.remove_prefix(kAssetScheme.size());
-    return root / std::filesystem::path(relative);
+    return core::resolveUnder(root, relative).value_or(std::filesystem::path{});
 }
 
 // **sRGB for a colour, linear for data**, which is what the asset compiler

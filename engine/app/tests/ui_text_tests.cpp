@@ -198,3 +198,51 @@ TEST_CASE("tearing down while a picture is on its way in leaves nothing behind")
         text.sync(*fixture.device, *fixture.cmd);
     }
 }
+
+TEST_CASE("a view's picture remade in a frame is the one that frame draws (the 26-security-cameras crash)")
+{
+    // What `ViewHost` does when a camera texture's size changes: the old
+    // target destroyed, a new one made, in the frame's first half -- and the
+    // UI's table, handed to the renderer, has to name the new one in that same
+    // frame, or the renderer binds a destroyed texture.
+    Fixture fixture;
+    UiText text;
+    text.setMounts(&fixture.mounts);
+    rhi::TextureHandle current = fixture.device->createTexture(
+        {.format = rhi::TextureFormat::Rgba8Unorm, .usage = rhi::TextureUsage::Sampled, .width = 4, .height = 4});
+    bool drawing = true;
+    text.setViewLookup([&](std::string_view name, UiText::ViewPicture& out) {
+        if (!drawing || name != "Lobby")
+            return false;
+        out.texture = current;
+        out.width = 4;
+        out.height = 4;
+        return true;
+    });
+    REQUIRE(resolves(text, "view://Lobby"));
+    text.sync(*fixture.device, *fixture.cmd);
+    REQUIRE(text.images().size() == 1);
+    CHECK(text.images()[0] == current);
+
+    // Remade: the draw that asks for it again is answered with the new one,
+    // and so is the table, before anything else runs.
+    fixture.device->destroy(current);
+    current = fixture.device->createTexture(
+        {.format = rhi::TextureFormat::Rgba8Unorm, .usage = rhi::TextureUsage::Sampled, .width = 8, .height = 8});
+    REQUIRE(resolves(text, "view://Lobby"));
+    CHECK(text.images()[0] == current);
+
+    // Remade again with nothing asking this frame (a world's UI laid out once):
+    // the refresh after the views are made answers for it.
+    fixture.device->destroy(current);
+    current = fixture.device->createTexture(
+        {.format = rhi::TextureFormat::Rgba8Unorm, .usage = rhi::TextureUsage::Sampled, .width = 2, .height = 2});
+    text.refreshViews();
+    CHECK(text.images()[0] == current);
+
+    // And a view that stopped drawing names no texture at all.
+    drawing = false;
+    text.refreshViews();
+    CHECK_FALSE(text.images()[0].valid());
+    fixture.device->destroy(current);
+}

@@ -174,6 +174,7 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
     if (auto error = buildRequestWire(request, url, wire); error.has_value())
         return error;
 
+    const Deadline deadline = deadlineAfter(request.timeoutMs);
     TcpStream stream;
     if (auto error = stream.connect(url.host, url.port, request.timeoutMs); error.has_value())
         return error;
@@ -209,7 +210,9 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
     }
 
     std::string raw;
-    const auto receive = [&](std::span<u8> chunk, core::usize& received) -> std::optional<core::EngineError> {
+    const auto receive = [&](std::span<u8> chunk, core::usize& received,
+                             u32 waitMs) -> std::optional<core::EngineError> {
+        setTimeouts(socket, waitMs);
         const int got = ssl.read(connection.value, chunk.data(), static_cast<int>(chunk.size()));
         if (got > 0) {
             received = static_cast<core::usize>(got);
@@ -225,7 +228,7 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
         const I18nArg args[] = {{"url", request.url}, {"code", static_cast<core::i64>(why)}};
         return core::makeError(ENG_TR("net.err.https_failed"), args);
     };
-    if (auto error = readUntilClosed(receive, request.maxBodyBytes, raw); error.has_value())
+    if (auto error = readUntilClosed(receive, request.maxBodyBytes, raw, deadline); error.has_value())
         return error;
     return parseHttpResponse(raw, request.maxBodyBytes, response);
 }

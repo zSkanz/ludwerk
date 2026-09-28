@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "class_descriptors.gen.h"
+#include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
@@ -809,6 +810,10 @@ int sceneServiceLoadSceneAsync(lua_State* L)
     if (path.empty()) {
         const core::I18nArg args[] = {{"path", std::string_view{path}}};
         raise(L, ENG_TR("scene.err.scene_path_empty"), args);
+    }
+    if (!core::safeRelativePath(path).has_value()) {
+        const core::I18nArg args[] = {{"path", std::string_view{path}}};
+        raise(L, ENG_TR("scene.err.scene_path_invalid"), args);
     }
 
     bool activate = true;

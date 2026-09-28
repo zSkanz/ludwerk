@@ -104,3 +104,31 @@ TEST_CASE("the CLI is found beside an installed editor")
     CHECK(command[5] == "--status");
     std::filesystem::remove_all(root, ec);
 }
+
+TEST_CASE("a CLI inside the project, or above it, is never the one run (audit T1)")
+{
+    // A project that carries its own `tools/cli/main.luau` -- which the editor
+    // would run, unsandboxed, the moment the Export window opened.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "engine-cli-planted";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "project" / "tools" / "cli");
+    std::ofstream(root / "project" / "tools" / "cli" / "main.luau") << "-- not the engine's\n";
+    std::filesystem::create_directories(root / "bin");
+
+    std::filesystem::create_directories(root / "project" / "scenes");
+
+    // No installation beside the host, and the folder handed in holds no CLI:
+    // nothing found -- the project above it is not searched.
+    CHECK_FALSE(app::locateCli(root / "bin", root / "project" / "scenes").has_value());
+    CHECK_FALSE(app::locateCli(root / "bin", {}).has_value());
+
+    // The repository this build came from is found by name, not by searching
+    // above a project.
+    std::filesystem::create_directories(root / "repo" / "tools" / "cli");
+    std::ofstream(root / "repo" / "tools" / "cli" / "main.luau") << "-- the CLI\n";
+    const std::optional<app::CliCommand> cli = app::locateCli(root / "bin", root / "repo");
+    REQUIRE(cli.has_value());
+    CHECK(cli->script == root / "repo" / "tools" / "cli" / "main.luau");
+    std::filesystem::remove_all(root, ec);
+}

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include "engine/asset/terrain.h"
 
@@ -95,7 +96,10 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
     const double dirY = static_cast<double>(direction.y);
     const double dirZ = static_cast<double>(direction.z);
     const double length = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
-    if (!(length > 0.0) || !(maxDistance > 0.0)) {
+    // **Finite, or nothing** (audit E2): an infinite reach made the step NaN
+    // and the march never ended.
+    if (!std::isfinite(length) || !(length > 0.0) || !(maxDistance > 0.0) || std::isnan(maxDistance) ||
+        !std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z)) {
         return std::nullopt;
     }
     const DVec3 step{dirX / length, dirY / length, dirZ / length};
@@ -129,6 +133,48 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
     // leaves that chunk, less a voxel so a surface on its far side is not
     // stepped over.
     const double chunkMetres = voxel * static_cast<double>(ChunkEdge);
+
+    // **Only the stretch of the ray that crosses the field is marched** (audit
+    // E2): a direction of a million metres -- the usual way to ask for "as far
+    // as it goes" -- was a million chunk lookups through empty sky. The field's
+    // box is its chunks', and a ray that misses it misses the terrain.
+    if (field.chunks().empty())
+        return std::nullopt;
+    DVec3 boxLow{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                 std::numeric_limits<double>::max()};
+    DVec3 boxHigh{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(),
+                  std::numeric_limits<double>::lowest()};
+    for (const TerrainField::Entry& entry : field.chunks()) {
+        const DVec3 corner{static_cast<double>(entry.first.x) * chunkMetres,
+                           static_cast<double>(entry.first.y) * chunkMetres,
+                           static_cast<double>(entry.first.z) * chunkMetres};
+        boxLow = DVec3{std::min(boxLow.x, corner.x), std::min(boxLow.y, corner.y), std::min(boxLow.z, corner.z)};
+        boxHigh = DVec3{std::max(boxHigh.x, corner.x + chunkMetres), std::max(boxHigh.y, corner.y + chunkMetres),
+                        std::max(boxHigh.z, corner.z + chunkMetres)};
+    }
+    double enter = 0.0;
+    double leave = maxDistance;
+    const double starts[3] = {origin.x, origin.y, origin.z};
+    const double steps[3] = {step.x, step.y, step.z};
+    const double lows[3] = {boxLow.x - voxel, boxLow.y - voxel, boxLow.z - voxel};
+    const double highs[3] = {boxHigh.x + voxel, boxHigh.y + voxel, boxHigh.z + voxel};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(steps[axis]) < 1e-12) {
+            if (starts[axis] < lows[axis] || starts[axis] > highs[axis])
+                return std::nullopt;
+            continue;
+        }
+        double near = (lows[axis] - starts[axis]) / steps[axis];
+        double far = (highs[axis] - starts[axis]) / steps[axis];
+        if (near > far)
+            std::swap(near, far);
+        enter = std::max(enter, near);
+        leave = std::min(leave, far);
+    }
+    if (enter > leave)
+        return std::nullopt;
+    maxDistance = leave;
+
     const auto emptyAround = [&](double along) {
         const DVec3 p{origin.x + step.x * along, origin.y + step.y * along, origin.z + step.z * along};
         for (int corner = 0; corner < 8; ++corner) {
@@ -158,8 +204,8 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
         return along + std::max(exit, 0.0);
     };
 
-    double previousAlong = 0.0;
-    for (double along = marchStep; along <= maxDistance; along += marchStep) {
+    double previousAlong = enter;
+    for (double along = enter + marchStep; along <= maxDistance; along += marchStep) {
         if (emptyAround(along)) {
             // Landing inside ground is possible beside a perpendicular wall;
             // then the march just carries on in small steps from here.

@@ -29,8 +29,8 @@ using core::DVec3;
 using core::f32;
 using core::f64;
 using core::i32;
-using core::u64;
 using core::InstanceId;
+using core::u64;
 using core::Vec2;
 using core::Vec3;
 using scene::DetectorMessage;
@@ -378,8 +378,7 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
     const auto under = [&](Vec2 pixel) -> InstanceId {
         if (!view.valid())
             return {};
-        const std::optional<Hit> hit =
-            cast(services, view.rayThrough(pixel), PointerReach, characterOf(w, player));
+        const std::optional<Hit> hit = cast(services, view.rayThrough(pixel), PointerReach, characterOf(w, player));
         if (!hit.has_value() || !hit->instance.valid())
             return {};
         const InstanceId detector = detectorAbove(w, classes, hit->instance);
@@ -458,8 +457,7 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
             const Vec3 toward = core::toVec3(*anchor - origin);
             const f32 length = core::length(toward);
             if (length > 0.05f) {
-                const std::optional<Hit> hit =
-                    cast(services, Ray{origin, toward * (1.0f / length)}, length, character);
+                const std::optional<Hit> hit = cast(services, Ray{origin, toward * (1.0f / length)}, length, character);
                 const InstanceId parent = w.parentOf(id);
                 const bool own = hit.has_value() && hit->instance.valid() &&
                                  (hit->instance == parent || w.isAncestorOf(parent, hit->instance) ||

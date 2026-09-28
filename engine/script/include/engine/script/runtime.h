@@ -137,6 +137,16 @@ public:
     // events (ADR 0041). Called right after the simulation dispatch, so they
     // land in the same drain as the `InputAction` signals the same tick raised.
     void fireInputEvents(std::span<const input::RawInputEvent> events);
+
+    // **The watchdog** (audit S5): a resumption running past `warnSeconds` is
+    // warned about, and one past `killSeconds` is stopped with an error in its
+    // thread. 0 turns either off. The host sets it: 10 ms and 1 s where a
+    // person is testing, 5 s and no warning in an exported game.
+    void setWatchdog(core::f64 warnSeconds, core::f64 killSeconds) noexcept;
+    // **The script heap's cap** (audit S8), in bytes; 0 for none. May be set at
+    // any time: it bounds what is allocated from then on.
+    void setMemoryLimit(core::usize bytes) noexcept;
+    [[nodiscard]] core::usize memoryInUse() const noexcept;
     // Clicks and prompts (ADR 0126), from the same events, before scripts see
     // them.
     void stepDetectors(core::f64 dt, std::span<const input::RawInputEvent> events);
