@@ -931,6 +931,128 @@ TEST_CASE("a corrected character is stepped again from where the authority put i
     CHECK(match.client.world.parts().find(mine)->cframe.position.x <= 5.5 + 1e-9);
 }
 
+namespace {
+
+// A flat world, and a movement model that walks `walkSpeed` a second along x --
+// the one the authority steps too, so a replay that used the authority's speed
+// lands where the authority does.
+class FlatReplay final : public scene::ICharacterReplay
+{
+public:
+    FlatReplay(const scene::World& world, core::InstanceId& character) : m_world(world), m_character(character) {}
+
+    [[nodiscard]] std::optional<scene::CharacterCommand> lastCommand(core::InstanceId) const override
+    {
+        const scene::CharacterBodyComponent* body = m_world.characterBodies().find(m_character);
+        if (body == nullptr)
+            return std::nullopt;
+        scene::CharacterCommand command;
+        command.moveDirection = core::Vec3{1.0f, 0.0f, 0.0f};
+        command.walkSpeed = body->walkSpeed;
+        command.jumpSpeed = body->jumpSpeed;
+        command.dt = 1.0f / 60.0f;
+        return command;
+    }
+
+    [[nodiscard]] std::vector<core::CFrameD> replay(core::InstanceId, const scene::CharacterReplayStart& start,
+                                                    std::span<const scene::CharacterCommand> commands) override
+    {
+        std::vector<core::CFrameD> frames;
+        core::CFrameD at = start.transform;
+        for (const scene::CharacterCommand& command : commands) {
+            speeds.push_back(command.walkSpeed);
+            at.position.x += static_cast<double>(command.walkSpeed) * static_cast<double>(command.dt);
+            frames.push_back(at);
+        }
+        return frames;
+    }
+
+    std::vector<core::f32> speeds;
+
+private:
+    const scene::World& m_world;
+    core::InstanceId& m_character;
+};
+
+// Both ends' game: while "Move" is held, a character walks its own
+// `WalkSpeed` along x for a tick.
+void walk(scene::World& world, core::InstanceId character)
+{
+    const scene::CharacterBodyComponent* body = world.characterBodies().find(character);
+    if (body != nullptr)
+        world.parts().find(character)->cframe.position.x += static_cast<double>(body->walkSpeed) / 60.0;
+}
+
+} // namespace
+
+TEST_CASE("a character's speeds reach the replica that predicts it, so a faster walk is not a rollback")
+{
+    // **D205.** A server script set `WalkSpeed = 24`; the replica, which never
+    // heard, predicted at 16 and was corrected every snapshot -- the stutter a
+    // player felt as the game fighting them.
+    PlayedMatch match;
+    const core::InstanceId racer =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(racer.valid());
+    match.server.world.setName(racer, match.server.atoms.intern("Racer"));
+    match.server.world.parts().find(racer)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(racer, match.server.workspace).has_value());
+    scene::CharacterBodyComponent* authoritative = match.server.world.characterBodies().find(racer);
+    REQUIRE(authoritative != nullptr);
+    authoritative->walkSpeed = 24.0f;
+    authoritative->jumpSpeed = 11.0f;
+    authoritative->maxSlopeAngle = 30.0f;
+    authoritative->autoStepHeight = 0.25f;
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(3);
+    core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    // The four arrive -- on the replica's OWN character, whose motion state
+    // stays its own.
+    const scene::CharacterBodyComponent* predicted = match.client.world.characterBodies().find(mine);
+    REQUIRE(predicted != nullptr);
+    CHECK(predicted->walkSpeed == 24.0f);
+    CHECK(predicted->jumpSpeed == 11.0f);
+    CHECK(predicted->maxSlopeAngle == 30.0f);
+    CHECK(predicted->autoStepHeight == 0.25f);
+
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, true}};
+    const auto play = [&](int frames) {
+        for (int frame = 1; frame <= frames; ++frame) {
+            match.tick += 1;
+            match.authority->receive(match.server.world, match.server.workspace);
+            for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents) {
+                if (intent.pressed)
+                    walk(match.server.world, racer);
+            }
+            match.authority->send(match.server.world, match.server.workspace, match.tick);
+            if (frame % 4 == 0)
+                match.replica->receive(match.client.world, match.client.workspace);
+            walk(match.client.world, mine);
+            match.replica->sendIntent(match.client.world, match.tick);
+        }
+    };
+    play(60);
+    // Within a centimetre every tick: nothing to correct.
+    CHECK(match.replica->stats().corrections == 0);
+
+    // **The speed changes while commands are in flight.** The ones the
+    // authority has not answered yet were predicted at 24 and will be answered
+    // at 30 -- so they are replayed at 30, and the replica lands where the
+    // authority will put it.
+    match.server.world.characterBodies().find(racer)->walkSpeed = 30.0f;
+    play(60);
+    REQUIRE_FALSE(replay.speeds.empty());
+    CHECK(replay.speeds.back() == 30.0f);
+    const core::u64 settled = match.replica->stats().corrections;
+    play(60);
+    CHECK(match.replica->stats().corrections == settled);
+}
+
 TEST_CASE("another player's part is drawn between snapshots rather than stepping at their rate")
 {
     PlayedMatch match;

@@ -156,6 +156,72 @@ Key translateScancode(SDL_Scancode scancode) noexcept
         return Key::Up;
     case SDL_SCANCODE_DOWN:
         return Key::Down;
+    case SDL_SCANCODE_MINUS:
+        return Key::Minus;
+    case SDL_SCANCODE_EQUALS:
+        return Key::Equals;
+    case SDL_SCANCODE_LEFTBRACKET:
+        return Key::LeftBracket;
+    case SDL_SCANCODE_RIGHTBRACKET:
+        return Key::RightBracket;
+    case SDL_SCANCODE_BACKSLASH:
+        return Key::Backslash;
+    case SDL_SCANCODE_SEMICOLON:
+        return Key::Semicolon;
+    case SDL_SCANCODE_APOSTROPHE:
+        return Key::Quote;
+    case SDL_SCANCODE_GRAVE:
+        return Key::Backquote;
+    case SDL_SCANCODE_COMMA:
+        return Key::Comma;
+    case SDL_SCANCODE_PERIOD:
+        return Key::Period;
+    case SDL_SCANCODE_SLASH:
+        return Key::Slash;
+    case SDL_SCANCODE_CAPSLOCK:
+        return Key::CapsLock;
+    case SDL_SCANCODE_INSERT:
+        return Key::Insert;
+    case SDL_SCANCODE_PAGEUP:
+        return Key::PageUp;
+    case SDL_SCANCODE_PAGEDOWN:
+        return Key::PageDown;
+    case SDL_SCANCODE_NUMLOCKCLEAR:
+        return Key::NumLock;
+    case SDL_SCANCODE_KP_0:
+        return Key::Keypad0;
+    case SDL_SCANCODE_KP_1:
+        return Key::Keypad1;
+    case SDL_SCANCODE_KP_2:
+        return Key::Keypad2;
+    case SDL_SCANCODE_KP_3:
+        return Key::Keypad3;
+    case SDL_SCANCODE_KP_4:
+        return Key::Keypad4;
+    case SDL_SCANCODE_KP_5:
+        return Key::Keypad5;
+    case SDL_SCANCODE_KP_6:
+        return Key::Keypad6;
+    case SDL_SCANCODE_KP_7:
+        return Key::Keypad7;
+    case SDL_SCANCODE_KP_8:
+        return Key::Keypad8;
+    case SDL_SCANCODE_KP_9:
+        return Key::Keypad9;
+    case SDL_SCANCODE_KP_PERIOD:
+        return Key::KeypadPeriod;
+    case SDL_SCANCODE_KP_DIVIDE:
+        return Key::KeypadDivide;
+    case SDL_SCANCODE_KP_MULTIPLY:
+        return Key::KeypadMultiply;
+    case SDL_SCANCODE_KP_MINUS:
+        return Key::KeypadMinus;
+    case SDL_SCANCODE_KP_PLUS:
+        return Key::KeypadPlus;
+    case SDL_SCANCODE_KP_ENTER:
+        return Key::KeypadEnter;
+    case SDL_SCANCODE_KP_EQUALS:
+        return Key::KeypadEquals;
     default:
         return Key::Unknown;
     }
@@ -245,6 +311,39 @@ constexpr KeyNaming KeyNames[] = {
     {Key::Home, "Home"},
     {Key::End, "End"},
     {Key::Delete, "Delete"},
+    {Key::Minus, "Minus"},
+    {Key::Equals, "Equals"},
+    {Key::LeftBracket, "LeftBracket"},
+    {Key::RightBracket, "RightBracket"},
+    {Key::Backslash, "Backslash"},
+    {Key::Semicolon, "Semicolon"},
+    {Key::Quote, "Quote"},
+    {Key::Backquote, "Backquote"},
+    {Key::Comma, "Comma"},
+    {Key::Period, "Period"},
+    {Key::Slash, "Slash"},
+    {Key::CapsLock, "CapsLock"},
+    {Key::Insert, "Insert"},
+    {Key::PageUp, "PageUp"},
+    {Key::PageDown, "PageDown"},
+    {Key::NumLock, "NumLock"},
+    {Key::Keypad0, "Keypad0"},
+    {Key::Keypad1, "Keypad1"},
+    {Key::Keypad2, "Keypad2"},
+    {Key::Keypad3, "Keypad3"},
+    {Key::Keypad4, "Keypad4"},
+    {Key::Keypad5, "Keypad5"},
+    {Key::Keypad6, "Keypad6"},
+    {Key::Keypad7, "Keypad7"},
+    {Key::Keypad8, "Keypad8"},
+    {Key::Keypad9, "Keypad9"},
+    {Key::KeypadPeriod, "KeypadPeriod"},
+    {Key::KeypadDivide, "KeypadDivide"},
+    {Key::KeypadMultiply, "KeypadMultiply"},
+    {Key::KeypadMinus, "KeypadMinus"},
+    {Key::KeypadPlus, "KeypadPlus"},
+    {Key::KeypadEnter, "KeypadEnter"},
+    {Key::KeypadEquals, "KeypadEquals"},
 };
 
 // Every gamepad SDL reports is opened, because an unopened one produces no
@@ -686,6 +785,12 @@ void setTextInputEnabled(u32 windowId, bool enabled) noexcept
         (void)SDL_StartTextInput(window);
     else
         (void)SDL_StopTextInput(window);
+}
+
+bool textInputEnabled(u32 windowId) noexcept
+{
+    SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(windowId));
+    return window != nullptr && SDL_TextInputActive(window);
 }
 
 std::span<const Event> pumpEvents()

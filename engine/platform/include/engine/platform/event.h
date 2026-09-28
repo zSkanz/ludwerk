@@ -140,6 +140,41 @@ enum class Key : u16
     Home,
     End,
     Delete,
+    // The rest of the keyboard (D210), which `Enum.KeyCode` carries at its END
+    // -- as a second keyboard block, so nothing a game compares by value moved.
+    Minus,
+    Equals,
+    LeftBracket,
+    RightBracket,
+    Backslash,
+    Semicolon,
+    Quote,
+    Backquote,
+    Comma,
+    Period,
+    Slash,
+    CapsLock,
+    Insert,
+    PageUp,
+    PageDown,
+    NumLock,
+    Keypad0,
+    Keypad1,
+    Keypad2,
+    Keypad3,
+    Keypad4,
+    Keypad5,
+    Keypad6,
+    Keypad7,
+    Keypad8,
+    Keypad9,
+    KeypadPeriod,
+    KeypadDivide,
+    KeypadMultiply,
+    KeypadMinus,
+    KeypadPlus,
+    KeypadEnter,
+    KeypadEquals,
 
     // Not a key. The count is what sizes a keyboard snapshot, and having it
     // here is what stops that array from being a number somebody has to keep in
@@ -306,8 +341,10 @@ struct Event
 //
 // Off by default, and that is SDL's rule rather than ours: a game that never
 // asks pays no IME cost and, on a phone, gets no on-screen keyboard. `ui` turns
-// it on while a `TextInput` element holds focus and off again when it does not.
+// it on while a `TextInput` element holds focus and off again when it does not
+// (`app::TextInputFocus`, D204).
 void setTextInputEnabled(u32 windowId, bool enabled) noexcept;
+[[nodiscard]] bool textInputEnabled(u32 windowId) noexcept;
 
 // Drains the OS queue and returns this frame's translated events. The span is
 // owned by the module and stays valid until the next call, so a caller that

@@ -212,6 +212,44 @@ local CharacterBodyFields: { Schema.Field } = {
             .. "picks a clip from, and a replica that guessed it from velocity would guess wrong at "
             .. "every transition -- which is where a player looks.",
     },
+    -- **The four a prediction steps with** (D205). A
+    -- replica predicts its own character with ITS copy of these, and a server
+    -- script that set `WalkSpeed = 24` left every replica walking at 16 and
+    -- corrected every snapshot: a rollback the player felt as a stutter.
+    {
+        Name = "WalkSpeed",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "How fast the authority walks this character, and so how fast a replica must predict it "
+            .. "-- a prediction at any other speed is corrected every snapshot.",
+    },
+    {
+        Name = "JumpSpeed",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "The upward speed a jump starts at, for the same reason as `WalkSpeed`.",
+    },
+    {
+        Name = "MaxSlopeAngle",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "Which slopes the controller climbs. A replica that disagreed would predict walking up "
+            .. "a ramp the authority slides down.",
+    },
+    {
+        Name = "AutoStepHeight",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "Which ledges the controller steps up, for the same reason as `MaxSlopeAngle`.",
+    },
 }
 
 --- **`moveDirection` is deliberately absent**, and it is worth saying why here

@@ -141,7 +141,7 @@ struct RawInputEvent
 // that no device event names. `input.cpp` static_asserts the arithmetic against
 // the generated enum descriptor at registration, which is the check that keeps
 // this number honest.
-inline constexpr usize kKeyCodeCount = 103;
+inline constexpr usize kKeyCodeCount = 136;
 
 // Whether a `KeyCode` is one of the four virtual axes or the two composites over
 // them -- the ones `InputService:SetVirtualState` may write and nothing else

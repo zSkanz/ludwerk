@@ -398,6 +398,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Typing reaches a `TextInput` in an exported game**, and on a phone the
+  on-screen keyboard opens with it (D204).
+- **A client no longer fights the server over a character's speed**:
+  `WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight` replicate, and
+  a correction replays at the server's speeds (D205). Protocol version 20.
+- **Joining the same server again from a script is the same player**, with the
+  same `UserId` (D207).
+- **A server that vanishes is noticed in ten seconds**, not thirty;
+  `[network] timeout` in `project.toml` sets it (D208).
+- A headless client back in solo no longer reports an eighteen-trillion
+  millisecond frame, and waits for the clock again (D209, D213).
+- `Enum.KeyCode` has punctuation, Insert, PageUp, PageDown, CapsLock, NumLock
+  and the keypad, appended after the existing items (D210).
+- `ludwerk check` and `ludwerk fmt` skip `dist/`, and name the engine's
+  definitions as the engine's (D211, D212).
 - **Nothing a person made is lost or doubled by saving, moving or closing** (an
   audit of every way the editor writes, after the tester's report below):
   - The unsaved-changes dialog's **Save** saves everything unsaved -- the stamp,

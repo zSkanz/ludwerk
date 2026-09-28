@@ -89,6 +89,10 @@ struct ProjectConfig
     // server starts with no arguments.
     bool serverRole = false;
 
+    // `[network] timeout` -- seconds the other end may go silent before this
+    // machine says it is gone (D208). From 1 to 120; ten by default.
+    core::u32 networkTimeoutSeconds = 10;
+
     // **What the views may cost** (ADR 0107), `[render]`: how many camera
     // textures are drawn in one frame, the largest side one may have, and how
     // many sub-worlds may run. Settings rather than constants, because a

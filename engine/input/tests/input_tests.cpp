@@ -900,3 +900,25 @@ TEST_CASE("the mouse a system makes out of a finger is not a second input")
     CHECK(raw[0].userInputType == input::UserInputType::Touch);
     CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::Touch);
 }
+
+TEST_CASE("punctuation and the keypad are KeyCodes, appended after everything a game already held")
+{
+    // **D210.** A game could not bind a comma, a slash or the keypad at all.
+    Fixture fixture;
+    for (const char* name :
+         {"Minus",       "Equals",     "LeftBracket", "RightBracket", "Backslash",    "Semicolon",    "Quote",
+          "Backquote",   "Comma",      "Period",      "Slash",        "CapsLock",     "Insert",       "PageUp",
+          "PageDown",    "NumLock",    "Keypad0",     "Keypad9",      "KeypadPeriod", "KeypadDivide", "KeypadMultiply",
+          "KeypadMinus", "KeypadPlus", "KeypadEnter", "KeypadEquals"}) {
+        CAPTURE(name);
+        const core::i32 code = fixture.keyCode(name);
+        CHECK(code > fixture.keyCode("VirtualStick2"));
+        CHECK(input::keyCodeFromName(name) == code);
+        CHECK(input::keyCodeName(code) == name);
+        CHECK(input::deviceOf(code) == input::DeviceType::KeyboardMouse);
+    }
+    // Nothing that was there moved.
+    CHECK(fixture.keyCode("Delete") == 66);
+    CHECK(fixture.keyCode("VirtualStick2") == 102);
+    CHECK(fixture.keyCode("Minus") == 103);
+}

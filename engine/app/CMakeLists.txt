@@ -289,6 +289,8 @@ add_custom_command(TARGET engine_host POST_BUILD
 engine_add_module_tests(app
     SOURCES
         tests/pointer_ownership_tests.cpp
+        tests/frame_scheduler_tests.cpp
+        tests/text_input_focus_tests.cpp
         tests/preserved_tests.cpp
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp

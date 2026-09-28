@@ -52,6 +52,21 @@ A host and a server listen on port 7777; `--join=address:port` names another.
 `--join=` dials again if the connection drops; one that joined from a script
 hears `Disconnected` and decides for itself.
 
+**Joining the same server again is being the same player.** A machine keeps,
+for as long as it runs, who it was on each server it joined, and a script's
+`Join` to that address presents it: the server welcomes the player back with
+the `UserId` it had, so a score or an inventory keyed on it is still theirs. A
+game that wants to come back on its own calls `Join` from `Disconnected`.
+
+**A server that goes silent is gone after ten seconds**, whether it closed or
+a cable was pulled, and the same holds for a player a server stops hearing.
+`[network] timeout` in `project.toml` sets it, from 1 to 120 seconds:
+
+```toml
+[network]
+timeout = 5
+```
+
 ## Playing a match from the editor
 
 At the top of **Run and Debug** (`Ctrl+Shift+D`), and under the **Run** menu,

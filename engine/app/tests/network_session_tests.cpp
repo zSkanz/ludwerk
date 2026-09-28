@@ -175,3 +175,44 @@ TEST_CASE("a dedicated server cannot join, host or disconnect")
     server.frame();
     CHECK(log.contains("dedicated join:false host:false leave:false"));
 }
+
+TEST_CASE("a script that joins again after leaving is welcomed back as the same player")
+{
+    // **D207.** The command line's redial kept the player's token; a script's
+    // `Join` began a new session with none, and the server made a stranger of
+    // somebody it had just seen -- a new `UserId`, and a game that keyed a score
+    // on it lost the score.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        game:GetService("NetworkService"):Host(47102)
+    )");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local joins = 0
+        NetworkService.Connected:Connect(function()
+            joins += 1
+            print(`joined:{joins} user:{NetworkService.LocalPlayer.UserId}`)
+            if joins == 1 then
+                NetworkService:Disconnect()
+            end
+        end)
+        NetworkService.Disconnected:Connect(function()
+            if joins == 1 then
+                NetworkService:Join("memory:47102")
+            end
+        end)
+        NetworkService:Join("memory:47102")
+    )");
+    client.boot(wire);
+
+    run(server, client, 90);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("joined:1 user:2"));
+    CHECK(log.contains("joined:2 user:2"));
+    CHECK_FALSE(log.contains("joined:2 user:3"));
+}

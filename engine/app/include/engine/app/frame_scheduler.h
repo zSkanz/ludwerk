@@ -46,6 +46,30 @@ struct Frame
     bool clamped = false;
 };
 
+// **Which clock a frame reads** (D209, D213): the synthetic one -- one tick a
+// frame, as fast as the machine goes -- for a headless run that exists to
+// produce the same pixels on any runner, and the real one for everything else.
+//
+// **Once real, real for good.** A headless client that had joined a match and
+// left it used to go back to the synthetic clock: its frames ran flat out,
+// ticking hundreds of times a second, and the first of them measured a clock
+// that restarted from zero. A process that has had real time -- a network
+// session, a dev session, a window -- has somebody on the other end of it, and
+// a world that suddenly ran at a thousand ticks a second is not what either of
+// them saw.
+class FrameClock
+{
+public:
+    [[nodiscard]] bool synthetic(bool headless, bool devSession, bool networked) noexcept
+    {
+        m_real = m_real || !headless || devSession || networked;
+        return !m_real;
+    }
+
+private:
+    bool m_real = false;
+};
+
 class FrameScheduler
 {
 public:

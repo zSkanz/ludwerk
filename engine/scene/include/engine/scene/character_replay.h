@@ -37,6 +37,12 @@ struct CharacterReplayStart
     core::CFrameD transform;
     core::f32 verticalVelocity = 0.0f;
     bool grounded = false;
+    // The speeds the authority steps this character with, when the snapshot
+    // said. The commands a replay steps through are the ones the authority has
+    // not answered yet, and it will answer them at ITS speeds -- not at the
+    // ones this replica held when it predicted them (D205).
+    std::optional<core::f32> walkSpeed;
+    std::optional<core::f32> jumpSpeed;
 };
 
 class ICharacterReplay

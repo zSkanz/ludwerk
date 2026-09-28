@@ -31,9 +31,11 @@ local function collectLuau(root: string, ignore: { string }): { string }
     local files: { string } = {}
     local pending: { string } = { root }
 
+    -- A whole folder name, never a substring: `dist` ignores `dist/` and not
+    -- `src/distance.luau` (D211).
     local function ignored(candidate: string): boolean
-        for _, pattern in ignore do
-            if string.find(candidate, pattern, 1, true) ~= nil then
+        for _, segment in string.split(string.gsub(candidate, "\\", "/"), "/") do
+            if table.find(ignore, segment) ~= nil then
                 return true
             end
         end
@@ -123,6 +125,30 @@ local function forNewSolver(definition: string, scratch: string): string
     return target
 end
 
+--- `@engine` for `engine.d.luau`: what the analyser calls a definitions file
+--- when it says it loaded one.
+local function definitionName(path: string): string
+    local file = string.match(string.gsub(path, "\\", "/"), "([^/]+)$") or path
+    return string.match(file, "^(.-)%.d%.luau$") or string.match(file, "^(.-)%.luau$") or file
+end
+
+--- StyLua over the project minus the ignored folders, which it would otherwise
+--- walk into -- `dist/` above all (D211). Globs rather than a file list, which
+--- would outgrow a Windows command line on a large project.
+local function styluaCommand(prefix: { string }, path: string, ignore: { string }): { string }
+    local command = table.clone(prefix)
+    table.insert(command, "--glob=**/*.luau")
+    table.insert(command, "--glob=**/*.lua")
+    -- Declarations are not sources (see `collectLuau`), and an explicit glob
+    -- overrides a project's `.styluaignore`, which is where they were skipped.
+    table.insert(command, "--glob=!**/*.d.luau")
+    for _, folder in ignore do
+        table.insert(command, `--glob=!**/{folder}/**`)
+    end
+    table.insert(command, path)
+    return command
+end
+
 local function toolMissing(tool: string): boolean
     local probe = process.run({ tool, "--version" }, { stdio = "none" })
     return not probe.ok
@@ -150,7 +176,9 @@ local function run(options: Options): number
     local analyze: { string } = { "luau-lsp", "analyze", "--platform=standard", "--flag:LuauSolverV2=true" }
     local scratch = projectlib.joined(options.path, ".engine/check")
     for _, definition in options.definitions do
-        table.insert(analyze, `--definitions={forNewSolver(definition, scratch)}`)
+        -- Named after the file (`@engine`, `@scene`): unnamed, the analyser
+        -- announces every one under another platform's name (D212).
+        table.insert(analyze, `--definitions=@{definitionName(definition)}={forNewSolver(definition, scratch)}`)
     end
     for _, pattern in options.ignore do
         table.insert(analyze, `--ignore=**/{pattern}/**`)
@@ -165,7 +193,8 @@ local function run(options: Options): number
         return 1
     end
 
-    local formatted = process.run({ "stylua", "--check", options.path }, { stdio = "inherit" })
+    local formatted =
+        process.run(styluaCommand({ "stylua", "--check" }, options.path, options.ignore), { stdio = "inherit" })
     if not formatted.ok then
         print(tr("cli.check.err.stylua"))
         return 1
@@ -178,4 +207,6 @@ end
 return {
     run = run,
     collectLuau = collectLuau,
+    styluaCommand = styluaCommand,
+    definitionName = definitionName,
 }

@@ -30,6 +30,7 @@ public:
     {
         net::TransportConfig transport;
         transport.channels = ChannelCount;
+        transport.timeoutMs = m_config.timeoutMs;
         if (m_config.topology == Topology::Replica) {
             transport.port = 0;
             transport.maxPeers = 1;
@@ -39,6 +40,8 @@ public:
             if (auto error = m_transport->connect(m_config.address, m_config.port, authority); error.has_value())
                 return error;
             m_replica.emplace(*m_transport, authority);
+            if (m_config.token.valid())
+                m_replica->setPlayerToken(m_config.token);
             m_replica->setInterpolationDelay(m_config.interpolationDelayTicks);
             if (m_probe)
                 m_replica->setReferenceProbe(m_probe);
@@ -101,6 +104,7 @@ public:
             status.peerCount = m_replica->welcomed() ? 1 : 0;
             status.welcomed = m_replica->welcomed();
             status.lost = m_replica->lost();
+            status.token = m_replica->playerToken();
         }
         return status;
     }

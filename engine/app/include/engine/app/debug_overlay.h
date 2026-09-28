@@ -191,6 +191,9 @@ public:
     void setDrive(EditorDrive* drive) noexcept { drive_ = drive; }
     // True once the script's `quit` step has run.
     [[nodiscard]] bool driveAskedToQuit() const noexcept { return driveQuit_; }
+    // Whether one of the editor's own fields has the keyboard, so a game's
+    // `TextInput` letting go does not switch that field's typing off (D204).
+    [[nodiscard]] bool editorTyping() const noexcept;
 
     // **The next world is the same world rebuilt, so keep the Explorer as it
     // is.** The tree throws away which rows were expanded whenever the world

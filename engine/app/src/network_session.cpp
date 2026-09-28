@@ -97,6 +97,12 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     config.address = address;
     config.port = port;
     config.redial = redial;
+    m_tokenKey.clear();
+    if (topology == replication::Topology::Replica) {
+        m_tokenKey = address + ":" + std::to_string(port);
+        if (const auto known = m_tokens.find(m_tokenKey); known != m_tokens.end())
+            config.token = known->second;
+    }
     std::optional<core::EngineError> error;
     std::unique_ptr<net::ITransport> transport = m_transports ? m_transports() : net::createEnetTransport();
     m_replication = replication::createReplicationOver(std::move(transport), config, error);
@@ -198,6 +204,8 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     WorldHost* host = m_host();
 #if ENG_ENABLE_REPLICATION
     if (m_replication != nullptr) {
+        if (const replication::Status status = m_replication->status(); status.token.valid() && !m_tokenKey.empty())
+            m_tokens[m_tokenKey] = status.token;
         m_replication->shutdown();
         m_replication.reset();
     }

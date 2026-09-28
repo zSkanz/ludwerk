@@ -2323,6 +2323,11 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
             break;
         }
         commands.push_back(*sample.command);
+        // Answered at the authority's speeds, so replayed at them.
+        if (authoritative.walkSpeed.has_value())
+            commands.back().walkSpeed = *authoritative.walkSpeed;
+        if (authoritative.jumpSpeed.has_value())
+            commands.back().jumpSpeed = *authoritative.jumpSpeed;
     }
     if (complete) {
         const std::vector<core::CFrameD> frames = m_replay->replay(character, authoritative, commands);
@@ -2461,11 +2466,20 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                             start.verticalVelocity = asF32(entity.fields[other]);
                         else if (motion->name == "Grounded")
                             start.grounded = asBool(entity.fields[other]);
+                        else if (motion->name == "WalkSpeed")
+                            start.walkSpeed = asF32(entity.fields[other]);
+                        else if (motion->name == "JumpSpeed")
+                            start.jumpSpeed = asF32(entity.fields[other]);
                     }
                     reconcile(world, local->second, start);
                     m_reconciledAck = m_ackedIntent;
                 }
-                if (field != nullptr && field->pool == "characterBodies")
+                // The MOTION state is the local simulation's; the settings it
+                // steps with -- `WalkSpeed` and the rest -- are the authority's,
+                // and a replica that kept its own predicted at the wrong speed
+                // and was corrected every snapshot (D205).
+                if (field != nullptr && field->pool == "characterBodies" &&
+                    (field->name == "VerticalVelocity" || field->name == "Grounded" || field->name == "State"))
                     continue;
                 if (cframe)
                     continue;

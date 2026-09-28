@@ -4068,7 +4068,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(runContextDesc);
 
     // --- KeyCode ---
-    static std::array<EnumItemDesc, 103> keyCodeItems;
+    static std::array<EnumItemDesc, 136> keyCodeItems;
     keyCodeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Unknown"),
@@ -4583,6 +4583,171 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("VirtualStick2"),
             .value = 102,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Minus"),
+            .value = 103,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Equals"),
+            .value = 104,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LeftBracket"),
+            .value = 105,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RightBracket"),
+            .value = 106,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Backslash"),
+            .value = 107,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Semicolon"),
+            .value = 108,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Quote"),
+            .value = 109,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Backquote"),
+            .value = 110,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Comma"),
+            .value = 111,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Period"),
+            .value = 112,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Slash"),
+            .value = 113,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("CapsLock"),
+            .value = 114,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Insert"),
+            .value = 115,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("PageUp"),
+            .value = 116,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("PageDown"),
+            .value = 117,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("NumLock"),
+            .value = 118,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad0"),
+            .value = 119,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad1"),
+            .value = 120,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad2"),
+            .value = 121,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad3"),
+            .value = 122,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad4"),
+            .value = 123,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad5"),
+            .value = 124,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad6"),
+            .value = 125,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad7"),
+            .value = 126,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad8"),
+            .value = 127,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Keypad9"),
+            .value = 128,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadPeriod"),
+            .value = 129,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadDivide"),
+            .value = 130,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadMultiply"),
+            .value = 131,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadMinus"),
+            .value = 132,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadPlus"),
+            .value = 133,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadEnter"),
+            .value = 134,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeypadEquals"),
+            .value = 135,
             .docKey = {},
         },
     }};

@@ -251,6 +251,22 @@ using generated::Source;
             setI32(out, body->state);
             return true;
         }
+        if (field.name == "WalkSpeed") {
+            setF32(out, body->walkSpeed);
+            return true;
+        }
+        if (field.name == "JumpSpeed") {
+            setF32(out, body->jumpSpeed);
+            return true;
+        }
+        if (field.name == "MaxSlopeAngle") {
+            setF32(out, body->maxSlopeAngle);
+            return true;
+        }
+        if (field.name == "AutoStepHeight") {
+            setF32(out, body->autoStepHeight);
+            return true;
+        }
         return false;
     }
 
@@ -1078,6 +1094,22 @@ using generated::Source;
         }
         if (field.name == "State") {
             body->state = static_cast<core::i32>(asU32(value));
+            return true;
+        }
+        if (field.name == "WalkSpeed") {
+            body->walkSpeed = asF32(value);
+            return true;
+        }
+        if (field.name == "JumpSpeed") {
+            body->jumpSpeed = asF32(value);
+            return true;
+        }
+        if (field.name == "MaxSlopeAngle") {
+            body->maxSlopeAngle = asF32(value);
+            return true;
+        }
+        if (field.name == "AutoStepHeight") {
+            body->autoStepHeight = asF32(value);
             return true;
         }
         return false;

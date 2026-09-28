@@ -409,6 +409,27 @@ What this section used to hold, resolved, for whoever remembers it:
 
 ## Now
 
+**The owner's defect list of 2026-09-28**, ahead of the plan
+([`owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
+
+- [x] P0-1 **Typing reaches a `TextInput` in an exported game**, and a phone's
+      keyboard opens with it (D204).
+- [x] P0-2 **`WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight`
+      replicate**, and a correction replays at the server's speeds (D205,
+      protocol 20).
+- [ ] P1-3 `.Parent` of a destroyed instance raises (D206): an API decision,
+      brought to the owner with the proposal that `.Parent` alone read nil.
+- [x] P1-4 **A script's `Join` to the same server again is the same player**
+      (D207).
+- [x] P1-5 **A silent peer is gone in ten seconds**, `[network] timeout` (D208).
+- [x] P2-6 A headless client back in solo no longer measures an
+      eighteen-trillion millisecond frame (D209).
+- [x] P2-7 `Enum.KeyCode` has punctuation, the navigation keys and the keypad,
+      appended (D210).
+- [x] P2-8 `ludwerk check` and `fmt` skip `dist/` (D211).
+- [x] P2-9 The analyser names the engine's definitions `@engine` (D212).
+- [x] P2-10 A headless process that has had real time keeps it (D213).
+
 **Next: scenes, the server/client split, and export**, ADRs 0104, 0105 and
 0106, from one ledger:
 [`docs/briefs/export-and-server-kickoff.md`](docs/briefs/export-and-server-kickoff.md).

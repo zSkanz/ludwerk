@@ -307,6 +307,39 @@ Items are analogue or digital, and mixing them is the one mistake this enum make
 | `Virtual4` | 100 |  |
 | `VirtualStick1` | 101 | `Virtual1` and `Virtual2` as one Vector2 -- the source a `Direction2D` action binds for an on-screen thumbstick. The same relationship `LeftThumbstick` has to `LeftStickX` and `LeftStickY`, and the reason the virtual seam carries a value: design an on-screen BUTTON and the thumbstick does not fit later. |
 | `VirtualStick2` | 102 | `Virtual3` and `Virtual4` as one Vector2. |
+| `Minus` | 103 | **The rest of the keyboard, appended** (D210): punctuation, the navigation keys and the keypad, by their US-layout legend. At the END of the enum rather than in the keyboard block, so no item a game already compares by value moves; the resolver reaches them as a second keyboard block. |
+| `Equals` | 104 |  |
+| `LeftBracket` | 105 |  |
+| `RightBracket` | 106 |  |
+| `Backslash` | 107 |  |
+| `Semicolon` | 108 |  |
+| `Quote` | 109 |  |
+| `Backquote` | 110 |  |
+| `Comma` | 111 |  |
+| `Period` | 112 |  |
+| `Slash` | 113 |  |
+| `CapsLock` | 114 |  |
+| `Insert` | 115 |  |
+| `PageUp` | 116 |  |
+| `PageDown` | 117 |  |
+| `NumLock` | 118 |  |
+| `Keypad0` | 119 |  |
+| `Keypad1` | 120 |  |
+| `Keypad2` | 121 |  |
+| `Keypad3` | 122 |  |
+| `Keypad4` | 123 |  |
+| `Keypad5` | 124 |  |
+| `Keypad6` | 125 |  |
+| `Keypad7` | 126 |  |
+| `Keypad8` | 127 |  |
+| `Keypad9` | 128 |  |
+| `KeypadPeriod` | 129 |  |
+| `KeypadDivide` | 130 |  |
+| `KeypadMultiply` | 131 |  |
+| `KeypadMinus` | 132 |  |
+| `KeypadPlus` | 133 |  |
+| `KeypadEnter` | 134 |  |
+| `KeypadEquals` | 135 |  |
 
 ## Enum.LineJoinMode
 

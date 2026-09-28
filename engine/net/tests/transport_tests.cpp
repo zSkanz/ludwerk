@@ -292,3 +292,34 @@ TEST_CASE("a payload larger than one MTU arrives whole, on every delivery mode")
         CHECK(received == payload);
     }
 }
+
+TEST_CASE("a peer that goes silent is gone within the timeout, not thirty seconds later")
+{
+    // **D208.** A server that vanished -- closed without a word, as a crash or a
+    // pulled cable does -- took ENet's own default of up to thirty seconds to
+    // notice. The limit is the transport's setting now.
+    seedCatalog();
+    auto server = createEnetTransport();
+    auto client = createEnetTransport();
+    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2, .timeoutMs = 1000}).has_value());
+    REQUIRE_FALSE(client->open({.port = 0, .maxPeers = 4, .channels = 2, .timeoutMs = 1000}).has_value());
+    PeerId toServer;
+    REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
+    std::vector<TransportEvent> serverEvents;
+    std::vector<TransportEvent> clientEvents;
+    REQUIRE(pumpUntil(*server, *client, serverEvents, clientEvents, [&] {
+        return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
+    }));
+
+    // The server goes without saying so.
+    server->close();
+    clientEvents.clear();
+    bool gone = false;
+    // Four seconds of polling: past the one-second limit with room for a loaded
+    // runner, and well short of ENet's own five-second minimum.
+    for (int round = 0; round < 400 && !gone; ++round) {
+        REQUIRE_FALSE(client->poll(clientEvents, 10).has_value());
+        gone = has(clientEvents, TransportEvent::Kind::Disconnected);
+    }
+    CHECK(gone);
+}

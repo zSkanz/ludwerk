@@ -28,9 +28,9 @@
         "depend on what somebody else shipped this week, so it is off."
     ],
 
-    "luau-lsp.types.definitionFiles": [
-        "runtime/types/engine.d.luau"
-    ],
+    "luau-lsp.types.definitionFiles": {
+        "@engine": "runtime/types/engine.d.luau"
+    },
 
     "$comment.definitions": [
         "Declaration files describe globals; they are not sources. Without this the",

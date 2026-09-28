@@ -26,7 +26,12 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     // Monotonic clock, so this cannot go backwards -- but a paused debugger can
     // make it enormous, and treating that as real time would burn the catch-up
     // budget on the first frame after every breakpoint.
-    const u64 elapsedNs = nowNs - lastNs_;
+    //
+    // **Two clocks can**, and one did (D209): a headless client that left a
+    // match went from the real clock back to the synthetic one, which counts
+    // from zero, and `now - last` wrapped to eighteen trillion milliseconds.
+    // Time that went backwards is no time at all.
+    const u64 elapsedNs = nowNs > lastNs_ ? nowNs - lastNs_ : 0;
     lastNs_ = nowNs;
 
     frame.renderDt = static_cast<f64>(elapsedNs) / 1'000'000'000.0;

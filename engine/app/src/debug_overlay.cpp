@@ -14386,6 +14386,11 @@ void DebugOverlay::preserveExplorerOnNextWorld() noexcept
     g_keepExpansionOnce = true;
 }
 
+bool DebugOverlay::editorTyping() const noexcept
+{
+    return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantTextInput;
+}
+
 void DebugOverlay::captureLog()
 {
     ConsoleLog& log = console();
@@ -14483,6 +14488,11 @@ void DebugOverlay::setViews(const ViewHost* views) noexcept
 
 void DebugOverlay::preserveExplorerOnNextWorld() noexcept
 {}
+
+bool DebugOverlay::editorTyping() const noexcept
+{
+    return false;
+}
 
 void DebugOverlay::captureLog()
 {}

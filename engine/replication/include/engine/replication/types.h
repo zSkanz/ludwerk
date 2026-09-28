@@ -114,10 +114,17 @@ struct Config
     // are drawn, so there is a snapshot on each side of the moment shown
     // (ADR 0076). Zero applies each snapshot as it arrives.
     u32 interpolationDelayTicks = 4;
+    // How long the other end may go silent before it is gone, in
+    // milliseconds: `[network] timeout` (D208). See `TransportConfig`.
+    u32 timeoutMs = 10000;
     // A replica whose connection drops dials again (ADR 0085). False for a
     // join a script made (ADR 0106): the game hears `Disconnected` and decides
     // what next, rather than the engine deciding for it.
     bool redial = true;
+    // A replica: **the player it was on this server before** (D207), presented
+    // in the hello so a game that joins again after a drop is welcomed back as
+    // the same `UserId` rather than as a stranger. Invalid for a first join.
+    PlayerToken token;
 };
 
 // What a script can see, and every field is a `HostFact`: it describes the
@@ -137,6 +144,9 @@ struct Status
     // connection went and has not come back (ADR 0106).
     bool welcomed = false;
     bool lost = false;
+    // A replica: the player the authority welcomed it as, to present again on
+    // the next join to the same server (D207). Invalid until a welcome.
+    PlayerToken token;
 };
 
 // One tick's worth of what the module did, for the overlay and for a test that

@@ -810,3 +810,19 @@ TEST_CASE("a thread's CPU clock runs while it works and stops while it waits")
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     CHECK(static_cast<double>(engine::platform::threadCpuNs() - idleStart) < 10.0e6);
 }
+
+TEST_CASE("text input switches on and off for a window, which is what raises a phone's keyboard")
+{
+    // D204: the switch existed and nothing called it.
+    seedRealCatalog();
+    HeadlessPlatform platform;
+    EngineError error;
+    const auto window =
+        engine::platform::createWindow({.titleKey = ENG_TR("platform.window.title"), .visible = false}, &error);
+    REQUIRE_MESSAGE(window != nullptr, error.detail);
+    const engine::core::u32 id = engine::platform::windowId(*window);
+    engine::platform::setTextInputEnabled(id, true);
+    CHECK(engine::platform::textInputEnabled(id));
+    engine::platform::setTextInputEnabled(id, false);
+    CHECK_FALSE(engine::platform::textInputEnabled(id));
+}

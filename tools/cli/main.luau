@@ -37,7 +37,9 @@ local tr = catalog.tr
 -- Vendored trees and Lute's own typedefs. The second does not typecheck under
 -- the pinned luau-lsp for upstream reasons (M0 finding 2), and gating on it
 -- would fail for something that is not ours to fix.
-local DefaultIgnore = { "third_party", ".lute", "luau_packages", ".engine" }
+-- Folder NAMES, matched whole: `dist` is what `ludwerk build` writes, and a
+-- check that walked into it analysed every exported copy of the game (D211).
+local DefaultIgnore = { "third_party", ".lute", "luau_packages", ".engine", "dist" }
 
 --- `process.args` is not what its name suggests: it carries the script path as
 --- its first entry and keeps the `--` separator that was meant to end Lute's

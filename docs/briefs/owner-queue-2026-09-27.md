@@ -53,6 +53,29 @@ feature to be tried before anything new. What that sweep found:
       second says it cannot open it. A match tested from one folder always
       does this.
 
+### The owner's list of 2026-09-28
+
+Found by the owner building a multiplayer test and a snake game, outside the
+repository. Each was reproduced by running before it was fixed.
+
+- [x] P0-1 **Typing reaches a `TextInput` in an exported game**, and a phone's
+      keyboard opens with it (D204).
+- [x] P0-2 **`WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight`
+      replicate**, and a correction replays at the server's speeds (D205,
+      protocol 20).
+- [ ] P1-3 `.Parent` of a destroyed instance raises (D206): an API decision,
+      brought to the owner with the proposal that `.Parent` alone read nil.
+- [x] P1-4 **A script's `Join` to the same server again is the same player**
+      (D207).
+- [x] P1-5 **A silent peer is gone in ten seconds**, `[network] timeout` (D208).
+- [x] P2-6 A headless client back in solo no longer measures an
+      eighteen-trillion millisecond frame (D209).
+- [x] P2-7 `Enum.KeyCode` has punctuation, the navigation keys and the keypad,
+      appended (D210).
+- [x] P2-8 `ludwerk check` and `fmt` skip `dist/` (D211).
+- [x] P2-9 The analyser names the engine's definitions `@engine` (D212).
+- [x] P2-10 A headless process that has had real time keeps it (D213).
+
 ## Q1 — `UIGradient` and `UIStroke`, with the new features
 
 Both classes as the other platform ships them today, including the features it

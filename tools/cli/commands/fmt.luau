@@ -22,7 +22,7 @@ export type Options = {
 local function run(options: Options): number
     local files = check.collectLuau(options.path, options.ignore)
 
-    local result = process.run({ "stylua", options.path }, { stdio = "inherit" })
+    local result = process.run(check.styluaCommand({ "stylua" }, options.path, options.ignore), { stdio = "inherit" })
     if not result.ok then
         return 1
     end

@@ -23,8 +23,12 @@ constexpr i32 KeyboardCount = 66;
 // which is what makes `keyCodeOf` a subtraction rather than a table. Asserted
 // rather than assumed: a key added to one enum and not the other would silently
 // shift every gamepad code by one.
-static_assert(static_cast<i32>(platform::Key::Count) == KeyboardCount + 1,
-              "Enum.KeyCode's keyboard block and platform::Key must be the same list");
+// The rest of the keyboard (D210), at the END of the enum so no value a game
+// already held moved: `platform::Key` goes on past `Delete` with them, and
+// `Enum.KeyCode` carries them after the virtual block.
+constexpr i32 ExtraKeysCount = 33;
+static_assert(static_cast<i32>(platform::Key::Count) == KeyboardCount + ExtraKeysCount + 1,
+              "Enum.KeyCode's two keyboard blocks and platform::Key must be the same list");
 constexpr i32 MouseButtonFirst = KeyboardFirst + KeyboardCount; // 67
 constexpr i32 MouseButtonCount = 5;
 constexpr i32 MouseMovement = MouseButtonFirst + MouseButtonCount; // 72
@@ -44,6 +48,7 @@ constexpr i32 VirtualFirst = RightThumbstick + 1; // 97
 constexpr i32 VirtualCount = 4;
 constexpr i32 VirtualStick1 = VirtualFirst + VirtualCount; // 101
 constexpr i32 VirtualStick2 = VirtualStick1 + 1;           // 102
+constexpr i32 ExtraKeysFirst = VirtualStick2 + 1;          // 103
 
 // The axes, by name, so the two stick composites can find their halves.
 constexpr i32 LeftStickX = PadAxisFirst;
@@ -51,7 +56,7 @@ constexpr i32 LeftStickY = PadAxisFirst + 1;
 constexpr i32 RightStickX = PadAxisFirst + 2;
 constexpr i32 RightStickY = PadAxisFirst + 3;
 
-static_assert(VirtualStick2 + 1 == static_cast<i32>(kKeyCodeCount),
+static_assert(ExtraKeysFirst + ExtraKeysCount == static_cast<i32>(kKeyCodeCount),
               "the KeyCode ranges above must cover the whole enum with no gap");
 
 [[nodiscard]] constexpr bool inRange(i32 value, i32 first, i32 count) noexcept
@@ -62,6 +67,8 @@ static_assert(VirtualStick2 + 1 == static_cast<i32>(kKeyCodeCount),
 [[nodiscard]] i32 keyCodeOf(platform::Key key) noexcept
 {
     const auto raw = static_cast<i32>(key);
+    if (raw > KeyboardCount && raw <= KeyboardCount + ExtraKeysCount)
+        return ExtraKeysFirst + raw - KeyboardCount - 1;
     if (raw <= 0 || raw > KeyboardCount)
         return 0;
     // `platform::Key` counts from 1 after `Unknown`, and so does the keyboard
@@ -185,6 +192,8 @@ std::string_view keyCodeName(i32 keyCode) noexcept
 {
     if (inRange(keyCode, KeyboardFirst, KeyboardCount))
         return platform::keyName(static_cast<platform::Key>(keyCode - KeyboardFirst + 1));
+    if (inRange(keyCode, ExtraKeysFirst, ExtraKeysCount))
+        return platform::keyName(static_cast<platform::Key>(KeyboardCount + 1 + keyCode - ExtraKeysFirst));
     if (inRange(keyCode, MouseButtonFirst, MouseButtonCount))
         return platform::mouseButtonName(static_cast<platform::MouseButton>(keyCode - MouseButtonFirst + 1));
     if (inRange(keyCode, PadButtonFirst, PadButtonCount))

@@ -117,7 +117,7 @@ quality = "high"
 | `[project]` | `name` (becomes the built executable's name), `id` (reverse-DNS; groups taskbar buttons on Windows, and the Android package), `version` (`X.Y.Z`, stamped by every export), `company`, `icon` (one square PNG, 1024 pixels is best: every export makes its own sizes from it), `scene` |
 | `[window]` | `title`, `size` (or `width` and `height`), `fullscreen`, `resizable` |
 | `[dev]` | `port` — default 4560 |
-| `[network]` | `server` — where `NetworkService:Join()` goes with no address |
+| `[network]` | `server` — where `NetworkService:Join()` goes with no address; `timeout` — seconds a silent connection is kept, 10 by default |
 | `[assets]` | `content` — where the asset compiler reads from |
 | `[graphics]` | The quality family. See [Graphics quality settings](manual:rendering/quality) |
 | `[render]` | `max_views_per_frame`, `max_view_resolution` — what camera textures may cost. See [Views](manual:rendering/views) |

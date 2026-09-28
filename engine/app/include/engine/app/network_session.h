@@ -21,6 +21,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -105,6 +106,12 @@ private:
     core::u64 m_waited = 0;
     core::u64 m_joinTimeout = 600;
     std::string m_address;
+    // **Who this machine was on each server it joined** (D207), by
+    // `address:port`: a script's `Join` after a drop presents the same token,
+    // and the authority welcomes the same player back -- the `UserId` a game
+    // keyed a score on. Kept for the life of the process, never on disk.
+    std::map<std::string, replication::PlayerToken> m_tokens;
+    std::string m_tokenKey;
     // Whether this connection dials again when it drops: a command-line join
     // does, a script's does not.
     bool m_redial = true;

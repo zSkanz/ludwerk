@@ -115,6 +115,12 @@ struct TransportConfig
     // is per channel, and having exactly one is how a transport ends up with a
     // stall nobody can explain.
     u8 channels = 2;
+
+    // **How long a peer may go silent before it is gone** (D208), in
+    // milliseconds. ENet's own default waits up to thirty seconds, and a player
+    // whose server vanished watched a frozen world for all of them. Ten is long
+    // enough for a phone changing networks and short enough to say so.
+    u32 timeoutMs = 10000;
 };
 
 // **Poll-driven, never callback-driven**, and this is the R10 decision in the

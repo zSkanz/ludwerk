@@ -121,6 +121,7 @@ public:
             return core::makeError(ENG_TR("net.err.transport_peer_cap"), args);
         }
         m_channels = std::max<u8>(1, config.channels);
+        m_timeoutMs = std::max<u32>(1, config.timeoutMs);
         m_host = enet_host_create(bindTo, config.maxPeers, m_channels, 0, 0);
         if (m_host == nullptr) {
             const I18nArg args[] = {{"port", static_cast<core::i64>(config.port)}};
@@ -167,6 +168,7 @@ public:
             return core::makeError(ENG_TR("net.err.transport_no_peer_slot"), args);
         }
 
+        enet_peer_timeout(peer, 0, m_timeoutMs, m_timeoutMs);
         outPeer = track(peer);
         return std::nullopt;
     }
@@ -226,6 +228,9 @@ public:
             wait = 0;
             switch (event.type) {
             case ENET_EVENT_TYPE_CONNECT:
+                // A peer that dialled in is held to the same silence limit as
+                // one this host dialled.
+                enet_peer_timeout(event.peer, 0, m_timeoutMs, m_timeoutMs);
                 // Every field named, empty ones included. Clang counts a skipped
                 // designator as a missing initializer under `-Werror`, and the
                 // Tier-2 build is where that is discovered.
@@ -291,6 +296,7 @@ private:
 
     ENetHost* m_host = nullptr;
     u8 m_channels = 2;
+    u32 m_timeoutMs = 10000;
     // Ids start at one, so a default-constructed `PeerId` is never a peer.
     u32 m_nextId = 1;
     std::unordered_map<u32, ENetPeer*> m_peers;

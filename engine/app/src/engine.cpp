@@ -59,6 +59,7 @@
 #include "engine/app/streaming_host.h"
 #include "engine/app/terrain_cells.h"
 #include "engine/app/terrain_overlay.h"
+#include "engine/app/text_input_focus.h"
 #include "engine/app/thumbnails.h"
 #include "engine/app/ui_text.h"
 #include "engine/app/view_host.h"
@@ -1567,11 +1568,30 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         writer.endObject();
         control.post(writer.text());
     };
+    // Every `sample` whose tick the world has reached, answered with the tick
+    // it is at (D214).
+    const auto answerSamples = [&] {
+        if (pendingSamples.empty())
+            return;
+        const u64 tick = host->world().engineState().tick;
+        const u64 hash = host->world().worldHash();
+        std::erase_if(pendingSamples, [&](const PendingSample& sample) {
+            if (sample.tick > tick)
+                return false;
+            replyOk("sample", sample.id, [tick, hash](core::JsonWriter& writer) {
+                writer.field("tick", tick);
+                writer.field("hash", hash);
+            });
+            return true;
+        });
+    };
 
     render::RenderWorld snapshot;
 
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
     bool quit = false;
+    TextInputFocus textInputFocus;
+    FrameClock frameClock;
 
     while (!quit) {
         if (options.frames != 0 && scheduler.totalFrames() >= options.frames)
@@ -1611,7 +1631,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // reason and a stronger one: a peer on another machine is ticking in
         // real time, and a server that simulated as fast as it could would be
         // an hour ahead of its players in a minute.
-        const bool syntheticClock = options.headless && options.devControlUrl.empty() && !network.active();
+        const bool syntheticClock =
+            frameClock.synthetic(options.headless, !options.devControlUrl.empty(), network.active());
         const u64 nowNs = syntheticClock ? scheduler.totalFrames() * headlessStepNs : platform::nowNs();
 
         const Frame frame = scheduler.beginFrame(nowNs);
@@ -3515,6 +3536,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             host->tick();
             network.send();
             network.sendMessages();
+            // **Answered at the tick, not at the frame** (D214): a loaded
+            // machine runs several ticks a frame, and a sample asked for tick
+            // 240 came back from 241 because the frame went from 239 past it.
+            answerSamples();
         }
         // A frame that ran no tick still services the connection: a paused
         // editor, or a frame that arrived early, must not look like a peer
@@ -3841,19 +3866,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             drawChunkGrid(streaming, editor.cameraCFrame().position.y, debugDraw);
         }
 
-        if (!pendingSamples.empty()) {
-            const u64 tick = host->world().engineState().tick;
-            const u64 hash = host->world().worldHash();
-            std::erase_if(pendingSamples, [&](const PendingSample& sample) {
-                if (sample.tick > tick)
-                    return false;
-                replyOk("sample", sample.id, [tick, hash](core::JsonWriter& writer) {
-                    writer.field("tick", tick);
-                    writer.field("hash", hash);
-                });
-                return true;
-            });
-        }
+        // A tick already past when the request arrived is answered with the
+        // tick it is now, which is what the sample's `tick` field says.
+        answerSamples();
 
         if (host->shutdownRequested())
             quit = true;
@@ -3989,7 +4004,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 case platform::EventType::KeyDown:
                     if (event.key == platform::Key::Backspace)
                         uiBackspace = true;
-                    else if (event.key == platform::Key::Return)
+                    else if (event.key == platform::Key::Return || event.key == platform::Key::KeypadEnter)
                         uiSubmit = true;
                     else if (event.key == platform::Key::Delete)
                         uiForwardDelete = true;
@@ -4400,6 +4415,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // `TextInput` eats the keys, so typing into a chat box does not also
             // drive the character.
             host->input().setKeyboardCapturedByUi(uiResult.textInputFocused);
+            // And the platform asked for the characters, which nothing did
+            // (D204): on a phone this is what raises the keyboard.
+            if (window != nullptr) {
+                const bool editorTyping = overlay.has_value() && overlay->editorTyping();
+                if (const std::optional<bool> typing = textInputFocus.follow(uiResult.textInputFocused, editorTyping))
+                    platform::setTextInputEnabled(platform::windowId(*window), *typing);
+            }
 
             ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
             // Index 0 is "no texture" and every entry after it is a texture the

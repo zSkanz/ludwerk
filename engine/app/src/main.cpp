@@ -714,6 +714,7 @@ int main(int argc, char** argv)
         options.windowTitle = config.windowTitle;
         options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
+        options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxViewResolution = config.maxViewResolution;
         options.maxSubWorlds = config.maxSubWorlds;
