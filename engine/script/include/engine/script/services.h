@@ -37,6 +37,7 @@
 #include "engine/scene/skeleton_host.h"
 #include "engine/script/animation.h"
 #include "engine/script/binding.h"
+#include "engine/script/content_provider.h"
 #include "engine/script/reload_state.h"
 #include "engine/script/save_store.h"
 #include "engine/script/scenes.h"
@@ -166,6 +167,9 @@ public:
     // Scenes as scripts see them: which is open, `scene:BindToClose`, and the
     // two mailboxes (ADR 0124).
     SceneState scenes;
+
+    // `ContentProvider:PreloadAsync` (ADR 0131 §3): the calls parked on it.
+    PreloadState preloads;
 
     std::vector<ChildWaiter> childWaiters;
 

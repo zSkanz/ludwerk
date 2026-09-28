@@ -379,7 +379,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_sceneCloseGrace = options.sceneCloseGrace;
     m_prepareInBackground = !options.headless;
     m_warmContent = options.warmContent;
-    m_warmProgress = options.warmProgress;
+    m_warmedContent = options.warmedContent;
     m_runtime.emplace(*m_world);
     m_runtime->setSaveStore(m_saves.get());
     if (std::optional<core::EngineError> error = m_runtime->boot(); error.has_value())
@@ -1159,6 +1159,14 @@ void WorldHost::tick()
     m_runtime->drain(core::Phase::PostSimulation);
 
     m_runtime->resumeTimers();
+    // Preloads (ADR 0131 §3): what scripts asked for handed to the loader, and
+    // every call whose content has arrived resumed -- beside the timers, so
+    // what it defers drains at `Heartbeat`.
+    if (std::vector<std::string> wanted = script::takePreloadContent(m_runtime->state()); !wanted.empty()) {
+        if (m_warmContent)
+            m_warmContent(*m_world, wanted);
+    }
+    script::resumePreloads(m_runtime->state(), [this](std::string_view content) { return contentState(content); });
     m_runtime->firePhase(core::Phase::Heartbeat, state.fixedTimestep);
     m_runtime->drain(core::Phase::Heartbeat);
 
@@ -1236,6 +1244,35 @@ bool WorldHost::applyPendingScene()
     return true;
 }
 
+script::ContentState WorldHost::contentState(std::string_view content)
+{
+    if (m_warmedContent) {
+        if (const std::optional<bool> warmed = m_warmedContent(*m_world, content); warmed.has_value())
+            return *warmed ? script::ContentState::Loaded : script::ContentState::Failed;
+        // On its way, or not a kind the loader warms: which is it?
+        const bool loaderKind = content.ends_with(".gltf") || content.ends_with(".glb") || content.ends_with(".png") ||
+                                content.ends_with(".jpg") || content.ends_with(".jpeg") || content.ends_with(".ktx2");
+        if (loaderKind)
+            return script::ContentState::Pending;
+    }
+    // A sound is opened and its length read, which is what a voice needs first.
+    if (content.ends_with(".ogg") || content.ends_with(".wav") || content.ends_with(".mp3") ||
+        content.ends_with(".flac"))
+        return m_audio.clipDuration(content) > 0.0 ? script::ContentState::Loaded : script::ContentState::Failed;
+    // Anything else, and everything in a run that draws nothing: found or not.
+    if (m_mounts != nullptr)
+        return m_mounts->resolve(content).source != asset::ResolvedContent::Source::Missing
+                   ? script::ContentState::Loaded
+                   : script::ContentState::Failed;
+    std::string_view relative = content;
+    if (relative.starts_with("asset://"))
+        relative.remove_prefix(8);
+    std::error_code error;
+    return std::filesystem::exists(m_root / "content" / std::filesystem::path(std::string(relative)), error)
+               ? script::ContentState::Loaded
+               : script::ContentState::Failed;
+}
+
 void WorldHost::dropPrepared()
 {
     if (!m_prepared.has_value())
@@ -1244,8 +1281,7 @@ void WorldHost::dropPrepared()
     if (m_prepared->task != nullptr && m_prepared->task->handle.valid() &&
         !m_prepared->task->done.load(std::memory_order_acquire))
         jobs::wait(m_prepared->task->handle);
-    if (m_prepared->warming && m_warmContent && m_world.has_value())
-        m_warmContent(*m_world, {});
+    m_preparedContent.clear();
     m_prepared.reset();
 }
 
@@ -1295,10 +1331,20 @@ void WorldHost::stepSceneLoad()
         // Parsed: half. Then what it names, as it arrives.
         if (!m_prepared->warming) {
             m_prepared->warming = true;
+            m_preparedContent = scene::sceneContent(*task.parsed);
             if (m_warmContent)
-                m_warmContent(*m_world, scene::sceneContent(*task.parsed));
+                m_warmContent(*m_world, m_preparedContent);
         }
-        const core::f64 warmed = m_warmProgress ? std::clamp(m_warmProgress(), 0.0, 1.0) : 1.0;
+        // What the loader was handed and has not yet answered for; a name it
+        // does not load (a sound, a material) answers at once.
+        core::usize arrived = 0;
+        for (const std::string& content : m_preparedContent) {
+            if (!m_warmedContent || m_warmedContent(*m_world, content).has_value())
+                ++arrived;
+        }
+        const core::f64 warmed = m_preparedContent.empty() ? 1.0
+                                                           : static_cast<core::f64>(arrived) /
+                                                                 static_cast<core::f64>(m_preparedContent.size());
         script::setSceneLoadProgress(L, 0.5 + 0.5 * warmed);
         if (warmed < 1.0)
             return;

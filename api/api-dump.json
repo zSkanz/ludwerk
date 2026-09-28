@@ -681,6 +681,40 @@
       "Events": []
     },
     {
+      "Name": "ContentProvider",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "RequestQueueSize",
+          "Type": "number",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "PreloadAsync",
+          "Parameters": [
+            {
+              "Name": "items",
+              "Type": "{ string | Instance }"
+            },
+            {
+              "Name": "callback",
+              "Type": "((item: string | Instance, status: Enum.AssetFetchStatus) -> ())?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "DataModel",
       "Extends": "Instance",
       "Tags": ["NotCreatable"],
@@ -8167,6 +8201,19 @@
         },
         {
           "Name": "Contextual",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "AssetFetchStatus",
+      "Items": [
+        {
+          "Name": "Failure",
+          "Value": 1
+        },
+        {
+          "Name": "Success",
           "Value": 0
         }
       ]

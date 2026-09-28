@@ -120,9 +120,21 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F8 — preloading (ADR 0131 §3)
 
-- [ ] `ContentProvider:PreloadAsync(items, callback)` and `RequestQueueSize`,
-  on the warming path of A2c (ADR 0125).
-- [ ] Tests: preloaded assets are resident; the callback reports each.
+- [x] `ContentProvider:PreloadAsync(items, callback)` and `RequestQueueSize`,
+  on the warming path of A2c (ADR 0125): meshes and pictures through the mesh
+  loader's warm lists (`warmMeshes`, `warmTextures`), a sound by opening it and
+  reading its length, anything else by whether it resolves. An instance item
+  is every `asset://` its properties and its descendants' name.
+  `Enum.AssetFetchStatus` (`Success`, `Failure`) appended at the end.
+  **Not yet:** ADR 0125's budget (`[scene] max_prepared_bytes`), which A2c did
+  not build either.
+- [x] Tests: the callback reports each item (a found mesh, a missing one, an
+  instance's picture) and the call resumes once all have; `RequestQueueSize`
+  reads 0 after; a bad item is a keyed error. Headless, where nothing draws, so
+  "resident" is "resolves" there; a windowed run answers from the libraries.
+- A new service moves every determinism trace at tick zero (the hash covers
+  every instance): re-recorded with `engine-host --replay=tests/determinism
+  --record-replay`.
 
 ## Findings
 

@@ -25,6 +25,15 @@ What a `UIStroke` outlines.
 | `Contextual` | 0 | The text of a text object; the border of anything else. |
 | `Border` | 1 | The element's border, even on a text object. |
 
+## Enum.AssetFetchStatus
+
+How an item of `ContentProvider:PreloadAsync` ended.
+
+| Item | Value | Description |
+|---|---|---|
+| `Success` | 0 | Everything it names is loaded. |
+| `Failure` | 1 | Something it names could not be found or read. |
+
 ## Enum.AutomaticSize
 
 Which axes a `UIObject` sizes to fit its contents on, overriding that half of `Size` (§2.2). Text and lists are what need it: a label whose box is smaller than its words is the commonest UI defect there is.

@@ -153,6 +153,9 @@ end
 declare extern type EnumSceneLoadStatus extends EnumItem with
 end
 
+declare extern type EnumAssetFetchStatus extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2470,6 +2473,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
     function GetService(self, name: "TeamService"): TeamService
+    function GetService(self, name: "ContentProvider"): ContentProvider
     function GetService(self, name: "SceneService"): SceneService
     function GetService(self, name: "ServerStorage"): ServerStorage
     function GetService(self, name: "NetworkService"): NetworkService
@@ -2666,6 +2670,17 @@ declare extern type Team extends Instance with
     AutoAssign: boolean
     --- Every player on this team, in the order they joined.
     function GetPlayers(self): { Player }
+end
+
+declare extern type ContentProvider extends Instance with
+    --- How many of the assets `PreloadAsync` was asked for are still on their way.
+    read RequestQueueSize: number
+    --- Loads every item and yields until each has arrived or failed. An item is a content name, such as
+    --- `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name.
+    --- `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`.
+    --- Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything
+    --- else is found or not.
+    function PreloadAsync(self, items: { string | Instance }, callback: ((item: string | Instance, status: EnumAssetFetchStatus) -> ())?): ()
 end
 
 declare extern type SceneService extends Instance with
@@ -3686,6 +3701,11 @@ declare Enum: {
         Failed: EnumSceneLoadStatus,
         Cancelled: EnumSceneLoadStatus,
         GetEnumItems: (self: any) -> { EnumSceneLoadStatus },
+    },
+    AssetFetchStatus: {
+        Success: EnumAssetFetchStatus,
+        Failure: EnumAssetFetchStatus,
+        GetEnumItems: (self: any) -> { EnumAssetFetchStatus },
     },
 }
 

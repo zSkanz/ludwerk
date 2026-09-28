@@ -16,6 +16,7 @@
 #include "engine/scene/ragdoll_build.h"
 #include "engine/scene/scene_file.h"
 #include "engine/scene/world.h"
+#include "engine/script/content_provider.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/materials.h"
 #include "engine/script/remote.h"
@@ -170,7 +171,8 @@ int instanceIndex(lua_State* L)
 
     // A callback is a member too (ADR 0079), and a script reads back the
     // function it assigned.
-    if (remoteCallbackGet(L, id, key) || saveCallbackGet(L, id, key) || sceneMemberGet(L, id, key))
+    if (remoteCallbackGet(L, id, key) || saveCallbackGet(L, id, key) || sceneMemberGet(L, id, key) ||
+        contentProviderMemberGet(L, id, key))
         return 1;
 
     // **Then a child by that name** (ADR 0078, reversing 0061 on the owner's

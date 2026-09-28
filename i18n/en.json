@@ -493,6 +493,7 @@
   "script.err.save_too_many_slots": "A game keeps at most {limit} slots ([save] max_slots).",
   "script.err.save_value": "A save cannot hold {valueType}: it holds strings, numbers, booleans, vectors, CFrames, Color3s, Vector2s, UDims, UDim2s, Rects, sequences and tables of them.",
   "script.err.scene_closed": "Scene {scene} has closed: nothing bound to it would ever run. scene is always the scene open now.",
+  "script.err.preload_item": "PreloadAsync takes a list of content names, such as \"asset://models/tree.gltf\", and instances.",
   "script.err.scene_load_over": "The load of {path} has ended -- it failed or was cancelled -- so there is nothing to activate.",
   "script.err.scene_load_options": "LoadSceneAsync takes options as { Activate: boolean?, Data: any? }.",
   "script.err.message_topic": "A message topic is a name: a string that is not empty.",

@@ -588,6 +588,15 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
             load(type.bottomTexture, true);
         }
     });
+    // Pictures wanted before anything shows them (ADR 0131): as colour, which
+    // is what a picture a script names is -- a material's maps come with it.
+    for (const core::NameAtom image : warmTextures_)
+        load(image, true);
+    std::erase_if(warmTextures_, [&](core::NameAtom image) {
+        return library.find(image).valid() ||
+               std::binary_search(failed_.begin(), failed_.end(), image,
+                                  [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+    });
 
     return loaded;
 }
@@ -876,25 +885,44 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
     // A foliage layer's meshes (ADR 0116), from the same feed and the same
     // budget: a field of grass is one mesh, loaded once.
     world.foliageMeshes().forEach([&](core::InstanceId, const scene::FoliageMeshComponent& mesh) { load(mesh.mesh); });
-    // And a prepared scene's (ADR 0125), after what is on screen.
-    for (const core::NameAtom content : warm_)
+    // And what is wanted before it is shown (ADR 0125, 0131), after what is
+    // on screen; each name leaves the list once it has arrived.
+    for (const core::NameAtom content : warmMeshes_)
         load(content);
+    std::erase_if(warmMeshes_, [&](core::NameAtom content) {
+        return library.find(content) != nullptr ||
+               std::binary_search(failed_.begin(), failed_.end(), content,
+                                  [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
+    });
 
     return loaded;
 }
 
-core::f64 MeshLoader::warmedFraction(const MeshLibrary& library) const
+void MeshLoader::warmMeshes(std::span<const core::NameAtom> meshes)
 {
-    if (warm_.empty())
-        return 1.0;
-    core::usize arrived = 0;
-    for (const core::NameAtom content : warm_) {
-        const bool gaveUp = std::binary_search(failed_.begin(), failed_.end(), content,
-                                               [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; });
-        if (gaveUp || library.find(content) != nullptr)
-            ++arrived;
+    for (const core::NameAtom content : meshes) {
+        if (std::find(warmMeshes_.begin(), warmMeshes_.end(), content) == warmMeshes_.end())
+            warmMeshes_.push_back(content);
     }
-    return static_cast<core::f64>(arrived) / static_cast<core::f64>(warm_.size());
+}
+
+void MeshLoader::warmTextures(std::span<const core::NameAtom> images)
+{
+    for (const core::NameAtom content : images) {
+        if (std::find(warmTextures_.begin(), warmTextures_.end(), content) == warmTextures_.end())
+            warmTextures_.push_back(content);
+    }
+}
+
+std::optional<bool> MeshLoader::warmed(core::NameAtom content, const MeshLibrary& meshes,
+                                       const TextureLibrary& textures) const
+{
+    if (meshes.find(content) != nullptr || textures.find(content).valid())
+        return true;
+    if (std::binary_search(failed_.begin(), failed_.end(), content,
+                           [](core::NameAtom a, core::NameAtom b) { return a.id < b.id; }))
+        return false;
+    return std::nullopt;
 }
 
 bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const asset::Model& model, core::NameAtom urn,

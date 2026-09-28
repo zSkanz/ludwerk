@@ -69,6 +69,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `game` and `scene` are mailboxes: `SendMessage(topic, ...)` and
   `BindToMessage(topic, fn)`, deferred, the values copied, and a binding goes
   with its script's scene.
+- **`ContentProvider:PreloadAsync`** (ADR 0131). Loads a list of content names
+  and instances -- every asset an instance names -- before anything shows them,
+  and yields until each has arrived; a callback reports each item's
+  `Enum.AssetFetchStatus`. `ContentProvider.RequestQueueSize` counts what is
+  still on its way. Every determinism trace was re-recorded: a new service is a
+  new instance in the world hash.
 - **A scene prepared in the background** (ADR 0125).
   `SceneService:LoadSceneAsync(path, { Activate = false })` returns a
   `SceneLoad` at once: the file is read and parsed off the main thread and its

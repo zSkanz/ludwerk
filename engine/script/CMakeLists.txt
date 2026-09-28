@@ -19,6 +19,7 @@ engine_add_module(script
         src/bytecode.cpp
         src/input_events.cpp
         src/binding.cpp
+        src/content_provider.cpp
         src/datatypes.cpp
         src/instance_binding.cpp
         src/materials.cpp

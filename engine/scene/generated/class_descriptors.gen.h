@@ -79,6 +79,7 @@ inline constexpr EnumId StrokeSizingModeEnumId = 38;
 inline constexpr EnumId BorderStrokePositionEnumId = 39;
 inline constexpr EnumId ViewQualityEnumId = 40;
 inline constexpr EnumId SceneLoadStatusEnumId = 41;
+inline constexpr EnumId AssetFetchStatusEnumId = 42;
 
 } // namespace generated
 

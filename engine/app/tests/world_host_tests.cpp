@@ -2200,3 +2200,38 @@ TEST_CASE("a SceneLoad cancelled before it activates changes nothing")
     CHECK(log.contains("activate refused true"));
     CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
 }
+
+// --- Preloading (ADR 0131 §3) ------------------------------------------------------
+
+TEST_CASE("PreloadAsync waits for every item, reports each, and names what an instance holds")
+{
+    Captured log;
+    Project project;
+    project.write("content/models/crate.gltf", "{}");
+    project.write("content/ui/logo.png", "not really a picture");
+    project.write("src/client/preload.luau", R"(
+        local ContentProvider = game:GetService("ContentProvider")
+        local label = Instance.new("ImageLabel")
+        label.Image = "asset://ui/logo.png"
+        local statuses = {}
+        ContentProvider:PreloadAsync({ "asset://models/crate.gltf", "asset://models/missing.gltf", label },
+            function(item: string | Instance, status: Enum.AssetFetchStatus)
+                local name = if typeof(item) == "string" then item else (item :: Instance).ClassName
+                table.insert(statuses, `{name}={status.Name}`)
+            end)
+        table.sort(statuses)
+        print(`preloaded {table.concat(statuses, " ")} queue {ContentProvider.RequestQueueSize}`)
+        local refused = not pcall(function()
+            ContentProvider:PreloadAsync({ 42 } :: any)
+        end)
+        print(`refused {refused}`)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("preloaded ImageLabel=Success asset://models/crate.gltf=Success "
+                       "asset://models/missing.gltf=Failure queue 0"));
+    CHECK(log.contains("refused true"));
+}

@@ -1124,6 +1124,15 @@ local Definition: Schema.Definition = {
                 { Name = "Cancelled", Value = 5, Doc = "`Cancel()`, or another load, dropped it." },
             } :: { Schema.EnumItem },
         },
+        -- ADR 0131. At the END.
+        {
+            Name = "AssetFetchStatus",
+            Doc = "How an item of `ContentProvider:PreloadAsync` ended.",
+            Items = {
+                { Name = "Success", Value = 0, Doc = "Everything it names is loaded." },
+                { Name = "Failure", Value = 1, Doc = "Something it names could not be found or read." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

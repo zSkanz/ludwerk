@@ -134,12 +134,13 @@ where the old scene's `scene:BindToClose` runs.
 - [x] The scene reader gains a detached target: `scene::parseScene` reads and
   checks a file into a `ParsedScene` on a job; `readScene(world, parsed)`
   instantiates it on the main thread.
-- [~] Assets warmed from the parse: **meshes** (every `asset://*.gltf|glb` the
-  parse names, through the mesh loader's own feed, `MeshLoader::warm`). **Not
-  yet:** textures, materials, sounds, and terrain and block cells within
-  `[scene] warm_radius`; `[scene] max_prepared_bytes`.
+- [~] Assets warmed from the parse: **meshes and pictures** (every
+  `asset://*.gltf|glb|png|jpg|jpeg|ktx2` the parse names, through the mesh
+  loader's own feeds, `MeshLoader::warmMeshes` and `warmTextures`, which F8's
+  preloading shares). **Not yet:** materials, sounds, and terrain and block
+  cells within `[scene] warm_radius`; `[scene] max_prepared_bytes`.
 - [x] `Progress` measured and monotonic: half at the parse, the rest the share
-  of warmed meshes that have arrived (loaded or given up on).
+  of the names it holds that have arrived (loaded or given up on).
 - [x] `Activate()` at the next safe point: `SceneLoading`, the old scene's
   `scene:BindToClose` waited for (A2b), saves flushed, teardown, instantiation
   from the prepared parse, scripts started, held messages, `SceneLoaded`,

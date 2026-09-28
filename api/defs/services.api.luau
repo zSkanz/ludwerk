@@ -540,6 +540,47 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Method },
     },
     {
+        Name = "ContentProvider",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and "
+            .. "on the GPU while a loading screen is up, so the first frame of play has nothing popping in. "
+            .. "The same path a scene prepared with `SceneService:LoadSceneAsync` warms by.",
+        Properties = {
+            {
+                Name = "RequestQueueSize",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                ThreadSafety = "Safe",
+                Scripted = true,
+                Doc = "How many of the assets `PreloadAsync` was asked for are still on their way.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "PreloadAsync",
+                Parameters = {
+                    { Name = "items", Type = "{ string | Instance }" },
+                    {
+                        Name = "callback",
+                        Type = "((item: string | Instance, status: Enum.AssetFetchStatus) -> ())?",
+                        Default = "nil",
+                    },
+                },
+                Returns = {},
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Loads every item and yields until each has arrived or failed. An item is a content "
+                    .. "name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its "
+                    .. "descendants name. `callback` runs once per item as it finishes, with "
+                    .. "`Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the "
+                    .. "GPU; a sound is opened and its length read; anything else is found or not.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "SceneService",
         Extends = "Instance",
         Module = "scene",

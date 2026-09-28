@@ -84,6 +84,31 @@ once, and a streamed chunk referring to a shared mesh refers to the hash.
 The URN is what you write; the hash is what the engine resolves it to. You do
 not need to think about the second one until you are looking at a manifest.
 
+## Loading before it is shown
+
+A mesh or a picture is loaded the first time something in the world names it,
+and appears a moment later. When that moment matters -- the first frame of a
+level, a cutscene -- load it first with `ContentProvider:PreloadAsync`, behind
+a loading screen:
+
+```luau
+--!strict
+local ContentProvider = game:GetService("ContentProvider")
+
+local level = workspace:WaitForChild("Level")
+ContentProvider:PreloadAsync({ "asset://models/boss.gltf", level }, function(item, status)
+    print(item, status.Name) -- Success or Failure, once per item
+end)
+-- Everything named above is loaded now.
+```
+
+An item is a URN, or an instance: every asset it and its descendants name.
+The call yields until each has arrived or failed, and
+`ContentProvider.RequestQueueSize` says how many are still on their way.
+Meshes and pictures are loaded onto the GPU; a sound is opened and its length
+read. A scene prepared with `SceneService:LoadSceneAsync` loads its meshes the
+same way ([Scenes at run time](manual:guides/scenes#loading-in-the-background)).
+
 ## Where to look next
 
 - [The asset pipeline](manual:assets/pipeline) — what turns a source file into

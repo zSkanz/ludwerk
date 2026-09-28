@@ -209,7 +209,9 @@ struct WorldHostOptions
     // in a windowed run -- and asks how much of it has arrived, from 0 to 1.
     // Absent, nothing is warmed and a prepared scene is ready once parsed.
     std::function<void(scene::World&, const std::vector<std::string>&)> warmContent = nullptr;
-    std::function<core::f64()> warmProgress = nullptr;
+    // Where one warmed name stands: nothing while it is on its way, then
+    // whether it arrived (ADR 0131 §3 asks this of each name).
+    std::function<std::optional<bool>(scene::World&, std::string_view)> warmedContent = nullptr;
 };
 
 // What the conformance run reported. Read after the loop, because the run ends
@@ -617,7 +619,11 @@ private:
     // reproduces (R10).
     bool m_prepareInBackground = false;
     std::function<void(scene::World&, const std::vector<std::string>&)> m_warmContent;
-    std::function<core::f64()> m_warmProgress;
+    std::function<std::optional<bool>(scene::World&, std::string_view)> m_warmedContent;
+    // What a prepared scene is warming, to measure its `Progress` by.
+    std::vector<std::string> m_preparedContent;
+    // `ContentProvider:PreloadAsync` (ADR 0131 §3): where one name stands.
+    [[nodiscard]] script::ContentState contentState(std::string_view content);
     f64 m_sceneCloseGrace = 5.0;
     bool m_developer = false;
     // Instances reparented to nil because a script held them when they

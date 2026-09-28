@@ -375,7 +375,15 @@ local EventPrefixes = { "Pre", "Post" }
 
 --- Services whose names do not end in `Service`, per §9. Anything else ending
 --- differently is a lint failure rather than a judgement call.
-local ServiceNameExceptions = { Workspace = true, Lighting = true, ReplicatedStorage = true, ServerStorage = true }
+-- `ContentProvider` is ADR 0131's: the name a person coming to this engine
+-- already looks for, chosen by the owner with the rest of the toolkit.
+local ServiceNameExceptions = {
+    Workspace = true,
+    Lighting = true,
+    ReplicatedStorage = true,
+    ServerStorage = true,
+    ContentProvider = true,
+}
 
 --- Events whose names are neither past-tense facts nor `Pre*`/`Post*` phases.
 --- All three are frozen public surface in §2.1 and §2.2, so the rule grows a
@@ -596,7 +604,7 @@ function Schema.validate(definition: Definition): { string }
             if not endsWithAny(class.Name, { "Service" }) then
                 table.insert(
                     errors,
-                    `{class.Name}: services end in Service, except Workspace, Lighting and the two storages (§9)`
+                    `{class.Name}: services end in Service, except the few named in ServiceNameExceptions (§9)`
                 )
             end
         end

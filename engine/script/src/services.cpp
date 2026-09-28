@@ -23,6 +23,7 @@
 #include "engine/scene/voxel_fluid.h"
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
+#include "engine/script/content_provider.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
@@ -2000,6 +2001,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
 
     {"SceneService", "LoadScene", sceneServiceLoadScene},
     {"SceneService", "LoadSceneAsync", sceneServiceLoadSceneAsync},
+    {"ContentProvider", "PreloadAsync", contentProviderPreloadAsync},
     {"SceneService", "GetLoadData", sceneServiceGetLoadData},
     {"SceneService", "SendToHost", sceneServiceSendToHost},
     {"SceneService", "IsSubWorld", sceneServiceIsSubWorld},

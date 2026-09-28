@@ -23,6 +23,7 @@ guided tour.
 |---|---|---|
 | [`AudioService`](audioservice.md) | [`Instance`](instance.md) | Mixing and the listener (§2.1). |
 | [`ClientScriptService`](clientscriptservice.md) | [`Instance`](instance.md) | This scene's player code (ADR 0105): its HUD, its menu's buttons, a camera. |
+| [`ContentProvider`](contentprovider.md) | [`Instance`](instance.md) | Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and on the GPU while a loading screen is up, so the first frame of play has nothing popping in. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | The debug overlay and the engine's own instrumentation. |
 | [`GlobalScriptService`](globalscriptservice.md) | [`Instance`](instance.md) | The game's code, for every scene (ADR 0105). |
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | The hot-reload loop as a script can see it (ADR 0024). |

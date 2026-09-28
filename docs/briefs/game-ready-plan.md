@@ -43,7 +43,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 1 | **A1** HTTPS through the platform's TLS · **A2** `SaveService` | foundation | A game that saves and talks to the internet |
 | [x] 2 | **B1** terrain layers are materials · **B2** rules by slope and height | world | The base of everything the terrain does next |
 | [~] 2b | **A2b** a scene closes as a game does, and `game` and `scene` are mailboxes (ADR 0124) · **A2c** a scene prepared in the background (ADR 0125), built together | foundation | Found in use on 2026-09-27: a close handler never ran under Stop; loading screens freeze |
-| [ ] 2c | **F8** `ContentProvider:PreloadAsync` | toolkit | Shares A2c's warming path |
+| [x] 2c | **F8** `ContentProvider:PreloadAsync` | toolkit | Shares A2c's warming path |
 | [ ] 2d | **F1** `ClickDetector`, `ProximityPrompt`, `DragDetector` | toolkit | The owner: "certain we need it" |
 | [x] 3 | **B5** wind | world | Small, and foliage needs it |
 | [~] 4 | **B6** foliage | world | The largest visual gain |

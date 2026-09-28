@@ -220,13 +220,16 @@ public:
     // starting, is when one of them may be there now.
     void retryMissing() noexcept { failed_.clear(); }
 
-    // **Meshes wanted before anything wears them** (ADR 0125): what a scene
-    // being prepared names, loaded by `sync` from the same feed as the world's.
-    // Replaces the previous list; empty stops warming.
-    void warm(std::vector<core::NameAtom> meshes) { warm_ = std::move(meshes); }
-    // How much of the list has arrived -- loaded, or given up on -- from 0 to
-    // 1, and 1 for an empty list.
-    [[nodiscard]] core::f64 warmedFraction(const MeshLibrary& library) const;
+    // **Meshes and pictures wanted before anything shows them**: what a scene
+    // being prepared names (ADR 0125) and what `PreloadAsync` asks for (ADR
+    // 0131). Loaded by `sync` and `syncTextures` from the same feeds as the
+    // world's, after it; each name leaves the list once it has arrived.
+    void warmMeshes(std::span<const core::NameAtom> meshes);
+    void warmTextures(std::span<const core::NameAtom> images);
+    // Where one name stands: nothing while it is on its way, true once it is
+    // in its library, false once it was given up on.
+    [[nodiscard]] std::optional<bool> warmed(core::NameAtom content, const MeshLibrary& meshes,
+                                             const TextureLibrary& textures) const;
 
     // Waits for any decode still running, because one is writing into memory
     // this object owns. See the definition: abandoning it is a use-after-free at
@@ -283,7 +286,8 @@ private:
     // same reason `MeshLibrary` is: R10 forbids an unordered container's order
     // reaching observable output, and a log is observable.
     std::vector<core::NameAtom> failed_;
-    std::vector<core::NameAtom> warm_;
+    std::vector<core::NameAtom> warmMeshes_;
+    std::vector<core::NameAtom> warmTextures_;
     std::vector<rhi::TextureHandle> textures_;
     // **What a `view://` name shows until something draws into it** (ADR
     // 0107): one black pixel, shared by every such name and never destroyed

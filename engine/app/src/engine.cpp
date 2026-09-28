@@ -1408,16 +1408,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .warmContent = options.headless ? std::function<void(scene::World&, const std::vector<std::string>&)>{}
                                         : [&meshLoader](scene::World& world, const std::vector<std::string>& names) {
                                               std::vector<core::NameAtom> meshes;
+                                              std::vector<core::NameAtom> images;
                                               for (const std::string& name : names) {
                                                   if (name.ends_with(".gltf") || name.ends_with(".glb"))
                                                       meshes.push_back(world.atoms().intern(name));
+                                                  else if (name.ends_with(".png") || name.ends_with(".jpg") ||
+                                                           name.ends_with(".jpeg") || name.ends_with(".ktx2"))
+                                                      images.push_back(world.atoms().intern(name));
                                               }
-                                              meshLoader.warm(std::move(meshes));
+                                              meshLoader.warmMeshes(meshes);
+                                              meshLoader.warmTextures(images);
                                           },
-        .warmProgress = options.headless ? std::function<core::f64()>{}
-                                         : [&meshLoader, &meshLibrary]() {
-                                               return meshLoader.warmedFraction(meshLibrary);
-                                           },
+        .warmedContent = options.headless
+                             ? std::function<std::optional<bool>(scene::World&, std::string_view)>{}
+                             : [&meshLoader, &meshLibrary, &textureLibrary](scene::World& world,
+                                                                            std::string_view name) {
+                                   return meshLoader.warmed(world.atoms().intern(name), meshLibrary, textureLibrary);
+                               },
     };
 
     auto host = std::make_unique<WorldHost>();

@@ -2735,6 +2735,25 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     teamDesc.detachComponents = native::detachTeamComponents;
     classes.registerClass(teamDesc);
 
+    // --- ContentProvider ---
+    static std::array<MethodDesc, 1> contentProviderMethods;
+    contentProviderMethods = {{
+        MethodDesc{
+            .name = atoms.intern("PreloadAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Loads every item and yields until each has arrived or failed. An item is a content name, such as `asset://models/tree.gltf`, or an instance -- every asset it and its descendants name. `callback` runs once per item as it finishes, with `Enum.AssetFetchStatus.Success` or `Failure`. Meshes and pictures are loaded onto the GPU; a sound is opened and its length read; anything else is found or not.",
+        },
+    }};
+    ClassDescriptor contentProviderDesc;
+    contentProviderDesc.name = atoms.intern("ContentProvider");
+    contentProviderDesc.super = instanceClass;
+    contentProviderDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    contentProviderDesc.defaultName = atoms.intern("ContentProvider");
+    contentProviderDesc.doc = "Loads assets before anything shows them (ADR 0131): a level's meshes and pictures read and on the GPU while a loading screen is up, so the first frame of play has nothing popping in. The same path a scene prepared with `SceneService:LoadSceneAsync` warms by.";
+    contentProviderDesc.methods = contentProviderMethods;
+    classes.registerClass(contentProviderDesc);
+
     // --- SceneService ---
     static std::array<MethodDesc, 5> sceneServiceMethods;
     sceneServiceMethods = {{
@@ -5652,6 +5671,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     sceneLoadStatusDesc.docKey = {};
     sceneLoadStatusDesc.items = sceneLoadStatusItems;
     enums.registerEnum(sceneLoadStatusDesc);
+
+    // --- AssetFetchStatus ---
+    static std::array<EnumItemDesc, 2> assetFetchStatusItems;
+    assetFetchStatusItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Success"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Failure"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor assetFetchStatusDesc;
+    assetFetchStatusDesc.name = atoms.intern("AssetFetchStatus");
+    assetFetchStatusDesc.docKey = {};
+    assetFetchStatusDesc.items = assetFetchStatusItems;
+    enums.registerEnum(assetFetchStatusDesc);
 }
 
 } // namespace engine::scene::generated
