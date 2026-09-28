@@ -118,9 +118,11 @@ A second `Destroy` is a no-op and does not fire `Instance.Destroying` twice.
 
 **A destroyed handle stops resolving** at the end of the drain in which
 `Destroying` fired. Until then the corpse is still usable; after it, every
-access raises `script.err.instance_dead`. This is deliberate — the ECS reclaims
-the slot, and a use-after-destroy becomes a keyed error instead of a silent read
-of a corpse. Roblox leaves such a handle readable forever; Ludwerk does not.
+access raises `script.err.instance_dead` — **except reading `Parent`, which
+answers `nil`**, so `if part.Parent then` tells a live instance from a gone one
+whatever the handle. This is deliberate — the ECS reclaims the slot, and a
+use-after-destroy becomes a keyed error instead of a silent read of a corpse.
+Roblox leaves such a handle readable forever; Ludwerk does not.
 
 ## Copying a subtree
 

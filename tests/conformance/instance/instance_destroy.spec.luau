@@ -160,6 +160,19 @@ describe("Instance Destroy", function()
             end):ToThrow("script.err.instance_dead")
         end)
 
+        it("reads Parent as nil, the one thing it still answers", function()
+            -- The owner's decision of 2026-09-28 (D206): `if part.Parent then`
+            -- is how a game asks whether something is still in the world, and
+            -- it has to work on a handle the world has let go of.
+            local victim = namedFolder("Victim", root)
+            victim:Destroy()
+            task.wait()
+
+            expect(victim.Parent):ToBeNil()
+            local alive = if victim.Parent then true else false
+            expect(alive):ToBe(false)
+        end)
+
         it("raises script.err.instance_dead on a property write", function()
             local victim = namedFolder("Victim", root)
             victim:Destroy()

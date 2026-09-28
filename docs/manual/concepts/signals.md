@@ -140,7 +140,8 @@ nothing.
 Until the end of that drain the handle still works, so `Connect` still succeeds
 — the new handler simply does not run for the already-enqueued fire, which
 captured the connection list before that connection existed. After the drain,
-every access raises `script.err.instance_dead`.
+every access raises `script.err.instance_dead`, except reading `Parent`, which
+answers `nil`.
 
 `Signal.Destroy` on a signal you made follows the same rule, and every
 `Connection` reports `Connected == false` once the drain ends.

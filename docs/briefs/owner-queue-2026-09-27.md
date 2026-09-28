@@ -63,8 +63,8 @@ repository. Each was reproduced by running before it was fixed.
 - [x] P0-2 **`WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight`
       replicate**, and a correction replays at the server's speeds (D205,
       protocol 20).
-- [ ] P1-3 `.Parent` of a destroyed instance raises (D206): an API decision,
-      brought to the owner with the proposal that `.Parent` alone read nil.
+- [x] P1-3 **`.Parent` of a destroyed instance reads nil**; everything else on
+      it still raises (D206, the owner's decision).
 - [x] P1-4 **A script's `Join` to the same server again is the same player**
       (D207).
 - [x] P1-5 **A silent peer is gone in ten seconds**, `[network] timeout` (D208).

@@ -405,6 +405,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **A client no longer fights the server over a character's speed**:
   `WalkSpeed`, `JumpSpeed`, `MaxSlopeAngle` and `AutoStepHeight` replicate, and
   a correction replays at the server's speeds (D205). Protocol version 20.
+- **`.Parent` of a destroyed instance reads `nil`** rather than raising, so
+  `if part.Parent then` works on any handle; every other access to a destroyed
+  instance still raises `script.err.instance_dead` (D206, the owner's decision).
 - **Joining the same server again from a script is the same player**, with the
   same `UserId` (D207).
 - **A server that vanishes is noticed in ten seconds**, not thirty;

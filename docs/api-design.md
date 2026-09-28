@@ -896,7 +896,7 @@ save/load pair for bindings in v1.
 | 22 | Optional typing | 100% `--!strict`, fully typed defs, new solver | Non-negotiable quality bar |
 | 23 | TextXAlignment/TextYAlignment | `HorizontalAlignment`/`VerticalAlignment` (shared enums w/ layout) | One alignment vocabulary |
 | 24 | RemoteEvent/RemoteFunction | v1: none; `@std/net` primitives; replication reserved. **`RemoteEvent` is built (ADR 0077)** over the replication engine, with its events named as past-tense facts: `ServerReceived` and `ClientReceived`. **`RemoteFunction` is built too (ADR 0079)**: `InvokeServerAsync` and `OnServerInvoke`, and no `InvokeClient`. `@std/net` stays PARALLEL to replication and not underneath: one talks to the author's backend, the other to the players in the match | Honest scope; portable backends (ADR 0012) |
-| 25 | A destroyed instance stays readable forever | Handles stop resolving at the end of the drain in which `Destroying` fired; using one raises `script.err.instance_dead` | The ECS reclaims the slot (architecture §4). Use-after-destroy becomes a keyed error instead of a silent read of a corpse |
+| 25 | A destroyed instance stays readable forever | Handles stop resolving at the end of the drain in which `Destroying` fired; using one raises `script.err.instance_dead` -- except `Parent`, which reads nil, so `if part.Parent then` still asks whether it is in the world (D206) | The ECS reclaims the slot (architecture §4). Use-after-destroy becomes a keyed error instead of a silent read of a corpse |
 | 26 | Dot-access to children (`workspace.Baseplate`, `folder.ChildName`) | **No longer a divergence (ADR 0078).** A dot reads a member first and a child second, and the scene's tree is typed from the scene itself in `.engine/types/scene.d.luau` | Superseded on the owner's word, 2026-09-23. The string indexer this row once priced is not available in the pinned Luau at all; a tree declared per project types the path and keeps typo detection |
 | 27 | `AnimationTrack.IsPlaying` | `AnimationTrack.Playing` | §9's own rule: a boolean PROPERTY carries no `Is` prefix and a boolean METHOD does. `Sound.Playing` was already spelled this way, and one engine cannot have both |
 | 28 | `BasePart.Color`, `BasePart.Transparency`, and `Material` as an enum of surface kinds | `BasePart.Material` names a `.material.json` asset (or a runtime clone of one); a part overrides only the parameters its material declares, through `SetMaterialParameter` | The owner's word, 2026-09-24 (ADR 0090): a surface is governed by its material, as in the engines this design follows. The engine default material declares `Color` and `Transparency`, so a grey-box part is still tinted -- through the method, not the property. **This is the one row that removes a member scripts write constantly**, and `ludwerk migrate materials` exists because of it |
@@ -1185,7 +1185,9 @@ so until then the corpse is still usable: `Connect` still succeeds (the handler
 simply does not run for the already-enqueued fire, which captured the
 connection list before that connection existed), and a second `Destroy` is a
 no-op that enqueues nothing and does not fire `Destroying` twice. After that
-drain, each of those raises `script.err.instance_dead`. `GetChildren` and
+drain, each of those raises `script.err.instance_dead` -- all but reading
+`Parent`, which answers nil, so `if part.Parent then` is a liveness test on any
+handle (D206). `GetChildren` and
 `GetDescendants` return fresh arrays, so destroying during iteration over one is
 safe; the array may simply contain instances that are gone by the time you reach
 them. `Signal:Destroy()` on a script-created signal follows the same rule:

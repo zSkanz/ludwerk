@@ -108,6 +108,17 @@ using scene::World;
 
 int instanceIndex(lua_State* L)
 {
+    // **`Parent` of a destroyed instance is nil** (D206, the owner's decision
+    // of 2026-09-28): the one read a dead handle still answers, because
+    // `if part.Parent then` is how a game asks whether something is still in
+    // the world. Everything else raises, as divergence #25 has it.
+    if (const core::InstanceId* dead = toInstance(L, 1); dead != nullptr && !world(L).alive(*dead)) {
+        if (const char* key = lua_tostring(L, 2); key != nullptr && std::string_view{key} == "Parent") {
+            lua_pushnil(L);
+            return 1;
+        }
+    }
+
     const core::InstanceId id = liveInstance(L, 1);
 
     int atom = -1;
