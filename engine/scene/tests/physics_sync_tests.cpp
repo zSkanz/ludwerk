@@ -262,6 +262,7 @@ public:
     }
 
     void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
+    void nudgeCharacter(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
 
     [[nodiscard]] physics::CharacterState characterState(physics::WorldHandle, physics::CharacterHandle) const override
     {

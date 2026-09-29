@@ -456,6 +456,99 @@ TEST_CASE("a replay from a remembered tick is the live step again, to the bit (A
     }
 }
 
+TEST_CASE("a replay of a character pushing crates is the live step again, to the bit (ADR 0133)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local function block(name: string, position: vector, size: vector, anchored: boolean)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Size = size
+            part.Position = position
+            part.Anchored = anchored
+            part.Parent = workspace
+        end
+        block("Ground", vector.create(0, -1, 0), vector.create(200, 2, 200), true)
+        block("Crate1", vector.create(3, 0.75, 0), vector.create(1.5, 1.5, 1.5), false)
+        block("Crate2", vector.create(4.7, 0.75, 0.4), vector.create(1.5, 1.5, 1.5), false)
+        block("Crate3", vector.create(6.4, 0.75, -0.5), vector.create(1.5, 1.5, 1.5), false)
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Size = vector.create(2, 4, 2)
+        walker.Position = vector.create(0, 3, 0)
+        walker.WalkSpeed = 8
+        walker.Parent = workspace
+        local ticks = 0
+        game:GetService("RunService").Heartbeat:Connect(function()
+            ticks += 1
+            if ticks > 90 then
+                walker:Move(vector.create(1, 0, 0.05))
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& world = host.world();
+    const auto named = [&](const char* name) {
+        return world.findFirstChild(host.workspace(), world.atoms().lookup(name));
+    };
+    const core::InstanceId walker = named("Walker");
+    const std::array<core::InstanceId, 3> crates{named("Crate1"), named("Crate2"), named("Crate3")};
+    REQUIRE(walker.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+
+    // Replayed from every tick of the push, a step at a time, as a replica
+    // replays whatever the authority answers.
+    for (int tick = 0; tick < 91; ++tick)
+        host.tick();
+    physics->remember(1000);
+    int compared = 0;
+    for (int step = 0; step < 50; ++step) {
+        const core::u64 from = 1000 + static_cast<core::u64>(step);
+        scene::CharacterReplayStart start;
+        start.tick = from;
+        start.transform = world.parts().find(walker)->cframe;
+        start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+        start.grounded = world.characterBodies().find(walker)->grounded;
+        for (const core::InstanceId crate : crates) {
+            const scene::RigidBodyComponent* motion = world.rigidBodies().find(crate);
+            start.bodies.push_back(scene::CharacterReplayStart::Body{crate, world.parts().find(crate)->cframe,
+                                                                     motion->linearVelocity, motion->angularVelocity});
+        }
+
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        physics->remember(from + 1);
+        const core::DVec3 live = world.parts().find(walker)->cframe.position;
+        std::array<core::DVec3, 3> liveCrates{};
+        for (std::size_t at = 0; at < crates.size(); ++at)
+            liveCrates[at] = world.parts().find(crates[at])->cframe.position;
+
+        const std::array<scene::CharacterCommand, 1> one{*command};
+        const std::vector<core::CFrameD> replayed = physics->replay(walker, start, one);
+        REQUIRE(replayed.size() == 1);
+        CAPTURE(step);
+        CHECK(replayed[0].position.x == live.x);
+        CHECK(replayed[0].position.y == live.y);
+        CHECK(replayed[0].position.z == live.z);
+        for (std::size_t at = 0; at < crates.size(); ++at) {
+            CAPTURE(at);
+            const core::DVec3 again = world.parts().find(crates[at])->cframe.position;
+            CHECK(again.x == liveCrates[at].x);
+            CHECK(again.y == liveCrates[at].y);
+            CHECK(again.z == liveCrates[at].z);
+        }
+        ++compared;
+    }
+    // The crates were pushed: the test was not comparing crates at rest.
+    CHECK(world.parts().find(crates[0])->cframe.position.x > 4.0);
+    CHECK(compared == 50);
+}
+
 TEST_CASE("a BindToClose handler that yields is waited for")
 {
     Captured log;

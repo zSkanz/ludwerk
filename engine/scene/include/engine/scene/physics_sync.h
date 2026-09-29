@@ -497,6 +497,9 @@ private:
     };
     // By tick, the newest `IslandMemory` of them.
     static constexpr usize IslandMemory = 128;
+    // A replay's correction of its character under this is a nudge, which
+    // keeps the controller's contacts; over it, a move, which finds them anew.
+    static constexpr f64 NudgeMetres = 0.05;
     std::map<u64, Island> m_islands;
     [[nodiscard]] bool restoreIsland(const Island& island);
 

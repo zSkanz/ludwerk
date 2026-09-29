@@ -1032,26 +1032,28 @@ What predicting the crates near a player's character costs the client. The
 scene is the crate-push test in `engine/app/tests/network_session_tests.cpp`:
 a character and three loose 2 m crates, pushed for ten seconds (661 ticks at
 60 Hz) over the memory transport, clean and at three seeds of 2% loss, 5%
-reordering and two polls of jitter. Measured 2026-09-28 on `win-msvc-dev`,
+reordering and two polls of jitter. Measured 2026-09-29 on `win-msvc-dev`,
 three runs of the four; the runs agreed to within 10%, and the medians are
 below.
 
 | Each tick | Keeping the island (character + 3 crates) |
 |---|---|
-| Median of 661 | **5.4 µs** (3.6 ms in all) |
+| Median of 661 | **10.4 µs** (6.9 ms in all) |
 
 | Per run | Re-simulations | Ticks stepped again | Time | Per tick stepped again |
 |---|---|---|---|---|
-| Clean | 13 | 26 | 1.40 ms | 54 µs |
-| Loss, seed 9 | 15 | 56 | 2.72 ms | 49 µs |
-| Loss, seed 5 | 16 | 56 | 2.94 ms | 53 µs |
-| Loss, seed 21 | 16 | 59 | 2.85 ms | 48 µs |
+| Clean | 13 | 26 | 1.85 ms | 71 µs |
+| Loss, seed 9 | 14 | 52 | 3.31 ms | 64 µs |
+| Loss, seed 5 | 15 | 56 | 3.85 ms | 69 µs |
+| Loss, seed 21 | 15 | 57 | 3.66 ms | 64 µs |
 
-**About fifty microseconds a tick stepped again, restore included, and under
+**About seventy microseconds a tick stepped again, restore included, and under
 two re-simulations a second while pushing.** That is 0.3 ms of every second of
-play here. The bound is a re-simulation on every snapshot (30 a second at this
-rate) of about eight ticks each: 240 ticks a second, 12 ms of every second,
-1.2% of one core. Most of the re-simulations are not corrections: a replica
+play here, and keeping the island is 0.6 ms more. The bound is a re-simulation
+on every snapshot (30 a second at this rate) of about eight ticks each: 240
+ticks a second, 17 ms of every second, 1.7% of one core. The island includes
+the solver's contact cache: without it a replay was not the live step, and the
+cost of keeping it doubled the per-tick figure (it was 5.4 µs). Most of the re-simulations are not corrections: a replica
 steps the island again whenever it disagrees with the authority by 10 µm or
 more, because a disagreement that small and left alone grew to a centimetre the
 next time two crates met.

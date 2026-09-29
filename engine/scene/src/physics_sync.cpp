@@ -723,13 +723,39 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
         const f32 pendingWalk = body->walkSpeed;
         const f32 pendingJumpSpeed = body->jumpSpeed;
         if (restoreIsland(saved)) {
+            // The authority's word on the character, when it differs. Put
+            // somewhere new, a controller finds its contacts again; nudged by
+            // the little a prediction is off, it keeps the ones of its own
+            // last step, which are the authority's too, near enough -- found
+            // afresh at a crate's edge, they stepped a replay 8 cm from the
+            // authority's in two ticks.
+            const auto mine = std::find_if(saved.entities.begin(), saved.entities.end(),
+                                           [&](const IslandEntity& entity) { return entity.id == character; });
+            if (mine == saved.entities.end() || !mine->character) {
+                m_backend.setCharacterTransform(m_world, record.handle, start.transform);
+            }
+            else if (!(mine->cframe == start.transform)) {
+                const core::DVec3 off = start.transform.position - mine->cframe.position;
+                if (off.x * off.x + off.y * off.y + off.z * off.z < NudgeMetres * NudgeMetres)
+                    m_backend.nudgeCharacter(m_world, record.handle, start.transform);
+                else
+                    m_backend.setCharacterTransform(m_world, record.handle, start.transform);
+            }
             part->cframe = start.transform;
             record.written = start.transform;
-            m_backend.setCharacterTransform(m_world, record.handle, start.transform);
             body->verticalVelocity = start.verticalVelocity;
             body->grounded = start.grounded;
-            // And what it pushes, where the authority had it (ADR 0133).
+            // And what it pushes, where the authority had it (ADR 0133) --
+            // but only what the authority disagrees about. A body put back
+            // where it already is is not left as it was: it is woken, and its
+            // rotation goes through a matrix and back. A crate asleep in the
+            // step it answers, woken here, was stepped when it had not been.
             for (const CharacterReplayStart::Body& pushed : start.bodies) {
+                const auto same = std::find_if(saved.entities.begin(), saved.entities.end(),
+                                               [&](const IslandEntity& entity) { return entity.id == pushed.id; });
+                if (same != saved.entities.end() && same->body && same->cframe == pushed.cframe &&
+                    same->linear == pushed.linear && same->angular == pushed.angular)
+                    continue;
                 PartComponent* place = m_scene.parts().find(pushed.id);
                 RigidBodyComponent* motion = m_scene.rigidBodies().find(pushed.id);
                 if (place == nullptr || motion == nullptr || pushed.id.index >= m_bodies.size())

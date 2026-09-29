@@ -196,6 +196,12 @@ public:
     virtual void moveCharacter(WorldHandle world, CharacterHandle character, core::Vec3 velocity, f32 fixedDt) = 0;
     virtual void setCharacterTransform(WorldHandle world, CharacterHandle character,
                                        const core::CFrameD& transform) = 0;
+    // **Moved a little, and still leaning on what it leaned on** (ADR 0133):
+    // the transform set, the contacts of its last step kept rather than found
+    // again. A replica's replay corrects its character by millimetres, and a
+    // controller whose contacts are found afresh at a crate's edge steps
+    // otherwise than the authority's, which kept its own.
+    virtual void nudgeCharacter(WorldHandle world, CharacterHandle character, const core::CFrameD& transform) = 0;
     [[nodiscard]] virtual CharacterState characterState(WorldHandle world, CharacterHandle character) const = 0;
 
     // --- Collision groups ----------------------------------------------------

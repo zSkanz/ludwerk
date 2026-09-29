@@ -210,7 +210,10 @@ engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-t
   23). Any difference past 10 µm is stepped again without counting a
   correction: the two machines step the island to the bit from the same state,
   and a fifth of a millimetre left alone was a centimetre at the next contact
-  (D251).
+  (D251). A replay with crates in it is the live step to the bit: it writes
+  only what the authority disagrees about, keeps its character's contacts
+  through a small correction, and the island keeps the solver's contact cache
+  and each body's sleep (D252, found by the owner's game measured windowed).
 - [x] Remove the side-pass (D244) for predicted parts; keep it for other
   players' characters.
 - [x] F3 Network panel and `GetStats()`: predicted bodies, re-simulations/s,

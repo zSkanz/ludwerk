@@ -1,4 +1,4 @@
-﻿#include "engine/replication/session.h"
+#include "engine/replication/session.h"
 
 #include <algorithm>
 #include <bit>

@@ -1338,6 +1338,9 @@ public:
             if (!lock.Succeeded())
                 return false;
             m_system.SaveBodyState(lock.GetBody(), recorder);
+            // Awake or asleep: a body's own state does not say, and a crate
+            // restored awake that had been asleep is stepped differently.
+            recorder.Write(lock.GetBody().IsActive());
         }
         const u64 characterCount = characters.size();
         recorder.Write(characterCount);
@@ -1348,6 +1351,13 @@ public:
             recorder.Write(packHandle(handle));
             record->character->SaveState(recorder);
         }
+        // **And the contacts the solver warm-starts from.** Without them a
+        // step taken again started from the impulses of the newest step, not
+        // of the one restored, and even a crate at rest came out a few
+        // micrometres elsewhere -- which a crate pushed into another made
+        // centimetres. Every contact the cache holds involves a body that
+        // moves, and on a replica those are the island's.
+        m_system.SaveState(recorder, JPH::EStateRecorderState::Contacts);
         const std::string data = recorder.GetData();
         out.assign(data.begin(), data.end());
         return true;
@@ -1373,13 +1383,16 @@ public:
                     return false;
                 m_system.RestoreBodyState(lock.GetBody(), recorder);
             }
-            // The broad phase learns where it is now, and a body that moves
-            // is awake.
+            bool active = false;
+            recorder.Read(active);
+            // The broad phase learns where it is now, and the body is awake
+            // or asleep as it was.
             bodies.SetPositionAndRotation(record->id, bodies.GetPosition(record->id), bodies.GetRotation(record->id),
                                           JPH::EActivation::DontActivate);
-            if (!bodies.GetLinearVelocity(record->id).IsNearZero() ||
-                !bodies.GetAngularVelocity(record->id).IsNearZero())
+            if (active)
                 bodies.ActivateBody(record->id);
+            else
+                bodies.DeactivateBody(record->id);
         }
         u64 characterCount = 0;
         recorder.Read(characterCount);
@@ -1391,6 +1404,8 @@ public:
                 return false;
             record->character->RestoreState(recorder);
         }
+        if (recorder.IsFailed() || !m_system.RestoreState(recorder))
+            return false;
         return !recorder.IsFailed();
     }
 
@@ -1744,6 +1759,14 @@ public:
         record->character->RefreshContacts(m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
                                            m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{},
                                            JPH::ShapeFilter{}, m_temp);
+    }
+
+    void nudgeCharacter(CharacterHandle handle, const core::CFrameD& transform)
+    {
+        if (CharacterRecord* record = resolve(handle); record != nullptr) {
+            record->character->SetPosition(toLocal(transform.position));
+            record->character->SetRotation(toJolt(transform.rotation));
+        }
     }
 
     [[nodiscard]] CharacterState characterState(CharacterHandle handle) const
@@ -3024,6 +3047,13 @@ public:
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->setCharacterTransform(character, transform);
+        }
+    }
+
+    void nudgeCharacter(WorldHandle handle, CharacterHandle character, const core::CFrameD& transform) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->nudgeCharacter(character, transform);
         }
     }
 
