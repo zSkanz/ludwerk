@@ -101,7 +101,25 @@ inline constexpr usize MaxQueuedIntents = 64;
 // The visual slide of a correction: what is left of it after each tick, and
 // the distance past which a correction is a teleport and drawn as one.
 inline constexpr core::f64 VisualDecayPerTick = 0.6;
+
+// **What a replica predicts besides its character** (ADR 0133): the loose
+// parts within this many metres of it, nearest first, up to a count; one that
+// has been out of range this many ticks goes back to being drawn between
+// snapshots. `[network] predict_radius`, `predict_max_bodies` and
+// `predict_linger_ticks` set them for a project.
+inline constexpr core::f64 DefaultPredictRadius = 8.0;
+inline constexpr u32 DefaultPredictMaxBodies = 32;
+inline constexpr u32 DefaultPredictLingerTicks = 30;
 inline constexpr core::f64 VisualSnapMetres = 2.0;
+// **A replica's island disagreeing by this much is stepped again** from the
+// authority's word, without counting a correction (ADR 0133). Measured: from
+// the same state the two machines step it to the bit, so any difference is a
+// real one -- and a fifth of a millimetre left alone was a centimetre after
+// the next time two crates met.
+inline constexpr core::f64 ResyncMetres = 0.00001;
+// A loose part this close to a predicted one -- past their bounding spheres --
+// is predicted too, one step out from the radius.
+inline constexpr core::f64 PredictTouchMetres = 0.25;
 inline constexpr u32 MaxOwnedStatesPerTick = 2;
 inline constexpr u16 MaxOwnedRecords = 4096;
 inline constexpr u16 MaxRemoteRefs = 1024;
@@ -425,10 +443,24 @@ public:
     // This replica's player number, as the authority's welcome named it.
     [[nodiscard]] u32 playerId() const noexcept { return m_playerId; }
     [[nodiscard]] core::InstanceId localOf(NetId id) const noexcept;
-    [[nodiscard]] Stats stats() const noexcept { return m_stats; }
+    [[nodiscard]] Stats stats() const noexcept
+    {
+        Stats now = m_stats;
+        now.predictedBodies = static_cast<u32>(m_predictedParts.size());
+        return now;
+    }
     // Snapshots refused because the reconstruction did not match what the
     // authority described. Zero in a correct build; a test asserts it.
     [[nodiscard]] u64 checksumFailures() const noexcept { return m_checksumFailures; }
+    // The loose parts this replica predicts (ADR 0133), and how far, how many
+    // and how long.
+    void setPrediction(core::f64 radius, u32 maxBodies, u32 lingerTicks) noexcept
+    {
+        m_predictRadius = radius;
+        m_predictMax = maxBodies;
+        m_predictLinger = lingerTicks;
+    }
+    [[nodiscard]] usize predictedCount() const noexcept { return m_predictedParts.size(); }
     // The own character's drawn offset (`VisualCorrection`).
     [[nodiscard]] VisualCorrection visualCorrection() const noexcept
     {
@@ -437,6 +469,9 @@ public:
 
 private:
     void decayVisualOffset() noexcept;
+    // Which loose parts are predicted this tick: in, out, and what each
+    // starts from.
+    void updatePredicted(scene::World& world);
     void onSnapshot(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void onSpawn(scene::World& world, std::span<const u8> bytes);
     void onDespawn(scene::World& world, std::span<const u8> bytes);
@@ -502,6 +537,14 @@ private:
     // not, so a character could be predicted from where it was spawned --
     // the origin -- and corrected the moment the first answer came.
     bool m_ownedSynced = false;
+    // Predicted parts, by network id, and how many ticks each has been out of
+    // range.
+    std::map<u32, u32> m_predictedParts;
+    // How far the last comparison found a predicted part from the authority's.
+    core::f64 m_lastBodyCorrection = 0.0;
+    core::f64 m_predictRadius = DefaultPredictRadius;
+    u32 m_predictMax = DefaultPredictMaxBodies;
+    u32 m_predictLinger = DefaultPredictLingerTicks;
     // What is left to slide of the corrections so far, and whose.
     core::InstanceId m_visualCharacter;
     core::DVec3 m_visualOffset{};

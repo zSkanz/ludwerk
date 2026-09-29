@@ -196,6 +196,12 @@ public:
             physics->remember(tick);
     }
 
+    [[nodiscard]] std::optional<core::CFrameD> remembered(core::u64 tick, core::InstanceId id) const override
+    {
+        const scene::PhysicsSync* physics = m_host != nullptr ? m_host->physics() : nullptr;
+        return physics != nullptr ? physics->remembered(tick, id) : std::nullopt;
+    }
+
 private:
     std::unique_ptr<WorldHost>& m_host;
 };

@@ -46,6 +46,17 @@ struct CharacterReplayStart
     // ones this replica held when it predicted them (D205).
     std::optional<core::f32> walkSpeed;
     std::optional<core::f32> jumpSpeed;
+    // **The predicted parts, as the authority had them at that tick** (ADR
+    // 0133): restored with the character, so what it pushed is stepped again
+    // from where the authority says it was.
+    struct Body
+    {
+        core::InstanceId id{};
+        core::CFrameD cframe{};
+        core::Vec3 linear{};
+        core::Vec3 angular{};
+    };
+    std::vector<Body> bodies;
 };
 
 class ICharacterReplay
@@ -71,6 +82,14 @@ public:
     // (ADR 0133): kept, so a correction can restore it at the tick the
     // authority answers and step it again for real. Nothing by default.
     virtual void remember(core::u64 tick) { (void)tick; }
+    // Where `id` was after the step of `tick`, as remembered; nothing when it
+    // was not simulated here then.
+    [[nodiscard]] virtual std::optional<core::CFrameD> remembered(core::u64 tick, core::InstanceId id) const
+    {
+        (void)tick;
+        (void)id;
+        return std::nullopt;
+    }
 };
 
 } // namespace engine::scene

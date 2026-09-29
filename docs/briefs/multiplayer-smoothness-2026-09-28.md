@@ -198,19 +198,24 @@ engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-t
   `stepController` path stays only as the fallback where no island was
   remembered, which is at join. The corner test: no correction past a
   centimetre in 100 jumps over jitter and loss, the join's take aside.
-- [ ] **Predicted set:** loose parts within `[network] predict_radius` (8 m) of
-  the own character plus what they touch, capped at `predict_max_bodies` (32),
-  entering at the authority's full motion state, leaving after
-  `predict_linger_ticks` (30) with a blend.
-- [ ] **Island correction:** on a failed comparison, restore character and
-  predicted bodies to the snapshot's tick and re-simulate to the present with
-  the ADR 0101 machinery, scoped to the island; predicted bodies sent in full
-  (protocol version rises).
-- [ ] Remove the side-pass (D244) for predicted parts; keep it for other
+- [x] **Predicted set:** loose parts within 8 m of the own character plus
+  what they touch, capped at 32, entering at the authority's newest motion
+  state, leaving after 30 ticks out of range. The radius, cap and linger are
+  constants in `session.h` for now: the project has no `[network]` section yet.
+  **The blend on leaving is owed**, and moves to the next item, one drawn
+  position per instance, which gives every instance the offset a blend needs.
+- [x] **Island correction:** on a failed comparison, restore character and
+  predicted bodies to the snapshot's tick and re-simulate to the present,
+  scoped to the island; a loose part's velocities are on the wire (protocol
+  23). Any difference past 10 µm is stepped again without counting a
+  correction: the two machines step the island to the bit from the same state,
+  and a fifth of a millimetre left alone was a centimetre at the next contact
+  (D251).
+- [x] Remove the side-pass (D244) for predicted parts; keep it for other
   players' characters.
-- [ ] F3 Network panel and `GetStats()`: predicted bodies, re-simulations/s,
+- [x] F3 Network panel and `GetStats()`: predicted bodies, re-simulations/s,
   ticks re-simulated, re-simulation time.
-- [ ] **Tests:** pushing a crate for 10 s over jitter/loss — zero corrections
+- [x] **Tests:** pushing a crate for 10 s over jitter/loss — zero corrections
   above 1 cm and no overlap; 100 corner jumps — zero corrections above 1 cm;
   the authority's determinism traces unchanged.
 - [ ] Re-export the owner's test game and measure it windowed with a real key;

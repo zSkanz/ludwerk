@@ -1,6 +1,9 @@
 // `NetworkService:Join`, `Host` and `Disconnect` from a script (ADR 0106), two
 // hosts in one process over the memory transport -- the same session the
 // engine runs over ENet.
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <doctest/doctest.h>
 #include <map>
 #include <memory>
@@ -344,9 +347,23 @@ public:
 
     void remember(core::u64 tick) override
     {
+        // Timed: what keeping the island costs every tick, for the baseline.
+        const auto began = std::chrono::steady_clock::now();
         if (scene::PhysicsSync* physics = m_host.physics(); physics != nullptr)
             physics->remember(tick);
+        remembers += 1;
+        rememberMicros += static_cast<core::u64>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count());
     }
+
+    [[nodiscard]] std::optional<core::CFrameD> remembered(core::u64 tick, core::InstanceId id) const override
+    {
+        const scene::PhysicsSync* physics = m_host.physics();
+        return physics != nullptr ? physics->remembered(tick, id) : std::nullopt;
+    }
+
+    core::u64 remembers = 0;
+    core::u64 rememberMicros = 0;
 
 private:
     app::WorldHost& m_host;
@@ -566,4 +583,264 @@ TEST_CASE("a hundred jumps onto a block's corner over jitter and loss are not co
     // And over a clean one, nothing at all.
     const CornerRun clean = measureCorner(false, true);
     CHECK(clean.corrections == 0);
+}
+
+// The same game with three loose crates in the walk: the client runs at them
+// and back for ten seconds, pushing them into each other.
+constexpr std::string_view CrateServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Corner = require("@shared/corner")
+NetworkService:Host(47121)
+local function part(name: string, size: vector, position: vector, anchored: boolean)
+    local made = Instance.new("Part")
+    made.Name = name
+    made.Anchored = anchored
+    made.Size = size
+    made.Position = position
+    made.Parent = workspace
+end
+part("Floor", vector.create(80, 1, 80), vector.create(0, -0.5, 0), true)
+part("Crate1", vector.create(2, 2, 2), vector.create(-1, 1, 0), false)
+part("Crate2", vector.create(2, 2, 2), vector.create(2, 1, 0.6), false)
+part("Crate3", vector.create(2, 2, 2), vector.create(5, 1, -0.8), false)
+local bodies: { [Player]: CharacterBody } = {}
+RunService.Heartbeat:Connect(function()
+    for _, player in NetworkService:GetPlayers() do
+        if player.UserId ~= 2 then
+            continue
+        end
+        local body = bodies[player]
+        if not body then
+            body = Instance.new("CharacterBody")
+            body.Name = "Hero"
+            body.Size = vector.create(2, 4, 2)
+            body.Position = vector.create(-6, 3, 0)
+            body.WalkSpeed = 8
+            body.JumpSpeed = 6
+            body.Parent = workspace
+            bodies[player] = body
+            player.Character = body
+        end
+        Corner.drive(player, body :: CharacterBody)
+    end
+end)
+)";
+
+constexpr std::string_view CrateClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local InputService = game:GetService("InputService")
+local Corner = require("@shared/corner")
+local context = Instance.new("InputContext")
+context.Parent = workspace
+local move = Instance.new("InputAction")
+move.Name = "Move"
+move.Type = Enum.InputActionType.Direction2D
+move.Parent = context
+local stick = Instance.new("InputBinding")
+stick.KeyCode = Enum.KeyCode.VirtualStick1
+stick.Parent = move
+NetworkService:Join("memory:47121")
+
+-- A second to settle, then ten seconds at the crates: a second and a half
+-- pushing, a second back, a little sideways each time so they turn.
+local ticks = 0
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    local body = if me then me.Character else nil
+    if NetworkService.State ~= Enum.NetworkState.Connected or not me or not body then
+        return
+    end
+    ticks += 1
+    local run, side = 0, 0
+    if ticks > 60 then
+        local at = (ticks - 60) % 150
+        if at < 90 then
+            run = 1
+            side = if (ticks // 150) % 2 == 0 then 0.25 else -0.25
+        else
+            run = -1
+        end
+        workspace:SetAttribute("Pushing", true)
+    end
+    InputService:SetVirtualState(Enum.KeyCode.Virtual1, run)
+    InputService:SetVirtualState(Enum.KeyCode.Virtual2, side)
+    Corner.drive(me, body :: CharacterBody)
+    if ticks > 660 then
+        print("crates-done")
+    end
+end)
+)";
+
+namespace {
+
+// How far the segment `from`..`to` -- a capsule's axis -- comes to a box.
+[[nodiscard]] double segmentToBox(const core::DVec3& from, const core::DVec3& to, const core::CFrameD& box,
+                                  const core::Vec3& size)
+{
+    const core::Mat3 back = core::transpose(box.rotation);
+    const core::Vec3 half = size * 0.5f;
+    double nearest = 1e9;
+    for (int step = 0; step <= 8; ++step) {
+        const double t = step / 8.0;
+        const core::DVec3 point{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t,
+                                from.z + (to.z - from.z) * t};
+        const core::DVec3 offset = point - box.position;
+        const core::Vec3 local = back * core::Vec3{static_cast<core::f32>(offset.x), static_cast<core::f32>(offset.y),
+                                                   static_cast<core::f32>(offset.z)};
+        const core::Vec3 clamped{std::clamp(local.x, -half.x, half.x), std::clamp(local.y, -half.y, half.y),
+                                 std::clamp(local.z, -half.z, half.z)};
+        const core::Vec3 apart{local.x - clamped.x, local.y - clamped.y, local.z - clamped.z};
+        nearest = std::min(nearest,
+                           std::sqrt(static_cast<double>(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z)));
+    }
+    return nearest;
+}
+
+struct CrateRun
+{
+    int overDuringPush = 0;
+    double largest = 0.0;
+    double deepest = 0.0;
+    double nearest = 1e9;
+    int looked = 0;
+    core::u32 mostPredicted = 0;
+    replication::Stats last;
+};
+
+[[nodiscard]] CrateRun measureCrates(bool lossy, core::u32 seed)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    net::LossConfig loss;
+    loss.seed = seed;
+    loss.dropPerMille = 20;
+    loss.reorderPerMille = 50;
+    loss.jitterPolls = 2;
+
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/corner.luau", std::string(CornerShared));
+    server.project.write("src/server/init.luau", std::string(CrateServer));
+    server.bootOver(wire, lossy ? &loss : nullptr);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/corner.luau", std::string(CornerShared));
+    client.project.write("src/client/init.luau", std::string(CrateClient));
+    client.bootOver(wire, lossy ? &loss : nullptr);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    CrateRun run;
+    core::u64 seen = 0;
+    scene::World& world = client.host->world();
+    for (int frame = 0; frame < 20000 && !log.contains("crates-done"); ++frame) {
+        server.frame();
+        client.frame();
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr)
+            continue;
+        const replication::Stats stats = replica->stats();
+        run.last = stats;
+        const bool pushing =
+            std::holds_alternative<bool>(world.getAttribute(client.host->workspace(), world.atoms().lookup("Pushing")));
+        if (stats.corrections != seen) {
+            seen = stats.corrections;
+            if (pushing) {
+                MESSAGE("MEASURE crate correction size=" << stats.lastCorrectionMetres
+                                                         << " predicted=" << stats.predictedBodies);
+                run.largest = std::max(run.largest, stats.lastCorrectionMetres);
+                if (stats.lastCorrectionMetres > 0.01)
+                    ++run.overDuringPush;
+            }
+        }
+        if (!pushing)
+            continue;
+        run.mostPredicted = std::max(run.mostPredicted, stats.predictedBodies);
+        const core::InstanceId hero = world.findFirstChild(client.host->workspace(), world.atoms().lookup("Hero"));
+        const scene::PartComponent* body = hero.valid() ? world.parts().find(hero) : nullptr;
+        if (body == nullptr)
+            continue;
+        ++run.looked;
+        const core::DVec3 feet = body->cframe.position + core::DVec3{0.0, -1.0, 0.0};
+        const core::DVec3 head = body->cframe.position + core::DVec3{0.0, 1.0, 0.0};
+        for (const char* name : {"Crate1", "Crate2", "Crate3"}) {
+            const core::InstanceId crate = world.findFirstChild(client.host->workspace(), world.atoms().lookup(name));
+            const scene::PartComponent* box = crate.valid() ? world.parts().find(crate) : nullptr;
+            if (box == nullptr)
+                continue;
+            // A capsule of radius 1: inside by what the axis is closer than that.
+            const double gap = segmentToBox(feet, head, box->cframe, box->size) - 1.0;
+            run.deepest = std::max(run.deepest, -gap);
+            run.nearest = std::min(run.nearest, gap);
+        }
+    }
+    CHECK(log.contains("crates-done"));
+    MESSAGE("MEASURE crates lossy=" << lossy << " seed=" << seed << " corrections=" << seen
+                                    << " overDuringPush=" << run.overDuringPush << " largest=" << run.largest
+                                    << " deepest=" << run.deepest << " nearest=" << run.nearest
+                                    << " looked=" << run.looked << " predicted=" << run.mostPredicted
+                                    << " resims=" << run.last.resimulations << " ticks=" << run.last.resimulatedTicks
+                                    << " micros=" << run.last.resimulationMicros << " remembers=" << replay.remembers
+                                    << " rememberMicros=" << replay.rememberMicros);
+    return run;
+}
+
+} // namespace
+
+TEST_CASE("ten seconds pushing crates over jitter and loss are not corrected, and nothing overlaps (ADR 0133)")
+{
+    // Over three different runs of loss and jitter.
+    for (const core::u32 seed : {9u, 5u, 21u}) {
+        const CrateRun lossy = measureCrates(true, seed);
+        // The crates were the replica's to simulate, not only to draw.
+        CHECK(lossy.mostPredicted >= 2);
+        CHECK(lossy.overDuringPush == 0);
+        // Pushing -- in touch, looked at every tick -- and never inside a
+        // crate past the solver's own skin.
+        CHECK(lossy.looked > 500);
+        CHECK(lossy.nearest < 0.05);
+        CHECK(lossy.deepest < 0.03);
+    }
+    const CrateRun clean = measureCrates(false, 0);
+    CHECK(clean.overDuringPush == 0);
+    CHECK(clean.deepest < 0.03);
+}
+
+TEST_CASE("a replica predicts the loose parts near its character and what they touch, and no further (ADR 0133)")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/corner.luau", std::string(CornerShared));
+    // The character stands at x = -6: a crate 7.5 m away, one touching it past
+    // the 8 m radius, and one far off.
+    std::string script(CrateServer);
+    const std::string placed = R"(part("Crate1", vector.create(2, 2, 2), vector.create(-1, 1, 0), false)
+part("Crate2", vector.create(2, 2, 2), vector.create(2, 1, 0.6), false)
+part("Crate3", vector.create(2, 2, 2), vector.create(5, 1, -0.8), false))";
+    const std::string instead = R"(part("Crate1", vector.create(2, 2, 2), vector.create(1.5, 1, 0), false)
+part("Crate2", vector.create(2, 2, 2), vector.create(3.6, 1, 0), false)
+part("Crate3", vector.create(2, 2, 2), vector.create(14, 1, 0), false))";
+    const std::size_t at = script.find(placed);
+    REQUIRE(at != std::string::npos);
+    script.replace(at, placed.size(), instead);
+    server.project.write("src/server/init.luau", script);
+    server.bootOver(wire, nullptr);
+    Machine client;
+    client.project.write("src/client/init.luau", R"(game:GetService("NetworkService"):Join("memory:47121"))");
+    client.bootOver(wire, nullptr);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    core::u32 predicted = 0;
+    for (int frame = 0; frame < 240; ++frame) {
+        server.frame();
+        client.frame();
+        if (const replication::IReplication* replica = client.network->replication(); replica != nullptr)
+            predicted = replica->stats().predictedBodies;
+    }
+    CHECK(predicted == 2);
 }

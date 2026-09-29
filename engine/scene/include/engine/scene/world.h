@@ -319,6 +319,13 @@ struct EngineState
         f64 lastCorrectionMetres = 0.0;
         u32 inputBufferDepth = 0;
         u64 inputStarvations = 0;
+        // A replica's own simulation (ADR 0133): the loose parts it predicts,
+        // the re-simulations a second and the ticks they stepped, and what
+        // one took on average over that second, in milliseconds.
+        u32 predictedParts = 0;
+        f64 resimulationsPerSecond = 0.0;
+        f64 resimulatedTicksPerSecond = 0.0;
+        f64 resimulationMs = 0.0;
     };
     NetworkStats networkStats;
 

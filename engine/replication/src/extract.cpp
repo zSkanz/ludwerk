@@ -231,6 +231,14 @@ using generated::Source;
             setBool(out, body->canCollide);
             return true;
         }
+        if (field.name == "LinearVelocity") {
+            setVec3(out, body->linearVelocity);
+            return true;
+        }
+        if (field.name == "AngularVelocity") {
+            setVec3(out, body->angularVelocity);
+            return true;
+        }
         return false;
     }
 
@@ -1202,6 +1210,14 @@ using generated::Source;
         }
         if (field.name == "CanCollide") {
             body->canCollide = asBool(value);
+            return true;
+        }
+        if (field.name == "LinearVelocity") {
+            body->linearVelocity = asVec3(value);
+            return true;
+        }
+        if (field.name == "AngularVelocity") {
+            body->angularVelocity = asVec3(value);
             return true;
         }
         return false;

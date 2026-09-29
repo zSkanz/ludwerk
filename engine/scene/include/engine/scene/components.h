@@ -157,6 +157,13 @@ struct RigidBodyComponent
     // the parts that are its own, and holds 0 for the rest.
     u32 networkOwner = 0;
 
+    // **Simulated on this replica, near its character** (ADR 0133): written
+    // by the replication module on a replica only. A predicted part is a
+    // dynamic body here, corrected with the character rather than drawn
+    // between snapshots. Never replicated, never hashed: the authority's is
+    // always false.
+    bool predicted = false;
+
     // `ApplyImpulse` accumulates here and the mirror drains it at the start of
     // the next tick. A queue rather than an immediate call because a script may
     // run at any point in the frame and the solver may not be interrupted --

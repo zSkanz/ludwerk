@@ -331,12 +331,16 @@ void NetworkSession::update()
         shown.lastCorrectionMetres = stats.lastCorrectionMetres;
         shown.inputBufferDepth = stats.intentDepth;
         shown.inputStarvations = stats.intentStarvations;
+        shown.predictedParts = stats.predictedBodies;
         const core::u64 now = m_clock ? m_clock() : platform::nowNs();
         const core::u64 snapshots = status.authority ? stats.snapshotsSent : stats.snapshotsReceived;
         if (m_rateStartedNs == 0 || now < m_rateStartedNs) {
             m_rateStartedNs = now;
             m_rateSnapshots = snapshots;
             m_rateCorrections = stats.corrections;
+            m_rateResimulations = stats.resimulations;
+            m_rateResimulatedTicks = stats.resimulatedTicks;
+            m_rateResimulationMicros = stats.resimulationMicros;
         }
         else if (now - m_rateStartedNs >= 1'000'000'000ull) {
             const core::f64 seconds = static_cast<core::f64>(now - m_rateStartedNs) / 1e9;
@@ -344,9 +348,23 @@ void NetworkSession::update()
                 static_cast<core::f64>(snapshots - std::min(snapshots, m_rateSnapshots)) / seconds;
             shown.correctionsPerSecond =
                 static_cast<core::f64>(stats.corrections - std::min(stats.corrections, m_rateCorrections)) / seconds;
+            const core::u64 resimulations = stats.resimulations - std::min(stats.resimulations, m_rateResimulations);
+            shown.resimulationsPerSecond = static_cast<core::f64>(resimulations) / seconds;
+            shown.resimulatedTicksPerSecond =
+                static_cast<core::f64>(stats.resimulatedTicks -
+                                       std::min(stats.resimulatedTicks, m_rateResimulatedTicks)) /
+                seconds;
+            const core::u64 micros =
+                stats.resimulationMicros - std::min(stats.resimulationMicros, m_rateResimulationMicros);
+            shown.resimulationMs = resimulations > 0
+                                       ? static_cast<core::f64>(micros) / 1000.0 / static_cast<core::f64>(resimulations)
+                                       : 0.0;
             m_rateStartedNs = now;
             m_rateSnapshots = snapshots;
             m_rateCorrections = stats.corrections;
+            m_rateResimulations = stats.resimulations;
+            m_rateResimulatedTicks = stats.resimulatedTicks;
+            m_rateResimulationMicros = stats.resimulationMicros;
         }
     }
 

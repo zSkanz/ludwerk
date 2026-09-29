@@ -14133,6 +14133,10 @@ void drawNetwork(const scene::World& world)
         row("Last correction", number(stats.lastCorrectionMetres * 100.0, 1, " cm"));
         row("Input buffer", number(static_cast<double>(stats.inputBufferDepth), 0, " ticks"));
         row("Input ran dry", number(static_cast<double>(stats.inputStarvations), 0, ""));
+        row("Predicted parts", number(static_cast<double>(stats.predictedParts), 0, ""));
+        row("Resimulations", number(stats.resimulationsPerSecond, 1, " /s"));
+        row("Resimulated ticks", number(stats.resimulatedTicksPerSecond, 0, " /s"));
+        row("Resimulation", number(stats.resimulationMs, 2, " ms"));
         row("Peers", number(static_cast<double>(state.networkPeerCount), 0, ""));
         ImGui::EndTable();
     }

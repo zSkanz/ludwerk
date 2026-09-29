@@ -159,6 +159,24 @@ local BasePartFields: { Schema.Field } = {
         Component = "parts",
         Doc = "The copy's emissive map, when it changed it.",
     },
+    {
+        Name = "LinearVelocity",
+        Id = 15,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How fast a loose part moves (protocol 23, ADR 0133). A replica that predicts the part -- "
+            .. "one near its character -- starts it and corrects it from the authority's motion, not "
+            .. "only its place: a crate restored without its velocity steps again as a crate at rest.",
+    },
+    {
+        Name = "AngularVelocity",
+        Id = 16,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How fast it turns, for the same reason (protocol 23).",
+    },
 }
 
 --- **Retired**: a part has no colour or transparency of its own since ADR 0090;

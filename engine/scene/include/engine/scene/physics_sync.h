@@ -62,6 +62,7 @@ public:
     // finds the answered tick here restores it and steps the simulation again
     // with the live step, so the prediction redone is the prediction made.
     void remember(u64 tick) override;
+    [[nodiscard]] std::optional<core::CFrameD> remembered(u64 tick, core::InstanceId id) const override;
     [[nodiscard]] usize rememberedTicks() const noexcept { return m_islands.size(); }
 
     // --- Rollback (ADR 0101) ----------------------------------------------

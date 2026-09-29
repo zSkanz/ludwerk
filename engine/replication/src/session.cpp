@@ -1,7 +1,8 @@
-#include "engine/replication/session.h"
+﻿#include "engine/replication/session.h"
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -1910,9 +1911,129 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
     resolveCharacters(world, root);
     if (!ticking)
         return;
+    updatePredicted(world);
     m_serverClock += 1;
     interpolate(world);
     decayVisualOffset();
+}
+
+void ReplicaSession::updatePredicted(scene::World& world)
+{
+    const auto release = [&](u32 netId) {
+        const auto local = m_locals.find(netId);
+        if (local != m_locals.end() && world.alive(local->second)) {
+            if (scene::RigidBodyComponent* body = world.rigidBodies().find(local->second); body != nullptr)
+                body->predicted = false;
+        }
+    };
+    const auto own = m_owned != 0 ? m_locals.find(m_owned) : m_locals.end();
+    const scene::PartComponent* character =
+        own != m_locals.end() && world.alive(own->second) ? world.parts().find(own->second) : nullptr;
+    // Only where there is a simulation to predict with: a replica with no
+    // physics replay -- a test's bare world -- follows every part.
+    if (character == nullptr || !m_ownedSynced || m_predictMax == 0 || m_replay == nullptr) {
+        for (const auto& [netId, away] : m_predictedParts)
+            release(netId);
+        m_predictedParts.clear();
+        return;
+    }
+
+    // In range: loose, nobody's, not a character, nearest first (R10: ties by
+    // id) -- and what those touch, one step out, so a crate pushed into
+    // another past the radius meets a crate that moves rather than a wall.
+    struct Candidate
+    {
+        f64 distance = 0.0;
+        u32 netId = 0;
+        core::DVec3 at{};
+        f64 reach = 0.0;
+    };
+    const core::DVec3 centre = character->cframe.position;
+    std::vector<Candidate> loose;
+    for (const auto& [netId, local] : m_locals) {
+        if (netId == m_owned || !world.alive(local) || world.characterBodies().find(local) != nullptr)
+            continue;
+        const scene::RigidBodyComponent* body = world.rigidBodies().find(local);
+        const scene::PartComponent* part = world.parts().find(local);
+        if (body == nullptr || part == nullptr || body->anchored || body->networkOwner != 0)
+            continue;
+        const core::DVec3 d = part->cframe.position - centre;
+        const core::Vec3& size = part->size;
+        loose.push_back(
+            Candidate{.distance = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z),
+                      .netId = netId,
+                      .at = part->cframe.position,
+                      .reach = 0.5 * std::sqrt(static_cast<f64>(size.x * size.x + size.y * size.y + size.z * size.z))});
+    }
+    std::vector<std::pair<f64, u32>> near;
+    std::vector<const Candidate*> inRange;
+    for (const Candidate& candidate : loose) {
+        if (candidate.distance <= m_predictRadius) {
+            near.emplace_back(candidate.distance, candidate.netId);
+            inRange.push_back(&candidate);
+        }
+    }
+    for (const Candidate& candidate : loose) {
+        if (candidate.distance <= m_predictRadius)
+            continue;
+        for (const Candidate* held : inRange) {
+            const core::DVec3 d = candidate.at - held->at;
+            if (std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) <= candidate.reach + held->reach + PredictTouchMetres) {
+                near.emplace_back(candidate.distance, candidate.netId);
+                break;
+            }
+        }
+    }
+    std::sort(near.begin(), near.end());
+    if (near.size() > m_predictMax)
+        near.resize(m_predictMax);
+    std::set<u32> wanted;
+    for (const auto& entry : near)
+        wanted.insert(entry.second);
+
+    // Out of range long enough: drawn between snapshots again.
+    for (auto at = m_predictedParts.begin(); at != m_predictedParts.end();) {
+        if (wanted.contains(at->first)) {
+            at->second = 0;
+            ++at;
+            continue;
+        }
+        if (++at->second > m_predictLinger) {
+            release(at->first);
+            at = m_predictedParts.erase(at);
+            continue;
+        }
+        ++at;
+    }
+
+    // In: from the newest state the authority sent, never the drawn one,
+    // which is the interpolation's, ticks behind.
+    const WorldState* newest = m_states.empty() ? nullptr : m_states.back().get();
+    for (const u32 netId : wanted) {
+        if (m_predictedParts.contains(netId) || m_predictedParts.size() >= m_predictMax)
+            continue;
+        const InstanceId local = m_locals.at(netId);
+        scene::PartComponent* part = world.parts().find(local);
+        scene::RigidBodyComponent* body = world.rigidBodies().find(local);
+        const EntityState* held = newest != nullptr ? findEntity(*newest, netId) : nullptr;
+        if (held != nullptr) {
+            const generated::ClassDesc& desc = generated::Classes[held->schema];
+            for (usize at = 0; at < held->fields.size(); ++at) {
+                const generated::FieldDesc* field = fieldAt(desc, at);
+                if (field == nullptr)
+                    continue;
+                if (field->name == "CFrame" && field->pool == "parts")
+                    part->cframe = asCFrame(held->fields[at]);
+                else if (field->name == "LinearVelocity" && field->pool == "rigidBodies")
+                    body->linearVelocity = asVec3(held->fields[at]);
+                else if (field->name == "AngularVelocity" && field->pool == "rigidBodies")
+                    body->angularVelocity = asVec3(held->fields[at]);
+            }
+        }
+        body->predicted = true;
+        m_samples.erase(netId);
+        m_predictedParts.emplace(netId, 0u);
+    }
 }
 
 void ReplicaSession::decayVisualOffset() noexcept
@@ -2511,6 +2632,7 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_ownedParts.clear();
     m_predicted.clear();
     m_sentIntents.clear();
+    m_predictedParts.clear();
     m_owned = 0;
     m_ownedSynced = false;
     m_ackedIntent = 0;
@@ -2711,6 +2833,7 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
     // comparison corrected it by 27 cm (ADR 0133's measurement).
     const bool comparing = m_ownedSynced && predicted != nullptr;
     m_ownedSynced = true;
+    bool corrected = false;
     core::DVec3 error{};
     core::Mat3 turn;
     bool turned = false;
@@ -2728,12 +2851,33 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
                 }
             }
         }
-        // A centimetre is inside what floats and the two ends' frame timing
-        // make of the same motion; correcting it every snapshot would be a
-        // visible shimmer.
-        if (distance < 0.01 && !turned)
+        // **And every part it predicts** (ADR 0133): a crate the character
+        // pushed that the authority has somewhere else is a correction of
+        // the whole island, even with the character where it should be.
+        m_lastBodyCorrection = 0.0;
+        if (m_replay != nullptr) {
+            for (const scene::CharacterReplayStart::Body& body : authoritative.bodies) {
+                const std::optional<core::CFrameD> mine = m_replay->remembered(m_ackedIntent, body.id);
+                if (!mine.has_value())
+                    continue;
+                const core::DVec3 apart = body.cframe.position - mine->position;
+                m_lastBodyCorrection = std::max(m_lastBodyCorrection,
+                                                std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z));
+            }
+        }
+        // **Agreed is agreed**: nothing to do.
+        if (distance < ResyncMetres && !turned && m_lastBodyCorrection < ResyncMetres)
             return;
-        m_stats.corrections += 1;
+        // **Under a centimetre, stepped again without a word** (ADR 0133).
+        // From the same state the two machines step the island to the bit,
+        // but a replay does not always land there -- the solver warm-starts
+        // from contacts it cached at later ticks -- and a fifth of a
+        // millimetre left alone was a centimetre the next time two crates
+        // met. Caught while it is that small it never grows: the same replay
+        // as a correction, not counted as one.
+        corrected = distance >= 0.01 || turned || m_lastBodyCorrection >= 0.01;
+        if (corrected)
+            m_stats.corrections += 1;
     }
 
     // **Stepped again from where the authority put it** -- what every engine
@@ -2766,9 +2910,15 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
     if (complete) {
         scene::CharacterReplayStart from = authoritative;
         from.tick = m_ackedIntent;
+        // Timed for the overlay alone: the clock never reaches the result.
+        const auto began = std::chrono::steady_clock::now();
         const std::vector<core::CFrameD> frames = m_replay->replay(character, from, commands);
+        m_stats.resimulationMicros += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count());
         if (frames.size() == commands.size()) {
-            if (comparing)
+            m_stats.resimulations += 1;
+            m_stats.resimulatedTicks += commands.size();
+            if (corrected)
                 m_stats.replays += 1;
             usize at = 0;
             for (Sample& sample : m_predicted) {
@@ -2820,6 +2970,9 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
 
 void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const WorldState& state)
 {
+    // The own character's answer, kept until every entity is read (ADR 0133).
+    std::optional<scene::CharacterReplayStart> answer;
+    InstanceId answeredCharacter;
     const usize nameField = commonIndex("Name");
     const usize parentField = commonIndex("Parent");
     // **This world's own copy of each service, by its class name, first.**
@@ -2920,28 +3073,8 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                         else if (motion->name == "JumpSpeed")
                             start.jumpSpeed = asF32(entity.fields[other]);
                     }
-                    // **Corrected at once, drawn sliding** (the multiplayer
-                    // smoothness brief): what the correction moved is kept
-                    // as an offset the drawing decays over a tenth of a
-                    // second, unless it is a teleport.
-                    const scene::PartComponent* drawn = world.parts().find(local->second);
-                    const core::DVec3 before = drawn != nullptr ? drawn->cframe.position : core::DVec3{};
-                    const u64 counted = m_stats.corrections;
-                    reconcile(world, local->second, start);
-                    if (drawn != nullptr) {
-                        const core::DVec3 moved = before - drawn->cframe.position;
-                        const f64 distance = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
-                        if (m_visualCharacter != local->second)
-                            m_visualOffset = core::DVec3{};
-                        m_visualCharacter = local->second;
-                        m_visualOffset = m_visualOffset + moved;
-                        const core::DVec3& o = m_visualOffset;
-                        if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
-                            m_visualOffset = core::DVec3{};
-                        if (m_stats.corrections != counted)
-                            m_stats.lastCorrectionMetres = distance;
-                    }
-                    m_reconciledAck = m_ackedIntent;
+                    answer = start;
+                    answeredCharacter = local->second;
                 }
                 // The MOTION state is the local simulation's; the settings it
                 // steps with -- `WalkSpeed` and the rest -- are the authority's,
@@ -2956,6 +3089,13 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             else if (cframe && m_ownedParts.contains(entity.id.value)) {
                 // **Its own part is simulated here** (ADR 0099): the authority's
                 // copy is this machine's, a round trip old.
+                continue;
+            }
+            else if (m_predictedParts.contains(entity.id.value) &&
+                     (cframe || (field != nullptr && field->pool == "rigidBodies" &&
+                                 (field->name == "LinearVelocity" || field->name == "AngularVelocity")))) {
+                // **Predicted here** (ADR 0133): simulated beside the
+                // character and corrected with it, from the answer below.
                 continue;
             }
             else if (cframe && m_interpolationDelay > 0) {
@@ -2994,6 +3134,52 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
         }
         m_written[entity.id.value] = std::move(next);
     }
+
+    if (!answer.has_value())
+        return;
+    // The predicted parts at the answered tick, from this whole state.
+    for (const auto& [netId, away] : m_predictedParts) {
+        const EntityState* held = findEntity(state, netId);
+        const auto local = m_locals.find(netId);
+        if (held == nullptr || local == m_locals.end())
+            continue;
+        scene::CharacterReplayStart::Body body;
+        body.id = local->second;
+        const generated::ClassDesc& desc = generated::Classes[held->schema];
+        for (usize at = 0; at < held->fields.size(); ++at) {
+            const generated::FieldDesc* field = fieldAt(desc, at);
+            if (field == nullptr)
+                continue;
+            if (field->name == "CFrame" && field->pool == "parts")
+                body.cframe = asCFrame(held->fields[at]);
+            else if (field->name == "LinearVelocity" && field->pool == "rigidBodies")
+                body.linear = asVec3(held->fields[at]);
+            else if (field->name == "AngularVelocity" && field->pool == "rigidBodies")
+                body.angular = asVec3(held->fields[at]);
+        }
+        answer->bodies.push_back(body);
+    }
+    // **Corrected at once, drawn sliding** (the multiplayer smoothness brief):
+    // what the correction moved is kept as an offset the drawing decays over a
+    // tenth of a second, unless it is a teleport.
+    const scene::PartComponent* drawn = world.parts().find(answeredCharacter);
+    const core::DVec3 before = drawn != nullptr ? drawn->cframe.position : core::DVec3{};
+    const u64 counted = m_stats.corrections;
+    reconcile(world, answeredCharacter, *answer);
+    if (drawn != nullptr) {
+        const core::DVec3 moved = before - drawn->cframe.position;
+        const f64 distance = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
+        if (m_visualCharacter != answeredCharacter)
+            m_visualOffset = core::DVec3{};
+        m_visualCharacter = answeredCharacter;
+        m_visualOffset = m_visualOffset + moved;
+        const core::DVec3& o = m_visualOffset;
+        if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
+            m_visualOffset = core::DVec3{};
+        if (m_stats.corrections != counted)
+            m_stats.lastCorrectionMetres = std::max(distance, m_lastBodyCorrection);
+    }
+    m_reconciledAck = m_ackedIntent;
 }
 
 } // namespace engine::replication

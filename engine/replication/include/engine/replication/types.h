@@ -175,6 +175,14 @@ struct Stats
     // ran dry, summed; on a replica, its own, as the authority's snapshots say.
     u32 intentDepth = 0;
     u64 intentStarvations = 0;
+    // **What a replica simulates itself, and what stepping it again costs**
+    // (ADR 0133): the loose parts it predicts now; the replays that stepped
+    // its island again, and how many ticks they stepped in all; and the time
+    // they took, in microseconds -- measured, never simulated with.
+    u32 predictedBodies = 0;
+    u64 resimulations = 0;
+    u64 resimulatedTicks = 0;
+    u64 resimulationMicros = 0;
     u32 spawned = 0;
     u32 despawned = 0;
     // `RemoteEvent` messages (ADR 0077): sent, taken in, and refused -- a flood

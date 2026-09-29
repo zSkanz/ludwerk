@@ -818,7 +818,8 @@ local Classes: { Schema.Class } = {
                 Returns = {
                     "{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, "
                         .. "CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, "
-                        .. "InputStarvations: number }",
+                        .. "InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, "
+                        .. "ResimulatedTicksPerSecond: number, ResimulationTime: number }",
                 },
                 ThreadSafety = "Unsafe",
                 Doc = "**How the connection is doing**, for a game that shows a connection-quality mark: the "
@@ -826,7 +827,10 @@ local Classes: { Schema.Class } = {
                     .. "lost in percent (`Loss`), snapshots a second, corrections of this machine's own "
                     .. "character a second and how far the last one moved it in metres (`LastCorrection`), and "
                     .. "the authority's queue of this player's input -- how many ticks it holds "
-                    .. "(`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On an "
+                    .. "(`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On a client, "
+                    .. "what it simulates itself: the loose parts near its character it predicts "
+                    .. "(`PredictedParts`), the times a second a correction stepped them again and the ticks it "
+                    .. "stepped, and what one took on average in milliseconds (`ResimulationTime`). On an "
                     .. "authority, the worst peer's link and the deepest queue. All zero solo.",
             },
             {

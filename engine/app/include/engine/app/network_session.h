@@ -121,6 +121,9 @@ private:
     core::u64 m_rateStartedNs = 0;
     core::u64 m_rateSnapshots = 0;
     core::u64 m_rateCorrections = 0;
+    core::u64 m_rateResimulations = 0;
+    core::u64 m_rateResimulatedTicks = 0;
+    core::u64 m_rateResimulationMicros = 0;
     std::string m_address;
     // **Who this machine was on each server it joined** (D207), by
     // `address:port`: a script's `Join` after a drop presents the same token,

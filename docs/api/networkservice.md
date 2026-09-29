@@ -35,9 +35,9 @@ Leaves the match, or stops hosting, and goes back to solo in the scene it is in;
 
 Everybody taking part, in the order they joined. **The same call solo** -- one player -- so a game that loops over its players is already a multiplayer game.
 
-### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number }`
+### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }`
 
-**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On an authority, the worst peer's link and the deepest queue. All zero solo.
+**How the connection is doing**, for a game that shows a connection-quality mark: the round trip in milliseconds (`Ping`), how much it varies (`Jitter`), the share of packets lost in percent (`Loss`), snapshots a second, corrections of this machine's own character a second and how far the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's input -- how many ticks it holds (`InputBufferDepth`) and how many times it ran dry (`InputStarvations`). On a client, what it simulates itself: the loose parts near its character it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority, the worst peer's link and the deepest queue. All zero solo.
 
 ### `Host(port: number? = nil)`
 

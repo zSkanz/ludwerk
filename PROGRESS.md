@@ -418,6 +418,23 @@ machine: 68 ticks of a held key, every one exactly 8/60 m but the one that
 met a wall, and no correction. His match over the VPN, with the Network panel
 open, is the check still to come.
 
+**Its stage 2, predicted physics and an exact replay** (ADR 0133, 2026-09-28):
+the corner measured and fixed (D250, `cab7dc21`); the replay made the live step
+(`3945271a`); then the crates near a player's character simulated on the
+player's machine and corrected with it, what they touch included, their motion
+on the wire (protocol 23), the side-pass (D244) kept only for what is not
+predicted, and the Network panel and `GetStats` showing what that costs (D251).
+Ten seconds pushing three crates over loss and jitter: no correction past a
+centimetre and no overlap; the resimulation's cost is in
+`docs/perf-baselines.md`. The owner's test game re-exported and measured
+windowed is what closes it.
+
+**Next after it: one drawn position per instance** (the owner, 2026-09-28): the
+name over a character smeared in a match because the world UI, particles,
+views, 2D sprites and picking read the simulated position while parts draw an
+interpolated one. Everything visual will read one position resolved per frame,
+with rule tests and a lint so nothing reads the raw one again.
+
 **The audit of 2026-09-28 comes first**
 ([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's
 priority, band by band. After it: F1b, `DragDetector`, and the game-ready
@@ -434,9 +451,10 @@ plan where it stopped.
         real input: the IP typed, the join made, the walk taken, and the
         reconnection after its server was killed and restarted.
 - [ ] **P1, failures and data loss**: S2 with S3, S6, S7, S10, A1 to A12,
-      A15, F6 to F9. Done through A5 (D233 to D241). **Paused on 2026-09-28**
-      for the multiplayer smoothness brief, the owner's new first priority;
-      A6 is next when the audit resumes.
+      A15, F6 to F9. Done through A6, with A12 and the medium items (D233 to
+      D241, D247 to D249). **Paused on 2026-09-28** for the multiplayer
+      smoothness brief and its stage 2, then one drawn position per instance;
+      A7 is next when the audit resumes.
 - [ ] **P1, performance**: the frame statistics first (p95, the CPU and GPU
       split, time per phase), then each fix measured before and after.
 - [ ] **P2.**

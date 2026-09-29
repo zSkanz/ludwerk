@@ -2840,9 +2840,11 @@ declare extern type NetworkService extends Instance with
     --- (`Loss`), snapshots a second, corrections of this machine's own character a second and how far
     --- the last one moved it in metres (`LastCorrection`), and the authority's queue of this player's
     --- input -- how many ticks it holds (`InputBufferDepth`) and how many times it ran dry
-    --- (`InputStarvations`). On an authority, the worst peer's link and the deepest queue. All zero
-    --- solo.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number }
+    --- (`InputStarvations`). On a client, what it simulates itself: the loose parts near its character
+    --- it predicts (`PredictedParts`), the times a second a correction stepped them again and the ticks
+    --- it stepped, and what one took on average in milliseconds (`ResimulationTime`). On an authority,
+    --- the worst peer's link and the deepest queue. All zero solo.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }
     --- Connects to a server at `address` (`host` or `host:port`), or to `[network] server` from
     --- `project.toml` with none. **Joining replaces this machine's scene with the server's**: what it
     --- replicates arrives, and server code stops, since this machine no longer decides the world.

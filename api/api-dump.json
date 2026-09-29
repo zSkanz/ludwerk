@@ -2364,7 +2364,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, LastCorrection: number, InputBufferDepth: number, InputStarvations: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number }"],
           "ThreadSafety": "Unsafe"
         },
         {

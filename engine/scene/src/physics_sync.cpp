@@ -243,7 +243,8 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     // and the authority is the one that follows. A replica holds an owner only
     // for its own parts, so any owner here is this machine.
     const NetworkTopology topology = m_scene.engineState().networkTopology;
-    const bool replicated = topology == NetworkTopology::Replica && !body.anchored && body.networkOwner == 0;
+    const bool replicated =
+        topology == NetworkTopology::Replica && !body.anchored && body.networkOwner == 0 && !body.predicted;
     const bool ownedElsewhere = topology != NetworkTopology::Replica && body.networkOwner != 0;
     const bool driven = isDriven(id) || replicated || ownedElsewhere || (body.anchored && movingAnchored);
     desc.motion = driven          ? physics::MotionType::Kinematic
@@ -382,6 +383,12 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         if (applied) {
             remember();
             record.backendMotion = desc.motion;
+            // **A body that becomes simulated starts moving as it was**: a
+            // rebuilt body is at rest, and a part a replica starts predicting
+            // mid-flight would otherwise drop out of the air (ADR 0133).
+            if (desc.motion == physics::MotionType::Dynamic && !(body.linearVelocity == core::Vec3{0.0f, 0.0f, 0.0f} &&
+                                                                 body.angularVelocity == core::Vec3{0.0f, 0.0f, 0.0f}))
+                m_backend.setBodyVelocity(m_world, record.handle, body.linearVelocity, body.angularVelocity);
         }
         else {
             // **A refusal leaves the body as it was, so only the retry gate is
@@ -642,6 +649,18 @@ void PhysicsSync::remember(u64 tick)
         m_islands.erase(m_islands.begin());
 }
 
+std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId id) const
+{
+    const auto island = m_islands.find(tick);
+    if (island == m_islands.end())
+        return std::nullopt;
+    for (const IslandEntity& entity : island->second.entities) {
+        if (entity.id == id)
+            return entity.cframe;
+    }
+    return std::nullopt;
+}
+
 bool PhysicsSync::restoreIsland(const Island& island)
 {
     // Every one of them still here, as it was, or nothing is touched.
@@ -709,6 +728,22 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
             m_backend.setCharacterTransform(m_world, record.handle, start.transform);
             body->verticalVelocity = start.verticalVelocity;
             body->grounded = start.grounded;
+            // And what it pushes, where the authority had it (ADR 0133).
+            for (const CharacterReplayStart::Body& pushed : start.bodies) {
+                PartComponent* place = m_scene.parts().find(pushed.id);
+                RigidBodyComponent* motion = m_scene.rigidBodies().find(pushed.id);
+                if (place == nullptr || motion == nullptr || pushed.id.index >= m_bodies.size())
+                    continue;
+                BodyRecord& held = m_bodies[pushed.id.index];
+                if (held.generation != pushed.id.generation || !held.live)
+                    continue;
+                place->cframe = pushed.cframe;
+                held.written = pushed.cframe;
+                motion->linearVelocity = pushed.linear;
+                motion->angularVelocity = pushed.angular;
+                m_backend.setBodyTransform(m_world, held.handle, pushed.cframe);
+                m_backend.setBodyVelocity(m_world, held.handle, pushed.linear, pushed.angular);
+            }
             frames.reserve(commands.size());
             for (usize at = 0; at < commands.size(); ++at) {
                 const CharacterCommand& command = commands[at];
