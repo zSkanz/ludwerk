@@ -406,8 +406,11 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
         unlinkChild(id);
         m_changes.push({ChangeKind::ChildRemoved, oldParent, id, core::NameAtom{}});
         // Nearest ancestor first: a handler that walks upward sees the same
-        // order the tree does.
+        // order the tree does. Only to an ancestor somebody listens on
+        // (audit E10).
         for (core::InstanceId ancestor = oldParent; ancestor.valid(); ancestor = parentOf(ancestor)) {
+            if (!listensForTree(ancestor, TreeListen::Descendants))
+                continue;
             for (const core::InstanceId member : subtree)
                 m_changes.push({ChangeKind::DescendantRemoving, ancestor, member, core::NameAtom{}});
         }
@@ -419,6 +422,8 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
         indexName(newParent, id);
         m_changes.push({ChangeKind::ChildAdded, newParent, id, core::NameAtom{}});
         for (core::InstanceId ancestor = newParent; ancestor.valid(); ancestor = parentOf(ancestor)) {
+            if (!listensForTree(ancestor, TreeListen::Descendants))
+                continue;
             for (const core::InstanceId member : subtree)
                 m_changes.push({ChangeKind::DescendantAdded, ancestor, member, core::NameAtom{}});
         }
@@ -429,8 +434,10 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
 
     // Every member's ancestry changed, not just the moved instance's, and each
     // is told about its OWN parent rather than about the moved one's.
-    for (const core::InstanceId member : subtree)
-        m_changes.push({ChangeKind::AncestryChanged, member, parentOf(member), core::NameAtom{}});
+    for (const core::InstanceId member : subtree) {
+        if (listensForTree(member, TreeListen::Ancestry))
+            m_changes.push({ChangeKind::AncestryChanged, member, parentOf(member), core::NameAtom{}});
+    }
 
     // **A UI element moved is a layout to redo, on both sides** (the owner: a
     // frame reparented into another kept its old place and size until one of
@@ -701,6 +708,26 @@ core::InstanceId World::clone(core::InstanceId id)
     return mapping[key(id)];
 }
 
+void World::listenForTree(core::InstanceId id, TreeListen what)
+{
+    if (!id.valid())
+        return;
+    if (m_treeListeners.size() <= id.index)
+        m_treeListeners.resize(static_cast<std::size_t>(id.index) + 1);
+    TreeListener& entry = m_treeListeners[id.index];
+    if (entry.generation != id.generation)
+        entry = TreeListener{id.generation, 0};
+    entry.bits = static_cast<u8>(entry.bits | static_cast<u8>(what));
+}
+
+bool World::listensForTree(core::InstanceId id, TreeListen what) const noexcept
+{
+    if (id.index >= m_treeListeners.size())
+        return false;
+    const TreeListener& entry = m_treeListeners[id.index];
+    return entry.generation == id.generation && (entry.bits & static_cast<u8>(what)) != 0;
+}
+
 // --- Properties -------------------------------------------------------------
 
 std::optional<Value> World::getProperty(core::InstanceId id, core::NameAtom property) const
@@ -717,7 +744,6 @@ std::optional<Value> World::getProperty(core::InstanceId id, core::NameAtom prop
 
 World::SetResult World::setProperty(core::InstanceId id, core::NameAtom property, const Value& value)
 {
-    ++m_mutations;
     InstanceRecord* record = m_instances.find(id);
     if (record == nullptr)
         return SetResult::UnknownProperty;
@@ -740,6 +766,11 @@ World::SetResult World::setProperty(core::InstanceId id, core::NameAtom property
 
     if (!descriptor->set(*this, id, value))
         return SetResult::InvalidValue;
+    // **Counted once it is a change** (audit E8): a script writing the same
+    // position every tick counted a mutation every tick, and everything that
+    // asks "did the world change?" -- the navmesh's regather above all --
+    // answered yes for ever.
+    ++m_mutations;
 
     const u16 slot = m_classes.propertySlot(record->classId, property);
     // Past 64 properties the mask cannot say, so the write is loud. Correct,

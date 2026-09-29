@@ -66,6 +66,10 @@ private:
         MeshHandle translucent;
         MeshHandle cutout;
         core::u64 content = 0;
+        // What the mesh actually read: the chunk's own blocks and the one-block
+        // shell around it. `content` digests the 26 neighbours whole, which is
+        // cheap to ask every frame and too coarse to act on alone.
+        core::u64 exact = 0;
         float blockSize = 1.0f;
         bool seen = false;
     };

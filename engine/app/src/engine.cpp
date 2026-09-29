@@ -1074,6 +1074,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::u64 frameTriangles = 0;
     core::u32 frameLodDraws = 0;
     std::vector<f64> frameTimesMs;
+    // **Where each frame went** (audit P1): the simulation, and the time spent
+    // waiting on the GPU and the display -- a command buffer, a swapchain
+    // image, the present -- with what is left the CPU drawing. Measured on the
+    // frame that spent it and recorded with the next frame's sample, as the
+    // frame time is. Without it a slow frame could not be attributed.
+    std::vector<f64> frameSimMs;
+    std::vector<f64> frameWaitMs;
+    f64 phaseSimMs = 0.0;
+    f64 phaseWaitMs = 0.0;
+    const auto msSince = [](core::u64 since) { return static_cast<f64>(platform::nowNs() - since) / 1'000'000.0; };
     // Sixty warm-up frames rather than `--frame-stats`'s ten. A soak is minutes
     // long, so a second of startup costs it nothing -- and the streamed world
     // has not finished its first ring of chunks inside ten frames, which would
@@ -1926,6 +1936,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (lastFrameNs != 0) {
                 const f64 frameMs = static_cast<f64>(sampleNs - lastFrameNs) / 1'000'000.0;
                 frameTimesMs.push_back(frameMs);
+                frameSimMs.push_back(phaseSimMs);
+                frameWaitMs.push_back(phaseWaitMs);
                 // Resident size is read per frame rather than sampled, because
                 // the number the gate wants is a PEAK and a peak between two
                 // samples is a peak nobody saw.
@@ -1952,6 +1964,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                              .focus = focusPosition});
             }
             lastFrameNs = sampleNs;
+            phaseSimMs = 0.0;
+            phaseWaitMs = 0.0;
         }
 
         // The FrameStart safe point. Overlay edits are applied HERE and not
@@ -3769,6 +3783,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         // The simulation, before anything is drawn: rendering shows the state a
         // tick settled on, never one being written.
+        const core::u64 simStartedNs = platform::nowNs();
         for (u32 step = 0; step < simTicks; ++step) {
             // What arrived is input to the tick that follows it, and what is
             // sent is the tick's result -- reversed, both directions cost a
@@ -3795,6 +3810,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // 240 came back from 241 because the frame went from 239 past it.
             answerSamples();
         }
+        phaseSimMs += msSince(simStartedNs);
         // A frame that ran no tick still services the connection: a paused
         // editor, or a frame that arrived early, must not look like a peer
         // that stopped answering.
@@ -4304,7 +4320,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             }
         }
 
+        const core::u64 beginWaitNs = platform::nowNs();
         rhi::ICmdList* cmd = device->beginFrame();
+        phaseWaitMs += msSince(beginWaitNs);
         if (cmd == nullptr)
             continue;
 
@@ -4317,7 +4335,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         core::u32 targetHeight = static_cast<core::u32>(options.height);
 
         if (!options.headless) {
+            const core::u64 acquireNs = platform::nowNs();
             const rhi::Swapchain swapchain = device->acquireSwapchain(*window);
+            phaseWaitMs += msSince(acquireNs);
             target = swapchain.texture;
             targetFormat = swapchain.format;
             targetWidth = swapchain.width;
@@ -5263,7 +5283,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // contract already describes.
         host->setGizmoTarget(nullptr);
 
+        const core::u64 presentNs = platform::nowNs();
         device->submitAndPresent();
+        phaseWaitMs += msSince(presentNs);
 
         // **A process with no window and a real clock sleeps until its next
         // tick** -- a dedicated server, above all. A window's present waits for
@@ -5453,10 +5475,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // away, because averaging a spike in is exactly how a baseline stops
         // being comparable.
         constexpr core::usize kWarmupFrames = 10;
-        std::vector<f64> measured = frameTimesMs;
-        if (measured.size() > kWarmupFrames * 2)
-            measured.erase(measured.begin(), measured.begin() + static_cast<std::ptrdiff_t>(kWarmupFrames));
-        std::sort(measured.begin(), measured.end());
+        const auto sorted = [&](const std::vector<f64>& times) {
+            std::vector<f64> kept = times;
+            if (kept.size() > kWarmupFrames * 2)
+                kept.erase(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(kWarmupFrames));
+            std::sort(kept.begin(), kept.end());
+            return kept;
+        };
+        const auto at = [](const std::vector<f64>& ordered, f64 fraction) {
+            if (ordered.empty())
+                return 0.0;
+            const auto index = static_cast<core::usize>(fraction * static_cast<f64>(ordered.size() - 1) + 0.5);
+            return ordered[std::min(index, ordered.size() - 1)];
+        };
+        std::vector<f64> measured = sorted(frameTimesMs);
 
         const f64 median = measured[measured.size() / 2];
         const f64 worst = measured.back();
@@ -5469,6 +5501,28 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             I18nArg{"triangles", static_cast<core::i64>(frameTriangles)},
         };
         core::log(LogLevel::Info, ENG_TR("engine.frame.info.stats"), stats);
+
+        // **The tail, and where it went** (audit P1): a median says how a scene
+        // usually runs and nothing about the frames a player feels. Each phase
+        // is sorted on its own, so its p95 is that phase's and not the p95
+        // frame's -- the question it answers is "is this phase ever slow".
+        std::vector<f64> drawMs;
+        drawMs.reserve(frameTimesMs.size());
+        for (core::usize index = 0; index < frameTimesMs.size(); ++index)
+            drawMs.push_back(std::max(0.0, frameTimesMs[index] - frameSimMs[index] - frameWaitMs[index]));
+        const std::vector<f64> sim = sorted(frameSimMs);
+        const std::vector<f64> wait = sorted(frameWaitMs);
+        const std::vector<f64> draw = sorted(drawMs);
+        const auto hitches = static_cast<core::i64>(
+            std::count_if(measured.begin(), measured.end(), [](f64 frameMs) { return frameMs > 33.0; }));
+        const std::array<I18nArg, 10> tail{
+            I18nArg{"p95", at(measured, 0.95)}, I18nArg{"p99", at(measured, 0.99)},
+            I18nArg{"hitches", hitches},        I18nArg{"sim", at(sim, 0.5)},
+            I18nArg{"sim95", at(sim, 0.95)},    I18nArg{"draw", at(draw, 0.5)},
+            I18nArg{"draw95", at(draw, 0.95)},  I18nArg{"wait", at(wait, 0.5)},
+            I18nArg{"wait95", at(wait, 0.95)},  I18nArg{"frames", static_cast<core::i64>(measured.size())},
+        };
+        core::log(LogLevel::Info, ENG_TR("engine.frame.info.phases"), tail);
     }
 
     // The soak verdict is computed BEFORE teardown, because teardown frees the

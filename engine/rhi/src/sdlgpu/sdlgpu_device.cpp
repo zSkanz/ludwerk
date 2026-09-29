@@ -57,6 +57,30 @@ template <class T>
     return (id != 0 && id <= table.size()) ? &table[id - 1] : nullptr;
 }
 
+// **A bind call's native list, on the stack** (audit R6): every bind made a
+// `std::vector`, and a frame of a busy scene makes thousands of binds. Sixteen
+// covers every slot count a backend allows a stage; a longer list, which no
+// caller makes, spills to the heap rather than being cut.
+template <class T>
+class BindList
+{
+public:
+    explicit BindList(usize count) : m_count(count)
+    {
+        if (count > m_inline.size())
+            m_spill.resize(count);
+    }
+    [[nodiscard]] T* data() noexcept { return m_spill.empty() ? m_inline.data() : m_spill.data(); }
+    [[nodiscard]] T& operator[](usize index) noexcept { return data()[index]; }
+    [[nodiscard]] usize size() const noexcept { return m_count; }
+    void shrink(usize count) noexcept { m_count = count; }
+
+private:
+    std::array<T, 16> m_inline{};
+    std::vector<T> m_spill;
+    usize m_count = 0;
+};
+
 struct TextureEntry
 {
     SDL_GPUTexture* texture = nullptr;
@@ -155,6 +179,11 @@ private:
     SDL_GPURenderPass* renderPass_ = nullptr;
     SDL_GPUCopyPass* copyPass_ = nullptr;
     SDL_GPUComputePass* computePass_ = nullptr;
+    // What the open render pass has bound, so a bind of the same is skipped
+    // (audit R6). Forgotten at every pass, since a pass starts with nothing.
+    std::array<SDL_GPUBuffer*, 16> boundVertex_{};
+    SDL_GPUBuffer* boundIndex_ = nullptr;
+    IndexType boundIndexType_ = IndexType::U16;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -188,6 +217,7 @@ public:
             return;
 
         SDL_WaitForGPUIdle(device_);
+        releaseInFlight();
         cmdList_.releaseStaging();
 
         for (SDL_GPUGraphicsPipeline* pipeline : pipelines_)
@@ -313,6 +343,7 @@ public:
         if (!desc.debugName.empty())
             SDL_SetGPUBufferName(device_, buffer, std::string(desc.debugName).c_str());
 
+        bufferSizes_.push_back(desc.sizeBytes);
         return {addSlot(buffers_, buffer)};
     }
 
@@ -516,15 +547,33 @@ public:
             return;
 
         cmdList_.endOpenPass();
-        if (!SDL_SubmitGPUCommandBuffer(cmdList_.buffer()))
+        // **No more than `MaxFramesInFlight` frames ahead of the GPU** (audit
+        // R8). A window's present waits for the display, which is what kept a
+        // windowed run in step; a headless one had nothing to wait on, so the
+        // CPU queued frame after frame the GPU had not drawn, and memory grew a
+        // gigabyte a second (11-ocean to 4 GiB in five seconds). The oldest
+        // frame's fence is waited on once the queue is full.
+        SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdList_.buffer());
+        if (fence == nullptr)
             noteFailure();
+        else
+            inFlight_.push_back(fence);
+        while (inFlight_.size() > MaxFramesInFlight) {
+            SDL_GPUFence* oldest = inFlight_.front();
+            inFlight_.erase(inFlight_.begin());
+            if (!lost_)
+                (void)SDL_WaitForGPUFences(device_, true, &oldest, 1);
+            SDL_ReleaseGPUFence(device_, oldest);
+        }
         cmdList_.begin(nullptr);
     }
 
     void waitIdle() override
     {
-        if (!lost_)
+        if (!lost_) {
             SDL_WaitForGPUIdle(device_);
+            releaseInFlight();
+        }
     }
 
     [[nodiscard]] bool readTexture(TextureHandle texture, std::span<std::byte> out) override;
@@ -539,6 +588,11 @@ public:
     {
         SDL_GPUBuffer** entry = slot(buffers_, handle.id);
         return entry != nullptr ? *entry : nullptr;
+    }
+    [[nodiscard]] u32 bufferSize(BufferHandle handle) noexcept
+    {
+        u32* entry = slot(bufferSizes_, handle.id);
+        return entry != nullptr ? *entry : 0;
     }
     [[nodiscard]] TextureEntry* texture(TextureHandle handle) noexcept { return slot(textures_, handle.id); }
     [[nodiscard]] const TextureEntry* texture(TextureHandle handle) const noexcept
@@ -616,7 +670,20 @@ private:
     SdlGpuCmdList cmdList_;
     bool lost_ = false;
 
+    // The frames submitted and not yet known finished, oldest first.
+    static constexpr std::size_t MaxFramesInFlight = 3;
+    std::vector<SDL_GPUFence*> inFlight_;
+    // After the GPU is idle: every fence in flight has signalled.
+    void releaseInFlight() noexcept
+    {
+        for (SDL_GPUFence* fence : inFlight_)
+            SDL_ReleaseGPUFence(device_, fence);
+        inFlight_.clear();
+    }
+
     std::vector<SDL_GPUBuffer*> buffers_;
+    // Each buffer's size, by the same slot.
+    std::vector<u32> bufferSizes_;
     std::vector<TextureEntry> textures_;
     std::vector<SDL_GPUSampler*> samplers_;
     SDL_GPUTexture* fallbackTexture_ = nullptr;
@@ -928,9 +995,14 @@ namespace {
 // arriving at load time is megabytes once, and growing the per-frame buffer to
 // hold it would keep that memory for the rest of the run.
 constexpr u32 kStagingLargestUpload = 4u * 1024u * 1024u;
+// **A buffer's upload may be larger** (audit R13): a buffer rewritten whole is
+// the instance data, written again every frame, and above the texture limit it
+// took and gave back a transfer buffer of its own every frame -- fifty thousand
+// parts are ~6 MB of it.
+constexpr u32 kStagingLargestBufferUpload = 16u * 1024u * 1024u;
 // The frame buffer's first size, and the ceiling it grows to.
 constexpr u32 kStagingInitial = 1024u * 1024u;
-constexpr u32 kStagingCeiling = 16u * 1024u * 1024u;
+constexpr u32 kStagingCeiling = 32u * 1024u * 1024u;
 // D3D12 places a texture copy's source on a 512-byte boundary and rejects
 // anything else; a buffer copy needs far less, and 16 keeps every element type
 // this engine uploads naturally aligned.
@@ -988,10 +1060,11 @@ SdlGpuCmdList::Staged SdlGpuCmdList::stage(std::span<const std::byte> data, u32 
     SDL_GPUDevice* device = device_.handle();
     const u32 size = static_cast<u32>(data.size());
     const u32 offset = alignUp(stagingUsed_, alignment);
-    if (size <= kStagingLargestUpload)
+    const u32 largest = alignment == kBufferStagingAlignment ? kStagingLargestBufferUpload : kStagingLargestUpload;
+    if (size <= largest)
         stagingWanted_ = std::max(stagingWanted_, offset + size);
 
-    if (staging_ != nullptr && size <= kStagingLargestUpload && offset + size <= stagingCapacity_) {
+    if (staging_ != nullptr && size <= largest && offset + size <= stagingCapacity_) {
         // Cycled on the frame's first write only: every later write of the frame
         // goes to the same backing, at a range nothing else has used.
         void* mapped = SDL_MapGPUTransferBuffer(device, staging_, !stagingCycled_);
@@ -1046,9 +1119,11 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
     endOpenPass();
     if (buffer_ == nullptr)
         return;
+    boundVertex_.fill(nullptr);
+    boundIndex_ = nullptr;
 
-    std::vector<SDL_GPUColorTargetInfo> colors;
-    colors.reserve(desc.colorAttachments.size());
+    BindList<SDL_GPUColorTargetInfo> colors(desc.colorAttachments.size());
+    usize colorCount = 0;
     for (const ColorAttachment& attachment : desc.colorAttachments) {
         TextureEntry* entry = device_.texture(attachment.texture);
         if (entry == nullptr || entry->texture == nullptr)
@@ -1060,8 +1135,9 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
                             attachment.clearColor.a};
         info.load_op = toSdl(attachment.loadOp);
         info.store_op = toSdl(attachment.storeOp);
-        colors.push_back(info);
+        colors[colorCount++] = info;
     }
+    colors.shrink(colorCount);
 
     SDL_GPUDepthStencilTargetInfo depth{};
     const TextureEntry* depthEntry = device_.texture(desc.depthStencil.texture);
@@ -1119,10 +1195,20 @@ void SdlGpuCmdList::bindVertexBuffers(u32 firstSlot, std::span<const BufferHandl
     if (renderPass_ == nullptr || buffers.empty())
         return;
 
-    std::vector<SDL_GPUBufferBinding> bindings;
-    bindings.reserve(buffers.size());
-    for (const BufferHandle handle : buffers)
-        bindings.push_back({.buffer = device_.buffer(handle), .offset = 0});
+    // The same buffers in the same slots as the last bind of this pass are
+    // already bound (audit R6): a scene of one mesh drawn a thousand ways
+    // rebound it a thousand times.
+    bool same = firstSlot + buffers.size() <= boundVertex_.size();
+    BindList<SDL_GPUBufferBinding> bindings(buffers.size());
+    for (usize index = 0; index < buffers.size(); ++index) {
+        SDL_GPUBuffer* native = device_.buffer(buffers[index]);
+        bindings[index] = {.buffer = native, .offset = 0};
+        same = same && boundVertex_[firstSlot + index] == native;
+    }
+    if (same)
+        return;
+    for (usize index = 0; index < buffers.size() && firstSlot + index < boundVertex_.size(); ++index)
+        boundVertex_[firstSlot + index] = bindings[index].buffer;
 
     SDL_BindGPUVertexBuffers(renderPass_, firstSlot, bindings.data(), static_cast<Uint32>(bindings.size()));
 }
@@ -1133,6 +1219,10 @@ void SdlGpuCmdList::bindIndexBuffer(BufferHandle buffer, IndexType type)
         return;
 
     const SDL_GPUBufferBinding binding{.buffer = device_.buffer(buffer), .offset = 0};
+    if (binding.buffer == boundIndex_ && type == boundIndexType_)
+        return;
+    boundIndex_ = binding.buffer;
+    boundIndexType_ = type;
     SDL_BindGPUIndexBuffer(renderPass_, &binding, toSdl(type));
 }
 
@@ -1156,8 +1246,8 @@ void SdlGpuCmdList::bindTextures(ShaderStage stage, u32 firstSlot, std::span<con
     if (renderPass_ == nullptr || bindings.empty())
         return;
 
-    std::vector<SDL_GPUTextureSamplerBinding> native;
-    native.reserve(bindings.size());
+    BindList<SDL_GPUTextureSamplerBinding> native(bindings.size());
+    usize filled = 0;
     for (const TextureBinding& binding : bindings) {
         const TextureEntry* entry = device_.texture(binding.texture);
         SDL_GPUTexture* texture = entry != nullptr ? entry->texture : nullptr;
@@ -1171,7 +1261,7 @@ void SdlGpuCmdList::bindTextures(ShaderStage stage, u32 firstSlot, std::span<con
             if (texture == nullptr || sampler == nullptr)
                 return;
         }
-        native.push_back({.texture = texture, .sampler = sampler});
+        native[filled++] = {.texture = texture, .sampler = sampler};
     }
 
     const auto count = static_cast<Uint32>(native.size());
@@ -1213,7 +1303,12 @@ void SdlGpuCmdList::upload(BufferHandle buffer, std::span<const std::byte> data,
     const SDL_GPUTransferBufferLocation source{.transfer_buffer = staged.transfer, .offset = staged.offset};
     const SDL_GPUBufferRegion destination{
         .buffer = target, .offset = offsetBytes, .size = static_cast<Uint32>(data.size())};
-    SDL_UploadToGPUBuffer(pass, &source, &destination, false);
+    // **A write of the whole buffer cycles it** (audit R11): nothing of the
+    // old contents survives, so a frame still in flight can keep reading them
+    // from the old backing instead of the copy waiting for it to finish. A
+    // write of a part must not -- the rest is live.
+    const bool whole = offsetBytes == 0 && data.size() == device_.bufferSize(buffer);
+    SDL_UploadToGPUBuffer(pass, &source, &destination, whole);
     releaseStaged(staged);
 }
 
@@ -1340,10 +1435,9 @@ void SdlGpuCmdList::bindStorageBuffers(ShaderStage stage, u32 firstSlot, std::sp
 {
     if (renderPass_ == nullptr || buffers.empty())
         return;
-    std::vector<SDL_GPUBuffer*> native;
-    native.reserve(buffers.size());
-    for (const BufferHandle handle : buffers)
-        native.push_back(device_.buffer(handle));
+    BindList<SDL_GPUBuffer*> native(buffers.size());
+    for (usize index = 0; index < buffers.size(); ++index)
+        native[index] = device_.buffer(buffers[index]);
     const auto count = static_cast<Uint32>(native.size());
     switch (stage) {
     case ShaderStage::Vertex:
@@ -1368,14 +1462,13 @@ void SdlGpuCmdList::beginComputePass(std::span<const BufferHandle> writes)
     endOpenPass();
     if (buffer_ == nullptr)
         return;
-    std::vector<SDL_GPUStorageBufferReadWriteBinding> bindings;
-    bindings.reserve(writes.size());
-    for (const BufferHandle handle : writes) {
+    BindList<SDL_GPUStorageBufferReadWriteBinding> bindings(writes.size());
+    for (usize index = 0; index < writes.size(); ++index) {
         SDL_GPUStorageBufferReadWriteBinding binding{};
-        binding.buffer = device_.buffer(handle);
+        binding.buffer = device_.buffer(writes[index]);
         // Never cycled: what a pass writes is what the draws after it read.
         binding.cycle = false;
-        bindings.push_back(binding);
+        bindings[index] = binding;
     }
     computePass_ = SDL_BeginGPUComputePass(buffer_, nullptr, 0, bindings.data(), static_cast<Uint32>(bindings.size()));
 }
@@ -1400,10 +1493,9 @@ void SdlGpuCmdList::bindComputeStorageBuffers(u32 firstSlot, std::span<const Buf
 {
     if (computePass_ == nullptr || buffers.empty())
         return;
-    std::vector<SDL_GPUBuffer*> native;
-    native.reserve(buffers.size());
-    for (const BufferHandle handle : buffers)
-        native.push_back(device_.buffer(handle));
+    BindList<SDL_GPUBuffer*> native(buffers.size());
+    for (usize index = 0; index < buffers.size(); ++index)
+        native[index] = device_.buffer(buffers[index]);
     SDL_BindGPUComputeStorageBuffers(computePass_, firstSlot, native.data(), static_cast<Uint32>(native.size()));
 }
 

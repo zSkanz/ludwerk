@@ -1310,7 +1310,10 @@ const Clip* AudioSystem::Impl::clipFor(std::string_view content)
             core::log(core::LogLevel::Warn, ENG_TR("audio.warn.undecodable"), args);
         }
     }
-    else {
+    else if (!content.empty()) {
+        // A sound that names nothing plays the tone by design and is not
+        // missing anything: the warning named an empty file on every run of
+        // a game whose sounds are tones.
         const core::I18nArg args[] = {{"content", std::string(content)}};
         core::log(core::LogLevel::Warn, ENG_TR("audio.warn.content_missing"), args);
     }

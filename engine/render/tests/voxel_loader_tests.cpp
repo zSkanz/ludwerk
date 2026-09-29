@@ -81,6 +81,20 @@ TEST_CASE("breaking a block re-meshes its chunk and the neighbour whose face it 
     CHECK(fixture.sync() == 2);
 }
 
+TEST_CASE("breaking a block inside a chunk re-meshes that chunk alone (audit P1)")
+{
+    // Nothing a neighbour's mesh reads changed -- only its one-block shell is
+    // read -- so the neighbours keep their meshes. Every one of them used to
+    // re-mesh, since their key digested this chunk whole.
+    VoxelFixture fixture;
+    (void)fixture.voxels().grid.fill(0, 0, 0, 47, 3, 15, 1);
+    (void)fixture.sync();
+
+    (void)fixture.voxels().grid.set(24, 1, 8, asset::AirBlock);
+    CHECK(fixture.sync() == 1);
+    CHECK(fixture.sync() == 0);
+}
+
 TEST_CASE("a chunk emptied of blocks gives its mesh back")
 {
     VoxelFixture fixture;

@@ -474,7 +474,11 @@ private:
     // on a new tick, after a write through the world's own verbs, or after a
     // terrain edit. So a script that builds a wall and asks for a path in the
     // same breath gets a path round the wall, and a thousand agents asking in
-    // one tick that wrote nothing cost one gather.
+    // one tick that wrote nothing cost one gather. The tick stays in the key
+    // (audit E8, weighed): replication, physics and streaming write part
+    // frames straight into their components, past the mutation count, and an
+    // anchored wall a replica moves must still move the mesh. The cost is one
+    // walk of the parts per tick that asks for a path, never one per query.
     void gather()
     {
         Fingerprint terrains;

@@ -281,6 +281,37 @@ TEST_CASE("what a save cannot hold is an error at Set, and a name is never a pat
     CHECK(fixture.logContains("refusals-done"));
 }
 
+TEST_CASE("a slot's size is kept as it changes, and the limit reads it (audit S12)")
+{
+    TempFolder folder;
+    script::testing::Fixture fixture;
+    REQUIRE(fixture.booted);
+    SaveStore store(SaveStore::Options{.directory = folder.path, .maxSlotBytes = 200});
+    fixture.runtime->setSaveStore(&store);
+    CHECK(fixture.failure(R"(
+        local slot = game:GetService("SaveService"):GetSlotAsync("sized")
+        slot:Set("a", 1)
+        slot:Set("b", { "x", { deep = Vector3.new(1, 2, 3) } })
+        slot:Set("a", "longer than a number")
+        slot:Remove("b")
+        slot:Set("c", true)
+        -- Past the limit: refused, and the slot is as it was.
+        assert(not pcall(function() slot:Set("big", string.rep("z", 300)) end))
+        assert(slot:Get("big") == nil)
+        -- Replacing a value with a smaller one fits where adding it would not.
+        slot:Set("a", string.rep("y", 150))
+        slot:Set("a", 2)
+        print("sized-done")
+    )") == "");
+    fixture.tick(2);
+    CHECK(fixture.errors() == "");
+    CHECK(fixture.logContains("sized-done"));
+    SaveSlotData* slot = store.open("sized");
+    REQUIRE(slot != nullptr);
+    REQUIRE(slot->entryBytesKnown);
+    CHECK(SaveStore::payloadSize(slot->entryBytes, slot->values.size()) == SaveStore::encodedSize(*slot));
+}
+
 TEST_CASE("an older slot is migrated once before it is handed over")
 {
     TempFolder folder;

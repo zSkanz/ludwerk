@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 #include "engine/render/lighting.h"
@@ -327,6 +329,41 @@ struct PartLook
                emissive == other.emissive && metalness == other.metalness && roughness == other.roughness &&
                normalScale == other.normalScale && alphaCutoff == other.alphaCutoff &&
                block.surfaceValues == other.block.surfaceValues;
+    }
+
+    // **What `sameBlock` compares, as one number** (audit R4): two looks
+    // `sameBlock` calls one hash alike, so a frame's looks can be found by it
+    // rather than by walking every one before -- which, with ten thousand
+    // parts in ten thousand colours, was fifty million comparisons a frame.
+    // A negative zero hashes as a zero, since it compares as one.
+    [[nodiscard]] u64 key() const noexcept
+    {
+        u64 hash = 1469598103934665603ull;
+        const auto mix = [&hash](const void* data, usize size) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            for (usize at = 0; at < size; ++at) {
+                hash ^= bytes[at];
+                hash *= 1099511628211ull;
+            }
+        };
+        const auto number = [&mix](f32 value) {
+            const f32 plain = value + 0.0f;
+            mix(&plain, sizeof(plain));
+        };
+        mix(&builtIn, sizeof(builtIn));
+        mix(&material.id, sizeof(material.id));
+        mix(&clone, sizeof(clone));
+        for (const f32 channel : {color.r, color.g, color.b, emissive.r, emissive.g, emissive.b, metalness, roughness,
+                                  normalScale, alphaCutoff})
+            number(channel);
+        for (const SurfaceValue& value : block.surfaceValues) {
+            mix(value.name.data(), value.name.size());
+            for (const f32 channel : value.value)
+                number(channel);
+            mix(&value.texture.id, sizeof(value.texture.id));
+            mix(&value.isTexture, sizeof(value.isTexture));
+        }
+        return hash;
     }
 };
 
@@ -859,6 +896,12 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         PartLook look;
     };
     std::vector<ResolvedMaterial> resolved;
+    // `resolved`'s entries by their key, for the lookup only: the vector keeps
+    // the order they were made in, which is what reaches the output (R10).
+    std::unordered_map<u64, std::vector<u32>> resolvedByKey;
+    const auto meshKey = [](core::NameAtom content, u32 local, const PartLook& look) {
+        return look.key() ^ (static_cast<u64>(content.id) * 0x9E3779B97F4A7C15ull) ^ (static_cast<u64>(local) << 1);
+    };
     // The authored materials this frame draws, each resolved once.
     std::vector<FrameMaterial> frameMaterials;
     usize lastFrameMaterial = std::numeric_limits<usize>::max();
@@ -970,12 +1013,15 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
             u32 materialSlot = 0;
             bool found = false;
-            for (u32 index = 0; index < static_cast<u32>(resolved.size()); ++index) {
-                if (resolved[index].content == meshPart.meshContent && resolved[index].local == localMaterial &&
-                    resolved[index].look.builtIn == look.builtIn && resolved[index].look.sameBlock(look)) {
-                    materialSlot = resolved[index].slot;
-                    found = true;
-                    break;
+            const u64 key = meshKey(meshPart.meshContent, localMaterial, look);
+            if (const auto bucket = resolvedByKey.find(key); bucket != resolvedByKey.end()) {
+                for (const u32 index : bucket->second) {
+                    if (resolved[index].content == meshPart.meshContent && resolved[index].local == localMaterial &&
+                        resolved[index].look.builtIn == look.builtIn && resolved[index].look.sameBlock(look)) {
+                        materialSlot = resolved[index].slot;
+                        found = true;
+                        break;
+                    }
                 }
             }
             if (!found) {
@@ -1000,6 +1046,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 block.uniforms.emissive[3] = 0.0f;
                 (void)addMaterial(block);
                 resolved.push_back(ResolvedMaterial{meshPart.meshContent, localMaterial, materialSlot, look});
+                resolvedByKey[key].push_back(static_cast<u32>(resolved.size() - 1));
             }
 
             // The two sources of see-through, multiplied: the part's own
@@ -1093,17 +1140,22 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     localMaterial = entry->sectionMaterial[section];
 
                 // Deduplicated across the frame by (urn, local index) so the
-                // sort key groups draws that share a bind set. A linear scan,
-                // because an unordered container's iteration order must not
-                // reach observable output (R10).
+                // sort key groups draws that share a bind set -- found by key
+                // (audit R4), the vector keeping the order they were made in
+                // (R10). The entry's material slot, not its place in the
+                // list: the two agree today only because every material filed
+                // before this loop is filed with an entry here.
                 u32 materialSlot = 0;
                 bool found = false;
-                for (usize slot = 0; slot < resolved.size(); ++slot) {
-                    if (resolved[slot].content == urn && resolved[slot].local == localMaterial &&
-                        resolved[slot].look.builtIn && resolved[slot].look.sameBlock(PartLook{})) {
-                        materialSlot = static_cast<u32>(slot);
-                        found = true;
-                        break;
+                const u64 key = meshKey(urn, localMaterial, PartLook{});
+                if (const auto bucket = resolvedByKey.find(key); bucket != resolvedByKey.end()) {
+                    for (const u32 index : bucket->second) {
+                        if (resolved[index].content == urn && resolved[index].local == localMaterial &&
+                            resolved[index].look.builtIn && resolved[index].look.sameBlock(PartLook{})) {
+                            materialSlot = resolved[index].slot;
+                            found = true;
+                            break;
+                        }
                     }
                 }
                 if (!found) {
@@ -1111,6 +1163,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     out.materials.push_back(localMaterial < entry->materials.size() ? entry->materials[localMaterial]
                                                                                     : RenderMaterial{});
                     resolved.push_back(ResolvedMaterial{urn, localMaterial, materialSlot, PartLook{}});
+                    resolvedByKey[key].push_back(static_cast<u32>(resolved.size() - 1));
                 }
 
                 const Vec3 centre = core::center(worldBounds);
@@ -1410,6 +1463,8 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         u32 slot;
     };
     std::vector<ResolvedPartMaterial> partMaterials;
+    // By key, for the lookup only (audit R4; the order is the vector's, R10).
+    std::unordered_map<u64, std::vector<usize>> partMaterialsByKey;
     usize lastPartMaterial = std::numeric_limits<usize>::max();
 
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
@@ -1458,11 +1513,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             materialSlot = partMaterials[lastPartMaterial].slot;
             found = true;
         }
-        for (usize index = 0; !found && index < partMaterials.size(); ++index) {
-            if (partMaterials[index].look.builtIn == look.builtIn && partMaterials[index].look.sameBlock(look)) {
-                materialSlot = partMaterials[index].slot;
-                lastPartMaterial = index;
-                found = true;
+        const u64 key = look.key();
+        if (!found) {
+            if (const auto bucket = partMaterialsByKey.find(key); bucket != partMaterialsByKey.end()) {
+                for (const usize index : bucket->second) {
+                    if (partMaterials[index].look.builtIn == look.builtIn &&
+                        partMaterials[index].look.sameBlock(look)) {
+                        materialSlot = partMaterials[index].slot;
+                        lastPartMaterial = index;
+                        found = true;
+                        break;
+                    }
+                }
             }
         }
         if (!found) {
@@ -1487,6 +1549,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             }
             materialSlot = addMaterial(material);
             partMaterials.push_back(ResolvedPartMaterial{look, materialSlot});
+            partMaterialsByKey[key].push_back(partMaterials.size() - 1);
             lastPartMaterial = partMaterials.size() - 1;
         }
 

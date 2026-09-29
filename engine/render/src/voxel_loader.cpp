@@ -97,6 +97,7 @@ u32 VoxelLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Wor
         double distance = 0.0;
         asset::VoxelChunkKey key;
         u64 content = 0;
+        u64 exact = 0;
         asset::VoxelMesh meshed;
     };
     std::vector<Want> wants;
@@ -128,7 +129,16 @@ u32 VoxelLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Wor
                 if (at->content == content)
                     continue;
             }
-            wants.push_back(Want{distance, key, content, {}});
+            // **Asked only when that moved** (audit P1, 14-voxels): the key
+            // digests the 26 neighbours whole, and a block mined inside one
+            // of them changes nothing this chunk's mesh reads.
+            const u64 exact = combine(combine(asset::shellDigestOf(voxels->grid, key), looksDigest),
+                                      static_cast<u64>(std::bit_cast<u32>(size)));
+            if (exists && at->exact == exact) {
+                at->content = content;
+                continue;
+            }
+            wants.push_back(Want{distance, key, content, exact, {}});
         }
     }
 
@@ -198,11 +208,12 @@ u32 VoxelLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Wor
             at->translucent = translucent;
             at->cutout = cutout;
             at->content = want.content;
+            at->exact = want.exact;
             at->seen = true;
         }
         else {
             m_resident.insert(at, Resident{want.key, urn, translucentUrn, cutoutUrn, handle, translucent, cutout,
-                                           want.content, voxels->blockSize, true});
+                                           want.content, want.exact, voxels->blockSize, true});
         }
         m_lastRebuilds += 1;
     }

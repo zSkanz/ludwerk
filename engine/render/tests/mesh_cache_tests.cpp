@@ -283,7 +283,10 @@ struct LodFixture
     m.m[0][0] = scale;
     m.m[1][1] = scale;
     m.m[2][2] = scale;
-    m.m[2][3] = -distance;
+    // Column three, row two: `Mat4` is `m[c][r]`. The fixture used to put it
+    // where the code read it, and so agreed with a selection that was always
+    // level zero (audit R1).
+    m.m[3][2] = -distance;
     return m;
 }
 
@@ -411,4 +414,19 @@ TEST_CASE("a mesh uploaded with a LOD chain draws fewer indices as it recedes")
     CHECK(indicesAt(4000.0f) == 3);
 
     cache.destroy(*fixture.device);
+}
+
+TEST_CASE("a distant instance draws a coarser level, placed by the renderer's own transform (audit R1)")
+{
+    // The transform the extraction hands this, not one written for the test:
+    // a fixture that agrees with the code about where the translation lives
+    // cannot catch the two being wrong together.
+    const LodFixture fixture{0.0f, 0.05f};
+    engine::core::CFrameD place;
+    place.position = engine::core::DVec3{0.0, 0.0, -5000.0};
+    const engine::core::Mat4 far = engine::core::toRenderMatrix(place, engine::core::DVec3{});
+    place.position = engine::core::DVec3{0.0, 0.0, -1.0};
+    const engine::core::Mat4 near = engine::core::toRenderMatrix(place, engine::core::DVec3{});
+    CHECK(selectMeshLod(fixture.resolved, near, PixelsPerUnit) == 0);
+    CHECK(selectMeshLod(fixture.resolved, far, PixelsPerUnit) > 0);
 }

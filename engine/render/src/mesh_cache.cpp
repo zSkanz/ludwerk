@@ -374,10 +374,13 @@ u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transfo
     }
 
     // Camera-relative space, so the camera is the origin and the translation is
-    // the offset to it (`render_world.h`).
-    const core::f32 x = transform.m[0][3];
-    const core::f32 y = transform.m[1][3];
-    const core::f32 z = transform.m[2][3];
+    // the offset to it (`render_world.h`). **Column three**: `Mat4` is `m[c][r]`
+    // (`core/math.h`), and reading row three instead read zeros -- a distance
+    // of nothing, so every imported mesh drew its finest level everywhere
+    // (audit R1).
+    const core::f32 x = transform.m[3][0];
+    const core::f32 y = transform.m[3][1];
+    const core::f32 z = transform.m[3][2];
     const core::f32 distance = std::sqrt(x * x + y * y + z * z);
 
     // At or inside the near plane the projected error is unbounded, and the
@@ -391,9 +394,9 @@ u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transfo
     // the conservative choice: it never picks a level that looks worse than the
     // threshold, only sometimes one that looks better than it had to.
     const auto axisLength = [&transform](int column) {
-        const core::f32 ax = transform.m[0][column];
-        const core::f32 ay = transform.m[1][column];
-        const core::f32 az = transform.m[2][column];
+        const core::f32 ax = transform.m[column][0];
+        const core::f32 ay = transform.m[column][1];
+        const core::f32 az = transform.m[column][2];
         return std::sqrt(ax * ax + ay * ay + az * az);
     };
     const core::f32 scale = std::max({axisLength(0), axisLength(1), axisLength(2)});

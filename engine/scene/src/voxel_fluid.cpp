@@ -26,9 +26,7 @@ constexpr std::array<std::array<i32, 2>, 4> Sides{{{1, 0}, {-1, 0}, {0, 1}, {0, 
 // Asks for `at` to be looked at by `due`, keeping the earlier of two asks.
 void schedule(VoxelComponent& voxels, const Position& at, u64 due)
 {
-    const auto [entry, inserted] = voxels.fluidWakes.emplace(at, due);
-    if (!inserted)
-        entry->second = std::min(entry->second, due);
+    voxels.fluidWakes.schedule(at, due);
 }
 
 void wakeAround(VoxelComponent& voxels, const Position& at, u64 due)
@@ -243,17 +241,7 @@ u32 stepFluids(VoxelComponent& voxels, u64 tick)
         return 0;
 
     // What is due, in position order, up to the budget.
-    std::vector<Position> due;
-    for (auto entry = voxels.fluidWakes.begin();
-         entry != voxels.fluidWakes.end() && due.size() < MaxFluidUpdatesPerTick;) {
-        if (entry->second <= tick) {
-            due.push_back(entry->first);
-            entry = voxels.fluidWakes.erase(entry);
-        }
-        else {
-            ++entry;
-        }
-    }
+    const std::vector<Position> due = voxels.fluidWakes.takeDue(tick, MaxFluidUpdatesPerTick);
     if (due.empty())
         return 0;
 

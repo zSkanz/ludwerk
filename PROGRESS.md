@@ -462,8 +462,14 @@ plan where it stopped.
       a join cancels one (A10), a reload and a recovered backup keep their
       saves (A11, F7), stamps, images and field sizes are bounded (F6, F8,
       F9), and every way out of the process leaves a report (A15).
-- [ ] **P1, performance**: the frame statistics first (p95, the CPU and GPU
-      split, time per phase), then each fix measured before and after.
+- [x] **P1, performance** (2026-09-29): the frame statistics first -- p95,
+      p99, hitches and the time in simulation, CPU drawing and waiting on the
+      GPU (`engine.frame.info.phases`) -- then R1 to R15, E4, E5, E8 to E10,
+      E14, S12, S13 and 14-voxels' hitches, D265 to D272. Ten thousand parts in
+      ten thousand colours went from 68 to 5.6 ms a frame, 14-voxels' p95 from
+      11.1 to 2.6 ms, and a headless run's memory holds instead of growing a
+      gigabyte a second (`docs/perf-baselines.md`, "The audit's performance
+      band").
 - [ ] **P2.**
 
 **The owner's defect list of 2026-09-28**, ahead of the plan

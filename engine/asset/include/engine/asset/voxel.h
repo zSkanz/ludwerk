@@ -198,4 +198,11 @@ struct VoxelHit
                                                     const core::DVec3& origin, const core::Vec3& direction,
                                                     core::f64 reach, std::span<const bool> passable = {}) noexcept;
 
+// **What a chunk's mesh reads, as one number**: its own blocks and the
+// one-block shell around it, which is all `meshVoxelChunk` pads with. The
+// renderer and the physics mirror ask it when a neighbour changed, since a
+// block mined inside one chunk changes nothing its neighbours' meshes read --
+// and acting on the neighbour's digest alone remeshed 27 chunks for it.
+[[nodiscard]] core::u64 shellDigestOf(const VoxelGrid& grid, VoxelChunkKey key) noexcept;
+
 } // namespace engine::asset

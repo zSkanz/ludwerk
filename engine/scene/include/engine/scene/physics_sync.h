@@ -23,6 +23,7 @@
 // the accumulator (R10).
 #pragma once
 
+#include <array>
 #include <map>
 #include <optional>
 #include <span>
@@ -227,6 +228,8 @@ private:
         // generation, so a slot reused by a new instance is not mistaken for the
         // old one's body.
         u32 generation = 0;
+        // The `writeBack` that last found this body active (audit E4).
+        u64 activeStamp = 0;
         physics::BodyHandle handle;
         // **Whether the backend actually holds a body for this record.**
         //
@@ -436,6 +439,19 @@ private:
         bool seen = false;
     };
     std::vector<TerrainCollider> m_terrainColliders;
+    // **What each terrain's colliders were last decided from** (audit E9): the
+    // boxes of chunks round its movers, its revision and its placement, and
+    // whether that pass finished its rebuilds. The same again is the same
+    // answer: every collider kept, nothing gathered, sorted or digested.
+    struct TerrainWant
+    {
+        core::InstanceId terrain;
+        std::vector<std::array<i32, 6>> boxes;
+        u64 revision = 0;
+        u64 placement = 0;
+        bool settled = false;
+    };
+    std::vector<TerrainWant> m_terrainWants;
 
     // **A count, never a millisecond budget.** A collider is part of the world,
     // so how many get rebuilt in a tick has to be a fact about the operation
@@ -462,6 +478,9 @@ private:
         // The chunk's own digest and its six face neighbours' -- a face on the
         // chunk's edge is hidden by a neighbour's block -- and the block size.
         core::u64 content = 0;
+        // What its mesh read: the chunk and its one-block shell
+        // (`asset::shellDigestOf`), for when `content` moved.
+        core::u64 exact = 0;
         bool seen = false;
     };
     std::vector<VoxelCollider> m_voxelColliders;
@@ -504,6 +523,9 @@ private:
     [[nodiscard]] bool restoreIsland(const Island& island);
 
     std::vector<BodyRecord> m_bodies;
+    // Counted up by each `writeBack`: a body stamped with the current count
+    // was in this step's active list.
+    u64 m_writeBackStamp = 0;
     // Set while `stepQuietly` runs: contacts are drained and not published.
     bool m_quiet = false;
     [[nodiscard]] std::vector<core::InstanceId> simulatedIds() const;
@@ -516,15 +538,34 @@ private:
     // nothing per frame.
     std::vector<physics::ActiveBody> m_active;
 
-    // The welds resolved so far this tick, so a chain -- A welded to B, B welded
-    // to C -- resolves each link once and in dependency order rather than in
-    // whatever order the pool happens to hold them (R10).
-    std::vector<core::InstanceId> m_resolvedWelds;
-    std::vector<core::InstanceId> m_resolvedAttachments;
-    // The parts an active weld drives, rebuilt each tick before the bodies are
-    // applied. A driven part is kinematic; a released one goes back to being
-    // whatever `Anchored` says.
-    std::vector<core::InstanceId> m_drivenParts;
+    // **Marks by instance slot, for this tick's resolution round** (audit E5):
+    // the welds resolved so far, so a chain -- A welded to B, B welded to C --
+    // resolves each link once and in dependency order rather than in whatever
+    // order the pool holds them (R10); the attachments resolved so far; and the
+    // parts an active weld drives, rebuilt each round before the bodies are
+    // applied (a driven part is kinematic; a released one goes back to being
+    // whatever `Anchored` says). Each was a list searched once per entry -- a
+    // thousand welds, a million compares a tick.
+    struct Mark
+    {
+        u32 generation = 0;
+        u64 round = 0;
+    };
+    u64 m_resolveRound = 0;
+    std::vector<Mark> m_weldMarks;
+    std::vector<Mark> m_attachmentMarks;
+    std::vector<Mark> m_drivenMarks;
+    [[nodiscard]] bool marked(const std::vector<Mark>& marks, core::InstanceId id) const noexcept
+    {
+        return id.index < marks.size() && marks[id.index].generation == id.generation &&
+               marks[id.index].round == m_resolveRound;
+    }
+    void mark(std::vector<Mark>& marks, core::InstanceId id)
+    {
+        if (marks.size() <= id.index)
+            marks.resize(static_cast<std::size_t>(id.index) + 1);
+        marks[id.index] = Mark{id.generation, m_resolveRound};
+    }
 
     // The one-entry memo `inWorld` keeps. Mutable because the question is a
     // read and the answer is a cache; reset every tick so a reparent cannot

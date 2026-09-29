@@ -970,6 +970,22 @@ public:
 
     [[nodiscard]] ChangeQueue& changes() noexcept { return m_changes; }
 
+    // **Who listens for the tree's per-member events** (audit E10). A move
+    // enqueued `DescendantAdded`/`DescendantRemoving` for every ancestor times
+    // every member moved, and `AncestryChanged` for every member -- and a
+    // destroy moves each member of its subtree in turn, so a deep tree was
+    // quadratic in entries nobody read. Marked when a script reaches the
+    // event (`instance.DescendantAdded`), and never unmarked: a listener that
+    // disconnects costs what it cost before. Not world state -- a snapshot
+    // does not carry it, so an undo does not forget a listener still there.
+    enum class TreeListen : u8
+    {
+        Descendants = 1,
+        Ancestry = 2,
+    };
+    void listenForTree(core::InstanceId id, TreeListen what);
+    [[nodiscard]] bool listensForTree(core::InstanceId id, TreeListen what) const noexcept;
+
     // xxh3 over a canonical walk of the simulation-relevant state
     // (architecture.md §9). Never touches an atom's numeric value, which
     // depends on intern order; it hashes the text.
@@ -1279,6 +1295,12 @@ private:
 
     EngineState m_engineState;
     ChangeQueue m_changes;
+    struct TreeListener
+    {
+        u32 generation = 0;
+        u8 bits = 0;
+    };
+    std::vector<TreeListener> m_treeListeners;
     core::u64 m_restores = 0;
     core::u64 m_mutations = 0;
 

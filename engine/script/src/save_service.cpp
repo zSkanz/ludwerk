@@ -202,28 +202,39 @@ void fireChanged(lua_State* L, const SaveSlotData& slot, const std::string& key)
 // past the project's limit and leaving it as it was.
 void storeValue(lua_State* L, SaveSlotData& slot, const std::string& key, SaveValue value)
 {
+    // **Measured by the entry that changes** (audit S12): every `Set` encoded
+    // the whole slot to check the limit, so a game writing a few keys a frame
+    // into a big slot re-serialised all of it a few times a frame.
+    if (!slot.entryBytesKnown) {
+        slot.entryBytes = 0;
+        for (const auto& [name, held] : slot.values)
+            slot.entryBytes += SaveStore::entrySize(name, held);
+        slot.entryBytesKnown = true;
+    }
     const auto previous = slot.values.find(key);
-    std::optional<SaveValue> before;
-    if (previous != slot.values.end())
-        before = previous->second;
+    const bool had = previous != slot.values.end();
+    const core::u64 old = had ? SaveStore::entrySize(key, previous->second) : 0;
     const bool removing = value.table == nullptr && std::holds_alternative<std::monostate>(value.scalar);
     if (removing) {
-        if (previous == slot.values.end())
+        if (!had)
             return;
         slot.values.erase(previous);
+        slot.entryBytes -= old;
     }
     else {
-        slot.values[key] = std::move(value);
+        const core::u64 now = SaveStore::entrySize(key, value);
         const SaveStore& saves = store(L);
-        if (SaveStore::encodedSize(slot) > saves.options().maxSlotBytes) {
-            if (before.has_value())
-                slot.values[key] = std::move(*before);
-            else
-                slot.values.erase(key);
+        const core::u64 count = slot.values.size() + (had ? 0 : 1);
+        if (SaveStore::payloadSize(slot.entryBytes - old + now, count) > saves.options().maxSlotBytes) {
             const core::I18nArg args[] = {{"slot", std::string_view{slot.name}},
                                           {"limit", static_cast<core::i64>(saves.options().maxSlotBytes)}};
             raise(L, ENG_TR("script.err.save_too_large"), args);
         }
+        if (had)
+            previous->second = std::move(value);
+        else
+            slot.values.emplace(key, std::move(value));
+        slot.entryBytes = slot.entryBytes - old + now;
     }
     ++slot.generation;
     fireChanged(L, slot, key);

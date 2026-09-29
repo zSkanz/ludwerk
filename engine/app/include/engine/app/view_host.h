@@ -78,6 +78,11 @@ public:
         rhi::TextureHandle texture;
         core::u32 width = 0;
         core::u32 height = 0;
+        // A `ViewportFrame`'s laid-out size while it differs from the
+        // texture's, and for how many frames in a row it has been that size.
+        core::u32 wantedWidth = 0;
+        core::u32 wantedHeight = 0;
+        core::u32 wantedFrames = 0;
         // The renderer's view id: its own exposure, shadow fit and targets.
         core::u32 rendererView = 0;
         bool drawn = false;

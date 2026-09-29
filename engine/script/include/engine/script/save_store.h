@@ -63,6 +63,12 @@ struct SaveSlotData
     // Bumped on every change; a write records the generation it wrote.
     core::u64 generation = 0;
     core::u64 written = 0;
+    // **The payload's entries' bytes, kept as `values` changes** (audit S12),
+    // so a `Set` measures the value it writes and not the whole slot again.
+    // Unknown after anything replaces `values` wholesale; the next `Set`
+    // measures once.
+    core::u64 entryBytes = 0;
+    bool entryBytesKnown = false;
 
     [[nodiscard]] bool dirty() const noexcept { return generation != written; }
 };
@@ -120,6 +126,13 @@ public:
     [[nodiscard]] static bool decode(std::string_view text, SaveSlotData& slot);
     // The payload's size for `slot`, which is what the limit is measured on.
     [[nodiscard]] static core::u64 encodedSize(const SaveSlotData& slot);
+    // One entry's share of it: `"key":value`, without the separating comma.
+    [[nodiscard]] static core::u64 entrySize(std::string_view key, const SaveValue& value);
+    // The payload's size for entries of `entryBytes` in all, `count` of them.
+    [[nodiscard]] static constexpr core::u64 payloadSize(core::u64 entryBytes, core::u64 count) noexcept
+    {
+        return 2 + entryBytes + (count > 0 ? count - 1 : 0);
+    }
 
     // Queues a write of `slot` as it is now; the ticket says when it is done.
     // Untracked, the write is fire-and-forget and leaves no result behind.

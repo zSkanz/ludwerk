@@ -128,8 +128,28 @@ void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& worl
         seen[static_cast<core::usize>(view - views_.begin())] = true;
         view->signature = frameSignature(world, id, poses);
         const core::Vec2 size = viewSize(element->absoluteSize, maxResolution_);
-        ensureTexture(device, cmd, library, *view, static_cast<core::u32>(size.x), static_cast<core::u32>(size.y),
-                      {0.0f, 0.0f, 0.0f, 0.0f});
+        auto width = static_cast<core::u32>(size.x);
+        auto height = static_cast<core::u32>(size.y);
+        // **A frame being resized keeps its texture until the size settles**
+        // (audit R10): a tweened frame changed size every frame, and every
+        // change remade the texture and the renderer's ~20 targets behind it.
+        // Meanwhile the picture is scaled into the frame; it is remade once
+        // the size has held for a few frames, or at once past double or half.
+        if (view->texture.valid() && (width != view->width || height != view->height)) {
+            if (width == view->wantedWidth && height == view->wantedHeight)
+                ++view->wantedFrames;
+            else
+                view->wantedFrames = 1;
+            view->wantedWidth = width;
+            view->wantedHeight = height;
+            constexpr core::u32 SettledFrames = 6;
+            const auto far = [](core::u32 wanted, core::u32 held) { return wanted > held * 2 || wanted * 2 < held; };
+            if (view->wantedFrames < SettledFrames && !far(width, view->width) && !far(height, view->height)) {
+                width = view->width;
+                height = view->height;
+            }
+        }
+        ensureTexture(device, cmd, library, *view, width, height, {0.0f, 0.0f, 0.0f, 0.0f});
     });
 
     // **Every `SubWorld` with a name to draw into** (ADR 0107 §3), black until

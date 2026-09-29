@@ -558,19 +558,31 @@ std::vector<TerrainNodeDraw> TerrainLoader::draws(const scene::World& world) con
     // ancestor of it is what is drawn there. The same level needs no skirt --
     // the two meshes share their edge -- and a finer neighbour hangs its own.
     // Each terrain's drawn nodes, sorted, for `terrainSkirtSides`.
+    //
+    // **Gathered and sorted once per terrain, not once per node** (audit R5):
+    // per node it was every node gathered and sorted again, N^2 log N a frame.
+    // Terrains are few, so which one a node belongs to is a short walk.
+    std::vector<std::pair<core::InstanceId, std::vector<TerrainNodeKey>>> byTerrain;
+    const auto keysOf = [&byTerrain](core::InstanceId terrain) -> std::vector<TerrainNodeKey>& {
+        for (auto& [id, keys] : byTerrain) {
+            if (id == terrain)
+                return keys;
+        }
+        return byTerrain.emplace_back(terrain, std::vector<TerrainNodeKey>{}).second;
+    };
+    for (const Drawn& drawn : m_drawn) {
+        if (drawn.world == &world)
+            keysOf(drawn.draw.terrain).push_back(drawn.key);
+    }
+    for (auto& [id, keys] : byTerrain)
+        std::sort(keys.begin(), keys.end());
     std::vector<TerrainNodeDraw> out;
-    std::vector<TerrainNodeKey> keys;
+    out.reserve(m_drawn.size());
     for (const Drawn& drawn : m_drawn) {
         if (drawn.world != &world)
             continue;
-        keys.clear();
-        for (const Drawn& other : m_drawn) {
-            if (other.world == &world && other.draw.terrain == drawn.draw.terrain)
-                keys.push_back(other.key);
-        }
-        std::sort(keys.begin(), keys.end());
         TerrainNodeDraw draw = drawn.draw;
-        draw.skirts = terrainSkirtSides(keys, drawn.key);
+        draw.skirts = terrainSkirtSides(keysOf(drawn.draw.terrain), drawn.key);
         out.push_back(draw);
     }
     return out;

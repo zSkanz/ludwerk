@@ -31,9 +31,12 @@
 // still the answer for the day a module ABOVE scene brings a third batch.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <map>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine/asset/material.h"
@@ -1108,6 +1111,65 @@ struct TeamComponent
     bool autoAssign = true;
 };
 
+// **The blocks the fluid step is due to look at**, by position, with the tick
+// each is due. Ordered, so the step visits them the same way on every machine
+// (R10). Also indexed by the tick they fall due (audit E14): a pond settling
+// for a hundred ticks holds thousands of wakes due later, and finding the few
+// due now walked every one of them, every tick.
+class FluidWakes
+{
+public:
+    using Position = std::array<core::i32, 3>;
+
+    // Asks for `at` to be looked at by `due`, keeping the earlier of two asks.
+    void schedule(const Position& at, core::u64 due)
+    {
+        const auto [entry, inserted] = m_byPosition.emplace(at, due);
+        if (inserted) {
+            m_byDue.emplace(due, at);
+            return;
+        }
+        if (due >= entry->second)
+            return;
+        m_byDue.erase({entry->second, at});
+        entry->second = due;
+        m_byDue.emplace(due, at);
+    }
+
+    // Removes and returns what is due by `tick`, in position order, at most
+    // `budget` of them; the rest stay due.
+    [[nodiscard]] std::vector<Position> takeDue(core::u64 tick, std::size_t budget)
+    {
+        std::vector<Position> due;
+        for (auto entry = m_byDue.begin(); entry != m_byDue.end() && entry->first <= tick; ++entry)
+            due.push_back(entry->second);
+        std::sort(due.begin(), due.end());
+        if (due.size() > budget)
+            due.resize(budget);
+        for (const Position& at : due) {
+            const auto found = m_byPosition.find(at);
+            m_byDue.erase({found->second, at});
+            m_byPosition.erase(found);
+        }
+        return due;
+    }
+
+    void clear() noexcept
+    {
+        m_byPosition.clear();
+        m_byDue.clear();
+    }
+    [[nodiscard]] bool empty() const noexcept { return m_byPosition.empty(); }
+    [[nodiscard]] std::size_t size() const noexcept { return m_byPosition.size(); }
+    [[nodiscard]] auto begin() const noexcept { return m_byPosition.begin(); }
+    [[nodiscard]] auto end() const noexcept { return m_byPosition.end(); }
+    [[nodiscard]] bool operator==(const FluidWakes& other) const { return m_byPosition == other.m_byPosition; }
+
+private:
+    std::map<Position, core::u64> m_byPosition;
+    std::set<std::pair<core::u64, Position>> m_byDue;
+};
+
 // The block world `VoxelService` owns. **Not the terrain** -- see
 // `engine/asset/voxel.h`. One per `VoxelService`, which is one per DataModel.
 struct VoxelComponent
@@ -1118,11 +1180,10 @@ struct VoxelComponent
     // **Bumped on every write to `grid`**, the same trick the terrain uses: the
     // renderer and the physics mirror compare it before doing any work.
     core::u64 revision = 0;
-    // The blocks the fluid step is due to look at, by position, with the tick
-    // each is due. Ordered, so the step visits them the same way on every
-    // machine (R10), and copied with the component, so a world restored from
-    // a snapshot resumes its water where it was.
-    std::map<std::array<i32, 3>, core::u64> fluidWakes;
+    // The blocks the fluid step is due to look at (`FluidWakes`), copied with
+    // the component, so a world restored from a snapshot resumes its water
+    // where it was.
+    FluidWakes fluidWakes;
     // **What a fluid becomes where it touches another** (`SetFluidReaction`):
     // `from` touching `touching` turns into `result` -- lava meeting water is
     // stone, and the water stays water. Sorted by (`from`, `touching`), one

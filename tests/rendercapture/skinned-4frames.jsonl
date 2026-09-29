@@ -804,7 +804,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"de70f5163da19d16"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -820,7 +820,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"d26dafdee908f3bd"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -836,7 +836,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"e94c06ebaa654cbe"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -852,7 +852,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"a508944b3b456e39"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -878,7 +878,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":10}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"7ce449be69dbd3c6"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -965,7 +965,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":7}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":208,"digest":"7a2e32645140a1e7"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"fe1b349582b9ab60"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"36e15a660b8eef60"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1144,7 +1144,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"de70f5163da19d16"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1160,7 +1160,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"d26dafdee908f3bd"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1176,7 +1176,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"e94c06ebaa654cbe"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1192,7 +1192,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":6}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"a508944b3b456e39"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1218,7 +1218,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":10}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":128,"digest":"7ce449be69dbd3c6"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}
@@ -1305,7 +1305,7 @@
 {"op":"drawIndexed","indices":12,"instances":1,"firstIndex":0,"vertexOffset":0,"firstInstance":0}
 {"op":"setPipeline","pipeline":7}
 {"op":"bindUniforms","stage":"Vertex","slot":0,"bytes":208,"digest":"7a2e32645140a1e7"}
-{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":4096,"digest":"e731ce1418cd9736"}
+{"op":"bindUniforms","stage":"Vertex","slot":1,"bytes":128,"digest":"b0451f7537b97936"}
 {"op":"bindVertexBuffers","firstSlot":0,"count":2}
 {"op":"vertexBuffer","buffer":14}
 {"op":"vertexBuffer","buffer":16}

@@ -1080,3 +1080,40 @@ kept for the frame; the windowed frame, which does interpolate, is held at the
 display's 120 Hz on this machine and has no uncapped mode to measure it with.
 The interpolation itself is what the extraction already did before this
 change -- the same function, once per instance.
+
+## The audit's performance band (2026-09-29)
+
+The P1 performance items of the audit of 2026-09-28
+([`audit-2026-09-28.md`](briefs/audit-2026-09-28.md)). The package before the
+band (`a6cf7b93`) against the package with it, the `player` profile,
+`engine-host <project> --headless --exit --frame-stats --width=1920
+--height=1080`, three runs each, measured 2026-09-29. `perf_colors` is ten
+thousand plain parts in ten thousand colours and `perf_bodies` five thousand
+loose bodies on a floor, 300 frames; the examples ran 900 frames and
+`14-voxels` 1,800.
+
+| 1080p, median / worst frame | Before | After |
+|---|---|---|
+| `perf_colors` | 68.3 / 77-82 ms | 5.6 / 7.4-8.2 ms |
+| `perf_bodies` | 1.23-1.34 / 9.6-11.7 ms | 1.41-1.55 / 6.8-8.1 ms |
+| `10-open-world` | 2.50 / -- ms | 2.31 / 22-31 ms |
+| `20-platformer` | 0.12 ms | 0.17 ms |
+| `28-arcade` | 0.565 ms | 0.92 ms |
+| `14-voxels` | 0.29 / 37 ms, ~8% of frames 8-17 ms | 0.57 / 6.3-8.0 ms, p95 2.6 ms |
+
+**The colours are the material index** (R4): ten thousand colours were fifty
+million comparisons a frame. **The headless medians of the small scenes went
+up, and that is the fix and not a cost** (R8): a run with no display queued
+frames for the GPU without a bound, which is what grew its memory by a
+gigabyte a second (11-ocean now stays at 168 MiB where it reached 2.3 GiB in
+four seconds), and a median taken that way measured the CPU racing ahead. It
+now waits on the oldest of three frames in flight, and the new phase line puts
+the difference in "waiting on the GPU": 0.35 ms of 28-arcade's 0.92.
+
+**14-voxels** is now attributed: its slow frames are CPU drawing (p95 7.4 ms),
+not simulation (p95 1.1 ms). The cause was that one block mined remeshed the
+27 chunks round it -- their key digested each neighbour whole, where the mesh
+reads a one-block shell -- and the physics mirror rebuilt the 7 face
+neighbours' colliders the same way. Both now check the shell before acting:
+with the band but without that fix, the p95 was 11.1 ms, of which the drawing
+7.4; with it, 2.6 ms and 1.8.

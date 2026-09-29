@@ -102,7 +102,9 @@ void disconnectRecord(lua_State* L, ConnectionId id)
 
     const SignalId signal = connection->signal;
     if (SignalRecord* record = sys.signals.find(signal)) {
-        for (usize index = 0; index < record->connections.size(); ++index) {
+        // From the newest: what connects last is what most often goes first,
+        // a `:Once` or a `:Wait()` above all.
+        for (usize index = record->connections.size(); index-- > 0;) {
             if (record->connections[index] == id) {
                 record->connections.erase(record->connections.begin() + static_cast<std::ptrdiff_t>(index));
                 break;
@@ -128,8 +130,10 @@ void closeSignal(lua_State* L, SignalId id)
         return;
 
     record->closed = true;
-    // Copied, because `disconnectRecord` erases from the very vector this walks.
-    const std::vector<ConnectionId> live = record->connections;
+    // Taken out whole first (audit S13): each disconnect searched the list for
+    // itself, so closing a signal of N connections cost N² -- a destroyed part
+    // with a thousand listeners. Emptied, the search finds nothing at once.
+    const std::vector<ConnectionId> live = std::exchange(record->connections, {});
     for (const ConnectionId connection : live)
         disconnectRecord(L, connection);
 
@@ -385,8 +389,8 @@ int signalDisconnectAll(lua_State* L)
     SignalRecord& record = checkSignal(L, 1);
     if (record.kind != SignalKind::Script)
         raise(L, ENG_TR("script.err.signal_not_disconnectable"));
-    // Copied, because `disconnectRecord` erases from the very vector this walks.
-    const std::vector<ConnectionId> live = record.connections;
+    // Taken out whole, as `closeSignal` does, and for the same reason.
+    const std::vector<ConnectionId> live = std::exchange(record.connections, {});
     for (const ConnectionId connection : live)
         disconnectRecord(L, connection);
     return 0;

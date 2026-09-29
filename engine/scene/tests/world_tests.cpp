@@ -702,6 +702,10 @@ TEST_CASE("one reparent raises its fires in the documented order")
     const InstanceId moved = fixture.folder("Moved");
     REQUIRE_FALSE(fixture.world.setParent(moved, oldParent).has_value());
     (void)drain(fixture.world);
+    // Listened on, as a script reaching the events marks them (audit E10).
+    fixture.world.listenForTree(oldParent, engine::scene::World::TreeListen::Descendants);
+    fixture.world.listenForTree(newParent, engine::scene::World::TreeListen::Descendants);
+    fixture.world.listenForTree(moved, engine::scene::World::TreeListen::Ancestry);
 
     REQUIRE_FALSE(fixture.world.setParent(moved, newParent).has_value());
 
@@ -710,6 +714,27 @@ TEST_CASE("one reparent raises its fires in the documented order")
     CHECK(kindsOf(drain(fixture.world)) ==
           std::vector<ChangeKind>{ChangeKind::ChildRemoved, ChangeKind::DescendantRemoving, ChangeKind::ChildAdded,
                                   ChangeKind::DescendantAdded, ChangeKind::AncestryChanged});
+}
+
+TEST_CASE("a reparent nobody listens to the tree for enqueues only what its parents fire (audit E10)")
+{
+    // A thousand-deep tree destroyed used to enqueue every ancestor times every
+    // member, twice over, for events no script had reached.
+    Fixture fixture;
+    const InstanceId oldParent = fixture.folder("Old");
+    const InstanceId newParent = fixture.folder("New");
+    const InstanceId moved = fixture.folder("Moved");
+    InstanceId deepest = moved;
+    for (int depth = 0; depth < 200; ++depth) {
+        const InstanceId child = fixture.folder("Link");
+        REQUIRE_FALSE(fixture.world.setParent(child, deepest).has_value());
+        deepest = child;
+    }
+    REQUIRE_FALSE(fixture.world.setParent(moved, oldParent).has_value());
+    (void)drain(fixture.world);
+
+    REQUIRE_FALSE(fixture.world.setParent(moved, newParent).has_value());
+    CHECK(kindsOf(drain(fixture.world)) == std::vector<ChangeKind>{ChangeKind::ChildRemoved, ChangeKind::ChildAdded});
 }
 
 TEST_CASE("a property write enqueues only when the value changes, and only when watched")

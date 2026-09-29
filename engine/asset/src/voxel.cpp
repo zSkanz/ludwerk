@@ -363,4 +363,28 @@ u64 VoxelGrid::digest() const noexcept
     return XXH3_64bits_digest(&state);
 }
 
+u64 shellDigestOf(const VoxelGrid& grid, VoxelChunkKey key) noexcept
+{
+    const auto edge = static_cast<i32>(VoxelChunkEdge);
+    const VoxelChunk* chunk = grid.findChunk(key);
+    XXH3_state_t state;
+    XXH3_64bits_reset(&state);
+    const u64 own = chunk == nullptr ? 0x6E6F6E65ull : digestOf(*chunk);
+    XXH3_64bits_update(&state, &own, sizeof(own));
+    const i32 baseX = key.x * edge;
+    const i32 baseY = key.y * edge;
+    const i32 baseZ = key.z * edge;
+    for (i32 y = -1; y <= edge; ++y) {
+        for (i32 z = -1; z <= edge; ++z) {
+            // A row through the inside is shell only at its two ends.
+            const bool shellRow = y < 0 || y == edge || z < 0 || z == edge;
+            for (i32 x = -1; x <= edge; x += shellRow ? 1 : edge + 1) {
+                const BlockId block = grid.get(baseX + x, baseY + y, baseZ + z);
+                XXH3_64bits_update(&state, &block, sizeof(block));
+            }
+        }
+    }
+    return XXH3_64bits_digest(&state);
+}
+
 } // namespace engine::asset

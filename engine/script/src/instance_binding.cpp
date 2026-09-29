@@ -164,6 +164,12 @@ int instanceIndex(lua_State* L)
     }
 
     if (const scene::EventDesc* event = w.classes().findEvent(classId, name)) {
+        // The tree's per-member events are enqueued only for an instance
+        // somebody listens on (audit E10): reaching the event is listening.
+        if (event->name == w.atoms().lookup("DescendantAdded") || event->name == w.atoms().lookup("DescendantRemoving"))
+            w.listenForTree(id, scene::World::TreeListen::Descendants);
+        else if (event->name == w.atoms().lookup("AncestryChanged"))
+            w.listenForTree(id, scene::World::TreeListen::Ancestry);
         // The same object every time, which a script that connects in one place
         // and disconnects in another depends on.
         pushInstanceEvent(L, id, event->slot);

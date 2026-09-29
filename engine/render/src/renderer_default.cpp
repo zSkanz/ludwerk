@@ -630,6 +630,9 @@ private:
     {
         std::string name;
         bool ready = false;
+        // Its pipelines failed for this revision: it draws as the error
+        // surface every frame until the source changes, not only the first.
+        bool failed = false;
         // A URN surface's program revision, so a recompile rebuilds.
         core::u64 revision = 0;
         asset::SurfaceReflection reflection;
@@ -770,6 +773,12 @@ private:
     rhi::PipelineHandle luminanceReducePipeline_{};
     rhi::PipelineHandle luminanceAdaptPipeline_{};
     rhi::PipelineHandle tonemapPipeline_{};
+    // **The tonemap into the window itself** (audit R2): with anti-aliasing
+    // off the tonemap is the resolve, and it writes the swapchain, whose
+    // format is the window's -- B8G8R8A8 -- where the plain pipeline declares
+    // `kLdrFormat`. Drawing through a pipeline whose target format is not the
+    // pass's is undefined, and fatal under the debug layer.
+    rhi::PipelineHandle tonemapWindowPipeline_{};
     rhi::PipelineHandle fxaaPipeline_{};
     // The editor's selection silhouette. Four pipelines because the mask draws
     // the same three geometry variants everything else does, plus the fullscreen
@@ -935,9 +944,15 @@ private:
         std::vector<u32> sources;
         std::array<rhi::TextureHandle, 3> arrays{};
         bool ready = false;
-        bool seen = false;
+        // The draws in a row that did not have this terrain. **Given back only
+        // after many** (audit R3): a `ViewportFrame` or a sub-world draws a
+        // world with no ground between two draws of the main one, and giving
+        // the arrays back on the first rebuilt ~17 MB of them -- blits, mips --
+        // every frame a preview spun.
+        u32 unseen = 0;
         GpuTerrainSurfaceUniforms uniforms{};
     };
+    static constexpr u32 TerrainArraysKeptUnseen = 240;
     std::vector<TerrainArrays> terrainArrays_;
     void updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world);
     void releaseTerrainArrays(rhi::IDevice& device, TerrainArrays& entry);
@@ -948,6 +963,9 @@ private:
     // `tonemap.hlsl` with every colour correction folded in, for a frame that
     // has one.
     LookPipeline gradedTonemap_;
+    // The same, into the window (audit R2), for a frame that grades with
+    // anti-aliasing off.
+    LookPipeline gradedTonemapWindow_;
     // One direction of a separable Gaussian, and a filtered copy from one size
     // to another.
     LookPipeline blur_;
@@ -973,10 +991,11 @@ private:
     [[nodiscard]] bool ensureSkyLook(rhi::IDevice& device);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 12> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 13> lookPipelines() noexcept
     {
-        return {&gradedTonemap_, &blur_,       &resample_, &focusPrepare_, &focusGather_,       &focusComposite_,
-                &raysMask_,      &raysGather_, &raysAdd_,  &air_,          &surfaceSceneDepth_, &skyLook_};
+        return {&gradedTonemap_, &gradedTonemapWindow_, &blur_,     &resample_,   &focusPrepare_,
+                &focusGather_,   &focusComposite_,      &raysMask_, &raysGather_, &raysAdd_,
+                &air_,           &surfaceSceneDepth_,   &skyLook_};
     }
 
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1084,9 +1103,13 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         }
     }
 
+    // Every shader made so far goes back with the refusal (audit R14): a
+    // renderer that failed to create left them all on the device.
     if (!shadowSkinnedVertex.valid() || !shadowSkinnedFragment.valid() || !pbrSkinnedVertex.valid() ||
-        !pbrSkinnedFragment.valid())
-        return core::makeError(ENG_TR("render.err.shader_format_unknown"));
+        !pbrSkinnedFragment.valid()) {
+        destroy(device);
+        return error.key.hash != 0 ? error : core::makeError(ENG_TR("render.err.shader_format_unknown"));
+    }
     if (!shadowVertex.valid() || !pbrVertex.valid() || !pbrFragment.valid() || !skyVertex.valid() ||
         !skyFragment.valid() || !tonemapVertex.valid() || !tonemapFragment.valid()) {
         destroy(device);
@@ -1371,6 +1394,8 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
     luminanceAdaptPipeline_ =
         fullscreen(luminanceAdaptVertex, luminanceAdaptFragment, luminanceTarget, "luminance_adapt");
     tonemapPipeline_ = fullscreen(tonemapVertex, tonemapFragment, ldrTarget, "tonemap");
+    if (colorFormat != kLdrFormat)
+        tonemapWindowPipeline_ = fullscreen(tonemapVertex, tonemapFragment, swapTarget, "tonemap_window");
     fxaaPipeline_ = fullscreen(fxaaVertex, fxaaFragment, swapTarget, "fxaa");
     // The views draw into `kLdrFormat` textures; when the window's format is
     // another, their resolve needs a pipeline of its own (ADR 0107).
@@ -1846,6 +1871,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &pbrBlendPipeline_,
                                           &skyPipeline_,
                                           &tonemapPipeline_,
+                                          &tonemapWindowPipeline_,
                                           &shadowSkinnedPipeline_,
                                           &pbrSkinnedPipeline_,
                                           &pbrSkinnedBlendPipeline_,
@@ -2018,16 +2044,16 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
             if (surfaces_[index].name == name)
                 found = index;
         }
-        if (found < surfaces_.size() && surfaces_[found].revision == program->revision)
+        if (found < surfaces_.size() && surfaces_[found].revision == program->revision) {
+            failed = surfaces_[found].failed;
             return surfaces_[found].ready ? static_cast<u32>(found) + 1u : 0u;
+        }
         if (found == surfaces_.size()) {
             surfaces_.emplace_back().name = std::string(name);
         }
         SurfaceSet& set = surfaces_[found];
-        // A frame in flight may still hold the old pipelines; a recompile is
-        // a save in the editor, rare enough to wait for the GPU.
-        if (set.ready)
-            device.waitIdle();
+        // No wait for the GPU (audit R12): a destroy releases a pipeline once
+        // no frame in flight holds it, as every other mid-run release relies on.
         releaseSurface(device, set);
         // Timed, because it is the one cost a surface adds on the frame that
         // first draws it: ten shaders and every pipeline, on the render thread.
@@ -2051,7 +2077,11 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
                 });
             }
         }
-        if (!buildSurfacePipelines(device, set)) {
+        set.failed = !buildSurfacePipelines(device, set);
+        if (set.failed) {
+            // Said once per revision, where the magenta alone said nothing.
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"name", name}};
+            core::log(core::LogLevel::Warn, ENG_TR("render.warn.surface_pipeline_failed"), args);
             failed = true;
             return 0;
         }
@@ -2920,12 +2950,23 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             // The palette, one upload per draw. Per draw rather than per
             // skeleton because `bindUniforms` is the only route the frozen RHI
             // gives (ADR 0037) and it is scoped to the next draw -- which is why
-            // `kMaxSkinJoints` is a budget worth keeping small.
-            GpuSkinUniforms skin;
-            const u32 count = draw.boneCount < kMaxSkinJoints ? draw.boneCount : kMaxSkinJoints;
-            for (u32 index = 0; index < count; ++index)
-                skin.jointMatrices[index] = world.bones[draw.firstBone + index];
-            cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&skin, sizeof(skin)));
+            // `kMaxSkinJoints` is a budget worth keeping small. **Only the
+            // joints the skeleton has, straight from the frame's bones** (audit
+            // R7): a twenty-joint character pushed all sixty-four, copied into a
+            // block first, per draw per pass. The joints past its count are
+            // never indexed by its vertices, and a backend reads the block from
+            // its own uniform ring, never past the end of a buffer.
+            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
+            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
+            static_assert(sizeof(GpuSkinUniforms) == sizeof(Mat4) * kMaxSkinJoints);
+            if (count > 0) {
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
+                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
+            }
+            else {
+                static const GpuSkinUniforms Rest{};
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
+            }
 
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
             cmd.bindVertexBuffers(0, vertexBuffers);
@@ -3927,7 +3968,7 @@ const DefaultRenderer::TerrainArrays* DefaultRenderer::terrainArraysOf(core::Ins
 void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world)
 {
     for (TerrainArrays& entry : terrainArrays_)
-        entry.seen = false;
+        ++entry.unseen;
 
     // The stand-ins, the first frame a terrain is drawn rather than at
     // creation: a world with no ground never makes them. Two layers, because
@@ -3956,7 +3997,7 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
             found->id = terrain.id;
         }
         TerrainArrays& entry = *found;
-        entry.seen = true;
+        entry.unseen = 0;
 
         // The block, every frame: a material's colour is cheap to change and
         // must show at once, textures or not.
@@ -4040,12 +4081,13 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
         block.params[0] = entry.ready && !waiting ? 1.0f : 0.0f;
     }
 
-    // A terrain gone from the world gives its arrays back.
+    // A terrain gone from every world drawn for a while gives its arrays back.
+    const auto gone = [](const TerrainArrays& entry) { return entry.unseen > TerrainArraysKeptUnseen; };
     for (TerrainArrays& entry : terrainArrays_) {
-        if (!entry.seen)
+        if (gone(entry))
             releaseTerrainArrays(device, entry);
     }
-    std::erase_if(terrainArrays_, [](const TerrainArrays& entry) { return !entry.seen; });
+    std::erase_if(terrainArrays_, gone);
 }
 
 bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
@@ -4297,8 +4339,20 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         voxelPalette_.params[3] = 0.5f / static_cast<f32>(kVoxelTileSize);
         (void)ensureVoxel(device);
 
-        // **Each image into its tile, the first frame it is loaded**, and never
-        // again: a tile keeps its image for as long as the renderer lives.
+        // **Each image into its tile, the first frame it is loaded**, and not
+        // again while a block still shows it. **A full atlas takes back the
+        // tile of an image no block shows any more** (audit R9): a game that
+        // swapped its block images went on drawing new blocks untextured once
+        // it had seen 256 of them in all.
+        std::vector<u32> shown;
+        shown.reserve(world.voxelTextures.size() * 3);
+        for (const RenderWorld::VoxelTextures& images : world.voxelTextures) {
+            for (const rhi::TextureHandle texture : {images.top, images.side, images.bottom}) {
+                if (texture.valid())
+                    shown.push_back(texture.id);
+            }
+        }
+        std::sort(shown.begin(), shown.end());
         const auto tileOf = [&](rhi::TextureHandle texture) -> f32 {
             if (!texture.valid())
                 return -1.0f;
@@ -4306,8 +4360,17 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 if (handle == texture.id)
                     return static_cast<f32>(tile);
             }
-            if (voxelTiles_.size() >= kVoxelAtlasTiles || !voxelTilePipeline_.valid())
+            if (!voxelTilePipeline_.valid())
                 return -1.0f;
+            auto reclaimed = voxelTiles_.end();
+            if (voxelTiles_.size() >= kVoxelAtlasTiles) {
+                reclaimed = std::find_if(voxelTiles_.begin(), voxelTiles_.end(), [&](const auto& entry) {
+                    return !std::binary_search(shown.begin(), shown.end(), entry.first);
+                });
+                if (reclaimed == voxelTiles_.end())
+                    return -1.0f;
+            }
+            const bool freshAtlas = !voxelAtlas_.valid();
             if (!voxelAtlas_.valid()) {
                 voxelAtlas_ = device.createTexture({
                     .format = kVoxelAtlasFormat,
@@ -4319,12 +4382,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 if (!voxelAtlas_.valid())
                     return -1.0f;
             }
-            const auto tile = static_cast<u32>(voxelTiles_.size());
+            const auto tile = reclaimed != voxelTiles_.end() ? reclaimed->second : static_cast<u32>(voxelTiles_.size());
             const std::array<rhi::ColorAttachment, 1> atlasAttachment{rhi::ColorAttachment{
                 .texture = voxelAtlas_,
                 // The first image clears the atlas; every later one draws over
                 // its own square and leaves the rest as it was.
-                .loadOp = tile == 0 ? rhi::LoadOp::Clear : rhi::LoadOp::Load,
+                .loadOp = freshAtlas ? rhi::LoadOp::Clear : rhi::LoadOp::Load,
                 .storeOp = rhi::StoreOp::Store,
             }};
             cmd.beginRenderPass({.colorAttachments = atlasAttachment, .debugName = "voxel-tile"});
@@ -4341,7 +4404,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             cmd.bindTextures(rhi::ShaderStage::Fragment, 0, source);
             cmd.draw(3, 1, 0, 0);
             cmd.endRenderPass();
-            voxelTiles_.emplace_back(texture.id, tile);
+            if (reclaimed != voxelTiles_.end())
+                reclaimed->first = texture.id;
+            else
+                voxelTiles_.emplace_back(texture.id, tile);
             return static_cast<f32>(tile);
         };
         for (u32 id = 0; id < kVoxelPaletteSize; ++id) {
@@ -5343,8 +5409,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // tonemap** -- chosen only on a frame that has one, so a world without
     // draws through the plain pipeline with the plain block.
     GpuGradeUniforms grade;
-    // The plain tonemap's own target format, whichever target it writes.
-    const bool graded = look.graded && ensureLookPipeline(device, gradedTonemap_, "tonemap_graded", kLdrFormat);
+    // A view with nothing behind it goes straight to its target: the
+    // anti-aliasing resolve writes an opaque picture, and would lose the alpha.
+    const bool resolve = settings_.antiAliasing && !world.environment.transparentBackground;
+    // **Written in the format of what it writes** (audit R2): the LDR texture
+    // when a resolve follows, the target itself otherwise -- a window's
+    // swapchain, or a view's `kLdrFormat` texture.
+    const bool intoWindow = !resolve && target.colorFormat != kLdrFormat;
+    LookPipeline& gradedSlot = intoWindow ? gradedTonemapWindow_ : gradedTonemap_;
+    const bool graded = look.graded && ensureLookPipeline(device, gradedSlot, "tonemap_graded",
+                                                          intoWindow ? target.colorFormat : kLdrFormat);
     if (graded) {
         for (u32 row = 0; row < 3; ++row) {
             for (u32 column = 0; column < 4; ++column)
@@ -5361,10 +5435,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // fullscreen pass into a larger target sampling a smaller source is exactly
     // a bilinear upscale.
     cmd.pushDebugGroup("tonemap");
-    // A view with nothing behind it goes straight to its target: the
-    // anti-aliasing resolve writes an opaque picture, and would lose the alpha.
-    const bool resolve = settings_.antiAliasing && !world.environment.transparentBackground;
-    fullscreenPass(cmd, graded ? gradedTonemap_.handle : tonemapPipeline_, resolve ? ldr_ : target.color,
+    const rhi::PipelineHandle plain =
+        intoWindow && tonemapWindowPipeline_.valid() ? tonemapWindowPipeline_ : tonemapPipeline_;
+    fullscreenPass(cmd, graded ? gradedSlot.handle : plain, resolve ? ldr_ : target.color,
                    resolve ? renderWidth_ : target.width, resolve ? renderHeight_ : target.height, "tonemap",
                    tonemapBindings, asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
                    graded ? asBytes(&grade, sizeof(grade)) : std::span<const std::byte>{});

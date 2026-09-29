@@ -313,6 +313,7 @@ bool SaveStore::decode(std::string_view text, SaveSlotData& slot)
         values.emplace(std::string(key), std::move(*value));
     }
     slot.values = std::move(values);
+    slot.entryBytesKnown = false;
     slot.version = version >= 1.0 ? version : 1.0;
     return true;
 }
@@ -320,6 +321,16 @@ bool SaveStore::decode(std::string_view text, SaveSlotData& slot)
 core::u64 SaveStore::encodedSize(const SaveSlotData& slot)
 {
     return payloadOf(slot).size();
+}
+
+core::u64 SaveStore::entrySize(std::string_view key, const SaveValue& value)
+{
+    JsonWriter out;
+    out.beginObject();
+    out.key(key);
+    writeSaveValue(out, value);
+    out.endObject();
+    return out.text().size() - 2;
 }
 
 SaveSlotData* SaveStore::open(std::string_view name, SaveDamage* damage)
@@ -355,6 +366,7 @@ SaveSlotData* SaveStore::open(std::string_view name, SaveDamage* damage)
             }
             else if (hadMain || hadBackup) {
                 slot->values.clear();
+                slot->entryBytesKnown = false;
                 slot->recovered = false;
                 if (damage != nullptr)
                     *damage = SaveDamage::Lost;
@@ -415,6 +427,7 @@ bool SaveStore::remove(std::string_view name)
     }
     if (const auto found = m_slots.find(name); found != m_slots.end()) {
         found->second->values.clear();
+        found->second->entryBytesKnown = false;
         found->second->version = 1.0;
         found->second->recovered = true;
         ++found->second->generation;

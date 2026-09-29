@@ -942,8 +942,12 @@ void PhysicsSync::applyTerrain()
                     std::bit_cast<u64>(terrain.origin.z));
 
         // The chunks within reach of any mover, sorted and unique: a box of
-        // `TerrainCollisionReach` round each, in the field's own space.
-        std::vector<asset::ChunkKey> wanted;
+        // `TerrainCollisionReach` round each, in the field's own space. **The
+        // boxes first, one per distinct box** (audit E9): five thousand bodies
+        // on one field are a few boxes, and each box was expanded and sorted
+        // once per body.
+        std::vector<std::array<i32, 6>> boxes;
+        boxes.reserve(movers.size());
         for (const core::DVec3& mover : movers) {
             const core::DVec3 local{mover.x - terrain.origin.x, mover.y - terrain.origin.y, mover.z - terrain.origin.z};
             const auto low = [&](f64 value) {
@@ -952,9 +956,33 @@ void PhysicsSync::applyTerrain()
             const auto high = [&](f64 value) {
                 return static_cast<i32>(std::floor((value + TerrainCollisionReach) / chunkMetres));
             };
-            for (i32 z = low(local.z); z <= high(local.z); ++z) {
-                for (i32 y = low(local.y); y <= high(local.y); ++y) {
-                    for (i32 x = low(local.x); x <= high(local.x); ++x)
+            boxes.push_back({low(local.x), low(local.y), low(local.z), high(local.x), high(local.y), high(local.z)});
+        }
+        std::sort(boxes.begin(), boxes.end());
+        boxes.erase(std::unique(boxes.begin(), boxes.end()), boxes.end());
+
+        // The same boxes over the same field in the same place, after a pass
+        // that finished: every collider stands as it is.
+        auto want = std::find_if(m_terrainWants.begin(), m_terrainWants.end(),
+                                 [&](const TerrainWant& entry) { return entry.terrain == id; });
+        if (want == m_terrainWants.end()) {
+            m_terrainWants.push_back(TerrainWant{id, {}, 0, 0, false});
+            want = m_terrainWants.end() - 1;
+        }
+        if (want->settled && want->revision == terrain.fieldRevision && want->placement == placement &&
+            want->boxes == boxes) {
+            for (TerrainCollider& collider : m_terrainColliders) {
+                if (collider.terrain == id)
+                    collider.seen = true;
+            }
+            return;
+        }
+
+        std::vector<asset::ChunkKey> wanted;
+        for (const std::array<i32, 6>& box : boxes) {
+            for (i32 z = box[2]; z <= box[5]; ++z) {
+                for (i32 y = box[1]; y <= box[4]; ++y) {
+                    for (i32 x = box[0]; x <= box[3]; ++x)
                         wanted.push_back(asset::ChunkKey{x, y, z});
                 }
             }
@@ -1003,6 +1031,12 @@ void PhysicsSync::applyTerrain()
             return a.distance != b.distance ? a.distance < b.distance : a.key < b.key;
         });
 
+        // Settled when every rebuild this pass wanted fits in it; one left for
+        // the next tick is a pass that must run again.
+        want->boxes = std::move(boxes);
+        want->revision = terrain.fieldRevision;
+        want->placement = placement;
+        want->settled = rebuilt + pending.size() <= TerrainRebuildsPerTick;
         for (const Pending& next : pending) {
             if (rebuilt >= TerrainRebuildsPerTick)
                 break;
@@ -1125,6 +1159,15 @@ void PhysicsSync::applyVoxels()
                 if (at->content == content)
                     continue;
             }
+            // What the collider's mesh actually read, asked only when the
+            // coarse key moved: a block mined inside a neighbour rebuilt this
+            // chunk's collider for nothing (audit P1, 14-voxels).
+            const u64 exact = combine(combine(asset::shellDigestOf(voxels->grid, key), fluidDigest),
+                                      static_cast<u64>(std::bit_cast<u32>(voxels->blockSize)));
+            if (exists && at->exact == exact) {
+                at->content = content;
+                continue;
+            }
             if (rebuilt >= VoxelRebuildsPerTick)
                 continue; // the old collider, if any, stands until its turn
 
@@ -1145,9 +1188,10 @@ void PhysicsSync::applyVoxels()
                     m_backend.destroyBody(m_world, at->body);
                 at->body = handle;
                 at->content = content;
+                at->exact = exact;
             }
             else {
-                m_voxelColliders.insert(at, VoxelCollider{key, handle, content, true});
+                m_voxelColliders.insert(at, VoxelCollider{key, handle, content, exact, true});
             }
             rebuilt += 1;
         }
@@ -1235,7 +1279,7 @@ void PhysicsSync::applyScene()
 
 bool PhysicsSync::isDriven(core::InstanceId id) const
 {
-    return std::find(m_drivenParts.begin(), m_drivenParts.end(), id) != m_drivenParts.end();
+    return marked(m_drivenMarks, id);
 }
 
 // Welds resolve AFTER the step and the writeback, which is the defined point in
@@ -1250,9 +1294,7 @@ bool PhysicsSync::isDriven(core::InstanceId id) const
 // by the weld count regardless.
 void PhysicsSync::resolveWelds()
 {
-    m_resolvedWelds.clear();
-    m_resolvedAttachments.clear();
-    m_drivenParts.clear();
+    ++m_resolveRound;
 
     // Slot order, which is a pure function of the operation sequence. It decides
     // nothing about the result, because dependency order does -- what it decides
@@ -1303,9 +1345,9 @@ bool PhysicsSync::anchorFrame(core::InstanceId id, core::CFrameD& out)
 
 void PhysicsSync::resolveAttachment(core::InstanceId id)
 {
-    if (std::find(m_resolvedAttachments.begin(), m_resolvedAttachments.end(), id) != m_resolvedAttachments.end())
+    if (marked(m_attachmentMarks, id))
         return;
-    m_resolvedAttachments.push_back(id);
+    mark(m_attachmentMarks, id);
 
     AttachmentComponent* attachment = m_scene.attachments().find(id);
     if (attachment == nullptr)
@@ -1428,9 +1470,9 @@ void PhysicsSync::resolveAttachments()
 
 void PhysicsSync::resolveWeld(core::InstanceId weldId, WeldComponent& weld)
 {
-    if (std::find(m_resolvedWelds.begin(), m_resolvedWelds.end(), weldId) != m_resolvedWelds.end())
+    if (marked(m_weldMarks, weldId))
         return;
-    m_resolvedWelds.push_back(weldId);
+    mark(m_weldMarks, weldId);
 
     if (!weld.enabled || !m_scene.alive(weld.part0) || !m_scene.alive(weld.part1))
         return;
@@ -1466,7 +1508,7 @@ void PhysicsSync::resolveWeld(core::InstanceId weldId, WeldComponent& weld)
     }
 
     driven->cframe = (anchorFrameValue * weld.c0) * core::inverse(weld.c1);
-    m_drivenParts.push_back(weld.part1);
+    mark(m_drivenMarks, weld.part1);
 }
 
 void PhysicsSync::retireUnseen()
@@ -1612,6 +1654,7 @@ void PhysicsSync::writeBack()
 {
     m_active.clear();
     m_backend.collectActiveBodies(m_world, m_active);
+    ++m_writeBackStamp;
 
     for (const physics::ActiveBody& active : m_active) {
         const core::InstanceId id = unpackInstance(active.userData);
@@ -1621,6 +1664,7 @@ void PhysicsSync::writeBack()
         if (id.index >= m_bodies.size() || m_bodies[id.index].generation != id.generation)
             continue;
         BodyRecord& record = m_bodies[id.index];
+        record.activeStamp = m_writeBackStamp;
 
         // **A kinematic body is not written back** (D031). Its transform is the
         // script's -- a tween wrote it and the mirror moved the body to match --
@@ -1655,13 +1699,15 @@ void PhysicsSync::writeBack()
     // body that just went to sleep has left the active list while its component
     // still says it is moving, and a world where nothing is asleep pays for
     // nothing.
+    //
+    // **By the record's stamp, not by searching the active list** (audit E4):
+    // the search, once per moving body, was five thousand bodies times five
+    // thousand compares a tick.
     m_scene.rigidBodies().forEach([&](core::InstanceId id, RigidBodyComponent& body) {
         if (!body.active)
             return;
-        const u64 packed = packInstance(id);
-        const bool stillActive = std::any_of(m_active.begin(), m_active.end(), [&](const physics::ActiveBody& active) {
-            return active.userData == packed;
-        });
+        const bool stillActive = id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation &&
+                                 m_bodies[id.index].activeStamp == m_writeBackStamp;
         if (!stillActive) {
             body.active = false;
             body.linearVelocity = core::Vec3{0.0f, 0.0f, 0.0f};
