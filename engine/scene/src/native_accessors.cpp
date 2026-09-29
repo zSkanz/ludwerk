@@ -2099,6 +2099,277 @@ bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& 
     return true;
 }
 
+// --- Water (ADR 0118) -----------------------------------------------------------------
+
+void attachWaterComponents(World& world, core::InstanceId id)
+{
+    world.waters().add(id, WaterComponent{});
+}
+
+void detachWaterComponents(World& world, core::InstanceId id)
+{
+    world.waters().remove(id);
+}
+
+void attachWaterWaveComponents(World& world, core::InstanceId id)
+{
+    world.waterWaves().add(id, WaterWaveComponent{});
+}
+
+void detachWaterWaveComponents(World& world, core::InstanceId id)
+{
+    world.waterWaves().remove(id);
+}
+
+void attachWaterPointComponents(World& world, core::InstanceId id)
+{
+    world.waterPoints().add(id, WaterPointComponent{});
+}
+
+void detachWaterPointComponents(World& world, core::InstanceId id)
+{
+    world.waterPoints().remove(id);
+}
+
+namespace {
+
+// A number of a water's, got and set by the member it is, with its rule.
+enum class WaterRule
+{
+    Finite,
+    AtLeastZero,
+    AboveZero,
+    ZeroToOne,
+};
+
+[[nodiscard]] bool waterNumber(const Value& value, WaterRule rule, f64& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !std::isfinite(*number))
+        return false;
+    switch (rule) {
+    case WaterRule::Finite:
+        break;
+    case WaterRule::AtLeastZero:
+        if (*number < 0.0)
+            return false;
+        break;
+    case WaterRule::AboveZero:
+        if (!(*number > 0.0))
+            return false;
+        break;
+    case WaterRule::ZeroToOne:
+        if (*number < 0.0 || *number > 1.0)
+            return false;
+        break;
+    }
+    out = *number;
+    return true;
+}
+
+template <class Component, f64 Component::*Member>
+[[nodiscard]] Value getWaterNumber(const ComponentPool<Component>& pool, core::InstanceId id)
+{
+    const Component* found = pool.find(id);
+    return found == nullptr ? Value{} : Value{found->*Member};
+}
+
+template <class Component, f64 Component::*Member>
+[[nodiscard]] bool setWaterNumber(ComponentPool<Component>& pool, core::InstanceId id, const Value& value,
+                                  WaterRule rule)
+{
+    Component* found = pool.find(id);
+    return found != nullptr && waterNumber(value, rule, found->*Member);
+}
+
+[[nodiscard]] bool finiteVector(const Value& value, core::Vec3& out)
+{
+    const auto* vector = std::get_if<core::Vec3>(&value);
+    if (vector == nullptr || !std::isfinite(vector->x) || !std::isfinite(vector->y) || !std::isfinite(vector->z))
+        return false;
+    out = *vector;
+    return true;
+}
+
+} // namespace
+
+Value getWaterShape(const World& world, core::InstanceId id)
+{
+    const WaterComponent* water = world.waters().find(id);
+    return water == nullptr ? Value{} : Value{EnumValue{generated::WaterShapeEnumId, water->shape}};
+}
+
+bool setWaterShape(World& world, core::InstanceId id, const Value& value)
+{
+    WaterComponent* water = world.waters().find(id);
+    return water != nullptr && enumFrom(world, value, generated::WaterShapeEnumId, water->shape);
+}
+
+Value getWaterSurfaceLevel(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterComponent, &WaterComponent::surfaceLevel>(world.waters(), id);
+}
+
+bool setWaterSurfaceLevel(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterComponent, &WaterComponent::surfaceLevel>(world.waters(), id, value, WaterRule::Finite);
+}
+
+Value getWaterPosition(const World& world, core::InstanceId id)
+{
+    const WaterComponent* water = world.waters().find(id);
+    return water == nullptr ? Value{} : Value{water->position};
+}
+
+bool setWaterPosition(World& world, core::InstanceId id, const Value& value)
+{
+    WaterComponent* water = world.waters().find(id);
+    return water != nullptr && finiteVector(value, water->position);
+}
+
+Value getWaterSize(const World& world, core::InstanceId id)
+{
+    const WaterComponent* water = world.waters().find(id);
+    return water == nullptr ? Value{} : Value{water->size};
+}
+
+bool setWaterSize(World& world, core::InstanceId id, const Value& value)
+{
+    WaterComponent* water = world.waters().find(id);
+    core::Vec3 size;
+    // A river's length is its points', so its Z may be zero.
+    if (water == nullptr || !finiteVector(value, size) || !(size.x > 0.0f && size.y > 0.0f && size.z >= 0.0f))
+        return false;
+    water->size = size;
+    return true;
+}
+
+Value getWaterDensity(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterComponent, &WaterComponent::density>(world.waters(), id);
+}
+
+bool setWaterDensity(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterComponent, &WaterComponent::density>(world.waters(), id, value, WaterRule::AboveZero);
+}
+
+Value getWaterViscosity(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterComponent, &WaterComponent::viscosity>(world.waters(), id);
+}
+
+bool setWaterViscosity(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterComponent, &WaterComponent::viscosity>(world.waters(), id, value,
+                                                                      WaterRule::AtLeastZero);
+}
+
+Value getWaterCurrent(const World& world, core::InstanceId id)
+{
+    const WaterComponent* water = world.waters().find(id);
+    return water == nullptr ? Value{} : Value{water->current};
+}
+
+bool setWaterCurrent(World& world, core::InstanceId id, const Value& value)
+{
+    WaterComponent* water = world.waters().find(id);
+    return water != nullptr && finiteVector(value, water->current);
+}
+
+Value getWaterFlowSpeed(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterComponent, &WaterComponent::flowSpeed>(world.waters(), id);
+}
+
+bool setWaterFlowSpeed(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterComponent, &WaterComponent::flowSpeed>(world.waters(), id, value, WaterRule::Finite);
+}
+
+Value getWaterWaveWavelength(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterWaveComponent, &WaterWaveComponent::wavelength>(world.waterWaves(), id);
+}
+
+bool setWaterWaveWavelength(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterWaveComponent, &WaterWaveComponent::wavelength>(world.waterWaves(), id, value,
+                                                                               WaterRule::AboveZero);
+}
+
+Value getWaterWaveAmplitude(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterWaveComponent, &WaterWaveComponent::amplitude>(world.waterWaves(), id);
+}
+
+bool setWaterWaveAmplitude(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterWaveComponent, &WaterWaveComponent::amplitude>(world.waterWaves(), id, value,
+                                                                              WaterRule::AtLeastZero);
+}
+
+Value getWaterWaveDirection(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterWaveComponent, &WaterWaveComponent::direction>(world.waterWaves(), id);
+}
+
+bool setWaterWaveDirection(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterWaveComponent, &WaterWaveComponent::direction>(world.waterWaves(), id, value,
+                                                                              WaterRule::Finite);
+}
+
+Value getWaterWaveSteepness(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterWaveComponent, &WaterWaveComponent::steepness>(world.waterWaves(), id);
+}
+
+bool setWaterWaveSteepness(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterWaveComponent, &WaterWaveComponent::steepness>(world.waterWaves(), id, value,
+                                                                              WaterRule::ZeroToOne);
+}
+
+Value getWaterWavePhase(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterWaveComponent, &WaterWaveComponent::phase>(world.waterWaves(), id);
+}
+
+bool setWaterWavePhase(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterWaveComponent, &WaterWaveComponent::phase>(world.waterWaves(), id, value,
+                                                                          WaterRule::Finite);
+}
+
+Value getWaterPointPosition(const World& world, core::InstanceId id)
+{
+    const WaterPointComponent* point = world.waterPoints().find(id);
+    return point == nullptr ? Value{} : Value{point->position};
+}
+
+bool setWaterPointPosition(World& world, core::InstanceId id, const Value& value)
+{
+    WaterPointComponent* point = world.waterPoints().find(id);
+    return point != nullptr && finiteVector(value, point->position);
+}
+
+Value getBasePartBuoyant(const World& world, core::InstanceId id)
+{
+    const RigidBodyComponent* body = readBody(world, id);
+    return body == nullptr ? Value{} : Value{body->buoyant};
+}
+
+bool setBasePartBuoyant(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    RigidBodyComponent* body = writeBody(world, id);
+    if (flag == nullptr || body == nullptr)
+        return false;
+    body->buoyant = *flag;
+    return true;
+}
+
 // --- DragDetector (ADR 0126) --------------------------------------------------------
 
 void attachDragDetectorComponents(World& world, core::InstanceId id)

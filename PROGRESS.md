@@ -446,7 +446,15 @@ priority, band by band -- done by 2026-09-29. After it: F1b, `DragDetector`,
 **built 2026-09-29** ([`toolkit-kickoff.md`](docs/briefs/toolkit-kickoff.md),
 ADR 0126's amendment, protocol 26: six drag styles, limits from where the part
 rested, the drag sent as rays and moved by the authority, a pulled part the
-player's while it is pulled), and the game-ready plan where it stopped.
+player's while it is pulled), and the game-ready plan where it stopped: B3 and
+B4 (a voxel's two materials, the terrain tools) and **B8, water, built
+2026-09-29** ([`world-kickoff.md`](docs/briefs/world-kickoff.md), ADR 0118's
+amendment, protocol 28: `Water` as a sea, a lake or a river, its waves one
+function the physics floats things on and the shader draws, a hull that rolls,
+`examples/11-ocean` rewritten on it and `examples/31-lake-and-river`). Next,
+by the owner's order of 2026-09-29: scripts that run at the display's rate and
+the default camera on it (a new ADR amending 0134), then F2, movers and
+constraints.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).

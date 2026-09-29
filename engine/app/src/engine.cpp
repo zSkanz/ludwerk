@@ -93,6 +93,7 @@
 #include "engine/render/transform_history.h"
 #include "engine/render/ui_renderer.h"
 #include "engine/render/voxel_loader.h"
+#include "engine/render/water_loader.h"
 #include "engine/replication/extract.h"
 #include "engine/replication/replication.h"
 #include "engine/rhi/device.h"
@@ -1319,6 +1320,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     render::TerrainLoader terrainLoader;
     // The block world's chunks (V1), meshed and uploaded the same way.
     render::VoxelLoader voxelLoader;
+    render::WaterLoader waterLoader;
     // Particles (F2): simulated on the frame, because they are a picture.
     render::ParticleSystem particles;
     // Foliage over terrain (ADR 0116), grown per tile around the camera.
@@ -4539,6 +4541,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // under has to be the same atom `extract` looks up.
                 (void)terrainLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 (void)voxelLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
+                (void)waterLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 // Foliage over the terrain (ADR 0116), grown here for the
                 // reason the terrain is: an upload, before the extract.
                 foliage.sync(*device, *cmd, world);

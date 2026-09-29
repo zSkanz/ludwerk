@@ -158,6 +158,11 @@
           "ReadOnly": true
         },
         {
+          "Name": "Buoyant",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
           "Name": "CFrame",
           "Type": "CFrame"
         },
@@ -224,10 +229,36 @@
       ],
       "Methods": [
         {
+          "Name": "ApplyAngularImpulse",
+          "Parameters": [
+            {
+              "Name": "impulse",
+              "Type": "vector"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "ApplyImpulse",
           "Parameters": [
             {
               "Name": "impulse",
+              "Type": "vector"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ApplyImpulseAtPosition",
+          "Parameters": [
+            {
+              "Name": "impulse",
+              "Type": "vector"
+            },
+            {
+              "Name": "position",
               "Type": "vector"
             }
           ],
@@ -5538,6 +5569,126 @@
       "Events": []
     },
     {
+      "Name": "Water",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Current",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "Density",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "FlowSpeed",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "Shape",
+          "Type": "Enum.WaterShape",
+          "Default": "Enum.WaterShape.Ocean"
+        },
+        {
+          "Name": "Size",
+          "Type": "vector",
+          "Default": "vector.create(64, 8, 64)"
+        },
+        {
+          "Name": "SurfaceLevel",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Viscosity",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetHeightAt",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["number?"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "GetNormalAt",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["vector?"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "WaterPoint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "WaterWave",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Amplitude",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Direction",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Phase",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Steepness",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Wavelength",
+          "Type": "number",
+          "Default": "40"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "Weld",
       "Extends": "Instance",
       "Tags": [],
@@ -10024,6 +10175,23 @@
         {
           "Name": "Simple",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "WaterShape",
+      "Items": [
+        {
+          "Name": "Box",
+          "Value": 1
+        },
+        {
+          "Name": "Ocean",
+          "Value": 0
+        },
+        {
+          "Name": "Spline",
+          "Value": 2
         }
       ]
     }

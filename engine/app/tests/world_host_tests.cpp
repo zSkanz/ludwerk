@@ -307,6 +307,63 @@ TEST_CASE("a script saves the simulation, rolls back to it and steps again to ex
     CHECK(marked("Refused"));
 }
 
+TEST_CASE("a twist a script gave before the save is stepped again after the restore (ADR 0118)")
+{
+    // `ApplyAngularImpulse` waits for the next step like `ApplyImpulse`: a save
+    // between the two must carry it, or the world rolled back to is one where
+    // the twist was never given.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        workspace.Gravity = vector.zero
+        local spinner = Instance.new("Part")
+        spinner.Size = vector.create(4, 1, 1)
+        spinner.Position = vector.create(0, 5, 0)
+        spinner.Parent = workspace
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+
+        local ticks = 0
+        local saved: buffer? = nil
+        RunService.PostSimulation:Connect(function()
+            ticks += 1
+            if ticks == 5 then
+                spinner:ApplyAngularImpulse(vector.create(0, 3, 0))
+                saved = RunService:SaveSimulation()
+            elseif ticks == 25 and saved then
+                local first = spinner.CFrame
+                if first.LookVector.z > -0.999 then
+                    mark("Turned")
+                end
+                if not RunService:RestoreSimulation(saved) then
+                    mark("NotRestored")
+                end
+                for _ = 1, 20 do
+                    RunService:StepSimulation()
+                end
+                mark(if spinner.CFrame == first then "Same" else "Different")
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 27; ++tick)
+        host.tick();
+
+    const auto marked = [&host](std::string_view name) {
+        return host.world().findFirstChild(host.workspace(), host.world().atoms().lookup(name)).valid();
+    };
+    CHECK_FALSE(marked("NotRestored"));
+    CHECK(marked("Turned"));
+    CHECK(marked("Same"));
+    CHECK_FALSE(marked("Different"));
+}
+
 TEST_CASE("a character stepped again from where it was, through the commands it was given, goes where it went")
 {
     // **The replay a replica corrects its prediction with** (ADR 0076, as
@@ -2927,6 +2984,61 @@ TEST_CASE("the authority begins a client's drag only within reach, moves it itse
     host.tick();
     CHECK(world.rigidBodies().find(crate)->networkOwner == 0u);
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+// --- Water (ADR 0118) -----------------------------------------------------------------
+
+TEST_CASE("a box of half the water's density floats half under, and a pushed plank rolls and rights itself (ADR 0118)")
+{
+    Captured log;
+    Project project;
+    project.write("src/server/float.luau", R"(
+        local water = Instance.new("Water")
+        water.Parent = workspace
+        local function block(name: string, size: vector, at: vector): Part
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Size = size
+            part.Density = 0.5
+            part.Anchored = false
+            part.Position = at
+            part.Parent = workspace
+            return part
+        end
+        block("Box", vector.create(2, 2, 2), vector.create(0, 3, 0))
+        block("Plank", vector.create(6, 1, 2), vector.create(20, 1, 0))
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 60 * 8; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const auto partNamed = [&](std::string_view name) {
+        const core::InstanceId id = world.findFirstChild(host.workspace(), world.atoms().lookup(name));
+        REQUIRE(id.valid());
+        return id;
+    };
+    // Half under: its middle at the surface.
+    CHECK(world.parts().find(partNamed("Box"))->cframe.position.y == doctest::Approx(0.0).epsilon(0.15));
+
+    // Pushed down at one end: it rolls...
+    const core::InstanceId plank = partNamed("Plank");
+    const core::DVec3 at = world.parts().find(plank)->cframe.position;
+    scene::RigidBodyComponent& body = *world.rigidBodies().find(plank);
+    body.pendingImpulse = body.pendingImpulse + core::Vec3{0.0f, -4.0f, 0.0f};
+    body.pendingAngularImpulse =
+        body.pendingAngularImpulse + core::cross(core::Vec3{2.5f, 0.0f, 0.0f}, core::Vec3{0.0f, -4.0f, 0.0f});
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    const core::Vec3 rolled = world.parts().find(plank)->cframe.rotation * core::Vec3{0.0f, 1.0f, 0.0f};
+    CHECK(std::abs(rolled.x) > 0.02f);
+    // ...and the water rights it.
+    for (int tick = 0; tick < 60 * 6; ++tick)
+        host.tick();
+    const core::Vec3 upright = world.parts().find(plank)->cframe.rotation * core::Vec3{0.0f, 1.0f, 0.0f};
+    CHECK(upright.y > 0.99f);
+    CHECK(std::abs(world.parts().find(plank)->cframe.position.x - at.x) < 3.0);
 }
 
 // --- Paths from scripts stay in the project (audit F5) ----------------------------

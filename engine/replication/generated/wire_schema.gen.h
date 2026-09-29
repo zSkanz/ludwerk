@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 27;
+inline constexpr u32 ProtocolVersion = 28;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -240,6 +240,29 @@ inline constexpr FieldDesc ProximityPromptFields[] = {
     {"Enabled", 10, Encoding::Bool, Source::Component, "proximityPrompts"},
 };
 
+inline constexpr FieldDesc WaterFields[] = {
+    {"Shape", 1, Encoding::I32, Source::Component, "waters"},
+    {"SurfaceLevel", 2, Encoding::F32, Source::Component, "waters"},
+    {"Position", 3, Encoding::Vector3, Source::Component, "waters"},
+    {"Size", 4, Encoding::Vector3, Source::Component, "waters"},
+    {"Density", 5, Encoding::F32, Source::Component, "waters"},
+    {"Viscosity", 6, Encoding::F32, Source::Component, "waters"},
+    {"Current", 7, Encoding::Vector3, Source::Component, "waters"},
+    {"FlowSpeed", 8, Encoding::F32, Source::Component, "waters"},
+};
+
+inline constexpr FieldDesc WaterWaveFields[] = {
+    {"Wavelength", 1, Encoding::F32, Source::Component, "waterWaves"},
+    {"Amplitude", 2, Encoding::F32, Source::Component, "waterWaves"},
+    {"Direction", 3, Encoding::F32, Source::Component, "waterWaves"},
+    {"Steepness", 4, Encoding::F32, Source::Component, "waterWaves"},
+    {"Phase", 5, Encoding::F32, Source::Component, "waterWaves"},
+};
+
+inline constexpr FieldDesc WaterPointFields[] = {
+    {"Position", 1, Encoding::Vector3, Source::Component, "waterPoints"},
+};
+
 inline constexpr FieldDesc DragDetectorFields[] = {
     {"DragStyle", 1, Encoding::I32, Source::Component, "dragDetectors"},
     {"ResponseStyle", 2, Encoding::I32, Source::Component, "dragDetectors"},
@@ -345,6 +368,9 @@ inline constexpr ClassDesc Classes[] = {
     {"Tilemap2D", Tilemap2DFields, -1, false, false},
     {"ClickDetector", ClickDetectorFields, -1, false, false},
     {"ProximityPrompt", ProximityPromptFields, -1, false, false},
+    {"Water", WaterFields, -1, false, false},
+    {"WaterWave", WaterWaveFields, -1, false, false},
+    {"WaterPoint", WaterPointFields, -1, false, false},
     {"DragDetector", DragDetectorFields, -1, false, false},
     {"BloomEffect", BloomEffectFields, -1, false, false},
     {"ColorCorrectionEffect", ColorCorrectionEffectFields, -1, false, false},

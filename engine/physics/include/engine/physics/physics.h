@@ -69,6 +69,14 @@ public:
     virtual void setBodyTransform(WorldHandle world, BodyHandle body, const core::CFrameD& transform) = 0;
     virtual void setBodyVelocity(WorldHandle world, BodyHandle body, core::Vec3 linear, core::Vec3 angular) = 0;
     virtual void applyImpulse(WorldHandle world, BodyHandle body, core::Vec3 impulse) = 0;
+    // A change of angular momentum (ADR 0118). Not pure, so a backend that has
+    // no rotation to change -- a test's fake -- need not say so.
+    virtual void applyAngularImpulse(WorldHandle world, BodyHandle body, core::Vec3 impulse)
+    {
+        (void)world;
+        (void)body;
+        (void)impulse;
+    }
 
     // Changing the motion type or the shape is a recreate on Jolt's side, so it
     // is one call rather than a setter per field: a body that must be rebuilt

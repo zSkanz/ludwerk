@@ -522,6 +522,9 @@ struct NameIndex
     X(FoliageMeshComponent, foliageMeshes)                                                                             \
     X(ClickDetectorComponent, clickDetectors)                                                                          \
     X(DragDetectorComponent, dragDetectors)                                                                            \
+    X(WaterComponent, waters)                                                                                          \
+    X(WaterWaveComponent, waterWaves)                                                                                  \
+    X(WaterPointComponent, waterPoints)                                                                                \
     X(ProximityPromptComponent, proximityPrompts)                                                                      \
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
@@ -1213,6 +1216,12 @@ public:
     {
         return m_clickDetectors;
     }
+    [[nodiscard]] ComponentPool<WaterComponent>& waters() noexcept { return m_waters; }
+    [[nodiscard]] const ComponentPool<WaterComponent>& waters() const noexcept { return m_waters; }
+    [[nodiscard]] ComponentPool<WaterWaveComponent>& waterWaves() noexcept { return m_waterWaves; }
+    [[nodiscard]] const ComponentPool<WaterWaveComponent>& waterWaves() const noexcept { return m_waterWaves; }
+    [[nodiscard]] ComponentPool<WaterPointComponent>& waterPoints() noexcept { return m_waterPoints; }
+    [[nodiscard]] const ComponentPool<WaterPointComponent>& waterPoints() const noexcept { return m_waterPoints; }
     [[nodiscard]] ComponentPool<DragDetectorComponent>& dragDetectors() noexcept { return m_dragDetectors; }
     [[nodiscard]] const ComponentPool<DragDetectorComponent>& dragDetectors() const noexcept { return m_dragDetectors; }
     [[nodiscard]] ComponentPool<ProximityPromptComponent>& proximityPrompts() noexcept { return m_proximityPrompts; }

@@ -14,7 +14,9 @@
 #include "engine/render/shader_types.h"
 #include "engine/render/terrain_loader.h"
 #include "engine/render/voxel_loader.h"
+#include "engine/render/water_loader.h"
 #include "engine/scene/components.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 
 namespace engine::render {
@@ -1195,6 +1197,110 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 });
             }
         }
+    }
+
+    // --- Water (ADR 0118) ------------------------------------------------------
+    //
+    // **Each water is its own material** on the engine's water surface, its
+    // waves in the parameters that surface reads -- the terms `surfaceOf`
+    // evaluates for the simulation, so the picture and the floating are one
+    // function -- and a set of tiles of the shared grid: rings round the camera
+    // for a sea, the box for a lake, the ribbon for a river.
+    {
+        const MeshLibrary::Entry* grid = nullptr;
+        if (const core::NameAtom urn = world.atoms().lookup(waterGridUrn()); urn.id != 0)
+            grid = meshes.find(urn);
+        world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent& water) {
+            if (grid == nullptr || !inWorld(world, id, root))
+                return;
+            const scene::WaterSurface surface = scene::surfaceOf(world, id);
+            RenderMaterial material;
+            material.surface = "water";
+            material.readsSceneColor = true;
+            for (core::usize at = 0; at < scene::MaxWaterWaves; ++at) {
+                const scene::WaveTerm term = at < surface.count ? surface.terms[at] : scene::WaveTerm{};
+                material.surfaceValues.push_back(
+                    SurfaceValue{"WaveA" + std::to_string(at),
+                                 {static_cast<f32>(term.k), static_cast<f32>(at < surface.count ? term.amplitude : 0.0),
+                                  static_cast<f32>(term.dirX), static_cast<f32>(term.dirZ)}});
+                material.surfaceValues.push_back(
+                    SurfaceValue{"WaveB" + std::to_string(at),
+                                 {static_cast<f32>(term.omega), static_cast<f32>(term.phase),
+                                  static_cast<f32>(term.steepness), 0.0f}});
+            }
+            material.surfaceValues.push_back(
+                SurfaceValue{"WaveCount", {static_cast<f32>(surface.count), 0.0f, 0.0f, 0.0f}});
+            const u32 materialSlot = static_cast<u32>(out.materials.size());
+            out.materials.push_back(std::move(material));
+
+            // One tile: `size` metres square, centred at `x`, `z`, on the still
+            // surface -- or the river's ribbon, in its own world coordinates.
+            const auto tile = [&](const MeshLibrary::Entry& entry, core::DVec3 at, Vec3 scale) {
+                const Mat4 transform = core::toRenderMatrixScaled(core::CFrameD{at, core::Mat3{}}, origin, scale);
+                const Vec3 lo =
+                    core::toVec3(at - origin) + Vec3{entry.bounds.min.x * scale.x, -2.0f, entry.bounds.min.z * scale.z};
+                const Vec3 hi =
+                    core::toVec3(at - origin) + Vec3{entry.bounds.max.x * scale.x, 2.0f, entry.bounds.max.z * scale.z};
+                const core::AABB bounds{lo, hi};
+                const Vec3 centre = core::center(bounds);
+                const f32 depth = core::length(centre);
+                out.draws.push_back(DrawItem{
+                    .sortKey = drawSortKey(kTransparentPass, kStaticPipeline, materialSlot, 0u,
+                                           kMaxSortDepth - std::min(depth, kMaxSortDepth)),
+                    .transform = transform,
+                    .mesh = entry.mesh,
+                    .section = 0,
+                    .material = materialSlot,
+                    // A hair short of whole: it is drawn with the blended
+                    // surfaces, over what is under it, which it reads.
+                    .alpha = 0.999f,
+                    .transparent = true,
+                    .boundsCenter = centre,
+                    .boundsRadius = 0.5f * core::length(core::size(bounds)),
+                    .inCameraFrustum = core::intersects(out.camera.frustum, bounds),
+                    .firstBone = 0,
+                    .boneCount = 0,
+                    .outlined = false,
+                    .terrain = false,
+                    .voxelBlock = false,
+                });
+            };
+            const double level = water.surfaceLevel;
+            if (water.shape == 1) {
+                tile(*grid,
+                     core::DVec3{static_cast<double>(water.position.x), level, static_cast<double>(water.position.z)},
+                     Vec3{water.size.x, 1.0f, water.size.z});
+                return;
+            }
+            if (water.shape == 2) {
+                const core::NameAtom urn = world.atoms().lookup(waterRiverUrn(id));
+                if (const MeshLibrary::Entry* ribbon = urn.id != 0 ? meshes.find(urn) : nullptr; ribbon != nullptr)
+                    tile(*ribbon, core::DVec3{0.0, level, 0.0}, Vec3{1.0f, 1.0f, 1.0f});
+                return;
+            }
+            // **The sea**: three rings, each three times the last across and
+            // as coarse, the finest under the camera -- each snapped to its
+            // own vertex spacing so a vertex lands where a vertex was and the
+            // surface does not slide under the waves it carries.
+            //
+            // All three snapped to the coarsest ring's spacing, which every
+            // finer spacing divides: the rings meet edge to edge, and each
+            // vertex still lands on its own ring's lattice.
+            const double coarsest = 96.0 * 9.0 / static_cast<double>(WaterGridQuads);
+            const double cx = std::floor(origin.x / coarsest) * coarsest;
+            const double cz = std::floor(origin.z / coarsest) * coarsest;
+            for (int ring = 0; ring < 3; ++ring) {
+                const double size = 96.0 * std::pow(3.0, ring);
+                for (int tz = -1; tz <= 1; ++tz) {
+                    for (int tx = -1; tx <= 1; ++tx) {
+                        if (ring > 0 && tx == 0 && tz == 0)
+                            continue;
+                        tile(*grid, core::DVec3{cx + tx * size, level, cz + tz * size},
+                             Vec3{static_cast<f32>(size), 1.0f, static_cast<f32>(size)});
+                    }
+                }
+            }
+        });
     }
 
     // --- The block world (V1) --------------------------------------------------

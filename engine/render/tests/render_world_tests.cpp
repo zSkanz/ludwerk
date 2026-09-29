@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "engine/asset/material.h"
@@ -11,9 +13,11 @@
 #include "engine/render/render_world.h"
 #include "engine/render/terrain_loader.h"
 #include "engine/render/transform_history.h"
+#include "engine/render/water_loader.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 #include "engine_test_nearly.h"
 
@@ -1717,4 +1721,75 @@ TEST_CASE("an orthographic camera sees its whole column, above where it stands t
     // And what is above is in the frustum a draw is culled against.
     CHECK(core::intersects(snapshot.camera.frustum,
                            core::AABB::fromMinMax(core::Vec3{-0.75f, 0.25f, -0.75f}, core::Vec3{0.75f, 1.75f, 0.75f})));
+}
+
+TEST_CASE("a water is drawn on the surface the simulation floats things on (ADR 0118)")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId root = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(root);
+    const core::InstanceId water = fixture.world.create(fixture.folderClass);
+    REQUIRE_FALSE(fixture.world.setParent(water, root).has_value());
+    scene::WaterComponent component;
+    component.surfaceLevel = 3.0;
+    (void)fixture.world.waters().add(water, component);
+    for (const auto& [length, height, direction, steep] :
+         {std::tuple{60.0, 1.2, 10.0, 0.4}, std::tuple{31.0, 0.6, 70.0, 0.2}, std::tuple{17.0, 0.3, 200.0, 0.0}}) {
+        const core::InstanceId wave = fixture.world.create(fixture.folderClass);
+        scene::WaterWaveComponent term;
+        term.wavelength = length;
+        term.amplitude = height;
+        term.direction = direction;
+        term.steepness = steep;
+        (void)fixture.world.waterWaves().add(wave, term);
+        REQUIRE_FALSE(fixture.world.setParent(wave, water).has_value());
+    }
+    render::MeshLibrary meshes;
+    render::MeshLibrary::Entry grid;
+    grid.mesh = render::MeshHandle{1, 1};
+    grid.bounds = core::AABB{core::Vec3{-0.5f, 0.0f, -0.5f}, core::Vec3{0.5f, 0.0f, 0.5f}};
+    grid.sectionCount = 1;
+    meshes.set(fixture.atoms.intern(render::waterGridUrn()), grid);
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, root, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    // The sea: three rings of tiles, nine and eight and eight.
+    CHECK(snapshot.draws.size() == 25);
+    const auto found = std::find_if(snapshot.materials.begin(), snapshot.materials.end(),
+                                    [](const render::RenderMaterial& material) { return material.surface == "water"; });
+    REQUIRE(found != snapshot.materials.end());
+    CHECK(found->readsSceneColor);
+
+    // **The shader's sum, in its own floats, from the parameters it is
+    // handed**, against the simulation's in doubles: one surface.
+    const auto value = [&](const std::string& name) {
+        for (const render::SurfaceValue& entry : found->surfaceValues) {
+            if (entry.name == name)
+                return entry.value;
+        }
+        FAIL("no parameter ", name);
+        return std::array<float, 4>{};
+    };
+    const int count = static_cast<int>(value("WaveCount")[0] + 0.5f);
+    CHECK(count == 3);
+    const scene::WaterSurface surface = scene::surfaceOf(fixture.world, water);
+    for (const auto& [x, z, t] : {std::tuple{0.0f, 0.0f, 0.0f}, std::tuple{12.5f, -40.0f, 3.25f},
+                                  std::tuple{-77.0f, 18.0f, 61.0f}, std::tuple{300.0f, 250.0f, 600.0f}}) {
+        float drawn = 0.0f;
+        for (int index = 0; index < count; ++index) {
+            const std::array<float, 4> a = value("WaveA" + std::to_string(index));
+            const std::array<float, 4> b = value("WaveB" + std::to_string(index));
+            const float p = a[0] * (a[2] * x + a[3] * z) - b[0] * t + b[1];
+            drawn += a[1] * (std::sin(p) - 0.5f * b[2] * std::cos(2.0f * p));
+        }
+        CHECK(std::abs(static_cast<double>(drawn) + 3.0 -
+                       surface.heightAt(static_cast<double>(x), static_cast<double>(z), static_cast<double>(t))) <
+              2e-3);
+    }
+
+    // A lake is one tile over its box.
+    fixture.world.waters().find(water)->shape = 1;
+    render::extract(fixture.world, root, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    CHECK(snapshot.draws.size() == 1);
 }

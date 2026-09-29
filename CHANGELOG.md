@@ -62,6 +62,43 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Water** (ADR 0118, the game-ready plan's B8). A `Water` is a sea
+  (`Ocean`), a lake (`Box`) or a river (`Spline`, along its `WaterPoint`
+  children, flowing at `FlowSpeed`); its `WaterWave` children, up to eight, are
+  its waves. One function of them and `RunService.SimTime`, in the engine's own
+  maths and in the shipped `water` surface shader, so what floats rides the
+  surface that is drawn: a simulated part below the water's `Density` floats,
+  held up at 27 points through its volume and dragged towards the current, the
+  flow and the waves' own motion -- a hull pitches, rolls and rights itself.
+  `BasePart.Buoyant` opts a part out; a part a weld drives is carried, not
+  floated. `Water:GetHeightAt` and `GetNormalAt` for scripts, and
+  `BasePart:ApplyImpulseAtPosition` and `ApplyAngularImpulse` for thrust and
+  steering. Protocol 28. Every determinism trace was re-recorded: `Buoyant` is
+  a new property in the world hash; a `water` scenario joins them.
+  `examples/11-ocean` is rewritten on it -- a boat that is a body, no wave
+  function of its own -- and `examples/31-lake-and-river` carries logs down a
+  river into a lake.
+- **`DragDetector`** (ADR 0126 F1b). A part or a model dragged with the pointer
+  or a finger, with no input code: along a line, across a plane or the view,
+  turned about an axis or as a trackball, or left to a script, within limits
+  measured from where it rested; `DragStart`,
+  `DragContinue` and `DragEnd` with the player. The drag travels as rays
+  (protocol 26) and the authority moves the part; a physical drag hands the
+  part to the player while it is pulled. `examples/30-interactions` has a
+  drawer and a lever.
+- **A voxel holds two materials and a blend** (ADR 0114, B3).
+  `Terrain:PaintBall` takes `{ Mode, Strength, Falloff }`: `Replace`, `Blend`
+  over what is there, `Under` it, or `Erase` the paint; the seam between two
+  materials is a soft height blend. `.lterrain` version 4 and protocol 27 carry
+  the paint; an unpainted terrain is the bytes it was.
+- **Terrain tools** (B4): the editor's eyedropper (`Alt`+click), paint masks by
+  slope, height and material, *Replace Material*, a noise hill generator, and
+  heightmap export as 16-bit PNG or RAW.
+- **The ground replicates** (ADR 0135). Terrain and block edits travel to every
+  player as whole chunks, and a player joining late receives the ground as it
+  is. `Terrain:GrowBall` raises and lowers the ground as the editor's brushes
+  do.
+
 - **A scene closes as a game does, and talks to the game by message** (ADR
   0124). The global `scene` is the scene open now; `scene:BindToClose` runs
   when it closes and a `LoadScene` waits for it (`[scene]

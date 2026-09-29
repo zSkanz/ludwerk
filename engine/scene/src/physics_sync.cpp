@@ -15,6 +15,7 @@
 #include "engine/asset/terrain_mesher.h"
 #include "engine/asset/voxel_mesher.h"
 #include "engine/scene/players.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 
 namespace engine::scene {
@@ -457,6 +458,10 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     if (!(body.pendingImpulse == core::Vec3{0.0f, 0.0f, 0.0f})) {
         m_backend.applyImpulse(m_world, record.handle, body.pendingImpulse);
         body.pendingImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
+    }
+    if (!(body.pendingAngularImpulse == core::Vec3{0.0f, 0.0f, 0.0f})) {
+        m_backend.applyAngularImpulse(m_world, record.handle, body.pendingAngularImpulse);
+        body.pendingAngularImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
     }
 }
 
@@ -1948,8 +1953,12 @@ bool PhysicsSync::saveSimulation(std::vector<u8>& out) const
         const PartComponent* part = m_scene.parts().find(id);
         const RigidBodyComponent* body = m_scene.rigidBodies().find(id);
         const CharacterBodyComponent* character = m_scene.characterBodies().find(id);
-        const u8 has =
-            static_cast<u8>((part != nullptr ? 1 : 0) | (body != nullptr ? 2 : 0) | (character != nullptr ? 4 : 0));
+        // **A pending twist only where there is one** (ADR 0118): bit 8, so a
+        // snapshot of a world with none is the bytes it always was, and one
+        // written before twists existed still reads.
+        const bool twisted = body != nullptr && !(body->pendingAngularImpulse == core::Vec3{0.0f, 0.0f, 0.0f});
+        const u8 has = static_cast<u8>((part != nullptr ? 1 : 0) | (body != nullptr ? 2 : 0) |
+                                       (character != nullptr ? 4 : 0) | (twisted ? 8 : 0));
         put(out, has);
         if (part != nullptr)
             put(out, part->cframe);
@@ -1964,6 +1973,8 @@ bool PhysicsSync::saveSimulation(std::vector<u8>& out) const
             // platform as moving before anything had moved it.
             const bool recorded = id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation;
             put(out, recorded ? m_bodies[id.index].movingUntilTick : u64{0});
+            if (twisted)
+                put(out, body->pendingAngularImpulse);
         }
         if (character != nullptr) {
             put(out, static_cast<u8>(character->grounded ? 1 : 0));
@@ -2001,6 +2012,7 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
         core::Vec3 linear{};
         core::Vec3 angular{};
         core::Vec3 impulse{};
+        core::Vec3 twist{};
         u8 active = 0;
         u64 movingUntil = 0;
         u8 grounded = 0;
@@ -2024,6 +2036,8 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             (!take(bytes, at, entry.linear) || !take(bytes, at, entry.angular) || !take(bytes, at, entry.impulse) ||
              !take(bytes, at, entry.active) || !take(bytes, at, entry.movingUntil)))
             return false;
+        if ((entry.has & 8) != 0 && ((entry.has & 2) == 0 || !take(bytes, at, entry.twist)))
+            return false;
         if ((entry.has & 4) != 0 &&
             (!take(bytes, at, entry.grounded) || !take(bytes, at, entry.state) || !take(bytes, at, entry.groundPart) ||
              !take(bytes, at, entry.move) || !take(bytes, at, entry.jump) || !take(bytes, at, entry.vertical)))
@@ -2044,7 +2058,7 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
         const u8 has = static_cast<u8>((m_scene.parts().find(ids[index]) != nullptr ? 1 : 0) |
                                        (m_scene.rigidBodies().find(ids[index]) != nullptr ? 2 : 0) |
                                        (m_scene.characterBodies().find(ids[index]) != nullptr ? 4 : 0));
-        if (has != entries[index].has)
+        if (has != (entries[index].has & 7))
             return false;
     }
     if (!m_backend.restoreState(m_world, solver))
@@ -2064,6 +2078,7 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             body->linearVelocity = entry.linear;
             body->angularVelocity = entry.angular;
             body->pendingImpulse = entry.impulse;
+            body->pendingAngularImpulse = entry.twist;
             body->active = entry.active != 0;
             if (entry.id.index < m_bodies.size() && m_bodies[entry.id.index].generation == entry.id.generation)
                 m_bodies[entry.id.index].movingUntilTick = entry.movingUntil;
@@ -2101,6 +2116,10 @@ void PhysicsSync::step(f64 fixedDt)
         return;
 
     const auto begin = std::chrono::steady_clock::now();
+    // **The water's push and drag first** (ADR 0118), onto the pending
+    // impulses the mirror is about to apply -- here, so every step takes it:
+    // a tick, a rollback's re-simulation, a replica's prediction.
+    applyWaterForces(m_scene, m_workspace, fixedDt);
     applyScene();
     const auto applied = std::chrono::steady_clock::now();
 

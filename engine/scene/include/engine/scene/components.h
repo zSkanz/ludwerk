@@ -173,6 +173,11 @@ struct RigidBodyComponent
     // and because summing impulses is exactly what applying them one after
     // another would do anyway.
     core::Vec3 pendingImpulse{0.0f, 0.0f, 0.0f};
+    // **And a twist** (ADR 0118): `ApplyAngularImpulse`, and the turning half
+    // of `ApplyImpulseAtPosition` and of the water's push at a point.
+    core::Vec3 pendingAngularImpulse{0.0f, 0.0f, 0.0f};
+    // `BasePart.Buoyant`: whether a `Water` holds it up.
+    bool buoyant = true;
 
     // Whether the simulation is still moving this body, written by the mirror.
     // Not a property -- nothing in api-design.md exposes it -- and hashed
@@ -677,6 +682,39 @@ struct ClickDetectorComponent
     f64 maxActivationDistance = 32.0;
     // Atoms, as every string the wire carries is.
     core::NameAtom cursorIcon;
+};
+
+// ADR 0118: water -- a sea, a lake or a river -- whose surface is its
+// `WaterWave` children, read by the simulation and the picture alike.
+struct WaterComponent
+{
+    // `Enum.WaterShape`: 0 Ocean, 1 Box, 2 Spline.
+    i32 shape = 0;
+    f64 surfaceLevel = 0.0;
+    core::Vec3 position{};
+    core::Vec3 size{64.0f, 8.0f, 64.0f};
+    f64 density = 1.0;
+    f64 viscosity = 1.0;
+    core::Vec3 current{};
+    f64 flowSpeed = 0.0;
+};
+
+// One wave of a `Water`.
+struct WaterWaveComponent
+{
+    f64 wavelength = 40.0;
+    f64 amplitude = 0.5;
+    // Degrees about the vertical, 0 along +X.
+    f64 direction = 0.0;
+    f64 steepness = 0.0;
+    // Radians.
+    f64 phase = 0.0;
+};
+
+// A point a river runs through.
+struct WaterPointComponent
+{
+    core::Vec3 position{};
 };
 
 // ADR 0126: what makes a part or a model something a player drags. Who is

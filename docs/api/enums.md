@@ -653,3 +653,13 @@ How much of the renderer a `CameraTexture` asks for.
 |---|---|---|
 | `Full` | 0 | Everything the main view draws: shadows and the look's effects. |
 | `Simple` | 1 | No shadows and no effects -- a feed, a monitor, a minimap. |
+
+## Enum.WaterShape
+
+Where a `Water` is (ADR 0118).
+
+| Item | Value | Description |
+|---|---|---|
+| `Ocean` | 0 | Everywhere, without end: the sea. |
+| `Box` | 1 | A lake or a pool: `Size` across, centred on `Position`. |
+| `Spline` | 2 | A river along its `WaterPoint` children, `Size.X` wide, flowing at `FlowSpeed`. |

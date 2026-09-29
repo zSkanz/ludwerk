@@ -86,6 +86,7 @@ inline constexpr EnumId ProximityPromptInputTypeEnumId = 45;
 inline constexpr EnumId DragDetectorDragStyleEnumId = 46;
 inline constexpr EnumId DragDetectorResponseStyleEnumId = 47;
 inline constexpr EnumId TerrainPaintModeEnumId = 48;
+inline constexpr EnumId WaterShapeEnumId = 49;
 
 } // namespace generated
 
@@ -154,6 +155,8 @@ Value getBasePartCanTouch(const World& world, core::InstanceId id);
 bool setBasePartCanTouch(World& world, core::InstanceId id, const Value& value);
 Value getBasePartCanQuery(const World& world, core::InstanceId id);
 bool setBasePartCanQuery(World& world, core::InstanceId id, const Value& value);
+Value getBasePartBuoyant(const World& world, core::InstanceId id);
+bool setBasePartBuoyant(World& world, core::InstanceId id, const Value& value);
 Value getBasePartCollisionGroup(const World& world, core::InstanceId id);
 bool setBasePartCollisionGroup(World& world, core::InstanceId id, const Value& value);
 Value getBasePartFriction(const World& world, core::InstanceId id);
@@ -459,6 +462,46 @@ Value getClickDetectorCursorIcon(const World& world, core::InstanceId id);
 bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& value);
 void attachClickDetectorComponents(World& world, core::InstanceId id);
 void detachClickDetectorComponents(World& world, core::InstanceId id);
+
+// Water
+Value getWaterShape(const World& world, core::InstanceId id);
+bool setWaterShape(World& world, core::InstanceId id, const Value& value);
+Value getWaterSurfaceLevel(const World& world, core::InstanceId id);
+bool setWaterSurfaceLevel(World& world, core::InstanceId id, const Value& value);
+Value getWaterPosition(const World& world, core::InstanceId id);
+bool setWaterPosition(World& world, core::InstanceId id, const Value& value);
+Value getWaterSize(const World& world, core::InstanceId id);
+bool setWaterSize(World& world, core::InstanceId id, const Value& value);
+Value getWaterDensity(const World& world, core::InstanceId id);
+bool setWaterDensity(World& world, core::InstanceId id, const Value& value);
+Value getWaterViscosity(const World& world, core::InstanceId id);
+bool setWaterViscosity(World& world, core::InstanceId id, const Value& value);
+Value getWaterCurrent(const World& world, core::InstanceId id);
+bool setWaterCurrent(World& world, core::InstanceId id, const Value& value);
+Value getWaterFlowSpeed(const World& world, core::InstanceId id);
+bool setWaterFlowSpeed(World& world, core::InstanceId id, const Value& value);
+void attachWaterComponents(World& world, core::InstanceId id);
+void detachWaterComponents(World& world, core::InstanceId id);
+
+// WaterWave
+Value getWaterWaveWavelength(const World& world, core::InstanceId id);
+bool setWaterWaveWavelength(World& world, core::InstanceId id, const Value& value);
+Value getWaterWaveAmplitude(const World& world, core::InstanceId id);
+bool setWaterWaveAmplitude(World& world, core::InstanceId id, const Value& value);
+Value getWaterWaveDirection(const World& world, core::InstanceId id);
+bool setWaterWaveDirection(World& world, core::InstanceId id, const Value& value);
+Value getWaterWaveSteepness(const World& world, core::InstanceId id);
+bool setWaterWaveSteepness(World& world, core::InstanceId id, const Value& value);
+Value getWaterWavePhase(const World& world, core::InstanceId id);
+bool setWaterWavePhase(World& world, core::InstanceId id, const Value& value);
+void attachWaterWaveComponents(World& world, core::InstanceId id);
+void detachWaterWaveComponents(World& world, core::InstanceId id);
+
+// WaterPoint
+Value getWaterPointPosition(const World& world, core::InstanceId id);
+bool setWaterPointPosition(World& world, core::InstanceId id, const Value& value);
+void attachWaterPointComponents(World& world, core::InstanceId id);
+void detachWaterPointComponents(World& world, core::InstanceId id);
 
 // DragDetector
 Value getDragDetectorDragStyle(const World& world, core::InstanceId id);

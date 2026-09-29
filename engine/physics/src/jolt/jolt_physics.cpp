@@ -1202,6 +1202,15 @@ public:
         m_system.GetBodyInterface().AddImpulse(record->id, toJolt(impulse));
     }
 
+    void applyAngularImpulse(BodyHandle handle, core::Vec3 impulse)
+    {
+        BodyRecord* record = resolve(handle);
+        if (record == nullptr || record->motion != MotionType::Dynamic) {
+            return;
+        }
+        m_system.GetBodyInterface().AddAngularImpulse(record->id, toJolt(impulse));
+    }
+
     void setBodyMaterial(BodyHandle handle, f32 friction, f32 restitution)
     {
         BodyRecord* record = resolve(handle);
@@ -2932,6 +2941,13 @@ public:
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->applyImpulse(body, impulse);
+        }
+    }
+
+    void applyAngularImpulse(WorldHandle handle, BodyHandle body, core::Vec3 impulse) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->applyAngularImpulse(body, impulse);
         }
     }
 

@@ -434,7 +434,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 16> basePartProperties;
+    static std::array<PropertyDesc, 17> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -547,6 +547,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setBasePartCanQuery,
         },
         PropertyDesc{
+            .name = atoms.intern("Buoyant"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a `Water` holds it up (ADR 0118): the engine pushes an unanchored part in water up by the water it displaces, at points over its shape, so a hull pitches and rolls, and drags it by the water's `Viscosity`. Off, the water ignores it -- a game floating it its own way, or a stone.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartBuoyant,
+            .set = native::setBasePartBuoyant,
+        },
+        PropertyDesc{
             .name = atoms.intern("CollisionGroup"),
             .type = ValueType::String,
             .threadSafety = ThreadSafety::Unsafe,
@@ -613,7 +624,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 6> basePartMethods;
+    static std::array<MethodDesc, 8> basePartMethods;
     basePartMethods = {{
         MethodDesc{
             .name = atoms.intern("SetMaterialParameter"),
@@ -650,6 +661,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Adds an instantaneous change of momentum at the part's centre of mass, in kilogram-metres per second. Applied at the next simulation tick and ignored by an anchored part, which has no momentum to change.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ApplyImpulseAtPosition"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The same push, at a point in the world: off the centre it also turns the part, as a shove at a boat's bow swings it round (ADR 0118). Applied at the next tick.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ApplyAngularImpulse"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "An instantaneous change of angular momentum, about the axis it points along, in kilogram-square-metres per second: a twist with no push. Applied at the next tick.",
         },
     }};
     static std::array<EventDesc, 2> basePartEvents;
@@ -2473,6 +2496,228 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     clickDetectorDesc.attachComponents = native::attachClickDetectorComponents;
     clickDetectorDesc.detachComponents = native::detachClickDetectorComponents;
     classes.registerClass(clickDetectorDesc);
+
+    // --- Water ---
+    static std::array<PropertyDesc, 8> waterProperties;
+    waterProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Shape"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("WaterShape"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getWaterShape,
+            .set = native::setWaterShape,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SurfaceLevel"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The height of the still surface, in metres; the waves rise and fall about it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getWaterSurfaceLevel,
+            .set = native::setWaterSurfaceLevel,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Position"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getWaterPosition,
+            .set = native::setWaterPosition,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Size"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and its depth its Y, and its Z is not used. X and Y must be greater than zero.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.water_size"),
+            .get = native::getWaterSize,
+            .set = native::setWaterSize,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Density"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the water floats, and one of half its density floats half under.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getWaterDensity,
+            .set = native::setWaterDensity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Viscosity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getWaterViscosity,
+            .set = native::setWaterViscosity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Current"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` along its course.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getWaterCurrent,
+            .set = native::setWaterCurrent,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FlowSpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast a river flows along its points, first to last, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getWaterFlowSpeed,
+            .set = native::setWaterFlowSpeed,
+        },
+    }};
+    static std::array<MethodDesc, 2> waterMethods;
+    waterMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetHeightAt"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "The height of the surface above the position's column now, waves and all -- the height the picture draws there -- or nil where this water is not.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetNormalAt"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "Which way the surface faces above the position's column now, or nil where this water is not.",
+        },
+    }};
+    ClassDescriptor waterDesc;
+    waterDesc.name = atoms.intern("Water");
+    waterDesc.super = instanceClass;
+    waterDesc.flags = ClassFlags::None;
+    waterDesc.defaultName = atoms.intern("Water");
+    waterDesc.doc = "Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU for the picture. An unanchored part in it is held up by the water it displaces, at points over its shape, so a hull pitches and rolls; `Viscosity` drags it, and `Current` carries it. `GetHeightAt` is where the surface is, for a game's own use.";
+    static constexpr std::array<std::string_view, 3> waterParents{{"Workspace", "ReplicatedStorage", "ServerStorage"}};
+    waterDesc.parents = waterParents;
+    waterDesc.properties = waterProperties;
+    waterDesc.methods = waterMethods;
+    waterDesc.attachComponents = native::attachWaterComponents;
+    waterDesc.detachComponents = native::detachWaterComponents;
+    classes.registerClass(waterDesc);
+
+    // --- WaterWave ---
+    static std::array<PropertyDesc, 5> waterWaveProperties;
+    waterWaveProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Wavelength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Metres from one crest to the next.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getWaterWaveWavelength,
+            .set = native::setWaterWaveWavelength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Amplitude"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Metres a crest rises above the still surface.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getWaterWaveAmplitude,
+            .set = native::setWaterWaveAmplitude,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Direction"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which way it travels, in degrees about the vertical: 0 along +X, 90 along +Z.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getWaterWaveDirection,
+            .set = native::setWaterWaveDirection,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Steepness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "0 a rounded swell, 1 sharp crests and flat troughs.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getWaterWaveSteepness,
+            .set = native::setWaterWaveSteepness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Phase"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where in its cycle it starts, in radians, so two alike waves need not rise together.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getWaterWavePhase,
+            .set = native::setWaterWavePhase,
+        },
+    }};
+    ClassDescriptor waterWaveDesc;
+    waterWaveDesc.name = atoms.intern("WaterWave");
+    waterWaveDesc.super = instanceClass;
+    waterWaveDesc.flags = ClassFlags::None;
+    waterWaveDesc.defaultName = atoms.intern("WaterWave");
+    waterWaveDesc.doc = "One wave of the `Water` it is in (ADR 0118): the first eight, in order, make the surface. It travels at the speed deep water gives its length.";
+    static constexpr std::array<std::string_view, 3> waterWaveParents{{"Water", "ReplicatedStorage", "ServerStorage"}};
+    waterWaveDesc.parents = waterWaveParents;
+    waterWaveDesc.properties = waterWaveProperties;
+    waterWaveDesc.attachComponents = native::attachWaterWaveComponents;
+    waterWaveDesc.detachComponents = native::detachWaterWaveComponents;
+    classes.registerClass(waterWaveDesc);
+
+    // --- WaterPoint ---
+    static std::array<PropertyDesc, 1> waterPointProperties;
+    waterPointProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Position"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where the river passes, across the ground; its height is the water's `SurfaceLevel`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getWaterPointPosition,
+            .set = native::setWaterPointPosition,
+        },
+    }};
+    ClassDescriptor waterPointDesc;
+    waterPointDesc.name = atoms.intern("WaterPoint");
+    waterPointDesc.super = instanceClass;
+    waterPointDesc.flags = ClassFlags::None;
+    waterPointDesc.defaultName = atoms.intern("WaterPoint");
+    waterPointDesc.doc = "A point a `Spline` water runs through (ADR 0118), in order: a river's course.";
+    static constexpr std::array<std::string_view, 3> waterPointParents{{"Water", "ReplicatedStorage", "ServerStorage"}};
+    waterPointDesc.parents = waterPointParents;
+    waterPointDesc.properties = waterPointProperties;
+    waterPointDesc.attachComponents = native::attachWaterPointComponents;
+    waterPointDesc.detachComponents = native::detachWaterPointComponents;
+    classes.registerClass(waterPointDesc);
 
     // --- DragDetector ---
     static std::array<PropertyDesc, 14> dragDetectorProperties;
@@ -6350,6 +6595,31 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     terrainPaintModeDesc.docKey = {};
     terrainPaintModeDesc.items = terrainPaintModeItems;
     enums.registerEnum(terrainPaintModeDesc);
+
+    // --- WaterShape ---
+    static std::array<EnumItemDesc, 3> waterShapeItems;
+    waterShapeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Ocean"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Box"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Spline"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor waterShapeDesc;
+    waterShapeDesc.name = atoms.intern("WaterShape");
+    waterShapeDesc.docKey = {};
+    waterShapeDesc.items = waterShapeItems;
+    enums.registerEnum(waterShapeDesc);
 }
 
 } // namespace engine::scene::generated

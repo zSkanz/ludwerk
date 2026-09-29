@@ -1195,6 +1195,19 @@ local Definition: Schema.Definition = {
                 { Name = "Erase", Value = 3, Doc = "What was painted over shows less, revealing what is under." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "WaterShape",
+            Doc = "Where a `Water` is (ADR 0118).",
+            Items = {
+                { Name = "Ocean", Value = 0, Doc = "Everywhere, without end: the sea." },
+                { Name = "Box", Value = 1, Doc = "A lake or a pool: `Size` across, centred on `Position`." },
+                {
+                    Name = "Spline",
+                    Value = 2,
+                    Doc = "A river along its `WaterPoint` children, `Size.X` wide, flowing at `FlowSpeed`.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

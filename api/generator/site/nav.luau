@@ -67,7 +67,7 @@ local Sections: { Section } = {
     {
         Slug = "world",
         Title = "Building a world",
-        Summary = "Parts, materials, transforms, meshes, prefabs, terrain, blocks, and the scene the game starts in.",
+        Summary = "Parts, materials, transforms, meshes, prefabs, terrain, water, blocks, and the scene the game starts in.",
         Pages = {
             { Slug = "parts", Title = "Parts and solids" },
             { Slug = "materials", Title = "Materials" },
@@ -77,6 +77,7 @@ local Sections: { Section } = {
             { Slug = "terrain", Title = "Terrain" },
             { Slug = "wind", Title = "Wind" },
             { Slug = "foliage", Title = "Foliage" },
+            { Slug = "water", Title = "Water" },
             { Slug = "blocks", Title = "Block worlds" },
             { Slug = "2d", Title = "2D games" },
             { Slug = "navigation", Title = "Navigation" },

@@ -18,6 +18,7 @@ offers is on the base's page, which is what keeps one added member on
 |---|---|---|---|---|
 | `Anchored` | `boolean` | `false` | read/write | Whether the simulation moves this part. An anchored part is immovable scenery that other parts collide with and gravity ignores -- not a very heavy part, a different kind of body -- so writing this rebuilds it in the simulation and keeps its transform. |
 | `AngularVelocity` | `vector` | — | read-only | How fast this part is spinning, in radians per second about each world axis, as of the last simulation tick. |
+| `Buoyant` | `boolean` | `true` | read/write | Whether a `Water` holds it up (ADR 0118): the engine pushes an unanchored part in water up by the water it displaces, at points over its shape, so a hull pitches and rolls, and drags it by the water's `Viscosity`. Off, the water ignores it -- a game floating it its own way, or a stone. |
 | `CFrame` | `CFrame` | — | read/write | This part's transform in world space, and the f64 source of truth Position and Orientation are read back from. |
 | `CanCollide` | `boolean` | `true` | read/write | Whether this part physically stops anything. A part with this off still reports Touched, which is what makes a checkpoint, a trigger volume or a pickup work: things pass through it and it notices. |
 | `CanQuery` | `boolean` | `true` | read/write | Whether raycasts, shapecasts and box queries can see this part. Independent of CanCollide, because a part that blocks movement and a part a camera ray should ignore are different questions. |
@@ -35,9 +36,17 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
+### `ApplyAngularImpulse(impulse: vector)`
+
+An instantaneous change of angular momentum, about the axis it points along, in kilogram-square-metres per second: a twist with no push. Applied at the next tick.
+
 ### `ApplyImpulse(impulse: vector)`
 
 Adds an instantaneous change of momentum at the part's centre of mass, in kilogram-metres per second. Applied at the next simulation tick and ignored by an anchored part, which has no momentum to change.
+
+### `ApplyImpulseAtPosition(impulse: vector, position: vector)`
+
+The same push, at a point in the world: off the centre it also turns the part, as a shove at a boat's bow swings it round (ADR 0118). Applied at the next tick.
 
 ### `ClearMaterialParameter(name: string)`
 

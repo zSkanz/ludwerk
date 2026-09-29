@@ -36,6 +36,7 @@ engine_add_module(render
         src/foliage.cpp
         src/particles.cpp
         src/voxel_loader.cpp
+        src/water_loader.cpp
         src/scene_types.cpp
         src/shadow.cpp
         src/ui_renderer.cpp

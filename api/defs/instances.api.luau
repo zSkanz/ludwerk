@@ -517,6 +517,15 @@ local Classes: { Schema.Class } = {
                     .. "questions.",
             },
             {
+                Name = "Buoyant",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a `Water` holds it up (ADR 0118): the engine pushes an unanchored part in water "
+                    .. "up by the water it displaces, at points over its shape, so a hull pitches and rolls, and "
+                    .. "drags it by the water's `Viscosity`. Off, the water ignores it -- a game floating it its "
+                    .. "own way, or a stone.",
+            },
+            {
                 Name = "CollisionGroup",
                 Type = "string",
                 Default = '"Default"',
@@ -630,6 +639,22 @@ local Classes: { Schema.Class } = {
                 Doc = "Adds an instantaneous change of momentum at the part's centre of mass, in kilogram-metres "
                     .. "per second. Applied at the next simulation tick and ignored by an anchored part, which "
                     .. "has no momentum to change.",
+            },
+            {
+                Name = "ApplyImpulseAtPosition",
+                Parameters = { { Name = "impulse", Type = "vector" }, { Name = "position", Type = "vector" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "The same push, at a point in the world: off the centre it also turns the part, as a shove "
+                    .. "at a boat's bow swings it round (ADR 0118). Applied at the next tick.",
+            },
+            {
+                Name = "ApplyAngularImpulse",
+                Parameters = { { Name = "impulse", Type = "vector" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "An instantaneous change of angular momentum, about the axis it points along, in "
+                    .. "kilogram-square-metres per second: a twist with no push. Applied at the next tick.",
             },
         } :: { Schema.Method },
         Events = {
@@ -4760,6 +4785,156 @@ local Classes: { Schema.Class } = {
                 Doc = "The pointer left it, or it went out of reach. On this machine only.",
             },
         } :: { Schema.Event },
+    },
+    {
+        Name = "Water",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("Workspace"),
+        Storage = "Water",
+        Doc = "Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- "
+            .. "its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU "
+            .. "for the picture. An unanchored part in it is held up by the water it displaces, at points "
+            .. "over its shape, so a hull pitches and rolls; `Viscosity` drags it, and `Current` carries it. "
+            .. "`GetHeightAt` is where the surface is, for a game's own use.",
+        Properties = {
+            {
+                Name = "Shape",
+                Type = "Enum.WaterShape",
+                Default = "Enum.WaterShape.Ocean",
+                Doc = "Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).",
+            },
+            {
+                Name = "SurfaceLevel",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_finite",
+                Doc = "The height of the still surface, in metres; the waves rise and fall about it.",
+            },
+            {
+                Name = "Position",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s.",
+            },
+            {
+                Name = "Size",
+                Type = "vector",
+                Default = "vector.create(64, 8, 64)",
+                ErrorKey = "scene.err.water_size",
+                Doc = "A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and "
+                    .. "its depth its Y, and its Z is not used. X and Y must be greater than zero.",
+            },
+            {
+                Name = "Density",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the "
+                    .. "water floats, and one of half its density floats half under.",
+            },
+            {
+                Name = "Viscosity",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's.",
+            },
+            {
+                Name = "Current",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` "
+                    .. "along its course.",
+            },
+            {
+                Name = "FlowSpeed",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_finite",
+                Doc = "How fast a river flows along its points, first to last, in metres a second.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "GetHeightAt",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "number?" },
+                ThreadSafety = "ReadParallel",
+                Doc = "The height of the surface above the position's column now, waves and all -- the height "
+                    .. "the picture draws there -- or nil where this water is not.",
+            },
+            {
+                Name = "GetNormalAt",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "vector?" },
+                ThreadSafety = "ReadParallel",
+                Doc = "Which way the surface faces above the position's column now, or nil where this water "
+                    .. "is not.",
+            },
+        } :: { Schema.Method },
+    },
+    {
+        Name = "WaterWave",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("Water"),
+        Storage = "WaterWave",
+        Doc = "One wave of the `Water` it is in (ADR 0118): the first eight, in order, make the surface. "
+            .. "It travels at the speed deep water gives its length.",
+        Properties = {
+            {
+                Name = "Wavelength",
+                Type = "number",
+                Default = "40",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "Metres from one crest to the next.",
+            },
+            {
+                Name = "Amplitude",
+                Type = "number",
+                Default = "0.5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Metres a crest rises above the still surface.",
+            },
+            {
+                Name = "Direction",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_finite",
+                Doc = "Which way it travels, in degrees about the vertical: 0 along +X, 90 along +Z.",
+            },
+            {
+                Name = "Steepness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "0 a rounded swell, 1 sharp crests and flat troughs.",
+            },
+            {
+                Name = "Phase",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_finite",
+                Doc = "Where in its cycle it starts, in radians, so two alike waves need not rise together.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "WaterPoint",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = under("Water"),
+        Storage = "WaterPoint",
+        Doc = "A point a `Spline` water runs through (ADR 0118), in order: a river's course.",
+        Properties = {
+            {
+                Name = "Position",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "Where the river passes, across the ground; its height is the water's `SurfaceLevel`.",
+            },
+        } :: { Schema.Property },
     },
     {
         Name = "DragDetector",

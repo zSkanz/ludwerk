@@ -1117,3 +1117,44 @@ reads a one-block shell -- and the physics mirror rebuilt the 7 face
 neighbours' colliders the same way. Both now check the shell before acting:
 with the band but without that fix, the p95 was 11.1 ms, of which the drawing
 7.4; with it, 2.6 ms and 1.8.
+
+## Water (ADR 0118)
+
+What the water costs to draw and to float things in. Measured 2026-09-29 on
+`win-msvc-dev` (D3D12, the GPU debug layer on), `engine-host <project>
+--headless --width=1920 --height=1080 --frames=300 --exit --frame-stats`; three
+runs each, the medians below.
+
+**The ocean example, before and after it moved onto `Water`.** Before: nine
+grids of 256 quads placed from Luau, a surface shader of its own, a boat
+placed on the surface four times a tick. After: one `Water`, three rings of the
+shared grid drawn by the engine's water surface, and a simulated hull.
+
+| `examples/11-ocean` | Median frame | Simulation | Draws | Triangles |
+|---|---|---|---|---|
+| Before (its own shader, a driven boat) | 0.64, 0.69, 0.68 ms -- **0.68 ms** | 0.106 ms | 39 | 786 752 |
+| After (`Water`, a simulated hull) | 0.72, 0.71, 0.70 ms -- **0.71 ms** | 0.095 ms | 55 | 2 097 484 |
+
+The sea reaches nine times as far -- three rings out to 1.3 km, where the
+example's nine grids stopped at 144 m -- which is the extra draws and
+triangles; the frame is three hundredths of a millisecond more for it.
+
+**Floating.** Four hundred crates, 1.5 x 1.2 x 1.8 m, riding a sea of three
+waves, against the same four hundred falling with no water -- every body awake
+in both.
+
+| 400 bodies | Simulation a tick |
+|---|---|
+| No water | 0.175 ms |
+| Afloat | 0.620 ms |
+| **The water's push and drag** | **+0.45 ms, 1.1 µs a body** |
+
+The first version cost 2.07 ms for the same four hundred, 5.2 µs a body. Two
+changes took it down, and they are in the code's comments because the first
+thing anyone would try instead is the one that did not help: evaluating the
+waves with fewer transcendental calls (the double angle from the single's sine
+and cosine) saved a third; what saved the rest was not computing the waves
+per cell at all -- a wave's phase is linear in the cell's offset, so the 27
+cells' sines and cosines come from four pairs by the angle-sum rule, filled in a
+cascade, and the depth fade from four exponentials. A world with no `Water`
+pays nothing: the pass returns before it looks at a body.

@@ -17,6 +17,7 @@
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
 #include "engine/scene/scene_file.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 #include "engine/script/content_provider.h"
 #include "engine/script/datatypes.h"
@@ -875,6 +876,75 @@ int methodApplyImpulse(lua_State* L)
     if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
         body->pendingImpulse = body->pendingImpulse + impulse;
     return 0;
+}
+
+// **A push at a point, and a twist** (ADR 0118): queued on the part, as
+// `ApplyImpulse` is, and applied at the next tick.
+int methodApplyImpulseAtPosition(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 impulse = checkVector3(L, 2);
+    const core::Vec3 position = checkVector3(L, 3);
+    if (!std::isfinite(impulse.x) || !std::isfinite(impulse.y) || !std::isfinite(impulse.z))
+        luaL_argerror(L, 2, "a finite impulse");
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+        luaL_argerror(L, 3, "a finite position");
+    scene::World& w = world(L);
+    scene::RigidBodyComponent* body = w.rigidBodies().find(id);
+    const scene::PartComponent* part = w.parts().find(id);
+    if (body == nullptr || part == nullptr)
+        return 0;
+    // About the centre, where the mirror applies a push: off it, a turn too.
+    const core::Vec3 arm = core::toVec3(core::toDVec3(position) - part->cframe.position);
+    body->pendingImpulse = body->pendingImpulse + impulse;
+    body->pendingAngularImpulse = body->pendingAngularImpulse + core::cross(arm, impulse);
+    return 0;
+}
+
+int methodApplyAngularImpulse(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 impulse = checkVector3(L, 2);
+    if (!std::isfinite(impulse.x) || !std::isfinite(impulse.y) || !std::isfinite(impulse.z))
+        luaL_argerror(L, 2, "a finite impulse");
+    if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
+        body->pendingAngularImpulse = body->pendingAngularImpulse + impulse;
+    return 0;
+}
+
+// --- Water (ADR 0118) ------------------------------------------------------------
+
+// The surface above a column now, or nil outside this water.
+int methodWaterGetHeightAt(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 at = checkVector3(L, 2);
+    const scene::World& w = world(L);
+    const auto x = static_cast<double>(at.x);
+    const auto z = static_cast<double>(at.z);
+    if (!std::isfinite(x) || !std::isfinite(z) || !scene::waterCovers(w, id, x, z)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushnumber(L, scene::surfaceOf(w, id).heightAt(x, z, w.engineState().simTime));
+    return 1;
+}
+
+int methodWaterGetNormalAt(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 at = checkVector3(L, 2);
+    const scene::World& w = world(L);
+    const auto x = static_cast<double>(at.x);
+    const auto z = static_cast<double>(at.z);
+    if (!std::isfinite(x) || !std::isfinite(z) || !scene::waterCovers(w, id, x, z)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const scene::WaterSample sample = scene::surfaceOf(w, id).sample(x, z, w.engineState().simTime);
+    pushVector3(
+        L, core::normalize(core::Vec3{static_cast<float>(-sample.slopeX), 1.0f, static_cast<float>(-sample.slopeZ)}));
+    return 1;
 }
 
 // --- Network ownership (ADR 0099) ---------------------------------------------
@@ -2184,6 +2254,10 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Model", "GetExtentsSize", methodGetExtentsSize},
     {"BasePart", "ApplyImpulse", methodApplyImpulse},
     {"BasePart", "SetNetworkOwner", methodSetNetworkOwner},
+    {"BasePart", "ApplyImpulseAtPosition", methodApplyImpulseAtPosition},
+    {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
+    {"Water", "GetHeightAt", methodWaterGetHeightAt},
+    {"Water", "GetNormalAt", methodWaterGetNormalAt},
     {"BasePart", "GetNetworkOwner", methodGetNetworkOwner},
     {"BasePart", "SetMaterialParameter", methodSetMaterialParameter},
     {"BasePart", "GetMaterialParameter", methodGetMaterialParameter},

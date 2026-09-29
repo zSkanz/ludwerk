@@ -381,6 +381,86 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "waters") {
+        const scene::WaterComponent* component = world.waters().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Shape") {
+            setI32(out, component->shape);
+            return true;
+        }
+        if (field.name == "SurfaceLevel") {
+            setF32(out, static_cast<core::f32>(component->surfaceLevel));
+            return true;
+        }
+        if (field.name == "Position") {
+            setVec3(out, component->position);
+            return true;
+        }
+        if (field.name == "Size") {
+            setVec3(out, component->size);
+            return true;
+        }
+        if (field.name == "Density") {
+            setF32(out, static_cast<core::f32>(component->density));
+            return true;
+        }
+        if (field.name == "Viscosity") {
+            setF32(out, static_cast<core::f32>(component->viscosity));
+            return true;
+        }
+        if (field.name == "Current") {
+            setVec3(out, component->current);
+            return true;
+        }
+        if (field.name == "FlowSpeed") {
+            setF32(out, static_cast<core::f32>(component->flowSpeed));
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "waterWaves") {
+        const scene::WaterWaveComponent* component = world.waterWaves().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Wavelength") {
+            setF32(out, static_cast<core::f32>(component->wavelength));
+            return true;
+        }
+        if (field.name == "Amplitude") {
+            setF32(out, static_cast<core::f32>(component->amplitude));
+            return true;
+        }
+        if (field.name == "Direction") {
+            setF32(out, static_cast<core::f32>(component->direction));
+            return true;
+        }
+        if (field.name == "Steepness") {
+            setF32(out, static_cast<core::f32>(component->steepness));
+            return true;
+        }
+        if (field.name == "Phase") {
+            setF32(out, static_cast<core::f32>(component->phase));
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "waterPoints") {
+        const scene::WaterPointComponent* component = world.waterPoints().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Position") {
+            setVec3(out, component->position);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "dragDetectors") {
         const scene::DragDetectorComponent* component = world.dragDetectors().find(id);
         if (component == nullptr) {
@@ -919,6 +999,86 @@ using generated::Source;
         }
         if (field.name == "Enabled") {
             component->enabled = asBool(value);
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "waters") {
+        scene::WaterComponent* component = world.waters().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Shape") {
+            component->shape = asI32(value);
+            return true;
+        }
+        if (field.name == "SurfaceLevel") {
+            component->surfaceLevel = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Position") {
+            component->position = asVec3(value);
+            return true;
+        }
+        if (field.name == "Size") {
+            component->size = asVec3(value);
+            return true;
+        }
+        if (field.name == "Density") {
+            component->density = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Viscosity") {
+            component->viscosity = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Current") {
+            component->current = asVec3(value);
+            return true;
+        }
+        if (field.name == "FlowSpeed") {
+            component->flowSpeed = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "waterWaves") {
+        scene::WaterWaveComponent* component = world.waterWaves().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Wavelength") {
+            component->wavelength = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Amplitude") {
+            component->amplitude = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Direction") {
+            component->direction = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Steepness") {
+            component->steepness = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Phase") {
+            component->phase = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "waterPoints") {
+        scene::WaterPointComponent* component = world.waterPoints().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "Position") {
+            component->position = asVec3(value);
             return true;
         }
         return false;

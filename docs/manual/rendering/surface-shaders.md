@@ -8,7 +8,9 @@ as any other part is.
 
 Reach for one when the numbers cannot say it: water whose waves move every
 vertex, a flag that ripples, a part that burns away, glass that bends what is
-behind it. `examples/11-ocean` and `examples/23-surfaces` are all four.
+behind it. `examples/23-surfaces` is the last three, and the engine's own
+water ([Water](manual:world/water)) is the first: `shaders/surface/water.surface.hlsl`
+is a surface shader like any of yours.
 
 ## Writing one
 
@@ -215,11 +217,13 @@ float seaHeight(float2 xz, float t)
 }
 ```
 
-`examples/11-ocean` is this at full size: three waves, nine grids moved by the
-shader, and a boat and its cargo floated by the Luau copy. Keep the function
-something both languages can write the same way -- sines of positions and time
--- and keep what only looks nice, like a short chop in the normal, in the
-shader alone.
+The engine's water is this at full size, with the second copy in C++ rather
+than Luau: a `Water`'s waves are drawn by `shaders/surface/water.surface.hlsl`
+and floated on by the physics step, from the same parameters. A sea of your
+own is better built on it; write the function twice only for a surface the
+water cannot describe. Keep it something both languages can write the same way
+-- sines of positions and time -- and keep what only looks nice, like a short
+chop in the normal, in the shader alone.
 
 A shader that moves vertices wants vertices to move: a flat `Part` has four.
 `MeshPart.MeshContent` may name one of the engine's grids --

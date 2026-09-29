@@ -374,6 +374,10 @@ u64 World::worldHash() const
         // one tick from disagreeing on all of them.
         if (const RigidBodyComponent* body = m_rigidBodies.find(id); body != nullptr) {
             hasher.vec3(body->pendingImpulse);
+            // Only where there is one, so a world with no twist hashes as it
+            // did before twists existed.
+            if (!(body->pendingAngularImpulse == core::Vec3{0.0f, 0.0f, 0.0f}))
+                hasher.vec3(body->pendingAngularImpulse);
             hasher.flag(body->active);
             // Who simulates it decides whether the solver moves it (ADR 0099).
             // Hashed only when somebody other than the authority does, so every

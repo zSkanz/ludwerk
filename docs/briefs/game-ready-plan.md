@@ -48,7 +48,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 3 | **B5** wind | world | Small, and foliage needs it |
 | [~] 4 | **B6** foliage | world | The largest visual gain |
 | [x] 5 | **B3** two materials a voxel, paint modes, the seam · **B4** terrain tools | world | Painting as a person expects it |
-| [ ] 6 | **B8** water, and the ocean example rewritten | world | Fixes an example that exists; any game with a boat |
+| [x] 6 | **B8** water, and the ocean example rewritten | world | Fixes an example that exists; any game with a boat |
 | [ ] 6b | **F2** movers and constraints (motor, servo, align, rope, rod, spring) | toolkit | Builds on B8's impulses at a point; a part moves without code |
 | [ ] 7 | **C1** `Request` and WebSocket in `NetworkService` | network | What people ask of a network first |
 | [ ] 7b | **F3** UI grids, pages, flex, scale, size constraints, `CanvasGroup`, `UIDragDetector`, gamepad selection | toolkit | UI for every screen and a controller |

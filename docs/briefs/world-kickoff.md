@@ -194,24 +194,34 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage B8 — water (ADR 0118)
 
-- [ ] IDL: `Water` (`Shape`: `Ocean`/`Box`/`Spline`; `Waves` up to 8;
-  `SurfaceLevel`, `Density`, `Viscosity`, `Current`), `GetHeightAt`,
-  `GetNormalAt`; `BasePart.Buoyant`.
-- [ ] The wave function in C++ (deterministic) and HLSL from one parameter
-  upload; tested to agree within a stated tolerance.
-- [ ] The built-in water surface (clarity, foam at contact, refraction — the
-  example's look), replaceable by a surface shader.
-- [ ] Buoyancy and drag as forces at sample points in the physics step; in the
-  trace and the rollback snapshot.
-- [ ] `BasePart:ApplyImpulseAtPosition`, `BasePart:ApplyAngularImpulse`.
-- [ ] **`examples/11-ocean` rewritten**: a `Water` of shape `Ocean`, a simulated
-  hull that pitches and rolls, no Luau wave function; its README's two limits
-  removed.
-- [ ] A lake (`Box`) and a river (`Spline`) in an example over terrain.
-- [ ] Tests: a box of density 0.5 floats half submerged; a hull rolls under an
-  off-centre load; `GetHeightAt` equals the drawn surface at sampled points;
-  the trace reproduces.
-- [ ] Docs: a manual page *Water*.
+Built 2026-09-29, protocol 28; what changed from the ADR is its amendment.
+
+- [x] IDL: `Water` (`Shape`: `Ocean`/`Box`/`Spline`; `SurfaceLevel`,
+  `Position`, `Size`, `Density`, `Viscosity`, `Current`, `FlowSpeed`),
+  `GetHeightAt`, `GetNormalAt`; the waves as `WaterWave` children (up to 8)
+  and a river's course as `WaterPoint` children; `BasePart.Buoyant`.
+- [x] The wave function in C++ (`dmath`, deterministic) and HLSL from one
+  parameter upload; a render test evaluates the shader's sum from the
+  parameters it is handed and holds it within 2 mm of the simulation's.
+- [~] The built-in water surface (`shaders/surface/water.surface.hlsl`:
+  clarity, foam at contact, refraction -- the example's look). **Not yet:**
+  replaceable by a surface shader of the author's -- a water takes no material.
+- [x] Buoyancy and drag as impulses at 27 sample points in the physics step,
+  drag towards the current, the river's flow and the waves' orbital motion; in
+  the trace, and the pending twist in the rollback snapshot.
+- [x] `BasePart:ApplyImpulseAtPosition`, `BasePart:ApplyAngularImpulse`.
+- [x] **`examples/11-ocean` rewritten**: a `Water` of shape `Ocean`, a simulated
+  hull that pitches and rolls (never past 21 degrees in a minute of sailing),
+  no Luau wave function, no shader or material of its own; its README's two
+  limits removed.
+- [x] A lake (`Box`) and a river (`Spline`) over terrain:
+  `examples/31-lake-and-river`, logs the river carries into the lake.
+- [x] Tests: a box of density 0.5 floats half submerged; a pushed plank rolls
+  and rights itself; the surface's slopes and motion are its height's
+  derivatives; a welded part is not floated; a river carries what is in both
+  where it runs into a lake; the drawn surface is the simulated one; a twist
+  survives a save and restore; the `water` determinism scenario reproduces.
+- [x] Docs: a manual page *Water* (`docs/manual/world/water.md`).
 
 ## Stage B7 — friction and footsteps (ADR 0117)
 

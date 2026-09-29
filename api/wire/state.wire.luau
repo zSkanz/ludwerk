@@ -1235,6 +1235,129 @@ local ClickDetectorFields: { Schema.Field } = {
     },
 }
 
+-- Water (ADR 0118, protocol 28): every machine draws the same surface and the
+-- authority floats what is in it, so the shape and the waves travel whole.
+local WaterFields: { Schema.Field } = {
+    {
+        Name = "Shape",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "waters",
+        Doc = "Ocean, box or river.",
+    },
+    {
+        Name = "SurfaceLevel",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waters",
+        Doc = "The still surface's height.",
+    },
+    {
+        Name = "Position",
+        Id = 3,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "waters",
+        Doc = "A box's middle.",
+    },
+    {
+        Name = "Size",
+        Id = 4,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "waters",
+        Doc = "A box's extent; a river's width and depth.",
+    },
+    {
+        Name = "Density",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waters",
+        Doc = "What floats in it and how high.",
+    },
+    {
+        Name = "Viscosity",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waters",
+        Doc = "How it drags.",
+    },
+    {
+        Name = "Current",
+        Id = 7,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "waters",
+        Doc = "How it flows.",
+    },
+    {
+        Name = "FlowSpeed",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waters",
+        Doc = "How fast a river flows.",
+    },
+}
+
+local WaterWaveFields: { Schema.Field } = {
+    {
+        Name = "Wavelength",
+        Id = 1,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterWaves",
+        Doc = "Crest to crest.",
+    },
+    {
+        Name = "Amplitude",
+        Id = 2,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterWaves",
+        Doc = "How high a crest rises.",
+    },
+    {
+        Name = "Direction",
+        Id = 3,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterWaves",
+        Doc = "Which way it travels, in degrees.",
+    },
+    {
+        Name = "Steepness",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterWaves",
+        Doc = "How sharp its crests are.",
+    },
+    {
+        Name = "Phase",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "waterWaves",
+        Doc = "Where in its cycle it starts.",
+    },
+}
+
+local WaterPointFields: { Schema.Field } = {
+    {
+        Name = "Position",
+        Id = 1,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "waterPoints",
+        Doc = "Where the river passes.",
+    },
+}
+
 -- Everything a replica needs to begin a drag and, for a `Physical` one of a
 -- part it is handed, to pull it: the shape, the limits, the force. Not
 -- `ReferenceInstance`, which is the authority's -- a replica drags in the
@@ -1535,6 +1658,21 @@ local Classes: { Schema.Class } = {
         Doc = "A prompt a player triggers (ADR 0126, protocol 21). Shown and triggered on the machine near it, "
             .. "checked and fired on the authority.",
         Fields = ProximityPromptFields,
+    },
+    {
+        Name = "Water",
+        Doc = "Water (ADR 0118, protocol 28): its surface and what it does to what floats in it.",
+        Fields = WaterFields,
+    },
+    {
+        Name = "WaterWave",
+        Doc = "One wave of a `Water` (ADR 0118, protocol 28).",
+        Fields = WaterWaveFields,
+    },
+    {
+        Name = "WaterPoint",
+        Doc = "A point a river runs through (ADR 0118, protocol 28).",
+        Fields = WaterPointFields,
     },
     {
         Name = "DragDetector",

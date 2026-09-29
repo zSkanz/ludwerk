@@ -88,6 +88,7 @@ inline constexpr scene::EnumId ProximityPromptInputTypeEnumId = 45;
 inline constexpr scene::EnumId DragDetectorDragStyleEnumId = 46;
 inline constexpr scene::EnumId DragDetectorResponseStyleEnumId = 47;
 inline constexpr scene::EnumId TerrainPaintModeEnumId = 48;
+inline constexpr scene::EnumId WaterShapeEnumId = 49;
 
 } // namespace generated
 

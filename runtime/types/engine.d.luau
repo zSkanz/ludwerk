@@ -174,6 +174,9 @@ end
 declare extern type EnumTerrainPaintMode extends EnumItem with
 end
 
+declare extern type EnumWaterShape extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -956,6 +959,11 @@ declare extern type BasePart extends PVInstance with
     --- because a part that blocks movement and a part a camera ray should ignore are different
     --- questions.
     CanQuery: boolean
+    --- Whether a `Water` holds it up (ADR 0118): the engine pushes an unanchored part in water up by
+    --- the water it displaces, at points over its shape, so a hull pitches and rolls, and drags it by
+    --- the water's `Viscosity`. Off, the water ignores it -- a game floating it its own way, or a
+    --- stone.
+    Buoyant: boolean
     --- The named group deciding which other parts this one collides with, registered through
     --- `PhysicsService:RegisterCollisionGroup`. An unregistered name is an error rather than a silent
     --- fallback to Default: the failure mode of a typo here is a wall players walk through, which is
@@ -1015,6 +1023,12 @@ declare extern type BasePart extends PVInstance with
     --- second. Applied at the next simulation tick and ignored by an anchored part, which has no
     --- momentum to change.
     function ApplyImpulse(self, impulse: vector): ()
+    --- The same push, at a point in the world: off the centre it also turns the part, as a shove at a
+    --- boat's bow swings it round (ADR 0118). Applied at the next tick.
+    function ApplyImpulseAtPosition(self, impulse: vector, position: vector): ()
+    --- An instantaneous change of angular momentum, about the axis it points along, in
+    --- kilogram-square-metres per second: a twist with no push. Applied at the next tick.
+    function ApplyAngularImpulse(self, impulse: vector): ()
 end
 
 declare extern type Part extends BasePart with
@@ -2502,6 +2516,51 @@ declare extern type ClickDetector extends Instance with
     read MouseHoverLeave: Signal<Player>
 end
 
+declare extern type Water extends Instance with
+    --- Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).
+    Shape: EnumWaterShape
+    --- The height of the still surface, in metres; the waves rise and fall about it.
+    SurfaceLevel: number
+    --- The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s.
+    Position: vector
+    --- A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and its depth
+    --- its Y, and its Z is not used. X and Y must be greater than zero.
+    Size: vector
+    --- Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the water
+    --- floats, and one of half its density floats half under.
+    Density: number
+    --- How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's.
+    Viscosity: number
+    --- Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` along
+    --- its course.
+    Current: vector
+    --- How fast a river flows along its points, first to last, in metres a second.
+    FlowSpeed: number
+    --- The height of the surface above the position's column now, waves and all -- the height the
+    --- picture draws there -- or nil where this water is not.
+    function GetHeightAt(self, position: vector): number?
+    --- Which way the surface faces above the position's column now, or nil where this water is not.
+    function GetNormalAt(self, position: vector): vector?
+end
+
+declare extern type WaterWave extends Instance with
+    --- Metres from one crest to the next.
+    Wavelength: number
+    --- Metres a crest rises above the still surface.
+    Amplitude: number
+    --- Which way it travels, in degrees about the vertical: 0 along +X, 90 along +Z.
+    Direction: number
+    --- 0 a rounded swell, 1 sharp crests and flat troughs.
+    Steepness: number
+    --- Where in its cycle it starts, in radians, so two alike waves need not rise together.
+    Phase: number
+end
+
+declare extern type WaterPoint extends Instance with
+    --- Where the river passes, across the ground; its height is the water's `SurfaceLevel`.
+    Position: vector
+end
+
 declare extern type DragDetector extends Instance with
     --- How the pointer's motion moves the part: along a line, across a plane, turned about an axis,
     --- turned as a ball, or not at all.
@@ -3906,6 +3965,12 @@ declare Enum: {
         Erase: EnumTerrainPaintMode,
         GetEnumItems: (self: any) -> { EnumTerrainPaintMode },
     },
+    WaterShape: {
+        Ocean: EnumWaterShape,
+        Box: EnumWaterShape,
+        Spline: EnumWaterShape,
+        GetEnumItems: (self: any) -> { EnumWaterShape },
+    },
 }
 
 declare Vector3: {
@@ -4219,6 +4284,9 @@ declare Instance: {
         & (("FoliageLayer") -> FoliageLayer)
         & (("FoliageMesh") -> FoliageMesh)
         & (("ClickDetector") -> ClickDetector)
+        & (("Water") -> Water)
+        & (("WaterWave") -> WaterWave)
+        & (("WaterPoint") -> WaterPoint)
         & (("DragDetector") -> DragDetector)
         & (("ProximityPrompt") -> ProximityPrompt)
         & (("Team") -> Team)

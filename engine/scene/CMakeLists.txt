@@ -37,6 +37,7 @@ engine_add_module(scene
         src/streaming_glue.cpp
         src/tile_outline.cpp
         src/voxel_fluid.cpp
+        src/water.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         core
@@ -84,6 +85,7 @@ engine_add_module_tests(scene
         tests/sprite_animation_tests.cpp
         tests/streaming_glue_tests.cpp
         tests/voxel_fluid_tests.cpp
+        tests/water_tests.cpp
 )
 
 if(ENG_BUILD_TESTS)
