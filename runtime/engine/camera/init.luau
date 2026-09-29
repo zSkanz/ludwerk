@@ -6,18 +6,29 @@
 --- that would otherwise be copied into every project. Three examples in this
 --- repository hand-rolled the same forty lines before it existed.
 ---
---- **Advance a rig on `Heartbeat`, not on `PreRender`**, and that is the one
---- thing this module exists to stop people getting wrong. A camera on the render
---- clock moves every frame while the world it looks at moves once a tick, and
---- the difference between the two reads as the whole world vibrating (D047).
---- `PreRender` also never fires in a headless run, so a camera driven from there
---- does not move at all when a test drives the game — which is how a gate ends
---- up recording a picture of the default camera standing inside the ground.
+--- **A rig moves its camera every drawn frame, by itself** (ADR 0136). It binds
+--- a render step at `Enum.RenderPriority.Camera` and follows its subject where
+--- it is DRAWN -- `GetRenderCFrame` -- so it turns with the mouse in the frame
+--- and the world does not shake behind it. Following the SIMULATED place every
+--- frame is what shook: the subject moves once a tick and the camera every
+--- frame, and the difference reads as the whole world vibrating (D047). That is
+--- why the rig lived on `Heartbeat` until it could read where things are drawn.
+---
+--- **Call `rig:Update(dt)` on `Heartbeat` anyway.** Where a frame drives the
+--- rig it does nothing; where none does -- a headless run, a gate, a demo's
+--- autopilot -- it moves the camera once a tick, exactly as before, so a test
+--- that drives the game records the picture it always did.
 ---
 --- Casing follows ADR 0034: this is a module, so `camera.thirdPerson` is
 --- camelCase, and the rig it returns is an object, so `rig:Update()` is not.
 
+local InputService = game:GetService("InputService")
+local RunService = game:GetService("RunService")
+
 local Camera = {}
+
+-- How many rigs this VM has made: each binds its render step under its own name.
+local Rigs = 0
 
 export type Rig = {
     --- The camera this rig writes. Assigned to `workspace.CurrentCamera` by the
@@ -34,6 +45,12 @@ export type Rig = {
     Yaw: number,
     Height: number,
     Distance: number,
+    --- The actions the rig reads every frame (ADR 0136), from an
+    --- `InputContext` at `Rate = Render`: an axis pair to turn by, and the
+    --- pointer's motion to look by, read while the pointer is locked.
+    --- Settable after the rig is made.
+    TurnAction: InputAction?,
+    LookAction: InputAction?,
 
     --- Turns the rig. `delta` is an axis pair in the range [-1, 1] -- an
     --- `InputAction` of type `Direction2D` hands you exactly this -- and `dt`
@@ -49,8 +66,9 @@ export type Rig = {
     --- by the other makes a mouse that turns twice as far on a slow machine,
     --- which is the single most common way a look control feels wrong.
     Look: (self: Rig, delta: Vector2) -> (),
-    --- Moves the camera towards where it should be. Call once per SIMULATION
-    --- tick; see the note at the top for why not `PreRender`.
+    --- Moves the camera towards where it should be when no frame is drawn:
+    --- call once per SIMULATION tick. Where a frame is drawn the rig's render
+    --- step moves it instead, and this does nothing (see the note at the top).
     Update: (self: Rig, dt: number) -> (),
     --- The rig's own forward and right on the ground plane, which is what a
     --- character's movement should be expressed in: pressing "forward" means
@@ -71,6 +89,14 @@ export type Options = {
     Focus: number?,
     --- Radians per second at full stick deflection.
     TurnRate: number?,
+    --- **Actions the rig reads itself, every frame** (ADR 0136): an axis pair
+    --- to `Turn` by and a pointer displacement to `Look` by, the pointer only
+    --- while it is locked. Read only when their `InputContext` has
+    --- `Rate = Render` -- at the simulation's rate an action holds a tick's
+    --- worth, and reading it every frame would turn it several times over.
+    --- Without them, call `rig:Turn` and `rig:Look`.
+    TurnAction: InputAction?,
+    LookAction: InputAction?,
     --- Radians per PIXEL of pointer motion, for `Look`. About a quarter of a
     --- degree per pixel, which is where most first-person defaults sit.
     LookSensitivity: number?,
@@ -111,17 +137,58 @@ function RigImpl.Basis(self: any): (vector, vector)
     return forward, right
 end
 
-function RigImpl.Update(self: any, dt: number)
-    local focus = self.Subject.Position + vector.create(0, self.Focus, 0)
+-- Moves the camera towards where it should be, following a subject at `at`.
+-- A subject that jumped further than the rig ever eases -- a teleport, a
+-- respawn -- takes the camera with it, so the two land together instead of the
+-- camera flying across the world behind it.
+local function place(self: any, at: vector, dt: number)
+    local focus = at + vector.create(0, self.Focus, 0)
     local forward = vector.create(-math.sin(self.Yaw), 0, -math.cos(self.Yaw))
     local wanted = focus - forward * self.Distance + vector.create(0, self.Height, 0)
 
     local eye = self.Camera.CFrame.Position
-    -- Frame-rate independent, and the clamp is what keeps a hitch from
-    -- teleporting the camera: at 5 fps `Smoothing * dt` exceeds one, and an
-    -- unclamped lerp past its endpoint overshoots.
-    eye += (wanted - eye) * math.min(1, self.Smoothing * dt)
+    if vector.magnitude(wanted - eye) > self.Distance * 4 then
+        eye = wanted
+    else
+        -- Frame-rate independent, and the clamp is what keeps a hitch from
+        -- teleporting the camera: at 5 fps `Smoothing * dt` exceeds one, and
+        -- an unclamped lerp past its endpoint overshoots.
+        eye += (wanted - eye) * math.min(1, self.Smoothing * dt)
+    end
     self.Camera.CFrame = CFrame.lookAt(eye, focus)
+end
+
+-- Whether an action is sampled every frame, and so can be read in one.
+local function everyFrame(action: InputAction?): boolean
+    if action == nil then
+        return false
+    end
+    local context = action.Parent
+    return context ~= nil and context:IsA("InputContext") and (context :: any).Rate == Enum.InputRate.Render
+end
+
+-- The rig's render step: every drawn frame, where the subject is drawn.
+local function frame(self: any, dt: number)
+    self.Framed = true
+    if everyFrame(self.TurnAction) then
+        self:Turn(self.TurnAction:GetState() :: Vector2, dt)
+    end
+    -- The pointer turns it only while locked: unlocked, its motion belongs to
+    -- whatever the player is doing with the cursor.
+    if everyFrame(self.LookAction) and InputService.PointerLocked then
+        self:Look(self.LookAction:GetState() :: Vector2)
+    end
+    self.Yaw += self.Spin * dt
+    place(self, self.Subject:GetRenderCFrame().Position, dt)
+end
+
+function RigImpl.Update(self: any, dt: number)
+    -- A frame drives it where one is drawn.
+    if self.Framed then
+        return
+    end
+    self.Yaw += self.Spin * dt
+    place(self, self.Subject.Position, dt)
 end
 
 --- A third-person follow rig: behind and above the subject, turned by an axis
@@ -171,6 +238,12 @@ function Camera.thirdPerson(options: Options): Rig
         Smoothing = options.Smoothing or 8,
         MinHeight = options.MinHeight or 3,
         MaxHeight = options.MaxHeight or 24,
+        TurnAction = options.TurnAction,
+        LookAction = options.LookAction,
+        -- Radians a second it turns by itself: `orbit`'s.
+        Spin = 0,
+        -- A frame has driven it: from then on `Update` leaves it to them.
+        Framed = false,
     }, RigImpl)
 
     -- Placed before the first update rather than eased in from the origin: a
@@ -182,6 +255,13 @@ function Camera.thirdPerson(options: Options): Rig
         options.Subject.Position + vector.create(0, rigAny.Focus, 0)
     )
 
+    -- Every drawn frame, at the camera's place in the frame (ADR 0136). The
+    -- binding goes with the script that made the rig, and its scene.
+    Rigs += 1
+    RunService:BindToRenderStep(`engine.camera.rig{Rigs}`, Enum.RenderPriority.Camera.Value, function(dt: number)
+        frame(rigAny, dt)
+    end)
+
     return (rig :: any) :: Rig
 end
 
@@ -189,13 +269,8 @@ end
 --- menu background, a spectator view or a screenshot harness wants.
 function Camera.orbit(options: Options & { Speed: number? }): Rig
     local rig = Camera.thirdPerson(options)
-    local speed = options.Speed or 0.35
     local rigAny = rig :: any
-    local advance = rigAny.Update
-    rigAny.Update = function(self: any, dt: number)
-        self.Yaw += speed * dt
-        advance(self, dt)
-    end
+    rigAny.Spin = options.Speed or 0.35
     return rig
 end
 

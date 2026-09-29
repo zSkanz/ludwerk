@@ -243,10 +243,16 @@ void detachMeshPartComponents(scene::World& world, core::InstanceId id)
 
 // --- Camera -----------------------------------------------------------------
 
+// **By phase** (ADR 0136): a render phase reads and writes the camera's
+// presentation, which is drawn as written; every other phase -- and the world
+// hash, which reads through here -- the simulated `cframe`.
 Value getCameraCFrame(const scene::World& world, core::InstanceId id)
 {
     const scene::CameraComponent* camera = readCamera(world, id);
-    return camera == nullptr ? Value{} : Value{camera->cframe};
+    if (camera == nullptr)
+        return Value{};
+    const bool presented = world.engineState().renderPhase && camera->presenting;
+    return Value{presented ? camera->presented : camera->cframe};
 }
 
 bool setCameraCFrame(scene::World& world, core::InstanceId id, const Value& value)
@@ -255,7 +261,15 @@ bool setCameraCFrame(scene::World& world, core::InstanceId id, const Value& valu
     scene::CameraComponent* camera = writeCamera(world, id);
     if (cframe == nullptr || camera == nullptr)
         return false;
+    if (world.engineState().renderPhase) {
+        camera->presented = *cframe;
+        camera->presenting = true;
+        camera->presentedSinceTick = true;
+        return true;
+    }
     camera->cframe = *cframe;
+    camera->presenting = false;
+    camera->presentedSinceTick = false;
     return true;
 }
 

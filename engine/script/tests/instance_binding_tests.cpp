@@ -568,7 +568,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `SubWorld`'s five and `SceneService`'s `SendToHost` and `IsSubWorld`
     // (ADR 0107 §3), 161 with `Terrain`'s `GrowBall` (ADR 0135), and 165 with
     // `BasePart`'s `ApplyImpulseAtPosition` and `ApplyAngularImpulse` and
-    // `Water`'s `GetHeightAt` and `GetNormalAt` (ADR 0118).
+    // `Water`'s `GetHeightAt` and `GetNormalAt` (ADR 0118); and 170 with
+    // `GetRenderCFrame` on `BasePart`, `Attachment` and `Camera` and
+    // `RunService`'s `BindToRenderStep` and `UnbindFromRenderStep` (ADR 0136).
     // This number is what makes a
     // DECLARED-but-unbound method impossible to ship: the IDL would count it and the binding table would not, which is
     // `Inert` for a method.
@@ -576,8 +578,8 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // **It earned its keep at F1.** Five methods were declared in the IDL in one
     // commit and this failed on the next build, before anything could reach a
     // script and find a name that answered nothing.
-    CHECK(coverage.declared == 165);
-    CHECK(coverage.bound == 165);
+    CHECK(coverage.declared == 170);
+    CHECK(coverage.bound == 170);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

@@ -624,7 +624,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 8> basePartMethods;
+    static std::array<MethodDesc, 9> basePartMethods;
     basePartMethods = {{
         MethodDesc{
             .name = atoms.intern("SetMaterialParameter"),
@@ -661,6 +661,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Adds an instantaneous change of momentum at the part's centre of mass, in kilogram-metres per second. Applied at the next simulation tick and ignored by an anchored part, which has no momentum to change.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetRenderCFrame"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is `CFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.",
         },
         MethodDesc{
             .name = atoms.intern("ApplyImpulseAtPosition"),
@@ -754,6 +760,15 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
+    static std::array<MethodDesc, 1> attachmentMethods;
+    attachmentMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetRenderCFrame"),
+            .yields = false,
+            .threadSafety = ThreadSafety::ReadParallel,
+            .doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is `WorldCFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.",
+        },
+    }};
     ClassDescriptor attachmentDesc;
     attachmentDesc.name = atoms.intern("Attachment");
     attachmentDesc.super = instanceClass;
@@ -763,6 +778,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     static constexpr std::array<std::string_view, 3> attachmentParents{{"BasePart", "ReplicatedStorage", "ServerStorage"}};
     attachmentDesc.parents = attachmentParents;
     attachmentDesc.properties = attachmentProperties;
+    attachmentDesc.methods = attachmentMethods;
     attachmentDesc.attachComponents = native::attachAttachmentComponents;
     attachmentDesc.detachComponents = native::detachAttachmentComponents;
     classes.registerClass(attachmentDesc);
@@ -3853,7 +3869,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 6> runServiceMethods;
+    static std::array<MethodDesc, 8> runServiceMethods;
     runServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("Pause"),
@@ -3866,6 +3882,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Restarts a paused world, and its clock with it. Idempotent: resuming a running world is a no-op, not an error.",
+        },
+        MethodDesc{
+            .name = atoms.intern("BindToRenderStep"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order bound between equals -- after the input a frame reads at `Rate = Render` and before `PreRender` fires, with the time since the last frame (ADR 0136). What a camera that follows something is for: in it, `GetRenderCFrame` answers where things are drawn, and a camera written is drawn exactly as written. `Enum.RenderPriority` holds the landmarks, as numbers: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.\012\012Binding a name already bound replaces it. Nothing runs without a window. A binding belongs to the script that made it and goes with its scene (ADR 0124).",
+        },
+        MethodDesc{
+            .name = atoms.intern("UnbindFromRenderStep"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops the render step bound under `name`. A name nothing is bound under is not an error.",
         },
         MethodDesc{
             .name = atoms.intern("IsPaused"),
@@ -3897,7 +3925,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("PreRender"),
             .slot = 7,
-            .doc = "Fires at render rate, before the frame is drawn, carrying the variable time in seconds since the previous render. It never fires in a headless run: headless is the same scheduler minus the render steps, and this is one of them. It stays connectable so that shared code need not branch on it -- but a handler connected to it in a headless process is a handler that will not run.",
+            .doc = "Fires at render rate, before the frame is drawn and after the render steps (`BindToRenderStep`), carrying the variable time in seconds since the previous render. Its handlers run in a render phase: `GetRenderCFrame` answers where things are drawn, and a camera written is presented (ADR 0136). It never fires in a headless run: headless is the same scheduler minus the render steps, and this is one of them. It stays connectable so that shared code need not branch on it -- but a handler connected to it in a headless process is a handler that will not run.",
         },
         EventDesc{
             .name = atoms.intern("PreAnimation"),
@@ -6620,6 +6648,41 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     waterShapeDesc.docKey = {};
     waterShapeDesc.items = waterShapeItems;
     enums.registerEnum(waterShapeDesc);
+
+    // --- RenderPriority ---
+    static std::array<EnumItemDesc, 5> renderPriorityItems;
+    renderPriorityItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("First"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Input"),
+            .value = 100,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Camera"),
+            .value = 200,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Character"),
+            .value = 300,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Last"),
+            .value = 2000,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor renderPriorityDesc;
+    renderPriorityDesc.name = atoms.intern("RenderPriority");
+    renderPriorityDesc.docKey = {};
+    renderPriorityDesc.items = renderPriorityItems;
+    enums.registerEnum(renderPriorityDesc);
 }
 
 } // namespace engine::scene::generated

@@ -19,3 +19,9 @@ offers is on the base's page, which is what keeps one added member on
 |---|---|---|---|---|
 | `CFrame` | `CFrame` | — | read/write | Where this sits relative to the part it is parented to. |
 | `WorldCFrame` | `CFrame` | — | read-only | Where that lands in the world, recomputed each tick.<br><br>Read-only because a world transform that could be assigned would be a second source of truth about the same place: the part moves, and whatever was written here would be either overwritten or wrong. |
+
+## Methods
+
+### `GetRenderCFrame(): CFrame`
+
+**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is `WorldCFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.

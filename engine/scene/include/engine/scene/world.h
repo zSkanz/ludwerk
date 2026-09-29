@@ -293,6 +293,11 @@ struct EngineState
     // its pointer goes through the tick's camera.
     core::CFrameD drawnCamera;
     bool drawnCameraValid = false;
+    // **A render phase is running** (ADR 0136): a render step, `PreRender`, or
+    // an action at `Rate = Render`. A camera written now is presented, and
+    // `GetRenderCFrame` answers where things are drawn. Never true without a
+    // window, so nothing a replay or a gate runs sees it.
+    bool renderPhase = false;
     bool pointerLocked = false;
     bool pointerVisible = true;
     // `Enum.InputDeviceType`: 0 KeyboardMouse, 1 Gamepad, 2 Touch.

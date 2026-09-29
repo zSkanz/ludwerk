@@ -158,6 +158,16 @@ and is an ordinary child of it.
 - Events (in-frame order, all `(dt: number)`): `PreRender` (render-rate,
   variable dt), `PreAnimation`, `PreSimulation`, `PostSimulation`, `Heartbeat`
   (fixed-tick, per architecture §3 — this rate split is documented loudly).
+- **The render phase** (ADR 0136): per drawn frame, the render-rate input
+  dispatch, then `BindToRenderStep(name, priority, fn)` functions by priority
+  (`Enum.RenderPriority`: `First` 0, `Input` 100, `Camera` 200, `Character`
+  300, `Last` 2000; ties in bind order), then `PreRender`. In it
+  `BasePart`/`Attachment`/`Camera:GetRenderCFrame()` answer where a thing is
+  drawn this frame, and `Camera.CFrame` written is *presented* -- drawn as
+  written, and latched into the simulated `CFrame` at the next tick's start.
+  Outside it they answer and write the simulated `CFrame`; the world hash reads
+  only that. `UnbindFromRenderStep(name)`; a binding belongs to its script
+  (ADR 0124).
   **`PreRender` never fires in a headless run** (`ludwerk test`, the
   determinism harness): headless mode is the same scheduler minus the render
   steps, and `PreRender` is one of them. It stays connectable so shared code

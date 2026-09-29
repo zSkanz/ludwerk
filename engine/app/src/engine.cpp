@@ -1088,6 +1088,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     std::vector<f64> frameWaitMs;
     f64 phaseSimMs = 0.0;
     f64 phaseWaitMs = 0.0;
+    // The render phase's scripts (ADR 0136): the render-rate input, the render
+    // steps and `PreRender`, which run every frame and so grow with the rate.
+    f64 phaseRenderScriptsMs = 0.0;
+    std::vector<f64> frameRenderScriptsMs;
     const auto msSince = [](core::u64 since) { return static_cast<f64>(platform::nowNs() - since) / 1'000'000.0; };
     // Sixty warm-up frames rather than `--frame-stats`'s ten. A soak is minutes
     // long, so a second of startup costs it nothing -- and the streamed world
@@ -1946,6 +1950,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 frameTimesMs.push_back(frameMs);
                 frameSimMs.push_back(phaseSimMs);
                 frameWaitMs.push_back(phaseWaitMs);
+                frameRenderScriptsMs.push_back(phaseRenderScriptsMs);
                 // Resident size is read per frame rather than sampled, because
                 // the number the gate wants is a PEAK and a peak between two
                 // samples is a peak nobody saw.
@@ -1974,6 +1979,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             lastFrameNs = sampleNs;
             phaseSimMs = 0.0;
             phaseWaitMs = 0.0;
+            phaseRenderScriptsMs = 0.0;
         }
 
         // The FrameStart safe point. Overlay edits are applied HERE and not
@@ -4389,8 +4395,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // the game still running, and no amount of arbitrating who wins the
             // camera would make that untrue.
             const bool worldIsRunning = !options.editor || advancing(editor.runState());
-            if (!options.headless && worldIsRunning)
-                host->preRender(frame.renderDt);
+            if (!options.headless && worldIsRunning) {
+                const core::u64 renderPhaseNs = platform::nowNs();
+                host->preRender(frame.renderDt, &framePoses);
+                phaseRenderScriptsMs += msSince(renderPhaseNs);
+            }
             // **Again, after `PreRender`** (ADR 0134): a camera a game writes
             // on the frame's clock -- `PreRender`, a `Rate = Render` look -- is
             // drawn where it was written this frame, not where the poses
@@ -5555,6 +5564,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             I18nArg{"wait95", at(wait, 0.95)},  I18nArg{"frames", static_cast<core::i64>(measured.size())},
         };
         core::log(LogLevel::Info, ENG_TR("engine.frame.info.phases"), tail);
+
+        // The scripts a frame runs (ADR 0136), only where a window runs them:
+        // what a render step costs at the display's rate.
+        if (std::any_of(frameRenderScriptsMs.begin(), frameRenderScriptsMs.end(), [](f64 ms) { return ms > 0.0; })) {
+            const std::vector<f64> renderPhase = sorted(frameRenderScriptsMs);
+            const std::array<I18nArg, 2> renderArgs{I18nArg{"median", at(renderPhase, 0.5)},
+                                                    I18nArg{"p95", at(renderPhase, 0.95)}};
+            core::log(LogLevel::Info, ENG_TR("engine.frame.info.render_phase"), renderArgs);
+        }
     }
 
     // The soak verdict is computed BEFORE teardown, because teardown frees the

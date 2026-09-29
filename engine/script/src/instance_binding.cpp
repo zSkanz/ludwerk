@@ -13,6 +13,7 @@
 
 #include "class_descriptors.gen.h"
 #include "engine/core/finite.h"
+#include "engine/core/log.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
@@ -22,6 +23,7 @@
 #include "engine/script/content_provider.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/materials.h"
+#include "engine/script/modules.h"
 #include "engine/script/remote.h"
 #include "engine/script/save_service.h"
 #include "engine/script/scenes.h"
@@ -910,6 +912,60 @@ int methodApplyAngularImpulse(lua_State* L)
     if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
         body->pendingAngularImpulse = body->pendingAngularImpulse + impulse;
     return 0;
+}
+
+// --- Where it is drawn (ADR 0136) ------------------------------------------------
+
+// **This frame's drawn place in a render phase; the simulated one anywhere
+// else**, so what a tick reads never depends on when a frame happened (R10).
+int methodGetRenderCFrame(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::World& w = world(L);
+    ServiceState& state = *context(L).services;
+    script::DrawnKind kind = script::DrawnKind::Part;
+    core::CFrameD simulated;
+    if (const scene::PartComponent* part = w.parts().find(id)) {
+        simulated = part->cframe;
+    }
+    else if (const scene::AttachmentComponent* attachment = w.attachments().find(id)) {
+        kind = script::DrawnKind::Attachment;
+        simulated = attachment->worldCFrame;
+    }
+    else if (const scene::CameraComponent* camera = w.cameras().find(id)) {
+        kind = script::DrawnKind::Camera;
+        simulated = camera->cframe;
+        // Presented this phase: drawn as written, whatever the frame's poses
+        // remembered before the write.
+        if (w.engineState().renderPhase && camera->presenting) {
+            pushCFrame(L, camera->presented);
+            return 1;
+        }
+    }
+    else {
+        return 0;
+    }
+    if (w.engineState().renderPhase) {
+        core::CFrameD drawn;
+        if (state.drawnPoses.pose != nullptr && state.drawnPoses.pose(state.drawnPoses.user, id, kind, drawn)) {
+            pushCFrame(L, drawn);
+            return 1;
+        }
+    }
+    else if (state.renderPhasesRun && state.scenes.developer) {
+        // With a window, a simulation phase asking where a thing is drawn has
+        // almost certainly mistaken the phase: said once, for each script.
+        const core::InstanceId script = scriptOfThread(L);
+        if (std::find(state.warnedRenderCFrame.begin(), state.warnedRenderCFrame.end(), script) ==
+            state.warnedRenderCFrame.end()) {
+            state.warnedRenderCFrame.push_back(script);
+            const std::string name = w.alive(script) ? std::string(w.atoms().text(w.name(script))) : std::string{};
+            const core::I18nArg args[] = {{"script", std::string_view{name}}};
+            core::log(core::LogLevel::Warn, ENG_TR("script.warn.render_cframe_in_simulation"), args);
+        }
+    }
+    pushCFrame(L, simulated);
+    return 1;
 }
 
 // --- Water (ADR 0118) ------------------------------------------------------------
@@ -2254,6 +2310,9 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Model", "GetExtentsSize", methodGetExtentsSize},
     {"BasePart", "ApplyImpulse", methodApplyImpulse},
     {"BasePart", "SetNetworkOwner", methodSetNetworkOwner},
+    {"BasePart", "GetRenderCFrame", methodGetRenderCFrame},
+    {"Attachment", "GetRenderCFrame", methodGetRenderCFrame},
+    {"Camera", "GetRenderCFrame", methodGetRenderCFrame},
     {"BasePart", "ApplyImpulseAtPosition", methodApplyImpulseAtPosition},
     {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
     {"Water", "GetHeightAt", methodWaterGetHeightAt},

@@ -451,10 +451,12 @@ B4 (a voxel's two materials, the terrain tools) and **B8, water, built
 2026-09-29** ([`world-kickoff.md`](docs/briefs/world-kickoff.md), ADR 0118's
 amendment, protocol 28: `Water` as a sea, a lake or a river, its waves one
 function the physics floats things on and the shader draws, a hull that rolls,
-`examples/11-ocean` rewritten on it and `examples/31-lake-and-river`). Next,
-by the owner's order of 2026-09-29: scripts that run at the display's rate and
-the default camera on it (a new ADR amending 0134), then F2, movers and
-constraints.
+`examples/11-ocean` rewritten on it and `examples/31-lake-and-river`). Then,
+by the owner's order of 2026-09-29, **scripts at the display's rate, built
+2026-09-29** (ADR 0136: `BindToRenderStep`, `GetRenderCFrame`, a camera
+written in a render phase presented as written and latched into the simulated
+one at the next tick, the default rig turning every frame; no trace moved).
+Next: F2, movers and constraints.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).

@@ -22,6 +22,7 @@
 #include "engine/script/net_module.h"
 #include "engine/script/sandbox.h"
 #include "engine/script/save_service.h"
+#include "engine/script/scenes.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
 #include "engine/script/tasks.h"
@@ -363,6 +364,17 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
 void ScriptRuntime::setGizmoSink(const GizmoSink& sink)
 {
     m_impl->services.gizmos = sink;
+}
+
+void ScriptRuntime::runRenderSteps(f64 dt)
+{
+    if (m_impl->state != nullptr)
+        script::runRenderSteps(m_impl->state, dt);
+}
+
+void ScriptRuntime::setDrawnPoseSink(const DrawnPoseSink& sink)
+{
+    m_impl->services.drawnPoses = sink;
 }
 
 void ScriptRuntime::setPhysics(scene::PhysicsSync* physics)

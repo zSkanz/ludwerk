@@ -25,15 +25,16 @@ says why.
 ## Moving it
 
 Write `Camera.CFrame`. That is the only mechanism, and `CFrame.lookAt` is
-usually the shortest way to say what you mean:
+usually the shortest way to say what you mean. **A camera that follows
+something moves every frame, in a render step, following where it is drawn:**
 
 ```luau
 --!strict
 local RunService = game:GetService("RunService")
 
-RunService.PreRender:Connect(function(dt: number)
-    local eye = subject.Position + vector.create(0, 6, 11)
-    camera.CFrame = CFrame.lookAt(eye, subject.Position + vector.create(0, 2, 0))
+RunService:BindToRenderStep("follow", Enum.RenderPriority.Camera.Value, function(dt: number)
+    local at = subject:GetRenderCFrame().Position
+    camera.CFrame = CFrame.lookAt(at + vector.create(0, 6, 11), at + vector.create(0, 2, 0))
 end)
 ```
 
@@ -43,18 +44,34 @@ The camera looks along its `CFrame.LookVector`, which is **−Z**.
 
 ## Which phase to move it in
 
-It depends on what the camera follows, and getting it wrong produces a symptom
-that looks like a rendering bug:
+A frame runs its **render phase** -- the input a frame reads at
+`Rate = Render`, then the render steps by priority, then `RunService.PreRender`
+-- and then draws. The simulation runs on its own clock, sixty ticks a second,
+whatever the display does. What a camera reads and writes depends on which of
+the two it runs in:
 
-- **A camera that follows a simulated thing belongs on
-  `RunService.Heartbeat`.** A camera advanced on the render clock moves every
-  frame while the world it looks at moves once a tick, and the difference reads
-  as the whole world vibrating.
-- **A camera driven only by pointer input can go on `RunService.PreRender`**,
-  which is also where a purely cosmetic camera shake belongs.
+| | In a render phase | In a simulation phase (`Heartbeat` …) |
+|---|---|---|
+| `part:GetRenderCFrame()` | where it is **drawn** this frame | its `CFrame` |
+| `camera.CFrame = …` | **presented**: drawn exactly as written, and the simulation's camera from the next tick | the simulation's camera now, drawn between ticks |
+| `camera.CFrame` read | what was presented | the simulation's |
 
-`PreRender` never fires in a headless run, which is a second reason a camera
-that matters to gameplay should not live there.
+So:
+
+- **A camera that follows a moving thing: a render step, and
+  `GetRenderCFrame`.** It moves every frame with what it follows as the picture
+  shows it, and turns with the mouse in the frame. Following the *simulated*
+  place every frame is what shakes: that place moves once a tick, and the
+  camera every frame.
+- **A camera the gameplay moves once a tick** -- a cut to a new shot, a
+  camera on rails -- can be written on `Heartbeat`; it is drawn between ticks.
+- **Nothing in a render phase runs without a window.** A test, a gate or a
+  server runs no render step and no `PreRender`: a camera that matters there
+  also needs a tick's path -- which is what `rig:Update` below is.
+
+The simulation reads the camera the player last saw -- movement relative to
+the camera included -- and only at a tick's start, so what a tick does never
+depends on when a frame happened.
 
 ## The three numbers
 
@@ -90,23 +107,33 @@ local rig = camera.thirdPerson({
     Distance = 11,
     Height = 6,
     Focus = 2,
+    -- Read every frame, from an InputContext at Rate = Render.
+    TurnAction = turnAction,
+    LookAction = lookAction,
 })
 
 RunService.Heartbeat:Connect(function(dt: number)
-    rig:Turn(stickDelta, dt)   -- a RATE: takes dt
-    rig:Update(dt)
+    local forward, right = rig:Basis()
+    -- ... move the character in that basis ...
+    rig:Update(dt) -- moves the camera only where no frame is drawn
 end)
 ```
 
-`camera.thirdPerson` creates the `Camera`, parents it to `workspace`, assigns
-`Workspace.CurrentCamera`, and places it correctly before the first frame rather
-than easing in from the origin. `camera.orbit` is the same rig with a constant
-yaw rate, which is what a menu backdrop or a turntable wants.
+`camera.thirdPerson` creates the `Camera` (or adopts the scene's), assigns
+`Workspace.CurrentCamera`, places it before the first frame, and **binds its
+own render step at `Enum.RenderPriority.Camera`**: every frame it reads its
+actions, turns, and follows its subject's `GetRenderCFrame`. A subject that
+jumps further than the rig ever eases -- a teleport, a respawn -- takes the
+camera with it. `camera.orbit` is the same rig turning by itself.
 
-Two rules the module exists to enforce, and both are worth knowing even if you
-write your own rig:
-
-- **Advance a rig on `Heartbeat`, not `PreRender`** — for the reason above.
+- **Give the rig its actions from an `InputContext` at `Rate = Render`.** At
+  the simulation's rate an action holds a tick's worth, and reading it every
+  frame would turn it several times over, so the rig reads only render-rate
+  ones. The pointer turns it while the pointer is locked. Without actions, call
+  `rig:Turn` and `rig:Look` yourself.
+- **Call `rig:Update(dt)` on `Heartbeat` anyway.** Where a frame is drawn it
+  does nothing; where none is -- a test, the flagship's autopilot -- it moves
+  the camera once a tick, as the picture a test records expects.
 - **Never scale a pointer delta by `dt`.** `Turn` takes a stick deflection and a
   `dt` because a stick is a rate. `Look` takes a mouse delta and no `dt` because
   a mouse delta is already a displacement, and multiplying it by frame time

@@ -62,6 +62,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Scripts that run at the display's rate** (ADR 0136).
+  `RunService:BindToRenderStep(name, priority, fn)` and `UnbindFromRenderStep`,
+  with `Enum.RenderPriority`, run every drawn frame by priority before
+  `PreRender`; `BasePart`, `Attachment` and `Camera:GetRenderCFrame()` answer
+  where a thing is drawn this frame there, and its `CFrame` anywhere else. A
+  camera written in a render phase is *presented* -- drawn exactly as written,
+  and the simulation's camera from the next tick -- so the simulation and the
+  world hash never read a value written between two ticks. `@engine/camera`'s
+  rigs turn and follow every frame, reading their `TurnAction` and
+  `LookAction` from a render-rate context, and move once a tick where nothing
+  draws. No determinism trace moved.
 - **Water** (ADR 0118, the game-ready plan's B8). A `Water` is a sea
   (`Ocean`), a lake (`Box`) or a river (`Spline`, along its `WaterPoint`
   children, flowing at `FlowSpeed`); its `WaterWave` children, up to eight, are

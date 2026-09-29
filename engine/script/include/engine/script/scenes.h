@@ -33,6 +33,18 @@ struct OwnedHandler
     core::u32 scene = 0;
 };
 
+// `RunService:BindToRenderStep` (ADR 0136): a function run every drawn frame,
+// in `priority` order and, between equals, the order bound (`order`), owned by
+// the script that bound it (ADR 0124).
+struct RenderStep
+{
+    std::string name;
+    double priority = 0.0;
+    core::u64 order = 0;
+    int functionRef = -1;
+    core::InstanceId owner;
+};
+
 struct MessageBinding
 {
     // `GameMailbox`, or a scene's serial.
@@ -103,6 +115,8 @@ struct SceneState
 
     std::vector<OwnedHandler> closeHandlers;
     std::vector<MessageBinding> bindings;
+    std::vector<RenderStep> renderSteps;
+    core::u64 nextRenderStep = 1;
     std::vector<HeldMessage> held;
 
     std::vector<SceneLoadRecord> loads;
@@ -119,6 +133,13 @@ struct SceneState
 // The `Scene` value type and the `scene` global. Once, at boot, before the
 // sandbox.
 void registerSceneTypes(lua_State* L);
+
+// `RunService:BindToRenderStep` and `UnbindFromRenderStep` (ADR 0136), in
+// `services.cpp`'s table, and the steps run, once a drawn frame, by the host
+// through `ScriptRuntime::runRenderSteps`.
+int runServiceBindToRenderStep(lua_State* L);
+int runServiceUnbindFromRenderStep(lua_State* L);
+void runRenderSteps(lua_State* L, double dt);
 
 // `game:SendMessage` and `game:BindToMessage`, in `services.cpp`'s table.
 int dataModelSendMessage(lua_State* L);

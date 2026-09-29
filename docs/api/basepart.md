@@ -60,6 +60,10 @@ The value this part draws with for one parameter: its override when it has one t
 
 The player whose machine simulates this part, or `nil` for the authority. A replica knows only about itself: it answers its own `Player` for a part it owns, and `nil` otherwise.
 
+### `GetRenderCFrame(): CFrame`
+
+**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is `CFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.
+
 ### `SetMaterialParameter(name: string, value: Color3 | number | boolean | Vector2 | vector | { number })`
 
 Overrides one parameter of the material this part wears, for this part alone. **Raises for a parameter the material does not declare**: a material decides what a part may change about it, and a tint written to one that did not allow it would be a surface that silently ignores its script. `Color` and `Emissive` take a `Color3`; the rest take a number. A parameter of the material's surface shader, when the material lists it in `instanceParameters`, takes a number, a boolean, a `Vector2`, a `vector` or a `Color3`, or four numbers in a table -- not a texture, which would make the part a material of its own. **A surface shader parameter is not replicated**: set it where the part is drawn.

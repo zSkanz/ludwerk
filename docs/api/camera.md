@@ -15,7 +15,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `CFrame` | `CFrame` | — | read/write | Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which is -Z. |
+| `CFrame` | `CFrame` | — | read/write | Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which is -Z.<br><br>**Written in a render phase** -- a `RunService:BindToRenderStep` function, a `PreRender` handler, an action at `Rate = Render` -- it is *presented*: drawn exactly as written this frame, and it becomes the camera the simulation reads when the next tick starts. Written in a simulation phase it is that camera at once, drawn between ticks. Read in a render phase it answers what was presented; anywhere else, the simulation's (ADR 0136). |
 | `ClipPlane` | `CFrame` | — | read/write | A plane the camera does not see behind (ADR 0107), used while `ClipPlaneEnabled` is true: it passes through this CFrame's position, and what lies in front of its `LookVector` is drawn while what lies behind is not. A mirror's camera, standing behind the glass, sees the room and not the wall the mirror hangs on. `@engine/views` sets it for you. The camera must be behind the plane; one in front of it draws as if there were none. |
 | `ClipPlaneEnabled` | `boolean` | `false` | read/write | Whether `ClipPlane` is used. |
 | `FarPlane` | `number` | — | read/write | Distance in metres to the far clip plane; geometry beyond it is not drawn. |
@@ -24,3 +24,9 @@ offers is on the base's page, which is what keeps one added member on
 | `OrthographicSize` | `number` | `10` | read/write | Half the height of what an orthographic camera shows, in metres. Its width follows from the window's shape. Zooming a 2D view is changing this.<br><br>**An orthographic camera sees its whole column**, from `FarPlane` behind where it stands to `FarPlane` in front: nothing in its picture shrinks with distance, so a top-down camera standing lower than the top of what it looks at still shows all of it. |
 | `Projection` | `Enum.CameraProjection` | — | read/write | Perspective for a 3D view, Orthographic for a 2D one (the 2D layer, phase 3). An orthographic camera ignores `FieldOfView` and shows `OrthographicSize` metres above and below the middle of the view, whatever the distance. |
 | `ViewportSize` | `Vector2` | — | read-only | The size of what the world is drawn into, in pixels: the window in a game, the Viewport panel in the editor. What a script divides by to turn a screen position into a fraction, or reads to know it is on a tall screen rather than a wide one -- it changes when the window is resized or a phone is turned, and a layout that reads it every frame follows. |
+
+## Methods
+
+### `GetRenderCFrame(): CFrame`
+
+**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.

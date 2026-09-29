@@ -1158,3 +1158,22 @@ per cell at all -- a wave's phase is linear in the cell's offset, so the 27
 cells' sines and cosines come from four pairs by the angle-sum rule, filled in a
 cascade, and the depth fade from four exponentials. A world with no `Water`
 pays nothing: the pass returns before it looks at a body.
+
+## Scripts at the display's rate (ADR 0136)
+
+What the render phase costs now that the default camera runs in it: the input
+a frame reads at `Rate = Render`, the render steps -- `@engine/camera`'s rig
+among them -- and `PreRender`, timed around the whole phase each frame.
+Measured 2026-09-29 on `win-msvc-dev` with a window on a 120 Hz display,
+`engine-host examples/10-open-world --frames=600 --exit --frame-stats`; three
+runs.
+
+| `examples/10-open-world` | The render phase a frame | p95 |
+|---|---|---|
+| The rig following the character every frame | 0.052, 0.050, 0.049 ms -- **0.050 ms** | 0.06 ms |
+
+Fifty microseconds a frame is 6 ms of every second at 120 Hz and 12 ms at 240,
+about one percent of one core. The frame itself did not move: 8.6 to 8.9 ms,
+the display's own interval. `--frame-stats` prints the phase's line only where
+a window runs it.
+

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <variant>
@@ -15,8 +16,10 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/input/input.h"
+#include "engine/render/draw_poses.h"
 #include "engine/render/lighting.h"
 #include "engine/render/render_world.h"
+#include "engine/render/transform_history.h"
 #include "engine/scene/components.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/players.h"
@@ -2565,6 +2568,299 @@ TEST_CASE("PreloadAsync waits for every item, reports each, and names what an in
     CHECK(log.contains("preloaded ImageLabel=Success asset://models/crate.gltf=Success "
                        "asset://models/missing.gltf=Failure queue 0"));
     CHECK(log.contains("refused true"));
+}
+
+// --- The display's rate (ADR 0136) --------------------------------------------------
+
+namespace {
+
+// Whether the script left a Folder of this name in the workspace.
+[[nodiscard]] bool leftMark(app::WorldHost& host, std::string_view name)
+{
+    return host.world().findFirstChild(host.workspace(), host.world().atoms().lookup(name)).valid();
+}
+
+// The workspace's current camera's component.
+[[nodiscard]] scene::CameraComponent& currentCamera(app::WorldHost& host)
+{
+    const scene::WorkspaceComponent* space = host.world().workspaces().find(host.workspace());
+    REQUIRE(space != nullptr);
+    scene::CameraComponent* camera = host.world().cameras().find(space->currentCamera);
+    REQUIRE(camera != nullptr);
+    return *camera;
+}
+
+} // namespace
+
+TEST_CASE("render steps run by priority before PreRender, stop when unbound, and never without a frame (ADR 0136)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local order = {}
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+        RunService:BindToRenderStep("late", Enum.RenderPriority.Last.Value, function()
+            table.insert(order, "late")
+        end)
+        RunService:BindToRenderStep("camera", Enum.RenderPriority.Camera.Value, function(dt: number)
+            table.insert(order, if dt > 0 then "camera" else "camera?")
+        end)
+        -- Bound after, at the same priority: after it.
+        RunService:BindToRenderStep("follow", Enum.RenderPriority.Camera.Value, function()
+            table.insert(order, "follow")
+        end)
+        RunService:BindToRenderStep("first", Enum.RenderPriority.First.Value, function()
+            table.insert(order, "first")
+        end)
+        RunService.PreRender:Connect(function()
+            table.insert(order, "pre")
+            mark("frame:" .. table.concat(order, ","))
+            table.clear(order)
+        end)
+        local ticks = 0
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            if #order > 0 then
+                mark("ran on a tick")
+            end
+            if ticks == 3 then
+                RunService:UnbindFromRenderStep("camera")
+                RunService:UnbindFromRenderStep("never bound")
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    // Ticks with no frame drawn: a headless run. Nothing ran.
+    for (int tick = 0; tick < 2; ++tick)
+        host.tick();
+    CHECK_FALSE(leftMark(host, "ran on a tick"));
+
+    host.preRender(1.0 / 240.0);
+    CHECK(leftMark(host, "frame:first,camera,follow,late,pre"));
+    host.tick();
+    host.preRender(1.0 / 240.0);
+    CHECK(leftMark(host, "frame:first,follow,late,pre"));
+    CHECK_FALSE(leftMark(host, "ran on a tick"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("a camera written in a render phase is drawn as written and is the next tick's, and the hash never sees it "
+          "(ADR 0136)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local camera = Instance.new("Camera")
+        camera.CFrame = CFrame.new(0, 10, 0)
+        camera.Parent = workspace
+        workspace.CurrentCamera = camera
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+        local frames = 0
+        local read = 0
+        RunService:BindToRenderStep("camera", Enum.RenderPriority.Camera.Value, function()
+            frames += 1
+            camera.CFrame = CFrame.new(frames * 5, 10, 0)
+            -- A render phase reads what it presented. Kept, and marked on the
+            -- tick: a marker made here would itself be a change the hash sees.
+            read = camera.CFrame.Position.x
+        end)
+        local ticks = 0
+        RunService.Heartbeat:Connect(function()
+            ticks += 1
+            mark(`read presented {read}`)
+            -- The simulation reads the presented camera from the next tick on.
+            mark(`tick {ticks} sees {camera.CFrame.Position.x}`)
+            if ticks == 4 then
+                camera.CFrame = CFrame.new(-1, 10, 0)
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    CHECK(leftMark(host, "tick 1 sees 0"));
+
+    const core::u64 before = host.world().worldHash();
+    host.preRender(1.0 / 240.0);
+    // Presented: drawn as written, the simulated camera untouched, the hash too.
+    scene::CameraComponent& camera = currentCamera(host);
+    CHECK(camera.presenting);
+    CHECK(camera.presented.position.x == doctest::Approx(5.0));
+    CHECK(camera.cframe.position.x == doctest::Approx(0.0));
+    CHECK(host.world().worldHash() == before);
+    render::DrawPoses poses;
+    render::TransformHistory history;
+    history.capture(host.world());
+    poses.begin(host.world(), &history, 0.5f);
+    CHECK(poses.camera(host.world().workspaces().find(host.workspace())->currentCamera).position.x ==
+          doctest::Approx(5.0));
+
+    // Two frames before the next tick: it takes the last.
+    host.preRender(1.0 / 240.0);
+    host.tick();
+    CHECK(leftMark(host, "read presented 10"));
+    CHECK(leftMark(host, "tick 2 sees 10"));
+    host.tick();
+    CHECK(leftMark(host, "tick 3 sees 10"));
+
+    // Written in a simulation phase: the simulation's at once, and no longer
+    // presented -- drawn between ticks again.
+    host.tick();
+    CHECK(leftMark(host, "tick 4 sees 10"));
+    CHECK_FALSE(currentCamera(host).presenting);
+    CHECK(currentCamera(host).cframe.position.x == doctest::Approx(-1.0));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE("GetRenderCFrame is where a part is drawn in a render phase and its CFrame on a tick (ADR 0136)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local part = Instance.new("Part")
+        part.Name = "Mover"
+        part.Anchored = true
+        part.Position = vector.create(0, 0, 0)
+        part.Parent = workspace
+        local function mark(name: string)
+            local folder = Instance.new("Folder")
+            folder.Name = name
+            folder.Parent = workspace
+        end
+        RunService.Heartbeat:Connect(function()
+            part.Position += vector.create(1, 0, 0)
+            if part:GetRenderCFrame() == part.CFrame then
+                mark("a tick reads the CFrame")
+            end
+        end)
+        RunService:BindToRenderStep("read", 0, function()
+            mark(`drawn at {part:GetRenderCFrame().Position.x}, simulated at {part.CFrame.Position.x}`)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    render::TransformHistory history;
+    for (int tick = 0; tick < 3; ++tick) {
+        history.capture(host.world());
+        host.tick();
+    }
+    CHECK(leftMark(host, "a tick reads the CFrame"));
+    // Half way between the last two ticks: 2.5, while the simulation is at 3.
+    render::DrawPoses poses;
+    poses.begin(host.world(), &history, 0.5f);
+    host.preRender(1.0 / 240.0, &poses);
+    CHECK(leftMark(host, "drawn at 2.5, simulated at 3"));
+    // No poses -- a frame drawn at its tick -- answers the simulated place.
+    host.preRender(1.0 / 240.0);
+    CHECK(leftMark(host, "drawn at 3, simulated at 3"));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
+TEST_CASE(
+    "the default camera turns in the frame the mouse moves and holds its subject still on screen at 240 Hz (ADR 0136)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local cameraRigs = require("@engine/camera")
+        local subject = Instance.new("Part")
+        subject.Name = "Subject"
+        subject.Anchored = true
+        subject.Position = vector.create(0, 0, 0)
+        subject.Parent = workspace
+        local context = Instance.new("InputContext")
+        context.Rate = Enum.InputRate.Render
+        context.Parent = workspace
+        local look = Instance.new("InputAction")
+        look.Name = "Look"
+        look.Type = Enum.InputActionType.Direction2D
+        look.Parent = context
+        local binding = Instance.new("InputBinding")
+        binding.KeyCode = Enum.KeyCode.MouseMovement
+        binding.Parent = look
+        local rig = cameraRigs.thirdPerson({ Subject = subject, Smoothing = 1000 })
+        rig.LookAction = look
+        local ticks = 0
+        RunService.Heartbeat:Connect(function(dt: number)
+            ticks += 1
+            -- 8 m/s, and a teleport on tick 30.
+            subject.Position += vector.create(8 * dt, 0, 0)
+            if ticks == 30 then
+                subject.Position += vector.create(200, 0, 0)
+            end
+            rig:Update(dt)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.world().engineState().pointerLocked = true;
+    scene::World& world = host.world();
+    const core::InstanceId subject = world.findFirstChild(host.workspace(), world.atoms().lookup("Subject"));
+    REQUIRE(subject.valid());
+
+    render::TransformHistory history;
+    render::DrawPoses poses;
+    const auto frameAt = [&](core::f32 alpha, core::Vec2 mouse) {
+        input::DeviceState device;
+        device.pointerDelta = mouse;
+        host.input().setSnapshot(device);
+        poses.begin(world, &history, alpha);
+        host.preRender(1.0 / 240.0, &poses);
+        poses.begin(world, &history, alpha);
+    };
+    // Where the subject sits in the camera's own space, as drawn.
+    const auto onScreen = [&]() {
+        const core::CFrameD eye = currentCamera(host).presented;
+        return core::toVec3(core::transformPoint(core::inverse(eye), poses.part(subject).position));
+    };
+
+    // A still mouse, then one that moved: the camera turned in that frame.
+    history.capture(world);
+    host.tick();
+    frameAt(0.0f, core::Vec2{});
+    const core::Vec3 lookBefore =
+        core::transformDirection(currentCamera(host).presented, core::Vec3{0.0f, 0.0f, -1.0f});
+    frameAt(0.25f, core::Vec2{60.0f, 0.0f});
+    const core::Vec3 lookAfter = core::transformDirection(currentCamera(host).presented, core::Vec3{0.0f, 0.0f, -1.0f});
+    CHECK(std::abs(lookAfter.x - lookBefore.x) + std::abs(lookAfter.z - lookBefore.z) > 0.05);
+
+    // 8 m/s, four frames a tick: once settled, the subject stays where it is
+    // on the screen, within a centimetre at eleven metres -- about a pixel --
+    // through the teleport, which the camera takes with it.
+    std::optional<core::Vec3> held;
+    core::f32 worst = 0.0f;
+    for (int tick = 0; tick < 40; ++tick) {
+        history.capture(world);
+        host.tick();
+        for (int frame = 0; frame < 4; ++frame) {
+            frameAt(static_cast<core::f32>(frame) / 4.0f, core::Vec2{});
+            if (tick < 5)
+                continue;
+            const core::Vec3 now = onScreen();
+            if (!held.has_value())
+                held = now;
+            worst = std::max(worst, core::length(now - *held));
+        }
+    }
+    CHECK(worst < 0.01f);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
 // --- Clicked and prompted without code (ADR 0126) ---------------------------------

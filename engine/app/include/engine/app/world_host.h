@@ -31,6 +31,7 @@
 #include "engine/nav/nav.h"
 #include "engine/physics/backends.h"
 #include "engine/render/animation.h"
+#include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
@@ -290,7 +291,13 @@ public:
 
     // The render-rate phase. Never fires headless -- headless is the same
     // scheduler minus the render steps, and this is one of them.
-    void preRender(f64 renderDt);
+    //
+    // **A render phase** (ADR 0136), in order: the input a frame reads at
+    // `Rate = Render`, the render steps by priority, then `PreRender`. Within
+    // it `GetRenderCFrame` answers from `poses` -- the frame's, resolved before
+    // the scripts run -- and a camera written is presented. No poses answers
+    // the simulated place, as a phase outside it does.
+    void preRender(f64 renderDt, const render::DrawPoses* poses = nullptr);
 
     // Where `DebugService`'s gizmos go this frame. Null clears it, which is what
     // a headless run leaves it as: the calls become silent no-ops rather than

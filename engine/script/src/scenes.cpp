@@ -4,6 +4,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -727,6 +728,13 @@ core::u32 closeScene(lua_State* L, core::u32 next)
         unref(L, binding.functionRef);
         return true;
     });
+    // A render step goes with the script that bound it (ADR 0136, 0124).
+    std::erase_if(state.renderSteps, [&](const RenderStep& step) {
+        if (!ownedByScene(L, step.owner))
+            return false;
+        unref(L, step.functionRef);
+        return true;
+    });
 
     state.closed[closing] = closingPath;
     if (next != 0 && next == state.prepared) {
@@ -738,6 +746,75 @@ core::u32 closeScene(lua_State* L, core::u32 next)
     }
     state.open = next;
     return next;
+}
+
+// --- Render steps (ADR 0136) ---------------------------------------------------
+
+int runServiceBindToRenderStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const double priority = luaL_checknumber(L, 3);
+    luaL_checktype(L, 4, LUA_TFUNCTION);
+    if (length == 0)
+        raise(L, ENG_TR("script.err.render_step_name"));
+    if (!std::isfinite(priority))
+        raise(L, ENG_TR("script.err.render_step_priority"));
+    const std::string name{text, length};
+    SceneState& state = scenes(L);
+    // A name already bound is replaced, keeping nothing of the old binding --
+    // its order included, so a rebind goes after its equals as a new one does.
+    std::erase_if(state.renderSteps, [&](const RenderStep& step) {
+        if (step.name != name)
+            return false;
+        unref(L, step.functionRef);
+        return true;
+    });
+    lua_pushvalue(L, 4);
+    const int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    state.renderSteps.push_back(RenderStep{name, priority, state.nextRenderStep++, ref, scriptOfThread(L)});
+    return 0;
+}
+
+int runServiceUnbindFromRenderStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+    std::erase_if(scenes(L).renderSteps, [&](const RenderStep& step) {
+        if (step.name != name)
+            return false;
+        unref(L, step.functionRef);
+        return true;
+    });
+    return 0;
+}
+
+void runRenderSteps(lua_State* L, double dt)
+{
+    services(L).renderPhasesRun = true;
+    // Taken in order first: a step may bind, rebind or unbind, and what it
+    // does takes effect from the next frame.
+    std::vector<RenderStep> running = scenes(L).renderSteps;
+    std::stable_sort(running.begin(), running.end(), [](const RenderStep& a, const RenderStep& b) {
+        return a.priority != b.priority ? a.priority < b.priority : a.order < b.order;
+    });
+    for (const RenderStep& step : running) {
+        // Still bound: a step earlier this frame may have unbound it.
+        const std::vector<RenderStep>& bound = scenes(L).renderSteps;
+        if (std::find_if(bound.begin(), bound.end(), [&](const RenderStep& now) { return now.order == step.order; }) ==
+            bound.end())
+            continue;
+        lua_State* co = lua_newthread(L);
+        lua_getref(L, step.functionRef);
+        lua_xmove(L, co, 1);
+        lua_pushnumber(co, dt);
+        (void)resumeScheduled(L, co, 1);
+        lua_pop(L, 1);
+    }
 }
 
 void deliverHeldMessages(lua_State* L)

@@ -156,7 +156,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which is -Z.",
+            .doc = "Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which is -Z.\012\012**Written in a render phase** -- a `RunService:BindToRenderStep` function, a `PreRender` handler, an action at `Rate = Render` -- it is *presented*: drawn exactly as written this frame, and it becomes the camera the simulation reads when the next tick starts. Written in a simulation phase it is that camera at once, drawn between ticks. Read in a render phase it answers what was presented; anywhere else, the simulation's (ADR 0136).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
             .get = native::getCameraCFrame,
             .set = native::setCameraCFrame,
@@ -253,6 +253,15 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setCameraClipPlaneEnabled,
         },
     }};
+    static std::array<scene::MethodDesc, 1> cameraMethods;
+    cameraMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetRenderCFrame"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::ReadParallel,
+            .doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.",
+        },
+    }};
     scene::ClassDescriptor cameraDesc;
     cameraDesc.name = atoms.intern("Camera");
     cameraDesc.super = pVInstanceClass;
@@ -262,6 +271,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     static constexpr std::array<std::string_view, 4> cameraParents{{"Workspace", "ViewportFrame", "ReplicatedStorage", "ServerStorage"}};
     cameraDesc.parents = cameraParents;
     cameraDesc.properties = cameraProperties;
+    cameraDesc.methods = cameraMethods;
     cameraDesc.attachComponents = native::attachCameraComponents;
     cameraDesc.detachComponents = native::detachCameraComponents;
     classes.registerClass(cameraDesc);

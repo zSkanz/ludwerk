@@ -502,6 +502,18 @@ Whether a `RaycastParams` filter list names what a cast may hit or what it must 
 | `Exclude` | 0 | Everything except the listed instances and their descendants. |
 | `Include` | 1 | Only the listed instances and their descendants. |
 
+## Enum.RenderPriority
+
+Where a render step runs in the frame (ADR 0136): `RunService:BindToRenderStep` takes a number, and these are the landmarks -- `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.
+
+| Item | Value | Description |
+|---|---|---|
+| `First` | 0 | Before everything else in the frame. |
+| `Input` | 100 | Where input a frame reads is turned into intent. |
+| `Camera` | 200 | Where the camera is placed: the default rig runs here. |
+| `Character` | 300 | After the camera: what follows where it looks. |
+| `Last` | 2000 | After everything else, before `PreRender` fires. |
+
 ## Enum.RotationOrder
 
 The order `CFrame.fromEuler` applies its three angles, and `CFrame:ToEuler` recovers them: intrinsic rotations, each about the axes the previous one produced, read left to right. All six permutations are declared.

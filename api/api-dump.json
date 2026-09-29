@@ -75,7 +75,14 @@
           "ReadOnly": true
         }
       ],
-      "Methods": [],
+      "Methods": [
+        {
+          "Name": "GetRenderCFrame",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
       "Events": []
     },
     {
@@ -294,6 +301,12 @@
           "ThreadSafety": "ReadParallel"
         },
         {
+          "Name": "GetRenderCFrame",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
           "Name": "SetMaterialParameter",
           "Parameters": [
             {
@@ -505,7 +518,14 @@
           "Transient": true
         }
       ],
-      "Methods": [],
+      "Methods": [
+        {
+          "Name": "GetRenderCFrame",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "ReadParallel"
+        }
+      ],
       "Events": []
     },
     {
@@ -3326,6 +3346,25 @@
       ],
       "Methods": [
         {
+          "Name": "BindToRenderStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "priority",
+              "Type": "number"
+            },
+            {
+              "Name": "fn",
+              "Type": "(dt: number) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "IsPaused",
           "Parameters": [],
           "Returns": ["boolean"],
@@ -3363,6 +3402,17 @@
         {
           "Name": "StepSimulation",
           "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnbindFromRenderStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
         }
@@ -9897,6 +9947,31 @@
         {
           "Name": "Include",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "RenderPriority",
+      "Items": [
+        {
+          "Name": "Camera",
+          "Value": 200
+        },
+        {
+          "Name": "Character",
+          "Value": 300
+        },
+        {
+          "Name": "First",
+          "Value": 0
+        },
+        {
+          "Name": "Input",
+          "Value": 100
+        },
+        {
+          "Name": "Last",
+          "Value": 2000
         }
       ]
     },

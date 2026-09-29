@@ -20,6 +20,12 @@ offers is on the base's page, which is what keeps one added member on
 
 ## Methods
 
+### `BindToRenderStep(name: string, priority: number, fn: (dt: number) -> ())`
+
+Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order bound between equals -- after the input a frame reads at `Rate = Render` and before `PreRender` fires, with the time since the last frame (ADR 0136). What a camera that follows something is for: in it, `GetRenderCFrame` answers where things are drawn, and a camera written is drawn exactly as written. `Enum.RenderPriority` holds the landmarks, as numbers: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.
+
+Binding a name already bound replaces it. Nothing runs without a window. A binding belongs to the script that made it and goes with its scene (ADR 0124).
+
 ### `IsPaused(): boolean`
 
 Whether the world is currently paused. Since `Pause` and `Resume` are both idempotent, this is how code tells the two states apart rather than by watching a call fail.
@@ -44,6 +50,10 @@ Restarts a paused world, and its clock with it. Idempotent: resuming a running w
 
 Steps the 3D simulation one fixed tick now, as the tick would, without running a script and **without `Touched` or `TouchEnded`**: a tick simulated again already fired its touches. What re-simulating after `RestoreSimulation` is: set each tick's inputs -- a character's `MoveDirection`, an impulse -- and step, once per tick to catch up.
 
+### `UnbindFromRenderStep(name: string)`
+
+Stops the render step bound under `name`. A name nothing is bound under is not an error.
+
 ## Events
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
@@ -63,7 +73,7 @@ The first phase of a sim tick, before animation is evaluated, carrying the fixed
 
 ### `PreRender(dt: number)`
 
-Fires at render rate, before the frame is drawn, carrying the variable time in seconds since the previous render. It never fires in a headless run: headless is the same scheduler minus the render steps, and this is one of them. It stays connectable so that shared code need not branch on it -- but a handler connected to it in a headless process is a handler that will not run.
+Fires at render rate, before the frame is drawn and after the render steps (`BindToRenderStep`), carrying the variable time in seconds since the previous render. Its handlers run in a render phase: `GetRenderCFrame` answers where things are drawn, and a camera written is presented (ADR 0136). It never fires in a headless run: headless is the same scheduler minus the render steps, and this is one of them. It stays connectable so that shared code need not branch on it -- but a handler connected to it in a headless process is a handler that will not run.
 
 ### `PreSimulation(dt: number)`
 

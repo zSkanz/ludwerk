@@ -129,3 +129,11 @@ lag would have passed.
   has it; the ray is the drawn one.
 - The blend a predicted part owes when it leaves the predicted set (ADR 0133)
   now has the slide it needs; it is the next use of it.
+
+## Amended by ADR 0136 (2026-09-29)
+
+The row **"A camera a game writes on the frame's clock"** is superseded: such a
+camera is now *presented* -- drawn as written, kept out of the simulated
+`Camera.CFrame` and the hash, and latched into the simulated one at the next
+tick's start -- and scripts in a render phase read where things are drawn with
+`GetRenderCFrame`.

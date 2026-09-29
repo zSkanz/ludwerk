@@ -372,6 +372,15 @@ struct WeldComponent
 struct CameraComponent
 {
     core::CFrameD cframe;
+    // **Where a render phase put it** (ADR 0136): drawn exactly as written,
+    // and made the simulated `cframe` when the next tick starts. Not a
+    // property: the hash and the simulation never read it.
+    core::CFrameD presented;
+    // Drawn from `presented` rather than between ticks, until a simulation
+    // phase writes `cframe`.
+    bool presenting = false;
+    // Written since the last tick started: the next one takes it.
+    bool presentedSinceTick = false;
     // Degrees, vertical. Stored as authored so a read gives back the write.
     f32 fieldOfView = 70.0f;
     f32 nearPlane = 0.1f;

@@ -1208,6 +1208,19 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "RenderPriority",
+            Doc = "Where a render step runs in the frame (ADR 0136): `RunService:BindToRenderStep` takes a "
+                .. "number, and these are the landmarks -- `Enum.RenderPriority.Camera.Value + 1` runs just after "
+                .. "the camera.",
+            Items = {
+                { Name = "First", Value = 0, Doc = "Before everything else in the frame." },
+                { Name = "Input", Value = 100, Doc = "Where input a frame reads is turned into intent." },
+                { Name = "Camera", Value = 200, Doc = "Where the camera is placed: the default rig runs here." },
+                { Name = "Character", Value = 300, Doc = "After the camera: what follows where it looks." },
+                { Name = "Last", Value = 2000, Doc = "After everything else, before `PreRender` fires." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

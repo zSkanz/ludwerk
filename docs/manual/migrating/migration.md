@@ -28,12 +28,26 @@ Full contract: [Signals and connections](manual:concepts/signals). The reasoning
 
 ### Two clocks, and the phase says which
 
-`RunService.PreRender` is per render frame with a variable `dt`. `PreAnimation`,
-`PreSimulation`, `PostSimulation` and `Heartbeat` are per **simulation tick**
-with the fixed timestep. `task.wait` resumes on the simulation clock.
+`RunService.PreRender` and the render steps are per render frame with a variable
+`dt`. `PreAnimation`, `PreSimulation`, `PostSimulation` and `Heartbeat` are per
+**simulation tick** with the fixed timestep -- **`Heartbeat` here runs 60 times a
+second, not once a frame**. `task.wait` resumes on the simulation clock, so
+`task.wait(1)` is exactly 60 ticks, everywhere.
 
-So `task.wait(1)` is exactly 60 ticks, everywhere, and a camera that follows the
-world belongs on `Heartbeat` rather than `PreRender`.
+| What you used | Here | Clock |
+|---|---|---|
+| `RenderStepped` | `RunService:BindToRenderStep(name, priority, fn)`, or `PreRender` | every frame |
+| `BindToRenderStep` | the same, with `Enum.RenderPriority` | every frame, by priority, before `PreRender` |
+| `PreRender` | `PreRender` | every frame, after the render steps |
+| `Heartbeat` for per-frame work | `PreRender` or a render step | every frame |
+| `Heartbeat` for gameplay | `Heartbeat` | 60 a second, fixed |
+| `Stepped` / `PreSimulation` | `PreSimulation` | 60 a second, fixed |
+
+A camera that follows something goes in a render step and reads
+`GetRenderCFrame()`, which is where a part is drawn this frame -- a part's
+`CFrame` is the simulation's and moves once a tick. A camera written there is
+presented as written, and the simulation reads it from the next tick
+([Camera](manual:rendering/camera)).
 
 ### No ModuleScripts
 

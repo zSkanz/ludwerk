@@ -2058,6 +2058,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"DataModel", "Shutdown", dataModelShutdown},
 
     {"RunService", "Pause", runServicePause},
+    {"RunService", "BindToRenderStep", runServiceBindToRenderStep},
+    {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},
     {"RunService", "Resume", runServiceResume},
     {"RunService", "IsPaused", runServiceIsPaused},
     {"RunService", "SaveSimulation", runServiceSaveSimulation},

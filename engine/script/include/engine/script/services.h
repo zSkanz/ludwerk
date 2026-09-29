@@ -64,6 +64,22 @@ struct GizmoSink
     void (*sphere)(void* user, core::Vec3 position, f32 radius, core::Color3 color) = nullptr;
 };
 
+// **Where things are drawn this frame** (ADR 0136), for `GetRenderCFrame`:
+// set by the host for the length of a render phase and cleared after it, so a
+// simulation phase -- and every headless run -- has none. The script module
+// does not link the renderer; the host answers from its `DrawPoses`.
+enum class DrawnKind : core::u8
+{
+    Part,
+    Attachment,
+    Camera,
+};
+struct DrawnPoseSink
+{
+    void* user = nullptr;
+    bool (*pose)(void* user, core::InstanceId id, DrawnKind kind, core::CFrameD& out) = nullptr;
+};
+
 // Named instrumentation counters. `GetStat` raises for a name nothing has
 // published rather than answering zero: a misspelt stat is a bug in the caller,
 // and a debug surface that answers zero hides that bug in the one place people
@@ -148,6 +164,13 @@ public:
     core::InstanceId dataModel;
 
     GizmoSink gizmos;
+    DrawnPoseSink drawnPoses;
+    // A render phase has run in this VM: a window draws it (ADR 0136). What
+    // tells a `GetRenderCFrame` in a simulation phase that it is a mistake
+    // rather than a headless run, where it is the only answer there is.
+    bool renderPhasesRun = false;
+    // The scripts already warned about that, once each.
+    std::vector<core::InstanceId> warnedRenderCFrame;
     StatTable stats;
     FrameStats frameStats;
 

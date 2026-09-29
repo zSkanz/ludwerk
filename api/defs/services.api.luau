@@ -1092,6 +1092,31 @@ local Classes: { Schema.Class } = {
                     .. "no-op, not an error.",
             },
             {
+                Name = "BindToRenderStep",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "priority", Type = "number" },
+                    { Name = "fn", Type = "(dt: number) -> ()" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order "
+                    .. "bound between equals -- after the input a frame reads at `Rate = Render` and before "
+                    .. "`PreRender` fires, with the time since the last frame (ADR 0136). What a camera that "
+                    .. "follows something is for: in it, `GetRenderCFrame` answers where things are drawn, and a "
+                    .. "camera written is drawn exactly as written. `Enum.RenderPriority` holds the landmarks, as "
+                    .. "numbers: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.\n\n"
+                    .. "Binding a name already bound replaces it. Nothing runs without a window. A binding "
+                    .. "belongs to the script that made it and goes with its scene (ADR 0124).",
+            },
+            {
+                Name = "UnbindFromRenderStep",
+                Parameters = { { Name = "name", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stops the render step bound under `name`. A name nothing is bound under is not an error.",
+            },
+            {
                 Name = "IsPaused",
                 Parameters = {},
                 Returns = { "boolean" },
@@ -1135,8 +1160,10 @@ local Classes: { Schema.Class } = {
             {
                 Name = "PreRender",
                 Parameters = { { Name = "dt", Type = "number" } },
-                Doc = "Fires at render rate, before the frame is drawn, carrying the variable time in seconds since "
-                    .. "the previous render. It never fires in a headless run: headless is the same scheduler minus "
+                Doc = "Fires at render rate, before the frame is drawn and after the render steps "
+                    .. "(`BindToRenderStep`), carrying the variable time in seconds since the previous render. Its "
+                    .. "handlers run in a render phase: `GetRenderCFrame` answers where things are drawn, and a "
+                    .. "camera written is presented (ADR 0136). It never fires in a headless run: headless is the same scheduler minus "
                     .. "the render steps, and this is one of them. It stays connectable so that shared code need "
                     .. "not branch on it -- but a handler connected to it in a headless process is a handler that "
                     .. "will not run.",

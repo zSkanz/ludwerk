@@ -641,6 +641,17 @@ local Classes: { Schema.Class } = {
                     .. "has no momentum to change.",
             },
             {
+                Name = "GetRenderCFrame",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "ReadParallel",
+                Doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture "
+                    .. "shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a "
+                    .. "`PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, "
+                    .. "a run with no window, a server -- it is `CFrame`, because what a tick reads must not depend on "
+                    .. "when a frame happened. A camera that follows this reads it.",
+            },
+            {
                 Name = "ApplyImpulseAtPosition",
                 Parameters = { { Name = "impulse", Type = "vector" }, { Name = "position", Type = "vector" } },
                 Returns = {},
@@ -820,6 +831,19 @@ local Classes: { Schema.Class } = {
                     .. "overwritten or wrong.",
             },
         },
+        Methods = {
+            {
+                Name = "GetRenderCFrame",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "ReadParallel",
+                Doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture "
+                    .. "shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a "
+                    .. "`PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, "
+                    .. "a run with no window, a server -- it is `WorldCFrame`, because what a tick reads must not depend on "
+                    .. "when a frame happened. A camera that follows this reads it.",
+            },
+        } :: { Schema.Method },
     },
     {
         -- `NotCreatable` and abstract: a constraint's TYPE is its class, because
@@ -1638,7 +1662,12 @@ local Classes: { Schema.Class } = {
                 Name = "CFrame",
                 Type = "CFrame",
                 Doc = "Where the camera is and which way it looks. The look direction is the CFrame's LookVector, "
-                    .. "which is -Z.",
+                    .. "which is -Z.\n\n"
+                    .. "**Written in a render phase** -- a `RunService:BindToRenderStep` function, a `PreRender` "
+                    .. "handler, an action at `Rate = Render` -- it is *presented*: drawn exactly as written this "
+                    .. "frame, and it becomes the camera the simulation reads when the next tick starts. Written "
+                    .. "in a simulation phase it is that camera at once, drawn between ticks. Read in a render "
+                    .. "phase it answers what was presented; anywhere else, the simulation's (ADR 0136).",
             },
             {
                 Name = "ViewportSize",
@@ -1709,6 +1738,19 @@ local Classes: { Schema.Class } = {
                 Doc = "Whether `ClipPlane` is used.",
             },
         },
+        Methods = {
+            {
+                Name = "GetRenderCFrame",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "ReadParallel",
+                Doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture "
+                    .. "shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a "
+                    .. "`PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, "
+                    .. "a run with no window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend on "
+                    .. "when a frame happened. A camera that follows this reads it.",
+            },
+        } :: { Schema.Method },
     },
     {
         Name = "PointLight",

@@ -87,6 +87,7 @@ inline constexpr EnumId DragDetectorDragStyleEnumId = 46;
 inline constexpr EnumId DragDetectorResponseStyleEnumId = 47;
 inline constexpr EnumId TerrainPaintModeEnumId = 48;
 inline constexpr EnumId WaterShapeEnumId = 49;
+inline constexpr EnumId RenderPriorityEnumId = 50;
 
 } // namespace generated
 

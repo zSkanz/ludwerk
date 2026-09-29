@@ -363,6 +363,11 @@ local TurnAction = action(CameraControls, "Turn")
 --- `rig:Turn` takes the rate and `rig:Look` takes the displacement.
 local LookAction = action(CameraControls, "Look")
 
+-- **The rig reads both itself, every frame** (ADR 0136): the context is at
+-- `Rate = Render`, so a mouse moved turns the camera in the frame it moved.
+rig.TurnAction = TurnAction
+rig.LookAction = LookAction
+
 -- **Locked at boot**, because a third-person camera that needs a click before
 -- it responds is a camera that feels broken for the first second of every
 -- session. `PointerVisible` follows it: a cursor drawn over a locked pointer
@@ -443,10 +448,12 @@ local sinceSave = 0
 --- (api-design.md §2.1), so this is how the demo knows nobody is watching and
 --- takes over the controls itself (see `autopilot`).
 ---
---- **It is NOT what drives the camera, and that is a defect report from a human
---- playing this scene: with the camera on `PreRender` the whole world shakes as
---- soon as the character walks** (D047). The rig is advanced on `Heartbeat`,
---- with the world, and `@engine/camera`'s own header says why in more detail.
+--- **It is not what drives the camera.** A human playing this scene found the
+--- whole world shaking with the camera on `PreRender` (D047): it followed the
+--- character's SIMULATED place every frame, and that place moves once a tick.
+--- The rule that replaced it (ADR 0136): the camera moves every frame, in its
+--- render step, following where the character is DRAWN (`GetRenderCFrame`) --
+--- smooth and a frame behind the mouse, not a tick. `@engine/camera` does it.
 local renderIsDriving = false
 
 --- The hour of the day as a string a HUD can show. `ClockTime` is a float, and
@@ -556,16 +563,9 @@ RunService.Heartbeat:Connect(function(dt: number)
     -- world changes lighting model between one tick and the next.
     lantern.Brightness = 5.5 * (1 - daylight)
 
-    -- Camera first, because movement is expressed in the camera's frame: a
-    -- character that walked in last frame's direction turns a fraction of a
-    -- second after the camera does, which reads as drag on the controls.
-    rig:Turn(TurnAction:GetState() :: Vector2, dt)
-    -- Only while the pointer is locked. Unlocked, the motion belongs to whatever
-    -- the player is doing with the cursor, and a camera that kept turning would
-    -- be reading somebody else's input.
-    if InputService.PointerLocked then
-        rig:Look(LookAction:GetState() :: Vector2)
-    end
+    -- Movement is expressed in the camera's frame, which the rig turned this
+    -- frame already -- it reads the turn and the look itself, every frame
+    -- (ADR 0136) -- so pressing forward goes the way the picture faces.
     local forward, right = rig:Basis()
 
     character.WalkSpeed = if SprintAction:GetState() :: boolean then 13 else 7
@@ -618,8 +618,9 @@ RunService.Heartbeat:Connect(function(dt: number)
         autopilot(RunService.SimTime)
     end
 
-    -- On the SIM clock, with the world. See `renderIsDriving` above for the
-    -- measurement that put it here.
+    -- Where no frame is drawn -- the soak, a gate -- the rig moves once a
+    -- tick, here; where one is, its render step already did, and this does
+    -- nothing.
     rig:Update(dt)
 
     -- One tick of virtual press, then cleared, the same way `04-obby` does it:
@@ -627,8 +628,8 @@ RunService.Heartbeat:Connect(function(dt: number)
     InputService:SetVirtualState(Enum.KeyCode.Virtual1, 0)
 end)
 
--- Connected for one purpose: to notice that something is drawing. The camera is
--- advanced on `Heartbeat` instead, which is what stops the world shaking.
+-- Connected for one purpose: to notice that something is drawing, which is
+-- when the autopilot stands down. The camera is the rig's own render step.
 RunService.PreRender:Connect(function()
     renderIsDriving = true
 end)

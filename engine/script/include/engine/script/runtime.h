@@ -117,6 +117,15 @@ public:
     // those calls are documented no-ops there rather than errors.
     void setGizmoSink(const GizmoSink& sink);
 
+    // **The render steps** (ADR 0136): every function `BindToRenderStep` bound,
+    // in priority order, with the frame's `dt`. The host calls it once a drawn
+    // frame, inside the render phase, after the render-rate input dispatch and
+    // before `PreRender` fires; never without a window.
+    void runRenderSteps(f64 dt);
+    // Where `GetRenderCFrame` reads the frame's poses: set for a render phase,
+    // cleared (a default sink) after it.
+    void setDrawnPoseSink(const DrawnPoseSink& sink);
+
     // Points `HotReloadService`'s bag at storage the host owns -- storage that
     // outlives this runtime, which is the whole reason the bag is not a Luau
     // table. Until it is called the runtime's own bag is used, so `SaveState`

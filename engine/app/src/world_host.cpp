@@ -1022,6 +1022,18 @@ void WorldHost::tick()
     state.tick += 1;
     state.simTime = static_cast<f64>(state.tick) * state.fixedTimestep;
 
+    // **The camera the player last saw becomes the tick's** (ADR 0136): a
+    // camera a render phase presented since the last tick is its simulated
+    // `CFrame` from here, before anything in the tick reads it -- the only
+    // point a frame's write reaches the simulation. Without a window nothing
+    // is ever presented, so a replay or a gate never takes this branch.
+    m_world->cameras().forEach([](core::InstanceId, scene::CameraComponent& camera) {
+        if (!camera.presentedSinceTick)
+            return;
+        camera.cframe = camera.presented;
+        camera.presentedSinceTick = false;
+    });
+
     // Step 5a of architecture.md §3's frame: gameplay action signals, resolved
     // deterministically, BEFORE `PreAnimation`. Ahead of the first drain on
     // purpose -- a `Pressed` raised here is drained by the same drain the
@@ -1679,14 +1691,42 @@ bool WorldHost::instanceHeld(core::InstanceId id)
     return script::instanceHeld(m_runtime->state(), id);
 }
 
-void WorldHost::preRender(f64 renderDt)
+void WorldHost::preRender(f64 renderDt, const render::DrawPoses* poses)
 {
+    scene::EngineState& state = m_world->engineState();
+    state.renderPhase = true;
+    if (poses != nullptr) {
+        m_runtime->setDrawnPoseSink(script::DrawnPoseSink{
+            .user = const_cast<render::DrawPoses*>(poses),
+            .pose =
+                [](void* user, core::InstanceId id, script::DrawnKind kind, core::CFrameD& out) {
+                    const auto& frame = *static_cast<const render::DrawPoses*>(user);
+                    switch (kind) {
+                    case script::DrawnKind::Part:
+                        out = frame.part(id);
+                        return true;
+                    case script::DrawnKind::Attachment:
+                        out = frame.attachment(id);
+                        return true;
+                    case script::DrawnKind::Camera:
+                        out = frame.camera(id);
+                        return true;
+                    }
+                    return false;
+                },
+        });
+    }
     // Step 3 of the frame: the render-rate half of the dispatch split
-    // (ADR 0039), before `PreRender` fires, so a camera handler reads the look
-    // delta the frame it happened.
+    // (ADR 0039), before anything else of the phase, so a camera reads the
+    // look delta the frame it happened.
     m_input.dispatchRenderRate(*m_world);
+    // Then the render steps, in priority order, before `PreRender`'s handlers
+    // (ADR 0136).
+    m_runtime->runRenderSteps(renderDt);
     m_runtime->firePhase(core::Phase::PreRender, renderDt);
     m_runtime->drain(core::Phase::PreRender);
+    m_runtime->setDrawnPoseSink(script::DrawnPoseSink{});
+    state.renderPhase = false;
 }
 
 void WorldHost::setGizmoTarget(render::DebugDraw* draw)

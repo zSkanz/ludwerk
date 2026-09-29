@@ -177,6 +177,9 @@ end
 declare extern type EnumWaterShape extends EnumItem with
 end
 
+declare extern type EnumRenderPriority extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -1023,6 +1026,12 @@ declare extern type BasePart extends PVInstance with
     --- second. Applied at the next simulation tick and ignored by an anchored part, which has no
     --- momentum to change.
     function ApplyImpulse(self, impulse: vector): ()
+    --- **Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows
+    --- it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender`
+    --- handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no
+    --- window, a server -- it is `CFrame`, because what a tick reads must not depend on when a frame
+    --- happened. A camera that follows this reads it.
+    function GetRenderCFrame(self): CFrame
     --- The same push, at a point in the world: off the centre it also turns the part, as a shove at a
     --- boat's bow swings it round (ADR 0118). Applied at the next tick.
     function ApplyImpulseAtPosition(self, impulse: vector, position: vector): ()
@@ -1082,6 +1091,12 @@ declare extern type Attachment extends Instance with
     --- could be assigned would be a second source of truth about the same place: the part moves, and
     --- whatever was written here would be either overwritten or wrong.
     read WorldCFrame: CFrame
+    --- **Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows
+    --- it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender`
+    --- handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no
+    --- window, a server -- it is `WorldCFrame`, because what a tick reads must not depend on when a
+    --- frame happened. A camera that follows this reads it.
+    function GetRenderCFrame(self): CFrame
 end
 
 declare extern type Bone extends Attachment with
@@ -1386,7 +1401,11 @@ end
 
 declare extern type Camera extends PVInstance with
     --- Where the camera is and which way it looks. The look direction is the CFrame's LookVector, which
-    --- is -Z.
+    --- is -Z. **Written in a render phase** -- a `RunService:BindToRenderStep` function, a `PreRender`
+    --- handler, an action at `Rate = Render` -- it is *presented*: drawn exactly as written this frame,
+    --- and it becomes the camera the simulation reads when the next tick starts. Written in a
+    --- simulation phase it is that camera at once, drawn between ticks. Read in a render phase it
+    --- answers what was presented; anywhere else, the simulation's (ADR 0136).
     CFrame: CFrame
     --- The size of what the world is drawn into, in pixels: the window in a game, the Viewport panel in
     --- the editor. What a script divides by to turn a screen position into a fraction, or reads to know
@@ -1420,6 +1439,12 @@ declare extern type Camera extends PVInstance with
     ClipPlane: CFrame
     --- Whether `ClipPlane` is used.
     ClipPlaneEnabled: boolean
+    --- **Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows
+    --- it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender`
+    --- handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no
+    --- window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend
+    --- on when a frame happened. A camera that follows this reads it.
+    function GetRenderCFrame(self): CFrame
 end
 
 declare extern type PointLight extends Instance with
@@ -3057,10 +3082,12 @@ declare extern type RunService extends Instance with
     --- `os.clock` is for profiling and never for gameplay. It stops advancing while the world is
     --- paused.
     read SimTime: number
-    --- Fires at render rate, before the frame is drawn, carrying the variable time in seconds since the
-    --- previous render. It never fires in a headless run: headless is the same scheduler minus the
-    --- render steps, and this is one of them. It stays connectable so that shared code need not branch
-    --- on it -- but a handler connected to it in a headless process is a handler that will not run.
+    --- Fires at render rate, before the frame is drawn and after the render steps (`BindToRenderStep`),
+    --- carrying the variable time in seconds since the previous render. Its handlers run in a render
+    --- phase: `GetRenderCFrame` answers where things are drawn, and a camera written is presented (ADR
+    --- 0136). It never fires in a headless run: headless is the same scheduler minus the render steps,
+    --- and this is one of them. It stays connectable so that shared code need not branch on it -- but a
+    --- handler connected to it in a headless process is a handler that will not run.
     read PreRender: Signal<number>
     --- The first phase of a sim tick, before animation is evaluated, carrying the fixed tick duration
     --- in seconds.
@@ -3082,6 +3109,17 @@ declare extern type RunService extends Instance with
     --- Restarts a paused world, and its clock with it. Idempotent: resuming a running world is a no-op,
     --- not an error.
     function Resume(self): ()
+    --- Runs `fn(dt)` **every drawn frame**, in `priority` order -- lowest first, and in the order bound
+    --- between equals -- after the input a frame reads at `Rate = Render` and before `PreRender` fires,
+    --- with the time since the last frame (ADR 0136). What a camera that follows something is for: in
+    --- it, `GetRenderCFrame` answers where things are drawn, and a camera written is drawn exactly as
+    --- written. `Enum.RenderPriority` holds the landmarks, as numbers:
+    --- `Enum.RenderPriority.Camera.Value + 1` runs just after the camera. Binding a name already bound
+    --- replaces it. Nothing runs without a window. A binding belongs to the script that made it and
+    --- goes with its scene (ADR 0124).
+    function BindToRenderStep(self, name: string, priority: number, fn: (dt: number) -> ()): ()
+    --- Stops the render step bound under `name`. A name nothing is bound under is not an error.
+    function UnbindFromRenderStep(self, name: string): ()
     --- Whether the world is currently paused. Since `Pause` and `Resume` are both idempotent, this is
     --- how code tells the two states apart rather than by watching a call fail.
     function IsPaused(self): boolean
@@ -3971,6 +4009,14 @@ declare Enum: {
         Box: EnumWaterShape,
         Spline: EnumWaterShape,
         GetEnumItems: (self: any) -> { EnumWaterShape },
+    },
+    RenderPriority: {
+        First: EnumRenderPriority,
+        Input: EnumRenderPriority,
+        Camera: EnumRenderPriority,
+        Character: EnumRenderPriority,
+        Last: EnumRenderPriority,
+        GetEnumItems: (self: any) -> { EnumRenderPriority },
     },
 }
 
