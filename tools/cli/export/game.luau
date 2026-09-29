@@ -8,14 +8,19 @@
 	to run them would still hand every player the server's code. So a
 	`client` package has no `src/server/`, no `src/scenes/*/server/`, no
 	scene's `ServerScriptService` or `ServerStorage`, and no `Server` folder in
-	`global.json`; a `server` package has none of the client's. The sentinel
+	`global.json`; a `server` package has none of the client's. **And per
+	script** (ADR 0138 §5): a `Script` anywhere else whose `RunContext` is the
+	other side's keeps its instance and loses its `Source`, in every scene,
+	stamp and `global.json` -- so a stamp can carry a door's server half and
+	its client half, and each package gets its own. The sentinel
 	test (`tests/packaging/sides.test.luau`) searches each side's output for the
 	other's strings, pack included, because a pack stores what it carries
 	uncompressed and a miss there is a leak.
 
 	The pack is rebuilt per side from a staged copy of `content/` -- hard links
 	where the file system allows, so a game with a gigabyte of art does not copy
-	it twice -- in which only the scenes and `global.json` are rewritten.
+	it twice -- in which only the scenes, the stamps and `global.json` are
+	rewritten.
 ]]
 
 local fs = require("@std/fs")
@@ -124,22 +129,64 @@ local function removeTree(target: string)
     end
 end
 
---- A scene's JSON without the other side's services. Nil when nothing in it
---- belonged to the other side, so the staged file stays a link.
-local function stripScene(text: string, side: Side): string?
-    local document, layout = jsondoc.parse(text)
-    local storage = jsondoc.get(document, "storage")
-    if storage == nil or storage.kind ~= "object" then
-        return nil
+--- **The other side's code, taken out of every `Script` in a node's tree that
+--- carries the other side's `RunContext`** (ADR 0138 §5). The instance stays,
+--- with no `Source`: the tree is the same on every machine, for replication and
+--- the hash, and a script with no code is never live. Says whether anything
+--- changed.
+local function stripScripts(node: jsondoc.Node?, side: Side): boolean
+    if node == nil or node.kind ~= "object" or side == "all" then
+        return false
     end
+    local foreign = if side == "client" then "Server" else "Client"
     local changed = false
-    for _, service in foreignServices(side) do
-        if jsondoc.get(storage, service) ~= nil then
-            jsondoc.remove(storage, service)
+    if jsondoc.stringOf(jsondoc.get(node, "class")) == "Script" then
+        local properties = jsondoc.get(node, "properties")
+        if
+            properties ~= nil
+            and jsondoc.stringOf(jsondoc.get(properties, "RunContext")) == foreign
+            and jsondoc.get(properties, "Source") ~= nil
+        then
+            jsondoc.remove(properties, "Source")
             changed = true
         end
     end
+    local children = jsondoc.get(node, "children")
+    if children ~= nil and children.kind == "array" then
+        for _, child in children.items do
+            changed = stripScripts(child, side) or changed
+        end
+    end
+    return changed
+end
+
+--- A scene's JSON without the other side's services, and without the other
+--- side's code in the scripts left. Nil when nothing in it belonged to the
+--- other side, so the staged file stays a link.
+local function stripScene(text: string, side: Side): string?
+    local document, layout = jsondoc.parse(text)
+    local changed = false
+    local storage = jsondoc.get(document, "storage")
+    if storage ~= nil and storage.kind == "object" then
+        for _, service in foreignServices(side) do
+            if jsondoc.get(storage, service) ~= nil then
+                jsondoc.remove(storage, service)
+                changed = true
+            end
+        end
+        for _, key in storage.keys do
+            changed = stripScripts(storage.values[key], side) or changed
+        end
+    end
+    changed = stripScripts(jsondoc.get(document, "root"), side) or changed
     return if changed then jsondoc.print(document, layout) else nil
+end
+
+--- A stamp's JSON without the other side's code (ADR 0138 §5). Nil when it
+--- carried none.
+local function stripStamp(text: string, side: Side): string?
+    local document, layout = jsondoc.parse(text)
+    return if stripScripts(jsondoc.get(document, "root"), side) then jsondoc.print(document, layout) else nil
 end
 
 --- `global.json` without the other side's folder of `GlobalScriptService`.
@@ -157,11 +204,12 @@ local function stripGlobal(text: string, side: Side): string?
             table.insert(kept, child)
         end
     end
-    if #kept == #children.items then
-        return nil
-    end
+    local changed = #kept ~= #children.items
     children.items = kept
-    return jsondoc.print(document, layout)
+    -- The `Shared` folder decides nothing: a script in it runs where its own
+    -- `RunContext` says (ADR 0138 §2).
+    changed = stripScripts(root, side) or changed
+    return if changed then jsondoc.print(document, layout) else nil
 end
 
 --- Every `*.scene.json` under `root`, and `global.json` at it, rewritten in
@@ -176,6 +224,8 @@ local function stripStaged(root: string, side: Side, relative: string?)
             local stripped: string? = nil
             if string.sub(entry.name, -11) == ".scene.json" then
                 stripped = stripScene(fs.readFileToString(file), side)
+            elseif string.sub(entry.name, -11) == ".stamp.json" then
+                stripped = stripStamp(fs.readFileToString(file), side)
             elseif relative == nil and entry.name == "global.json" then
                 stripped = stripGlobal(fs.readFileToString(file), side)
             end
@@ -319,6 +369,7 @@ return {
     foreignScripts = foreignScripts,
     stripScene = stripScene,
     stripGlobal = stripGlobal,
+    stripStamp = stripStamp,
     stageContent = stageContent,
     withServerRole = withServerRole,
     compose = compose,

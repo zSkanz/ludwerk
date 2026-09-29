@@ -77,6 +77,7 @@
 #include "engine/scene/skeleton_host.h"
 #include "engine/scene/value.h"
 #include "engine/scene/world.h"
+#include "engine/script/modules.h"
 #include "engine/script/save_store.h"
 #include "icon_ids.gen.h"
 
@@ -630,7 +631,9 @@ bool drawIcon(const IconAtlas* icons, std::string_view id, float size,
 // **Its colour is its own.** A badge means the same thing on every icon, so it
 // takes its own role rather than the subject's -- tinting it `spatial` on a
 // `Part` and `ui` on a `Frame` would make one mark's colour mean two things.
-void drawIconBadge(const IconAtlas* icons, ImVec2 origin, float size)
+// `face` is the mark: the stamp's by default, or a script's side (ADR 0138 §4).
+// Every mark shares the stamp's halo, which is its outer silhouette.
+void drawIconBadge(const IconAtlas* icons, ImVec2 origin, float size, std::string_view faceId = icons::OverlayStamp)
 {
     if (icons == nullptr || !icons->ready() || size <= 0.0f)
         return;
@@ -646,7 +649,7 @@ void drawIconBadge(const IconAtlas* icons, ImVec2 origin, float size)
         return;
 
     const IconSprite base = icons->find(icons::OverlayStampBase, static_cast<core::u32>(halo + 0.5f));
-    const IconSprite face = icons->find(icons::OverlayStamp, static_cast<core::u32>(mark + 0.5f));
+    const IconSprite face = icons->find(faceId, static_cast<core::u32>(mark + 0.5f));
     if (!base.valid || !face.valid)
         return;
 
@@ -676,7 +679,7 @@ void drawIconBadge(const IconAtlas* icons, ImVec2 origin, float size)
     // painted on -- including a selected row, which is a different colour from
     // the window behind it.
     const ImVec4 behind = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-    const ImVec4 front = iconTint(icons, icons::OverlayStamp);
+    const ImVec4 front = iconTint(icons, faceId);
 
     const auto texture = static_cast<ImTextureID>(reinterpret_cast<intptr_t>(native));
     draw->AddImage(texture, haloMin, haloMax, ImVec2(base.u0, base.v0), ImVec2(base.u1, base.v1),
@@ -2072,6 +2075,23 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                     }
                     ImGui::EndMenu();
                 }
+                // **A script for each side** (ADR 0138 §4): what the door's
+                // server half, its client half and a script for both are
+                // made with. Inside a script service, the service decides.
+                const auto sideEntry = [&](std::string_view mark, core::TextKey label, core::i32 runContext) {
+                    const std::string text = core::engineCatalog().format(label);
+                    if (iconMenuItem(icons, mark, text.c_str())) {
+                        commands->createClass = world.classes().findId(world.atoms().lookup("Script"));
+                        commands->createParent = row.id;
+                        commands->createRunContext = runContext;
+                    }
+                };
+                sideEntry(icons::OverlaySideServer, ENG_TR("engine.overlay.explorer.insert_server_script"),
+                          script::RunContextServer);
+                sideEntry(icons::OverlaySideClient, ENG_TR("engine.overlay.explorer.insert_client_script"),
+                          script::RunContextClient);
+                sideEntry(icons::OverlaySideShared, ENG_TR("engine.overlay.explorer.insert_shared_script"),
+                          script::RunContextShared);
                 // **Bringing a file in from the machine, and getting the
                 // instance for it.** The file still lands in `content/` --
                 // that is where a project's files live and there is nowhere
@@ -2255,11 +2275,33 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                     // root is where the mark lives (ADR 0049) and where "is
                     // this linked?" is a question worth answering.
                     const core::NameAtom stamp = world.stampOf(row.id);
-                    if (stamp.valid())
+                    // **Where a script outside the services runs** (ADR 0138
+                    // §4): inside one, the service already says it.
+                    const std::optional<script::ScriptSide> side =
+                        world.classOf(row.id) == world.classes().findId(world.atoms().lookup("Script")) &&
+                                !script::serviceSideOf(world, row.id).has_value()
+                            ? std::optional<script::ScriptSide>(script::scriptSideOf(world, row.id))
+                            : std::nullopt;
+                    if (side.has_value()) {
+                        drawIconBadge(icons, iconOrigin, iconSize,
+                                      *side == script::ScriptSide::Server   ? icons::OverlaySideServer
+                                      : *side == script::ScriptSide::Client ? icons::OverlaySideClient
+                                                                            : icons::OverlaySideShared);
+                    }
+                    else if (stamp.valid()) {
                         drawIconBadge(icons, iconOrigin, iconSize);
+                    }
 
                     if (ImGui::IsItemHovered()) {
-                        if (stamp.valid()) {
+                        if (side.has_value()) {
+                            const core::I18nArg args[] = {{"class", className}};
+                            const core::TextKey key =
+                                *side == script::ScriptSide::Server   ? ENG_TR("engine.overlay.explorer.runs_on_server")
+                                : *side == script::ScriptSide::Client ? ENG_TR("engine.overlay.explorer.runs_on_client")
+                                                                      : ENG_TR("engine.overlay.explorer.runs_on_both");
+                            ImGui::SetTooltip("%s", core::engineCatalog().format(key, args).c_str());
+                        }
+                        else if (stamp.valid()) {
                             const std::string_view file = world.atoms().text(stamp);
                             ImGui::SetTooltip("%.*s -- stamped from content/%.*s", static_cast<int>(className.size()),
                                               className.data(), static_cast<int>(file.size()), file.data());
@@ -4162,6 +4204,25 @@ template <class Keypoint>
     return false;
 }
 
+// **The service that decides a script's side, named**, or empty when none does
+// (ADR 0138 §2): `ServerScriptService`, `ClientScriptService`, or
+// `GlobalScriptService.Server` / `.Client`. What `RunContext` is greyed for.
+std::string sideDecidedBy(const scene::World& world, core::InstanceId id)
+{
+    const scene::ClassId global = world.classes().findId(world.atoms().lookup("GlobalScriptService"));
+    for (core::InstanceId walk = world.parentOf(id); walk.valid(); walk = world.parentOf(walk)) {
+        const std::string_view name = world.atoms().text(world.classes().find(world.classOf(walk))->name);
+        if (name == "ServerScriptService" || name == "ClientScriptService")
+            return std::string(name);
+        if (world.fixed(walk) && world.classOf(world.parentOf(walk)) == global) {
+            const std::string_view folder = world.atoms().text(world.name(walk));
+            if (folder == "Server" || folder == "Client")
+                return "GlobalScriptService." + std::string(folder);
+        }
+    }
+    return {};
+}
+
 // `tree` is the content browser's, and null wherever there is none -- the F3
 // overlay over a running game has an inspector and no project. The `Content`
 // editor then keeps its text field and its drop target and offers an empty list,
@@ -4259,7 +4320,17 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
     // Over a selection, `collectCommonProperties` has already answered with the
     // most restrictive descriptor of the set, so read-only for any member is
     // read-only here.
-    const bool locked = !editable(descriptor);
+    //
+    // **`RunContext` inside a script service is the service's** (ADR 0138 §2):
+    // greyed, and hovering it says which service decides.
+    std::string decidedBy;
+    if (descriptor.name == world.atoms().lookup("RunContext")) {
+        for (const core::InstanceId target : targets) {
+            if (decidedBy = sideDecidedBy(world, target); !decidedBy.empty())
+                break;
+        }
+    }
+    const bool locked = !editable(descriptor) || !decidedBy.empty();
     if (locked)
         ImGui::BeginDisabled();
 
@@ -4719,6 +4790,11 @@ void drawEditor(scene::World& world, core::InstanceId root, Inspector& inspector
 
     if (locked)
         ImGui::EndDisabled();
+    if (!decidedBy.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        const core::I18nArg args[] = {{"service", std::string_view{decidedBy}}};
+        ImGui::SetTooltip("%s",
+                          core::engineCatalog().format(ENG_TR("engine.overlay.properties.side_set_by"), args).c_str());
+    }
 
     ImGui::PopID();
 }

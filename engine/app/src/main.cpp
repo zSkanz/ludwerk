@@ -20,6 +20,7 @@
 #include "engine/app/project_config.h"
 #include "engine/app/replay.h"
 #include "engine/app/script_package.h"
+#include "engine/app/script_sides.h"
 #include "engine/app/two_worlds.h"
 #include "engine/core/build_info.h"
 #include "engine/core/error.h"
@@ -669,6 +670,14 @@ int main(int argc, char** argv)
     // with the options it runs them with. No window, no world.
     // The scripts a scene, a stamp or `global.json` carries (S0.3), in a staged
     // content directory `ludwerk build` is about to pack.
+    // **`ludwerk check`'s side pass** (ADR 0138 §8): every script a project
+    // carries, linted for the side it runs on. Warnings, so the exit is clean.
+    if (args.size() == 2 && args[0] == "--check-sides") {
+        const engine::core::usize found = engine::app::checkProjectSides(std::filesystem::path(args[1]));
+        const std::array<I18nArg, 1> counted{I18nArg{"count", static_cast<engine::core::i64>(found)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.sides_checked"), counted);
+        return kExitOk;
+    }
     if (args.size() == 2 && args[0] == "--compile-content-scripts") {
         engine::app::ScriptPackageReport report;
         if (!engine::app::compileContentScripts(std::filesystem::path(args[1]), report)) {

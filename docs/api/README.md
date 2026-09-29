@@ -104,7 +104,7 @@ guided tour.
 | [`RemoteEvent`](remoteevent.md) | [`Instance`](instance.md) | A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. |
 | [`RemoteFunction`](remotefunction.md) | [`Instance`](instance.md) | A question a client asks the server and waits for the answer to (ADR 0079): "what is in my inventory?", "may I open this door?". |
 | [`ScreenGui`](screengui.md) | [`Instance`](instance.md) | The root of one screen-space UI tree, parented to `UIService` (§2.2). |
-| [`Script`](script.md) | [`BaseScript`](basescript.md) | Luau that RUNS. |
+| [`Script`](script.md) | [`BaseScript`](basescript.md) | Luau that RUNS, exactly while it is live: enabled, in the world, under no storage, and its side running on this machine (ADR 0137). |
 | [`ScrollFrame`](scrollframe.md) | [`UIObject`](uiobject.md) | A `Frame` whose contents can be larger than it is (§2.2). |
 | [`Sky`](sky.md) | [`Instance`](instance.md) | What the sky shows: six images around the world, the sun's and the moon's look, stars and clouds. |
 | [`Sound`](sound.md) | [`Instance`](instance.md) | One sound, playing or not (§2.2). |

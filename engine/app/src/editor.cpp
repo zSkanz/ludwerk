@@ -18,6 +18,7 @@
 #include <engine/scene/scene_file.h>
 #include <engine/scene/voxel_fluid.h>
 #include <engine/scene/world.h>
+#include <engine/script/modules.h>
 #include <engine/ui/ui.h>
 #include <filesystem>
 #include <iterator>
@@ -32,6 +33,32 @@
 namespace engine::app {
 using core::Vec3;
 namespace {
+// **A script moved into a service takes the service's side** (ADR 0138 §2):
+// every `Script` in the subtree at `root` that now sits inside a script
+// service has its `RunContext` written to that service's side. Taken back out,
+// it keeps it -- server code stays server code, and never becomes `Shared` by
+// accident, which would ship it to every player. Inside the caller's undo
+// step, which every verb records before it moves anything.
+void adoptServiceSide(scene::World& world, core::InstanceId root)
+{
+    const scene::ClassId scriptClass = world.classes().findId(world.atoms().lookup("Script"));
+    const core::NameAtom runContext = world.atoms().intern("RunContext");
+    std::vector<core::InstanceId> subtree{root};
+    world.collectDescendants(root, subtree);
+    for (const core::InstanceId id : subtree) {
+        if (world.classOf(id) != scriptClass)
+            continue;
+        const std::optional<script::ScriptSide> side = script::serviceSideOf(world, id);
+        if (!side.has_value())
+            continue;
+        const core::i32 value =
+            *side == script::ScriptSide::Server ? script::RunContextServer : script::RunContextClient;
+        (void)world.setProperty(
+            id, runContext,
+            scene::Value{scene::EnumValue{world.enums().findId(world.atoms().lookup("RunContext")), value}});
+    }
+}
+
 // The seed a stage's world is built with. A constant, because nothing in a
 // stage is simulated and nothing in it reads the generator -- and a seed drawn
 // from anywhere else would make a stamp's bytes depend on when it was opened.
@@ -1089,7 +1116,7 @@ bool Editor::duplicateInstance(scene::World& world, core::InstanceId id, core::I
 }
 
 bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::InstanceId parent, core::InstanceId root,
-                            Inspector& inspector)
+                            Inspector& inspector, std::optional<core::i32> runContext)
 {
     if (!world.alive(parent))
         return false;
@@ -1126,6 +1153,12 @@ bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::I
         m_status = EditorStatus{"that cannot be parented there", true};
         return false;
     }
+    if (runContext.has_value()) {
+        (void)world.setProperty(
+            made, world.atoms().intern("RunContext"),
+            scene::Value{scene::EnumValue{world.enums().findId(world.atoms().lookup("RunContext")), *runContext}});
+    }
+    adoptServiceSide(world, made);
 
     // **An interface element starts 50 by 50 pixels** (the owner's call), not
     // at the zero size a script's `Instance.new` gives it -- a Frame made in
@@ -1443,6 +1476,7 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
                     world.setStamp(at, world.atoms().intern(mark.stamp));
             }
         }
+        adoptServiceSide(world, placed);
         pasted.push_back(placed);
     }
 
@@ -2750,6 +2784,7 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
         m_status = EditorStatus{"that stamp could not be read", true};
         return false;
     }
+    adoptServiceSide(world, placed);
 
     // In front of the camera rather than at the origin, for the reason
     // `createInstance` places a new part there: something four kilometres from
@@ -2852,6 +2887,7 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
             m_status = EditorStatus{"that stamp could not be read", true};
             return false;
         }
+        adoptServiceSide(world, subject);
     }
 
     // **Not selected and not revealed.** Somebody dropping a material on a part
@@ -2911,6 +2947,8 @@ bool Editor::reparent(scene::World& world, std::span<const core::InstanceId> ids
     for (const core::InstanceId id : plan.movable) {
         if (world.setParent(id, newParent).has_value())
             ++refused;
+        else
+            adoptServiceSide(world, id);
     }
     if (at.has_value() && plan.movable.size() == 1 && world.parentOf(plan.movable.front()) == newParent)
         (void)world.moveChild(newParent, plan.movable.front(), *at);

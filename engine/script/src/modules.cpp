@@ -640,7 +640,7 @@ std::string scriptChunkName(lua_State* L, core::InstanceId instance)
     return treePathOf(w, instance);
 }
 
-ScriptSide scriptSideOf(const scene::World& w, core::InstanceId instance)
+std::optional<ScriptSide> serviceSideOf(const scene::World& w, core::InstanceId instance)
 {
     const scene::ClassId serverService = w.classes().findId(w.atoms().lookup("ServerScriptService"));
     const scene::ClassId clientService = w.classes().findId(w.atoms().lookup("ClientScriptService"));
@@ -661,6 +661,22 @@ ScriptSide scriptSideOf(const scene::World& w, core::InstanceId instance)
             if (w.name(walk) == clientFolder)
                 return ScriptSide::Client;
         }
+    }
+    return std::nullopt;
+}
+
+ScriptSide scriptSideOf(const scene::World& w, core::InstanceId instance)
+{
+    if (const std::optional<ScriptSide> side = serviceSideOf(w, instance); side.has_value())
+        return *side;
+    // **Anywhere else, the script's own `RunContext`** (ADR 0138 §2). A
+    // `ModuleScript` carries the field unread: it runs where it is required.
+    if (const scene::ScriptComponent* script = w.scripts().find(instance);
+        script != nullptr && w.classOf(instance) == w.classes().findId(w.atoms().lookup("Script"))) {
+        if (script->runContext == RunContextServer)
+            return ScriptSide::Server;
+        if (script->runContext == RunContextClient)
+            return ScriptSide::Client;
     }
     return ScriptSide::Anywhere;
 }

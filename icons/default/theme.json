@@ -192,6 +192,9 @@
     "content.Scene": "spatial",
     "content.Shader": "script",
     "content.Texture": "spatial",
+    "overlay.SideClient": "ui",
+    "overlay.SideServer": "system",
+    "overlay.SideShared": "script",
     "overlay.Stamp": "neutral",
     "overlay.StampBase": "neutral"
   },
@@ -372,6 +375,9 @@
     "content.Scene": "content/Scene.png",
     "content.Shader": "content/Shader.png",
     "content.Texture": "class/ImageLabel.png",
+    "overlay.SideClient": "overlay/SideClient.png",
+    "overlay.SideServer": "overlay/SideServer.png",
+    "overlay.SideShared": "overlay/SideShared.png",
     "overlay.Stamp": "overlay/Stamp.png",
     "overlay.StampBase": "overlay/StampBase.png"
   }

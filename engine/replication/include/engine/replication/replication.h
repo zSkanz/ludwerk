@@ -32,6 +32,8 @@ class World;
 
 namespace engine::replication {
 
+class ScriptTemplates;
+
 // What the authority and the replica both are.
 //
 // **Two calls a tick and they are not symmetric.** `receive` runs before the
@@ -97,6 +99,10 @@ public:
     // the scene from its own package; the authority never calls it.
     using SceneChanger = std::function<void(scene::World&, const std::string&, std::vector<core::u8>)>;
     virtual void setSceneChanger(SceneChanger changer) = 0;
+
+    // **Where a replica keeps its own scripts** (ADR 0138 §6), asked at each
+    // spawn (`ReplicaSession::setScriptTemplates`). Ignored by an authority.
+    virtual void setScriptTemplates(std::function<ScriptTemplates*()> templates) = 0;
     [[nodiscard]] virtual std::vector<core::InstanceId> drainStreamedOut() = 0;
 
     // A replica's own character's drawn offset (`VisualCorrection`); nothing

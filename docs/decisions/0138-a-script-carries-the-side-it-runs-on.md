@@ -1,6 +1,6 @@
 # 0138 — A script carries the side it runs on, and a service decides it for the scripts inside
 
-- Status: accepted (to be built; see `docs/briefs/script-sides-kickoff.md`, stage 2)
+- Status: accepted, built 2026-09-29 (`docs/briefs/script-sides-kickoff.md`, S2, protocol 29; see the amendment)
 - Date: 2026-09-29
 - Decided by: the owner, on 2026-09-29: *"na classe do script em si deveria ter
   um run context ... client ou server ... se eu exportar só para o servidor, o
@@ -174,3 +174,73 @@ package**, and attaches them to the instances the authority sends:
 
 - Two VMs on a solo machine (the module-state pitfall of §8): a later decision.
 - Sending code to a replica: never. It would let a server run code on a client.
+
+## Amendment -- 2026-09-29, as built (S2, protocol 29)
+
+- **The property** is `ScriptComponent::runContext`, `Shared` (2) by default,
+  with S0's `ScriptReadOnly` mark -- written by the editor, the scene reader and
+  a clone, refused to a script with `script.err.property_editor_only`. The one
+  mark does for `Source` and for this what §2 asked a new one for.
+- **The side** is `script::scriptSideOf`: `serviceSideOf` -- the walk ADR 0105
+  already made -- and, when no service answers, the script's `RunContext`. The
+  one gate that decides whether a script runs here (`scriptLive`, ADR 0137) is
+  unchanged, so boot, a move, a clone and a join all follow it.
+- **A service writes its side** (§2) in every editor verb that puts a script
+  somewhere: reparent, create, paste and both ways of placing a stamp. Inside
+  the verb's own undo step, which records the world before it moves anything.
+  Properties greys the row inside a service, and hovering it names the service
+  (`engine.overlay.properties.side_set_by`).
+- **The marks** (§4) are `overlay.SideServer` (a rack's two slots),
+  `overlay.SideClient` (a screen on a stand) and `overlay.SideShared` (the disc
+  split in two), cut into the stamp mark's disc in `tools/repo/draw_icons.py`
+  and tinted `system`, `ui` and `script`. `drawIconBadge` takes the face to
+  draw; a script outside the services shows its side rather than a stamp mark.
+  **The three *Insert* entries are on the Explorer's row menu**, beside Insert
+  Object, not in the class picker or the command palette: the picker returns a
+  class, and a side is not one.
+- **The package** (§5): `tools/cli/export/game.luau`'s `stripScripts` removes
+  the `Source` of every `Script` whose `RunContext` is the other side's, in
+  every scene tree the package keeps (the world and each storage), every stamp
+  and the whole of `global.json`. A file without `Source` reads back empty.
+  **The partition cache follows** without its own step: a package partitions its
+  scenes from the staged, stripped content. The sentinel test decodes the
+  compiled scripts' base64 bytecode (S0.3) to find a side's code in it, and
+  covers a world script, a script in a part, a stamp's two halves, a script in
+  `GlobalScriptService.Shared`, a `ServerStorage` module and the trash.
+- **An instance's origin** (§6): the world's record carries where an instance
+  was authored and its place there (`World::Origin`), neither hashed nor saved.
+  A scene read numbers **what it made** -- not what the world held already --
+  per tree, in preorder: `scene:Workspace`, `scene:<storage>`, each storage
+  counted alone so a package that leaves one out numbers the rest alike.
+  `Instance.stamp` numbers what it placed as `stamp:<name>`, root 0, linked or
+  not. **A clone keeps it**, so a clone of an authored door is the door again to
+  a replica -- wider than §6 promised, which named a stamp's clone only; a clone
+  of a scene's model now brings its client code too.
+- **The wire** (protocol 29): `Spawn` carries `origin` and `originIndex`. No
+  scene name is in it: spawns flow only while authority and replica hold the
+  same scene, because the replica follows a scene change before the new
+  scene's spawns.
+- **The replica's own copy** is `replication::ScriptTemplates`, held by the
+  `WorldHost`. `clearForReplica` takes the topmost scripts under each subtree
+  it destroys -- `ModuleScript`s too, so a module in a replicated folder of
+  `ReplicatedStorage` no longer dies with it -- detached and keyed by their
+  parent's origin; one whose parent was made at run time goes. **The first
+  clear that destroys anything replaces the scene's templates**, and a clear
+  that finds nothing keeps them: a `--join` boot clears, and the socket
+  opening clears again. Each spawn clones its origin's templates under the new
+  instance, and S1 starts them once it is in the world. A stamp's templates are
+  read from the replica's package the first time one of its instances arrives,
+  placed and numbered as `Instance.stamp` does. Back in solo, they are dropped.
+- **The hash and the file** (§7) share one rule, `scene::quietAtDefault`: a
+  property left out of both at its default, today `RunContext` at `Shared`.
+  No determinism trace moved and no scene changed.
+- **Help** (§8) is one C++ lint, `app::lintScriptSide`, over words outside
+  comments -- strings count, since `GetService("UIService")` names a service in
+  one. The script editor underlines its findings when the text comes to rest;
+  `ludwerk check` runs it through `engine-host --check-sides` over scenes,
+  stamps, `global.json` and `src/`, so the two say the same thing. **All three
+  warnings need a project whose `[export] multiplayer` is not `none`**, where §8
+  asked it of the third only: a solo game has one side, and the first run over
+  the examples warned `examples/28-arcade`, a solo game, for setting its camera
+  from a scene's server script. `ludwerk check` still types only `.luau`
+  files; the scene and stamp pass is the side pass.

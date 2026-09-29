@@ -14,6 +14,7 @@
 
 #include "engine/asset/terrain_cell.h"
 #include "engine/core/finite.h"
+#include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/players.h"
@@ -2052,6 +2053,12 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         for (const u32 id : entering) {
             spawn.u32v(id);
             spawn.text(m_world->atoms().text(m_classNames.at(id)));
+            // Where it was authored (protocol 29, ADR 0138 §6): the replica's
+            // own scripts for that place go under it.
+            const InstanceId instance = instanceOfNet(*m_world, id);
+            const scene::World::Origin origin = instance.valid() ? m_world->originOf(instance) : scene::World::Origin{};
+            spawn.text(origin.asset.valid() ? m_world->atoms().text(origin.asset) : std::string_view{});
+            spawn.u32v(origin.index);
         }
         sendBytes(m_transport, peer.id, spawn.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         m_stats.spawned += static_cast<u32>(entering.size());
@@ -3351,6 +3358,8 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
     for (u32 at = 0; at < count && reader.ok(); ++at) {
         const u32 id = reader.u32v();
         const std::string_view className = reader.text();
+        const std::string_view originText = reader.text();
+        const u32 originIndex = reader.u32v();
         if (!reader.ok() || m_locals.contains(id))
             continue;
         if (m_locals.size() >= MaxReplicaInstances)
@@ -3366,8 +3375,22 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
         if (classId == scene::InvalidClass)
             continue;
         const InstanceId local = world.create(classId);
-        if (local.valid())
-            m_locals[id] = local;
+        if (!local.valid())
+            continue;
+        m_locals[id] = local;
+        // **This machine's own scripts for where it was authored** (ADR 0138
+        // §6). Looked up, never interned, for the reason the class is: an
+        // origin this replica never read is not one it holds scripts for --
+        // except a stamp, which it reads from its own package the first time.
+        if (!originText.empty()) {
+            const bool stamp = originText.starts_with("stamp:");
+            const core::NameAtom asset = stamp ? world.atoms().intern(originText) : world.atoms().lookup(originText);
+            if (asset.valid()) {
+                world.setOrigin(local, scene::World::Origin{asset, originIndex});
+                if (ScriptTemplates* templates = m_templates ? m_templates() : nullptr; templates != nullptr)
+                    (void)templates->attach(world, local, scene::World::Origin{asset, originIndex});
+            }
+        }
     }
 }
 

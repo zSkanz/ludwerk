@@ -2,6 +2,7 @@
 
 #if ENG_ENABLE_REPLICATION
 #include "engine/replication/extract.h"
+#include "engine/replication/script_templates.h"
 #endif
 
 #include <algorithm>
@@ -483,6 +484,10 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_sceneName = sceneFolderName(options.bootScene);
     m_readContent = options.readContent;
     m_stamps = options.bootStamps;
+#if ENG_ENABLE_REPLICATION
+    m_scriptTemplates = std::make_shared<replication::ScriptTemplates>();
+    m_scriptTemplates->setStampSource(m_stamps);
+#endif
     m_partitionScene = options.partitionScene;
     m_resetStreaming = options.resetStreaming;
     m_world->engineState().currentScene = options.bootScenePath;
@@ -605,7 +610,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // client and then died with the part. `NetworkSession::start` clears again
     // when the socket opens, and finds nothing left to clear.
     if (options.networkTopology == scene::NetworkTopology::Replica)
-        (void)replication::clearForReplica(*m_world, m_workspace);
+        (void)replication::clearForReplica(*m_world, m_workspace, m_scriptTemplates.get());
 #endif
     if (options.startScripts) {
         script::startScripts(m_runtime->state());
@@ -1605,6 +1610,12 @@ void WorldHost::warnScriptsInStorage()
 // the ADR allows: a game that went solo is a game that just loaded its scene.
 void WorldHost::returnToSolo()
 {
+#if ENG_ENABLE_REPLICATION
+    // What a join kept for the authority's instances: the scene read again
+    // brings this machine's own scripts back where they were.
+    if (m_scriptTemplates)
+        m_scriptTemplates->clear(*m_world);
+#endif
     const std::string current = m_world->engineState().currentScene;
     if (!current.empty()) {
         if (const std::optional<core::EngineError> error = loadScene(current); error.has_value())

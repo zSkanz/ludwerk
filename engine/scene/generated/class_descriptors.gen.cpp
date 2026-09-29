@@ -401,7 +401,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     const ClassId baseScriptClass = classes.registerClass(baseScriptDesc);
 
     // --- Script ---
-    static std::array<PropertyDesc, 1> scriptProperties;
+    static std::array<PropertyDesc, 2> scriptProperties;
     scriptProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -415,13 +415,26 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getScriptEnabled,
             .set = native::setScriptEnabled,
         },
+        PropertyDesc{
+            .name = atoms.intern("RunContext"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("RunContext"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .scriptReadOnly = true,
+            .inert = false,
+            .doc = "**Where this script runs, outside the script services** (ADR 0138): `Server` on the authority, `Client` where a player sits, `Shared` on both -- once per machine, so a solo game runs a `Shared` script once. Inside `ServerScriptService`, `ClientScriptService` or `GlobalScriptService`'s `Server` and `Client` folders **the service decides**, and moving a script into one writes the service's side here: server code taken back out stays server code.\012\012A package leaves out the code of every script whose side never runs there -- the instance stays, with no `Source` -- so a stamp can carry a server half and a client half and each machine gets its own.\012\012**The editor writes it, and a script only reads it**: the side was fixed when the package was made.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getScriptRunContext,
+            .set = native::setScriptRunContext,
+        },
     }};
     ClassDescriptor scriptDesc;
     scriptDesc.name = atoms.intern("Script");
     scriptDesc.super = baseScriptClass;
     scriptDesc.flags = ClassFlags::None;
     scriptDesc.defaultName = atoms.intern("Script");
-    scriptDesc.doc = "Luau that RUNS. Every enabled Script is started on its own coroutine when the world does.\012\012**Where it is decides where it runs** (ADR 0105). Under `ServerScriptService` or `GlobalScriptService.Server` it runs only while this machine is the authority; under `ClientScriptService` or `GlobalScriptService.Client`, only where a player sits -- never on a dedicated server. Anywhere else it runs on every machine.\012\012**In the editor, \"when the world does\" means when you press play** (ADR 0058). Opening a project mounts every script -- they are in the tree, `Source` is editable, a tab can open one -- and starts none of them, so a project shows what its scene holds and nothing a file scope built. Stop tears the VM down, which is what makes a second play the same as the first. Every other way of running this engine starts scripts at boot.";
+    scriptDesc.doc = "Luau that RUNS, exactly while it is live: enabled, in the world, under no storage, and its side running on this machine (ADR 0137).\012\012**Where it runs** (ADR 0138): under `ServerScriptService` or `GlobalScriptService.Server` only where this machine is the authority; under `ClientScriptService` or `GlobalScriptService.Client` only where a player sits -- never on a dedicated server. Anywhere else, `RunContext` says.\012\012**In the editor, \"when the world does\" means when you press play** (ADR 0058). Opening a project mounts every script -- they are in the tree, `Source` is editable, a tab can open one -- and starts none of them, so a project shows what its scene holds and nothing a file scope built. Stop tears the VM down, which is what makes a second play the same as the first. Every other way of running this engine starts scripts at boot.";
     scriptDesc.properties = scriptProperties;
     classes.registerClass(scriptDesc);
 
@@ -4836,7 +4849,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(logLevelDesc);
 
     // --- RunContext ---
-    static std::array<EnumItemDesc, 2> runContextItems;
+    static std::array<EnumItemDesc, 3> runContextItems;
     runContextItems = {{
         EnumItemDesc{
             .name = atoms.intern("Client"),
@@ -4846,6 +4859,11 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Server"),
             .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Shared"),
+            .value = 2,
             .docKey = {},
         },
     }};

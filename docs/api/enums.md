@@ -529,12 +529,13 @@ The order `CFrame.fromEuler` applies its three angles, and `CFrame:ToEuler` reco
 
 ## Enum.RunContext
 
-Where a `Script` would run once the client/server split exists. Declared with both items in v1 and read by nothing: a `Script` runs identically whatever its `RunContext` says. The items exist so that code written today cannot come to mean something else by them later (§2.1).
+**Where a `Script` runs** (ADR 0138): `Script.RunContext`. Inside a script service the service decides, and anywhere else the property does. A solo or hosting machine is the server and a player at once, and runs each script once whatever its side.
 
 | Item | Value | Description |
 |---|---|---|
-| `Client` | 0 | The machine a player sits at. |
-| `Server` | 1 | The authoritative simulation host. |
+| `Client` | 0 | Where a player sits: a joined client, solo and a host -- never a dedicated server. A dedicated server's package carries no `Client` script's code. |
+| `Server` | 1 | The authority: a dedicated server, solo and a host -- never a joined client. A client's package carries no `Server` script's code. |
+| `Shared` | 2 | Every machine, once each: the server and every client. The default outside the script services. |
 
 ## Enum.ScaleType
 

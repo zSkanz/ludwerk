@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <doctest/doctest.h>
@@ -10,6 +11,8 @@
 #include <string>
 #include <variant>
 
+#include "../../scene/generated/class_descriptors.gen.h"
+#include "engine/app/editor.h"
 #include "engine/app/inspector.h"
 #include "engine/app/script_complete.h"
 #include "engine/app/script_package.h"
@@ -2061,6 +2064,107 @@ TEST_CASE("server code runs only on the authority and client code never on a ded
     CHECK_FALSE(server);
     CHECK(client);
     CHECK(anywhere);
+}
+
+TEST_CASE("a script in the world runs where its RunContext says, once per machine (ADR 0138 §3)")
+{
+    // The owner's door: a stamp's server half and client half, both in the
+    // world. Before ADR 0138 a script outside the services ran on every
+    // machine whatever it was, so the dedicated server loaded the sounds' code
+    // and every player the rules'.
+    const auto run = [](scene::NetworkTopology topology) {
+        Captured log;
+        Project project;
+        project.write(
+            "content/scenes/main.scene.json",
+            R"json({"format":"scene","version":2,"root":{"children":[)json"
+            R"json({"class":"Script","name":"Rules","properties":{"Source":"print('rc:server')","RunContext":"Server"}},)json"
+            R"json({"class":"Script","name":"Sound","properties":{"Source":"print('rc:client')","RunContext":"Client"}},)json"
+            R"json({"class":"Script","name":"Both","properties":{"Source":"print('rc:shared')"}}]}})json");
+        app::WorldHost host;
+        app::WorldHostOptions options = bootOptions(project.root);
+        options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+        options.networkTopology = topology;
+        REQUIRE_FALSE(host.boot(options).has_value());
+        for (int tick = 0; tick < 3; ++tick)
+            host.tick();
+        const auto count = [&](std::string_view needle) {
+            return std::count_if(log.lines.begin(), log.lines.end(),
+                                 [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+        };
+        return std::array<std::ptrdiff_t, 3>{count("rc:server"), count("rc:client"), count("rc:shared")};
+    };
+
+    // Solo and a host are the server and a player at once: every side, once.
+    CHECK(run(scene::NetworkTopology::Solo) == std::array<std::ptrdiff_t, 3>{1, 1, 1});
+    CHECK(run(scene::NetworkTopology::Host) == std::array<std::ptrdiff_t, 3>{1, 1, 1});
+    CHECK(run(scene::NetworkTopology::Dedicated) == std::array<std::ptrdiff_t, 3>{1, 0, 1});
+    CHECK(run(scene::NetworkTopology::Replica) == std::array<std::ptrdiff_t, 3>{0, 1, 1});
+}
+
+TEST_CASE("a script's RunContext is written only when it is not Shared, and hashed likewise (ADR 0138 §7)")
+{
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId script = w.create(w.classes().findId(w.atoms().lookup("Script")));
+    REQUIRE(w.setParent(script, host.workspace()) == std::nullopt);
+    const core::u64 before = w.worldHash();
+    CHECK(scene::writeScene(w).find("RunContext") == std::string::npos);
+
+    REQUIRE(w.setProperty(script, w.atoms().intern("RunContext"),
+                          scene::Value{scene::EnumValue{scene::generated::RunContextEnumId, 1}}) ==
+            scene::World::SetResult::Changed);
+    CHECK(w.worldHash() != before);
+    const std::string written = scene::writeScene(w);
+    const std::size_t at = written.find("\"RunContext\"");
+    REQUIRE(at != std::string::npos);
+    CHECK(written.find("\"Server\"", at) == written.find_first_of('"', written.find(':', at)));
+}
+
+TEST_CASE("a script moved into a script service takes its side, keeps it when taken out, and undo puts it back")
+{
+    // ADR 0138 §2: server code taken out of `ServerScriptService` stays server
+    // code, and never becomes `Shared` by accident, which would ship it to
+    // every player.
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId root = host.runtime().dataModel();
+    app::Editor editor;
+    app::Inspector inspector;
+    const core::NameAtom runContext = w.atoms().intern("RunContext");
+    const auto sideOf = [&](core::InstanceId id) {
+        return std::get<scene::EnumValue>(w.getProperty(id, runContext).value()).value;
+    };
+
+    REQUIRE(
+        editor.createInstance(w, w.classes().findId(w.atoms().lookup("Script")), host.workspace(), root, inspector));
+    const core::InstanceId script = inspector.selection();
+    REQUIRE(w.alive(script));
+    CHECK(sideOf(script) == 2);
+
+    const std::array<core::InstanceId, 1> one{script};
+    REQUIRE(editor.reparent(w, one, serviceOf(host, "ServerScriptService"), root, inspector));
+    CHECK(sideOf(script) == 1);
+    REQUIRE(editor.reparent(w, one, host.workspace(), root, inspector));
+    CHECK(w.parentOf(script) == host.workspace());
+    CHECK(sideOf(script) == 1);
+
+    // One step each: undoing the move out, then the move in, gives back Shared.
+    REQUIRE(editor.undo(w, inspector));
+    REQUIRE(editor.undo(w, inspector));
+    CHECK(sideOf(script) == 2);
+
+    // The Insert menu's entries ask for a side; a service overrides it.
+    REQUIRE(
+        editor.createInstance(w, w.classes().findId(w.atoms().lookup("Script")), host.workspace(), root, inspector, 0));
+    CHECK(sideOf(inspector.selection()) == 0);
+    REQUIRE(editor.createInstance(w, w.classes().findId(w.atoms().lookup("Script")),
+                                  serviceOf(host, "ServerScriptService"), root, inspector, 0));
+    CHECK(sideOf(inspector.selection()) == 1);
 }
 
 TEST_CASE("a shared module is one module, whether required by path or by instance")

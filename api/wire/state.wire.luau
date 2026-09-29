@@ -2060,10 +2060,24 @@ local Messages: { Schema.Message } = {
                         Type = "text",
                         Doc = "Created by name; a class the replica does not have is skipped.",
                     },
+                    {
+                        Name = "origin",
+                        Type = "text",
+                        Doc = "Where it was authored (protocol 29, ADR 0138 §6): `scene:` and the tree a scene "
+                            .. "read made it in, `stamp:` and the stamp `Instance.stamp` placed it from, or empty for "
+                            .. "an instance made at run time. A replica puts the scripts its own package holds for "
+                            .. "that place under the instance, since scripts never cross the wire.",
+                    },
+                    {
+                        Name = "originIndex",
+                        Type = "u32",
+                        Doc = "Its place in `origin`'s tree, in preorder (protocol 29). Zero with no origin.",
+                    },
                 },
             },
         },
-        Doc = "An instance entering interest: its network id and the class to create. Reliable, "
+        Doc = "An instance entering interest: its network id, the class to create and where it was "
+            .. "authored. Reliable, "
             .. "because an instance that is never created is a replica missing part of the world for "
             .. "good. **Its fields ride the snapshot**, as a whole record against a baseline that "
             .. "does not have it -- one decoding path for new and changed rather than two.",

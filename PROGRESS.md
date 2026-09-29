@@ -461,10 +461,13 @@ lifecycle** ([`script-sides-kickoff.md`](docs/briefs/script-sides-kickoff.md),
 ADRs 0137 and 0138). S0, the defects, and **S1, a script runs exactly while it
 is live, built 2026-09-29** (a clone, a stamp and a model parented at run time
 start their scripts; one that leaves the world stops; storage is inert; back
-in solo a machine runs what a solo boot of its scene runs). Next: S2
-(`RunContext`), the S3 audit and the S4 close; then the terrain audit's
-ledger, then every editor text through i18n (R3, the owner's word of
-2026-09-29), then F2, movers and constraints.
+in solo a machine runs what a solo boot of its scene runs), and **S2, a
+script carries its side, built 2026-09-29** (`Script.RunContext`; each
+package keeps only its side's code per script; a joined client runs its own
+package's scripts under what the server sends, protocol 29). Next: the S3
+audit and the S4 close; then the terrain audit's ledger, then every editor
+text through i18n (R3, the owner's word of 2026-09-29), then F2, movers and
+constraints.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).

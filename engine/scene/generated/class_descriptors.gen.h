@@ -134,6 +134,8 @@ void detachScriptComponents(World& world, core::InstanceId id);
 // Script
 Value getScriptEnabled(const World& world, core::InstanceId id);
 bool setScriptEnabled(World& world, core::InstanceId id, const Value& value);
+Value getScriptRunContext(const World& world, core::InstanceId id);
+bool setScriptRunContext(World& world, core::InstanceId id, const Value& value);
 
 // BasePart
 Value getBasePartCFrame(const World& world, core::InstanceId id);

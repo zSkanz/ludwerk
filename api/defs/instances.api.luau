@@ -378,11 +378,12 @@ local Classes: { Schema.Class } = {
         Name = "Script",
         Extends = "BaseScript",
         Module = "scene",
-        Doc = "Luau that RUNS. Every enabled Script is started on its own coroutine when the world does."
-            .. "\n\n**Where it is decides where it runs** (ADR 0105). Under `ServerScriptService` or "
-            .. "`GlobalScriptService.Server` it runs only while this machine is the authority; under "
-            .. "`ClientScriptService` or `GlobalScriptService.Client`, only where a player sits -- never on a "
-            .. "dedicated server. Anywhere else it runs on every machine."
+        Doc = "Luau that RUNS, exactly while it is live: enabled, in the world, under no storage, and its side "
+            .. "running on this machine (ADR 0137)."
+            .. "\n\n**Where it runs** (ADR 0138): under `ServerScriptService` or `GlobalScriptService.Server` "
+            .. "only where this machine is the authority; under `ClientScriptService` or "
+            .. "`GlobalScriptService.Client` only where a player sits -- never on a dedicated server. Anywhere else, "
+            .. "`RunContext` says."
             .. '\n\n**In the editor, "when the world does" means when you press play** (ADR 0058). Opening a '
             .. "project mounts every script -- they are in the tree, `Source` is editable, a tab can open one -- and "
             .. "starts none of them, so a project shows what its scene holds and nothing a file scope built. Stop "
@@ -414,6 +415,21 @@ local Classes: { Schema.Class } = {
                     .. "whether a connection dies with the thing its closure captured, which is a separate question "
                     .. "and not one a property setter may decide."
                     .. "\n\nSeveral scripts enabled by one tick start in document order.",
+            },
+            {
+                Name = "RunContext",
+                Type = "Enum.RunContext",
+                ScriptReadOnly = true,
+                Default = "Enum.RunContext.Shared",
+                Doc = "**Where this script runs, outside the script services** (ADR 0138): `Server` on the "
+                    .. "authority, `Client` where a player sits, `Shared` on both -- once per machine, so a solo "
+                    .. "game runs a `Shared` script once. Inside `ServerScriptService`, `ClientScriptService` or "
+                    .. "`GlobalScriptService`'s `Server` and `Client` folders **the service decides**, and moving a "
+                    .. "script into one writes the service's side here: server code taken back out stays server "
+                    .. "code.\n\nA package leaves out the code of every script whose side never runs there -- the "
+                    .. "instance stays, with no `Source` -- so a stamp can carry a server half and a client half and "
+                    .. "each machine gets its own.\n\n**The editor writes it, and a script only reads it**: the "
+                    .. "side was fixed when the package was made.",
             },
         },
     },

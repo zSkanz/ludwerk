@@ -162,8 +162,9 @@ engine. See [Testing](manual:guides/testing).
 
 ## Reserved names
 
-`Enum.RunContext` is a reserved enum, and it does nothing: where code runs is
-where it is in the tree (ADR 0105).
+Where code runs is where it is in the tree, and outside the script services a
+script's own `RunContext` (ADRs 0105 and 0138; see
+[Where my code runs](manual:concepts/scripts)).
 
 ## Where to look next
 

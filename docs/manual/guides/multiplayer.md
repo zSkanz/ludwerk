@@ -103,12 +103,16 @@ A scene has its own two as well, `ServerScriptService` and
 | `ServerScriptService`, `GlobalScriptService.Server` | runs | **absent** | runs |
 | `ClientScriptService`, `GlobalScriptService.Client` | **absent** | runs | runs |
 | `GlobalScriptService.Shared` | required by server code | required by client code | both |
-| anywhere else (`Workspace`, a part...) | runs | runs | runs |
+| anywhere else (`Workspace`, a part, a stamp...) | its `RunContext`: `Server`, `Shared` | `Client`, `Shared` | every side, once |
 
-**Solo and a host run both**, so a game written for a match runs alone with no
-configuration branch, and **the server's code never reaches a player**: it is
-not replicated, a client that joins empties its own copy, and a dedicated export
-leaves it out of the player's package.
+**Solo and a host run each script once**, so a game written for a match runs
+alone with no configuration branch, and **the server's code never reaches a
+player**: it is not replicated, a client that joins empties its own copy, and a
+dedicated export leaves it out of the player's package -- per script, so a
+stamp's `Server` half is not in a player's package either. A client runs the
+`Client` and `Shared` scripts of its own package under what the server sends:
+see [Where my code runs](manual:concepts/scripts) for the whole rule and its
+price.
 
 `NetworkService.Authority` still answers "does this machine decide the world?"
 for code that runs everywhere, such as a script inside a part:

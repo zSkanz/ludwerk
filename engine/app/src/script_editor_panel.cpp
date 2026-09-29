@@ -28,6 +28,7 @@
 #include "engine/app/language_service.h"
 #include "engine/app/script_editor.h"
 #include "engine/app/script_editor_settings.h"
+#include "engine/app/script_sides.h"
 #include "engine/app/ui_theme.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
@@ -2559,6 +2560,24 @@ void drawPane(OpenScript& tab, ScriptEditor& editor, const DebugView& debug, con
             std::vector<Diagnostic> reached;
             lintInstanceAccess(tab.document, world->classes(), world->atoms(),
                                CompletionWorld{world, root, tab.instance}, reached);
+            // **Where it runs** (ADR 0138 §8): a client script reaching for the
+            // server's storage, a server script for a player's camera, a script
+            // for both that never asks which one it is on.
+            if (world->alive(tab.instance) &&
+                world->classOf(tab.instance) == world->classes().findId(world->atoms().lookup("Script"))) {
+                const bool decided = script::serviceSideOf(*world, tab.instance).has_value();
+                const std::string text = tab.document.text();
+                for (const SideFinding& finding : lintScriptSide(text, script::scriptSideOf(*world, tab.instance),
+                                                                 decided, projectIsMultiplayer(editor.projectRoot()))) {
+                    const core::I18nArg args[] = {{"word", std::string_view{finding.word}}};
+                    reached.push_back(Diagnostic{
+                        .at = Position{finding.line, finding.column},
+                        .length = finding.length,
+                        .message = core::engineCatalog().format(finding.key, args),
+                        .severity = Severity::Warning,
+                    });
+                }
+            }
             tab.document.appendDiagnostics(reached);
             // And the type checker's, which land when it answers (ADR 0093).
             if (LanguageService* service = languageService(); service != nullptr) {

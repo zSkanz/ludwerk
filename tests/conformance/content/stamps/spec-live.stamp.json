@@ -38,6 +38,39 @@
       }
      }
     ]
+   },
+   {
+    "class": "Script",
+    "name": "ServerMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Server"
+    },
+    "attributes": {
+     "Make": "FromServer"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "ClientMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Client"
+    },
+    "attributes": {
+     "Make": "FromClient"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "SharedMaker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "RunContext": "Shared"
+    },
+    "attributes": {
+     "Make": "FromShared"
+    }
    }
   ]
  }

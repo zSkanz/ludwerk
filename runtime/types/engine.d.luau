@@ -911,6 +911,16 @@ declare extern type Script extends BaseScript with
     --- question and not one a property setter may decide. Several scripts enabled by one tick start in
     --- document order.
     Enabled: boolean
+    --- **Where this script runs, outside the script services** (ADR 0138): `Server` on the authority,
+    --- `Client` where a player sits, `Shared` on both -- once per machine, so a solo game runs a
+    --- `Shared` script once. Inside `ServerScriptService`, `ClientScriptService` or
+    --- `GlobalScriptService`'s `Server` and `Client` folders **the service decides**, and moving a
+    --- script into one writes the service's side here: server code taken back out stays server code. A
+    --- package leaves out the code of every script whose side never runs there -- the instance stays,
+    --- with no `Source` -- so a stamp can carry a server half and a client half and each machine gets
+    --- its own. **The editor writes it, and a script only reads it**: the side was fixed when the
+    --- package was made.
+    read RunContext: EnumRunContext
 end
 
 declare extern type ModuleScript extends BaseScript with
@@ -3612,6 +3622,7 @@ declare Enum: {
     RunContext: {
         Client: EnumRunContext,
         Server: EnumRunContext,
+        Shared: EnumRunContext,
         GetEnumItems: (self: any) -> { EnumRunContext },
     },
     KeyCode: {

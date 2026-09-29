@@ -1127,6 +1127,23 @@ bool setBaseScriptSource(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getScriptRunContext(const World& world, core::InstanceId id)
+{
+    const ScriptComponent* script = world.scripts().find(id);
+    return script == nullptr ? Value{} : Value{EnumValue{generated::RunContextEnumId, script->runContext}};
+}
+
+bool setScriptRunContext(World& world, core::InstanceId id, const Value& value)
+{
+    ScriptComponent* script = world.scripts().find(id);
+    const auto* item = std::get_if<EnumValue>(&value);
+    if (script == nullptr || item == nullptr || item->enumId != generated::RunContextEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    script->runContext = item->value;
+    return true;
+}
+
 Value getScriptEnabled(const World& world, core::InstanceId id)
 {
     const ScriptComponent* script = world.scripts().find(id);

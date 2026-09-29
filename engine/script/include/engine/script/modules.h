@@ -76,17 +76,30 @@ struct MountedScript
     bool module = false;
 };
 
-// Which side a `Script` belongs to, from where it is (ADR 0105).
+// Which side a `Script` belongs to (ADR 0105, ADR 0138): inside a script
+// service the service decides, and anywhere else its `RunContext`.
 enum class ScriptSide : core::u8
 {
-    // Anywhere else in the world: every machine runs it.
+    // `RunContext = Shared` outside the services: every machine runs it, once.
     Anywhere,
-    // `ServerScriptService` or `GlobalScriptService.Server`: the authority only.
+    // `ServerScriptService`, `GlobalScriptService.Server`, or `RunContext =
+    // Server` elsewhere: the authority only.
     Server,
-    // `ClientScriptService` or `GlobalScriptService.Client`: where a player
-    // sits, never a dedicated server.
+    // `ClientScriptService`, `GlobalScriptService.Client`, or `RunContext =
+    // Client` elsewhere: where a player sits, never a dedicated server.
     Client,
 };
+
+// `Enum.RunContext`'s values (ADR 0138), as `ScriptComponent::runContext`
+// holds them.
+inline constexpr core::i32 RunContextClient = 0;
+inline constexpr core::i32 RunContextServer = 1;
+inline constexpr core::i32 RunContextShared = 2;
+
+// The side the service `instance` sits in decides, or nullopt when it sits in
+// none: what the editor greys `RunContext` for and writes when a script moves
+// into one (ADR 0138 §2).
+[[nodiscard]] std::optional<ScriptSide> serviceSideOf(const scene::World& world, core::InstanceId instance);
 
 [[nodiscard]] ScriptSide scriptSideOf(const scene::World& world, core::InstanceId instance);
 

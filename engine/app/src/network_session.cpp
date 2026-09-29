@@ -133,6 +133,13 @@ void NetworkSession::wire()
     // scene, from this machine's own package, cleared of what the authority is
     // about to send, as a join clears it.
     const std::function<WorldHost*()> hostOf = m_host;
+    // **Where this machine's own scripts wait for the authority's instances**
+    // (ADR 0138 §6): the host's, asked at each spawn, since a reload makes a
+    // new host.
+    m_replication->setScriptTemplates([hostOf]() -> replication::ScriptTemplates* {
+        WorldHost* host = hostOf();
+        return host != nullptr ? host->scriptTemplates() : nullptr;
+    });
     m_replication->setSceneChanger([hostOf](scene::World&, const std::string& path, std::vector<core::u8> data) {
         WorldHost* host = hostOf();
         if (host == nullptr)
@@ -141,7 +148,7 @@ void NetworkSession::wire()
             core::logText(core::LogLevel::Error, error->message);
             return;
         }
-        (void)replication::clearForReplica(host->world(), host->workspace());
+        (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
     });
 #endif
 }
@@ -161,7 +168,7 @@ std::optional<core::EngineError> NetworkSession::start(replication::Topology top
 #if ENG_ENABLE_REPLICATION
         // What the authority is about to send, removed from this copy of the
         // scene so it is not everything twice. See `clearReplicated`.
-        (void)replication::clearForReplica(host->world(), host->workspace());
+        (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
 #endif
         m_connecting = true;
         m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
@@ -283,7 +290,7 @@ void NetworkSession::update()
 #if ENG_ENABLE_REPLICATION
             // **Joining replaces this machine's scene with the server's**: what
             // the authority replicates is cleared, and server code with it.
-            (void)replication::clearForReplica(host->world(), host->workspace());
+            (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
 #endif
             // And every script is checked against "live" for a replica (ADR
             // 0137 §5): what does not run here stops.

@@ -25,6 +25,8 @@ struct ClassDesc;
 struct FieldDesc;
 } // namespace generated
 
+class ScriptTemplates;
+
 // The fields one instance replicates: the common set, then its class's, in
 // schema order.
 //
@@ -95,7 +97,11 @@ void diffFields(const generated::ClassDesc& desc, std::span<const FieldValue> ba
 // twice: one local copy nothing moves and one the snapshots do. What does NOT
 // replicate stays -- the terrain (ADR 0069, decision 7), the camera, the
 // scripts -- which is exactly what a replica needs from its own files.
-core::usize clearReplicated(scene::World& world, core::InstanceId root);
+//
+// With `templates`, the scripts under each subtree are taken into it before
+// the subtree goes (ADR 0138 §6), and the first destroy replaces what it held
+// for the scene.
+core::usize clearReplicated(scene::World& world, core::InstanceId root, ScriptTemplates* templates = nullptr);
 
 // **What a replica clears when it joins** (ADR 0080): what replicates under
 // `workspace`, what replicates under `ReplicatedStorage` -- the authority's
@@ -103,7 +109,7 @@ core::usize clearReplicated(scene::World& world, core::InstanceId root);
 // `ServerScriptService` and `GlobalScriptService.Server`, which are the
 // authority's alone (ADR 0105). `workspace`'s parent is the data model the
 // services are found under. Returns how many subtrees went.
-core::usize clearForReplica(scene::World& world, core::InstanceId workspace);
+core::usize clearForReplica(scene::World& world, core::InstanceId workspace, ScriptTemplates* templates = nullptr);
 
 // Applies one field to an instance. Returns false when the id is not one this
 // class has -- which is what a peer speaking a newer protocol looks like, and is

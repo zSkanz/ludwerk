@@ -19,6 +19,7 @@ engine_add_module(app
         src/reload.cpp
         src/replay.cpp
         src/script_package.cpp
+        src/script_sides.cpp
         src/script_files.cpp
         src/two_worlds.cpp
         src/bench.cpp
@@ -300,6 +301,7 @@ engine_add_module_tests(app
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp
         tests/foliage_editor_tests.cpp
+        tests/script_sides_tests.cpp
         tests/preserved_tests.cpp
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp

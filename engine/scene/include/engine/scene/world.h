@@ -94,6 +94,16 @@ struct InstanceRecord
     // instance of one stamp: forty lamp posts intern one name.
     core::NameAtom stamp;
 
+    // **Where this instance was authored** (ADR 0138 §6): the tree a scene read
+    // made it in (`scene:Workspace`, `scene:ReplicatedStorage`, ...) or the stamp
+    // `Instance.stamp` placed it from (`stamp:doors/front`), and its place in
+    // that tree's preorder. A replica, which is never sent a script, finds the
+    // scripts its own package holds for an instance the authority sends by
+    // this pair. Kept through a clone, so a copy of a door is a door; not in
+    // the world hash, and not saved.
+    core::NameAtom origin;
+    u32 originIndex = 0;
+
     // **Made from a file under `src/`** (ADR 0092): a `Script` the mount
     // read, or a `Folder` it made to hold one. The FILE is its source, so a
     // scene does not write it -- but what somebody put inside it is theirs and
@@ -686,6 +696,20 @@ public:
     // inside one", because that is the question the break rule actually needs.
     void setStamp(core::InstanceId id, core::NameAtom stamp) noexcept;
     [[nodiscard]] core::NameAtom stampOf(core::InstanceId id) const noexcept;
+
+    // Where an instance was authored, and its place there (ADR 0138 §6; see
+    // `InstanceRecord::origin`). An empty atom for one made at run time.
+    struct Origin
+    {
+        core::NameAtom asset;
+        u32 index = 0;
+    };
+    void setOrigin(core::InstanceId id, Origin origin) noexcept;
+    [[nodiscard]] Origin originOf(core::InstanceId id) const noexcept;
+    // Every instance of the subtree at `root` given `asset` and its preorder
+    // place, counting on from `next`, which it returns advanced. A scene read
+    // calls it per top-level node of a tree, a stamp once for its root.
+    u32 numberOrigins(core::InstanceId root, core::NameAtom asset, u32 next);
 
     // The nearest ancestor-or-self that carries a stamp, or an invalid id.
     //
@@ -1377,5 +1401,12 @@ private:
 private:
     std::vector<std::pair<core::InstanceId, std::string>> m_unread;
 };
+
+// **A property left out of the world hash and the scene file at its default**
+// (ADR 0138 §7): `Script.RunContext` at `Shared`. So every world hashed and
+// every scene written before the property existed hashes and reads as it did,
+// and no determinism trace and no scene moves -- the voxel fluid fields'
+// precedent, as a rule both writers share rather than two copies of it.
+[[nodiscard]] bool quietAtDefault(const World& world, const PropertyDesc& property, const Value& value);
 
 } // namespace engine::scene

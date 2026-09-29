@@ -197,6 +197,9 @@ inline constexpr std::string_view ContentShader = "content.Shader";
 inline constexpr std::string_view ContentTexture = "content.Texture";
 
 // overlay.*
+inline constexpr std::string_view OverlaySideClient = "overlay.SideClient";
+inline constexpr std::string_view OverlaySideServer = "overlay.SideServer";
+inline constexpr std::string_view OverlaySideShared = "overlay.SideShared";
 inline constexpr std::string_view OverlayStamp = "overlay.Stamp";
 inline constexpr std::string_view OverlayStampBase = "overlay.StampBase";
 

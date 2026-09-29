@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <span>
 
+#include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/world.h"
@@ -1978,17 +1980,50 @@ void diffFields(const ClassDesc& desc, std::span<const FieldValue> baseline, std
     }
 }
 
-usize clearReplicated(scene::World& world, InstanceId root)
+namespace {
+
+// The first clear of a join or a scene change that destroys anything drops the
+// templates of the scene before it (`ScriptTemplates::dropSceneTemplates`).
+struct TemplateTaking
+{
+    ScriptTemplates* templates = nullptr;
+    bool dropped = false;
+
+    void before(scene::World& world, std::span<const InstanceId> doomed)
+    {
+        if (templates == nullptr || doomed.empty())
+            return;
+        if (!dropped) {
+            templates->dropSceneTemplates(world);
+            dropped = true;
+        }
+        for (const InstanceId id : doomed)
+            templates->takeFrom(world, id);
+    }
+};
+
+usize clearReplicatedTaking(scene::World& world, InstanceId root, TemplateTaking& taking)
 {
     std::vector<InstanceId> doomed;
     for (InstanceId child = world.firstChild(root); child.valid(); child = world.nextSibling(child)) {
         if (schemaFor(world, child) != nullptr)
             doomed.push_back(child);
     }
+    // **A replica's own scripts are kept out of what goes** (ADR 0138 §6),
+    // to be put back under what the authority sends.
+    taking.before(world, doomed);
     for (const InstanceId id : doomed)
         (void)world.destroy(id);
     world.retireDestroyed();
     return doomed.size();
+}
+
+} // namespace
+
+usize clearReplicated(scene::World& world, InstanceId root, ScriptTemplates* templates)
+{
+    TemplateTaking taking{templates};
+    return clearReplicatedTaking(world, root, taking);
 }
 
 namespace {
@@ -2007,9 +2042,10 @@ usize emptyOf(scene::World& world, InstanceId container)
 
 } // namespace
 
-usize clearForReplica(scene::World& world, InstanceId workspace)
+usize clearForReplica(scene::World& world, InstanceId workspace, ScriptTemplates* templates)
 {
-    usize cleared = clearReplicated(world, workspace);
+    TemplateTaking taking{templates};
+    usize cleared = clearReplicatedTaking(world, workspace, taking);
     const InstanceId dataModel = world.parentOf(workspace);
     for (InstanceId service = dataModel.valid() ? world.firstChild(dataModel) : InstanceId{}; service.valid();
          service = world.nextSibling(service)) {
@@ -2020,7 +2056,7 @@ usize clearForReplica(scene::World& world, InstanceId workspace)
         // `Lighting`'s children travel too (ADR 0096): the authority's
         // effects, air and sky replace whatever the replica's scene put there.
         if (name == "ReplicatedStorage" || name == "Lighting" || name == "TeamService") {
-            cleared += clearReplicated(world, service);
+            cleared += clearReplicatedTaking(world, service, taking);
         }
         else if (name == "ServerStorage" || name == "ServerScriptService") {
             // The server's, and never a replica's (ADR 0080, ADR 0105): what

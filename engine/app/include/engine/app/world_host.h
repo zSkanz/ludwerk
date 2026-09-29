@@ -48,6 +48,10 @@ namespace engine::render {
 class DebugDraw;
 }
 
+namespace engine::replication {
+class ScriptTemplates;
+} // namespace engine::replication
+
 namespace engine::app {
 
 using core::f32;
@@ -376,6 +380,11 @@ public:
     // Solo again after a join (ADR 0137 §5): the current scene loaded again,
     // the server code restarted, every script checked against "live".
     void returnToSolo();
+    // **A replica's own scripts, kept while the authority's instances come**
+    // (ADR 0138 §6): what a join's clear takes out of this machine's scene and
+    // puts back under what the authority sends. Null in a build without
+    // replication.
+    [[nodiscard]] replication::ScriptTemplates* scriptTemplates() const noexcept { return m_scriptTemplates.get(); }
     // One warning for each storage holding a `Script`, which does not run there.
     void warnScriptsInStorage();
     [[nodiscard]] const scene::SceneIoReport& bootSceneReport() const noexcept { return m_bootSceneReport; }
@@ -739,6 +748,9 @@ private:
     // How a scene named at run time is read, and its stamps (ADR 0106).
     std::function<std::optional<std::string>(std::string_view)> m_readContent;
     scene::StampSource m_stamps;
+    // Shared rather than unique so the type can stay incomplete here: a build
+    // without replication never makes one (see `scriptTemplates`).
+    std::shared_ptr<replication::ScriptTemplates> m_scriptTemplates;
     std::function<std::filesystem::path(scene::World&, const std::filesystem::path&)> m_partitionScene;
     std::function<void()> m_resetStreaming;
     // The project was a directory, so "no scripts" is worth a warning; a lone

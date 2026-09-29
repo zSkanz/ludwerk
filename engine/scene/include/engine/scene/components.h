@@ -1330,6 +1330,10 @@ struct ModelComponent
 struct ScriptComponent
 {
     bool enabled = true;
+    // `Enum.RunContext` (ADR 0138): where a `Script` runs outside the script
+    // services. `Shared`, 2, by default -- every machine, once each. A
+    // `ModuleScript` carries it unread.
+    i32 runContext = 2;
 
     // **The Luau this instance carries.** Data on the instance rather than a
     // path to a file, which is what makes a script an ordinary thing: created

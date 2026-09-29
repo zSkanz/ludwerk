@@ -285,6 +285,29 @@ void World::setStamp(core::InstanceId id, core::NameAtom stamp) noexcept
         record->stamp = stamp;
 }
 
+void World::setOrigin(core::InstanceId id, Origin origin) noexcept
+{
+    if (InstanceRecord* record = m_instances.find(id); record != nullptr) {
+        record->origin = origin.asset;
+        record->originIndex = origin.index;
+    }
+}
+
+World::Origin World::originOf(core::InstanceId id) const noexcept
+{
+    const InstanceRecord* record = m_instances.find(id);
+    return record != nullptr ? Origin{record->origin, record->originIndex} : Origin{};
+}
+
+u32 World::numberOrigins(core::InstanceId root, core::NameAtom asset, u32 next)
+{
+    std::vector<core::InstanceId> subtree{root};
+    collectDescendants(root, subtree);
+    for (const core::InstanceId id : subtree)
+        setOrigin(id, Origin{asset, next++});
+    return next;
+}
+
 core::NameAtom World::stampOf(core::InstanceId id) const noexcept
 {
     const InstanceRecord* record = m_instances.find(id);
@@ -652,6 +675,7 @@ core::InstanceId World::clone(core::InstanceId id)
         const ClassId sourceClass = record->classId;
         const core::NameAtom sourceName = record->name;
         const core::NameAtom sourceStamp = record->stamp;
+        const Origin sourceOrigin{record->origin, record->originIndex};
 
         const core::InstanceId copy = create(sourceClass);
         if (!copy.valid())
@@ -662,6 +686,8 @@ core::InstanceId World::clone(core::InstanceId id)
         // next change to the stamp then left behind.
         if (sourceStamp.valid())
             setStamp(copy, sourceStamp);
+        // A copy of an authored door is that door again, to a replica too.
+        setOrigin(copy, sourceOrigin);
         mapping[key(original)] = copy;
     }
 

@@ -407,12 +407,11 @@ does. All three are additive to build, and `Enum.WindowMode` went with the third
 of them (§2.3).
 
 **Reserved meanings, not implemented in v1** (do not squat them): the service
-names `Players` and `ReplicationService`, which name no class at all; and `Enum.RunContext`,
-which *is* declared and does carry `Client` and `Server` (§2.3) — the items
-exist, nothing reads them, and a `Script` runs identically whatever its
-`RunContext` says. Reserving a meaning is not the same as withholding a name:
-these are reserved so that v1 code cannot come to mean something else by them
-once the client/server split ships. `NavigationService` was on this list until
+names `Players` and `ReplicationService`, which name no class at all.
+Reserving a meaning is not the same as withholding a name: these are reserved
+so that v1 code cannot come to mean something else by them. `Enum.RunContext`
+was on this list until ADR 0138 gave it a reader: `Script.RunContext`, with
+`Shared` added, decides where a script outside the script services runs. `NavigationService` was on this list until
 post-v1 phase 3 built it (ADR 0089): paths over the walkable ground, built
 where queries ask. `NetworkService` was on this list until
 post-v1 phase 4 built it (ADR 0069, ADR 0070): it reports the process's posture
@@ -727,7 +726,7 @@ change how it falls.
 | `InputObject` | The read-only snapshot `InputService`'s raw events carry (§2.1, ADR 0041): `UserInputType`, `KeyCode`, `Position`, `Delta`. A snapshot and not a live object, so holding one past its handler tells you what happened rather than what is happening. |
 | `Content` | A type alias of `string` in v1 (`asset://…`, `save://…` URIs); reserved to become opaque later. It is a real exported type name, generated into `engine.d.luau` (§5), so `local c: Content = "asset://models/tree.glb"` type-checks — which is what makes the alias worth having before it becomes opaque. |
 | `Material` | **A surface, and not an `Instance`** (ADR 0090): it cannot be parented, and a project keeps one as a `.material.json` asset in `content/`. `Material.load(content)` returns the shared handle for an asset, which is **read-only** -- writing a property raises. `material:Clone()` returns a runtime copy that is writable, never saved, and released when nothing points at it; nothing clones implicitly, and reading `part.Material` returns what the part wears. Props: `Source` (the asset `Content` it came from, a clone included), `Color`, `Transparency`, `ColorMap`, `NormalMap`, `MetallicRoughnessMap`, `Emissive`, `EmissiveMap`, `Metalness`, `Roughness`, `NormalScale`, `AlphaMode`, `AlphaCutoff`, `DoubleSided`. A material asset may name a `parent` and override only what differs (a variant), and declares `instanceParameters`: which of `Color`, `Transparency`, `Emissive`, `Metalness`, `Roughness`, `NormalScale`, `AlphaCutoff` a part wearing it may override. A material may also name a **surface shader** (ADR 0091): two HLSL functions against `engine/surface.hlsli`, whose declared `ENG_PARAM`s are fields of the material exactly like the ones above, readable off any handle, writable on a clone, and eligible for `instanceParameters`. |
-| `Enum` | Global `Enum` namespace; `EnumItem` = `Name`, `Value`, `EnumType` — and `EnumType` is the enum **object**, not its name as a string, so `Enum.PartShape.Ball.EnumType == Enum.PartShape`. `Enum.X:GetEnumItems()` returns a **fresh** array on every call, in declaration order (fresh so a caller may sort it; ordered because R10 forbids container order reaching observable order). The declared enums, in full: `EasingStyle` (Linear, Sine, Quad, Cubic, Quart, Quint, Exponential, Circular, Back, Bounce, Elastic), `EasingDirection`, `KeyCode` (keys + mouse + gamepad buttons), `InputActionType` (Bool, Direction1D, Direction2D, Direction3D, ViewportPosition), `InputDeviceType` (KeyboardMouse, Gamepad, Touch), `InputRate` (Simulation, Render — ADR 0039), `PartShape`, `CollisionFidelity` (Default, Hull, Box, Precise), `RotationOrder` (XYZ, XZY, YXZ, YZX, ZXY, ZYX — all six permutations; YXZ wherever an `order` parameter is omitted), `RaycastFilterType` (Include, Exclude), `StreamingMode` (Nonatomic, Atomic, Persistent), `PlaybackState`, `CharacterState` (Grounded, Airborne), `AutomaticSize`, `FillDirection`, `HorizontalAlignment`, `VerticalAlignment`, `SortOrder`, `ScaleType` (Stretch, Slice, Tile), `LogLevel` (Trace, Debug, Info, Warning, Error — ascending severity, and `Value` orders them), `RunContext` (Client, Server — declared and carrying both items in v1, but nothing reads them; §2.1), `AlphaMode` (Opaque, Mask, Blend — glTF's three, how a `Material` reads the alpha channel of its colour), `UserInputType` (the device an `InputObject` came from; §2.1). **Two names left this list rather than joining it**: `Material` is a data type now and not an enum (ADR 0090), and `WindowMode` went with the `WindowService` that was never built (§2.1). |
+| `Enum` | Global `Enum` namespace; `EnumItem` = `Name`, `Value`, `EnumType` — and `EnumType` is the enum **object**, not its name as a string, so `Enum.PartShape.Ball.EnumType == Enum.PartShape`. `Enum.X:GetEnumItems()` returns a **fresh** array on every call, in declaration order (fresh so a caller may sort it; ordered because R10 forbids container order reaching observable order). The declared enums, in full: `EasingStyle` (Linear, Sine, Quad, Cubic, Quart, Quint, Exponential, Circular, Back, Bounce, Elastic), `EasingDirection`, `KeyCode` (keys + mouse + gamepad buttons), `InputActionType` (Bool, Direction1D, Direction2D, Direction3D, ViewportPosition), `InputDeviceType` (KeyboardMouse, Gamepad, Touch), `InputRate` (Simulation, Render — ADR 0039), `PartShape`, `CollisionFidelity` (Default, Hull, Box, Precise), `RotationOrder` (XYZ, XZY, YXZ, YZX, ZXY, ZYX — all six permutations; YXZ wherever an `order` parameter is omitted), `RaycastFilterType` (Include, Exclude), `StreamingMode` (Nonatomic, Atomic, Persistent), `PlaybackState`, `CharacterState` (Grounded, Airborne), `AutomaticSize`, `FillDirection`, `HorizontalAlignment`, `VerticalAlignment`, `SortOrder`, `ScaleType` (Stretch, Slice, Tile), `LogLevel` (Trace, Debug, Info, Warning, Error — ascending severity, and `Value` orders them), `RunContext` (Client, Server, Shared — `Script.RunContext`, where a script outside the script services runs; ADR 0138), `AlphaMode` (Opaque, Mask, Blend — glTF's three, how a `Material` reads the alpha channel of its colour), `UserInputType` (the device an `InputObject` came from; §2.1). **Two names left this list rather than joining it**: `Material` is a data type now and not an enum (ADR 0090), and `WindowMode` went with the `WindowService` that was never built (§2.1). |
 
 **What `typeof` returns.** `typeof(Vector3.new(1, 2, 3))` is **`"vector"`** —
 Vector3 *is* the VM primitive (divergence #9, §9), which is why every signature
@@ -1001,8 +1000,10 @@ or by being in the world the scene describes; no client/server folders yet.
   `src/shared/` a `ModuleScript`, in the script service its folder names (ADR
   0105; subdirectories become `Folder`s), with the file's text as its `Source`.
   A `src/shared/` module is one module whether it is required by path or by
-  instance. Scripts have `Enabled: boolean`; `RunContext` is a reserved enum
-  and read by nothing. `src/scripts/` is read as `src/client/` for one release.
+  instance. Scripts have `Enabled: boolean` and, outside the script services,
+  `RunContext` (ADR 0138): a mounted file is always in a service, so the
+  service decides its side. `src/scripts/` is read as `src/client/` for one
+  release.
   **The mount is no longer the only way to have a script**: one saved in a scene
   or placed from a stamp is the same instance the mount would have made, and
   neither knows about the other.
@@ -1068,12 +1069,12 @@ or by being in the world the scene describes; no client/server folders yet.
   v1 multiplayer-ish pattern is a **sibling backend project run on Lute**
   (`backend/` using `@std/net.serve`), sharing `src/shared` via the alias —
   the @std convergence story keeping process boundaries honest from day one.
-  `src/client`/`src/server` folder names and `Enum.RunContext` are reserved.
+  `src/client`/`src/server` folder names and `Enum.RunContext` were reserved.
   **"The CLI warns if they exist in v1" was never built** (D149) — a repo-wide
   search for either folder name outside this document finds nothing. The
-  reservation itself is real where it counts: `Enum.RunContext` is in
-  `api/defs/enums.api.luau` with both items and is honestly documented there as
-  read by nothing.
+  reservation was real where it counted: `Enum.RunContext` was in
+  `api/defs/enums.api.luau` with both items, documented as read by nothing,
+  until ADR 0138 gave it `Shared` and a reader.
 
   **"Later" started 2026-08-27**, when phase 4 opened. Two things about this
   paragraph survive it rather than being replaced by it, and both matter: the

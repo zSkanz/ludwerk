@@ -166,16 +166,16 @@ describe("Enum", function()
     end)
 
     describe("Enum.RunContext", function()
-        it("is declared even though v1 leaves it unset", function()
-            -- §3 mounts scripts with "`RunContext` (reserved enum; unset in v1)",
-            -- so the enum exists before anything reads it.
+        it("is well formed", function()
             expectWellFormedEnum(Enum.RunContext)
         end)
 
-        it("reserves Client and Server as its values", function()
+        it("names the three sides a script runs on (ADR 0138)", function()
             local names = namesOf(Enum.RunContext)
             expect(names):ToContain("Client")
             expect(names):ToContain("Server")
+            expect(names):ToContain("Shared")
+            expect(Enum.RunContext.Shared.Value):ToBe(2)
         end)
     end)
 end)

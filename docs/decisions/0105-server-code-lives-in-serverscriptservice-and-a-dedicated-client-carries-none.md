@@ -1,6 +1,7 @@
 # 0105 — Code lives in three script services, and each side's package carries only its own
 
-- Status: accepted
+- Status: accepted; amended by [0138](0138-a-script-carries-the-side-it-runs-on.md), which gives a script
+  outside the services a side of its own (`Script.RunContext`) and ends `Enum.RunContext`'s reservation
 - Date: 2026-09-26
 - Decided by: the owner, on 2026-09-26, in conversation. He asked how code that
   runs on the server is kept apart from code that runs on the client, and

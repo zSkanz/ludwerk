@@ -992,6 +992,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // breakpoint on a chunk, and `reloadWorld` replaces every instance in the
     // world while the chunk names stay what they were.
     ScriptEditor scripts;
+    scripts.setProjectRoot(options.scriptPath);
     // What this person had last time: their content-folder colours, and the
     // scene they were looking at (the scene is read separately below, because
     // the boot has to know it before an `Editor` exists).
@@ -2961,7 +2962,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // A script too, wherever it is made: it is an instance,
                     // and its `Source` is saved with the scene (ADR 0092).
                     openIfScript(editor.createInstance(authored(), editorCommands.createClass,
-                                                       editorCommands.createParent, authoredRoot(), inspector));
+                                                       editorCommands.createParent, authoredRoot(), inspector,
+                                                       editorCommands.createRunContext));
                 }
                 // The ribbon's insert: into the selection when it can hold
                 // authored things, and into the Workspace the viewport draws

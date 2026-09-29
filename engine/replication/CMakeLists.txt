@@ -42,6 +42,7 @@ if(ENG_ENABLE_REPLICATION)
             src/field.cpp
             src/extract.cpp
             src/replication.cpp
+            src/script_templates.cpp
             src/session.cpp
         DEPS
             core

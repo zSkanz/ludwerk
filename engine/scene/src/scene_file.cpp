@@ -1077,7 +1077,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
             const std::string_view name = world.atoms().text(property.name);
 
             const std::optional<Value> value = property.get(world, id);
-            if (!value.has_value())
+            if (!value.has_value() || quietAtDefault(world, property, *value))
                 continue;
 
             if (!anyProperty) {
@@ -2736,8 +2736,17 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
         // workspace and only its children are created.
         applyNode(world, workspace, rootNode, pending, out);
         if (const JsonValue children = rootNode["children"]; children.type() == core::JsonType::Array) {
-            for (core::usize index = 0; index < children.size(); ++index)
-                (void)readInstance(world, workspace, children.at(index), pending, out, &load, 0);
+            // **Numbered as read** (ADR 0138 §6): what this read made, and
+            // nothing else the world already held, so an authority and a
+            // replica that read the same file number the same instances alike.
+            const core::NameAtom origin = world.atoms().intern("scene:Workspace");
+            u32 next = 0;
+            for (core::usize index = 0; index < children.size(); ++index) {
+                const core::InstanceId made =
+                    readInstance(world, workspace, children.at(index), pending, out, &load, 0);
+                if (made.valid())
+                    next = world.numberOrigins(made, origin, next);
+            }
         }
     }
 
@@ -2760,8 +2769,17 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
                 continue;
             applyNode(world, service, node, pending, out);
             if (const JsonValue children = node["children"]; children.type() == core::JsonType::Array) {
-                for (core::usize index = 0; index < children.size(); ++index)
-                    (void)readInstance(world, service, children.at(index), pending, out, &load, 0);
+                // Each storage its own count: a package that leaves one out
+                // numbers the others as the one that keeps it does.
+                const core::NameAtom origin =
+                    world.atoms().intern("scene:" + std::string(world.atoms().text(world.name(service))));
+                u32 next = 0;
+                for (core::usize index = 0; index < children.size(); ++index) {
+                    const core::InstanceId made =
+                        readInstance(world, service, children.at(index), pending, out, &load, 0);
+                    if (made.valid())
+                        next = world.numberOrigins(made, origin, next);
+                }
             }
             roots.emplace_back(std::string(world.atoms().text(world.name(service))), service);
             // A reference written as `ScriptService.X` still finds X.

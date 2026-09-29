@@ -224,9 +224,14 @@ int instanceNewIndex(lua_State* L)
         raisePropertyError(L, ENG_TR("scene.err.read_only_property"), id, *property);
     // **The editor's and the engine's to write** (ADR 0137 §4): a script that
     // could write another's `Source` and enable it would run text the sandbox
-    // never loaded.
-    if (property->scriptReadOnly)
-        raisePropertyError(L, ENG_TR("script.err.property_not_script_writable"), id, *property);
+    // never loaded. `RunContext` likewise (ADR 0138 §2): the side was fixed
+    // when the package was made, and the other side's code is not in it.
+    if (property->scriptReadOnly) {
+        const bool code = property->name == world(L).atoms().lookup("Source");
+        raisePropertyError(
+            L, code ? ENG_TR("script.err.property_not_script_writable") : ENG_TR("script.err.property_editor_only"), id,
+            *property);
+    }
 
     const std::optional<scene::Value> value = toValue(L, 3, property->type);
     if (!value.has_value())
@@ -827,6 +832,10 @@ int instanceStamp(lua_State* L)
 
     if (!linked)
         w.setStamp(placed, core::NameAtom{});
+    // **Which stamp, and where in it**, linked or not (ADR 0138 §6): what a
+    // replica reads the stamp's client and shared scripts from its own package
+    // by, since the authority never sends a script.
+    (void)w.numberOrigins(placed, w.atoms().intern("stamp:" + name), 0);
 
     pushInstance(L, placed);
     return 1;

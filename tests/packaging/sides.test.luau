@@ -28,12 +28,21 @@ local build = require("../../tools/cli/commands/build")
 local new = require("../../tools/cli/commands/new")
 local projectlib = require("../../tools/cli/project")
 
+--- The last five are CODE, not names (ADR 0138 §5): a `Script` anywhere else
+--- whose `RunContext` is one side's keeps its instance in both packages and its
+--- code in that side's only. Found in the compiled scripts' bytecode, which the
+--- search decodes (`decodedScripts`).
 local ServerStrings = {
     "SENTINEL-SERVER-SCRIPT",
     "SENTINEL-SCENE-SERVER-SCRIPT",
     "SENTINEL-SERVER-STORAGE",
     "SENTINEL-SERVER-SCRIPT-SERVICE",
     "SENTINEL-GLOBAL-SERVER",
+    "SENTINEL-WORKSPACE-SERVER-CODE",
+    "SENTINEL-PART-SERVER-CODE",
+    "SENTINEL-STAMP-SERVER-CODE",
+    "SENTINEL-SHARED-FOLDER-SERVER-CODE",
+    "SENTINEL-STORAGE-MODULE-CODE",
 }
 
 local ClientStrings = {
@@ -41,6 +50,8 @@ local ClientStrings = {
     "SENTINEL-SCENE-CLIENT-SCRIPT",
     "SENTINEL-CLIENT-SCRIPT-SERVICE",
     "SENTINEL-GLOBAL-CLIENT",
+    "SENTINEL-WORKSPACE-CLIENT-CODE",
+    "SENTINEL-STAMP-CLIENT-CODE",
 }
 
 --- **In both sides' packages, compiled** (S0.3): a script in the scene's
@@ -49,6 +60,10 @@ local ClientStrings = {
 local BothStrings = {
     "SENTINEL-WORKSPACE-SCRIPT",
     "SENTINEL-STAMP-SCRIPT",
+    -- The instances a side's code was taken out of: in both packages.
+    "SENTINEL-WORKSPACE-SERVER-NAME",
+    "SENTINEL-WORKSPACE-CLIENT-NAME",
+    "SENTINEL-STAMP-CLIENT-NAME",
 }
 
 --- `own` and `BothStrings`, one list.
@@ -123,6 +138,12 @@ local function folder(name: string): string
     return `\{"class": "Folder", "name": "{name}"\}`
 end
 
+--- A `Script` node named `name`, printing `code`, on `side` (nil: `Shared`).
+local function sided(name: string, code: string, side: string?): string
+    local context = if side ~= nil then `, "RunContext": "{side}"` else ""
+    return `\{"class": "Script", "name": "{name}", "properties": \{"Source": {jsonString(script(code))}{context}\}\}`
+end
+
 local function service(class: string, child: string): string
     return `"{class}": \{"class": "{class}", "name": "{class}", "children": [{folder(child)}]\}`
 end
@@ -157,10 +178,21 @@ local function scaffold(parent: string): string
             '  "root": {"class": "Workspace", "name": "Workspace", "children": [',
             `    \{"class": "Script", "name": "SENTINEL-WORKSPACE-SCRIPT", "properties": \{"Source": {jsonString(
                 script("SENTINEL-WORKSPACE-PRINT")
-            )}\}\}`,
+            )}\}\},`,
+            "    " .. sided("SENTINEL-WORKSPACE-SERVER-NAME", "SENTINEL-WORKSPACE-SERVER-CODE", "Server") .. ",",
+            "    " .. sided("SENTINEL-WORKSPACE-CLIENT-NAME", "SENTINEL-WORKSPACE-CLIENT-CODE", "Client") .. ",",
+            `    \{"class": "Part", "name": "Crate", "children": [{sided(
+                "Guard",
+                "SENTINEL-PART-SERVER-CODE",
+                "Server"
+            )}]\}`,
             "  ]},",
             '  "storage": {',
-            "    " .. service("ServerStorage", "SENTINEL-SERVER-STORAGE") .. ",",
+            `    "ServerStorage": \{"class": "ServerStorage", "name": "ServerStorage", "children": [{folder(
+                "SENTINEL-SERVER-STORAGE"
+            )}, \{"class": "ModuleScript", "name": "Keys", "properties": \{"Source": {jsonString(
+                "return '" .. "SENTINEL-STORAGE-MODULE-CODE" .. "'\n"
+            )}\}\}]\},`,
             "    " .. service("ServerScriptService", "SENTINEL-SERVER-SCRIPT-SERVICE") .. ",",
             "    " .. service("ClientScriptService", "SENTINEL-CLIENT-SCRIPT-SERVICE"),
             "  }",
@@ -176,7 +208,11 @@ local function scaffold(parent: string): string
             '  "version": 2,',
             `  "root": \{"class": "Model", "name": "Door", "children": [\{"class": "Script", "name": "SENTINEL-STAMP-SCRIPT", "properties": \{"Source": {jsonString(
                 script("SENTINEL-STAMP-PRINT")
-            )}\}\}]\}`,
+            )}\}\}, {sided("Open", "SENTINEL-STAMP-SERVER-CODE", "Server")}, {sided(
+                "SENTINEL-STAMP-CLIENT-NAME",
+                "SENTINEL-STAMP-CLIENT-CODE",
+                "Client"
+            )}]\}`,
             "}",
             "",
         }, "\n")
@@ -189,13 +225,52 @@ local function scaffold(parent: string): string
             '  "version": 1,',
             '  "root": {"class": "GlobalScriptService", "name": "GlobalScriptService", "children": [',
             `    \{"class": "Folder", "name": "Server", "children": [{folder("SENTINEL-GLOBAL-SERVER")}]\},`,
-            `    \{"class": "Folder", "name": "Client", "children": [{folder("SENTINEL-GLOBAL-CLIENT")}]\}`,
+            `    \{"class": "Folder", "name": "Client", "children": [{folder("SENTINEL-GLOBAL-CLIENT")}]\},`,
+            `    \{"class": "Folder", "name": "Shared", "children": [{sided(
+                "Tally",
+                "SENTINEL-SHARED-FOLDER-SERVER-CODE",
+                "Server"
+            )}]\}`,
             "  ]}",
             "}",
             "",
         }, "\n")
     )
     return project
+end
+
+local Base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local function base64Decode(text: string): string
+    local values: { [string]: number } = {}
+    for index = 1, #Base64 do
+        values[string.sub(Base64, index, index)] = index - 1
+    end
+    local out: { string } = {}
+    local bits, count = 0, 0
+    for index = 1, #text do
+        local value = values[string.sub(text, index, index)]
+        if value ~= nil then
+            bits = bit32.bor(bit32.lshift(bits, 6), value)
+            count += 6
+            if count >= 8 then
+                count -= 8
+                table.insert(out, string.char(bit32.band(bit32.rshift(bits, count), 0xFF)))
+            end
+        end
+    end
+    return table.concat(out)
+end
+
+--- **Every compiled scene, stamp and `global.json` script in `text`, decoded**
+--- (S0.3: `luauc:` and the bytecode in base64). A string a script prints is a
+--- constant in its bytecode, so a side's code is found here or nowhere.
+local function decodedScripts(text: string): string
+    local out: { string } = {}
+    for encoded in string.gmatch(text, "luauc:([A-Za-z0-9+/=]+)") do
+        table.insert(out, base64Decode(encoded))
+    end
+    return table.concat(out, "\n")
 end
 
 --- Every file under `root`, read whole.
@@ -205,7 +280,8 @@ local function everyFile(root: string, out: { [string]: string })
         if entry.type == "dir" then
             everyFile(file, out)
         elseif entry.type == "file" then
-            out[file] = fs.readFileToString(file)
+            local text = fs.readFileToString(file)
+            out[file] = text .. decodedScripts(text)
         end
     end
 end

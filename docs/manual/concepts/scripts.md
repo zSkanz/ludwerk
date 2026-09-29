@@ -69,29 +69,65 @@ engine and cannot be renamed, moved or destroyed. `Server` and `Client` follow
 the same rules as the two scene services, and `Shared` holds the `ModuleScript`s
 both sides require.
 
-Where each one runs:
+### Where my code runs
 
-| Where a `Script` is | Dedicated server | Client that joined | Solo and host |
-|---|---|---|---|
-| `ServerScriptService`, `GlobalScriptService.Server` | runs | **absent** | runs |
-| `ClientScriptService`, `GlobalScriptService.Client` | **absent** | runs | runs |
-| `GlobalScriptService.Shared` | required by server code | required by client code | both |
-| anywhere else (`Workspace`, a part...) | runs | runs | runs |
+**Inside a script service, the service decides. Anywhere else, the script's
+own `RunContext` does** (ADR 0138): `Server`, `Client`, or `Shared` for both,
+which is what a new script is.
 
-- **Solo and a host run both sides**: they decide the world and a player sits at
-  them. A single-player game is a game whose one machine does both, and nothing
-  about it needs to change.
-- **The server's code never reaches a player.** It is not replicated, a client
-  that joins empties its own copy, and a dedicated export leaves it out of the
-  player's package.
-- **A script anywhere else still runs everywhere**, as it always has: a door
-  with its own script inside it. That is allowed; the services are just where
-  code goes by default.
-- **In the editor, Play is solo**, so every script runs.
+| Where a `Script` is | Its side | Dedicated server | Client that joined | Solo and host |
+|---|---|---|---|---|
+| `ServerScriptService`, `GlobalScriptService.Server` | `Server` | runs | **absent** | runs |
+| `ClientScriptService`, `GlobalScriptService.Client` | `Client` | **absent** | runs | runs |
+| anywhere else (`Workspace`, a part, a stamp, a screen, `GlobalScriptService.Shared`) | its `RunContext` | `Server` and `Shared` | `Client` and `Shared` | every side, **once** |
+| `ServerStorage`, `ReplicatedStorage` | never runs | -- | -- | -- |
+
+- **Solo and a host run each script once.** They decide the world and a player
+  sits at them, and they hold one world: a `Shared` script that ran twice there
+  would do everything twice. A single-player game needs nothing changed.
+- **A service writes the side it decides.** Move a script into
+  `ServerScriptService` and its `RunContext` becomes `Server`; take it back out
+  and it stays `Server`, so server code never becomes `Shared` by accident. In
+  the Properties panel `RunContext` is greyed inside a service, and says which
+  one decides.
+- **The Explorer marks where a script outside the services runs**: a server
+  rack, a screen, or a disc split in two for both. The *Insert* menu has a
+  server script, a client script and a script for both.
+- **A script writes neither its own side nor another's.** The side was fixed
+  when the package was made.
+- **In the editor, Play is solo**, so every script runs, once.
+
+**A stamp can carry both halves.** A door stamp holds a `Server` script -- does
+it open, does the player hold the key -- and a `Client` script -- the creak,
+the "press E" -- side by side. Each package carries only its own half's code:
+the dedicated server has no sound code and a player has no rules (the instance
+stays in both, with no code in it).
+
+**A client runs its own copy.** Scripts never cross the network; a server that
+could send code could run code on every player. So a client that joined runs
+the `Client` and `Shared` scripts of **its own package**, put back under the
+instances the server sends:
+
+- a script in the scene, under the part it is authored in;
+- a stamp placed with `Instance.stamp` while the game runs, and any clone of it:
+  the client reads the same stamp from its own package.
+
+**The price**: anything else a script makes at run time -- a clone of a plain
+model, a script made with `Instance.new` -- never reaches a client's code. Code
+a player needs has to be in the player's package: a script service, a stamp, or
+the scene.
+
+**A module is shared solo and not in a match.** Solo, the server's scripts and
+the client's require the same `ModuleScript` and get the same table; on a
+dedicated server and a client they are two machines and two tables. A value one
+side stores in a module is not the other side's.
 
 A client script that reaches for something under a server service finds it
 while you test solo and does not find it on a client that joined. Keep what
-both sides need in `ReplicatedStorage` or `GlobalScriptService.Shared`.
+both sides need in `ReplicatedStorage` or `GlobalScriptService.Shared`. In a
+project with multiplayer, the script editor and `ludwerk check` warn about this,
+about a server script asking for a camera, the interface or input, and about a
+`Shared` script that never asks `NetworkService.Authority` which side it is on.
 
 ## Scripts from files
 
@@ -264,9 +300,9 @@ ever runs.
 
 ## Reserved names
 
-`Enum.RunContext` is a reserved enum with `Client` and `Server` items, and it
-does nothing: where code runs is where it is in the tree, not a property a
-script carries (ADR 0105).
+`src/client/` and `src/server/` are the folder names the file mounts read
+(ADR 0105). `Enum.RunContext` is no longer reserved: `Script.RunContext` reads
+it (ADR 0138).
 
 ## Where to look next
 

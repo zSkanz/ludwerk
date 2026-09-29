@@ -47,6 +47,7 @@ public:
                 m_replica->setReferenceProbe(m_probe);
             m_replica->setCharacterReplay(m_characterReplay);
             m_replica->setSceneChanger(m_sceneChanger);
+            m_replica->setScriptTemplates(m_templates);
             return std::nullopt;
         }
         transport.port = m_config.port;
@@ -141,6 +142,13 @@ public:
             m_replica->setSceneChanger(m_sceneChanger);
     }
 
+    void setScriptTemplates(std::function<ScriptTemplates*()> templates) override
+    {
+        m_templates = std::move(templates);
+        if (m_replica.has_value())
+            m_replica->setScriptTemplates(m_templates);
+    }
+
     [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut() override
     {
         return m_replica.has_value() ? m_replica->drainStreamedOut() : std::vector<core::InstanceId>{};
@@ -217,6 +225,7 @@ private:
     std::function<bool(core::InstanceId)> m_probe;
     scene::ICharacterReplay* m_characterReplay = nullptr;
     SceneChanger m_sceneChanger;
+    std::function<ScriptTemplates*()> m_templates;
     u64 m_tick = 0;
 };
 

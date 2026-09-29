@@ -14,6 +14,7 @@
 #include "engine/app/world_host.h"
 #include "engine/app/world_ui.h"
 #include "engine/net/memory_transport.h"
+#include "engine/platform/file.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/replication.h"
@@ -49,6 +50,14 @@ struct Machine
         if (!scene.empty()) {
             options.bootScene = project.root / "content" / std::filesystem::path(scene);
             options.bootScenePath = std::string(scene);
+            // The project's stamps, as the engine reads them: `Instance.stamp`
+            // and a replica's own scripts both need them (ADR 0138 §6).
+            options.bootStamps = [root = project.root](std::string_view stamp) -> std::optional<std::string> {
+                std::string text;
+                if (!platform::readTextFile(root / "content" / std::filesystem::path(stamp), text))
+                    return std::nullopt;
+                return text;
+            };
         }
         REQUIRE_FALSE(host->boot(options).has_value());
         replication::Config base;
@@ -204,6 +213,73 @@ TEST_CASE("back solo after a join, a machine runs what a solo boot of its scene 
     CHECK(occurrences(log, "crate-lid-started") == 2);
     const scene::World& world = client.host->world();
     CHECK(world.findFirstChild(client.host->workspace(), world.atoms().lookup("Crate")).valid());
+}
+
+TEST_CASE("a joined client runs its own copy of a door's client and shared scripts, and none of its server code "
+          "(ADR 0138 §6)")
+{
+    // Scripts never cross the wire. Before ADR 0138 a script inside a part the
+    // authority replicates ran its file scope on the client, died with the
+    // join's clear, and never came back; a stamp placed at run time brought
+    // none of its code at all.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const auto sided = [](std::string_view name, std::string_view side, std::string_view tag) {
+        std::string node = R"json({"class":"Script","name":")json" + std::string(name) +
+                           R"json(","properties":{"Source":"print(`)json" + std::string(tag) +
+                           R"json(:{game:GetService('NetworkService').Authority}`)")json";
+        if (!side.empty())
+            node += R"json(,"RunContext":")json" + std::string(side) + "\"";
+        return node + "}}";
+    };
+    const std::string scene = R"json({"format":"scene","version":2,"root":{"children":[)json"
+                              R"json({"class":"Part","name":"Door","properties":{"Anchored":true},"children":[)json" +
+                              sided("Creak", "Client", "door-client") + "," + sided("Rules", "Server", "door-server") +
+                              "," + sided("Both", "", "door-both") + "]}]}}";
+    const std::string lamp =
+        R"json({"format":"scene","version":2,"root":{"class":"Model","name":"Lamp","children":[)json"
+        R"json({"class":"Part","name":"Bulb","properties":{"Anchored":true},"children":[)json" +
+        sided("Glow", "Client", "lamp-client") + "]}]}}";
+
+    Machine server;
+    server.project.write("content/scenes/main.scene.json", scene);
+    server.project.write("content/stamps/lamp.stamp.json", lamp);
+    // A stamp placed at run time, and a clone of it: each is the stamp again.
+    server.project.write("src/client/host.luau", R"(
+        game:GetService("NetworkService"):Host(47103)
+        local placed = Instance.stamp("lamp")
+        placed.Parent = workspace
+        placed:Clone().Parent = workspace
+    )");
+    server.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+
+    Machine client;
+    client.project.write("content/scenes/main.scene.json", scene);
+    client.project.write("content/stamps/lamp.stamp.json", lamp);
+    client.project.write("src/client/join.luau", R"(
+        game:GetService("NetworkService"):Join("memory:47103")
+    )");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+
+    run(server, client, 60);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+
+    // The client's own door scripts, run again under the authority's door.
+    CHECK(occurrences(log, "door-client:false") == 1);
+    CHECK(occurrences(log, "door-both:false") == 1);
+    CHECK(occurrences(log, "door-server:false") == 0);
+    // Both lamps, each with the stamp's client script from the client's package.
+    CHECK(occurrences(log, "lamp-client:false") == 2);
+    // Each machine's solo boot, before the host and the join: once each, and
+    // hosting did not start the authority's again.
+    CHECK(occurrences(log, "door-server:true") == 2);
+    CHECK(occurrences(log, "lamp-client:true") == 2);
+
+    // Under the replicated door, in the client's world.
+    const scene::World& world = client.host->world();
+    const core::InstanceId door = world.findFirstChild(client.host->workspace(), world.atoms().lookup("Door"));
+    REQUIRE(door.valid());
+    CHECK(world.findFirstChild(door, world.atoms().lookup("Creak")).valid());
 }
 
 TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")

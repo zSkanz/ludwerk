@@ -519,6 +519,9 @@ struct EditorCommands
     // is what makes this drainable beside everything else here.
     scene::ClassId createClass = scene::InvalidClass;
     core::InstanceId createParent;
+    // With `createClass` a `Script`: the side the *Insert* menu's entry asked
+    // for, `Enum.RunContext`'s value (ADR 0138 §4).
+    std::optional<core::i32> createRunContext;
 
     // **Delete or duplicate THE SELECTION**, not one named instance.
     //
@@ -1120,8 +1123,12 @@ public:
     // placement goes through `setProperty` like every other editor write, so a
     // class with no `CFrame` simply does not get one rather than needing a
     // special case here.
+    //
+    // `runContext`, for a `Script`, is the side the *Insert* menu's server,
+    // client and both entries ask for (ADR 0138 §4). Inside a script service
+    // the service decides instead.
     bool createInstance(scene::World& world, scene::ClassId classId, core::InstanceId parent, core::InstanceId root,
-                        Inspector& inspector);
+                        Inspector& inspector, std::optional<core::i32> runContext = std::nullopt);
 
     // **A mesh from the content, made a `MeshPart`** (the owner: dragged onto
     // the viewport or a row of the tree, it becomes one wearing that mesh).

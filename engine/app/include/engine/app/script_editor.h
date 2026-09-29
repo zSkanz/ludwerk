@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -402,6 +403,11 @@ public:
         return taken;
     }
 
+    // The open project, whose `[export] multiplayer` decides one of the side
+    // warnings (ADR 0138 §8). Empty outside a project.
+    void setProjectRoot(std::filesystem::path root) { m_projectRoot = std::move(root); }
+    [[nodiscard]] const std::filesystem::path& projectRoot() const noexcept { return m_projectRoot; }
+
     [[nodiscard]] bool anyDirty() const noexcept;
     [[nodiscard]] std::size_t dirtyCount() const noexcept;
 
@@ -444,6 +450,7 @@ public:
     void setBoundLine(std::string_view chunk, core::u32 line, core::u32 boundLine) noexcept;
 
 private:
+    std::filesystem::path m_projectRoot;
     std::vector<OpenScript> m_tabs;
     std::size_t m_active = 0;
     std::optional<std::size_t> m_focusRequest;

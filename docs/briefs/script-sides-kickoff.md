@@ -115,32 +115,39 @@ rewritten it around stamps. `network_session_tests.cpp` holds back to solo and
 
 ## Stage S2 — a script carries its side (ADR 0138)
 
-- [ ] `Enum.RunContext.Shared = 2`. `Script.RunContext`, default `Shared`, with
+- [x] `Enum.RunContext.Shared = 2`. `Script.RunContext`, default `Shared`, with
   a new IDL mark: editable and saved, refused to scripts (§2). Regenerate the
   API dump, the definitions and the docs, as `gen_cpp` and the gate require.
-- [ ] The service decides (§2): the effective side, and the property written
+- [x] The service decides (§2): the effective side, and the property written
   when a script is moved into a service. Editor undo covers the write.
-- [ ] Where it runs (§3), wired into the side check that `scriptSideOf` and
+- [x] Where it runs (§3), wired into the side check that `scriptSideOf` and
   `scriptSideRunsHere` make today.
-- [ ] The Properties panel greys it inside a service, with *"set by …"*
+- [x] The Properties panel greys it inside a service, with *"set by …"*
   (i18n'd). The Explorer mark outside the services (§4): generalise
   `drawIconBadge`, draw three overlay SVGs in the theme's style. The *Insert*
   menu's three entries.
-- [ ] Packages (§5): the per-script strip across scenes, `global.json`, stamps
+- [x] Packages (§5): the per-script strip across scenes, `global.json`, stamps
   and the partition cache, with the instance kept and `Source` emptied. The
   sentinel test covers all five places §5 lists.
-- [ ] A replica runs its own copy (§6):
+- [x] A replica runs its own copy (§6):
   - the scene's scripts, re-attached by identity;
   - the stamp reference on the wire (a protocol bump) and the replica's
     attachment from its own package;
   - a clone of a stamp behaves the same.
-- [ ] Hash and file (§7): hashed and written only when not `Shared`. Prove no
+- [x] Hash and file (§7): hashed and written only when not `Shared`. Prove no
   trace moved.
-- [ ] Help (§8): the language service's three warnings, the `ludwerk check`
+- [x] Help (§8): the language service's three warnings, the `ludwerk check`
   pass over scene and stamp scripts, and the manual's *"Where my code runs"*.
-- [ ] ADR 0105 gets a line under its status pointing to 0138. The decisions
+- [x] ADR 0105 gets a line under its status pointing to 0138. The decisions
   index lists 0137 and 0138.
-- [ ] ADR 0138's amendment, as built.
+- [x] ADR 0138's amendment, as built.
+
+S2 done 2026-09-29, protocol 29. `instance/script_run_context.spec.luau`,
+`world_host_tests.cpp` (where each side runs, once; the file and the hash; a
+move into a service and its undo), `network_session_tests.cpp` (a joined
+client's own copy of a door's scripts and of a stamp placed at run time),
+`script_sides_tests.cpp`, `export.test.luau` and the sentinel test. The
+*Insert* entries are on the Explorer's row menu (the amendment says why).
 
 ## Stage S3 — the audit of the script system
 
@@ -225,3 +232,19 @@ test for each before its fix; defects that share a root fixed together.
 - **Back to solo could not be "restart the server code" alone**: the join had
   replaced the scene's parts, and the scripts inside them, with the
   authority's. Loading the current scene again is what a solo boot of it is.
+- **S2's new IDL mark was S0's.** `ScriptReadOnly`, made for `Source`, is
+  exactly "editable and saved, refused to scripts"; `RunContext` wears it with
+  its own error key.
+- **The sentinel test could not see a scene script's code.** S0.3 ships it as
+  base64 bytecode, so the string a script prints is not in the package's text;
+  the test decodes every `luauc:` blob before it searches. Without that, the
+  per-script strip would have passed with nothing stripped.
+- **An origin had to be what a read MADE, not a walk of the tree after it.** A
+  replica loads a scene into a world already holding the authority's instances,
+  and the authority's holds its players' characters; numbering the whole tree
+  would number two different trees.
+- **The side warnings are for multiplayer projects only.** Run over every
+  example, the first version warned a solo arcade for its camera.
+- **The replica now keeps modules too.** A `ModuleScript` in a replicated
+  folder of `ReplicatedStorage` died with the join's clear; the templates keep
+  it and put it back.

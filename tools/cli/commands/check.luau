@@ -6,6 +6,10 @@
 	`scripts/gates/luau-check.sh` calls it, rather than the two drifting until
 	they disagree about whether the repository is green. Two checks, in the
 	order that gives the most useful first failure: types, then formatting.
+	Then **where each script runs** (ADR 0138 §8): warnings about a script's
+	side, in its `.luau` file or inside a scene, a stamp or `global.json`,
+	from the engine's own lint (`engine-host --check-sides`) so that the editor
+	and this say the same thing. Warnings do not fail the check.
 
 	**The i18n lint is not one of them** (S0.8): it checks the engine's own
 	`ENG_TR` keys against `i18n/en.json`, which a game does not have, so it is
@@ -202,6 +206,13 @@ local function run(options: Options): number
     if not formatted.ok then
         print(tr("cli.check.err.stylua"))
         return 1
+    end
+
+    local engine = projectlib.findEngine()
+    if engine ~= nil then
+        process.run({ engine, "--check-sides", options.path }, { stdio = "inherit" })
+    else
+        print(tr("cli.check.sides_skipped"))
     end
 
     print(tr("cli.check.ok", { count = #files }))

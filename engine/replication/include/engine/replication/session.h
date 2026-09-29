@@ -473,6 +473,10 @@ public:
     // authority said and replays the commands it has not answered yet. Unset,
     // a correction shifts the prediction by the error, as before.
     void setCharacterReplay(scene::ICharacterReplay* replay) noexcept { m_replay = replay; }
+    // **Where this replica's own scripts are kept** (ADR 0138 §6): asked at
+    // each spawn, because a hot reload makes a new host and new templates.
+    // Unset, nothing is attached, which is what a test with no host wants.
+    void setScriptTemplates(std::function<ScriptTemplates*()> templates) { m_templates = std::move(templates); }
     // How this replica follows the authority to another scene (ADR 0106).
     // Unset, a scene change is ignored, which is what a test with no host
     // wants.
@@ -568,6 +572,7 @@ private:
     std::map<u32, u64> m_departed;
     std::function<bool(core::InstanceId)> m_probe;
     std::function<void(scene::World&, const std::string&, std::vector<core::u8>)> m_sceneChanger;
+    std::function<ScriptTemplates*()> m_templates;
     // Husks made since the host last drained them.
     std::vector<core::InstanceId> m_streamedOut;
     std::deque<std::shared_ptr<const WorldState>> m_states;

@@ -92,6 +92,34 @@ test.suite("export", function(suite)
         assert.eq(game.stripScene('{"root": {"class": "Workspace"}}', "client"), nil)
     end)
 
+    suite:case("a script keeps its instance and loses the other side's code, wherever it is (ADR 0138 §5)", function()
+        local door = '{"format": "scene", "root": {"class": "Model", "name": "Door", "children": ['
+            .. '{"class": "Script", "name": "Rules", "properties": {"Source": "RULES", "RunContext": "Server"}}, '
+            .. '{"class": "Part", "name": "Leaf", "children": ['
+            .. '{"class": "Script", "name": "Creak", "properties": {"Source": "CREAK", "RunContext": "Client"}}]}, '
+            .. '{"class": "Script", "name": "Both", "properties": {"Source": "BOTH"}}]}}'
+        local client = game.stripStamp(door, "client") :: string
+        assert.that(string.find(client, "RULES", 1, true) == nil, client)
+        assert.that(string.find(client, '"Rules"', 1, true) ~= nil, client)
+        assert.that(string.find(client, "CREAK", 1, true) ~= nil, client)
+        assert.that(string.find(client, "BOTH", 1, true) ~= nil, client)
+        local server = game.stripStamp(door, "server") :: string
+        assert.that(string.find(server, "CREAK", 1, true) == nil, server)
+        assert.that(string.find(server, '"Creak"', 1, true) ~= nil, server)
+        assert.that(string.find(server, "RULES", 1, true) ~= nil, server)
+        -- A solo or host package keeps everything.
+        assert.eq(game.stripStamp(door, "all"), nil)
+
+        -- A scene's world and a global.json's Shared folder likewise.
+        local scene = '{"format": "scene", "root": {"class": "Workspace", "children": ['
+            .. '{"class": "Script", "name": "Rules", "properties": {"Source": "RULES", "RunContext": "Server"}}]}}'
+        assert.that(string.find(game.stripScene(scene, "client") :: string, "RULES", 1, true) == nil)
+        local global = '{"format": "global", "root": {"class": "GlobalScriptService", "children": ['
+            .. '{"class": "Folder", "name": "Shared", "children": ['
+            .. '{"class": "Script", "name": "Sound", "properties": {"Source": "SOUND", "RunContext": "Client"}}]}]}}'
+        assert.that(string.find(game.stripGlobal(global, "server") :: string, "SOUND", 1, true) == nil)
+    end)
+
     suite:case("global.json loses the other side's folder", function()
         local global = '{"format": "global", "root": {"class": "GlobalScriptService", "children": ['
             .. '{"class": "Folder", "name": "Server"}, {"class": "Folder", "name": "Client"}, '

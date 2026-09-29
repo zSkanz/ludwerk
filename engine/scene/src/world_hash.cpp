@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <array>
 
+#include "../generated/class_descriptors.gen.h"
 #include "engine/scene/world.h"
 
 // Header-only: everything xxHash needs is inlined into this translation unit,
@@ -558,14 +559,25 @@ u64 World::worldHash() const
                     // regression looks exactly like the expected movement.
                     if (property.hostFact)
                         continue;
+                    const Value value = property.get(*this, id);
+                    if (quietAtDefault(*this, property, value))
+                        continue;
                     hasher.text(m_atoms.text(property.name));
-                    hashValue(hasher, property.get(*this, id), *this);
+                    hashValue(hasher, value, *this);
                 }
             }
         }
     });
 
     return hasher.digest();
+}
+
+bool quietAtDefault(const World& world, const PropertyDesc& property, const Value& value)
+{
+    if (property.name != world.atoms().lookup("RunContext"))
+        return false;
+    const auto* item = std::get_if<EnumValue>(&value);
+    return item != nullptr && item->enumId == generated::RunContextEnumId && item->value == 2;
 }
 
 } // namespace engine::scene

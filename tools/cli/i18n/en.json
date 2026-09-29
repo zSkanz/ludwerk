@@ -48,6 +48,7 @@
   "cli.test.err.failed": "{failed} of {total} case(s) failed.",
   "cli.test.wrote_junit": "Wrote the JUnit report to {path}.",
   "cli.check.running": "Checking {count} Luau file(s).",
+  "cli.check.sides_skipped": "check: no engine is built here, so where each script runs was not checked.",
   "cli.check.ok": "check: ok — {count} file(s), no diagnostics.",
   "cli.check.err.analyze": "luau-analyze reported errors.",
   "cli.check.err.stylua": "StyLua reported unformatted files. Run {tool} fmt.",

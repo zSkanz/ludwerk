@@ -118,12 +118,30 @@ def arrow(i, direction):
     return i
 
 
+def cut_bar(i, x, y, w, h):
+    """A rectangle cut out of what is drawn: transparent in both exports."""
+    i.draw.rectangle(tuple(v * SCALE for v in (x, y, x + w, y + h)), fill=0)
+    i.svg.append(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="black"/>')
+    return i
+
+
 def draw_icon(group, name):
     i = Icon()
     if group == "overlay":
         i.circle(12,12,10,fill=True)
         if name == "Stamp":
             i.circle(12,12,4,hole=True)
+        # Where a script runs (ADR 0138 §4): cut into the same disc, so each
+        # reads at badge size. A server rack's two slots; a client's screen,
+        # its stand; both sides, the disc split down the middle.
+        if name == "SideServer":
+            cut_bar(i, 6.5, 7.5, 11, 3).circle(8.5, 9, 1, fill=True)
+            cut_bar(i, 6.5, 13.5, 11, 3).circle(8.5, 15, 1, fill=True)
+        elif name == "SideClient":
+            cut_bar(i, 5.5, 6, 13, 8.5)
+            cut_bar(i, 8.5, 16.5, 7, 2)
+        elif name == "SideShared":
+            cut_bar(i, 11, 2, 2, 20)
         return i
     if group == "action":
         if name in ("Back","Forward","Up","Collapse","Expand"):

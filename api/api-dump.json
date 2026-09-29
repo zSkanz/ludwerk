@@ -3678,6 +3678,12 @@
           "Name": "Enabled",
           "Type": "boolean",
           "Default": "true"
+        },
+        {
+          "Name": "RunContext",
+          "Type": "Enum.RunContext",
+          "ScriptReadOnly": true,
+          "Default": "Enum.RunContext.Shared"
         }
       ],
       "Methods": [],
@@ -10015,6 +10021,10 @@
         {
           "Name": "Server",
           "Value": 1
+        },
+        {
+          "Name": "Shared",
+          "Value": 2
         }
       ]
     },

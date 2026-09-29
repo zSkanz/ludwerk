@@ -82,6 +82,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`Script.RunContext`** (ADR 0138): `Server`, `Client` or `Shared` (new in
+  `Enum.RunContext`, and the default), deciding where a script outside the
+  script services runs. Inside one, the service decides, and moving a script
+  in writes its side. A solo or hosting machine runs each script once. The
+  Explorer marks the side, the *Insert* menu has a script for each, and in a
+  project with multiplayer the script editor and `ludwerk check` warn about a
+  script reaching for the other side's things.
+- **Each package carries only its own side's code per script** (ADR 0138 §5):
+  a stamp can hold a server half and a client half.
+- **A joined client runs its own package's client and shared scripts** under
+  what the server sends -- a scene's parts, a stamp placed at run time and its
+  clones (ADR 0138 §6). **Protocol 29**: `Spawn` carries where an instance was
+  authored.
+
 - **Scripts that run at the display's rate** (ADR 0136).
   `RunService:BindToRenderStep(name, priority, fn)` and `UnbindFromRenderStep`,
   with `Enum.RenderPriority`, run every drawn frame by priority before
