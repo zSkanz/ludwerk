@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -269,6 +270,46 @@ namespace {
 constexpr float SkyReach = 12.0f;
 constexpr std::array<float, 8> SkyStops{1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 10.0f, SkyReach};
 
+// **The largest value within `reach` of each place in `values`**, in time that
+// does not grow with the reach (van Herk and Gil-Werman): each block of one
+// window's width gives its running maximum from the left and from the right,
+// and a window is the right-hand run of the block it starts in beside the
+// left-hand run of the block it ends in. The naive walk was a window's width
+// per value, which at small voxels was most of a region's cost (terrain audit
+// P2).
+void slidingMax(std::span<const float> values, i32 reach, std::vector<float>& out)
+{
+    const auto count = static_cast<i32>(values.size());
+    const i32 width = 2 * reach + 1;
+    // Padded with nothing either side, so a window at an end is a window.
+    const i32 padded = count + 2 * reach;
+    const auto at = [&](i32 index) {
+        const i32 source = index - reach;
+        return source >= 0 && source < count ? values[static_cast<usize>(source)]
+                                             : -std::numeric_limits<float>::infinity();
+    };
+    std::vector<float> fromLeft(static_cast<usize>(padded));
+    std::vector<float> fromRight(static_cast<usize>(padded));
+    for (i32 index = 0; index < padded; ++index) {
+        const float value = at(index);
+        fromLeft[static_cast<usize>(index)] =
+            index % width == 0 ? value : std::max(fromLeft[static_cast<usize>(index - 1)], value);
+    }
+    for (i32 index = padded - 1; index >= 0; --index) {
+        const float value = at(index);
+        fromRight[static_cast<usize>(index)] = (index + 1) % width == 0 || index == padded - 1
+                                                   ? value
+                                                   : std::max(fromRight[static_cast<usize>(index + 1)], value);
+    }
+    out.resize(static_cast<usize>(count));
+    for (i32 index = 0; index < count; ++index) {
+        // The window over `values[index - reach, index + reach]` is
+        // `padded[index, index + width - 1]`.
+        out[static_cast<usize>(index)] =
+            std::max(fromRight[static_cast<usize>(index)], fromLeft[static_cast<usize>(index + width - 1)]);
+    }
+}
+
 // The column map's margin round a region, in cells of `step` metres: the
 // longest ray, the lift off the surface and a cell to spare.
 [[nodiscard]] i32 skyMargin(float step) noexcept
@@ -376,25 +417,28 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     {
         const i32 reach = static_cast<i32>(std::ceil(SkyReach / step)) + 1;
         std::vector<float> across(tops.size(), -std::numeric_limits<float>::infinity());
+        std::vector<float> line;
+        std::vector<float> window;
         for (i32 z = 0; z < mapD; ++z) {
+            line.resize(static_cast<usize>(mapW));
             for (i32 x = 0; x < mapW; ++x) {
-                float highest = -std::numeric_limits<float>::infinity();
-                for (i32 k = std::max(x - reach, 0); k <= std::min(x + reach, mapW - 1); ++k) {
-                    const float top = tops[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(k)];
-                    if (!std::isnan(top))
-                        highest = std::max(highest, top);
-                }
-                across[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)] = highest;
+                const float top = tops[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)];
+                line[static_cast<usize>(x)] = std::isnan(top) ? -std::numeric_limits<float>::infinity() : top;
             }
+            slidingMax(line, reach, window);
+            for (i32 x = 0; x < mapW; ++x)
+                across[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)] =
+                    window[static_cast<usize>(x)];
         }
-        for (i32 z = 0; z < mapD; ++z) {
-            for (i32 x = 0; x < mapW; ++x) {
-                float highest = -std::numeric_limits<float>::infinity();
-                for (i32 k = std::max(z - reach, 0); k <= std::min(z + reach, mapD - 1); ++k)
-                    highest = std::max(
-                        highest, across[static_cast<usize>(k) * static_cast<usize>(mapW) + static_cast<usize>(x)]);
-                nearTops[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)] = highest;
-            }
+        line.resize(static_cast<usize>(mapD));
+        for (i32 x = 0; x < mapW; ++x) {
+            for (i32 z = 0; z < mapD; ++z)
+                line[static_cast<usize>(z)] =
+                    across[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)];
+            slidingMax(line, reach, window);
+            for (i32 z = 0; z < mapD; ++z)
+                nearTops[static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x)] =
+                    window[static_cast<usize>(z)];
         }
     }
 

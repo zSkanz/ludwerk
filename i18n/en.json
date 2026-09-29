@@ -226,6 +226,7 @@
   "asset.chunk.err.magic": "That file is not a {brand} world chunk.",
   "scene.err.terrain_not_empty": "VoxelSize can only be set while the terrain is empty. Clear it first.",
   "scene.err.voxel_unknown_block": "No block type has id {id}: {count} are registered, and 0 is air.",
+  "scene.err.voxel_fill_too_large": "That fill covers more than {limit} block(s), so it changed nothing. Fill in pieces.",
   "scene.err.terrain_heights_shape": "WriteHeights needs whole rows: {count} height(s) do not make rows of {columns} column(s). The table holds one height per column, row after row.",
   "scene.err.terrain_brush_too_large": "That edit covers more than {limit} voxel(s) -- a size or a radius no brush has -- so it changed nothing. Edit in pieces.",
   "scene.err.terrain_region_too_large": "That region is {count} voxel(s), and ReadVoxels reads at most {limit} at once. Read it in pieces.",

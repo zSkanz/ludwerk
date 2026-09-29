@@ -6,11 +6,13 @@
 // would lose a player's work without saying so.
 #include <doctest/doctest.h>
 #include <filesystem>
+#include <map>
 #include <system_error>
 #include <thread>
 
 #include "engine/app/field_streamer.h"
 #include "engine/asset/field_cells.h"
+#include "engine/asset/terrain_cell.h"
 #include "engine/platform/async_io.h"
 #include "engine/platform/file.h"
 #include "engine/scene/components.h"
@@ -179,6 +181,130 @@ TEST_CASE("ground left behind is dropped, and ground somebody changed is kept")
     streamed.lookFrom(core::DVec3{0.0, 0.0, 0.0});
     REQUIRE(streamed.pumpUntil([&] { return streamed.holds(-1, -1); }));
     CHECK(streamed.field().voxel(4, 5, 4).material == 3);
+}
+
+TEST_CASE("ground dug to nothing stays dug when its cell goes out and comes back (terrain audit G1)")
+{
+    // A digging game on a streamed world: a chunk dug to air is dropped, and
+    // a cell that streamed out and back merged its file's copy in wherever the
+    // field held nothing -- so the hole filled in behind the player.
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    const asset::ChunkKey dug{0, 0, 0};
+    REQUIRE(streamed.field().findChunk(dug) != nullptr);
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    // Dug to air, which drops the chunk as an edit's `finishChunk` does.
+    terrain.field.removeChunk(dug);
+    terrain.fieldRevision += 1;
+    // And a block chunk mined to air.
+    scene::VoxelComponent& voxels = *streamed.world.voxels().find(streamed.workspace);
+    REQUIRE(voxels.grid.findChunk(asset::VoxelChunkKey{0, 0, 0}) != nullptr);
+    voxels.grid.removeChunk(asset::VoxelChunkKey{0, 0, 0});
+    voxels.revision += 1;
+
+    streamed.lookFrom(core::DVec3{420.0, 0.0, 420.0});
+    REQUIRE(streamed.pumpUntil([&] {
+        return streamed.holds(6, 6) && !streamed.holds(-1, -1) &&
+               streamed.streamer.stateOf(asset::ChunkId{0, 0, asset::FieldLayerTerrain}) != asset::ChunkState::Resident;
+    }));
+    streamed.lookFrom(core::DVec3{0.0, 0.0, 0.0});
+    // Until both cells the edits were in have been read again.
+    REQUIRE(streamed.pumpUntil([&] {
+        return streamed.streamer.stateOf(asset::ChunkId{0, 0, asset::FieldLayerTerrain}) ==
+                   asset::ChunkState::Resident &&
+               streamed.streamer.stateOf(asset::ChunkId{0, 0, asset::FieldLayerVoxels}) == asset::ChunkState::Resident;
+    }));
+
+    CHECK(streamed.field().findChunk(dug) == nullptr);
+    CHECK(streamed.grid().findChunk(asset::VoxelChunkKey{0, 0, 0}) == nullptr);
+}
+
+TEST_CASE("a world put back does not bring back a chunk dug before it was taken (terrain audit G2)")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    scene::TerrainComponent* terrain = streamed.world.terrains().find(streamed.ground);
+    terrain->field.removeChunk(asset::ChunkKey{0, 0, 0});
+    terrain->fieldRevision += 1;
+    const core::u64 revision = terrain->fieldRevision;
+
+    // An undo of something else, or a Stop: the world put back as it was
+    // after the dig, and the streamer's cells shared back into it.
+    const scene::WorldSnapshot after = streamed.world.snapshot();
+    (void)terrain->field.setVoxel(-4, -4, -4, asset::Voxel{});
+    terrain->fieldRevision += 1;
+    streamed.world.restore(after);
+    streamed.streamer.reconcile();
+
+    terrain = streamed.world.terrains().find(streamed.ground);
+    CHECK(streamed.field().findChunk(asset::ChunkKey{0, 0, 0}) == nullptr);
+    CHECK(streamed.holds(-1, -1));
+    // And its revision is past any it had, so nothing trusts a build of
+    // ground that the restore put somewhere else (terrain audit P6).
+    CHECK(terrain->fieldRevision > revision + 1);
+}
+
+TEST_CASE("a save does not write back a chunk dug in a cell that was let go (terrain audit G3)")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    terrain.field.removeChunk(asset::ChunkKey{0, 0, 0});
+    terrain.fieldRevision += 1;
+    // Away: the cell is kept for the dig, and let go of by the streamer.
+    streamed.lookFrom(core::DVec3{420.0, 0.0, 420.0});
+    REQUIRE(streamed.pumpUntil([&] { return streamed.holds(6, 6) && !streamed.holds(-1, -1); }));
+
+    std::map<asset::ChunkId, std::vector<std::byte>> written;
+    app::FieldStreamer::TerrainCellWriter writer;
+    writer.write = [&written](asset::ChunkId id, std::span<const std::byte> bytes) -> std::optional<std::string> {
+        written[id] = std::vector<std::byte>(bytes.begin(), bytes.end());
+        return "written_" + std::to_string(id.x) + "_" + std::to_string(id.z);
+    };
+    writer.read = [&streamed](const asset::ChunkIndexEntry& entry) -> std::optional<std::vector<std::byte>> {
+        std::vector<std::byte> bytes;
+        if (!platform::readFile(streamed.directory / entry.urn, bytes))
+            return std::nullopt;
+        return bytes;
+    };
+    writer.remove = [](const asset::ChunkIndexEntry&) {};
+    const app::FieldStreamer::TerrainSaveReport report = streamed.streamer.saveTerrain(writer);
+    CHECK(report.ok);
+
+    const auto cell = written.find(asset::ChunkId{0, 0, asset::FieldLayerTerrain});
+    REQUIRE(cell != written.end());
+    asset::TerrainCell decoded;
+    REQUIRE_FALSE(asset::decodeTerrainCell(cell->second, decoded).has_value());
+    CHECK(decoded.field.findChunk(asset::ChunkKey{0, 0, 0}) == nullptr);
+    CHECK(decoded.field.findChunk(asset::ChunkKey{0, -1, 0}) != nullptr);
+}
+
+TEST_CASE("an edit where the ground is not loaded yet reads it first (terrain audit U1)")
+{
+    // A script building four hundred metres from the camera: the ball made a
+    // chunk of only itself, which then stood in for the cell's own chunk -- the
+    // ground under the ball was gone once the cell came in.
+    IoScope io;
+    StreamedWorld streamed;
+    streamed.world.setGroundLoader([&streamed](core::DVec3 low, core::DVec3 high, core::u32 cells) {
+        streamed.streamer.loadNow(low, high, cells);
+    });
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    REQUIRE_FALSE(streamed.holds(6, 6));
+
+    const core::DVec3 at{420.0, 0.0, 420.0};
+    streamed.world.loadGround(core::DVec3{at.x - 12.0, 0.0, at.z - 12.0}, core::DVec3{at.x + 12.0, 0.0, at.z + 12.0});
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    (void)asset::fillBall(terrain.field, at, 4.0, 2);
+    terrain.fieldRevision += 1;
+
+    // Then the camera goes there, and the cell's reads land.
+    streamed.lookFrom(at);
+    REQUIRE(streamed.pumpUntil([&] { return streamed.holds(7, 7); }));
+    CHECK(asset::sampleField(streamed.field(), core::DVec3{at.x, -10.0, at.z}).distance < 0.0f);
 }
 
 TEST_CASE("a world with no camera and no focus does not hold the simulation for ground (D169)")

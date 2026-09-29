@@ -79,8 +79,9 @@ struct Box
     i32 maxX = -1;
     i32 maxY = -1;
     i32 maxZ = -1;
-    // Past `MaxEditVoxels`, and so emptied.
+    // Past `limit`, and so emptied.
     bool refused = false;
+    core::u64 limit = MaxEditVoxels;
 
     [[nodiscard]] bool empty() const noexcept { return maxX < minX || maxY < minY || maxZ < minZ; }
 
@@ -96,8 +97,7 @@ struct Box
         const core::u64 y = extent(minY, maxY);
         const core::u64 z = extent(minZ, maxZ);
         // Multiplied only while it cannot overflow: each side is at most 2^31.
-        if (x > MaxEditVoxels || y > MaxEditVoxels || z > MaxEditVoxels || x * y > MaxEditVoxels ||
-            x * y * z > MaxEditVoxels) {
+        if (x > limit || y > limit || z > limit || x * y > limit || x * y * z > limit) {
             refused = true;
             maxX = minX - 1;
         }
@@ -109,6 +109,11 @@ struct Box
     const double reach = static_cast<double>(field.settings().voxelSize) * static_cast<double>(RampReach);
     const Band band = bandOf(field);
     Box box;
+    // A brush somewhere that is not a place: nothing, rather than the voxels
+    // round the origin a NaN's index falls on (terrain audit B6).
+    if (!std::isfinite(low.x) || !std::isfinite(low.y) || !std::isfinite(low.z) || !std::isfinite(high.x) ||
+        !std::isfinite(high.y) || !std::isfinite(high.z))
+        return box;
     box.minX = field.voxelIndex(low.x - reach);
     box.minY = std::max(field.voxelIndex(low.y - reach), band.low);
     box.minZ = field.voxelIndex(low.z - reach);
@@ -606,13 +611,19 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
 EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float strength)
 {
     EditReport report;
+    // A NaN clamps to itself and turned the blend into a dig (terrain audit B6).
     const float amount = std::clamp(strength, 0.0f, 1.0f);
-    if (!(radius > 0.0) || amount <= 0.0f)
+    if (!(radius > 0.0) || !(amount > 0.0f))
         return report;
-    const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
-                          DVec3{center.x + radius, center.y + radius, center.z + radius});
+    Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
+                    DVec3{center.x + radius, center.y + radius, center.z + radius});
+    if (!box.refused) {
+        box.limit = MaxSmoothVoxels;
+        box.bound();
+    }
     if (box.empty()) {
         report.refused = box.refused;
+        report.limit = box.refused && box.limit == MaxSmoothVoxels ? MaxSmoothVoxels : MaxEditVoxels;
         return report;
     }
 
@@ -889,7 +900,7 @@ EditReport flattenBall(TerrainField& field, DVec3 center, double radius, float h
 {
     EditReport report;
     const float amount = std::clamp(strength, 0.0f, 1.0f);
-    if (!(radius > 0.0) || amount <= 0.0f || std::isnan(height))
+    if (!(radius > 0.0) || !(amount > 0.0f) || !std::isfinite(height))
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
@@ -930,6 +941,11 @@ EditReport raiseBall(TerrainField& field, DVec3 center, double radius, float amo
     EditReport report;
     if (!(radius > 0.0) || amount == 0.0f || std::isnan(amount))
         return report;
+    // **No further than the band is high** (terrain audit B1): every column
+    // reads a shift's worth past its window, and `RaiseBall(p, 1, 1e9)` asked
+    // for two billion voxels a column.
+    const float bandHeight = field.settings().maxHeight - field.settings().minHeight;
+    amount = std::clamp(amount, -bandHeight, bandHeight);
     const double voxel = static_cast<double>(field.settings().voxelSize);
     const double reach = radius + std::abs(static_cast<double>(amount));
     const Band band = bandOf(field);
@@ -1043,7 +1059,7 @@ EditReport raiseBall(TerrainField& field, DVec3 center, double radius, float amo
 EditReport growBall(TerrainField& field, DVec3 center, double radius, float amount, u8 material)
 {
     EditReport report;
-    if (!(radius > 0.0) || amount == 0.0f || std::isnan(amount))
+    if (!(radius > 0.0) || amount == 0.0f || !std::isfinite(amount))
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});

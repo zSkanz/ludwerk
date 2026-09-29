@@ -933,11 +933,26 @@ void PhysicsSync::applyTerrain()
     };
 
     m_scene.terrains().forEach([&](core::InstanceId id, TerrainComponent& terrain) {
-        if (!inWorld(id) || terrain.field.empty())
+        // **A terrain passed over this tick has no colliders after it**: the
+        // retirement below takes every one not seen. So its last pass is not
+        // settled any more, or the next one with the same boxes would mark
+        // colliders seen that are gone -- and a character respawned where it
+        // died stood on nothing (terrain audit P1).
+        const auto unsettle = [&] {
+            for (TerrainWant& entry : m_terrainWants) {
+                if (entry.terrain == id)
+                    entry.settled = false;
+            }
+        };
+        if (!inWorld(id) || terrain.field.empty()) {
+            unsettle();
             return;
+        }
         gatherMovers();
-        if (movers.empty())
+        if (movers.empty()) {
+            unsettle();
             return;
+        }
 
         const asset::TerrainField& field = terrain.field;
         const f64 chunkMetres = static_cast<f64>(asset::ChunkEdge) * static_cast<f64>(field.settings().voxelSize);
@@ -999,6 +1014,8 @@ void PhysicsSync::applyTerrain()
             asset::ChunkKey key;
             u64 content = 0;
             f64 distance = 0.0;
+            // The revision its collider was last current at; 0 for none.
+            u64 current = 0;
         };
         std::vector<Pending> pending;
         for (const asset::ChunkKey key : wanted) {
@@ -1029,9 +1046,16 @@ void PhysicsSync::applyTerrain()
                 const f64 cz = terrain.origin.z + (static_cast<f64>(key.z) + 0.5) * chunkMetres - mover.z;
                 nearest = std::min(nearest, cx * cx + cy * cy + cz * cz);
             }
-            pending.push_back(Pending{key, content, nearest});
+            pending.push_back(Pending{key, content, nearest, exists ? at->revision : 0});
         }
+        // **Longest waiting first, then nearest, ties by key** -- a function
+        // of the world (R10). Nearest alone rebuilt the same four every tick
+        // of a dig across more, and the rest stayed solid where they had been
+        // dug for as long as the digging went on (terrain audit P5). A chunk
+        // with no collider yet has waited longest of all.
         std::stable_sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) {
+            if (a.current != b.current)
+                return a.current < b.current;
             return a.distance != b.distance ? a.distance < b.distance : a.key < b.key;
         });
 

@@ -105,6 +105,12 @@ public:
     // there again rather than a hole the streamer believes is filled.
     void reconcile();
 
+    // **Reads now every cell over a square that is not held** -- terrain and
+    // block alike, at most `maxCells` -- for an edit about to be made there
+    // (`World::loadGround`, terrain audit U1). A read later for one of them
+    // finds it held and changes nothing.
+    void loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells);
+
     // Where a save writes one cell, and how it removes one.
     struct TerrainCellWriter
     {

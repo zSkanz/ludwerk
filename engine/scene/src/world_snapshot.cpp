@@ -8,6 +8,10 @@
 // the cost is proportional to what the world holds rather than to how deeply it
 // is nested. The design work happened in the headers; this file is what those
 // headers were for.
+#include <algorithm>
+#include <utility>
+#include <vector>
+
 #include "engine/scene/world.h"
 
 namespace engine::scene {
@@ -37,7 +41,45 @@ WorldSnapshot World::snapshot() const
 
 void World::restore(const WorldSnapshot& snapshot)
 {
+    // **The ground's revisions go forward, and its package is the disk's**
+    // (terrain audit G2, P6 and R5). A revision put back to an older number is
+    // one the renderer, the physics mirror and the navmesh have already seen
+    // with other ground behind it, so after a restore each counts on from past
+    // every number any of them has met. And `shipped` is the package's ground
+    // as far as this world had loaded it: which keys comes back with the
+    // world -- a key there and not in the field was dug, one not there was not
+    // loaded yet -- but what is at them is what the disk holds now, which an
+    // undo after a save does not change.
+    u64 floor = m_groundRevisionFloor;
+    std::vector<std::pair<core::InstanceId, asset::TerrainField>> terrainPackages;
+    std::vector<std::pair<core::InstanceId, asset::VoxelGrid>> voxelPackages;
+    m_terrains.forEach([&](core::InstanceId id, TerrainComponent& terrain) {
+        floor = std::max({floor, terrain.fieldRevision, terrain.layersRevision});
+        terrainPackages.emplace_back(id, std::move(terrain.shipped));
+    });
+    m_voxels.forEach([&](core::InstanceId id, VoxelComponent& voxels) {
+        floor = std::max(floor, voxels.revision);
+        voxelPackages.emplace_back(id, std::move(voxels.shipped));
+    });
+
     eachPool(*this, snapshot, [](auto& pool, const auto& source) { pool = source; });
+
+    floor += 1;
+    m_groundRevisionFloor = floor;
+    for (const auto& [id, package] : terrainPackages) {
+        if (TerrainComponent* terrain = m_terrains.find(id); terrain != nullptr)
+            terrain->shipped.refreshFrom(package);
+    }
+    for (const auto& [id, package] : voxelPackages) {
+        if (VoxelComponent* voxels = m_voxels.find(id); voxels != nullptr)
+            voxels->shipped.refreshFrom(package);
+    }
+    m_terrains.forEach([floor](core::InstanceId, TerrainComponent& terrain) {
+        terrain.fieldRevision = std::max(terrain.fieldRevision, floor);
+        terrain.layersRevision = std::max(terrain.layersRevision, floor);
+    });
+    m_voxels.forEach(
+        [floor](core::InstanceId, VoxelComponent& voxels) { voxels.revision = std::max(voxels.revision, floor); });
 
     // Not an assignment: the instance map is the one container where putting
     // the bytes back is not enough, because generations decide what an

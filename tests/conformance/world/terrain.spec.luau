@@ -210,6 +210,41 @@ describe("terrain", function()
         end):ToThrow()
     end)
 
+    it("refuses what no terrain can hold, rather than wrapping it or running out of memory", function()
+        -- Terrain audit B1, B3, B4 and B6: each of these used to be a wrapped
+        -- id that erased, a height that allocated gigabytes a column, a
+        -- setting no save could read back, or a chunk no save could hold.
+        expect(function()
+            terrain:FillBall(vector.create(0, 0, 0), 2, 256)
+        end):ToThrow()
+        expect(function()
+            terrain:PaintBall(vector.create(0, 0, 0), 2, -1)
+        end):ToThrow()
+        expect(function()
+            terrain:RaiseBall(vector.create(0, 0, 0), 2, math.huge, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:SmoothBall(vector.create(0, 0, 0), 2, 0 / 0)
+        end):ToThrow()
+        expect(function()
+            terrain.VoxelSize = 0.05
+        end):ToThrow()
+        expect(function()
+            terrain.MaxHeight = 2e6
+        end):ToThrow()
+
+        -- A raise far past the band is a raise to its ceiling, and done.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(8, 8, 8), Rock)
+        expect(terrain:RaiseBall(vector.create(0, -16, 0), 2, 1e9, Rock) > 0):ToBe(true)
+        expect((terrain:HeightAt(0, 0) :: number) <= 32):ToBe(true)
+
+        -- A ball fifty thousand kilometres out makes nothing, not a chunk past
+        -- every key a save can write.
+        local before = terrain.CellCount
+        expect(terrain:FillBall(vector.create(5e7, 0, 0), 10, Rock)):ToBe(0)
+        expect(terrain.CellCount):ToBe(before)
+    end)
+
     it("a ray meets the ground with nothing moving anywhere near it", function()
         -- Colliders are built near things that move, and there are none here:
         -- the ray is answered by the voxels themselves (ADR 0082).

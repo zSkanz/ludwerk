@@ -14,6 +14,7 @@
 // without anyone thinking about it.
 #pragma once
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -957,6 +958,24 @@ public:
     // not hashed, and nothing a script can see.
     [[nodiscard]] core::u64 restores() const noexcept { return m_restores; }
 
+    // --- Ground not loaded yet (terrain audit U1) ------------------------------
+    //
+    // **Loads the ground over a square now, where a streamer holds it on
+    // disk.** An edit into a cell not loaded made a chunk of only the edit,
+    // which then shadowed the file's chunk for good -- a cube of hillside gone
+    // when the cell came in, and a dig there did nothing at all. Every verb
+    // that writes the ground asks for its square first. Set by the host, which
+    // owns the streamers; a world nobody gave one has all its ground in memory.
+    // Cells are columns, so the square is `low` to `high` in x and z, world
+    // space, and at most `maxCells` are read.
+    using GroundLoader = std::function<void(core::DVec3 low, core::DVec3 high, core::u32 maxCells)>;
+    void setGroundLoader(GroundLoader loader) { m_groundLoader = std::move(loader); }
+    void loadGround(core::DVec3 low, core::DVec3 high, core::u32 maxCells = 256) const
+    {
+        if (m_groundLoader)
+            m_groundLoader(low, high, maxCells);
+    }
+
     // **How many writes this world has taken** through its own verbs --
     // `create`, `destroy`, `setParent`, `setProperty` -- counted up and never
     // restored. Not state, on the same terms as `restores`: what it is for is a
@@ -1302,6 +1321,10 @@ private:
     };
     std::vector<TreeListener> m_treeListeners;
     core::u64 m_restores = 0;
+    // Past every ground revision a restore has seen: where the next restore's
+    // count on from (`World::restore`). Not part of a snapshot.
+    core::u64 m_groundRevisionFloor = 0;
+    GroundLoader m_groundLoader;
     core::u64 m_mutations = 0;
 
     asset::MaterialLibrary* m_materialLibrary = nullptr;

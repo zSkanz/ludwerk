@@ -180,12 +180,12 @@ TEST_CASE("an undo that puts back a field from before a load leaves no hole wher
     editor.terrain().cellIndex = cellIndex;
     REQUIRE(editor.lookUntil(core::DVec3{8.0, 10.0, 8.0}, 0, [&] { return editor.holds(0, 0); }));
     // What an undo snapshot of this moment holds.
-    const asset::TerrainField before = editor.terrain().field;
+    const scene::WorldSnapshot before = editor.world.snapshot();
 
     // The camera moves on and ground loads there...
     REQUIRE(editor.lookUntil(core::DVec3{8.0, 10.0, 400.0}, 0, [&] { return editor.holds(0, 6); }));
     // ...and the world is put back to the snapshot, which never had it.
-    editor.terrain().field = before;
+    editor.world.restore(before);
     REQUIRE_FALSE(editor.holds(0, 6));
 
     // One frame that knows the world was restored, and the ground loaded

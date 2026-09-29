@@ -293,10 +293,17 @@ struct FieldSettings
 inline constexpr float MinVoxelSize = 0.01f;
 inline constexpr float MaxVoxelSize = 64.0f;
 inline constexpr float MaxFieldHeight = 1.0e6f;
+// **A terrain's voxel is at least ten centimetres**, the smallest the editor
+// offers (terrain audit P2). What reads round a point is reached in metres --
+// the sky a vertex sees, the ground a body collides with -- so its cost in
+// voxels grows with the cube of how small they are: at a centimetre, one
+// region's mesh wanted a quarter of a gigabyte and a walking character three
+// million chunk keys a tick.
+inline constexpr float MinTerrainVoxelSize = 0.1f;
 [[nodiscard]] inline bool saneFieldSettings(const FieldSettings& settings) noexcept
 {
     const auto within = [](float value, float low, float high) { return value >= low && value <= high; };
-    return within(settings.voxelSize, MinVoxelSize, MaxVoxelSize) &&
+    return within(settings.voxelSize, MinTerrainVoxelSize, MaxVoxelSize) &&
            within(settings.minHeight, -MaxFieldHeight, MaxFieldHeight) &&
            within(settings.maxHeight, -MaxFieldHeight, MaxFieldHeight) && settings.maxHeight > settings.minHeight;
 }
@@ -389,6 +396,17 @@ public:
     // `from` keeps a reference, so the first edit here clones it. That is how
     // an evicting streamer tells a cell somebody changed from one nobody did.
     void shareFrom(const TerrainField& from);
+    // **The same, less every key `known` already holds** -- the load path
+    // proper, with `known` the package's ground as far as it was ever loaded
+    // (`TerrainComponent::shipped`). A key there and not here was removed on
+    // purpose: dug away, or removed by the authority. Without it, "dug to
+    // nothing" and "not loaded" were the same fact, and a cell streamed out
+    // and back brought every hole's ground back (terrain audit G1).
+    void shareFrom(const TerrainField& from, const TerrainField& known);
+    // **Each chunk this field holds, as `newer` holds it** -- where it holds
+    // it -- and no key added: a world put back keeps the keys it had loaded,
+    // with what the package on disk now holds at them.
+    void refreshFrom(const TerrainField& newer);
 
     // Drops every chunk named, in one pass. `keys` sorted.
     void removeAll(std::span<const ChunkKey> keys);
@@ -449,11 +467,19 @@ struct EditReport
     // eight quadrillion voxels in C++, where no watchdog reaches, until the
     // machine ran out of memory.
     bool refused = false;
+    // The most the verb that refused it walks, for the message that says so.
+    core::u64 limit = 0;
 };
 
 // A box of 512 voxels a side: far past any brush a person holds, and small
 // enough that the worst edit is a pause rather than a hang.
 inline constexpr core::u64 MaxEditVoxels = 512ull * 512ull * 512ull;
+
+// **Smoothing's own bound**, 160 voxels a side: it holds three buffers over
+// its box and a margin, ten bytes a voxel, so `MaxEditVoxels` let one call
+// ask for a gigabyte and a half (terrain audit B5). A brush past it is past
+// what a smooth stamp does in a frame anyway.
+inline constexpr core::u64 MaxSmoothVoxels = 160ull * 160ull * 160ull;
 
 // Adds a ball of ground, or removes one when `material` is zero.
 EditReport fillBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material);
@@ -484,7 +510,8 @@ EditReport writeHeights(TerrainField& field, core::i32 firstX, core::i32 firstZ,
                         std::span<const float> heights, std::span<const core::u8> materials);
 
 // Softens the ground in a ball: every voxel moves towards the mean of its
-// twenty-seven neighbours by `strength`, less towards the rim. Clamped to 0..1.
+// twenty-seven neighbours by `strength`, less towards the rim. Clamped to 0..1;
+// a ball of more than `MaxSmoothVoxels` is refused.
 EditReport smoothBall(TerrainField& field, core::DVec3 center, double radius, float strength);
 
 // Pulls the ground in a ball towards a level plane at `height` -- taking what

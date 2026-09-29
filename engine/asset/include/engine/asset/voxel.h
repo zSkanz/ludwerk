@@ -115,6 +115,9 @@ struct VoxelChunk
 // mirror; a block there is refused as it is written, and a file naming a
 // chunk there is read without it.
 inline constexpr core::i32 MaxVoxelChunkKey = 1 << 20;
+// The most blocks one fill may cover: 256 a side, 34 MB of blocks at most
+// (terrain audit B2).
+inline constexpr core::u64 MaxFillBlocks = 256ull * 256ull * 256ull;
 [[nodiscard]] constexpr bool voxelChunkKeyInRange(VoxelChunkKey key) noexcept
 {
     const auto in = [](core::i32 value) { return value >= -MaxVoxelChunkKey && value <= MaxVoxelChunkKey; };
@@ -167,6 +170,11 @@ public:
     // the load path of a streamed cell, on `TerrainField::shareFrom`'s terms --
     // what is here wins, and the shared reference makes the first edit clone.
     void shareFrom(const VoxelGrid& from);
+    // Less every key `known` holds: `TerrainField::shareFrom`'s second form,
+    // for a block mined out of a chunk until it was air.
+    void shareFrom(const VoxelGrid& from, const VoxelGrid& known);
+    // `TerrainField::refreshFrom`'s terms.
+    void refreshFrom(const VoxelGrid& newer);
 
     // Drops every chunk named, in one pass. `keys` sorted.
     void removeAll(std::span<const VoxelChunkKey> keys);

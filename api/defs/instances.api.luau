@@ -1083,8 +1083,8 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "1",
                 ErrorKey = "scene.err.terrain_not_empty",
-                Doc = "How big one voxel is, in metres. One metre resolves a doorway and a path; two metres "
-                    .. "resolves a hillside and costs an eighth as much.\n\n"
+                Doc = "How big one voxel is, in metres, from 0.1 to 64. One metre resolves a doorway and a "
+                    .. "path; two metres resolves a hillside and costs an eighth as much.\n\n"
                     .. "**Only settable while the terrain is empty.** Changing it under a sculpted world "
                     .. "would mean resampling every voxel onto a different grid, which is a lossy operation "
                     .. "nobody asked for -- so it is refused, by name, rather than done quietly. Clear it "

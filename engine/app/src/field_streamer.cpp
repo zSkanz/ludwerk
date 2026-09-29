@@ -7,6 +7,7 @@
 #include "engine/app/streaming_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/platform/file.h"
 #include "engine/platform/platform.h"
 #include "engine/scene/components.h"
 #include "engine/scene/voxel_fluid.h"
@@ -90,8 +91,11 @@ void FieldStreamer::reconcile()
     scene::TerrainComponent* component = terrain();
     if (component == nullptr)
         return;
+    // Less what was removed on purpose: a chunk dug to nothing in the world
+    // put back is gone there, and the cell's copy of it must not return it
+    // (terrain audit G2).
     for (const auto& held : m_terrainCells) {
-        component->field.shareFrom(held.second.field);
+        component->field.shareFrom(held.second.field, component->shipped);
         component->shipped.shareFrom(held.second.field);
     }
     component->fieldRevision += 1;
@@ -143,7 +147,10 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
                     report.ok = false;
                     continue;
                 }
-                cell.field.shareFrom(onDisk.field);
+                // Less every chunk this session loaded and then removed:
+                // the file still holds it, and the field is the truth
+                // (terrain audit G3).
+                cell.field.shareFrom(onDisk.field, component->shipped);
             }
         }
         cell.settings = settings;
@@ -187,6 +194,24 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
         }
         m_paths.erase(held->first);
         held = m_terrainCells.erase(held);
+    }
+
+    // **A cell dug to nothing after it was let go** is empty too: the field
+    // holds none of it, and the package's copy says it was loaded -- so what
+    // its file holds is ground somebody removed (terrain audit G3). A cell
+    // never loaded is simply not here, and keeps its file.
+    std::set<asset::ChunkId> loaded;
+    for (const asset::TerrainField::Entry& entry : component->shipped.chunks())
+        loaded.insert(asset::terrainCellOf(entry.first, across));
+    for (auto row = rows.begin(); row != rows.end();) {
+        if (present.contains(row->first) || m_terrainCells.contains(row->first) || !loaded.contains(row->first)) {
+            ++row;
+            continue;
+        }
+        report.emptied.push_back(row->second);
+        report.removed += 1;
+        m_paths.erase(row->first);
+        row = rows.erase(row);
     }
 
     report.index.chunkSize = static_cast<core::f32>(asset::FieldCellMetres);
@@ -275,9 +300,38 @@ scene::VoxelComponent* FieldStreamer::voxels() const
     return found;
 }
 
+void FieldStreamer::loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells)
+{
+    if (!m_active || m_world == nullptr)
+        return;
+    core::u32 read = 0;
+    for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
+        if (read >= maxCells)
+            break;
+        const bool ground = entry.id.layer == asset::FieldLayerTerrain;
+        if (!ground && entry.id.layer != asset::FieldLayerVoxels)
+            continue;
+        if (ground ? m_terrainCells.contains(entry.id) : m_voxelCells.contains(entry.id))
+            continue;
+        if (entry.bounds.max.x < low.x || entry.bounds.min.x > high.x || entry.bounds.max.z < low.z ||
+            entry.bounds.min.z > high.z)
+            continue;
+        const auto path = m_paths.find(entry.id);
+        std::vector<std::byte> bytes;
+        if (path == m_paths.end() || !platform::readFile(path->second, bytes))
+            continue;
+        if (materialize(entry.id, bytes) >= 0.0)
+            ++read;
+    }
+}
+
 f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> bytes)
 {
     const u64 started = platform::nowNs();
+    // **Held already**, read for an edit (`loadNow`) before this read came
+    // back: the field has all of it that was not removed on purpose.
+    if (id.layer == asset::FieldLayerTerrain ? m_terrainCells.contains(id) : m_voxelCells.contains(id))
+        return millisecondsSince(started);
     if (id.layer == asset::FieldLayerTerrain) {
         asset::TerrainCell cell;
         if (asset::decodeTerrainCell(bytes, cell).has_value())
@@ -285,7 +339,11 @@ f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> byt
         // A world whose script removed its terrain has nowhere to put the
         // ground; the cell counts as resident, and costs what reading it did.
         if (scene::TerrainComponent* component = terrain(); component != nullptr) {
-            component->field.shareFrom(cell.field);
+            // **Less every chunk the package's copy already holds**: the
+            // field has it, or it was removed on purpose -- dug to nothing,
+            // or removed by the authority -- and a cell that went out and came
+            // back must not bring it back (terrain audit G1).
+            component->field.shareFrom(cell.field, component->shipped);
             // What the package ships, for the ground's replication (ADR 0135).
             component->shipped.shareFrom(cell.field);
             component->fieldRevision += 1;
@@ -298,7 +356,7 @@ f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> byt
     if (asset::decodeVoxelCell(bytes, cell).has_value())
         return -1.0;
     if (scene::VoxelComponent* component = voxels(); component != nullptr) {
-        component->grid.shareFrom(cell.grid);
+        component->grid.shareFrom(cell.grid, component->shipped);
         component->shipped.shareFrom(cell.grid);
         component->revision += 1;
         // Its water was saved without the steps it was due. A still lake

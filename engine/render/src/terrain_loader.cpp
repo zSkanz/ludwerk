@@ -170,8 +170,11 @@ struct ChunkSpan
 
 std::string terrainNodeUrn(core::InstanceId terrain, TerrainNodeKey node)
 {
-    return "terrain://" + std::to_string(terrain.index) + "/" + std::to_string(node.level) + "/" +
-           std::to_string(node.x) + "," + std::to_string(node.z);
+    // The slot's generation too (terrain audit P6): a terrain destroyed and
+    // made again in the same slot between two syncs filed its new node under
+    // the old one's URN, and the old one's release then removed it.
+    return "terrain://" + std::to_string(terrain.index) + "." + std::to_string(terrain.generation) + "/" +
+           std::to_string(node.level) + "/" + std::to_string(node.x) + "," + std::to_string(node.z);
 }
 
 asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNodeKey node)
@@ -377,10 +380,12 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
         // **The selection, depth first in key order** (R10: the order draws and
         // requests are made in is a function of the world and the camera).
         const auto select = [&](const auto& self, TerrainNodeKey key) -> void {
-            if (!occupied(field, key))
-                return;
+            // Distance first: it is arithmetic, and `occupied` is a search per
+            // chunk column under the node.
             const f64 distance = distanceTo(key);
             if (distance > m_lod.viewDistance)
+                return;
+            if (!occupied(field, key))
                 return;
             // Every node the walk passes through is in use, drawn or not: an
             // ancestor let go is one the next step back has to rebuild first.
@@ -423,11 +428,19 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             drawCovering(drawCovering, key);
         };
 
+        // **The roots within sight, not the field's whole extent** (terrain
+        // audit P3): two edits a million metres apart made a box of millions
+        // of roots, every one visited every frame.
         const i32 top = across(TerrainTopLevel);
-        const i32 firstX = asset::floorDiv(chunks.front().first.x, top);
-        const i32 lastX = asset::floorDiv(chunks.back().first.x + 1, top);
-        const i32 firstZ = asset::floorDiv(minZ, top);
-        const i32 lastZ = asset::floorDiv(maxZ + 1, top);
+        const f64 rootMetres = static_cast<f64>(top) * chunkMetres;
+        const auto rootAt = [rootMetres](f64 metres) {
+            return static_cast<i32>(std::clamp(std::floor(metres / rootMetres), -1.0e9, 1.0e9));
+        };
+        const i32 firstX = std::max(asset::floorDiv(chunks.front().first.x, top), rootAt(focus.x - m_lod.viewDistance));
+        const i32 lastX =
+            std::min(asset::floorDiv(chunks.back().first.x + 1, top), rootAt(focus.x + m_lod.viewDistance));
+        const i32 firstZ = std::max(asset::floorDiv(minZ, top), rootAt(focus.z - m_lod.viewDistance));
+        const i32 lastZ = std::min(asset::floorDiv(maxZ + 1, top), rootAt(focus.z + m_lod.viewDistance));
         for (i32 rootZ = firstZ; rootZ <= lastZ; ++rootZ) {
             for (i32 rootX = firstX; rootX <= lastX; ++rootX)
                 select(select, TerrainNodeKey{TerrainTopLevel, rootX, rootZ});

@@ -37,7 +37,8 @@ lowest surface it lays and rounded down to a whole chunk. That covers
 `WriteHeights`, Generate Flat Ground and a first raise on empty terrain.
 Its sides and bottom are drawn and collide like its top, so the edge of a
 terrain looks the same everywhere, however it was made. Nothing is written
-below `MinHeight`. `VoxelSize` can only change while the terrain is empty.
+below `MinHeight`. `VoxelSize` is 0.1 to 64 metres, and can only change while
+the terrain is empty.
 
 ## Shaping it
 
@@ -315,6 +316,14 @@ joiner included. A server that makes its terrain in a script sends it whole.
   for the feel of an instant hole; the next chunk the server sends over it wins.
 - **What it costs is what changes**: a crater sends the few chunks it touched,
   and a quiet match sends nothing.
+- **Its place travels too**: a terrain the server moves, or makes somewhere,
+  is there on every machine. One a server script destroys takes its ground
+  from every player, and one it makes after is the ground they see.
+
+**On a large world that streams**, an edit never loses ground the camera has
+not reached: a script, the brush or a block placed in a cell still on disk
+reads that cell first, and a hole dug in a cell that later streams out is still
+a hole when it comes back.
 
 **Worlds saved by an earlier version**, when terrain was stored as heights with
 voxels only where caves were, open as they were and are saved as voxels from

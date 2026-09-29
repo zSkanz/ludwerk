@@ -233,21 +233,42 @@ void VoxelGrid::removeChunk(VoxelChunkKey key)
 // One pass, for `TerrainField::shareFrom`'s reason.
 void VoxelGrid::shareFrom(const VoxelGrid& from)
 {
+    shareFrom(from, VoxelGrid{});
+}
+
+void VoxelGrid::shareFrom(const VoxelGrid& from, const VoxelGrid& known)
+{
     if (from.m_chunks.empty())
         return;
     decltype(m_chunks) merged;
     merged.reserve(m_chunks.size() + from.m_chunks.size());
     auto held = m_chunks.begin();
+    auto seen = known.m_chunks.begin();
     for (const auto& entry : from.m_chunks) {
         while (held != m_chunks.end() && held->first < entry.first)
             merged.push_back(std::move(*held++));
         if (held != m_chunks.end() && held->first == entry.first)
+            continue;
+        while (seen != known.m_chunks.end() && seen->first < entry.first)
+            ++seen;
+        if (seen != known.m_chunks.end() && seen->first == entry.first)
             continue;
         merged.push_back(entry);
     }
     while (held != m_chunks.end())
         merged.push_back(std::move(*held++));
     m_chunks = std::move(merged);
+}
+
+void VoxelGrid::refreshFrom(const VoxelGrid& newer)
+{
+    auto theirs = newer.m_chunks.begin();
+    for (auto& entry : m_chunks) {
+        while (theirs != newer.m_chunks.end() && theirs->first < entry.first)
+            ++theirs;
+        if (theirs != newer.m_chunks.end() && theirs->first == entry.first)
+            entry.second = theirs->second;
+    }
 }
 
 void VoxelGrid::removeAll(std::span<const VoxelChunkKey> keys)

@@ -8,7 +8,10 @@
 // a deferred fact -- none of which needs a solver, and all of which a solver
 // would make slower and less exact to assert.
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <doctest/doctest.h>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -2017,6 +2020,73 @@ TEST_CASE("a terrain that is cleared, or moved, takes its colliders with it")
     const core::usize destroyedBefore = mirror.backend.destroyed.size();
     mirror.step();
     CHECK(mirror.backend.destroyed.size() > destroyedBefore);
+}
+
+TEST_CASE("a tick with nothing moving does not leave the next one standing on colliders that are gone (terrain "
+          "audit P1)")
+{
+    // A game's only body anchored for a tick -- a character dead and waiting
+    // to respawn where it fell -- retired every terrain collider, and the pass
+    // after it, with the same boxes over the same ground, read as settled and
+    // built none: the character came back standing on nothing.
+    Mirror mirror;
+    (void)terrainWith(mirror, 3.0f);
+    const core::InstanceId crate = mirror.part("Crate", {4.0, 6.0, 4.0});
+    settle(mirror);
+    REQUIRE(meshesMade(mirror) >= 1);
+
+    mirror.body(crate).anchored = true;
+    const core::usize destroyed = mirror.backend.destroyed.size();
+    mirror.step();
+    REQUIRE(mirror.backend.destroyed.size() > destroyed);
+
+    mirror.body(crate).anchored = false;
+    const core::usize built = mirror.backend.created.size();
+    settle(mirror);
+    bool ground = false;
+    for (core::usize at = built; at < mirror.backend.created.size(); ++at)
+        ground = ground || mirror.backend.created[at].desc.shape.type == physics::ShapeType::TriangleMesh;
+    CHECK(ground);
+}
+
+TEST_CASE("an edit across more chunks than a tick rebuilds reaches every one of them (terrain audit P5)")
+{
+    // Nearest first rebuilt the same four every tick of an edit across nine,
+    // and the others stayed as they were for as long as it went on.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    // In the middle of a chunk, so the nine round it are in reach.
+    (void)mirror.part("Crate", {16.0, 14.0, 16.0});
+    settle(mirror);
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+
+    // Every tick the ground under all nine changes: painted one material,
+    // then the other.
+    const core::usize before = mirror.backend.created.size();
+    for (int tick = 0; tick < 4; ++tick) {
+        (void)asset::paintBall(component->field, core::DVec3{16.0, 10.0, 16.0}, 50.0,
+                               static_cast<core::u8>(tick % 2 == 0 ? 2 : 3));
+        component->fieldRevision += 1;
+        mirror.step();
+    }
+    std::set<std::array<core::i32, 3>> rebuilt;
+    for (core::usize at = before; at < mirror.backend.created.size(); ++at) {
+        const auto& made = mirror.backend.created[at];
+        if (made.desc.shape.type != physics::ShapeType::TriangleMesh || made.points.empty())
+            continue;
+        // A chunk's collider is its own surface: the middle of its points is
+        // inside it.
+        core::Vec3 sum{};
+        for (const core::Vec3& point : made.points)
+            sum = sum + point;
+        const float n = static_cast<float>(made.points.size());
+        rebuilt.insert({static_cast<core::i32>(std::floor(sum.x / n / 32.0f)),
+                        static_cast<core::i32>(std::floor(sum.y / n / 32.0f)),
+                        static_cast<core::i32>(std::floor(sum.z / n / 32.0f))});
+    }
+    // All nine, in three ticks of four.
+    CHECK(rebuilt.size() >= 9);
 }
 
 TEST_CASE("two terrains in one place each get their colliders")

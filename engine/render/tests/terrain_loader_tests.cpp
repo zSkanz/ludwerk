@@ -90,7 +90,7 @@ struct LoaderFixture
     }
 };
 
-// The node a URN names: `terrain://<id>/<level>/<x>,<z>`.
+// The node a URN names: `terrain://<slot>.<generation>/<level>/<x>,<z>`.
 [[nodiscard]] TerrainNodeKey keyOf(const core::AtomTable& atoms, core::NameAtom urn)
 {
     const std::string text(atoms.text(urn));

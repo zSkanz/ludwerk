@@ -734,12 +734,16 @@ TEST_CASE("field settings are checked as the floats they are (audit F9)")
     // 1e30 made a column a loop of a billion steps.
     CHECK(asset::saneFieldSettings(asset::FieldSettings{}));
     const float infinity = std::numeric_limits<float>::infinity();
-    for (const float voxel : {0.0f, -1.0f, 1e-40f, 0.001f, 100.0f, infinity, std::numeric_limits<float>::quiet_NaN()})
+    // A voxel under ten centimetres too: what reads round a point is reached in
+    // metres, so its cost grows with the cube of how small it is (terrain
+    // audit P2).
+    for (const float voxel :
+         {0.0f, -1.0f, 1e-40f, 0.001f, 0.05f, 100.0f, infinity, std::numeric_limits<float>::quiet_NaN()})
         CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{voxel, -256.0f, 256.0f}));
     CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, -1e30f, 256.0f}));
     CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, -256.0f, infinity}));
     CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, 10.0f, 10.0f}));
-    CHECK(asset::saneFieldSettings(asset::FieldSettings{0.01f, -1e6f, 1e6f}));
+    CHECK(asset::saneFieldSettings(asset::FieldSettings{0.1f, -1e6f, 1e6f}));
 }
 
 TEST_CASE("what a smooth stamp costs" * doctest::skip())

@@ -2295,6 +2295,9 @@ local Messages: { Schema.Message } = {
         Channel = "Control",
         Direction = "ToReplica",
         Layout = {
+            { Name = "originX", Type = "u64", Doc = "The terrain's `Position`, an f64's bits (protocol 25)." },
+            { Name = "originY", Type = "u64" },
+            { Name = "originZ", Type = "u64" },
             { Name = "layerCount", Type = "u16", Doc = "At most 255." },
             {
                 Name = "layers",
@@ -2330,8 +2333,9 @@ local Messages: { Schema.Message } = {
                 },
             },
         },
-        Doc = "The workspace's terrain's layers and rules, whole (ADR 0135, protocol 24): once to a replica that "
-            .. "joins, and whenever either changed. The replica's become exactly these.",
+        Doc = "The workspace's terrain's place, layers and rules, whole (ADR 0135, protocol 24; its place since "
+            .. "25): once to a replica that joins, and whenever any changed. The replica's become exactly these, "
+            .. "and a replica with no terrain makes one.",
     },
     {
         Name = "VoxelChunks",

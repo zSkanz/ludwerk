@@ -773,6 +773,9 @@ public:
     // which is what keeps a two-second drag on a colour from burying everything
     // before it under a hundred and twenty steps. Empty never coalesces.
     void record(const scene::World& world, std::string label, core::u64 coalesceKey = 0);
+    // The same, with the state taken earlier: a gesture that snapshots before
+    // it acts and records only once it has changed something.
+    void record(scene::WorldSnapshot state, std::string label, core::u64 coalesceKey = 0);
 
     bool undo(scene::World& world);
     bool redo(scene::World& world);
@@ -2813,6 +2816,12 @@ private:
         // step; one that was refused says why.
         core::u64 touched = 0;
         bool refused = false;
+        // **The world before it, recorded only once a stamp changed
+        // something** (terrain audit E2). Recorded up front, a stroke that
+        // changed nothing cleared the redo stack, and taking the step back
+        // took whatever was on top -- a Delete made mid-stroke.
+        std::optional<scene::WorldSnapshot> before;
+        std::string label;
     };
 
     // How far a brush can reach, in metres. A ray fired at the horizon has to
@@ -2827,6 +2836,9 @@ private:
     // (`Stroke::carve`).
     [[nodiscard]] static bool carves(Tool tool, const Brush& brush) noexcept;
     [[nodiscard]] static bool carves(Tool tool, BrushOp op) noexcept;
+    // The material ground is laid as: `wanted` when the terrain has a layer
+    // of that number, its last layer past them, and 1 on a terrain with none.
+    [[nodiscard]] static core::u8 groundMaterial(const scene::TerrainComponent& terrain, core::u8 wanted) noexcept;
     // One frame of a stroke, aimed at the ground as it now is: a drag stamps
     // by distance, and a pointer held still stamps on the clock -- Add and
     // Subtract at their building speed, every other tool at a rate its strength

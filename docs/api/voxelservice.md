@@ -36,7 +36,7 @@ Removes every block. The registered block types stay.
 
 ### `FillBlocks(from: vector, to: vector, id: number): number`
 
-Fills every block in the box between two block coordinates, both included, with one id -- 0 empties it. Returns how many blocks changed. The way to build a floor, a wall or a world's first ground in one call rather than thousands.
+Fills every block in the box between two block coordinates, both included, with one id -- 0 empties it. Returns how many blocks changed. The way to build a floor, a wall or a world's first ground in one call rather than thousands. A box of more than 256 blocks cubed is refused: fill it in pieces.
 
 ### `GetBlock(block: vector): number`
 

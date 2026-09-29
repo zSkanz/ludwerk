@@ -56,7 +56,7 @@ inline constexpr core::u32 TerrainTopLevel = asset::ChunkLevels - 1;
 // two meshes share their edge -- and a finer neighbour hangs its own.
 [[nodiscard]] core::u8 terrainSkirtSides(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key) noexcept;
 
-// The URN a node's mesh is filed under: `terrain://<instance>/<level>/<x>,<z>`.
+// The URN a node's mesh is filed under: `terrain://<slot>.<generation>/<level>/<x>,<z>`.
 [[nodiscard]] std::string terrainNodeUrn(core::InstanceId terrain, TerrainNodeKey node);
 
 // **The mesh one node is drawn with**, exactly as `sync` builds it -- the

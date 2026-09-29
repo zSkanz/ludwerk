@@ -51,6 +51,21 @@ describe("voxel service", function()
         expect(voxels.ChunkCount):ToBe(0)
     end)
 
+    it("refuses a fill no block world could hold, and a position that is not one", function()
+        -- Terrain audit B2: one call filled a million chunks, or walked 10^18
+        -- empty ones clearing a box of air.
+        expect(function()
+            voxels:FillBlocks(vector.create(0, 0, 0), vector.create(4095, 255, 4095), Stone)
+        end):ToThrow()
+        expect(function()
+            voxels:FillBlocks(vector.create(-1e7, -1e7, -1e7), vector.create(1e7, 1e7, 1e7), 0)
+        end):ToThrow()
+        expect(function()
+            voxels:SetBlock(vector.create(0 / 0, 0, 0), Stone)
+        end):ToThrow()
+        expect(voxels.ChunkCount):ToBe(0)
+    end)
+
     it("refuses a block id nobody registered", function()
         expect(function()
             voxels:SetBlock(vector.create(0, 0, 0), 99)

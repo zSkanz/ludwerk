@@ -317,13 +317,15 @@ Voxel TerrainChunk::mip(u32 level, u32 x, u32 y, u32 z) const noexcept
 i32 TerrainField::voxelIndex(double metres) const noexcept
 {
     // **Clamped before the cast** (audit S10): a double past an `i32` is
-    // undefined behaviour to convert, and a NaN is nowhere. A quarter of the
-    // range either side leaves room for the arithmetic callers do on indices.
+    // undefined behaviour to convert, and a NaN is nowhere. **And to the
+    // chunks a field may hold** (terrain audit B4): an edit far enough out made
+    // a chunk past `MaxChunkKey`, which a save then refused with its whole cell
+    // and the wire with its whole message.
     const double index = std::floor(metres / static_cast<double>(m_settings.voxelSize));
     if (!(index == index))
         return 0;
-    constexpr double Limit = 536870912.0;
-    return static_cast<i32>(std::clamp(index, -Limit, Limit));
+    constexpr double Limit = static_cast<double>(MaxChunkKey) * static_cast<double>(ChunkEdge);
+    return static_cast<i32>(std::clamp(index, -Limit, Limit + static_cast<double>(ChunkEdge) - 1.0));
 }
 
 const TerrainChunk* TerrainField::findChunk(ChunkKey key) const noexcept
@@ -521,6 +523,11 @@ void TerrainField::removeChunk(ChunkKey key)
 
 void TerrainField::shareFrom(const TerrainField& from)
 {
+    shareFrom(from, TerrainField{});
+}
+
+void TerrainField::shareFrom(const TerrainField& from, const TerrainField& known)
+{
     // One merge of the two sorted lists rather than an insertion per chunk:
     // a cell streamed into a large field would otherwise shift the tail of the
     // vector once per chunk it brings.
@@ -529,16 +536,32 @@ void TerrainField::shareFrom(const TerrainField& from)
     std::vector<Entry> merged;
     merged.reserve(m_chunks.size() + from.m_chunks.size());
     auto held = m_chunks.begin();
+    auto seen = known.m_chunks.begin();
     for (const Entry& entry : from.m_chunks) {
         while (held != m_chunks.end() && held->first < entry.first)
             merged.push_back(std::move(*held++));
         if (held != m_chunks.end() && held->first == entry.first)
+            continue;
+        while (seen != known.m_chunks.end() && seen->first < entry.first)
+            ++seen;
+        if (seen != known.m_chunks.end() && seen->first == entry.first)
             continue;
         merged.push_back(entry);
     }
     while (held != m_chunks.end())
         merged.push_back(std::move(*held++));
     m_chunks = std::move(merged);
+}
+
+void TerrainField::refreshFrom(const TerrainField& newer)
+{
+    auto theirs = newer.m_chunks.begin();
+    for (Entry& entry : m_chunks) {
+        while (theirs != newer.m_chunks.end() && theirs->first < entry.first)
+            ++theirs;
+        if (theirs != newer.m_chunks.end() && theirs->first == entry.first)
+            entry.second = theirs->second;
+    }
 }
 
 void TerrainField::removeAll(std::span<const ChunkKey> keys)
@@ -573,6 +596,9 @@ bool FieldWriter::set(i32 x, i32 y, i32 z, Voxel voxel)
 {
     const ChunkKey key = chunkOf(x, y, z);
     if (m_last == nullptr || !(key == m_lastKey)) {
+        // Never a chunk no save or message can carry (terrain audit B4).
+        if (!chunkKeyInRange(key))
+            return false;
         const bool air = canonical(voxel) == Voxel{};
         if (air && m_field.findChunk(key) == nullptr)
             return false;

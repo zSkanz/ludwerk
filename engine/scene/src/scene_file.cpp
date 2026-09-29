@@ -2284,6 +2284,10 @@ void readVoxels(World& world, const JsonValue& root, SceneIoReport& out)
     if (voxels == nullptr)
         return;
     voxels->grid.clear();
+    // The last scene's package too: a scene with no block world ships none,
+    // and a copy left over was the old scene's ground sent to every joiner
+    // as removed (terrain audit R5).
+    voxels->shipped.clear();
     voxels->types.clear();
     voxels->fluidWakes.clear();
     voxels->fluidReactions.clear();

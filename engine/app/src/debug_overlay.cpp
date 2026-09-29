@@ -6642,7 +6642,13 @@ void reportLookInput(Editor& editor, bool overViewport)
 // nothing, for a tool that is not one.
 [[nodiscard]] std::string terrainBrushWords(const Editor& editor)
 {
-    switch (editor.tool()) {
+    // No panel, no brush (`Editor::setTerrainPanelShown`): the chip said a
+    // brush was in hand that a click could not use (terrain audit E6).
+    const Editor::Tool tool = editor.tool();
+    if ((tool == Editor::Tool::Sculpt || tool == Editor::Tool::Paint || tool == Editor::Tool::Foliage) &&
+        !editor.terrainPanelShown())
+        return {};
+    switch (tool) {
     case Editor::Tool::Sculpt:
         switch (editor.effectiveBrushOp()) {
         case Editor::BrushOp::Grow:
@@ -11623,11 +11629,14 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::PushTextWrapPos(0.0f);
+        // Each mode's own keys: Paint has no strength and no opposite
+        // (terrain audit E6), and Foliage's opposite thins.
         ImGui::TextDisabled(g_terrainMode == TerrainMode::Sculpt
                                 ? "1-6 pick a tool  |  [ ] size  |  Shift+[ ] strength  |  hold Ctrl: the opposite  "
                                   "|  hold Shift: smooth  |  Esc puts the brush down"
-                                : "[ ] size  |  Shift+[ ] strength  |  hold Ctrl: the opposite  |  Esc puts the brush "
-                                  "down");
+                            : g_terrainMode == TerrainMode::Paint
+                                ? "[ ] size  |  Esc puts the brush down"
+                                : "[ ] size  |  Shift+[ ] strength  |  hold Ctrl: thin  |  Esc puts the brush down");
         ImGui::PopTextWrapPos();
     }
 }
@@ -12601,14 +12610,15 @@ void drawStatusBar(Editor& editor, const Inspector* inspector, EditorPanels& pan
             ImGui::SetWindowFocus("Stats");
         }
 
-        // A brush in hand says so, and how to put it down.
+        // A brush in hand says so, and how to put it down -- a terrain brush
+        // only with its panel open, which is when it is one.
         const char* brush = nullptr;
         switch (editor.tool()) {
         case Editor::Tool::Sculpt:
-            brush = "Sculpt";
+            brush = editor.terrainPanelShown() ? "Sculpt" : nullptr;
             break;
         case Editor::Tool::Paint:
-            brush = "Paint";
+            brush = editor.terrainPanelShown() ? "Paint" : nullptr;
             break;
         case Editor::Tool::Blocks:
             brush = "Blocks";
@@ -13651,7 +13661,10 @@ terrainPanelDone:;
         const bool typing = ImGui::GetIO().WantTextInput;
         editor->setBrushModifiers(ImGui::GetIO().KeyCtrl && !typing, ImGui::GetIO().KeyShift && !typing);
     }
-    if (editor != nullptr && !ImGui::IsAnyItemActive() && !popupOpen && !editor->lookInput().active) {
+    // **Not while the game plays** (terrain audit E6): a game's own 1 to 6, T
+    // and B changed the editor's brush and opened its panels behind it.
+    if (editor != nullptr && !ImGui::IsAnyItemActive() && !popupOpen && !editor->lookInput().active &&
+        !editor->inPlayMode()) {
         if (ctrlOnly && ImGui::IsKeyPressed(ImGuiKey_1, false)) {
             editor->setTool(Editor::Tool::Select);
             editor->setHandlesShown(false);

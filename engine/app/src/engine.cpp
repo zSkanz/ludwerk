@@ -3541,6 +3541,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // **A terrain saved as cells is streamed wherever it is being looked
         // at** (ADR 0087): around the editor's camera while editing, around the
         // world's own foci while it plays.
+        // **An edit into ground not loaded yet reads it first** (terrain audit
+        // U1): a script's, the editor brush's and a block placed alike.
+        host->world().setGroundLoader(
+            [&fields](core::DVec3 low, core::DVec3 high, core::u32 cells) { fields.loadNow(low, high, cells); });
         terrainCells.frame(host->world(), host->workspace(), editor.worldRestores(),
                            options.editor && editing(editor.runState())
                                ? std::optional<core::DVec3>(editor.cameraCFrame().position)

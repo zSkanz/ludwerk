@@ -402,9 +402,17 @@ private:
         std::vector<asset::TerrainField::Entry> terrainShipped;
         u64 terrainRevision = 0;
         std::vector<u8> terrainLook;
+        // The scene the shadow is of, and -- once a terrain of it was replaced
+        // or destroyed -- the package its peers loaded, which every terrain
+        // after is measured against; with the last terrain's settings, to
+        // send its removal in (terrain audit R4).
+        std::string scene;
+        std::vector<asset::TerrainField::Entry> base;
+        bool baseSet = false;
+        asset::FieldSettings settings;
         std::vector<asset::VoxelGrid::Entry> voxelChunks;
         std::vector<asset::VoxelGrid::Entry> voxelShipped;
-        u64 voxelRevision = 0;
+        u64 voxelRevision = ~u64{0};
         std::vector<u8> voxelTypes;
         u64 restores = 0;
     };

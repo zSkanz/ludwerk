@@ -521,6 +521,13 @@ bool setTerrainVoxelSize(World& world, core::InstanceId id, const Value& value)
         return false;
     if (!finite(*size) || *size <= 0.0)
         return false;
+    // **As the float it becomes, and within what a save, a stream and the wire
+    // accept** (terrain audit B3): a size they refuse was ground lost on
+    // reopen, and ground that never reached a replica.
+    asset::FieldSettings wanted = terrain->field.settings();
+    wanted.voxelSize = static_cast<f32>(*size);
+    if (!asset::saneFieldSettings(wanted))
+        return false;
 
     // **Only while it is empty**, and refused by name rather than done quietly.
     // Changing the lattice under a sculpted world would mean resampling every
@@ -595,6 +602,12 @@ bool setTerrainMinHeight(World& world, core::InstanceId id, const Value& value)
     // would be terrain that cannot be dug rather than an error.
     if (!finite(*height) || static_cast<f32>(*height) >= terrain->maxHeight)
         return false;
+    // `VoxelSize`'s reason (terrain audit B3).
+    asset::FieldSettings wanted = terrain->field.settings();
+    wanted.minHeight = static_cast<f32>(*height);
+    wanted.maxHeight = terrain->maxHeight;
+    if (!asset::saneFieldSettings(wanted))
+        return false;
     terrain->minHeight = static_cast<f32>(*height);
     terrain->field.setHeightRange(terrain->minHeight, terrain->maxHeight);
     terrain->fieldRevision += 1;
@@ -614,6 +627,11 @@ bool setTerrainMaxHeight(World& world, core::InstanceId id, const Value& value)
     if (height == nullptr || terrain == nullptr)
         return false;
     if (!finite(*height) || static_cast<f32>(*height) <= terrain->minHeight)
+        return false;
+    asset::FieldSettings wanted = terrain->field.settings();
+    wanted.minHeight = terrain->minHeight;
+    wanted.maxHeight = static_cast<f32>(*height);
+    if (!asset::saneFieldSettings(wanted))
         return false;
     terrain->maxHeight = static_cast<f32>(*height);
     terrain->field.setHeightRange(terrain->minHeight, terrain->maxHeight);

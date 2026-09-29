@@ -2500,6 +2500,151 @@ TEST_CASE("ground both ends loaded from the scene is not sent; what a script cha
     CHECK(still == untouched);
 }
 
+TEST_CASE("a chunk removed before a replica loaded its cell stays removed when it does (terrain audit G4)")
+{
+    // The replica's streamer loads the cell after the removal arrived: the
+    // field held nothing there either way, so the load merged the package's
+    // chunk back over the authority's word.
+    PlayedMatch match;
+    const asset::FieldSettings settings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f};
+    asset::TerrainField package(settings);
+    (void)asset::fillFlat(package, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+    const asset::ChunkKey gone{0, 0, 0};
+    REQUIRE(package.findChunk(gone) != nullptr);
+
+    // The server loaded the cell and dug the chunk away; the replica has not
+    // loaded it yet.
+    scene::TerrainComponent* server = match.server.world.terrains().find(makeTerrain(match.server));
+    server->field = package;
+    server->shipped = package;
+    server->field.removeChunk(gone);
+    server->fieldRevision += 1;
+    scene::TerrainComponent* client = match.client.world.terrains().find(makeTerrain(match.client));
+    client->field = asset::TerrainField(settings);
+    client->shipped = asset::TerrainField(settings);
+    match.run(3);
+
+    // Now the cell loads there, the way the streamer loads one.
+    client = match.client.world.terrains().find(terrainIn(match.client.world, match.client.workspace));
+    client->field.shareFrom(package, client->shipped);
+    client->shipped.shareFrom(package);
+    CHECK(client->field.findChunk(gone) == nullptr);
+    CHECK(client->field.findChunk(asset::ChunkKey{-1, 0, -1}) != nullptr);
+}
+
+TEST_CASE("an edit that came back to the package's bytes is not sent as a hole when the cell streams out (terrain "
+          "audit G5)")
+{
+    PlayedMatch match;
+    for (RealSide* side : {&match.server, &match.client}) {
+        scene::TerrainComponent* terrain = side->world.terrains().find(makeTerrain(*side));
+        terrain->field.setHeightRange(-32.0f, 32.0f);
+        (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+        terrain->shipped = terrain->field;
+        terrain->fieldRevision += 1;
+    }
+    match.run(3);
+    scene::TerrainComponent* server =
+        match.server.world.terrains().find(terrainIn(match.server.world, match.server.workspace));
+    // Painted and painted back: the same bytes in a chunk of its own.
+    const asset::Voxel was = server->field.voxel(3, 1, 3);
+    (void)server->field.setVoxel(3, 1, 3, asset::Voxel{asset::FullOccupancy, 7});
+    (void)server->field.setVoxel(3, 1, 3, was);
+    server->fieldRevision += 1;
+    match.run(2);
+
+    // The server's streamer lets the cell go as untouched -- its digest is the
+    // package's -- from the ground and the package's copy together.
+    const asset::ChunkKey key{0, 0, 0};
+    REQUIRE(server->field.findChunk(key) != nullptr);
+    server->field.removeChunk(key);
+    server->shipped.removeChunk(key);
+    server->fieldRevision += 1;
+    match.run(2);
+
+    const scene::TerrainComponent* client =
+        match.client.world.terrains().find(terrainIn(match.client.world, match.client.workspace));
+    CHECK(client->field.findChunk(key) != nullptr);
+}
+
+TEST_CASE("a terrain placed and given its look before any ground reaches a replica as it is (terrain audit R1, "
+          "R3)")
+{
+    PlayedMatch match;
+    const core::InstanceId ground = makeTerrain(match.server);
+    scene::TerrainComponent* terrain = match.server.world.terrains().find(ground);
+    terrain->origin = core::DVec3{100.0, 5.0, -40.0};
+    terrain->layers = {"asset://materials/terrain/grass.material.json"};
+    terrain->rules = asset::defaultTerrainRules();
+    match.run(3);
+
+    const core::InstanceId copy = terrainIn(match.client.world, match.client.workspace);
+    REQUIRE(copy.valid());
+    const scene::TerrainComponent* seen = match.client.world.terrains().find(copy);
+    CHECK(seen->layers == terrain->layers);
+    CHECK(seen->rules == terrain->rules);
+    CHECK(seen->origin.x == doctest::Approx(100.0));
+    CHECK(seen->origin.z == doctest::Approx(-40.0));
+
+    // Its ground after, at a voxel of its own.
+    terrain = match.server.world.terrains().find(ground);
+    terrain->field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 0.5f, .minHeight = -16.0f, .maxHeight = 16.0f});
+    (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 32.0f, 2.0f, 1);
+    terrain->fieldRevision += 1;
+    match.run(3);
+    seen = match.client.world.terrains().find(copy);
+    CHECK(seen->field.digest() == terrain->field.digest());
+}
+
+TEST_CASE("a scene's empty terrain given another voxel by the server takes it (terrain audit R2)")
+{
+    PlayedMatch match;
+    for (RealSide* side : {&match.server, &match.client})
+        (void)makeTerrain(*side);
+    match.run(2);
+    scene::TerrainComponent* server =
+        match.server.world.terrains().find(terrainIn(match.server.world, match.server.workspace));
+    server->field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 0.5f, .minHeight = -16.0f, .maxHeight = 16.0f});
+    (void)asset::fillFlat(server->field, core::DVec3{0.0, 0.0, 0.0}, 32.0f, 2.0f, 1);
+    server->fieldRevision += 1;
+    match.run(3);
+    const scene::TerrainComponent* client =
+        match.client.world.terrains().find(terrainIn(match.client.world, match.client.workspace));
+    CHECK(client->field.settings().voxelSize == doctest::Approx(0.5));
+    CHECK(client->field.digest() == server->field.digest());
+}
+
+TEST_CASE("a terrain destroyed and made again on the server takes the old ground from every replica (terrain audit "
+          "R4)")
+{
+    PlayedMatch match;
+    for (RealSide* side : {&match.server, &match.client}) {
+        scene::TerrainComponent* terrain = side->world.terrains().find(makeTerrain(*side));
+        terrain->field.setHeightRange(-32.0f, 32.0f);
+        (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+        terrain->shipped = terrain->field;
+        terrain->fieldRevision += 1;
+    }
+    match.run(3);
+
+    // The scene's terrain destroyed, and a new one generated somewhere else.
+    match.server.world.destroy(terrainIn(match.server.world, match.server.workspace));
+    match.run(2);
+    const scene::TerrainComponent* client =
+        match.client.world.terrains().find(terrainIn(match.client.world, match.client.workspace));
+    CHECK(client->field.empty());
+
+    scene::TerrainComponent* fresh = match.server.world.terrains().find(makeTerrain(match.server));
+    fresh->field.setHeightRange(-32.0f, 32.0f);
+    (void)asset::fillFlat(fresh->field, core::DVec3{200.0, 0.0, 0.0}, 32.0f, 4.0f, 2);
+    fresh->fieldRevision += 1;
+    match.run(3);
+    client = match.client.world.terrains().find(terrainIn(match.client.world, match.client.workspace));
+    CHECK(client->field.digest() == fresh->field.digest());
+}
+
 TEST_CASE("a block world's types and blocks reach a replica, and a block broken after (ADR 0135)")
 {
     PlayedMatch match;

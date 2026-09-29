@@ -1316,10 +1316,57 @@ int methodRagdollBuild(lua_State* L)
 void pushTouched(lua_State* L, const asset::EditReport& report)
 {
     if (report.refused) {
-        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(asset::MaxEditVoxels)}};
+        const core::u64 limit = report.limit != 0 ? report.limit : asset::MaxEditVoxels;
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(limit)}};
         raise(L, ENG_TR("scene.err.terrain_brush_too_large"), args);
     }
     lua_pushinteger(L, static_cast<int>(report.touched));
+}
+
+// **The ground under an edit, read first where it is not loaded yet**
+// (terrain audit U1): a script digging or building in a cell still on disk
+// made a chunk of only its edit, which shadowed the cell's own when it came
+// in. `reach` in metres round `center`, world space, and a margin for the
+// ramp and a smooth's blur.
+void groundFirst(lua_State* L, const scene::TerrainComponent& terrain, core::Vec3 low, core::Vec3 high)
+{
+    // A square that is not one reads nothing: its edit is refused anyway.
+    if (!std::isfinite(low.x) || !std::isfinite(low.z) || !std::isfinite(high.x) || !std::isfinite(high.z))
+        return;
+    const double margin = 8.0 * static_cast<double>(terrain.field.settings().voxelSize);
+    world(L).loadGround(core::DVec3{static_cast<double>(std::min(low.x, high.x)) - margin, 0.0,
+                                    static_cast<double>(std::min(low.z, high.z)) - margin},
+                        core::DVec3{static_cast<double>(std::max(low.x, high.x)) + margin, 0.0,
+                                    static_cast<double>(std::max(low.z, high.z)) + margin});
+}
+
+void groundFirst(lua_State* L, const scene::TerrainComponent& terrain, core::Vec3 center, double reach)
+{
+    if (!std::isfinite(reach) || !(reach >= 0.0))
+        return;
+    const auto r = static_cast<float>(std::min(reach, 1.0e7));
+    groundFirst(L, terrain, core::Vec3{center.x - r, center.y, center.z - r},
+                core::Vec3{center.x + r, center.y, center.z + r});
+}
+
+// **A material id, checked rather than wrapped** (terrain audit B6): through a
+// `u8` cast, 256 was 0 -- which removes -- and -1 was 255.
+[[nodiscard]] core::u8 checkMaterial(lua_State* L, int arg)
+{
+    const lua_Integer material = luaL_checkinteger(L, arg);
+    if (material < 0 || material > 255)
+        luaL_argerror(L, arg, "a material id from 0 to 255");
+    return static_cast<core::u8>(material);
+}
+
+// A strength or an amount a brush can use: a NaN clamped to itself and turned
+// a Smooth into a dig (terrain audit B6).
+[[nodiscard]] float checkFinite(lua_State* L, int arg, double fallback)
+{
+    const double value = luaL_optnumber(L, arg, fallback);
+    if (!std::isfinite(value))
+        luaL_argerror(L, arg, "a finite number");
+    return static_cast<float>(value);
 }
 
 int methodTerrainFillBall(lua_State* L)
@@ -1327,13 +1374,14 @@ int methodTerrainFillBall(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
-    const auto material = static_cast<core::u8>(luaL_checkinteger(L, 4));
+    const core::u8 material = checkMaterial(L, 4);
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
 
     // A `Vector3` from a script is `f32` and a brush takes a world position,
     // which is `f64` (R9). Widened explicitly: Clang diagnoses the implicit form
@@ -1359,12 +1407,16 @@ int methodTerrainRaiseBall(lua_State* L)
     const lua_Integer material = luaL_optinteger(L, 5, 0);
     if (material < 0 || material > 255)
         luaL_argerror(L, 5, "a material id from 1 to 255");
+    // `GrowBall`'s rule: an infinite amount is not a height (terrain audit B1).
+    if (!std::isfinite(amount))
+        luaL_argerror(L, 4, "a finite number of metres");
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
 
     // The field's own space; see `FillBall` above.
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
@@ -1395,6 +1447,7 @@ int methodTerrainGrowBall(lua_State* L)
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
     // The field's own space; see `FillBall` above.
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
                            static_cast<double>(center.y) - terrain->origin.y,
@@ -1412,13 +1465,15 @@ int methodTerrainFillBlock(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 center = checkVector3(L, 2);
     const core::Vec3 size = checkVector3(L, 3);
-    const auto material = static_cast<core::u8>(luaL_checkinteger(L, 4));
+    const core::u8 material = checkMaterial(L, 4);
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center,
+                0.5 * std::max(std::abs(static_cast<double>(size.x)), std::abs(static_cast<double>(size.z))));
 
     // The field's own space; see `FillBall` above.
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
@@ -1483,9 +1538,15 @@ int methodTerrainWriteHeights(lua_State* L)
     // The field's own space, snapped down to its grid: the first height is the
     // voxel column the corner falls in, which is what a heightmap's first pixel
     // means.
-    const double voxel = static_cast<double>(terrain->field.settings().voxelSize);
-    const auto firstX = static_cast<core::i32>(std::floor((static_cast<double>(corner.x) - terrain->origin.x) / voxel));
-    const auto firstZ = static_cast<core::i32>(std::floor((static_cast<double>(corner.z) - terrain->origin.z) / voxel));
+    // Through `voxelIndex`, which clamps before it casts (terrain audit B6).
+    const core::i32 firstX = terrain->field.voxelIndex(static_cast<double>(corner.x) - terrain->origin.x);
+    const core::i32 firstZ = terrain->field.voxelIndex(static_cast<double>(corner.z) - terrain->origin.z);
+    {
+        const double voxel = static_cast<double>(terrain->field.settings().voxelSize);
+        const auto across = static_cast<float>(static_cast<double>(columns) * voxel);
+        const auto deep = static_cast<float>(static_cast<double>(count / static_cast<core::usize>(columns)) * voxel);
+        groundFirst(L, *terrain, corner, core::Vec3{corner.x + across, corner.y, corner.z + deep});
+    }
     const asset::EditReport report =
         perColumn ? asset::writeHeights(terrain->field, firstX, firstZ, static_cast<core::u32>(columns), heights,
                                         std::span<const core::u8>(materials))
@@ -1745,13 +1806,14 @@ int methodTerrainPaintBall(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
-    const auto material = static_cast<core::u8>(luaL_checkinteger(L, 4));
+    const core::u8 material = checkMaterial(L, 4);
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
 
     // The field's own space; see `FillBall` above.
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
@@ -1810,12 +1872,13 @@ int methodTerrainFillCylinder(lua_State* L)
     const core::Vec3 center = checkVector3(L, 2);
     const auto height = static_cast<double>(luaL_checknumber(L, 3));
     const auto radius = static_cast<double>(luaL_checknumber(L, 4));
-    const auto material = static_cast<core::u8>(luaL_checkinteger(L, 5));
+    const core::u8 material = checkMaterial(L, 5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
     return finishEdit(L, *terrain,
                       asset::fillCylinder(terrain->field, intoField(*terrain, center), height, radius, material));
 }
@@ -1825,12 +1888,13 @@ int methodTerrainSmoothBall(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
-    const auto strength = static_cast<float>(luaL_optnumber(L, 4, 0.5));
+    const float strength = checkFinite(L, 4, 0.5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
     return finishEdit(L, *terrain, asset::smoothBall(terrain->field, intoField(*terrain, center), radius, strength));
 }
 
@@ -1840,12 +1904,13 @@ int methodTerrainFlattenBall(lua_State* L)
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
     const auto height = luaL_checknumber(L, 4);
-    const auto strength = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+    const float strength = checkFinite(L, 5, 1.0);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, center, radius);
     // A world height, like every other verb's, into the field's own space.
     const auto local = static_cast<float>(height - terrain->origin.y);
     return finishEdit(L, *terrain,
@@ -1857,13 +1922,14 @@ int methodTerrainReplaceMaterial(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const core::Vec3 low = checkVector3(L, 2);
     const core::Vec3 high = checkVector3(L, 3);
-    const auto from = static_cast<core::u8>(luaL_checkinteger(L, 4));
-    const auto to = static_cast<core::u8>(luaL_checkinteger(L, 5));
+    const core::u8 from = checkMaterial(L, 4);
+    const core::u8 to = checkMaterial(L, 5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, low, high);
     return finishEdit(
         L, *terrain,
         asset::replaceMaterial(terrain->field, intoField(*terrain, low), intoField(*terrain, high), from, to));
@@ -1896,17 +1962,25 @@ struct VoxelRegion
     const double voxel = static_cast<double>(terrain.field.settings().voxelSize);
     const core::DVec3 a = intoField(terrain, low);
     const core::DVec3 b = intoField(terrain, high);
-    const auto first = [voxel](double p, double q) {
-        return static_cast<core::i32>(std::floor(std::min(p, q) / voxel));
+    // Through `voxelIndex`, which clamps before it casts, and the sizes in 64
+    // bits: a region a script can name is not one whose width overflows an
+    // `i32` (terrain audit B6).
+    const auto first = [&terrain](double p, double q) { return terrain.field.voxelIndex(std::min(p, q)); };
+    const auto past = [&terrain, voxel](double p, double q) {
+        const double top = std::max(p, q);
+        const core::i32 floor = terrain.field.voxelIndex(top);
+        return static_cast<core::i64>(floor) + (std::floor(top / voxel) == top / voxel ? 0 : 1);
     };
-    const auto past = [voxel](double p, double q) { return static_cast<core::i32>(std::ceil(std::max(p, q) / voxel)); };
+    const auto size = [](core::i64 past, core::i32 first) {
+        return static_cast<core::i32>(std::clamp<core::i64>(past - first, 0, std::numeric_limits<core::i32>::max()));
+    };
     VoxelRegion region;
     region.x = first(a.x, b.x);
     region.y = first(a.y, b.y);
     region.z = first(a.z, b.z);
-    region.sizeX = std::max(past(a.x, b.x) - region.x, 0);
-    region.sizeY = std::max(past(a.y, b.y) - region.y, 0);
-    region.sizeZ = std::max(past(a.z, b.z) - region.z, 0);
+    region.sizeX = size(past(a.x, b.x), region.x);
+    region.sizeY = size(past(a.y, b.y), region.y);
+    region.sizeZ = size(past(a.z, b.z), region.z);
     return region;
 }
 
@@ -1970,6 +2044,10 @@ int methodTerrainWriteVoxels(lua_State* L)
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
         return 1;
+    }
+    {
+        const float voxel = terrain->field.settings().voxelSize;
+        groundFirst(L, *terrain, corner, core::Vec3{corner.x + size.x * voxel, corner.y, corner.z + size.z * voxel});
     }
     VoxelRegion region;
     const core::DVec3 local = intoField(*terrain, corner);

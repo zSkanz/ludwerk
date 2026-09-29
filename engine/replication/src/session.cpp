@@ -808,6 +808,13 @@ template <class Entry>
     const auto consider = [&](const auto& key, const auto& chunk, const void* before) {
         if (chunk.get() == chunkAt(shippedNow, key) && before == chunkAt(shippedWas, key))
             return;
+        // **Gone from the ground and from the package's copy at once** is a
+        // cell streamed out, which every machine does for itself -- even when
+        // the chunk was an edit whose bytes came back to the package's, which
+        // the streamer calls untouched by digest where this compares
+        // pointers. Sent, it was a hole on every replica (terrain audit G5).
+        if (chunk == nullptr && chunkAt(shippedNow, key) == nullptr && chunkAt(shippedWas, key) != nullptr)
+            return;
         out.emplace_back(key, chunk);
     };
     auto a = now.begin();
@@ -906,6 +913,11 @@ void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
 {
     Writer out;
     out.u8v(static_cast<u8>(MessageType::TerrainLook));
+    // Where it is (terrain audit R3): a terrain a server's script placed, or
+    // moved, stood at the origin on every replica.
+    writeF64(out, terrain.origin.x);
+    writeF64(out, terrain.origin.y);
+    writeF64(out, terrain.origin.z);
     const usize layers = std::min<usize>(terrain.layers.size(), asset::MaxTerrainLayers);
     out.u16v(static_cast<u16>(layers));
     for (usize at = 0; at < layers; ++at)
@@ -970,32 +982,76 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
     const bool restored = m_ground.restores != world.restores();
     m_ground.restores = world.restores();
 
-    // The terrain. A new one -- made by a script, or a scene's -- starts from
-    // no shadow, so what it holds past the package reaches every peer.
-    const InstanceId terrainId = groundTerrainUnder(world, root);
-    const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
-    if (terrainId != m_ground.terrain) {
-        m_ground.terrain = terrainId;
+    // **A new scene is every peer's own ground again**: each loads it.
+    if (const std::string& scene = world.engineState().currentScene; scene != m_ground.scene) {
+        m_ground.scene = scene;
+        m_ground.terrain = InstanceId{};
         m_ground.terrainChunks.clear();
         m_ground.terrainShipped.clear();
+        m_ground.base.clear();
+        m_ground.baseSet = false;
         m_ground.terrainRevision = ~u64{0};
         m_ground.terrainLook.clear();
     }
+
+    // The terrain. A scene's -- or one a script made in a scene with none --
+    // starts from the package's ground, which is what a peer sent the ground
+    // whole before it was here holds: from an empty shadow, a chunk of the
+    // package this terrain lacks was never visited, and its removal never
+    // sent.
+    //
+    // **One that replaces another in the same scene is the same ground to
+    // every peer** (terrain audit R4): a script that destroyed the terrain
+    // and made a new one left the old scene's ground on every replica, which
+    // has no way to know a different instance meant different ground. So the
+    // shadow stays what the peers hold, and the package they loaded stays the
+    // base the new one is measured against -- and a terrain destroyed takes
+    // its ground from every replica with it.
+    const InstanceId terrainId = groundTerrainUnder(world, root);
+    const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
+    if (terrainId != m_ground.terrain) {
+        if (m_ground.terrain.valid() || m_ground.baseSet) {
+            if (!m_ground.baseSet) {
+                m_ground.base = m_ground.terrainShipped;
+                m_ground.baseSet = true;
+            }
+        }
+        else if (terrain != nullptr) {
+            m_ground.terrainChunks.assign(terrain->shipped.chunks().begin(), terrain->shipped.chunks().end());
+            m_ground.terrainShipped = m_ground.terrainChunks;
+        }
+        m_ground.terrain = terrainId;
+        m_ground.terrainRevision = ~u64{0};
+        m_ground.terrainLook.clear();
+    }
+    const std::span<const asset::TerrainField::Entry> package =
+        m_ground.baseSet     ? std::span<const asset::TerrainField::Entry>(m_ground.base)
+        : terrain != nullptr ? terrain->shipped.chunks()
+                             : std::span<const asset::TerrainField::Entry>{};
     if (terrain != nullptr) {
         if (restored || terrain->fieldRevision != m_ground.terrainRevision) {
             const std::vector<asset::TerrainField::Entry> changed = changedChunks<asset::TerrainField::Entry>(
-                terrain->field.chunks(), m_ground.terrainChunks, terrain->shipped.chunks(), m_ground.terrainShipped);
+                terrain->field.chunks(), m_ground.terrainChunks, package, m_ground.terrainShipped);
             for (std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), changed))
                 m_groundEdits.push_back(std::move(message));
             m_ground.terrainChunks.assign(terrain->field.chunks().begin(), terrain->field.chunks().end());
-            m_ground.terrainShipped.assign(terrain->shipped.chunks().begin(), terrain->shipped.chunks().end());
+            m_ground.terrainShipped.assign(package.begin(), package.end());
             m_ground.terrainRevision = terrain->fieldRevision;
+            m_ground.settings = terrain->field.settings();
         }
         std::vector<u8> look = terrainLookMessage(*terrain);
         if (look != m_ground.terrainLook) {
             m_groundEdits.push_back(look);
             m_ground.terrainLook = std::move(look);
         }
+    }
+    else if (m_ground.baseSet && !m_ground.terrainChunks.empty()) {
+        const std::vector<asset::TerrainField::Entry> gone = changedChunks<asset::TerrainField::Entry>(
+            std::span<const asset::TerrainField::Entry>{}, m_ground.terrainChunks, package, m_ground.terrainShipped);
+        for (std::vector<u8>& message : terrainChunkMessages(m_ground.settings, gone))
+            m_groundEdits.push_back(std::move(message));
+        m_ground.terrainChunks.clear();
+        m_ground.terrainShipped.assign(package.begin(), package.end());
     }
 
     // The block world, the same way.
@@ -1007,6 +1063,11 @@ void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
         m_ground.voxelTypes.clear();
         m_ground.voxelRevision = ~u64{0};
         return;
+    }
+    // A block world new here, on the terrain's terms.
+    if (m_ground.voxelRevision == ~u64{0}) {
+        m_ground.voxelChunks.assign(voxels->shipped.chunks().begin(), voxels->shipped.chunks().end());
+        m_ground.voxelShipped = m_ground.voxelChunks;
     }
     if (restored || voxels->revision != m_ground.voxelRevision) {
         const std::vector<asset::VoxelGrid::Entry> changed = changedChunks<asset::VoxelGrid::Entry>(
@@ -1034,11 +1095,21 @@ void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
     if (const scene::TerrainComponent* terrain =
             m_ground.terrain.valid() ? world.terrains().find(m_ground.terrain) : nullptr;
         terrain != nullptr) {
-        const std::vector<asset::TerrainField::Entry> differing =
-            unshippedChunks<asset::TerrainField::Entry>(terrain->field.chunks(), terrain->shipped.chunks());
+        // Against the package the peer loaded: a terrain that replaced the
+        // scene's is measured from the scene's (terrain audit R4).
+        const std::vector<asset::TerrainField::Entry> differing = unshippedChunks<asset::TerrainField::Entry>(
+            terrain->field.chunks(),
+            m_ground.baseSet ? std::span<const asset::TerrainField::Entry>(m_ground.base) : terrain->shipped.chunks());
         for (const std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), differing))
             send(message);
         send(terrainLookMessage(*terrain));
+    }
+    else if (m_ground.baseSet) {
+        // The scene's terrain destroyed and none since: its ground goes.
+        const std::vector<asset::TerrainField::Entry> gone =
+            unshippedChunks<asset::TerrainField::Entry>(std::span<const asset::TerrainField::Entry>{}, m_ground.base);
+        for (const std::vector<u8>& message : terrainChunkMessages(m_ground.settings, gone))
+            send(message);
     }
     const InstanceId voxelsId = groundVoxelsOf(world);
     if (const scene::VoxelComponent* voxels = voxelsId.valid() ? world.voxels().find(voxelsId) : nullptr;
@@ -2686,6 +2757,20 @@ struct ChunkKeyOnWire
     core::i32 z = 0;
 };
 
+// What a replica's `shipped` holds for a chunk the authority removed before
+// this machine loaded it: any chunk at all, since only its presence is read.
+[[nodiscard]] std::shared_ptr<asset::TerrainChunk> knownGone()
+{
+    static const auto marker = std::make_shared<asset::TerrainChunk>(asset::Voxel{asset::FullOccupancy, 1});
+    return marker;
+}
+
+[[nodiscard]] const std::vector<asset::BlockId>& knownGoneBlocks()
+{
+    static const std::vector<asset::BlockId> marker(asset::VoxelChunkVolume, asset::BlockId{1});
+    return marker;
+}
+
 [[nodiscard]] ChunkKeyOnWire readKey(Reader& in) noexcept
 {
     ChunkKeyOnWire key;
@@ -2705,6 +2790,39 @@ struct ChunkKeyOnWire
     const std::span<const u8> code = in.bytes().subspan(in.at(), length);
     in.at() += length;
     return code;
+}
+
+} // namespace
+
+namespace {
+
+// **The workspace's terrain, made when the authority has one and this machine
+// none** -- a server that made its terrain in a script. Made with `settings`
+// when they are known, and the field's defaults when the look came first.
+[[nodiscard]] scene::TerrainComponent* groundTerrainFor(scene::World& world, InstanceId root,
+                                                        std::optional<asset::FieldSettings> settings)
+{
+    InstanceId id = groundTerrainUnder(world, root);
+    if (!id.valid()) {
+        const scene::ClassId terrainClass = world.classes().findId(world.atoms().intern("Terrain"));
+        if (terrainClass == scene::InvalidClass)
+            return nullptr;
+        id = world.create(terrainClass);
+        if (!id.valid())
+            return nullptr;
+        world.setName(id, world.atoms().intern("Terrain"));
+        if (world.setParent(id, root).has_value()) {
+            world.destroy(id);
+            return nullptr;
+        }
+        if (scene::TerrainComponent* made = world.terrains().find(id); made != nullptr && settings.has_value()) {
+            made->field = asset::TerrainField(*settings);
+            made->shipped = asset::TerrainField(*settings);
+            made->minHeight = settings->minHeight;
+            made->maxHeight = settings->maxHeight;
+        }
+    }
+    return world.terrains().find(id);
 }
 
 } // namespace
@@ -2747,37 +2865,38 @@ void ReplicaSession::onTerrainChunks(scene::World& world, InstanceId root, std::
         return;
     }
 
-    // The workspace's terrain, made when the authority's has ground and this
-    // one has none -- a server that made its terrain in a script.
-    InstanceId id = groundTerrainUnder(world, root);
-    if (!id.valid()) {
-        const scene::ClassId terrainClass = world.classes().findId(world.atoms().intern("Terrain"));
-        if (terrainClass == scene::InvalidClass)
-            return;
-        id = world.create(terrainClass);
-        if (!id.valid())
-            return;
-        world.setName(id, world.atoms().intern("Terrain"));
-        if (world.setParent(id, root).has_value()) {
-            world.destroy(id);
-            return;
-        }
-        if (scene::TerrainComponent* made = world.terrains().find(id); made != nullptr) {
-            made->field = asset::TerrainField(settings);
-            made->shipped = asset::TerrainField(settings);
-            made->minHeight = settings.minHeight;
-            made->maxHeight = settings.maxHeight;
-        }
-    }
-    scene::TerrainComponent* terrain = world.terrains().find(id);
+    scene::TerrainComponent* terrain = groundTerrainFor(world, root, settings);
     if (terrain == nullptr)
         return;
-    // Another voxel is another ground: the replica loaded some other scene.
-    if (std::abs(terrain->field.settings().voxelSize - settings.voxelSize) > 1e-6f) {
-        m_stats.messagesDropped += 1;
-        return;
+    // **Another voxel is another ground** -- unless this one has none yet, and
+    // then it is the authority's (terrain audit R2): a server script that set
+    // `VoxelSize` on the scene's empty terrain and generated sent every
+    // replica chunks it refused.
+    if (std::abs(terrain->field.settings().voxelSize - settings.voxelSize) > 1e-6f ||
+        terrain->field.settings().minHeight != settings.minHeight ||
+        terrain->field.settings().maxHeight != settings.maxHeight) {
+        if (!terrain->field.empty() && std::abs(terrain->field.settings().voxelSize - settings.voxelSize) > 1e-6f) {
+            m_stats.messagesDropped += 1;
+            return;
+        }
+        if (terrain->field.empty()) {
+            terrain->field = asset::TerrainField(settings);
+            terrain->shipped = asset::TerrainField(settings);
+        }
+        else {
+            terrain->field.setHeightRange(settings.minHeight, settings.maxHeight);
+        }
+        terrain->minHeight = settings.minHeight;
+        terrain->maxHeight = settings.maxHeight;
     }
     for (auto& [key, chunk] : chunks) {
+        // **The authority's word on a chunk this machine has not loaded** is
+        // kept as known, so the cell loading here later leaves it standing
+        // rather than merging the package's chunk over it -- a removal most of
+        // all, which the field alone cannot hold (terrain audit G4). A
+        // replica's `shipped` is read by nothing but that load.
+        if (terrain->shipped.findChunk(key) == nullptr)
+            terrain->shipped.setChunk(key, chunk != nullptr ? chunk : knownGone());
         if (chunk != nullptr)
             terrain->field.setChunk(key, std::move(chunk));
         else
@@ -2790,6 +2909,14 @@ void ReplicaSession::onTerrainLook(scene::World& world, InstanceId root, std::sp
 {
     Reader reader(bytes);
     (void)reader.u8v();
+    core::DVec3 origin;
+    origin.x = readF64(reader);
+    origin.y = readF64(reader);
+    origin.z = readF64(reader);
+    if (!reader.ok() || !core::isFinite(origin.x) || !core::isFinite(origin.y) || !core::isFinite(origin.z)) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
     const u16 layerCount = reader.u16v();
     if (!reader.ok() || layerCount > asset::MaxTerrainLayers) {
         m_stats.messagesDropped += 1;
@@ -2831,10 +2958,16 @@ void ReplicaSession::onTerrainLook(scene::World& world, InstanceId root, std::sp
         m_stats.messagesDropped += 1;
         return;
     }
-    const InstanceId id = groundTerrainUnder(world, root);
-    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    // **Made here when the look comes first** (terrain audit R1): a server
+    // script that made its terrain and set its layers before any ground sent
+    // the look to a replica with nothing to put it on, and never again.
+    scene::TerrainComponent* terrain = groundTerrainFor(world, root, std::nullopt);
     if (terrain == nullptr)
         return;
+    if (terrain->origin.x != origin.x || terrain->origin.y != origin.y || terrain->origin.z != origin.z) {
+        terrain->origin = origin;
+        terrain->fieldRevision += 1;
+    }
     if (terrain->layers != layers) {
         terrain->layers = std::move(layers);
         terrain->layersRevision += 1;
@@ -2889,6 +3022,11 @@ void ReplicaSession::onVoxelChunks(scene::World& world, std::span<const u8> byte
         voxels->blockSize = blockSize;
     }
     for (const auto& [key, blocks] : chunks) {
+        // `onTerrainChunks`' reason: a chunk not loaded here stays the
+        // authority's when its cell loads (terrain audit G4).
+        if (voxels->shipped.findChunk(key) == nullptr)
+            voxels->shipped.setChunk(key, blocks.empty() ? std::span<const asset::BlockId>(knownGoneBlocks())
+                                                         : std::span<const asset::BlockId>(blocks));
         if (blocks.empty())
             voxels->grid.removeChunk(key);
         else
@@ -2896,6 +3034,8 @@ void ReplicaSession::onVoxelChunks(scene::World& world, std::span<const u8> byte
     }
     voxels->revision += 1;
 }
+
+constexpr u16 MaxFluidReactionsOnWire = 4096;
 
 void ReplicaSession::onVoxelTypes(scene::World& world, std::span<const u8> bytes)
 {
@@ -2931,9 +3071,22 @@ void ReplicaSession::onVoxelTypes(scene::World& world, std::span<const u8> bytes
         entry.type.transparency = readF32(reader);
         entry.type.fluidReach = std::min<core::u8>(reader.u8v(), static_cast<core::u8>(asset::MaxFluidReach));
         entry.type.fluidTicks = std::clamp<u32>(reader.u32v(), 1, 1'000'000);
+        // Colours and a transparency a renderer can use (terrain audit R6).
+        bool finite = core::isFinite(entry.type.transparency);
+        for (const core::Color3* color : {&entry.type.color, &entry.type.side, &entry.type.bottom})
+            finite = finite && core::isFinite(color->r) && core::isFinite(color->g) && core::isFinite(color->b);
+        if (!finite) {
+            reader.fail();
+            break;
+        }
         read.push_back(entry);
     }
     const u16 reactionCount = reader.u16v();
+    // Each is an insertion into a sorted list: tens of thousands from a
+    // hostile server were a quadratic stall (terrain audit R6). No world has
+    // a fraction of this many.
+    if (reactionCount > MaxFluidReactionsOnWire)
+        reader.fail();
     std::vector<scene::VoxelComponent::FluidReaction> reactions;
     for (u16 at = 0; at < reactionCount && reader.ok(); ++at) {
         scene::VoxelComponent::FluidReaction reaction;

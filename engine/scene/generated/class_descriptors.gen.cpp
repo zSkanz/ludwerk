@@ -1045,7 +1045,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "How big one voxel is, in metres. One metre resolves a doorway and a path; two metres resolves a hillside and costs an eighth as much.\012\012**Only settable while the terrain is empty.** Changing it under a sculpted world would mean resampling every voxel onto a different grid, which is a lossy operation nobody asked for -- so it is refused, by name, rather than done quietly. Clear it first if that is really what you want.",
+            .doc = "How big one voxel is, in metres, from 0.1 to 64. One metre resolves a doorway and a path; two metres resolves a hillside and costs an eighth as much.\012\012**Only settable while the terrain is empty.** Changing it under a sculpted world would mean resampling every voxel onto a different grid, which is a lossy operation nobody asked for -- so it is refused, by name, rather than done quietly. Clear it first if that is really what you want.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.terrain_not_empty"),
             .get = native::getTerrainVoxelSize,
             .set = native::setTerrainVoxelSize,
@@ -3987,7 +3987,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("FillBlocks"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Fills every block in the box between two block coordinates, both included, with one id -- 0 empties it. Returns how many blocks changed. The way to build a floor, a wall or a world's first ground in one call rather than thousands.",
+            .doc = "Fills every block in the box between two block coordinates, both included, with one id -- 0 empties it. Returns how many blocks changed. The way to build a floor, a wall or a world's first ground in one call rather than thousands. A box of more than 256 blocks cubed is refused: fill it in pieces.",
         },
         MethodDesc{
             .name = atoms.intern("Clear"),

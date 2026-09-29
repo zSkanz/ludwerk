@@ -1173,11 +1173,11 @@ declare extern type Weld extends Instance with
 end
 
 declare extern type Terrain extends Instance with
-    --- How big one voxel is, in metres. One metre resolves a doorway and a path; two metres resolves a
-    --- hillside and costs an eighth as much. **Only settable while the terrain is empty.** Changing it
-    --- under a sculpted world would mean resampling every voxel onto a different grid, which is a lossy
-    --- operation nobody asked for -- so it is refused, by name, rather than done quietly. Clear it
-    --- first if that is really what you want.
+    --- How big one voxel is, in metres, from 0.1 to 64. One metre resolves a doorway and a path; two
+    --- metres resolves a hillside and costs an eighth as much. **Only settable while the terrain is
+    --- empty.** Changing it under a sculpted world would mean resampling every voxel onto a different
+    --- grid, which is a lossy operation nobody asked for -- so it is refused, by name, rather than done
+    --- quietly. Clear it first if that is really what you want.
     VoxelSize: number
     --- How wide one streamed cell of terrain is, in metres. Read-only: it is the streaming grid's own
     --- spacing, and a terrain that disagreed with it would have cells that load and unload on different
@@ -3331,7 +3331,8 @@ declare extern type VoxelService extends Instance with
     function GetBlock(self, block: vector): number
     --- Fills every block in the box between two block coordinates, both included, with one id -- 0
     --- empties it. Returns how many blocks changed. The way to build a floor, a wall or a world's first
-    --- ground in one call rather than thousands.
+    --- ground in one call rather than thousands. A box of more than 256 blocks cubed is refused: fill
+    --- it in pieces.
     function FillBlocks(self, from: vector, to: vector, id: number): number
     --- Removes every block. The registered block types stay.
     function Clear(self): ()

@@ -1016,6 +1016,39 @@ TEST_CASE("every Value alternative reaches the hasher")
     }
 }
 
+TEST_CASE("a restore moves a terrain's revisions on, and its package is what the disk now holds (terrain audit G2, "
+          "P6, R5)")
+{
+    using engine::asset::ChunkKey;
+    using engine::asset::FullOccupancy;
+    using engine::asset::Voxel;
+    Fixture fixture;
+    const InstanceId ground = fixture.folder("Terrain");
+    engine::scene::TerrainComponent component;
+    component.field = engine::asset::TerrainField(engine::asset::FieldSettings{});
+    (void)component.shipped.setVoxel(1, 1, 1, Voxel{FullOccupancy, 1});
+    (void)fixture.world.terrains().add(ground, std::move(component));
+    engine::scene::TerrainComponent* terrain = fixture.world.terrains().find(ground);
+    terrain->fieldRevision = 4;
+    const engine::scene::WorldSnapshot before = fixture.world.snapshot();
+
+    // Edits after it, a save that changed what the disk holds at a key it
+    // had loaded, and a cell loaded after it.
+    terrain->fieldRevision = 9;
+    (void)terrain->shipped.setVoxel(1, 1, 1, Voxel{FullOccupancy, 2});
+    (void)terrain->shipped.setVoxel(100, 1, 1, Voxel{FullOccupancy, 1});
+    const engine::asset::TerrainChunk* saved = terrain->shipped.findChunk(ChunkKey{0, 0, 0});
+    fixture.world.restore(before);
+
+    terrain = fixture.world.terrains().find(ground);
+    // A revision the renderer has seen with other ground behind it is not
+    // one the restored ground may have.
+    CHECK(terrain->fieldRevision > 9);
+    // The key it had loaded, as the disk now holds it; not one loaded since.
+    CHECK(terrain->shipped.findChunk(ChunkKey{0, 0, 0}) == saved);
+    CHECK(terrain->shipped.findChunk(ChunkKey{3, 0, 0}) == nullptr);
+}
+
 TEST_CASE("the world hash reads a player's intents by action name, not by atom number (D304)")
 {
     // The same intent in two worlds whose atom tables were filled in another

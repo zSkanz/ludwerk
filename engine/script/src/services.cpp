@@ -1724,11 +1724,32 @@ struct BlockCoord
     core::i32 z = 0;
 };
 
+// **The block world's cells under a box, read first where they are not loaded
+// yet** (terrain audit U1): a block placed in a cell still on disk made a
+// chunk of only that block, which shadowed the cell's own when it came in.
+void blocksFirst(lua_State* L, const scene::VoxelComponent& voxels, core::i32 x0, core::i32 z0, core::i32 x1,
+                 core::i32 z1)
+{
+    const auto size = static_cast<double>(voxels.blockSize);
+    world(L).loadGround(
+        core::DVec3{static_cast<double>(std::min(x0, x1)) * size, 0.0, static_cast<double>(std::min(z0, z1)) * size},
+        core::DVec3{static_cast<double>(std::max(x0, x1) + 1) * size, 0.0,
+                    static_cast<double>(std::max(z0, z1) + 1) * size});
+}
+
 BlockCoord checkBlockCoord(lua_State* L, int index)
 {
     const core::Vec3 v = checkVector3(L, index);
-    return BlockCoord{static_cast<core::i32>(std::floor(v.x)), static_cast<core::i32>(std::floor(v.y)),
-                      static_cast<core::i32>(std::floor(v.z))};
+    // **Clamped before the cast** (terrain audit B2): a float past an `i32`, or
+    // a NaN, is undefined behaviour to convert, and a block past the grid's
+    // reach is one it never holds.
+    if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z))
+        luaL_argerror(L, index, "a finite position");
+    static constexpr double Reach = static_cast<double>(asset::MaxVoxelChunkKey) * asset::VoxelChunkEdge;
+    const auto clamp = [](float value) {
+        return static_cast<core::i32>(std::clamp(std::floor(static_cast<double>(value)), -Reach, Reach));
+    };
+    return BlockCoord{clamp(v.x), clamp(v.y), clamp(v.z)};
 }
 
 asset::BlockId checkBlockId(lua_State* L, int index, const scene::VoxelComponent& voxels)
@@ -1897,6 +1918,7 @@ int voxelSetBlock(lua_State* L)
     scene::VoxelComponent& voxels = voxelsOf(L);
     const BlockCoord at = checkBlockCoord(L, 2);
     const asset::BlockId id = checkBlockId(L, 3, voxels);
+    blocksFirst(L, voxels, at.x, at.z, at.x, at.z);
     const bool changed = voxels.grid.set(at.x, at.y, at.z, id);
     if (changed) {
         voxels.revision += 1;
@@ -1936,6 +1958,21 @@ int voxelFillBlocks(lua_State* L)
     const BlockCoord from = checkBlockCoord(L, 2);
     const BlockCoord to = checkBlockCoord(L, 3);
     const asset::BlockId id = checkBlockId(L, 4, voxels);
+    // **Refused past a bound, as a terrain brush is** (terrain audit B2): one
+    // call filled a million chunks, eight gigabytes, or walked 10^18 empty
+    // ones clearing a box of air.
+    const auto side = [](core::i32 a, core::i32 b) {
+        return static_cast<core::u64>(std::abs(static_cast<core::i64>(b) - static_cast<core::i64>(a))) + 1;
+    };
+    const core::u64 sx = side(from.x, to.x);
+    const core::u64 sy = side(from.y, to.y);
+    const core::u64 sz = side(from.z, to.z);
+    if (sx > asset::MaxFillBlocks || sy > asset::MaxFillBlocks || sz > asset::MaxFillBlocks ||
+        sx * sy > asset::MaxFillBlocks || sx * sy * sz > asset::MaxFillBlocks) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(asset::MaxFillBlocks)}};
+        raise(L, ENG_TR("scene.err.voxel_fill_too_large"), args);
+    }
+    blocksFirst(L, voxels, from.x, from.z, to.x, to.z);
     const core::u32 changed = voxels.grid.fill(from.x, from.y, from.z, to.x, to.y, to.z, id);
     if (changed > 0) {
         voxels.revision += 1;

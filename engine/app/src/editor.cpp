@@ -267,6 +267,14 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // flag one of them will forget.
     m_sceneDirty = false;
 
+    // **What was written is the package now** (terrain audit R5): a match
+    // started from here loads it on every machine, so the ground's
+    // replication diffs against it rather than against the scene as it was
+    // opened -- which sent nothing for an edit saved and then undone.
+    world.terrains().forEach(
+        [](core::InstanceId, scene::TerrainComponent& terrain) { terrain.shipped = terrain.field; });
+    world.voxels().forEach([](core::InstanceId, scene::VoxelComponent& voxels) { voxels.shipped = voxels.grid; });
+
     // The tree as types, beside the scene it came from (ADR 0078): the project
     // is the folder `content/` is in. A failure here is not the save's, which
     // has already succeeded.
@@ -849,6 +857,13 @@ void UndoStack::record(const scene::World& world, std::string label, core::u64 c
     // before it under a hundred and twenty steps of the same colour.
     if (coalesceKey != 0 && !m_undo.empty() && m_undo.back().key == coalesceKey)
         return;
+    record(world.snapshot(), std::move(label), coalesceKey);
+}
+
+void UndoStack::record(scene::WorldSnapshot state, std::string label, core::u64 coalesceKey)
+{
+    if (coalesceKey != 0 && !m_undo.empty() && m_undo.back().key == coalesceKey)
+        return;
 
     // Anything ahead of here is a future that no longer happens. Keeping it
     // would let a redo after a new edit apply a change to a world that has
@@ -856,7 +871,7 @@ void UndoStack::record(const scene::World& world, std::string label, core::u64 c
     // than restore it.
     m_redo.clear();
 
-    m_undo.push_back(Step{world.snapshot(), std::move(label), coalesceKey});
+    m_undo.push_back(Step{std::move(state), std::move(label), coalesceKey});
     while (m_undo.size() > Depth)
         m_undo.pop_front();
 }
@@ -906,6 +921,11 @@ void UndoStack::clear() noexcept
 
 bool Editor::undo(scene::World& world, Inspector& inspector)
 {
+    // **Not in the middle of a stroke** (terrain audit E1): it popped the
+    // stroke's own step with the button still down, and the stamps after it
+    // belonged to no step at all.
+    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value())
+        return false;
     const std::string label(m_history.undoLabel());
     if (!m_history.undo(world))
         return false;
@@ -922,6 +942,8 @@ bool Editor::undo(scene::World& world, Inspector& inspector)
 
 bool Editor::redo(scene::World& world, Inspector& inspector)
 {
+    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value())
+        return false;
     const std::string label(m_history.redoLabel());
     if (!m_history.redo(world))
         return false;
@@ -4212,9 +4234,9 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
                 inspector.endGesture();
             // **A stroke that changed nothing leaves nothing to undo**: a brush
             // dragged over rock it cannot raise, or refused as too big, used to
-            // push a step that ctrl-Z spent a press on.
-            if (m_stroke->touched == 0)
-                m_history.retract();
+            // push a step that ctrl-Z spent a press on. Its step is recorded
+            // with its first change (`applyBrushAt`), so there is none.
+            //
             // **And one that was refused says so** (the brush used to do
             // nothing and say nothing): a stamp may touch at most
             // `MaxEditVoxels`, which small voxels reach at a modest radius.
@@ -4236,6 +4258,12 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         endStroke();
         return false;
     }
+
+    // **A stroke is on the terrain it began on** (terrain audit E5): that one
+    // deleted mid-stroke with another beside it, the rest of the stroke went
+    // onto the other with the first one's height and aim.
+    if (m_stroke.has_value() && !(terrainId == m_stroke->terrain))
+        endStroke();
 
     if (terrain == nullptr) {
         endStroke();
@@ -4267,8 +4295,12 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         m_brushAim->position.y += terrain->origin.y;
         m_brushAim->position.z += terrain->origin.z;
     }
-    else if (m_brushPlaneLock) {
-        // **The plane, when the ray met no ground.** Without this a brush over
+    else if (m_brushPlaneLock && (aimAt.empty() || m_stroke.has_value())) {
+        // **The plane, when the ray met no ground** -- on a field with none,
+        // where it is the only place to start, and under a stroke carried past
+        // the ground's edge. Not to start one beside ground that is there: a
+        // click past a hill's edge put a ball on the origin's plane in mid-air,
+        // five hundred metres out (terrain audit E4). Without this a brush over
         // an empty field stamps nothing anywhere, which is a tool that does not
         // work rather than a tool with an edge case.
         //
@@ -4338,8 +4370,10 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         stroke.carve = carves(m_tool, stroke.op);
         if (stroke.carve)
             stroke.aimField = terrain->field;
-        m_history.record(world, strokeLabel(m_tool, stroke.op, stroke.thin), stroke.gesture);
-        m_stroke = stroke;
+        // Taken now, recorded by the first stamp that changes something.
+        stroke.before = world.snapshot();
+        stroke.label = strokeLabel(m_tool, stroke.op, stroke.thin);
+        m_stroke = std::move(stroke);
 
         applyBrushAt(*terrain, m_brushAim->position);
         m_stroke->stamps += 1;
@@ -4370,6 +4404,10 @@ constexpr double CarveSpeedMax = 8.0;
 // work a second's worth of ground in one go behind the person's back.
 constexpr int CarveStampsPerFrame = 4;
 
+// The voxels a dragged stroke's stamps may walk in one frame, together: about
+// a few tens of milliseconds of the heavier brushes.
+constexpr double StrokeVoxelsPerFrame = 24.0e6;
+
 // How often a brush held still stamps, from the weakest brush to the
 // strongest: every tool but Add and Subtract, which pace themselves by speed.
 constexpr double HeldStampsMin = 4.0;
@@ -4386,6 +4424,18 @@ constexpr double HeldStampsMax = 20.0;
 }
 
 } // namespace
+
+core::u8 Editor::groundMaterial(const scene::TerrainComponent& terrain, core::u8 wanted) noexcept
+{
+    // **A layer the terrain has, or its first** (terrain audit E3): the brush's
+    // material is the project's, kept across scenes, and ground laid as a
+    // layer this terrain does not name drew grey -- and stayed grey when the
+    // first material was added, which the panel says the ground becomes.
+    const auto layers = static_cast<core::u32>(terrain.layers.size());
+    if (layers == 0 || wanted == 0)
+        return 1;
+    return static_cast<core::u8>(std::min<core::u32>(wanted, layers));
+}
 
 bool Editor::carves(Tool tool, const Brush& brush) noexcept
 {
@@ -4451,12 +4501,19 @@ void Editor::holdStroke(scene::TerrainComponent& terrain, const PickRay& ray, do
     const double lateral = std::sqrt(across.x * across.x + across.y * across.y + across.z * across.z);
     if (lateral >= radius * spacing) {
         const std::vector<core::DVec3> stamps = strokeStamps(m_stroke->last, target, radius, spacing);
-        for (core::usize at = 1; at < stamps.size(); ++at) {
+        // **As many as a frame can walk** (terrain audit E7): the stamps a
+        // frame were capped and the voxels each walks were not, so a big
+        // brush dragged fast stalled a frame for seconds. The rest of the drag
+        // is walked from where this frame stopped, next frame.
+        const double side = 2.0 * radius / static_cast<double>(terrain.field.settings().voxelSize) + 8.0;
+        const auto affordable = static_cast<core::usize>(
+            std::clamp(StrokeVoxelsPerFrame / (side * side * side), 1.0, static_cast<double>(stamps.size())));
+        core::usize applied = 0;
+        for (core::usize at = 1; at < stamps.size() && applied < affordable; ++at, ++applied) {
             applyBrushAt(terrain, stamps[at]);
             m_stroke->stamps += 1;
+            m_stroke->last = stamps[at];
         }
-        if (!stamps.empty())
-            m_stroke->last = stamps.back();
         return;
     }
 
@@ -4493,13 +4550,30 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
     const auto side = static_cast<f32>(radius * 2.0);
     const core::Vec3 extent{side, side, side};
 
+    // **The ground under the stamp, read first** where a streamed terrain has
+    // not loaded it yet (terrain audit U1): a brush over a cell still on disk
+    // made chunks of only the brush, and the cell's own were lost when it came
+    // in -- and on the next save.
+    if (m_strokeWorld != nullptr) {
+        const double reach = radius + 8.0 * static_cast<double>(terrain.field.settings().voxelSize);
+        m_strokeWorld->loadGround(core::DVec3{worldAt.x - reach, 0.0, worldAt.z - reach},
+                                  core::DVec3{worldAt.x + reach, 0.0, worldAt.z + reach});
+    }
+
     const BrushOp op = m_stroke.has_value() ? m_stroke->op : effectiveBrushOp();
+    const core::u8 material = groundMaterial(terrain, m_brush.material);
     asset::EditReport report;
     const auto noted = [this](const asset::EditReport& stamp) {
         if (!m_stroke.has_value())
             return;
         m_stroke->touched += stamp.touched;
         m_stroke->refused = m_stroke->refused || stamp.refused;
+        // **The stroke's one undo step, at its first change** (terrain audit
+        // E2), from the world as the stroke found it.
+        if (stamp.touched > 0 && m_stroke->before.has_value()) {
+            m_history.record(std::move(*m_stroke->before), std::move(m_stroke->label), m_stroke->gesture);
+            m_stroke->before.reset();
+        }
     };
 
     if (m_tool == Tool::Foliage) {
@@ -4517,7 +4591,14 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
         return;
     }
     if (m_tool == Tool::Paint) {
-        report = asset::paintBall(terrain.field, at, radius, m_brush.material);
+        // **Paint needs a material to paint** (terrain audit E6): with none, a
+        // stroke rewrote ids no layer names, deciding what the ground would
+        // become once somebody added one.
+        if (terrain.layers.empty()) {
+            m_status = EditorStatus{"this terrain has no materials yet: add one under Paint first", true};
+            return;
+        }
+        report = asset::paintBall(terrain.field, at, radius, material);
     }
     else {
         switch (op) {
@@ -4527,8 +4608,8 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
         // the side of a cliff, a ball half in the cliff, never a column down
         // from it. The ground-shaped verb is Grow.
         case BrushOp::Add:
-            report = box ? asset::fillBlock(terrain.field, at, extent, m_brush.material)
-                         : asset::fillBall(terrain.field, at, radius, m_brush.material);
+            report = box ? asset::fillBlock(terrain.field, at, extent, material)
+                         : asset::fillBall(terrain.field, at, radius, material);
             break;
         case BrushOp::Subtract:
             report =
@@ -4538,7 +4619,7 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
         // moves along its normal by a falloff, and a square falloff would
         // leave corners on it.
         case BrushOp::Grow:
-            report = asset::growBall(terrain.field, at, radius, growAmount(m_brush), m_brush.material);
+            report = asset::growBall(terrain.field, at, radius, growAmount(m_brush), material);
             break;
         case BrushOp::Erode:
             report = asset::growBall(terrain.field, at, radius, -growAmount(m_brush));
@@ -4895,8 +4976,29 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
     // the ground covers entirely as one value each, and writes voxels only
     // where the surface passes. `height` is a WORLD height, as a heightmap's
     // are: the field is laid at it less the terrain's own position.
-    asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, size,
-                    static_cast<f32>(static_cast<double>(height) - terrain->origin.y), material);
+    //
+    // **Every cell of the square read first** on a streamed terrain (terrain
+    // audit U2): laid over cells not loaded, the old ground above the new
+    // height came back with them, in blocks a chunk wide.
+    {
+        const double half =
+            static_cast<double>(size) / 2.0 + 8.0 * static_cast<double>(terrain->field.settings().voxelSize);
+        world.loadGround(core::DVec3{terrain->origin.x - half, 0.0, terrain->origin.z - half},
+                         core::DVec3{terrain->origin.x + half, 0.0, terrain->origin.z + half}, 4096);
+    }
+    const asset::EditReport laid = asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, size,
+                                                   static_cast<f32>(static_cast<double>(height) - terrain->origin.y),
+                                                   groundMaterial(*terrain, material));
+    // **Too big for its voxels is said, and leaves no step** (terrain audit
+    // E6): it recorded "Generate Ground", answered true and changed nothing.
+    if (laid.refused) {
+        if (existed)
+            m_history.retract();
+        m_status = EditorStatus{"that square is too big for this terrain's voxels: make it smaller, or the voxels "
+                                "bigger under Settings",
+                                true};
+        return false;
+    }
 
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
@@ -4919,6 +5021,11 @@ bool Editor::clearTerrain(scene::World& world, core::InstanceId root, Inspector&
 
     m_history.record(world, "Clear Terrain");
     terrain->field = asset::TerrainField(terrain->field.settings());
+    // **And its cells**, on a streamed terrain (terrain audit U2): cleared
+    // only in memory, every cell not loaded streamed back in, and those let
+    // go before a save came back after it. With no index the terrain is one
+    // the scene holds, which it now is; an undo puts the index back.
+    terrain->cellIndex.clear();
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
     return true;
@@ -5198,7 +5305,15 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     const double halfRows = 0.5 * static_cast<double>(rows - 1u) * static_cast<double>(voxel);
     const auto firstX = static_cast<core::i32>(std::floor(-half / static_cast<double>(voxel)));
     const auto firstZ = static_cast<core::i32>(std::floor(-halfRows / static_cast<double>(voxel)));
-    (void)asset::writeHeights(terrain.field, firstX, firstZ, columns, heights, spec.material);
+    // Every cell of the square read first on a streamed terrain, for Replace
+    // with Flat Ground's reason (terrain audit U2).
+    {
+        const double margin = 8.0 * static_cast<double>(voxel);
+        world.loadGround(core::DVec3{terrain.origin.x - half - margin, 0.0, terrain.origin.z - halfRows - margin},
+                         core::DVec3{terrain.origin.x + half + margin, 0.0, terrain.origin.z + halfRows + margin},
+                         4096);
+    }
+    (void)asset::writeHeights(terrain.field, firstX, firstZ, columns, heights, groundMaterial(terrain, spec.material));
     terrain.fieldRevision += 1;
     m_sceneDirty = true;
 

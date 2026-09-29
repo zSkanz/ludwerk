@@ -4400,6 +4400,9 @@ struct BrushRig
         // Ground that reaches the world's floor, so it is height-encoded -- the
         // ordinary case, and the one a brush has to leave ordinary.
         asset::fillBlock(component->field, core::DVec3{0.0, -20.0, 0.0}, core::Vec3{64.0f, 40.0f, 64.0f}, 1);
+        // Eight materials, so a brush's material is one the terrain has.
+        for (int layer = 1; layer <= 8; ++layer)
+            component->layers.push_back("asset://materials/terrain/layer" + std::to_string(layer) + ".material.json");
     }
 
     [[nodiscard]] scene::TerrainComponent& field()
@@ -6098,6 +6101,99 @@ TEST_CASE("a stroke that changes nothing leaves nothing to undo")
     rig.editor.setBrushMaterial(3);
     strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
     CHECK(rig.editor.history().depth() == before + 1);
+}
+
+TEST_CASE("undo waits for a stroke to end, and a stroke that changed nothing takes no other step (terrain audit "
+          "E1)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.history().record(rig.world, "Earlier");
+    const core::usize before = rig.editor.history().depth();
+    // Painting ground the material it already is: a stroke that changes
+    // nothing.
+    rig.editor.setTool(Editor::Tool::Paint);
+    rig.editor.setBrushMaterial(1);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+    rig.frame(pixel, true, true, 1.0 / 60.0);
+    // Ctrl+Z with the button still down.
+    CHECK_FALSE(rig.editor.undo(rig.world, rig.inspector));
+    rig.frame(pixel, false, true, 1.0 / 60.0);
+    rig.frame(pixel, false, false, 1.0 / 60.0);
+    CHECK(rig.editor.history().depth() == before);
+    CHECK(rig.editor.history().undoLabel() == "Earlier");
+}
+
+TEST_CASE("a stroke that changes nothing leaves what redo would bring back (terrain audit E2)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushMaterial(3);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    REQUIRE(rig.editor.history().canRedo());
+
+    rig.editor.setTool(Editor::Tool::Paint);
+    rig.editor.setBrushMaterial(1);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    CHECK(rig.editor.history().canRedo());
+}
+
+TEST_CASE("ground is laid as a material the terrain has (terrain audit E3)")
+{
+    // The brush's material is the project's and outlives a scene: pointed at
+    // layer 5, it laid ground no layer of a terrain with none named.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.field().layers.clear();
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushMaterial(5);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    const asset::FieldSample laid = asset::sampleField(rig.field().field, core::DVec3{0.0, 0.5, 0.0});
+    REQUIRE(laid.distance < 0.0f);
+    CHECK(laid.material == 1);
+}
+
+TEST_CASE("an Add aimed past the ground puts nothing in mid-air (terrain audit E4)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushMaterial(1);
+    const core::u64 digest = rig.field().field.digest();
+    // Past the ground's edge at 32 m: the ray meets nothing.
+    strokeAt(rig, core::DVec3{45.0, 0.0, 0.0});
+    CHECK(rig.field().field.digest() == digest);
+}
+
+TEST_CASE("a stroke ends with the terrain it began on (terrain audit E5)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    // A second terrain with the same ground, after the first.
+    const core::InstanceId other = rig.world.create(rig.classes.findId(rig.atoms.intern("Terrain")));
+    REQUIRE_FALSE(rig.world.setParent(other, rig.workspace).has_value());
+    scene::TerrainComponent* second = rig.world.terrains().find(other);
+    second->field = rig.field().field;
+    second->layers = rig.field().layers;
+    const core::u64 digest = second->field.digest();
+
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushMaterial(2);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+    rig.frame(pixel, true, true, 1.0 / 60.0);
+    rig.world.destroy(rig.terrain);
+    // Held for three seconds: an Add held still builds a ball every second or
+    // so.
+    for (int frame = 0; frame < 180; ++frame)
+        rig.frame(pixel, false, true, 1.0 / 60.0);
+    rig.frame(pixel, false, false, 1.0 / 60.0);
+    CHECK(rig.world.terrains().find(other)->field.digest() == digest);
 }
 
 TEST_CASE("a brush too big for the voxels says so instead of doing nothing")

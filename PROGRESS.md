@@ -496,10 +496,14 @@ audited end to end:
       types; `Terrain:GrowBall` gives a script the editor's Raise and Lower.
       The world hash read a player intent's action by atom number, which one
       method more in a build moved (D304).
-- [ ] **The terrain system's audit** -- quality, performance, security,
-      function, the editor with it -- and its fixes. Known going in: F11, a
-      big brush over unloaded cells writing air, ctrl-Z in the middle of a
-      stroke.
+- [x] **The terrain system's audit** -- quality, performance, security,
+      function, the editor with it -- and its fixes
+      ([`terrain-audit-2026-09-29.md`](docs/briefs/terrain-audit-2026-09-29.md),
+      D305 to D327, protocol 25): ground dug away that came back, edits over
+      cells not loaded, a script's arguments that allocated gigabytes, the
+      ground's replication completed, colliders that vanished under a
+      respawned character, and the brush's undo. Left and scheduled: the cost
+      of digging continuously (P4), and the rest its brief lists.
 
 **The owner's defect list of 2026-09-28**, ahead of the plan
 ([`owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
