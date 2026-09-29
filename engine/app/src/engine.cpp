@@ -590,9 +590,9 @@ void appendPrompts(scene::World& world, const render::DrawPoses& poses, const re
     }
 }
 
-// **How far a click or a prompt reaches** (ADR 0126), drawn round a selected
-// `ClickDetector` or `ProximityPrompt` -- or round the part holding one -- at
-// the part or attachment it hangs from.
+// **How far a click, a prompt or a drag reaches** (ADR 0126), drawn round a
+// selected `ClickDetector`, `ProximityPrompt` or `DragDetector` -- or round the
+// part holding one -- at the part or attachment it hangs from.
 void submitDetectorVolumes(const scene::World& world, std::span<const core::InstanceId> selection,
                            core::DVec3 cameraOrigin, render::DebugDraw& draw)
 {
@@ -605,6 +605,10 @@ void submitDetectorVolumes(const scene::World& world, std::span<const core::Inst
         else if (const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(id)) {
             reach = prompt->maxActivationDistance;
             colour = render::DebugColor::fromLinear(1.0f, 0.78f, 0.25f);
+        }
+        else if (const scene::DragDetectorComponent* drag = world.dragDetectors().find(id)) {
+            reach = drag->maxActivationDistance;
+            colour = render::DebugColor::fromLinear(0.40f, 0.90f, 0.55f);
         }
         else {
             return;

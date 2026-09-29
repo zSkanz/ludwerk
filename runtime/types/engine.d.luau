@@ -165,6 +165,12 @@ end
 declare extern type EnumProximityPromptInputType extends EnumItem with
 end
 
+declare extern type EnumDragDetectorDragStyle extends EnumItem with
+end
+
+declare extern type EnumDragDetectorResponseStyle extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2488,6 +2494,57 @@ declare extern type ClickDetector extends Instance with
     read MouseHoverLeave: Signal<Player>
 end
 
+declare extern type DragDetector extends Instance with
+    --- How the pointer's motion moves the part: along a line, across a plane, turned about an axis,
+    --- turned as a ball, or not at all.
+    DragStyle: EnumDragDetectorDragStyle
+    --- The line a `TranslateLine` drag moves along, the normal of a `TranslatePlane` drag's plane, or
+    --- the axis a `RotateAxis` drag turns about -- in `ReferenceInstance`'s frame when it names a part,
+    --- in the world's otherwise.
+    Axis: vector
+    --- A part whose frame `Axis` is in, whose position a turn is about, and that the limits are
+    --- measured from. Nil is the world's frame, the part's own pivot and where it rested when first
+    --- dragged. The authority's: a replica drags in the world's frame.
+    ReferenceInstance: Instance?
+    --- How far back along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests.
+    --- Equal to `MaxDragTranslation` is no limit.
+    MinDragTranslation: number
+    --- How far along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests; for a
+    --- plane, how far from it in any direction. Equal to `MinDragTranslation` is no limit.
+    MaxDragTranslation: number
+    --- How far a `RotateAxis` drag may turn the other way, in degrees, from where the part rests. Equal
+    --- to `MaxDragAngle` is no limit.
+    MinDragAngle: number
+    --- How far a `RotateAxis` drag may turn, in degrees, from where the part rests. Equal to
+    --- `MinDragAngle` is no limit.
+    MaxDragAngle: number
+    --- Whether the drag puts the part where it is dragged, pulls it there with a force, or only
+    --- reports. A turn is put there either way: a force turns nothing yet.
+    ResponseStyle: EnumDragDetectorResponseStyle
+    --- The most force a `Physical` drag pulls with, in newtons.
+    MaxForce: number
+    --- The most torque a `Physical` turn would twist with. Stored, replicated and not used: a turn is
+    --- put where it is dragged (the toolkit's F1 ledger).
+    MaxTorque: number
+    --- How quickly a `Physical` drag closes the gap: the speed it asks for is the distance times this,
+    --- each second.
+    Responsiveness: number
+    --- How far from the player's character, in metres, a drag may begin -- from the camera when there
+    --- is no character.
+    MaxActivationDistance: number
+    --- The picture the pointer shows over it. Stored, replicated and not drawn yet, as
+    --- `ClickDetector`'s.
+    CursorIcon: Content
+    --- Whether it can be dragged. Turned off mid-drag, the drag ends.
+    Enabled: boolean
+    --- A press on it within reach began a drag: the pointer's ray, and where it met the part.
+    read DragStart: Signal<Player, vector, vector, vector>
+    --- A tick of the drag, with the pointer's ray: every tick, whether the pointer moved or not.
+    read DragContinue: Signal<Player, vector, vector>
+    --- The button or the finger came up, or the detector went away or was turned off.
+    read DragEnd: Signal<Player>
+end
+
 declare extern type ProximityPrompt extends Instance with
     --- What triggering it does, such as `Open`.
     ActionText: string
@@ -3819,6 +3876,21 @@ declare Enum: {
         Touch: EnumProximityPromptInputType,
         GetEnumItems: (self: any) -> { EnumProximityPromptInputType },
     },
+    DragDetectorDragStyle: {
+        TranslateLine: EnumDragDetectorDragStyle,
+        TranslatePlane: EnumDragDetectorDragStyle,
+        TranslateViewPlane: EnumDragDetectorDragStyle,
+        RotateAxis: EnumDragDetectorDragStyle,
+        RotateTrackball: EnumDragDetectorDragStyle,
+        Scriptable: EnumDragDetectorDragStyle,
+        GetEnumItems: (self: any) -> { EnumDragDetectorDragStyle },
+    },
+    DragDetectorResponseStyle: {
+        Geometric: EnumDragDetectorResponseStyle,
+        Physical: EnumDragDetectorResponseStyle,
+        Custom: EnumDragDetectorResponseStyle,
+        GetEnumItems: (self: any) -> { EnumDragDetectorResponseStyle },
+    },
 }
 
 declare Vector3: {
@@ -4132,6 +4204,7 @@ declare Instance: {
         & (("FoliageLayer") -> FoliageLayer)
         & (("FoliageMesh") -> FoliageMesh)
         & (("ClickDetector") -> ClickDetector)
+        & (("DragDetector") -> DragDetector)
         & (("ProximityPrompt") -> ProximityPrompt)
         & (("Team") -> Team)
         & (("RemoteEvent") -> RemoteEvent)

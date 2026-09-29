@@ -44,17 +44,21 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   game's context sank, or the interface took, is not the prompt's --
   `InputSystem::consumed`). `GamepadKeyCode` defaults to `ButtonWest`: the
   enum has no `ButtonX`.
-- [ ] `DragDetector`: the drag styles, limits, `Geometric`/`Physical`/`Custom`
-  responses, signals.
-- [~] In a match: local fire, authority validation (reach from the
+- [x] `DragDetector`: the six drag styles, limits from where the part rested,
+  `Geometric`/`Physical`/`Custom` responses, the three signals with the
+  pointer's ray. A `Physical` turn is put there (`MaxTorque` inert: no angular
+  impulse yet).
+- [x] In a match: local fire, authority validation (reach from the
   character, with a part's size and a slack of 4 m; enabled), fire on the
   authority with the connection's player -- `DetectorInput`, protocol 21 --
-  and both classes replicate. **Not checked on the authority: line of sight**
-  (a prompt's reach is). A `Physical` drag's ownership is F1b's.
+  and all three classes replicate. A drag crosses as rays (`DragInput`,
+  protocol 26) and the authority moves it; a `Physical` drag of an unanchored
+  part is the player's while it lasts. **Not checked on the authority: line of
+  sight** (a prompt's reach is).
 - [x] Editor: activation distances drawn when selected (the detector, or the
   part holding it).
-- [~] An example: `examples/30-interactions`, a room with a button and a door
-  opened by a held prompt. The drawer and the lever come with F1b.
+- [x] An example: `examples/30-interactions`, a room with a button, a door
+  opened by a held prompt, a drawer and a lever.
 - [x] Tests: a click out of range does not fire and one in range does, with
   hover; a held prompt fires after `HoldDuration` and ends on release, and the
   service sees it; two prompts on one key show one; both classes replicate and

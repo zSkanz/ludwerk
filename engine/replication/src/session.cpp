@@ -1581,6 +1581,44 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     scene::DetectorMessage{detector, peer->player, static_cast<scene::DetectorMessage::Kind>(kind), 0});
                 m_stats.messagesReceived += 1;
             }
+            else if (type == MessageType::DragInput && peer->welcomed && peer->player.valid()) {
+                // A drag (ADR 0126 §3): the connection's player, and a ray the
+                // tick works the drag out from -- never a position to put the
+                // part at.
+                if (peer->messagesThisTick >= MaxRemoteMessagesPerTick) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                peer->messagesThisTick += 1;
+                const u32 netId = reader.u32v();
+                const u8 kind = reader.u8v();
+                scene::DetectorMessage message;
+                message.origin = core::DVec3{readF64(reader), readF64(reader), readF64(reader)};
+                message.direction = core::Vec3{readF32(reader), readF32(reader), readF32(reader)};
+                message.hit = core::DVec3{readF64(reader), readF64(reader), readF64(reader)};
+                const InstanceId detector = instanceOfNet(world, netId);
+                const f32 length = core::length(message.direction);
+                // An end carries no ray; a beginning and a tick carry one that
+                // is finite and of length one, near enough.
+                const bool rayed = kind < 2;
+                const bool finite = core::isFinite(message.origin.x) && core::isFinite(message.origin.y) &&
+                                    core::isFinite(message.origin.z) && core::isFinite(message.hit.x) &&
+                                    core::isFinite(message.hit.y) && core::isFinite(message.hit.z) &&
+                                    core::isFinite(length);
+                if (!reader.ok() || !reader.done() || !detector.valid() || kind > 2 || !finite ||
+                    (rayed && (length < 0.5f || length > 2.0f))) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                if (rayed)
+                    message.direction = message.direction * (1.0f / length);
+                message.detector = detector;
+                message.player = peer->player;
+                message.kind = static_cast<scene::DetectorMessage::Kind>(
+                    static_cast<u8>(scene::DetectorMessage::Kind::DragStart) + kind);
+                world.engineState().detectorInbox.push_back(message);
+                m_stats.messagesReceived += 1;
+            }
             break;
         }
         case net::TransportEvent::Kind::None:
@@ -2493,9 +2531,27 @@ void ReplicaSession::sendMessages(scene::World& world)
             continue;
         }
         Writer out;
-        out.u8v(static_cast<u8>(MessageType::DetectorInput));
-        out.u32v(detector);
-        out.u8v(static_cast<u8>(message.kind));
+        if (message.kind >= scene::DetectorMessage::Kind::DragStart) {
+            // A drag's, with its ray (ADR 0126 §3, protocol 26).
+            out.u8v(static_cast<u8>(MessageType::DragInput));
+            out.u32v(detector);
+            out.u8v(static_cast<u8>(static_cast<u8>(message.kind) -
+                                    static_cast<u8>(scene::DetectorMessage::Kind::DragStart)));
+            writeF64(out, message.origin.x);
+            writeF64(out, message.origin.y);
+            writeF64(out, message.origin.z);
+            writeF32(out, message.direction.x);
+            writeF32(out, message.direction.y);
+            writeF32(out, message.direction.z);
+            writeF64(out, message.hit.x);
+            writeF64(out, message.hit.y);
+            writeF64(out, message.hit.z);
+        }
+        else {
+            out.u8v(static_cast<u8>(MessageType::DetectorInput));
+            out.u32v(detector);
+            out.u8v(static_cast<u8>(message.kind));
+        }
         sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         m_stats.messagesSent += 1;
     }

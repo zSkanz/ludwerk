@@ -679,6 +679,38 @@ struct ClickDetectorComponent
     core::NameAtom cursorIcon;
 };
 
+// ADR 0126: what makes a part or a model something a player drags. Who is
+// dragging it, and from where, is the script layer's -- a machine's, not the
+// world's; where the drag's limits are measured from is the world's.
+struct DragDetectorComponent
+{
+    // `Enum.DragDetectorDragStyle` and `Enum.DragDetectorResponseStyle`.
+    i32 dragStyle = 1;
+    i32 responseStyle = 0;
+    core::Vec3 axis{0.0f, 1.0f, 0.0f};
+    core::InstanceId referenceInstance;
+    f64 minDragTranslation = 0.0;
+    f64 maxDragTranslation = 0.0;
+    // Degrees.
+    f64 minDragAngle = 0.0;
+    f64 maxDragAngle = 0.0;
+    f64 maxForce = 10000.0;
+    f64 maxTorque = 10000.0;
+    f64 responsiveness = 10.0;
+    f64 maxActivationDistance = 32.0;
+    core::NameAtom cursorIcon;
+    bool enabled = true;
+
+    // **Where the part rested when it was first dragged**, which the limits
+    // are measured from when no `ReferenceInstance` is named -- so a drawer
+    // pulled out and pushed back never drifts. With how far a turn has gone
+    // from it, in degrees, since a rotation's angle about an axis cannot be
+    // read back from the rotation alone once it passes half a turn.
+    core::CFrameD rest;
+    bool rested = false;
+    f64 angle = 0.0;
+};
+
 // ADR 0126: a prompt shown near a part, an attachment or a model. What it is
 // doing on this machine -- shown, held -- is the script layer's, not a
 // property, and not the world's.

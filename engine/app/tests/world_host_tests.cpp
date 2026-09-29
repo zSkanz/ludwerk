@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
@@ -2708,6 +2709,224 @@ TEST_CASE("the authority fires a client's click with its player only within reac
         scene::DetectorMessage{detector, player, scene::DetectorMessage::Kind::Click, 0});
     host.tick();
     CHECK(log.contains("lever pulled by player 1"));
+}
+
+// --- Dragged without code (ADR 0126 §3) --------------------------------------------
+
+namespace {
+
+[[nodiscard]] core::CFrameD frameOf(app::WorldHost& host, std::string_view name)
+{
+    scene::World& world = host.world();
+    const core::InstanceId id = world.findFirstChild(host.workspace(), world.atoms().lookup(name));
+    REQUIRE(id.valid());
+    return world.parts().find(id)->cframe;
+}
+
+// The pointer pressed at `from`, walked to `to` over `steps` ticks, and let go.
+void dragAcross(app::WorldHost& host, core::Vec2 from, core::Vec2 to, int steps)
+{
+    pointAt(host, from);
+    host.tick();
+    pointAt(host, from, {KeyMouseLeft});
+    host.tick();
+    for (int step = 1; step <= steps; ++step) {
+        const float t = static_cast<float>(step) / static_cast<float>(steps);
+        pointAt(host, core::Vec2{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t}, {KeyMouseLeft});
+        host.tick();
+    }
+    pointAt(host, to);
+    host.tick();
+}
+
+} // namespace
+
+TEST_CASE("a drawer drags along its line, within its limits from where it rested (ADR 0126 §3)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/drawer.luau", R"(
+        local camera = Instance.new("Camera")
+        camera.CFrame = CFrame.new(0, 0, 0)
+        camera.Parent = workspace
+        workspace.CurrentCamera = camera
+        local drawer = Instance.new("Part")
+        drawer.Name = "Drawer"
+        drawer.Anchored = true
+        drawer.Size = Vector3.new(2, 1, 1)
+        drawer.CFrame = CFrame.new(0, 0, -10)
+        drawer.Parent = workspace
+        local drag = Instance.new("DragDetector")
+        drag.DragStyle = Enum.DragDetectorDragStyle.TranslateLine
+        drag.Axis = vector.create(1, 0, 0)
+        drag.MinDragTranslation = 0
+        drag.MaxDragTranslation = 3
+        drag.Parent = drawer
+        drag.DragStart:Connect(function(player: Player, _origin: vector, _direction: vector, hit: vector)
+            print(`drag began by player {player.UserId} at z {math.floor(hit.z * 10 + 0.5) / 10}`)
+        end)
+        drag.DragEnd:Connect(function(player: Player)
+            print(`drag ended by player {player.UserId}`)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.world().engineState().viewportSize = core::Vec2{800.0f, 600.0f};
+
+    // A little to the right: the drawer follows the pointer along x.
+    dragAcross(host, core::Vec2{400.0f, 300.0f}, core::Vec2{480.0f, 300.0f}, 4);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("drag began by player 1 at z -9.5"));
+    CHECK(log.contains("drag ended by player 1"));
+    const double moved = frameOf(host, "Drawer").position.x;
+    CHECK(moved > 1.0);
+    CHECK(moved < 3.0);
+    CHECK(frameOf(host, "Drawer").position.z == doctest::Approx(-10.0));
+
+    // Far to the right: held at three metres out.
+    const core::Vec2 at{400.0f + static_cast<float>(moved) * 40.0f, 300.0f};
+    dragAcross(host, at, core::Vec2{790.0f, 300.0f}, 4);
+    CHECK(frameOf(host, "Drawer").position.x == doctest::Approx(3.0).epsilon(0.01));
+
+    // And far back to the left: held where it rested, not three metres short
+    // of where this drag began.
+    dragAcross(host, core::Vec2{400.0f + 3.0f * 40.0f, 300.0f}, core::Vec2{10.0f, 300.0f}, 4);
+    CHECK(frameOf(host, "Drawer").position.x == doctest::Approx(0.0).epsilon(0.01));
+}
+
+TEST_CASE("a lever turns about its axis, and no further than its angles (ADR 0126 §3)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/lever.luau", R"(
+        local camera = Instance.new("Camera")
+        camera.CFrame = CFrame.new(0, 0, 0)
+        camera.Parent = workspace
+        workspace.CurrentCamera = camera
+        local lever = Instance.new("Part")
+        lever.Name = "Lever"
+        lever.Anchored = true
+        lever.Size = Vector3.new(0.4, 3, 0.4)
+        lever.CFrame = CFrame.new(0, 0, -10)
+        lever.Parent = workspace
+        local drag = Instance.new("DragDetector")
+        drag.DragStyle = Enum.DragDetectorDragStyle.RotateAxis
+        drag.Axis = vector.create(0, 0, 1)
+        drag.MinDragAngle = -45
+        drag.MaxDragAngle = 45
+        drag.Parent = lever
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.world().engineState().viewportSize = core::Vec2{800.0f, 600.0f};
+
+    // Taken near its top and pulled far to the right: turned clockwise, as
+    // far as forty-five degrees.
+    dragAcross(host, core::Vec2{400.0f, 250.0f}, core::Vec2{790.0f, 250.0f}, 6);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    const core::CFrameD turned = frameOf(host, "Lever");
+    const core::Vec3 up = turned.rotation * core::Vec3{0.0f, 1.0f, 0.0f};
+    CHECK(up.x == doctest::Approx(std::sqrt(0.5)).epsilon(0.02));
+    CHECK(up.y == doctest::Approx(std::sqrt(0.5)).epsilon(0.02));
+    // Turned about its middle: it stays where it is.
+    CHECK(turned.position.x == doctest::Approx(0.0));
+}
+
+TEST_CASE("the authority begins a client's drag only within reach, moves it itself, and hands a pulled crate over")
+{
+    Captured log;
+    Project project;
+    project.write("src/server/drags.luau", R"(
+        local function thing(name: string, x: number, anchored: boolean, response: Enum.DragDetectorResponseStyle)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Anchored = anchored
+            part.CFrame = CFrame.new(x, 0, 0)
+            part.Parent = workspace
+            local drag = Instance.new("DragDetector")
+            drag.DragStyle = Enum.DragDetectorDragStyle.TranslateLine
+            drag.Axis = vector.create(0, 0, 1)
+            drag.ResponseStyle = response
+            drag.MaxActivationDistance = 10
+            drag.Parent = part
+            drag.DragStart:Connect(function(player: Player)
+                print(`{name} taken by player {player.UserId}`)
+            end)
+            drag.DragEnd:Connect(function(player: Player)
+                print(`{name} let go by player {player.UserId}`)
+            end)
+        end
+        thing("Slider", 100, true, Enum.DragDetectorResponseStyle.Geometric)
+        thing("Crate", 104, false, Enum.DragDetectorResponseStyle.Physical)
+        local body = Instance.new("Part")
+        body.Name = "Body"
+        body.Anchored = true
+        body.Parent = workspace
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId body = world.findFirstChild(host.workspace(), world.atoms().lookup("Body"));
+    const core::InstanceId slider = world.findFirstChild(host.workspace(), world.atoms().lookup("Slider"));
+    const core::InstanceId crate = world.findFirstChild(host.workspace(), world.atoms().lookup("Crate"));
+    REQUIRE(body.valid());
+    REQUIRE(slider.valid());
+    REQUIRE(crate.valid());
+    // A player across the network, whose character is the body.
+    const core::InstanceId player = world.create(world.classes().findId(world.atoms().intern("Player")));
+    REQUIRE(player.valid());
+    scene::PlayerComponent* remote = world.players().find(player);
+    REQUIRE(remote != nullptr);
+    remote->userId = 7;
+    remote->local = false;
+    remote->character = body;
+    const core::InstanceId sliding = world.firstChild(slider);
+    const core::InstanceId pulling = world.firstChild(crate);
+
+    const auto send = [&](core::InstanceId detector, scene::DetectorMessage::Kind kind, core::DVec3 origin,
+                          core::Vec3 direction, core::DVec3 hit) {
+        scene::DetectorMessage message{detector, player, kind, 0};
+        message.origin = origin;
+        message.direction = direction;
+        message.hit = hit;
+        world.engineState().detectorInbox.push_back(message);
+    };
+
+    // From a hundred metres off: refused.
+    world.parts().find(body)->cframe.position = core::DVec3{0.0, 0.0, 0.0};
+    send(sliding, scene::DetectorMessage::Kind::DragStart, core::DVec3{100.0, 5.0, 0.0}, core::Vec3{0.0f, -1.0f, 0.0f},
+         core::DVec3{100.0, 0.5, 0.0});
+    host.tick();
+    CHECK_FALSE(log.contains("Slider taken"));
+
+    // Beside it: taken, and moved by the authority from the rays it is sent --
+    // the ray straight down onto the line two metres along it.
+    world.parts().find(body)->cframe.position = core::DVec3{97.0, 0.0, 0.0};
+    send(sliding, scene::DetectorMessage::Kind::DragStart, core::DVec3{100.0, 5.0, 0.0}, core::Vec3{0.0f, -1.0f, 0.0f},
+         core::DVec3{100.0, 0.5, 0.0});
+    host.tick();
+    CHECK(log.contains("Slider taken by player 7"));
+    send(sliding, scene::DetectorMessage::Kind::DragContinue, core::DVec3{100.0, 5.0, 2.0},
+         core::Vec3{0.0f, -1.0f, 0.0f}, core::DVec3{});
+    host.tick();
+    CHECK(world.parts().find(slider)->cframe.position.z == doctest::Approx(2.0).epsilon(0.01));
+    send(sliding, scene::DetectorMessage::Kind::DragEnd, core::DVec3{}, core::Vec3{}, core::DVec3{});
+    host.tick();
+    CHECK(log.contains("Slider let go by player 7"));
+
+    // A crate pulled is the player's while it is pulled, and the authority's
+    // after (ADR 0099).
+    world.parts().find(body)->cframe.position = core::DVec3{101.0, 0.0, 0.0};
+    send(pulling, scene::DetectorMessage::Kind::DragStart, core::DVec3{104.0, 5.0, 0.0}, core::Vec3{0.0f, -1.0f, 0.0f},
+         core::DVec3{104.0, 0.5, 0.0});
+    host.tick();
+    CHECK(log.contains("Crate taken by player 7"));
+    CHECK(world.rigidBodies().find(crate)->networkOwner == 7u);
+    send(pulling, scene::DetectorMessage::Kind::DragEnd, core::DVec3{}, core::Vec3{}, core::DVec3{});
+    host.tick();
+    CHECK(world.rigidBodies().find(crate)->networkOwner == 0u);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
 // --- Paths from scripts stay in the project (audit F5) ----------------------------

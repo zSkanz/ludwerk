@@ -413,7 +413,8 @@ local ServiceNameExceptions = {
 --- `MouseHoverLeave` are the names a person arriving reaches for on a
 --- `ClickDetector`; `PromptButtonHoldBegan` is `InputBegan`'s case; and
 --- `PromptShown` and `PromptHidden` are past participles the pattern cannot
---- see, as `FocusLost` is.
+--- see, as `FocusLost` is. `DragStart`, `DragContinue` and `DragEnd` are the
+--- `DragDetector`'s, named in ADR 0126 for the same reason as the first four.
 local EventNameExceptions = {
     Heartbeat = true,
     MessageOut = true,
@@ -427,6 +428,9 @@ local EventNameExceptions = {
     PromptButtonHoldBegan = true,
     PromptShown = true,
     PromptHidden = true,
+    DragStart = true,
+    DragContinue = true,
+    DragEnd = true,
 }
 
 local function isPascalCase(name: string): boolean

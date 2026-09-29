@@ -2056,6 +2056,53 @@ TEST_CASE("a detector replicates, and a replica's click reaches the authority fr
     CHECK(arrived[1].kind == scene::DetectorMessage::Kind::Triggered);
 }
 
+TEST_CASE("a drag detector replicates, and a replica's drag reaches the authority with its ray (ADR 0126 §3)")
+{
+    PlayedMatch match;
+    const core::InstanceId drawer = match.part("Drawer", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId detector =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("DragDetector")));
+    REQUIRE(detector.valid());
+    REQUIRE_FALSE(match.server.world.setParent(detector, drawer).has_value());
+    scene::DragDetectorComponent* component = match.server.world.dragDetectors().find(detector);
+    component->dragStyle = 0;
+    component->axis = core::Vec3{1.0f, 0.0f, 0.0f};
+    component->maxDragTranslation = 0.5;
+    match.run(3);
+
+    const core::InstanceId here = match.copyOf(detector);
+    REQUIRE(here.valid());
+    const scene::DragDetectorComponent* copy = match.client.world.dragDetectors().find(here);
+    REQUIRE(copy != nullptr);
+    CHECK(copy->dragStyle == 0);
+    CHECK(copy->axis.x == doctest::Approx(1.0));
+    CHECK(copy->maxDragTranslation == doctest::Approx(0.5));
+
+    scene::DetectorMessage began{here, {}, scene::DetectorMessage::Kind::DragStart, 0};
+    began.origin = core::DVec3{0.0, 5.0, 0.0};
+    began.direction = core::Vec3{0.0f, -1.0f, 0.0f};
+    began.hit = core::DVec3{0.0, 1.5, 0.0};
+    match.client.world.engineState().detectorOutbox.push_back(began);
+    // A ray that is not one is dropped on the way in.
+    scene::DetectorMessage broken = began;
+    broken.kind = scene::DetectorMessage::Kind::DragContinue;
+    broken.direction = core::Vec3{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
+    match.client.world.engineState().detectorOutbox.push_back(broken);
+    match.client.world.engineState().detectorOutbox.push_back(
+        scene::DetectorMessage{here, {}, scene::DetectorMessage::Kind::DragEnd, 0});
+    match.run(2);
+
+    const std::vector<scene::DetectorMessage>& arrived = match.server.world.engineState().detectorInbox;
+    REQUIRE(arrived.size() == 2);
+    CHECK(arrived[0].detector == detector);
+    CHECK(arrived[0].kind == scene::DetectorMessage::Kind::DragStart);
+    CHECK(arrived[0].player == match.remote());
+    CHECK(arrived[0].origin.y == doctest::Approx(5.0));
+    CHECK(arrived[0].direction.y == doctest::Approx(-1.0));
+    CHECK(arrived[0].hit.y == doctest::Approx(1.5));
+    CHECK(arrived[1].kind == scene::DetectorMessage::Kind::DragEnd);
+}
+
 TEST_CASE("a peer's non-finite state and invented intents do not reach the authority (audit E3)")
 {
     PlayedMatch match;

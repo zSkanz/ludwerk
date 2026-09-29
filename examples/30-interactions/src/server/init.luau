@@ -10,6 +10,10 @@
 	  on or off.
 	- A door, with a `ProximityPrompt`: come near and hold E -- or tap it -- and
 	  it swings open, or shut.
+	- A drawer in the desk, with a `DragDetector`: pull it out along its
+	  runners, no further than they go.
+	- A lever on the wall, with another: turn it about its hinge, and the lamp
+	  follows it from dim to bright.
 
 	There is no raycast, no key handler and no distance check in this file.
 ]]
@@ -91,6 +95,48 @@ prompt.Triggered:Connect(function(player: Player)
     print(`30-interactions: player {player.UserId} {if open then "opened" else "closed"} the door`)
 end)
 
+-- --- The desk and its drawer ------------------------------------------------------
+
+local Wood = Color3.fromRGB(150, 110, 70)
+block("Desk", vector.create(2.4, 0.9, 1.2), vector.create(5.5, 0.45, -6.8), Wood)
+local drawer = block("Drawer", vector.create(1.6, 0.3, 1), vector.create(5.5, 0.62, -6.1), Color3.fromRGB(170, 130, 85))
+local pull = Instance.new("DragDetector")
+pull.DragStyle = Enum.DragDetectorDragStyle.TranslateLine
+-- Out of the desk, towards the room: the runners are half a metre long.
+pull.Axis = vector.create(0, 0, 1)
+pull.MinDragTranslation = 0
+pull.MaxDragTranslation = 0.5
+pull.MaxActivationDistance = 6
+pull.Parent = drawer
+pull.DragEnd:Connect(function(player: Player)
+    print(
+        `30-interactions: player {player.UserId} left the drawer {math.floor((drawer.Position.z + 6.1) * 100)} cm out`
+    )
+end)
+
+-- --- The lever --------------------------------------------------------------------------
+
+-- Turned about its hinge at the bottom: the hinge is the reference its turn is
+-- about, and the lamp is as bright as the lever is up.
+local hingeBlock =
+    block("LeverHinge", vector.create(0.3, 0.3, 0.3), vector.create(-7.6, 1.2, -3), Color3.fromRGB(60, 60, 66))
+local lever =
+    block("Lever", vector.create(0.12, 1.2, 0.12), vector.create(-7.6, 1.8, -3), Color3.fromRGB(200, 200, 210))
+local turn = Instance.new("DragDetector")
+turn.DragStyle = Enum.DragDetectorDragStyle.RotateAxis
+turn.Axis = vector.create(1, 0, 0)
+turn.ReferenceInstance = hingeBlock
+turn.MinDragAngle = -60
+turn.MaxDragAngle = 60
+turn.MaxActivationDistance = 6
+turn.Parent = lever
+turn.DragContinue:Connect(function()
+    -- Straight up is the lamp at half; towards the room, brighter.
+    local up = lever.CFrame.UpVector
+    local lean = math.clamp(up.z / math.sin(math.rad(60)), -1, 1)
+    light.Brightness = 1.5 + 1.5 * lean
+end)
+
 -- --- A character for every player -----------------------------------------------
 
 local characters: { [Player]: BasePart } = {}
@@ -139,4 +185,4 @@ RunService.Heartbeat:Connect(function(dt: number)
     end
 end)
 
-print("30-interactions: WASD walks. Click the red button; hold E by the door.")
+print("30-interactions: WASD walks. Click the red button; hold E by the door; pull the drawer; turn the lever.")

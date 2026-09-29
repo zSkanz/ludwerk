@@ -2474,6 +2474,199 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     clickDetectorDesc.detachComponents = native::detachClickDetectorComponents;
     classes.registerClass(clickDetectorDesc);
 
+    // --- DragDetector ---
+    static std::array<PropertyDesc, 14> dragDetectorProperties;
+    dragDetectorProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("DragStyle"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("DragDetectorDragStyle"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How the pointer's motion moves the part: along a line, across a plane, turned about an axis, turned as a ball, or not at all.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getDragDetectorDragStyle,
+            .set = native::setDragDetectorDragStyle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Axis"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The line a `TranslateLine` drag moves along, the normal of a `TranslatePlane` drag's plane, or the axis a `RotateAxis` drag turns about -- in `ReferenceInstance`'s frame when it names a part, in the world's otherwise.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.vector_direction"),
+            .get = native::getDragDetectorAxis,
+            .set = native::setDragDetectorAxis,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReferenceInstance"),
+            .type = ValueType::Instance,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A part whose frame `Axis` is in, whose position a turn is about, and that the limits are measured from. Nil is the world's frame, the part's own pivot and where it rested when first dragged. The authority's: a replica drags in the world's frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getDragDetectorReferenceInstance,
+            .set = native::setDragDetectorReferenceInstance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MinDragTranslation"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far back along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests. Equal to `MaxDragTranslation` is no limit.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getDragDetectorMinDragTranslation,
+            .set = native::setDragDetectorMinDragTranslation,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxDragTranslation"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far along `Axis`, in metres, a `TranslateLine` drag may go from where the part rests; for a plane, how far from it in any direction. Equal to `MinDragTranslation` is no limit.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getDragDetectorMaxDragTranslation,
+            .set = native::setDragDetectorMaxDragTranslation,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MinDragAngle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far a `RotateAxis` drag may turn the other way, in degrees, from where the part rests. Equal to `MaxDragAngle` is no limit.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getDragDetectorMinDragAngle,
+            .set = native::setDragDetectorMinDragAngle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxDragAngle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far a `RotateAxis` drag may turn, in degrees, from where the part rests. Equal to `MinDragAngle` is no limit.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getDragDetectorMaxDragAngle,
+            .set = native::setDragDetectorMaxDragAngle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ResponseStyle"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("DragDetectorResponseStyle"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the drag puts the part where it is dragged, pulls it there with a force, or only reports. A turn is put there either way: a force turns nothing yet.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getDragDetectorResponseStyle,
+            .set = native::setDragDetectorResponseStyle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most force a `Physical` drag pulls with, in newtons.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getDragDetectorMaxForce,
+            .set = native::setDragDetectorMaxForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = true,
+            .doc = "The most torque a `Physical` turn would twist with. Stored, replicated and not used: a turn is put where it is dragged (the toolkit's F1 ledger).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getDragDetectorMaxTorque,
+            .set = native::setDragDetectorMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Responsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How quickly a `Physical` drag closes the gap: the speed it asks for is the distance times this, each second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getDragDetectorResponsiveness,
+            .set = native::setDragDetectorResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxActivationDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far from the player's character, in metres, a drag may begin -- from the camera when there is no character.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getDragDetectorMaxActivationDistance,
+            .set = native::setDragDetectorMaxActivationDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("CursorIcon"),
+            .type = ValueType::String,
+            .contentKind = atoms.intern("Texture"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = true,
+            .doc = "The picture the pointer shows over it. Stored, replicated and not drawn yet, as `ClickDetector`'s.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getDragDetectorCursorIcon,
+            .set = native::setDragDetectorCursorIcon,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it can be dragged. Turned off mid-drag, the drag ends.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getDragDetectorEnabled,
+            .set = native::setDragDetectorEnabled,
+        },
+    }};
+    static std::array<EventDesc, 3> dragDetectorEvents;
+    dragDetectorEvents = {{
+        EventDesc{
+            .name = atoms.intern("DragStart"),
+            .slot = 7,
+            .doc = "A press on it within reach began a drag: the pointer's ray, and where it met the part.",
+        },
+        EventDesc{
+            .name = atoms.intern("DragContinue"),
+            .slot = 8,
+            .doc = "A tick of the drag, with the pointer's ray: every tick, whether the pointer moved or not.",
+        },
+        EventDesc{
+            .name = atoms.intern("DragEnd"),
+            .slot = 9,
+            .doc = "The button or the finger came up, or the detector went away or was turned off.",
+        },
+    }};
+    ClassDescriptor dragDetectorDesc;
+    dragDetectorDesc.name = atoms.intern("DragDetector");
+    dragDetectorDesc.super = instanceClass;
+    dragDetectorDesc.flags = ClassFlags::None;
+    dragDetectorDesc.defaultName = atoms.intern("DragDetector");
+    dragDetectorDesc.doc = "Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled along a line, a lever turned about an axis, a crate pushed across the floor. The engine casts the pointer -- the mouse, or a finger -- into the world once a tick; a press on the part within reach begins the drag, and each tick after moves the part the way `DragStyle` says, within its limits, until the button or the finger comes up.\012\012**The limits are measured from where the part rested** the first time it was dragged -- or from `ReferenceInstance`, when it names a part -- so a drawer pulled out and pushed back never drifts.\012\012**In a match** the machine that drags tells the authority, which checks the reach from the player's character and moves a `Geometric` drag there, so every player sees it. A `Physical` drag of an unanchored part hands the part to the dragging player for its duration (ADR 0099), and back after.";
+    static constexpr std::array<std::string_view, 4> dragDetectorParents{{"BasePart", "Model", "ReplicatedStorage", "ServerStorage"}};
+    dragDetectorDesc.parents = dragDetectorParents;
+    dragDetectorDesc.properties = dragDetectorProperties;
+    dragDetectorDesc.events = dragDetectorEvents;
+    dragDetectorDesc.attachComponents = native::attachDragDetectorComponents;
+    dragDetectorDesc.detachComponents = native::detachDragDetectorComponents;
+    classes.registerClass(dragDetectorDesc);
+
     // --- ProximityPrompt ---
     static std::array<PropertyDesc, 11> proximityPromptProperties;
     proximityPromptProperties = {{
@@ -6062,6 +6255,71 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     proximityPromptInputTypeDesc.docKey = {};
     proximityPromptInputTypeDesc.items = proximityPromptInputTypeItems;
     enums.registerEnum(proximityPromptInputTypeDesc);
+
+    // --- DragDetectorDragStyle ---
+    static std::array<EnumItemDesc, 6> dragDetectorDragStyleItems;
+    dragDetectorDragStyleItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("TranslateLine"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TranslatePlane"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TranslateViewPlane"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RotateAxis"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RotateTrackball"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Scriptable"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor dragDetectorDragStyleDesc;
+    dragDetectorDragStyleDesc.name = atoms.intern("DragDetectorDragStyle");
+    dragDetectorDragStyleDesc.docKey = {};
+    dragDetectorDragStyleDesc.items = dragDetectorDragStyleItems;
+    enums.registerEnum(dragDetectorDragStyleDesc);
+
+    // --- DragDetectorResponseStyle ---
+    static std::array<EnumItemDesc, 3> dragDetectorResponseStyleItems;
+    dragDetectorResponseStyleItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Geometric"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Physical"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Custom"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor dragDetectorResponseStyleDesc;
+    dragDetectorResponseStyleDesc.name = atoms.intern("DragDetectorResponseStyle");
+    dragDetectorResponseStyleDesc.docKey = {};
+    dragDetectorResponseStyleDesc.items = dragDetectorResponseStyleItems;
+    enums.registerEnum(dragDetectorResponseStyleDesc);
 }
 
 } // namespace engine::scene::generated

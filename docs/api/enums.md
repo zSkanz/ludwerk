@@ -94,6 +94,29 @@ How closely a `MeshPart`'s collision shape follows the geometry it renders (§2.
 | `Box` | 2 | The mesh's bounding box, which is the cheapest shape there is and the least faithful. |
 | `Precise` | 3 | The triangles themselves. Accepted and not yet implemented: this release collides against a hull and says so through this property reading back `Precise` while behaving as `Hull`. A triangle-mesh collider is work the asset pipeline has yet to do. |
 
+## Enum.DragDetectorDragStyle
+
+How a `DragDetector` turns the pointer's motion into its part's (ADR 0126).
+
+| Item | Value | Description |
+|---|---|---|
+| `TranslateLine` | 0 | Along `Axis`, through where it was grabbed. |
+| `TranslatePlane` | 1 | Across the plane `Axis` is the normal of. |
+| `TranslateViewPlane` | 2 | Across the plane facing the camera. |
+| `RotateAxis` | 3 | Turned about `Axis`, through its pivot. |
+| `RotateTrackball` | 4 | Turned any way about its pivot, as a ball. |
+| `Scriptable` | 5 | Not moved: the events say where the pointer is. |
+
+## Enum.DragDetectorResponseStyle
+
+What a `DragDetector` does with where its part is dragged to.
+
+| Item | Value | Description |
+|---|---|---|
+| `Geometric` | 0 | Puts it there. |
+| `Physical` | 1 | Pulls an unanchored part there with a force under `MaxForce`; an anchored one is put there. |
+| `Custom` | 2 | Nothing: the events report, and the game moves it. |
+
 ## Enum.EasingDirection
 
 Which end of a tween the easing applies to (§2.1).

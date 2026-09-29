@@ -179,7 +179,7 @@ struct RemoteMessage
 struct DetectorMessage
 {
     // `Click`, `RightClick`, `Triggered`, `TriggerEnded`, `HoldBegan`,
-    // `HoldEnded`, in that order from 0.
+    // `HoldEnded`, and a `DragDetector`'s three, in that order from 0.
     enum class Kind : u8
     {
         Click,
@@ -188,14 +188,21 @@ struct DetectorMessage
         TriggerEnded,
         HoldBegan,
         HoldEnded,
+        DragStart,
+        DragContinue,
+        DragEnd,
     };
-    // The `ClickDetector` or the `ProximityPrompt`.
+    // The `ClickDetector`, the `ProximityPrompt` or the `DragDetector`.
     core::InstanceId detector;
     // Arrived at an authority: the player who sent it.
     core::InstanceId player;
     Kind kind = Kind::Click;
     // Sends waited through for the detector to get a network id.
     u16 held = 0;
+    // A drag's: the pointer's ray, and where a drag that began met the part.
+    core::DVec3 origin{};
+    core::Vec3 direction{};
+    core::DVec3 hit{};
 };
 
 // The engine's look for a prompt, in pixels: the tick hit-tests a tap against
@@ -514,6 +521,7 @@ struct NameIndex
     X(FoliageLayerComponent, foliageLayers)                                                                            \
     X(FoliageMeshComponent, foliageMeshes)                                                                             \
     X(ClickDetectorComponent, clickDetectors)                                                                          \
+    X(DragDetectorComponent, dragDetectors)                                                                            \
     X(ProximityPromptComponent, proximityPrompts)                                                                      \
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
@@ -1205,6 +1213,8 @@ public:
     {
         return m_clickDetectors;
     }
+    [[nodiscard]] ComponentPool<DragDetectorComponent>& dragDetectors() noexcept { return m_dragDetectors; }
+    [[nodiscard]] const ComponentPool<DragDetectorComponent>& dragDetectors() const noexcept { return m_dragDetectors; }
     [[nodiscard]] ComponentPool<ProximityPromptComponent>& proximityPrompts() noexcept { return m_proximityPrompts; }
     [[nodiscard]] const ComponentPool<ProximityPromptComponent>& proximityPrompts() const noexcept
     {

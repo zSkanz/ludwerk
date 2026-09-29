@@ -72,6 +72,7 @@ guided tour.
 | [`DataModel`](datamodel.md) | [`Instance`](instance.md) | The root of the instance tree, reached through the `game` global. |
 | [`Decal`](decal.md) | [`Instance`](instance.md) | An image projected onto whatever lies inside a box (F2): a scorch mark, a footprint, a poster, a crack. |
 | [`DepthOfFieldEffect`](depthoffieldeffect.md) | [`PostEffect`](posteffect.md) | Focus by distance, as a camera lens has it: a band of the world in focus, and what is nearer or further softening away from it. |
+| [`DragDetector`](dragdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled along a line, a lever turned about an axis, a crate pushed across the floor. |
 | [`FixedConstraint`](fixedconstraint.md) | [`Constraint`](constraint.md) | A joint with no freedom at all: two bodies the solver treats as one rigid assembly. |
 | [`Folder`](folder.md) | [`Instance`](instance.md) | A node with no behaviour of its own, for grouping instances; mounting a script folder under `src/` also builds one per subdirectory. |
 | [`FoliageLayer`](foliagelayer.md) | [`Instance`](instance.md) | Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and never simulated. |

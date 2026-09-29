@@ -1160,6 +1160,31 @@ local Definition: Schema.Definition = {
                 { Name = "Touch", Value = 2, Doc = "A tap on the prompt." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "DragDetectorDragStyle",
+            Doc = "How a `DragDetector` turns the pointer's motion into its part's (ADR 0126).",
+            Items = {
+                { Name = "TranslateLine", Value = 0, Doc = "Along `Axis`, through where it was grabbed." },
+                { Name = "TranslatePlane", Value = 1, Doc = "Across the plane `Axis` is the normal of." },
+                { Name = "TranslateViewPlane", Value = 2, Doc = "Across the plane facing the camera." },
+                { Name = "RotateAxis", Value = 3, Doc = "Turned about `Axis`, through its pivot." },
+                { Name = "RotateTrackball", Value = 4, Doc = "Turned any way about its pivot, as a ball." },
+                { Name = "Scriptable", Value = 5, Doc = "Not moved: the events say where the pointer is." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "DragDetectorResponseStyle",
+            Doc = "What a `DragDetector` does with where its part is dragged to.",
+            Items = {
+                { Name = "Geometric", Value = 0, Doc = "Puts it there." },
+                {
+                    Name = "Physical",
+                    Value = 1,
+                    Doc = "Pulls an unanchored part there with a force under `MaxForce`; an anchored one is put there.",
+                },
+                { Name = "Custom", Value = 2, Doc = "Nothing: the events report, and the game moves it." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

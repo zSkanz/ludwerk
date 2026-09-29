@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 25;
+inline constexpr u32 ProtocolVersion = 26;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -240,6 +240,22 @@ inline constexpr FieldDesc ProximityPromptFields[] = {
     {"Enabled", 10, Encoding::Bool, Source::Component, "proximityPrompts"},
 };
 
+inline constexpr FieldDesc DragDetectorFields[] = {
+    {"DragStyle", 1, Encoding::I32, Source::Component, "dragDetectors"},
+    {"ResponseStyle", 2, Encoding::I32, Source::Component, "dragDetectors"},
+    {"Axis", 3, Encoding::Vector3, Source::Component, "dragDetectors"},
+    {"MinDragTranslation", 4, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MaxDragTranslation", 5, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MinDragAngle", 6, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MaxDragAngle", 7, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MaxForce", 8, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MaxTorque", 9, Encoding::F32, Source::Component, "dragDetectors"},
+    {"Responsiveness", 10, Encoding::F32, Source::Component, "dragDetectors"},
+    {"MaxActivationDistance", 11, Encoding::F32, Source::Component, "dragDetectors"},
+    {"CursorIcon", 12, Encoding::NameAtom, Source::Component, "dragDetectors"},
+    {"Enabled", 13, Encoding::Bool, Source::Component, "dragDetectors"},
+};
+
 inline constexpr FieldDesc BloomEffectFields[] = {
     {"Enabled", 1, Encoding::Bool, Source::Component, "postEffects"},
     {"Intensity", 2, Encoding::F32, Source::Component, "bloomEffects"},
@@ -329,6 +345,7 @@ inline constexpr ClassDesc Classes[] = {
     {"Tilemap2D", Tilemap2DFields, -1, false, false},
     {"ClickDetector", ClickDetectorFields, -1, false, false},
     {"ProximityPrompt", ProximityPromptFields, -1, false, false},
+    {"DragDetector", DragDetectorFields, -1, false, false},
     {"BloomEffect", BloomEffectFields, -1, false, false},
     {"ColorCorrectionEffect", ColorCorrectionEffectFields, -1, false, false},
     {"BlurEffect", BlurEffectFields, -1, false, false},
@@ -383,6 +400,7 @@ enum class MessageType : u8
     SceneChange = 14,
     Attributes = 15,
     DetectorInput = 16,
+    DragInput = 21,
     TerrainChunks = 17,
     TerrainLook = 18,
     VoxelChunks = 19,
@@ -423,6 +441,7 @@ inline constexpr MessageDesc Messages[] = {
     {"SceneChange", MessageType::SceneChange, 0, Direction::ToReplica},
     {"Attributes", MessageType::Attributes, 0, Direction::ToReplica},
     {"DetectorInput", MessageType::DetectorInput, 0, Direction::ToAuthority},
+    {"DragInput", MessageType::DragInput, 0, Direction::ToAuthority},
     {"TerrainChunks", MessageType::TerrainChunks, 0, Direction::ToReplica},
     {"TerrainLook", MessageType::TerrainLook, 0, Direction::ToReplica},
     {"VoxelChunks", MessageType::VoxelChunks, 0, Direction::ToReplica},

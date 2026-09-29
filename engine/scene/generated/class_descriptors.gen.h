@@ -83,6 +83,8 @@ inline constexpr EnumId AssetFetchStatusEnumId = 42;
 inline constexpr EnumId ProximityPromptExclusivityEnumId = 43;
 inline constexpr EnumId ProximityPromptStyleEnumId = 44;
 inline constexpr EnumId ProximityPromptInputTypeEnumId = 45;
+inline constexpr EnumId DragDetectorDragStyleEnumId = 46;
+inline constexpr EnumId DragDetectorResponseStyleEnumId = 47;
 
 } // namespace generated
 
@@ -456,6 +458,38 @@ Value getClickDetectorCursorIcon(const World& world, core::InstanceId id);
 bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& value);
 void attachClickDetectorComponents(World& world, core::InstanceId id);
 void detachClickDetectorComponents(World& world, core::InstanceId id);
+
+// DragDetector
+Value getDragDetectorDragStyle(const World& world, core::InstanceId id);
+bool setDragDetectorDragStyle(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorAxis(const World& world, core::InstanceId id);
+bool setDragDetectorAxis(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorReferenceInstance(const World& world, core::InstanceId id);
+bool setDragDetectorReferenceInstance(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMinDragTranslation(const World& world, core::InstanceId id);
+bool setDragDetectorMinDragTranslation(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMaxDragTranslation(const World& world, core::InstanceId id);
+bool setDragDetectorMaxDragTranslation(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMinDragAngle(const World& world, core::InstanceId id);
+bool setDragDetectorMinDragAngle(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMaxDragAngle(const World& world, core::InstanceId id);
+bool setDragDetectorMaxDragAngle(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorResponseStyle(const World& world, core::InstanceId id);
+bool setDragDetectorResponseStyle(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMaxForce(const World& world, core::InstanceId id);
+bool setDragDetectorMaxForce(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMaxTorque(const World& world, core::InstanceId id);
+bool setDragDetectorMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorResponsiveness(const World& world, core::InstanceId id);
+bool setDragDetectorResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorMaxActivationDistance(const World& world, core::InstanceId id);
+bool setDragDetectorMaxActivationDistance(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorCursorIcon(const World& world, core::InstanceId id);
+bool setDragDetectorCursorIcon(World& world, core::InstanceId id, const Value& value);
+Value getDragDetectorEnabled(const World& world, core::InstanceId id);
+bool setDragDetectorEnabled(World& world, core::InstanceId id, const Value& value);
+void attachDragDetectorComponents(World& world, core::InstanceId id);
+void detachDragDetectorComponents(World& world, core::InstanceId id);
 
 // ProximityPrompt
 Value getProximityPromptActionText(const World& world, core::InstanceId id);

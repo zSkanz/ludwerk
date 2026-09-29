@@ -442,8 +442,11 @@ on a tick drew the next one, every other frame at 120 Hz (D253).
 
 **The audit of 2026-09-28 comes first**
 ([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's
-priority, band by band. After it: F1b, `DragDetector`, and the game-ready
-plan where it stopped.
+priority, band by band -- done by 2026-09-29. After it: F1b, `DragDetector`,
+**built 2026-09-29** ([`toolkit-kickoff.md`](docs/briefs/toolkit-kickoff.md),
+ADR 0126's amendment, protocol 26: six drag styles, limits from where the part
+rested, the drag sent as rays and moved by the authority, a pulled part the
+player's while it is pulled), and the game-ready plan where it stopped.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).

@@ -381,6 +381,66 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "dragDetectors") {
+        const scene::DragDetectorComponent* component = world.dragDetectors().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "DragStyle") {
+            setI32(out, component->dragStyle);
+            return true;
+        }
+        if (field.name == "ResponseStyle") {
+            setI32(out, component->responseStyle);
+            return true;
+        }
+        if (field.name == "Axis") {
+            setVec3(out, component->axis);
+            return true;
+        }
+        if (field.name == "MinDragTranslation") {
+            setF32(out, static_cast<core::f32>(component->minDragTranslation));
+            return true;
+        }
+        if (field.name == "MaxDragTranslation") {
+            setF32(out, static_cast<core::f32>(component->maxDragTranslation));
+            return true;
+        }
+        if (field.name == "MinDragAngle") {
+            setF32(out, static_cast<core::f32>(component->minDragAngle));
+            return true;
+        }
+        if (field.name == "MaxDragAngle") {
+            setF32(out, static_cast<core::f32>(component->maxDragAngle));
+            return true;
+        }
+        if (field.name == "MaxForce") {
+            setF32(out, static_cast<core::f32>(component->maxForce));
+            return true;
+        }
+        if (field.name == "MaxTorque") {
+            setF32(out, static_cast<core::f32>(component->maxTorque));
+            return true;
+        }
+        if (field.name == "Responsiveness") {
+            setF32(out, static_cast<core::f32>(component->responsiveness));
+            return true;
+        }
+        if (field.name == "MaxActivationDistance") {
+            setF32(out, static_cast<core::f32>(component->maxActivationDistance));
+            return true;
+        }
+        if (field.name == "CursorIcon") {
+            setU32(out, component->cursorIcon.id);
+            return true;
+        }
+        if (field.name == "Enabled") {
+            setBool(out, component->enabled);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "clickDetectors") {
         const scene::ClickDetectorComponent* component = world.clickDetectors().find(id);
         if (component == nullptr) {
@@ -856,6 +916,66 @@ using generated::Source;
         scene::PostEffectComponent* component = world.postEffects().find(id);
         if (component == nullptr) {
             return false;
+        }
+        if (field.name == "Enabled") {
+            component->enabled = asBool(value);
+            return true;
+        }
+        return false;
+    }
+
+    if (field.pool == "dragDetectors") {
+        scene::DragDetectorComponent* component = world.dragDetectors().find(id);
+        if (component == nullptr) {
+            return false;
+        }
+        if (field.name == "DragStyle") {
+            component->dragStyle = asI32(value);
+            return true;
+        }
+        if (field.name == "ResponseStyle") {
+            component->responseStyle = asI32(value);
+            return true;
+        }
+        if (field.name == "Axis") {
+            component->axis = asVec3(value);
+            return true;
+        }
+        if (field.name == "MinDragTranslation") {
+            component->minDragTranslation = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxDragTranslation") {
+            component->maxDragTranslation = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MinDragAngle") {
+            component->minDragAngle = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxDragAngle") {
+            component->maxDragAngle = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxForce") {
+            component->maxForce = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxTorque") {
+            component->maxTorque = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "Responsiveness") {
+            component->responsiveness = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "MaxActivationDistance") {
+            component->maxActivationDistance = static_cast<core::f64>(asF32(value));
+            return true;
+        }
+        if (field.name == "CursorIcon") {
+            component->cursorIcon = core::NameAtom{asU32(value)};
+            return true;
         }
         if (field.name == "Enabled") {
             component->enabled = asBool(value);

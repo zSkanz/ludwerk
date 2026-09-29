@@ -2099,6 +2099,233 @@ bool setClickDetectorCursorIcon(World& world, core::InstanceId id, const Value& 
     return true;
 }
 
+// --- DragDetector (ADR 0126) --------------------------------------------------------
+
+void attachDragDetectorComponents(World& world, core::InstanceId id)
+{
+    world.dragDetectors().add(id, DragDetectorComponent{});
+}
+
+void detachDragDetectorComponents(World& world, core::InstanceId id)
+{
+    world.dragDetectors().remove(id);
+}
+
+namespace {
+
+[[nodiscard]] bool finiteFrom(const Value& value, f64& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !std::isfinite(*number))
+        return false;
+    out = *number;
+    return true;
+}
+
+// A number a drag reads, got and set by the member it is.
+template <f64 DragDetectorComponent::*Member>
+Value getDragNumber(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{} : Value{drag->*Member};
+}
+
+template <f64 DragDetectorComponent::*Member, bool AtLeastZero>
+bool setDragNumber(World& world, core::InstanceId id, const Value& value)
+{
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    if (drag == nullptr)
+        return false;
+    f64 number = 0.0;
+    if (!(AtLeastZero ? distanceFrom(value, number) : finiteFrom(value, number)))
+        return false;
+    drag->*Member = number;
+    return true;
+}
+
+} // namespace
+
+Value getDragDetectorDragStyle(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{} : Value{EnumValue{generated::DragDetectorDragStyleEnumId, drag->dragStyle}};
+}
+
+bool setDragDetectorDragStyle(World& world, core::InstanceId id, const Value& value)
+{
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag != nullptr && enumFrom(world, value, generated::DragDetectorDragStyleEnumId, drag->dragStyle);
+}
+
+Value getDragDetectorResponseStyle(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{}
+                           : Value{EnumValue{generated::DragDetectorResponseStyleEnumId, drag->responseStyle}};
+}
+
+bool setDragDetectorResponseStyle(World& world, core::InstanceId id, const Value& value)
+{
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag != nullptr && enumFrom(world, value, generated::DragDetectorResponseStyleEnumId, drag->responseStyle);
+}
+
+Value getDragDetectorAxis(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{} : Value{drag->axis};
+}
+
+bool setDragDetectorAxis(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* axis = std::get_if<core::Vec3>(&value);
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    // A direction: finite and not zero, since a line or a turn about nothing
+    // is no drag at all.
+    if (axis == nullptr || drag == nullptr || !finite(axis->x) || !finite(axis->y) || !finite(axis->z) ||
+        core::length(*axis) < 1e-6f)
+        return false;
+    drag->axis = *axis;
+    return true;
+}
+
+Value getDragDetectorReferenceInstance(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    if (drag == nullptr || !drag->referenceInstance.valid() || !world.alive(drag->referenceInstance))
+        return Value{};
+    return Value{drag->referenceInstance};
+}
+
+bool setDragDetectorReferenceInstance(World& world, core::InstanceId id, const Value& value)
+{
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    if (drag == nullptr)
+        return false;
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        if (!world.alive(*reference))
+            return false;
+        drag->referenceInstance = *reference;
+        return true;
+    }
+    if (valueType(value) != ValueType::Nil)
+        return false;
+    drag->referenceInstance = core::InstanceId{};
+    return true;
+}
+
+Value getDragDetectorMinDragTranslation(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::minDragTranslation>(world, id);
+}
+
+bool setDragDetectorMinDragTranslation(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::minDragTranslation, false>(world, id, value);
+}
+
+Value getDragDetectorMaxDragTranslation(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::maxDragTranslation>(world, id);
+}
+
+bool setDragDetectorMaxDragTranslation(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::maxDragTranslation, false>(world, id, value);
+}
+
+Value getDragDetectorMinDragAngle(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::minDragAngle>(world, id);
+}
+
+bool setDragDetectorMinDragAngle(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::minDragAngle, false>(world, id, value);
+}
+
+Value getDragDetectorMaxDragAngle(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::maxDragAngle>(world, id);
+}
+
+bool setDragDetectorMaxDragAngle(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::maxDragAngle, false>(world, id, value);
+}
+
+Value getDragDetectorMaxForce(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::maxForce>(world, id);
+}
+
+bool setDragDetectorMaxForce(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::maxForce, true>(world, id, value);
+}
+
+Value getDragDetectorMaxTorque(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::maxTorque>(world, id);
+}
+
+bool setDragDetectorMaxTorque(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::maxTorque, true>(world, id, value);
+}
+
+Value getDragDetectorResponsiveness(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::responsiveness>(world, id);
+}
+
+bool setDragDetectorResponsiveness(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::responsiveness, true>(world, id, value);
+}
+
+Value getDragDetectorMaxActivationDistance(const World& world, core::InstanceId id)
+{
+    return getDragNumber<&DragDetectorComponent::maxActivationDistance>(world, id);
+}
+
+bool setDragDetectorMaxActivationDistance(World& world, core::InstanceId id, const Value& value)
+{
+    return setDragNumber<&DragDetectorComponent::maxActivationDistance, true>(world, id, value);
+}
+
+Value getDragDetectorCursorIcon(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{} : Value{std::string(world.atoms().text(drag->cursorIcon))};
+}
+
+bool setDragDetectorCursorIcon(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    if (text == nullptr || drag == nullptr)
+        return false;
+    drag->cursorIcon = text->empty() ? core::NameAtom{} : world.atoms().intern(*text);
+    return true;
+}
+
+Value getDragDetectorEnabled(const World& world, core::InstanceId id)
+{
+    const DragDetectorComponent* drag = world.dragDetectors().find(id);
+    return drag == nullptr ? Value{} : Value{drag->enabled};
+}
+
+bool setDragDetectorEnabled(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* enabled = std::get_if<bool>(&value);
+    DragDetectorComponent* drag = world.dragDetectors().find(id);
+    if (enabled == nullptr || drag == nullptr)
+        return false;
+    drag->enabled = *enabled;
+    return true;
+}
+
 void attachProximityPromptComponents(World& world, core::InstanceId id)
 {
     ProximityPromptComponent prompt;

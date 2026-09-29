@@ -1235,6 +1235,117 @@ local ClickDetectorFields: { Schema.Field } = {
     },
 }
 
+-- Everything a replica needs to begin a drag and, for a `Physical` one of a
+-- part it is handed, to pull it: the shape, the limits, the force. Not
+-- `ReferenceInstance`, which is the authority's -- a replica drags in the
+-- world's frame, and a `Geometric` drag is moved by the authority anyway.
+local DragDetectorFields: { Schema.Field } = {
+    {
+        Name = "DragStyle",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "`Enum.DragDetectorDragStyle`: a replica decides a drag's shape where it drags.",
+    },
+    {
+        Name = "ResponseStyle",
+        Id = 2,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "`Enum.DragDetectorResponseStyle`: whether the replica pulls a part it holds, or asks.",
+    },
+    {
+        Name = "Axis",
+        Id = 3,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "The line, the plane's normal or the axis a replica drags along, in the world's frame.",
+    },
+    {
+        Name = "MinDragTranslation",
+        Id = 4,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "The line's limit back, from where the part rested.",
+    },
+    {
+        Name = "MaxDragTranslation",
+        Id = 5,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "The line's limit out, and a plane's radius.",
+    },
+    {
+        Name = "MinDragAngle",
+        Id = 6,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "A turn's limit the other way, in degrees.",
+    },
+    {
+        Name = "MaxDragAngle",
+        Id = 7,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "A turn's limit, in degrees.",
+    },
+    {
+        Name = "MaxForce",
+        Id = 8,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "A `Physical` drag is pulled on the machine that holds the part.",
+    },
+    {
+        Name = "MaxTorque",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "Stored and inert, as on the authority.",
+    },
+    {
+        Name = "Responsiveness",
+        Id = 10,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "How quickly a `Physical` drag the replica holds closes the gap.",
+    },
+    {
+        Name = "MaxActivationDistance",
+        Id = 11,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "A replica decides what its pointer can begin a drag on.",
+    },
+    {
+        Name = "CursorIcon",
+        Id = 12,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "What the pointer shows over it, on the machine that points.",
+    },
+    {
+        Name = "Enabled",
+        Id = 13,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "dragDetectors",
+        Doc = "A replica begins no drag on one turned off.",
+    },
+}
+
 -- Everything a replica needs to show a prompt and trigger it: the texts, the
 -- keys, the reach, the rules. `UIOffset` is not carried -- it moves a drawn
 -- box by pixels, and a game that sets it sets it where the prompt is drawn.
@@ -1424,6 +1535,12 @@ local Classes: { Schema.Class } = {
         Doc = "A prompt a player triggers (ADR 0126, protocol 21). Shown and triggered on the machine near it, "
             .. "checked and fired on the authority.",
         Fields = ProximityPromptFields,
+    },
+    {
+        Name = "DragDetector",
+        Doc = "A part a player drags (ADR 0126, protocol 26). Each machine begins its own drags and tells the "
+            .. "authority, so the detector has to be there.",
+        Fields = DragDetectorFields,
     },
     {
         Name = "BloomEffect",
@@ -2243,6 +2360,30 @@ local Messages: { Schema.Message } = {
             .. "scripts; the authority checks it -- the detector is live and enabled, and within reach of the "
             .. "sender's character -- and fires it there with the connection's player, never one the message "
             .. "names. Counted against the same per-tick limit as `RemoteToAuthority`.",
+    },
+    {
+        Name = "DragInput",
+        Id = 21,
+        Channel = "Control",
+        Direction = "ToAuthority",
+        Layout = {
+            { Name = "detector", Type = "u32", Doc = "The network id of the `DragDetector`." },
+            { Name = "kind", Type = "u8", Doc = "0 the drag began, 1 a tick of it, 2 it ended." },
+            { Name = "originX", Type = "u64", Doc = "The pointer's ray: where it starts, an f64's bits." },
+            { Name = "originY", Type = "u64" },
+            { Name = "originZ", Type = "u64" },
+            { Name = "directionX", Type = "f32", Doc = "Its direction, of length one." },
+            { Name = "directionY", Type = "f32" },
+            { Name = "directionZ", Type = "f32" },
+            { Name = "hitX", Type = "u64", Doc = "Where a drag that began met the part, an f64's bits." },
+            { Name = "hitY", Type = "u64" },
+            { Name = "hitZ", Type = "u64" },
+        },
+        Doc = "A player dragging something (ADR 0126, protocol 26). The replica fired it already; the "
+            .. "authority checks the beginning -- the detector is live and enabled, the hit within reach of the "
+            .. "sender's character -- and from then on works the drag out from the rays itself, the way the "
+            .. "replica did: a `Geometric` drag is moved there, and a `Physical` one of an unanchored part is "
+            .. "handed to the player until it ends. Counted against the per-tick limit of `RemoteToAuthority`.",
     },
     {
         Name = "TerrainChunks",

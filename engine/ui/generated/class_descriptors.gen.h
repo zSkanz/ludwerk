@@ -85,6 +85,8 @@ inline constexpr scene::EnumId AssetFetchStatusEnumId = 42;
 inline constexpr scene::EnumId ProximityPromptExclusivityEnumId = 43;
 inline constexpr scene::EnumId ProximityPromptStyleEnumId = 44;
 inline constexpr scene::EnumId ProximityPromptInputTypeEnumId = 45;
+inline constexpr scene::EnumId DragDetectorDragStyleEnumId = 46;
+inline constexpr scene::EnumId DragDetectorResponseStyleEnumId = 47;
 
 } // namespace generated
 

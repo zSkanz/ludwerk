@@ -1,9 +1,9 @@
-# Clicks and proximity prompts
+# Clicks, proximity prompts and drags
 
-A button to press, a door to open, a crate to pick up: three things nearly
-every game needs, and each one wants a raycast from the pointer, a distance
-check, a hover state, touch handling and, in a match, a message to the server
-that the server has to check. Two instances do all of it for you.
+A button to press, a door to open, a drawer to pull: things nearly every game
+needs, and each one wants a raycast from the pointer, a distance check, a hover
+state, touch handling and, in a match, a message to the server that the server
+has to check. Three instances do all of it for you.
 
 ## `ClickDetector`
 
@@ -70,6 +70,48 @@ end)
 
 `ProximityPromptService.PromptTriggered(prompt, player)` fires for any of them.
 
+## `DragDetector`
+
+Put a `DragDetector` in a part, or in a model, and the part can be dragged:
+
+```luau
+--!strict
+local drawer = workspace:WaitForChild("Drawer")
+local drag = Instance.new("DragDetector")
+drag.DragStyle = Enum.DragDetectorDragStyle.TranslateLine
+drag.Axis = vector.create(0, 0, 1)
+drag.MinDragTranslation = 0
+drag.MaxDragTranslation = 0.6
+drag.Parent = drawer
+
+drag.DragEnd:Connect(function(player: Player)
+    print(`{player.Name} left the drawer {drawer.Position.z} m out`)
+end)
+```
+
+- A press on the part within `MaxActivationDistance` -- the mouse's button, or
+  a finger -- begins the drag, and it goes on until the button or the finger
+  comes up. `DragStart`, then `DragContinue` every tick, then `DragEnd`; the
+  first two carry the pointer's ray, and `DragStart` where it met the part.
+- **`DragStyle`** is how the part follows: `TranslateLine` along `Axis`,
+  `TranslatePlane` across the plane `Axis` is the normal of,
+  `TranslateViewPlane` across the plane facing the camera, `RotateAxis` turned
+  about `Axis`, `RotateTrackball` turned any way, and `Scriptable` not at all --
+  the events are yours to move it by.
+- **The limits are measured from where the part rested** the first time it was
+  dragged: `MinDragTranslation` and `MaxDragTranslation` along a line (and
+  `MaxDragTranslation` as a radius across a plane), `MinDragAngle` and
+  `MaxDragAngle` in degrees for a turn. Equal values are no limit. A drawer
+  pulled out and pushed back ends where it started, never further.
+- **`ReferenceInstance`** names a part whose frame `Axis` is in, whose position
+  a turn is about, and that the limits are measured from -- a lever turning
+  about its hinge rather than its middle.
+- **`ResponseStyle`**: `Geometric` puts the part where it is dragged;
+  `Physical` pulls an unanchored part there with a force under `MaxForce`,
+  closing the gap at `Responsiveness` per second, so it pushes against what is
+  in its way; `Custom` only reports. A turn is put where it is dragged either
+  way.
+
 ## In a match
 
 Each machine resolves its own pointer and keys, and fires the signal at once,
@@ -80,13 +122,26 @@ signal there with that player. **The player is the connection's**, never
 anything the client says, so a forged click from across the map does nothing.
 Hovering is never sent.
 
+A drag is sent as the pointer's ray, never as a place: the server checks that
+the drag began on the part within the player's reach, and works out where the
+part goes from each ray itself, as the client did -- so a `Geometric` drag is
+moved by the server, and every player sees it. A `Physical` drag of an
+unanchored part hands the part to the dragging player while it lasts (see
+[network ownership](../guides/multiplayer.md)): their machine pulls it, and it
+comes back to the server when they let go.
+
 ## Limits
 
 - `CursorIcon` is stored and not drawn yet: the pointer keeps its look.
+- A `Physical` turn is put where it is dragged, not twisted: `MaxTorque` is
+  stored and not used yet.
+- `ReferenceInstance` is the server's: a client drags in the world's frame, and
+  a `Geometric` drag is the server's to move anyway.
 - The prompt's `UIOffset` is not sent to a client; set it on the machine that
   draws the prompt.
 - A click is resolved from the camera and the viewport as the tick begins, so a
   replay reproduces it -- but the replay harness does not record the pointer
   yet.
 
-`examples/30-interactions` is a room with a button and a door.
+`examples/30-interactions` is a room with a button, a door, a drawer and a
+lever.

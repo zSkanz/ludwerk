@@ -1068,6 +1068,135 @@
       "Events": []
     },
     {
+      "Name": "DragDetector",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Axis",
+          "Type": "vector",
+          "Default": "vector.create(0, 1, 0)"
+        },
+        {
+          "Name": "CursorIcon",
+          "Type": "Content",
+          "Default": "\"\"",
+          "Inert": true
+        },
+        {
+          "Name": "DragStyle",
+          "Type": "Enum.DragDetectorDragStyle",
+          "Default": "Enum.DragDetectorDragStyle.TranslatePlane"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "MaxActivationDistance",
+          "Type": "number",
+          "Default": "32"
+        },
+        {
+          "Name": "MaxDragAngle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxDragTranslation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "MaxTorque",
+          "Type": "number",
+          "Default": "10000",
+          "Inert": true
+        },
+        {
+          "Name": "MinDragAngle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MinDragTranslation",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "ReferenceInstance",
+          "Type": "Instance?",
+          "Default": "nil"
+        },
+        {
+          "Name": "ResponseStyle",
+          "Type": "Enum.DragDetectorResponseStyle",
+          "Default": "Enum.DragDetectorResponseStyle.Geometric"
+        },
+        {
+          "Name": "Responsiveness",
+          "Type": "number",
+          "Default": "10"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "DragContinue",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "cursorOrigin",
+              "Type": "vector"
+            },
+            {
+              "Name": "cursorDirection",
+              "Type": "vector"
+            }
+          ]
+        },
+        {
+          "Name": "DragEnd",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ]
+        },
+        {
+          "Name": "DragStart",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "cursorOrigin",
+              "Type": "vector"
+            },
+            {
+              "Name": "cursorDirection",
+              "Type": "vector"
+            },
+            {
+              "Name": "hitPoint",
+              "Type": "vector"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "Name": "FixedConstraint",
       "Extends": "Constraint",
       "Tags": [],
@@ -8563,6 +8692,52 @@
         {
           "Name": "Precise",
           "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "DragDetectorDragStyle",
+      "Items": [
+        {
+          "Name": "RotateAxis",
+          "Value": 3
+        },
+        {
+          "Name": "RotateTrackball",
+          "Value": 4
+        },
+        {
+          "Name": "Scriptable",
+          "Value": 5
+        },
+        {
+          "Name": "TranslateLine",
+          "Value": 0
+        },
+        {
+          "Name": "TranslatePlane",
+          "Value": 1
+        },
+        {
+          "Name": "TranslateViewPlane",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "DragDetectorResponseStyle",
+      "Items": [
+        {
+          "Name": "Custom",
+          "Value": 2
+        },
+        {
+          "Name": "Geometric",
+          "Value": 0
+        },
+        {
+          "Name": "Physical",
+          "Value": 1
         }
       ]
     },

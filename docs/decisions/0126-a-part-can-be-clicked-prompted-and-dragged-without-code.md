@@ -86,3 +86,28 @@ writes it; most write it with a bug. Three instances cover almost every case.
 ## Not decided here
 
 - A detector for 2D (`Part2D`). The same classes may take it later.
+
+## Amendment -- 2026-09-29, the drag detector built (F1b, protocol 26)
+
+What §3 left open, as built:
+
+- **The signals carry the pointer's ray**: `DragStart(player, cursorOrigin,
+  cursorDirection, hitPoint)`, `DragContinue(player, cursorOrigin,
+  cursorDirection)` every tick of the drag, `DragEnd(player)`. The engine has no
+  `Ray` datatype, and a `Scriptable` drag needs nothing more than the ray.
+- **The limits are measured from where the part rested** the first time it
+  was dragged, or from `ReferenceInstance`; a plane's `MaxDragTranslation` is a
+  radius. A turn's angle is kept with the detector, since a rotation cannot give
+  its angle about an axis back once it passes half a turn.
+- **A drag crosses the wire as a ray** (`DragInput`), never as a position: the
+  authority checks that the drag began on the part within the player's reach
+  and works out each tick from the rays itself, with the same function the
+  replica uses. So a replica does not move a `Geometric` drag itself -- the
+  authority's move replicates -- and a hostile one can put a part nowhere its
+  detector would not.
+- **A `Physical` turn is put where it is dragged**: the physics module has no
+  angular impulse yet, so `MaxTorque` is stored and inert. A `Physical`
+  translation pulls with the part's own linear impulse, capped at `MaxForce`.
+- `ReferenceInstance` is not replicated: the replica drags in the world's
+  frame, which only a `Physical` drag it holds moves by.
+
