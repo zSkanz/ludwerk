@@ -86,6 +86,13 @@ core::CFrameD DrawPoses::camera(core::InstanceId id) const
     const scene::CameraComponent* component = world_->cameras().find(id);
     if (component == nullptr)
         return core::CFrameD{};
+    // **A presented camera is drawn as it was written** (ADR 0136): a render
+    // step already placed it for this frame, and interpolating it again would
+    // put it a frame behind what it follows.
+    if (component->presenting) {
+        keep(id, Kind::Camera, component->presented);
+        return component->presented;
+    }
     core::CFrameD drawn = interpolatedCFrame(history_, id, component->cframe, alpha_);
     // A camera hung on a corrected character slides with it.
     drawn.position = drawn.position + slideOf(id);
