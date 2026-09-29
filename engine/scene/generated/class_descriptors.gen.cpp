@@ -1202,7 +1202,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetLayers"),
             .yields = false,
             .threadSafety = ThreadSafety::Safe,
-            .doc = "What each material id is: a list of material URNs, where entry `n` is what voxels of material `n` are drawn with. A new terrain's are the engine's eight, `engine://terrain/grass` to `engine://terrain/ice`.",
+            .doc = "What each material id is: a list of material URNs, where entry `n` is what voxels of material `n` are drawn with. A new terrain has none; a scene saved before terrains started empty reads the engine's eight, `engine://terrain/grass` to `engine://terrain/ice`.",
         },
         MethodDesc{
             .name = atoms.intern("SetLayers"),
@@ -1214,7 +1214,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetRules"),
             .yields = false,
             .threadSafety = ThreadSafety::Safe,
-            .doc = "The rules that paint the ground by slope and height, in the order they paint: each draws `Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between `HeightMin` and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer but its own), with an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new terrain's one rule is the slope rock: steep ground drawn as layer 3.\012\012**Rules are drawn, not written**: the voxels keep their materials until `ApplyRules`. What a raycast reports is what is drawn.",
+            .doc = "The rules that paint the ground by slope and height, in the order they paint: each draws `Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between `HeightMin` and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer but its own), with an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new terrain has none.\012\012**Rules are drawn, not written**: the voxels keep their materials until `ApplyRules`. What a raycast reports is what is drawn.",
         },
         MethodDesc{
             .name = atoms.intern("SetRules"),
@@ -1240,7 +1240,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     terrainDesc.super = instanceClass;
     terrainDesc.flags = ClassFlags::None;
     terrainDesc.defaultName = atoms.intern("Terrain");
-    terrainDesc.doc = "A sculpted, collidable landscape: ground you dig into rather than a floor made of parts.\012\012**It is a grid of voxels.** Space is cut into cubes `VoxelSize` on a side, and each one holds a material and an occupancy -- how full of that material it is, from 0 to 1. The surface is wherever the occupancy crosses one half, found by interpolating between neighbouring voxels, so a ball carved out of a hillside lands where you put it rather than on a grid line. Caves, arches, overhangs and flat ground are all the same data.\012\012Materials are numbered: 0 is air, and `n` is the terrain's layer `n` -- a material asset (`GetLayers`). A new terrain's eight layers are the engine's own, so 1 to 8 are Grass, Sand, Rock, Snow, Mud, Sandstone, Basalt and Ice until you change them.\012\012There is one per `Workspace`, reached as `workspace.Terrain`, because a world has one ground. Creating a second is legal and it simply is not the one the workspace names.\012\012**Every verb here is a write to the voxels**, and the voxels are part of the world -- so a sculpt is undoable in the editor, it moves the world hash, and it saves with the project.";
+    terrainDesc.doc = "A sculpted, collidable landscape: ground you dig into rather than a floor made of parts.\012\012**It is a grid of voxels.** Space is cut into cubes `VoxelSize` on a side, and each one holds a material and an occupancy -- how full of that material it is, from 0 to 1. The surface is wherever the occupancy crosses one half, found by interpolating between neighbouring voxels, so a ball carved out of a hillside lands where you put it rather than on a grid line. Caves, arches, overhangs and flat ground are all the same data.\012\012Materials are numbered: 0 is air, and `n` is the terrain's layer `n` -- a material asset (`GetLayers`). A new terrain has none -- its materials are the project's own files -- and draws plain grey ground until `SetLayers` gives it some.\012\012There is one per `Workspace`, reached as `workspace.Terrain`, because a world has one ground. Creating a second is legal and it simply is not the one the workspace names.\012\012**Every verb here is a write to the voxels**, and the voxels are part of the world -- so a sculpt is undoable in the editor, it moves the world hash, and it saves with the project.";
     static constexpr std::array<std::string_view, 3> terrainParents{{"Workspace", "ReplicatedStorage", "ServerStorage"}};
     terrainDesc.parents = terrainParents;
     terrainDesc.properties = terrainProperties;

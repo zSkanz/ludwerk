@@ -80,13 +80,23 @@ TEST_CASE("the first stamp is where the stroke was, and the remainder is left")
 TEST_CASE("a pointer that jumped a kilometre costs a comparison, not a hundred thousand edits")
 {
     // An alt-tab, a teleport, a camera cut mid-drag. Past the ceiling the stroke
-    // is its endpoints and nothing between -- a visible gap, which is
-    // recoverable, rather than a frame that never ends.
+    // is the ceiling's worth of stamps, spread end to end.
     const std::vector<core::DVec3> stamps = strokeStamps({0.0, 0.0, 0.0}, {1000.0, 0.0, 0.0}, 1.0, 0.25);
-    REQUIRE(stamps.size() == 2);
+    REQUIRE(stamps.size() == MaxStrokeStamps);
     CHECK(stamps.front().x == 0.0);
-    CHECK(stamps.back().x == 1000.0);
-    CHECK(stamps.size() <= MaxStrokeStamps);
+    CHECK(stamps.back().x == doctest::Approx(1000.0));
+}
+
+TEST_CASE("a fast drag with a small brush is a sparser line, never a gap")
+{
+    // Twenty metres in one frame with a one-metre brush at the default spacing
+    // is eighty stamps' worth, past the ceiling. It used to be the two ends and
+    // a hole between them in every quick stroke; now no two stamps are further
+    // apart than the brush is wide.
+    const std::vector<core::DVec3> stamps = strokeStamps({0.0, 0.0, 0.0}, {20.0, 0.0, 0.0}, 1.0, 0.25);
+    REQUIRE(stamps.size() == MaxStrokeStamps);
+    for (std::size_t at = 1; at < stamps.size(); ++at)
+        CHECK(stamps[at].x - stamps[at - 1].x < 2.0);
 }
 
 TEST_CASE("a stroke that has not advanced a whole step is not walked")

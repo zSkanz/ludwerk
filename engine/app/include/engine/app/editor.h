@@ -776,6 +776,14 @@ public:
 
     bool undo(scene::World& world);
     bool redo(scene::World& world);
+    // **Takes back the step just recorded**, for a gesture that turned out to
+    // change nothing -- a brush stroke over ground it could not move. A step
+    // that undoes nothing eats a press of ctrl-Z.
+    void retract() noexcept
+    {
+        if (!m_undo.empty())
+            m_undo.pop_back();
+    }
 
     [[nodiscard]] bool canUndo() const noexcept { return !m_undo.empty(); }
     [[nodiscard]] bool canRedo() const noexcept { return !m_redo.empty(); }
@@ -2047,6 +2055,33 @@ public:
         m_preferencesDirty = true;
     }
 
+    // **What the held keys make of the brush, for the stroke about to start**
+    // (the terrain editor, remade 2026-09-29): Ctrl turns it round -- Add digs,
+    // Grow erodes, a foliage brush thins -- and Shift smooths, which is what a
+    // person reaches for between two strokes of anything else. The shell says
+    // so every frame; a stroke keeps what they were when it began.
+    void setBrushModifiers(bool invert, bool smooth) noexcept
+    {
+        m_brushInvert = invert;
+        m_brushSmoothHeld = smooth;
+    }
+    // The operation a stroke started now would do.
+    [[nodiscard]] BrushOp effectiveBrushOp() const noexcept;
+    // Whether a foliage stroke started now would thin.
+    [[nodiscard]] bool effectiveFoliageThin() const noexcept { return m_foliageThin != m_brushInvert; }
+
+    // **Whether the foliage brush thins or paints** -- its own choice, not the
+    // sculpt brush's operation, which it used to borrow: picking Thin made the
+    // next sculpt stroke dig.
+    void setFoliageThin(bool thin) noexcept { m_foliageThin = thin; }
+    [[nodiscard]] bool foliageThin() const noexcept { return m_foliageThin; }
+
+    // **The height `Flatten` levels to**, in world metres, or nothing to level
+    // to where each stroke begins. A fixed height is what laying out a road or
+    // a building's pad takes: one level across many strokes.
+    void setFlattenHeight(std::optional<f32> height) noexcept { m_flattenHeight = height; }
+    [[nodiscard]] std::optional<f32> flattenHeight() const noexcept { return m_flattenHeight; }
+
     // --- Making ground exist ---------------------------------------------
     //
     // **The gap that made the brush useless.** For one commit the only way to
@@ -2092,6 +2127,21 @@ public:
 
     // **What the terrain's material ids mean** (ADR 0113), as one undoable
     // step: the Paint section's add, remove, replace and reorder. At most 255.
+    // **A terrain's materials are the project's own** (the owner, 2026-09-29):
+    // a new terrain has none, and these are the two ways to give it some.
+    //
+    // `addStarterTerrainMaterials` writes the engine's eight into the project
+    // as files under `materials/terrain/`, each a variant of the built-in one
+    // -- it looks the same, shows in Content, and opens and edits like any
+    // material -- and makes any the terrain lacks its layers, after what it
+    // has. A file already there is used as it is. One undo step for the layers;
+    // the files stay, as a new material's always do.
+    bool addStarterTerrainMaterials(scene::World& world, core::InstanceId root);
+    // Writes a new material called `name` and adds it as the terrain's next
+    // layer; answers its content-relative path, or empty with `status()`
+    // saying why.
+    std::string addNewTerrainMaterial(scene::World& world, core::InstanceId root, std::string_view name);
+
     bool setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
                           std::string_view label);
 
@@ -2753,6 +2803,16 @@ private:
         asset::TerrainField aimField;
         // Seconds banked toward the next stamp of a brush held still.
         double carveClock = 0.0;
+        // **What the stroke does**, fixed when it begins: the brush's operation
+        // as the held keys turned it (`effectiveBrushOp`), and for foliage
+        // whether it thins.
+        BrushOp op = BrushOp::Add;
+        bool thin = false;
+        // What its stamps did: how many voxels changed, and whether one was
+        // refused as too big. A stroke that changed nothing leaves no undo
+        // step; one that was refused says why.
+        core::u64 touched = 0;
+        bool refused = false;
     };
 
     // How far a brush can reach, in metres. A ray fired at the horizon has to
@@ -2766,6 +2826,7 @@ private:
     // Whether a stroke with this tool and brush stamps volume at the aim
     // (`Stroke::carve`).
     [[nodiscard]] static bool carves(Tool tool, const Brush& brush) noexcept;
+    [[nodiscard]] static bool carves(Tool tool, BrushOp op) noexcept;
     // One frame of a stroke, aimed at the ground as it now is: a drag stamps
     // by distance, and a pointer held still stamps on the clock -- Add and
     // Subtract at their building speed, every other tool at a rate its strength
@@ -2833,6 +2894,10 @@ private:
     bool m_globalUnreadable = false;
     bool m_undoClearedByMove = false;
     bool m_brushPlaneLock = true;
+    bool m_brushInvert = false;
+    bool m_brushSmoothHeld = false;
+    bool m_foliageThin = false;
+    std::optional<f32> m_flattenHeight;
     std::filesystem::path m_heightmapSource;
     core::u32 m_lastStrokeStamps = 0;
     Brush m_brush;

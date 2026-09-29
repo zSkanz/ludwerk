@@ -248,12 +248,16 @@ TEST_CASE("the mesh a node is drawn with is its ground, with skirts under its si
 TEST_CASE("the render terrain carries its layers, and only for terrain in the world")
 {
     LoaderFixture fixture;
+    // The engine's eight and the slope rock, set as a scene from before
+    // terrains started empty reads them.
+    fixture.component().layers = asset::defaultTerrainLayers();
+    fixture.component().rules = asset::defaultTerrainRules();
     RenderWorld snapshot;
     fixture.loader.appendRenderTerrains(fixture.world, fixture.root, snapshot);
     REQUIRE(snapshot.terrains.size() == 1);
     CHECK(snapshot.terrains.front().id == fixture.terrain);
     // The engine's eight (ADR 0113), flat in the old palette's colours until
-    // their textures load, and the one rule a new terrain has: steep rock.
+    // their textures load, and the slope rock.
     REQUIRE(snapshot.terrains.front().layers.size() == 8);
     const core::Vec3 grass = asset::terrainColorOf(1);
     CHECK(snapshot.terrains.front().layers[0].flat[1] == grass.y);

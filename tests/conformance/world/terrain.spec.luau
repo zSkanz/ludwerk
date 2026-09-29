@@ -211,34 +211,39 @@ describe("terrain", function()
         expect(workspace:Raycast(vector.create(3, 50, 3), vector.create(0, -100, 0), params)):ToBe(nil)
     end)
 
-    it("starts with the engine's eight layers, and a list set is the list read", function()
-        local layers = terrain:GetLayers()
-        expect(#layers):ToBe(8)
-        expect(layers[Grass]):ToBe("engine://terrain/grass")
-        expect(layers[Rock]):ToBe("engine://terrain/rock")
+    it("starts with no layers, and a list set is the list read", function()
+        -- A new terrain's materials are the project's to choose: none come
+        -- with it (2026-09-29).
+        expect(#terrain:GetLayers()):ToBe(0)
+        local layers = {
+            "engine://terrain/grass",
+            "engine://terrain/sand",
+            "engine://terrain/rock",
+        }
+        terrain:SetLayers(layers)
+        expect(terrain:GetLayers()[Rock]):ToBe("engine://terrain/rock")
 
         -- Replacing a layer and adding one: the voxels keep their numbers.
         layers[Rock] = "engine://terrain/basalt"
         table.insert(layers, "engine://terrain/snow")
         terrain:SetLayers(layers)
         local read = terrain:GetLayers()
-        expect(#read):ToBe(9)
+        expect(#read):ToBe(4)
         expect(read[Rock]):ToBe("engine://terrain/basalt")
-        expect(read[9]):ToBe("engine://terrain/snow")
+        expect(read[4]):ToBe("engine://terrain/snow")
 
         expect(function()
             terrain:SetLayers({ 1 } :: any)
         end):ToThrow()
     end)
 
-    it("paints by rules that start as the slope rock, and writes them when asked", function()
+    it("starts with no rules, paints by the ones it is given, and writes them when asked", function()
+        expect(#terrain:GetRules()):ToBe(0)
+        -- A slope rock, and a snow line after it, with the defaults filled in.
+        terrain:SetRules({ { Material = Rock, SlopeMin = 45 }, { Material = 4, HeightMin = 20 } })
         local rules = terrain:GetRules()
-        expect(#rules):ToBe(1)
         expect(rules[1].Material):ToBe(Rock)
         expect(rules[1].Enabled):ToBe(true)
-
-        -- A snow line added after it, with the defaults filled in.
-        terrain:SetRules({ rules[1], { Material = 4, HeightMin = 20 } })
         local read = terrain:GetRules()
         expect(#read):ToBe(2)
         expect(read[2].Material):ToBe(4)

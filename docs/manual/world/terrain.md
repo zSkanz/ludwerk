@@ -108,31 +108,43 @@ The surface, where occupancy crosses one half, is where the brush put it.
 
 A voxel's material is a number, and **the number means the terrain's layer
 of that number**: a material asset, like the ones parts wear
-([Materials](manual:world/materials)). A new terrain has the engine's eight
-layers:
+([Materials](manual:world/materials)).
 
-| Id | Layer |
+**A new terrain has no layers.** Its materials are the project's own files,
+which open in Content like any other; until it has one, its ground draws a
+plain grey, and the first material it is given is what that ground becomes.
+In the editor, the Terrain panel's Paint mode makes one (**New Material**),
+uses one the project has, or writes a starter set (**Add Starter
+Materials**): eight files under `content/materials/terrain/`, each a variant
+of one of the engine's built-in terrain materials, so they look finished and
+change like any material:
+
+| Starter | Built on |
 |---|---|
-| 1 | `engine://terrain/grass` |
-| 2 | `engine://terrain/sand` |
-| 3 | `engine://terrain/rock` |
-| 4 | `engine://terrain/snow` |
-| 5 | `engine://terrain/mud` |
-| 6 | `engine://terrain/sandstone` |
-| 7 | `engine://terrain/basalt` |
-| 8 | `engine://terrain/ice` |
+| `materials/terrain/grass.material.json` | `engine://terrain/grass` |
+| `materials/terrain/sand.material.json` | `engine://terrain/sand` |
+| `materials/terrain/rock.material.json` | `engine://terrain/rock` |
+| `materials/terrain/snow.material.json` | `engine://terrain/snow` |
+| `materials/terrain/mud.material.json` | `engine://terrain/mud` |
+| `materials/terrain/sandstone.material.json` | `engine://terrain/sandstone` |
+| `materials/terrain/basalt.material.json` | `engine://terrain/basalt` |
+| `materials/terrain/ice.material.json` | `engine://terrain/ice` |
 
 Material 0 is not ground: it is what digging writes.
 
-The engine's eight are built in, with colour, normal, roughness and height
-textures, and need no file. A project changes the list with
-`GetLayers` and `SetLayers`, or in the editor's Paint section:
+A scene saved before terrains started empty has no list, and reads the
+engine's eight directly, with the slope rock rule; it looks as it did. A
+script sets the list with `SetLayers` and reads it with `GetLayers`:
 
 ```luau
 --!strict
+terrain:SetLayers({
+    "asset://materials/terrain/grass.material.json", -- id 1
+    "asset://materials/terrain/rock.material.json", -- id 2
+})
 local layers = terrain:GetLayers()
-layers[3] = "asset://materials/cliff.material.json" -- every rock is now cliff
-table.insert(layers, "asset://materials/moss.material.json") -- id 9
+layers[2] = "asset://materials/cliff.material.json" -- every rock is now cliff
+table.insert(layers, "asset://materials/moss.material.json") -- id 3
 terrain:SetLayers(layers)
 ```
 
@@ -151,16 +163,14 @@ terrain:SetLayers(layers)
 ## Rules: painting by slope and height
 
 A terrain also has **rules**, which draw a layer wherever the ground is steep
-enough, or high enough, whatever it was painted. A new terrain has one: steep
-ground is drawn as rock (layer 3), over every layer but rock and basalt, with
-a ragged edge.
+enough, or high enough, whatever it was painted. A new terrain has none; a
+scene from before terrains started empty has the old slope rock.
 
 ```luau
 --!strict
-local rock = terrain:GetRules()[1]
-rock.Enabled = false -- no automatic rock: steep grass stays grass
 terrain:SetRules({
-    rock,
+    -- steep ground as rock (layer 3), over every layer but rock and basalt
+    { Material = 3, SlopeMin = 45, Blend = 9.7, Noise = 0.12, AppliesTo = { 1, 2, 4, 5, 6, 8 } },
     { Material = 4, HeightMin = 120, Blend = 6, Noise = 0.3 }, -- snow above 120 m
 })
 ```
@@ -183,33 +193,72 @@ terrain:SetRules({
 - **What the game sees is what is drawn**: the engine evaluates the rules on
   the CPU the same way the shader does, so the ground under a steep slope drawn
   as rock is rock to the game too.
-- An empty list turns the automatic rock off. The rules are saved with the
-  scene.
+- The rules are saved with the scene.
 
 ## In the editor
 
-The terrain tools sculpt and paint with a brush, one undo step per stroke.
+The **Terrain** panel (the mountain on the left-hand bar, or select the
+terrain) has five modes along its top, in the order the work goes:
 
-| Tool | What it does |
+| Mode | What it is for |
 |---|---|
-| Add | A ball (or box) of ground, centred where you aim. On a field it is a mound; on the side of a cliff it builds out from the cliff. |
-| Subtract | The same ball taken away. Aimed at a cliff face, it is how a cave is started. |
-| Grow | Moves the surface outwards along its own slope: a field rises, a cliff comes forward, an overhang grows down. |
-| Erode | Moves the surface inwards: the ground wears away. |
-| Smooth | Blurs the ground towards the average of its neighbours. |
-| Flatten | Pulls the ground towards the height where the stroke began. |
+| **Sculpt** | Shaping the ground with a brush. |
+| **Paint** | The terrain's materials, painting them by hand, and the rules that paint by slope and height. |
+| **Foliage** | Layers of grass, flowers and trees, and a brush that grows or thins them. |
+| **Create** | Flat ground, ground from a heightmap, and clearing it all. |
+| **Setup** | The voxel size and the height range. |
 
-None of them moves a column of ground, so a click on the side of the terrain
-never stands a pillar under it.
+Choosing a mode puts no brush in your hand; choosing a tool does. While a
+brush is in hand the viewport says so in its corner -- the tool, the size,
+and that **Esc** puts it down -- and clicking anything else also puts it down.
+Every stroke is one undo step, and a stroke that changed nothing leaves none.
 
-- **Dragging** stamps the brush every step of the way.
-- **Holding it still** keeps working the ground under it, as that ground now
-  is:
-  - Add builds towards you and Subtract tunnels away from you;
-  - Grow keeps climbing and Erode keeps wearing;
-  - the brush's strength sets how fast.
+### Sculpt
 
-**Heightmap** lays an image over the ground:
+| Tool | Key | What it does |
+|---|---|---|
+| Raise | 1 | Lifts the ground under the brush, most at its centre: a field rises, a cliff comes forward. |
+| Lower | 2 | Sinks the ground under the brush. |
+| Smooth | 3 | Softens bumps, fills pits and rounds off edges. Flat ground stays exactly where it is. |
+| Flatten | 4 | Levels the ground to one height: where the stroke starts, or a fixed height set under Brush. |
+| Add | 5 | A ball (or box) of ground where you aim; held still, it grows towards you. |
+| Dig | 6 | A ball (or box) taken away; held still, it tunnels in. |
+
+- **Hold Ctrl** for the opposite -- Raise lowers, Add digs -- and **hold
+  Shift** to smooth, whichever tool is chosen. What the keys make of the brush
+  is lit on its tile.
+- **[ and ]** make the brush smaller and bigger; with **Shift** they change
+  its strength.
+- **Dragging** stamps the brush every step of the way; **holding it still**
+  keeps working the ground under it, at a rate the strength sets.
+- The ring shows the brush: a circle on the ground, with a fainter one where a
+  soft brush does half as much; a box for a square Add or Dig.
+- A brush too big for the terrain's voxels says so rather than doing nothing:
+  one stamp may touch at most 512 x 512 x 512 voxels.
+
+### Paint
+
+A new terrain has no materials. **New Material** writes one into
+`materials/` and makes it the terrain's next layer (and opens it, to set its
+colour and textures); **Add Starter Materials** writes the eight starters
+under `materials/terrain/`. **Change Layers...** puts one of the project's
+materials in the selected layer's place, adds one, or removes the last.
+**Paint** paints the selected material under the brush without moving the
+ground.
+
+**Paint by slope and height** lists the terrain's rules in order, each with
+its fields, a switch, and up, down and remove; every change shows at once,
+and a drag is one undo step. **Apply to Voxels** writes what the rules draw
+into the ground.
+
+### Create
+
+**Flat ground** lays a square of the size and at the world height asked for
+-- on a new world it makes the terrain, and it is one undo step either way.
+On a terrain that has ground, it levels the whole square, sculpting inside it
+included.
+
+**From a heightmap** lays an image over the ground:
 
 1. Choose a file.
 2. Say how wide it is laid, and which heights black and white stand for.
@@ -226,17 +275,9 @@ back.
   and a cave under the top stays where it is. Where there was no ground, the
   image is laid as a slab 32 m deep under its lowest point.
 
-**Paint** shows the terrain's layers as swatches, in id order. **Layers...**
-replaces the selected layer with another material -- one of the engine's or
-one of the project's -- adds one after the last, or removes the last. Each is
-one undo step.
+### Setup
 
-**Rules** lists the terrain's rules in order, each with its fields, a switch,
-and up, down and remove; every change shows at once, and a drag is one undo
-step. **Add Rule** adds a snow line above 40 m to start from. **Apply to
-Voxels** writes what the rules draw into the ground, one undo step.
-
-**Settings** holds the three numbers a terrain is decided at:
+The three numbers a terrain is decided at:
 - `VoxelSize`, which can change only while the terrain is empty;
 - `MinHeight` and `MaxHeight`, the world's floor and ceiling.
 

@@ -66,8 +66,8 @@ namespace engine::app {
 // **A ceiling rather than a budget**, and it is about a pathological input
 // rather than performance: a pointer that jumps a kilometre -- an alt-tab, a
 // teleport, a camera cut mid-drag -- would otherwise ask for a hundred thousand
-// edits in one frame. Past the ceiling the stroke is the endpoints and nothing
-// between, which is visibly a gap rather than a hang.
+// edits in one frame. Past the ceiling the stroke is that many stamps spread
+// evenly along it: sparser, never a gap, and never a hang.
 inline constexpr core::usize MaxStrokeStamps = 64;
 
 // Draws the aiming ring: a circle of `radius` about `centre`, lying in the plane
@@ -84,5 +84,17 @@ inline constexpr core::usize MaxStrokeStamps = 64;
 // a world-space submission costs half a millimetre at four kilometres from the
 // origin -- on the one thing in the frame being placed precisely.
 void drawBrushRing(core::Vec3 centre, core::Vec3 normal, float radius, render::DebugDraw& debug);
+
+// **What the ring says about the brush it stands for** (the terrain editor,
+// remade 2026-09-29). A square brush is drawn square -- a circle for a brush
+// that cuts a box was a ring that lied about its corners -- and a brush that
+// fades towards its edge draws a second, fainter ring where it does half as
+// much, so the soft middle a person is working with is visible.
+struct BrushRingStyle
+{
+    bool square = false;
+    bool falloff = false;
+};
+void drawBrushRing(core::Vec3 centre, core::Vec3 normal, float radius, BrushRingStyle style, render::DebugDraw& debug);
 
 } // namespace engine::app

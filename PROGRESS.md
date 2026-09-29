@@ -476,6 +476,27 @@ plan where it stopped.
       scheduled into the terrain work that follows, with its reason in the
       audit's findings.
 
+**The terrain editor, remade** (the owner, 2026-09-29: "not practical, not
+easy to understand", and "I cannot smooth the mesh"), then the terrain system
+audited end to end:
+
+- [x] **The panel**: five modes (Sculpt, Paint, Foliage, Create, Setup), tools
+      as named tiles, the brush's keys written under it, the brush in hand
+      shown on the viewport; Smooth that smooths; the brush that died behind
+      Properties, the block tool that sculpted, the foliage brush that set the
+      sculpt one, silent refusals, empty undo steps and gaps in quick strokes
+      (D295 to D303).
+- [x] **No materials by default** (the owner, same day; ADR 0113's
+      amendment): a new terrain has none, the starters are files in Content,
+      and a scene saved before reads the engine's eight as it did.
+- [ ] **Terrain edits replicate** (the owner, same day: a digging game, ground
+      generated while a match runs): today a terrain arrives with the world
+      and a script's edit stays on the machine that made it.
+- [ ] **The terrain system's audit** -- quality, performance, security,
+      function, the editor with it -- and its fixes. Known going in: F11, a
+      big brush over unloaded cells writing air, ctrl-Z in the middle of a
+      stroke.
+
 **The owner's defect list of 2026-09-28**, ahead of the plan
 ([`owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):
 

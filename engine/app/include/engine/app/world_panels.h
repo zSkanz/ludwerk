@@ -19,7 +19,8 @@ class Editor;
 class Inspector;
 struct EditorCommands;
 
-// The Terrain panel's two authoring sections.
+// Two of the Terrain panel's modes' contents: Heightmap under Create, and
+// Settings.
 //
 // - **Heightmap**: an image from the machine laid over the ground, at a size
 //   and between two heights, which is how every terrain editor begins a real
@@ -29,8 +30,9 @@ struct EditorCommands;
 //   other property. `VoxelSize` is offered only while the terrain is empty,
 //   because the property refuses anything else and a control that is refused
 //   every time is worse than one that says why it is greyed.
-void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector,
-                      EditorCommands& commands);
+void drawTerrainHeightmap(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector,
+                          EditorCommands& commands);
+void drawTerrainSettings(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector);
 
 // The selected block type's images and opacity: what `SetBlockTextures` and
 // `SetBlockOpacity` set from a script, set here. Draws nothing when no type is

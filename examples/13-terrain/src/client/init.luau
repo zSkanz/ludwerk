@@ -25,6 +25,26 @@ local Grass = 1
 local Sand = 2
 
 local terrain = Instance.new("Terrain")
+-- **The ground's materials are this project's own files**, in
+-- `content/materials/terrain/`: a new terrain comes with none. Each file is a
+-- variant of one of the engine's built-in terrain materials, so it looks like
+-- that one until somebody opens it in Content and changes it. The order is
+-- the material ids the script paints with -- 1 grass, 2 sand, 3 rock.
+terrain:SetLayers({
+    "asset://materials/terrain/grass.material.json",
+    "asset://materials/terrain/sand.material.json",
+    "asset://materials/terrain/rock.material.json",
+    "asset://materials/terrain/snow.material.json",
+    "asset://materials/terrain/mud.material.json",
+    "asset://materials/terrain/sandstone.material.json",
+    "asset://materials/terrain/basalt.material.json",
+    "asset://materials/terrain/ice.material.json",
+})
+-- Rock on anything steeper than about 45 degrees, drawn over every layer but
+-- rock and basalt -- what a terrain used to start with.
+terrain:SetRules({
+    { Material = 3, SlopeMin = 45.35, Blend = 9.7, Noise = 0.12, AppliesTo = { 1, 2, 4, 5, 6, 8 } },
+})
 terrain.Name = "Ground"
 -- Reserved BEFORE anything is sculpted, and it cannot be widened afterwards: a
 -- collider's height precision is spread across this range when it is built.

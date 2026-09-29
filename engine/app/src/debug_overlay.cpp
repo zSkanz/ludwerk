@@ -6638,6 +6638,64 @@ void reportLookInput(Editor& editor, bool overViewport)
 // viewport that changes size when the editor has something to say.
 //
 // `region` is the image's rectangle in screen space.
+// What a terrain brush in hand does, in the Terrain panel's words -- or
+// nothing, for a tool that is not one.
+[[nodiscard]] std::string terrainBrushWords(const Editor& editor)
+{
+    switch (editor.tool()) {
+    case Editor::Tool::Sculpt:
+        switch (editor.effectiveBrushOp()) {
+        case Editor::BrushOp::Grow:
+            return "Raise";
+        case Editor::BrushOp::Erode:
+            return "Lower";
+        case Editor::BrushOp::Smooth:
+            return "Smooth";
+        case Editor::BrushOp::Flatten:
+            return "Flatten";
+        case Editor::BrushOp::Add:
+            return "Add";
+        case Editor::BrushOp::Subtract:
+            return "Dig";
+        }
+        return "Sculpt";
+    case Editor::Tool::Paint:
+        return "Paint";
+    case Editor::Tool::Foliage:
+        return editor.effectiveFoliageThin() ? "Thin foliage" : "Grow foliage";
+    case Editor::Tool::Select:
+    case Editor::Tool::Blocks:
+    case Editor::Tool::Tiles:
+        break;
+    }
+    return {};
+}
+
+// **A brush in hand says so, on the viewport itself** (the terrain editor,
+// remade): what it does, how big it is, and how to put it down -- the answer
+// to "why is the ground changing when I click", which the owner had to find by
+// accident.
+void drawBrushChip(const Editor& editor, ImVec2 at, ImVec2 region)
+{
+    const std::string words = terrainBrushWords(editor);
+    if (words.empty() || region.x < 160.0f || editor.inPlayMode())
+        return;
+    char tail[96];
+    (void)std::snprintf(tail, sizeof(tail), "   %.2f m   Esc puts it down", static_cast<double>(editor.brush().radius));
+    const std::string text = words + tail;
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float pad = 8.0f * scale;
+    const ImVec2 extent = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 min(at.x + pad, at.y + pad);
+    const ImVec2 max(min.x + extent.x + pad * 2.0f, min.y + extent.y + pad);
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    list->AddRectFilled(min, max, ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, 0.55f)), 4.0f * scale);
+    list->AddText(ImVec2(min.x + pad, min.y + pad * 0.5f),
+                  ImGui::ColorConvertFloat4ToU32(themeColor(palette().warning)), words.c_str());
+    list->AddText(ImVec2(min.x + pad + ImGui::CalcTextSize(words.c_str()).x, min.y + pad * 0.5f),
+                  ImGui::GetColorU32(ImGuiCol_Text), tail);
+}
+
 void drawViewportStatus(const Editor& editor, ImVec2 at, ImVec2 region)
 {
     const EditorStatus& status = editor.status();
@@ -6886,6 +6944,7 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
     if (native != nullptr && size.x >= 1.0f && size.y >= 1.0f) {
         ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(native)), size);
         drawViewportStatus(editor, origin, size);
+        drawBrushChip(editor, origin, size);
 
         // **Dropped into the WORLD** (ADR 0052): dragging something out of
         // the project's tree and onto the viewport is the shortest way to
@@ -10732,568 +10791,844 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
 // shell is drawn above them in this file and the Streaming panel needs it.
 void drawStreaming(const StreamingHost& streaming);
 
-// The Terrain panel's contents (F1).
+// The Terrain panel's contents (F1, remade 2026-09-29).
 //
-// **A panel and not a row of buttons.** The editors this one is measured against
-// all give terrain its own dock with the same three areas under different names:
-// somewhere to make ground, somewhere to shape it, somewhere to decide what it
-// is made of. They converge because the work does, and this is the same three.
+// **One job at a time.** The panel was every section at once -- create,
+// sculpt, brush, paint, rules, foliage, heightmap, settings -- in one column a
+// person scrolled through to find the one they wanted, with the tool that was
+// acting nowhere in sight (the owner: "not practical, not easy to understand").
+// It is five tabs now, in the order the work goes: shape the ground, paint it,
+// grow things on it, and -- once, at the start -- make it and set it up. The
+// tools are tiles named for what they do to the ground, the brush is two
+// sliders, and the keys that make a brush fast are written under it.
 //
-// The first version was three chips on the toolbar, and the failure was not that
-// it looked poor -- it was that a person opening a project with no terrain saw no
-// brush, no panel and no way to begin, because the chips were hidden when there
-// was nothing to act on. A tool that cannot be reached is not a tool.
-//
-// Sections rather than tabs, because this is a dock somebody keeps open beside
-// the viewport rather than a modal they visit, and because Create is a thing you
-// touch once while Sculpt is a thing you touch constantly.
+// **A tab is not a tool.** Opening the panel, or a tab, puts nothing in the
+// hand (the owner, 2026-09-23: a brush that followed the pointer over ground
+// nobody meant to edit). A tile does, and the viewport says so until Escape or
+// a click on something else puts it down.
+namespace {
+
+enum class TerrainMode : core::u8
+{
+    Sculpt,
+    Paint,
+    Foliage,
+    Create,
+    Settings,
+};
+
+TerrainMode g_terrainMode = TerrainMode::Sculpt;
+Editor::Tool g_terrainLastTool = Editor::Tool::Select;
+
+// The fixed height Flatten levels to when it is not the stroke's own, kept here
+// so switching between the two keeps the number somebody typed.
+f32 g_flattenFixed = 0.0f;
+
+[[nodiscard]] std::string terrainLayerName(const std::string& urn)
+{
+    std::string name = urn;
+    if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
+        name = name.substr(slash + 1);
+    if (name.ends_with(".material.json"))
+        name.resize(name.size() - std::string_view(".material.json").size());
+    if (!name.empty())
+        name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+    return name;
+}
+
+// The engine's own layers in their palette colours; a project's in its
+// material's colour.
+[[nodiscard]] ImVec4 terrainLayerColor(scene::World& world, const std::vector<std::string>& engineLayers,
+                                       const std::string& urn)
+{
+    const auto at = std::find(engineLayers.begin(), engineLayers.end(), urn);
+    if (at != engineLayers.end()) {
+        const core::Vec3 c = asset::terrainColorOf(static_cast<core::u8>(at - engineLayers.begin() + 1));
+        return ImVec4(c.x, c.y, c.z, 1.0f);
+    }
+    const asset::ResolvedMaterial material = world.resolveMaterial(world.atoms().intern(urn), 0);
+    core::Color3 color = material.properties.color;
+    // A material coloured by one of the engine's terrain textures -- a starter
+    // is a variant of a built-in one -- is that texture's colour, tinted: its
+    // own colour factor is white, and a row of white swatches says nothing.
+    const std::string& map = material.properties.colorMap;
+    if (map.starts_with(asset::EngineTerrainPrefix)) {
+        const std::string layer = map.substr(0, map.find('/', asset::EngineTerrainPrefix.size()));
+        const auto engine = std::find(engineLayers.begin(), engineLayers.end(), layer);
+        if (engine != engineLayers.end()) {
+            const core::Vec3 c = asset::terrainColorOf(static_cast<core::u8>(engine - engineLayers.begin() + 1));
+            color = core::Color3{c.x * color.r, c.y * color.g, c.z * color.b};
+        }
+    }
+    return ImVec4(color.r, color.g, color.b, 1.0f);
+}
+
+// One cell of the mode bar: an icon over a word, the chosen one lit. **A bar
+// and not tabs**, because the dock beside the viewport is narrow and five tabs
+// in it were cut to "Scu..." and "Cre...".
+bool terrainModeCell(const IconAtlas* icons, std::string_view icon, const char* word, bool on, float width)
+{
+    const float glyph = ImGui::GetFontSize() * 1.15f;
+    const float height = glyph + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y * 3.0f;
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::PushID(word);
+    const bool clicked = ImGui::InvisibleButton("##mode", ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    const ImVec2 max(min.x + width, min.y + height);
+    const ImU32 fill =
+        ImGui::GetColorU32(on ? ImGuiCol_ButtonActive : (hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
+    list->AddRectFilled(min, max, fill, ImGui::GetStyle().FrameRounding);
+    if (on)
+        list->AddRectFilled(ImVec2(min.x + 4.0f, max.y - 2.0f), ImVec2(max.x - 4.0f, max.y),
+                            ImGui::GetColorU32(ImGuiCol_NavHighlight));
+    paintActionIcon(icons, icon, ImVec2(min.x + (width - glyph) * 0.5f, min.y + ImGui::GetStyle().FramePadding.y),
+                    glyph, list);
+    const ImVec2 text = ImGui::CalcTextSize(word);
+    list->AddText(
+        ImVec2(min.x + std::max(0.0f, (width - text.x) * 0.5f), max.y - text.y - ImGui::GetStyle().FramePadding.y),
+        ImGui::GetColorU32(on ? ImGuiCol_Text : ImGuiCol_TextDisabled), word);
+    return clicked;
+}
+
+// A tile: an icon and a word, highlighted while it is the tool in hand, and
+// with a quieter highlight when the held keys have turned the brush into it.
+bool terrainTile(const IconAtlas* icons, std::string_view icon, const char* word, bool on, bool borrowed, float width)
+{
+    if (on)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    else if (borrowed)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+    const bool clicked = labeledIconButton(icons, icon, word, ImVec2(width, ImGui::GetFrameHeight() * 1.6f));
+    if (on || borrowed)
+        ImGui::PopStyleColor();
+    return clicked;
+}
+
+// Size and strength, which every brush has, and what only some have.
+void drawBrushControls(Editor& editor, bool strength, bool shape, bool flatten)
+{
+    const Editor::Brush brush = editor.brush();
+    ImGui::SeparatorText("Brush");
+    const float label = ImGui::CalcTextSize("Strength").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    ImGui::TextUnformatted("Size");
+    ImGui::SameLine(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    f32 radius = brush.radius;
+    if (ImGui::SliderFloat("##brush-size", &radius, 0.25f, 64.0f, "%.2f m", ImGuiSliderFlags_Logarithmic))
+        editor.setBrushRadius(radius);
+    ImGui::SetItemTooltip("how far the brush reaches from its centre. [ and ] change it in the viewport");
+    if (strength) {
+        ImGui::TextUnformatted("Strength");
+        ImGui::SameLine(label);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        int percent = static_cast<int>(std::lround(brush.strength * 100.0f));
+        if (ImGui::SliderInt("##brush-strength", &percent, 2, 100, "%d%%"))
+            editor.setBrushStrength(static_cast<f32>(percent) / 100.0f);
+        ImGui::SetItemTooltip("how much each stamp does. Shift+[ and Shift+] change it in the viewport");
+    }
+    if (shape) {
+        ImGui::TextUnformatted("Shape");
+        ImGui::SameLine(label);
+        int square = brush.shape == Editor::BrushShape::Box ? 1 : 0;
+        if (ImGui::RadioButton("Round", &square, 0))
+            editor.setBrushShape(Editor::BrushShape::Sphere);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Square", &square, 1))
+            editor.setBrushShape(Editor::BrushShape::Box);
+    }
+    if (flatten) {
+        ImGui::TextUnformatted("Level to");
+        const std::optional<f32> fixed = editor.flattenHeight();
+        int which = fixed.has_value() ? 1 : 0;
+        if (ImGui::RadioButton("Where each stroke starts", &which, 0))
+            editor.setFlattenHeight(std::nullopt);
+        if (ImGui::RadioButton("A fixed height", &which, 1))
+            editor.setFlattenHeight(g_flattenFixed);
+        if (fixed.has_value()) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            f32 height = *fixed;
+            if (ImGui::DragFloat("##flatten-height", &height, 0.1f, -4096.0f, 4096.0f, "%.1f m")) {
+                g_flattenFixed = height;
+                editor.setFlattenHeight(height);
+            }
+            ImGui::SetItemTooltip("the world height every stroke levels to: a road, a building's pad, a lake's floor");
+        }
+    }
+    if (ImGui::TreeNode("More")) {
+        ImGui::TextUnformatted("Spacing");
+        ImGui::SameLine(label);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        int spacing = static_cast<int>(std::lround(brush.spacing * 100.0f));
+        if (ImGui::SliderInt("##brush-spacing", &spacing, 10, 100, "%d%% of the size"))
+            editor.setBrushSpacing(static_cast<f32>(spacing) / 100.0f);
+        ImGui::SetItemTooltip("how far a drag travels between stamps; smaller is smoother and slower");
+        bool plane = editor.brushPlaneLock();
+        if (ImGui::Checkbox("Aim at empty space as level ground", &plane))
+            editor.setBrushPlaneLock(plane);
+        ImGui::SetItemTooltip("over the sky, the brush acts on a level plane at the height the stroke began, so a "
+                              "hillside can be continued past its edge");
+        ImGui::TreePop();
+    }
+}
+
+void drawTerrainRules(Editor& editor, scene::World& world, core::InstanceId root,
+                      const scene::TerrainComponent& terrain, const IconAtlas* icons)
+{
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("what the ground looks like by slope and height, top rule last; drawn live, written only by "
+                        "Apply");
+    ImGui::PopTextWrapPos();
+
+    std::vector<asset::TerrainRule> rules = terrain.rules;
+    const std::vector<std::string>& layers = terrain.layers;
+    const auto nameOf = [&](core::u8 id) {
+        const std::string name = id >= 1 && id <= layers.size() ? terrainLayerName(layers[id - 1]) : std::string("?");
+        return std::to_string(id) + "  " + name;
+    };
+    bool changed = false;
+    const char* label = "Edit Terrain Rule";
+    core::u64 coalesce = 0;
+    std::optional<std::size_t> remove;
+    std::optional<std::pair<std::size_t, std::size_t>> swap;
+
+    for (std::size_t index = 0; index < rules.size(); ++index) {
+        asset::TerrainRule& rule = rules[index];
+        ImGui::PushID(static_cast<int>(index));
+        const std::string title = std::to_string(index + 1) + ". " + nameOf(rule.material) + "###rule";
+        if (ImGui::Checkbox("##on", &rule.enabled)) {
+            changed = true;
+            label = rule.enabled ? "Enable Terrain Rule" : "Disable Terrain Rule";
+        }
+        ImGui::SetItemTooltip("on or off; turning the slope rock off is how steep ground keeps its own layer");
+        ImGui::SameLine();
+        if (ImGui::TreeNodeEx(title.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) {
+            const auto row = [&](const char* text) {
+                ImGui::TextUnformatted(text);
+                ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+            };
+            // A drag's frames are one step: the key is the rule and field.
+            const auto edited = [&](bool moved, core::u64 field) {
+                if (moved) {
+                    changed = true;
+                    coalesce = 0x52554C45000000ull | (static_cast<core::u64>(index) << 8) | field;
+                }
+            };
+            row("Material");
+            if (ImGui::BeginCombo("##material", nameOf(rule.material).c_str())) {
+                for (std::size_t id = 1; id <= layers.size(); ++id) {
+                    if (ImGui::Selectable(nameOf(static_cast<core::u8>(id)).c_str(), rule.material == id)) {
+                        rule.material = static_cast<core::u8>(id);
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            row("Slope");
+            float slope[2] = {rule.slopeMin, rule.slopeMax};
+            edited(ImGui::DragFloat2("##slope", slope, 0.25f, 0.0f, 90.0f, "%.1f deg"), 1);
+            rule.slopeMin = std::clamp(slope[0], 0.0f, 90.0f);
+            rule.slopeMax = std::clamp(slope[1], 0.0f, 90.0f);
+            ImGui::SetItemTooltip("from how steep to how steep, in degrees from level");
+            row("Height");
+            float height[2] = {rule.heightMin, rule.heightMax};
+            edited(ImGui::DragFloat2("##height", height, 0.25f, -100000.0f, 100000.0f, "%.1f m"), 2);
+            rule.heightMin = height[0];
+            rule.heightMax = height[1];
+            ImGui::SetItemTooltip("from how high to how high, in world metres; -100000 and 100000 are open");
+            row("Blend");
+            edited(ImGui::DragFloat("##blend", &rule.blend, 0.1f, 0.0f, 1000.0f, "%.1f"), 3);
+            rule.blend = std::max(rule.blend, 0.0f);
+            ImGui::SetItemTooltip("how wide the edge is: degrees across a slope bound, metres across a height bound");
+            row("Noise");
+            edited(ImGui::DragFloat("##noise", &rule.noise, 0.005f, 0.0f, 2.0f, "%.3f"), 4);
+            rule.noise = std::max(rule.noise, 0.0f);
+            ImGui::SetItemTooltip("how ragged the edge is; 0 is a clean line");
+            row("Covers");
+            const std::string covers = rule.appliesTo.empty() ? std::string("every layer but its own")
+                                                              : std::to_string(rule.appliesTo.size()) + " layer(s)";
+            if (ImGui::BeginCombo("##covers", covers.c_str())) {
+                for (std::size_t id = 1; id <= layers.size(); ++id) {
+                    const auto layer = static_cast<core::u8>(id);
+                    const bool listed =
+                        std::find(rule.appliesTo.begin(), rule.appliesTo.end(), layer) != rule.appliesTo.end();
+                    bool on = rule.appliesTo.empty() ? layer != rule.material : listed;
+                    if (ImGui::Checkbox(nameOf(layer).c_str(), &on)) {
+                        // From "every layer but its own" to an explicit list the
+                        // first time one is unticked.
+                        if (rule.appliesTo.empty()) {
+                            for (std::size_t other = 1; other <= layers.size(); ++other) {
+                                if (other != rule.material)
+                                    rule.appliesTo.push_back(static_cast<core::u8>(other));
+                            }
+                        }
+                        std::erase(rule.appliesTo, layer);
+                        if (on)
+                            rule.appliesTo.push_back(layer);
+                        std::sort(rule.appliesTo.begin(), rule.appliesTo.end());
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("the layers this rule may paint over");
+            if (ImGui::SmallButton("Up") && index > 0)
+                swap = std::pair{index, index - 1};
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Down") && index + 1 < rules.size())
+                swap = std::pair{index, index + 1};
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove"))
+                remove = index;
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (swap.has_value()) {
+        std::swap(rules[swap->first], rules[swap->second]);
+        changed = true;
+        label = "Reorder Terrain Rules";
+        coalesce = 0;
+    }
+    if (remove.has_value()) {
+        rules.erase(rules.begin() + static_cast<std::ptrdiff_t>(*remove));
+        changed = true;
+        label = "Remove Terrain Rule";
+        coalesce = 0;
+    }
+    ImGui::BeginDisabled(rules.size() >= asset::MaxTerrainRules);
+    if (labeledIconButton(icons, icons::ActionAdd, "Add Rule", ImVec2(-FLT_MIN, 0.0f))) {
+        // A height rule, which is the one people reach for after the slope
+        // rock: snow above a line.
+        asset::TerrainRule rule;
+        rule.material = layers.size() >= 4 ? 4 : 1;
+        rule.slopeMin = 0.0f;
+        rule.slopeMax = 90.0f;
+        rule.heightMin = 40.0f;
+        rule.blend = 4.0f;
+        rule.noise = 0.25f;
+        rules.push_back(std::move(rule));
+        changed = true;
+        label = "Add Terrain Rule";
+        coalesce = 0;
+    }
+    ImGui::EndDisabled();
+    if (changed)
+        (void)editor.setTerrainRules(world, root, std::move(rules), label, coalesce);
+
+    ImGui::BeginDisabled(terrain.rules.empty() || terrain.field.empty());
+    if (labeledIconButton(icons, icons::ActionPaint, "Apply to Voxels", ImVec2(-FLT_MIN, 0.0f)))
+        (void)editor.applyTerrainRules(world, root);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("writes what the rules draw into the ground's own materials, so a rule can be turned off "
+                          "afterwards with nothing changing");
+}
+
+// The terrain's layers as swatches, the brush's material among them, and the
+// list's own edits.
+void drawTerrainLayers(Editor& editor, scene::World& world, core::InstanceId root,
+                       const scene::TerrainComponent* terrain)
+{
+    if (terrain == nullptr)
+        return;
+    const std::vector<std::string> engineLayers = asset::defaultTerrainLayers();
+    const std::vector<std::string>& layers = terrain->layers;
+    const core::u8 selected = editor.brush().material;
+
+    // **A new terrain has no materials** (the owner, 2026-09-29: materials that
+    // come with the ground and cannot be opened in Content should not come at
+    // all). Its ground is plain grey, and the first material it is given is
+    // what that ground becomes.
+    static std::array<char, 64> newName{};
+    const auto newMaterial = [&] {
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+        const bool entered = ImGui::InputTextWithHint("##new-terrain-material", "name, e.g. grass", newName.data(),
+                                                      newName.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        const std::string typed(newName.data());
+        ImGui::BeginDisabled(typed.empty() || !ContentTree::isUsableName(typed));
+        const bool create = ImGui::Button("New Material", ImVec2(-FLT_MIN, 0.0f));
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("writes a material into materials/ and makes it this terrain's next layer; it opens so "
+                              "its colour and textures can be set");
+        if ((entered || create) && !typed.empty() && ContentTree::isUsableName(typed)) {
+            if (const std::string made = editor.addNewTerrainMaterial(world, root, typed); !made.empty()) {
+                (void)editor.openMaterial(made);
+                newName.fill(0);
+            }
+        }
+    };
+    if (layers.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted("This terrain has no materials yet.");
+        ImGui::TextDisabled("Its ground draws plain grey until it has one, and the first you add is what the ground "
+                            "already there becomes. Materials are files in Content, like any other.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        newMaterial();
+        if (ImGui::Button("Add Starter Materials", ImVec2(-FLT_MIN, 0.0f)))
+            (void)editor.addStarterTerrainMaterials(world, root);
+        ImGui::SetItemTooltip("grass, sand, rock, snow, dirt, clay and more, written into materials/terrain as files "
+                              "you can open and change");
+        if (!editor.content().filesOfKind(ContentKind::Material).empty() &&
+            ImGui::Button("Use a Material from the Project...", ImVec2(-FLT_MIN, 0.0f)))
+            ImGui::OpenPopup("terrain-layers");
+    }
+    const f32 swatch = ImGui::GetFrameHeight() * 1.6f;
+    const int columns =
+        std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) /
+                                     (swatch + ImGui::GetStyle().ItemSpacing.x)));
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        if (index > 0 && index % static_cast<std::size_t>(columns) != 0)
+            ImGui::SameLine();
+        const auto id = static_cast<core::u8>(index + 1);
+        ImGui::PushID(static_cast<int>(id));
+        const bool on = selected == id;
+        if (on) {
+            ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
+        }
+        if (ImGui::ColorButton("##swatch", terrainLayerColor(world, engineLayers, layers[index]),
+                               ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha, ImVec2(swatch, swatch)))
+            editor.setBrushMaterial(id);
+        if (on) {
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+        }
+        ImGui::SetItemTooltip("%s\n%s", terrainLayerName(layers[index]).c_str(), layers[index].c_str());
+        ImGui::PopID();
+    }
+    if (selected >= 1 && selected <= layers.size()) {
+        ImGui::Text("%s", terrainLayerName(layers[selected - 1]).c_str());
+        // A surface shader is not read on terrain (ADR 0113): said here, where
+        // somebody picked the material.
+        const asset::ResolvedMaterial wearing = world.resolveMaterial(world.atoms().intern(layers[selected - 1]), 0);
+        if (!wearing.properties.shader.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().warning));
+            ImGui::TextWrapped("its surface shader is not drawn on terrain; the layer uses the built-in surface");
+            ImGui::PopStyleColor();
+        }
+    }
+
+    // **The list itself**: a project material in place of a layer, or added
+    // after the last. Voxels keep their numbers, so replacing a layer repaints
+    // every voxel of it at once -- which is the point -- and only the last can
+    // be removed, since removing another would renumber the ones after it.
+    // The project's materials only: a built-in one is what cannot be opened.
+    static std::vector<std::string> choices;
+    choices.clear();
+    for (const std::string& file : editor.content().filesOfKind(ContentKind::Material))
+        choices.push_back(std::string(asset::AssetScheme) + file);
+    if (!layers.empty()) {
+        if (ImGui::Button("Change Layers...", ImVec2(-FLT_MIN, 0.0f)))
+            ImGui::OpenPopup("terrain-layers");
+        ImGui::SetItemTooltip("put another of the project's materials in the selected layer's place, add one, or "
+                              "remove the last");
+        if (selected >= 1 && selected <= layers.size() && !asset::isEngineMaterial(layers[selected - 1])) {
+            if (ImGui::Button("Open Material", ImVec2(-FLT_MIN, 0.0f))) {
+                std::string path = layers[selected - 1];
+                if (path.starts_with(asset::AssetScheme))
+                    path = path.substr(asset::AssetScheme.size());
+                (void)editor.openMaterial(path);
+            }
+            ImGui::SetItemTooltip("edit this layer's material: its colour, textures and how it repeats");
+        }
+        ImGui::SeparatorText("Another material");
+        newMaterial();
+    }
+    if (ImGui::BeginPopup("terrain-layers")) {
+        ImGui::TextDisabled("replace layer %d, or add a layer", static_cast<int>(selected));
+        ImGui::Separator();
+        if (choices.empty())
+            ImGui::TextDisabled("the project has no materials; make one with New Material");
+        for (const std::string& choice : choices) {
+            ImGui::PushID(choice.c_str());
+            ImGui::TextUnformatted(terrainLayerName(choice).c_str());
+            ImGui::SetItemTooltip("%s", choice.c_str());
+            ImGui::SameLine(ImGui::GetFontSize() * 10.0f);
+            const bool canReplace = selected >= 1 && selected <= layers.size();
+            ImGui::BeginDisabled(!canReplace);
+            if (ImGui::SmallButton("Replace")) {
+                std::vector<std::string> next = layers;
+                next[selected - 1] = choice;
+                (void)editor.setTerrainLayers(world, root, std::move(next), "Replace Terrain Layer");
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(layers.size() >= asset::MaxTerrainLayers);
+            if (ImGui::SmallButton("Add")) {
+                std::vector<std::string> next = layers;
+                next.push_back(choice);
+                if (editor.setTerrainLayers(world, root, std::move(next), "Add Terrain Layer"))
+                    editor.setBrushMaterial(static_cast<core::u8>(layers.size()));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+        ImGui::BeginDisabled(layers.size() <= 1);
+        if (ImGui::Selectable("Remove the last layer")) {
+            std::vector<std::string> next = layers;
+            next.pop_back();
+            (void)editor.setTerrainLayers(world, root, std::move(next), "Remove Terrain Layer");
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+}
+
+// What each sculpt tile does, in the words its tooltip and the line under the
+// tiles use.
+struct SculptTool
+{
+    Editor::BrushOp op;
+    std::string_view icon;
+    const char* word;
+    const char* what;
+};
+
+} // namespace
+
 void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector,
-                      const IconAtlas* icons)
+                      const IconAtlas* icons, EditorCommands& commands)
 {
     const core::InstanceId terrainId = editor.terrainIn(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
+    const Editor::Tool tool = editor.tool();
+    const bool brushInHand =
+        tool == Editor::Tool::Sculpt || tool == Editor::Tool::Paint || tool == Editor::Tool::Foliage;
 
-    const auto section = [&](const char* label, std::string_view icon, ImGuiTreeNodeFlags flags) {
-        const std::string title = tabIconPad() + label + "###" + label;
-        const ImVec2 origin = ImGui::GetCursorScreenPos();
-        const bool open = ImGui::CollapsingHeader(title.c_str(), flags);
-        paintActionIcon(
-            icons, icon,
-            ImVec2(origin.x + ImGui::GetTreeNodeToLabelSpacing(), origin.y + ImGui::GetStyle().FramePadding.y),
-            ImGui::GetFontSize());
-        return open;
+    // **A tool picked from outside picks its tab** -- T, Y, a status-bar click
+    // -- and a world with no ground opens on Create, the only thing to do.
+    if (tool != g_terrainLastTool) {
+        if (tool == Editor::Tool::Sculpt)
+            g_terrainMode = TerrainMode::Sculpt;
+        else if (tool == Editor::Tool::Paint)
+            g_terrainMode = TerrainMode::Paint;
+        else if (tool == Editor::Tool::Foliage)
+            g_terrainMode = TerrainMode::Foliage;
+        g_terrainLastTool = tool;
+    }
+    if (terrain == nullptr && g_terrainMode != TerrainMode::Create && g_terrainMode != TerrainMode::Settings &&
+        !brushInHand)
+        g_terrainMode = TerrainMode::Create;
+
+    // The ground in one line, above the tabs.
+    if (terrain != nullptr) {
+        const asset::FieldSettings& settings = terrain->field.settings();
+        ImGui::TextDisabled("%zu chunk(s)  |  %.2f m voxels  |  %.0f to %.0f m", terrain->field.chunkCount(),
+                            static_cast<double>(settings.voxelSize), static_cast<double>(settings.minHeight),
+                            static_cast<double>(settings.maxHeight));
+    }
+    else {
+        ImGui::TextDisabled("This world has no terrain yet.");
+    }
+
+    // The mode bar.
+    {
+        struct Mode
+        {
+            TerrainMode mode;
+            std::string_view icon;
+            const char* word;
+            const char* tip;
+        };
+        static constexpr std::array<Mode, 5> Modes{{
+            {TerrainMode::Sculpt, icons::ActionRaise, "Sculpt",
+             "shape the ground: raise, lower, smooth, flatten, add, dig (T)"},
+            {TerrainMode::Paint, icons::ActionPaint, "Paint",
+             "choose what the ground is made of, by hand or by slope and height (Y)"},
+            {TerrainMode::Foliage, icons::ActionGrid, "Foliage", "grow grass, flowers and trees on the ground"},
+            {TerrainMode::Create, icons::ActionAdd, "Create", "make ground: flat, or from a heightmap image"},
+            {TerrainMode::Settings, icons::ActionSettings, "Setup", "the voxel size and the height range"},
+        }};
+        const float spacing = 2.0f;
+        const float cell = std::floor((ImGui::GetContentRegionAvail().x - spacing * 4.0f) / 5.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, ImGui::GetStyle().ItemSpacing.y));
+        for (std::size_t index = 0; index < Modes.size(); ++index) {
+            if (index > 0)
+                ImGui::SameLine();
+            const Mode& entry = Modes[index];
+            if (terrainModeCell(icons, entry.icon, entry.word, g_terrainMode == entry.mode, cell) &&
+                g_terrainMode != entry.mode) {
+                g_terrainMode = entry.mode;
+                // **Changing mode changes the brush in hand, never picks one
+                // up**: a sculpt brush becomes a paint brush on Paint, and
+                // Create and Setup put it down.
+                if (brushInHand) {
+                    if (entry.mode == TerrainMode::Sculpt)
+                        editor.setTool(Editor::Tool::Sculpt);
+                    else if (entry.mode == TerrainMode::Paint)
+                        editor.setTool(Editor::Tool::Paint);
+                    else if (entry.mode == TerrainMode::Foliage)
+                        editor.setTool(Editor::Tool::Foliage);
+                    else
+                        editor.setTool(Editor::Tool::Select);
+                    g_terrainLastTool = editor.tool();
+                }
+            }
+            ImGui::SetItemTooltip("%s", entry.tip);
+        }
+        ImGui::PopStyleVar();
+        ImGui::Spacing();
+    }
+    const auto tab = [&](TerrainMode mode, const char*) { return g_terrainMode == mode; };
+
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const auto needTerrain = [&] {
+        ImGui::Spacing();
+        ImGui::TextWrapped("There is no ground to work on yet.");
+        if (ImGui::Button("Create Terrain...", ImVec2(-FLT_MIN, 0.0f)))
+            g_terrainMode = TerrainMode::Create;
     };
-    ImGui::TextWrapped("Choose a tool, then drag in the viewport. Ctrl+1 returns to selection.");
-    ImGui::Spacing();
-    // --- Create ---------------------------------------------------
-    if (section("Create", icons::ActionAdd, terrain == nullptr ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+    const auto brushDown = [&](const char* what) {
+        if (brushInHand)
+            return;
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", what);
+        ImGui::PopStyleColor();
+    };
+
+    // --- Sculpt ---------------------------------------------------------------
+    if (tab(TerrainMode::Sculpt, "Sculpt")) {
         if (terrain == nullptr) {
-            ImGui::TextWrapped("This world has no terrain yet.");
+            needTerrain();
         }
         else {
-            ImGui::TextDisabled("%zu chunk(s)", terrain->field.chunkCount());
-        }
-
-        ImGui::Separator();
-        // **A flat square, from the world's floor up.** The one
-        // generator worth having before a noise one: it is what a person
-        // needs to start sculpting, and ground that reaches the floor is
-        // mostly whole chunks of one value, which cost next to nothing.
-        // **256 m, which is 256 columns square at the default voxel.**
-        //
-        // Matched to the reference engines on SAMPLE COUNT rather than on
-        // metres: they ship grids of about 512 squared and spread them over five
-        // hundred to a thousand metres only because their brushes are one to two
-        // metres coarse. Copying their metres at half-metre voxels would be a
-        // world four to sixteen times denser than any of them ship.
-        //
-        // It is also four whole 64 m streaming cells on a side, so the default
-        // exercises the streaming grid rather than a special case.
-        static f32 groundSize = 256.0f;
-        static f32 groundHeight = 0.0f;
-        ImGui::TextUnformatted("Ground size");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##ground-size", &groundSize, 1.0f, 8.0f, 2048.0f, "%.0f m");
-        ImGui::TextUnformatted("Surface height");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##ground-height", &groundHeight, 0.25f, -256.0f, 256.0f, "%.1f m");
-        ImGui::SetItemTooltip("the height the ground's surface ends up at");
-        if (const core::u8 fill = editor.brush().material;
-            terrain != nullptr && fill >= 1 && fill <= terrain->layers.size()) {
-            std::string name = terrain->layers[fill - 1];
-            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
-                name = name.substr(slash + 1);
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("made of %s -- pick another under Paint", name.c_str());
-            ImGui::PopTextWrapPos();
-        }
-
-        // **The derived numbers, live**, which is what a landscape creation
-        // panel shows and what stops somebody typing 2048 and wondering why the
-        // editor stalled. A size field with no cost readout is one that only
-        // reports its mistake afterwards.
-        {
-            const f32 voxel = terrain != nullptr ? terrain->field.settings().voxelSize : 1.0f;
-            const auto columns = static_cast<int>(groundSize / std::max(voxel, 0.01f));
-            const auto side = static_cast<long long>(columns / static_cast<int>(asset::ChunkEdge) + 1);
-            // Flat ground is about four kilobytes a chunk column: one row of
-            // voxels in thirty-two is not all ground or all air (ADR 0082).
-            const auto kilobytes = side * side * 4;
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("%d x %d columns  |  %lld chunk columns  |  ~%lld KB", columns, columns, side * side,
-                                kilobytes);
-            ImGui::PopTextWrapPos();
-        }
-
-        // **One button, because it is one intention.**
-        //
-        // It used to be two -- Create Terrain and then Flat Ground -- and the
-        // first was strictly worse than the second: it produced an instance with
-        // an EMPTY field, which a ray misses, so every terrain tool then did
-        // nothing at all. Every heightmap engine hands you a plane on create
-        // because the plane IS its allocation; the two engines with sparse
-        // storage both grew a workaround for handing you nothing, and this is
-        // ours -- adopted rather than rediscovered.
-        if (labeledIconButton(icons, icons::ActionAdd, terrain == nullptr ? "Create Terrain" : "Generate Flat Ground",
-                              ImVec2(-FLT_MIN, 0.0f))) {
-            // **The palette's selection, not a second one.** The first
-            // version had a material here that no widget showed and nothing
-            // could change, which is a control that lies by being absent --
-            // one palette, one choice.
-            editor.generateGround(world, root, inspector, groundSize, groundHeight, editor.brush().material);
-        }
-        ImGui::SetItemTooltip(terrain == nullptr
-                                  ? "adds a Terrain under the workspace with flat ground, ready to sculpt"
-                                  : "lays flat ground over this square, on top of whatever is there");
-
-        if (terrain != nullptr) {
-            if (labeledIconButton(icons, icons::ActionDelete, "Clear Terrain", ImVec2(-FLT_MIN, 0.0f)))
-                editor.clearTerrain(world, root, inspector);
-            ImGui::SetItemTooltip("removes every bit of ground. One ctrl-Z brings it back");
-        }
-    }
-
-    // --- Sculpt ---------------------------------------------------
-    if (section("Sculpt", icons::ClassTerrain, ImGuiTreeNodeFlags_DefaultOpen)) {
-        const Editor::Brush brush = editor.brush();
-
-        const auto opButton = [&](Editor::BrushOp op, std::string_view icon, const char* word, const char* tip) {
-            const bool on = brush.op == op && editor.tool() == Editor::Tool::Sculpt;
-            if (on)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            const float width = std::max(76.0f * ImGui::GetStyle().FontScaleMain,
-                                         ImGui::CalcTextSize(word).x + ImGui::CalcTextSize(tabIconPad().c_str()).x +
-                                             ImGui::GetStyle().FramePadding.x * 2.0f);
-            if (ImGui::GetContentRegionAvail().x < width && ImGui::GetCursorPosX() > ImGui::GetStyle().WindowPadding.x)
-                ImGui::NewLine();
-            if (labeledIconButton(icons, icon, word, ImVec2(width, 0.0f))) {
-                editor.setBrushOp(op);
-                editor.setTool(Editor::Tool::Sculpt);
-            }
-            if (on)
-                ImGui::PopStyleColor();
-            ImGui::SetItemTooltip("%s", tip);
-        };
-        opButton(Editor::BrushOp::Add, icons::ActionAdd, "Add",
-                 "add a ball of ground where you aim -- hold it to build towards you");
-        ImGui::SameLine();
-        opButton(Editor::BrushOp::Subtract, icons::ActionDelete, "Subtract",
-                 "take a ball of ground away where you aim -- hold it to tunnel in");
-        ImGui::SameLine();
-        opButton(Editor::BrushOp::Grow, icons::ActionRaise, "Grow",
-                 "move the surface outwards: a field rises, a cliff comes forward");
-        ImGui::SameLine();
-        opButton(Editor::BrushOp::Erode, icons::ActionDig, "Erode", "move the surface inwards: the ground wears away");
-        ImGui::SameLine();
-        opButton(Editor::BrushOp::Smooth, icons::ActionSmooth, "Smooth",
-                 "soften what is there, pulling the ground towards its "
-                 "neighbours");
-        ImGui::SameLine();
-        opButton(Editor::BrushOp::Flatten, icons::ActionFlatten, "Flatten",
-                 "level towards the height you first clicked, so a drag does not chase itself downhill");
-    }
-    // Shared by sculpting and painting; not hidden inside a specific operation.
-    if (section("Brush", icons::ActionSettings, ImGuiTreeNodeFlags_DefaultOpen)) {
-        const Editor::Brush brush = editor.brush();
-        ImGui::TextUnformatted("Shape");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        int shape = brush.shape == Editor::BrushShape::Box ? 1 : 0;
-        if (ImGui::Combo("##brush-shape", &shape, "Sphere\0Box\0"))
-            editor.setBrushShape(shape == 1 ? Editor::BrushShape::Box : Editor::BrushShape::Sphere);
-        ImGui::SetItemTooltip("the shape Add and Subtract stamp. The other tools are always round");
-        ImGui::TextUnformatted("Radius");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        f32 radius = brush.radius;
-        if (ImGui::DragFloat("##radius", &radius, radius * 0.05f + 0.01f, 0.25f, 64.0f, "%.2f m"))
-            editor.setBrushRadius(radius);
-
-        // Every op has a strength, and every drag a spacing.
-        ImGui::TextUnformatted("Strength");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        f32 strength = brush.strength;
-        if (ImGui::DragFloat("##strength", &strength, 0.01f, 0.02f, 1.0f, "%.2f"))
-            editor.setBrushStrength(strength);
-        ImGui::SetItemTooltip(brush.op == Editor::BrushOp::Add || brush.op == Editor::BrushOp::Subtract
-                                  ? "how fast the brush builds or bores while you hold it"
-                                  : "how far one stamp moves the ground");
-        ImGui::TextUnformatted("Spacing");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        f32 spacing = brush.spacing;
-        if (ImGui::DragFloat("##spacing", &spacing, 0.01f, 0.1f, 1.0f, "%.2f x size"))
-            editor.setBrushSpacing(spacing);
-        ImGui::SetItemTooltip("how far a drag travels between stamps. Smaller overlaps more");
-    }
-
-    // --- Paint ----------------------------------------------------
-    if (section("Paint", icons::ActionPaint, ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("what new ground is made of, and what paint lays down");
-        ImGui::PopTextWrapPos();
-
-        // **Swatches, because a material is a colour before it is a
-        // number.** Every editor here shows a palette rather than an id
-        // field, and this one has to: the field stores a `u8` and a
-        // person cannot recognise 4 as snow. The swatches are the
-        // terrain's own layers (ADR 0113), id order.
-        const std::vector<std::string> engineLayers = asset::defaultTerrainLayers();
-        const std::vector<std::string>& layers = terrain != nullptr ? terrain->layers : engineLayers;
-        const auto layerName = [](const std::string& urn) {
-            std::string name = urn;
-            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
-                name = name.substr(slash + 1);
-            if (name.ends_with(".material.json"))
-                name.resize(name.size() - std::string_view(".material.json").size());
-            if (!name.empty())
-                name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
-            return name;
-        };
-        // The engine's own in their old palette colours; a project's in its
-        // material's colour.
-        const auto layerColor = [&](const std::string& urn) {
-            const auto at = std::find(engineLayers.begin(), engineLayers.end(), urn);
-            if (at != engineLayers.end()) {
-                const core::Vec3 c = asset::terrainColorOf(static_cast<core::u8>(at - engineLayers.begin() + 1));
-                return ImVec4(c.x, c.y, c.z, 1.0f);
-            }
-            const asset::ResolvedMaterial material = world.resolveMaterial(world.atoms().intern(urn), 0);
-            return ImVec4(material.properties.color.r, material.properties.color.g, material.properties.color.b, 1.0f);
-        };
-
-        const core::u8 selected = editor.brush().material;
-        const f32 swatch = ImGui::GetFrameHeight() * 1.4f;
-        const int columns =
-            std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) /
-                                         (swatch + ImGui::GetStyle().ItemSpacing.x)));
-        for (std::size_t index = 0; index < layers.size(); ++index) {
-            if (index > 0 && index % static_cast<std::size_t>(columns) != 0)
-                ImGui::SameLine();
-            const auto id = static_cast<core::u8>(index + 1);
-            ImGui::PushID(static_cast<int>(id));
-            const bool on = selected == id;
-            if (on) {
-                ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
-            }
-            if (ImGui::ColorButton("##swatch", layerColor(layers[index]),
-                                   ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha,
-                                   ImVec2(swatch, swatch))) {
-                editor.setBrushMaterial(id);
-            }
-            if (on) {
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-            }
-            ImGui::SetItemTooltip("%d  %s\n%s", static_cast<int>(id), layerName(layers[index]).c_str(),
-                                  layers[index].c_str());
-            ImGui::PopID();
-        }
-        if (selected >= 1 && selected <= layers.size()) {
-            ImGui::TextDisabled("%d  %s", static_cast<int>(selected), layerName(layers[selected - 1]).c_str());
-            // A surface shader is not read on terrain (ADR 0113): said here,
-            // where somebody picked the material, rather than left to a
-            // layer that silently looks built in.
-            const asset::ResolvedMaterial wearing =
-                world.resolveMaterial(world.atoms().intern(layers[selected - 1]), 0);
-            if (!wearing.properties.shader.empty()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().warning));
-                ImGui::TextWrapped("its surface shader is not drawn on terrain; the layer uses the built-in surface");
-                ImGui::PopStyleColor();
-            }
-        }
-
-        // **The list itself**: a project material in place of a layer, or
-        // added after the last. Voxels keep their numbers, so replacing a
-        // layer repaints every voxel of it at once -- which is the point --
-        // and only the last can be removed, since removing another would
-        // renumber the ones after it under the voxels' feet.
-        if (terrain != nullptr) {
-            static std::vector<std::string> choices;
-            if (ImGui::Button("Layers...", ImVec2(-FLT_MIN, 0.0f))) {
-                choices = engineLayers;
-                for (const std::string& file : editor.content().filesOfKind(ContentKind::Material))
-                    choices.push_back(std::string(asset::AssetScheme) + file);
-                ImGui::OpenPopup("terrain-layers");
-            }
-            ImGui::SetItemTooltip("replace the selected layer with another material, add one, or remove the last");
-            if (ImGui::BeginPopup("terrain-layers")) {
-                ImGui::TextDisabled("replace layer %d, or add a layer", static_cast<int>(selected));
-                ImGui::Separator();
-                for (const std::string& choice : choices) {
-                    ImGui::PushID(choice.c_str());
-                    ImGui::TextUnformatted(layerName(choice).c_str());
-                    ImGui::SetItemTooltip("%s", choice.c_str());
-                    ImGui::SameLine(ImGui::GetFontSize() * 10.0f);
-                    const bool canReplace = selected >= 1 && selected <= layers.size();
-                    ImGui::BeginDisabled(!canReplace);
-                    if (ImGui::SmallButton("replace")) {
-                        std::vector<std::string> next = layers;
-                        next[selected - 1] = choice;
-                        (void)editor.setTerrainLayers(world, root, std::move(next), "Replace Terrain Layer");
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndDisabled();
+            static constexpr std::array<SculptTool, 6> Tools{{
+                {Editor::BrushOp::Grow, icons::ActionRaise, "Raise",
+                 "lifts the ground under the brush, most at its centre. Hold Ctrl to lower"},
+                {Editor::BrushOp::Erode, icons::ActionDig, "Lower",
+                 "sinks the ground under the brush. Hold Ctrl to raise"},
+                {Editor::BrushOp::Smooth, icons::ActionSmooth, "Smooth",
+                 "softens bumps, fills pits and rounds off edges. Hold Shift with any tool to smooth"},
+                {Editor::BrushOp::Flatten, icons::ActionFlatten, "Flatten",
+                 "levels the ground to one height: where the stroke starts, or one you set below"},
+                {Editor::BrushOp::Add, icons::ActionAdd, "Add",
+                 "builds a ball of ground where you aim; hold still and it grows towards you. Ctrl digs"},
+                {Editor::BrushOp::Subtract, icons::ActionErase, "Dig",
+                 "carves a ball out where you aim; hold still and it tunnels in. Ctrl adds"},
+            }};
+            const Editor::BrushOp chosen = editor.brush().op;
+            const Editor::BrushOp acting = editor.effectiveBrushOp();
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float width = std::floor((avail - spacing * 2.0f) / 3.0f);
+            for (std::size_t index = 0; index < Tools.size(); ++index) {
+                if (index % 3 != 0)
                     ImGui::SameLine();
-                    ImGui::BeginDisabled(layers.size() >= asset::MaxTerrainLayers);
-                    if (ImGui::SmallButton("add")) {
-                        std::vector<std::string> next = layers;
-                        next.push_back(choice);
-                        if (editor.setTerrainLayers(world, root, std::move(next), "Add Terrain Layer"))
-                            editor.setBrushMaterial(static_cast<core::u8>(layers.size()));
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndDisabled();
-                    ImGui::PopID();
+                const SculptTool& entry = Tools[index];
+                const bool on = tool == Editor::Tool::Sculpt && chosen == entry.op;
+                const bool borrowed = tool == Editor::Tool::Sculpt && acting == entry.op && acting != chosen;
+                if (terrainTile(icons, entry.icon, entry.word, on, borrowed, width)) {
+                    editor.setBrushOp(entry.op);
+                    editor.setTool(Editor::Tool::Sculpt);
+                    g_terrainLastTool = Editor::Tool::Sculpt;
                 }
-                ImGui::Separator();
-                ImGui::BeginDisabled(layers.size() <= 1);
-                if (ImGui::Selectable("Remove the last layer")) {
-                    std::vector<std::string> next = layers;
-                    next.pop_back();
-                    (void)editor.setTerrainLayers(world, root, std::move(next), "Remove Terrain Layer");
+                ImGui::SetItemTooltip("%s (%zu)\n%s", entry.word, index + 1, entry.what);
+            }
+            const auto described = std::find_if(Tools.begin(), Tools.end(), [&](const SculptTool& entry) {
+                return entry.op == (tool == Editor::Tool::Sculpt ? acting : chosen);
+            });
+            if (described != Tools.end()) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(described->word);
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s.", described->what);
+                ImGui::PopTextWrapPos();
+            }
+            brushDown("Pick a tool, then drag on the ground in the viewport.");
+            const Editor::BrushOp shown = tool == Editor::Tool::Sculpt ? acting : chosen;
+            drawBrushControls(editor, true, shown == Editor::BrushOp::Add || shown == Editor::BrushOp::Subtract,
+                              shown == Editor::BrushOp::Flatten);
+            // The material new ground is made of, where the tools that make
+            // ground are.
+            if (shown == Editor::BrushOp::Add || shown == Editor::BrushOp::Grow) {
+                const core::u8 fill = editor.brush().material;
+                if (fill >= 1 && fill <= terrain->layers.size()) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("new ground is %s; choose another under Paint",
+                                        terrainLayerName(terrain->layers[fill - 1]).c_str());
+                    ImGui::PopTextWrapPos();
                 }
-                ImGui::EndDisabled();
-                ImGui::EndPopup();
             }
         }
-
-        if (labeledIconButton(icons, icons::ActionPaint, "Paint Material", ImVec2(-FLT_MIN, 0.0f)))
-            editor.setTool(Editor::Tool::Paint);
-        ImGui::SetItemTooltip("changes what the ground is made of without moving it at all");
     }
 
-    // --- Rules ----------------------------------------------------
-    //
-    // **What the ground is drawn as by slope and height** (ADR 0113 §2),
-    // live: every change redraws at once, and a drag on one number is one
-    // undo step. Rules draw and do not write; Apply writes.
-    if (terrain != nullptr && section("Rules", icons::ActionGrid, 0)) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("paint by slope and height, in order; drawn, not written, until Apply");
-        ImGui::PopTextWrapPos();
-
-        std::vector<asset::TerrainRule> rules = terrain->rules;
-        const std::vector<std::string>& layers = terrain->layers;
-        const auto nameOf = [&](core::u8 id) {
-            std::string name = id >= 1 && id <= layers.size() ? layers[id - 1] : std::string("?");
-            if (const std::size_t slash = name.find_last_of('/'); slash != std::string::npos)
-                name = name.substr(slash + 1);
-            if (name.ends_with(".material.json"))
-                name.resize(name.size() - std::string_view(".material.json").size());
-            return std::to_string(id) + "  " + name;
-        };
-        bool changed = false;
-        const char* label = "Edit Terrain Rule";
-        core::u64 coalesce = 0;
-        std::optional<std::size_t> remove;
-        std::optional<std::pair<std::size_t, std::size_t>> swap;
-
-        for (std::size_t index = 0; index < rules.size(); ++index) {
-            asset::TerrainRule& rule = rules[index];
-            ImGui::PushID(static_cast<int>(index));
-            const std::string title = std::to_string(index + 1) + ". " + nameOf(rule.material) + "###rule";
-            if (ImGui::Checkbox("##on", &rule.enabled)) {
-                changed = true;
-                label = rule.enabled ? "Enable Terrain Rule" : "Disable Terrain Rule";
+    // --- Paint ----------------------------------------------------------------
+    if (tab(TerrainMode::Paint, "Paint")) {
+        if (terrain == nullptr) {
+            needTerrain();
+        }
+        else {
+            ImGui::SeparatorText("Material");
+            drawTerrainLayers(editor, world, root, terrain);
+        }
+        // Nothing to paint with until there is a material.
+        if (terrain != nullptr && !terrain->layers.empty()) {
+            ImGui::Spacing();
+            const bool on = tool == Editor::Tool::Paint;
+            if (terrainTile(icons, icons::ActionPaint, on ? "Painting" : "Paint", on, false, -FLT_MIN)) {
+                editor.setTool(on ? Editor::Tool::Select : Editor::Tool::Paint);
+                g_terrainLastTool = editor.tool();
             }
-            ImGui::SetItemTooltip("on or off; off draws nothing, and turning the slope rock off is how steep "
-                                  "ground keeps its own layer");
-            ImGui::SameLine();
-            const bool open = ImGui::TreeNodeEx(title.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
-            if (open) {
-                const auto row = [&](const char* text) {
-                    ImGui::TextUnformatted(text);
-                    ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                };
-                // A drag's frames are one step: the key is the rule and field.
-                const auto edited = [&](bool moved, core::u64 field) {
-                    if (moved) {
-                        changed = true;
-                        coalesce = 0x52554C45000000ull | (static_cast<core::u64>(index) << 8) | field;
-                    }
-                };
-                row("Material");
-                if (ImGui::BeginCombo("##material", nameOf(rule.material).c_str())) {
-                    for (std::size_t id = 1; id <= layers.size(); ++id) {
-                        if (ImGui::Selectable(nameOf(static_cast<core::u8>(id)).c_str(), rule.material == id)) {
-                            rule.material = static_cast<core::u8>(id);
-                            changed = true;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                row("Slope");
-                float slope[2] = {rule.slopeMin, rule.slopeMax};
-                edited(ImGui::DragFloat2("##slope", slope, 0.25f, 0.0f, 90.0f, "%.1f deg"), 1);
-                rule.slopeMin = std::clamp(slope[0], 0.0f, 90.0f);
-                rule.slopeMax = std::clamp(slope[1], 0.0f, 90.0f);
-                ImGui::SetItemTooltip("from how steep to how steep, in degrees from level");
-                row("Height");
-                float height[2] = {rule.heightMin, rule.heightMax};
-                edited(ImGui::DragFloat2("##height", height, 0.25f, -100000.0f, 100000.0f, "%.1f m"), 2);
-                rule.heightMin = height[0];
-                rule.heightMax = height[1];
-                ImGui::SetItemTooltip("from how high to how high, in world metres; -100000 and 100000 are open");
-                row("Blend");
-                edited(ImGui::DragFloat("##blend", &rule.blend, 0.1f, 0.0f, 1000.0f, "%.1f"), 3);
-                rule.blend = std::max(rule.blend, 0.0f);
-                ImGui::SetItemTooltip("how wide the edge is: degrees across a slope bound, metres across a height "
-                                      "bound");
-                row("Noise");
-                edited(ImGui::DragFloat("##noise", &rule.noise, 0.005f, 0.0f, 2.0f, "%.3f"), 4);
-                rule.noise = std::max(rule.noise, 0.0f);
-                ImGui::SetItemTooltip("how ragged the edge is; 0 is a clean line");
-                row("Covers");
-                const std::string covers = rule.appliesTo.empty() ? std::string("every layer but its own")
-                                                                  : std::to_string(rule.appliesTo.size()) + " layer(s)";
-                if (ImGui::BeginCombo("##covers", covers.c_str())) {
-                    for (std::size_t id = 1; id <= layers.size(); ++id) {
-                        const auto layer = static_cast<core::u8>(id);
-                        const bool listed =
-                            std::find(rule.appliesTo.begin(), rule.appliesTo.end(), layer) != rule.appliesTo.end();
-                        bool on = rule.appliesTo.empty() ? layer != rule.material : listed;
-                        if (ImGui::Checkbox(nameOf(layer).c_str(), &on)) {
-                            // From "every layer but its own" to an explicit list
-                            // the first time one is unticked.
-                            if (rule.appliesTo.empty()) {
-                                for (std::size_t other = 1; other <= layers.size(); ++other) {
-                                    if (other != rule.material)
-                                        rule.appliesTo.push_back(static_cast<core::u8>(other));
-                                }
-                            }
-                            std::erase(rule.appliesTo, layer);
-                            if (on)
-                                rule.appliesTo.push_back(layer);
-                            std::sort(rule.appliesTo.begin(), rule.appliesTo.end());
-                            changed = true;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::SetItemTooltip("the layers this rule may paint over");
-
-                if (ImGui::SmallButton("up") && index > 0)
-                    swap = std::pair{index, index - 1};
-                ImGui::SameLine();
-                if (ImGui::SmallButton("down") && index + 1 < rules.size())
-                    swap = std::pair{index, index + 1};
-                ImGui::SameLine();
-                if (ImGui::SmallButton("remove"))
-                    remove = index;
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
+            ImGui::SetItemTooltip("changes what the ground is made of under the brush, without moving it");
+            brushDown("Press Paint, then drag over the ground.");
+            drawBrushControls(editor, false, false, false);
+            ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Paint by slope and height"))
+                drawTerrainRules(editor, world, root, *terrain, icons);
         }
-        if (swap.has_value()) {
-            std::swap(rules[swap->first], rules[swap->second]);
-            changed = true;
-            label = "Reorder Terrain Rules";
-            coalesce = 0;
-        }
-        if (remove.has_value()) {
-            rules.erase(rules.begin() + static_cast<std::ptrdiff_t>(*remove));
-            changed = true;
-            label = "Remove Terrain Rule";
-            coalesce = 0;
-        }
-
-        ImGui::BeginDisabled(rules.size() >= asset::MaxTerrainRules);
-        if (labeledIconButton(icons, icons::ActionAdd, "Add Rule", ImVec2(-FLT_MIN, 0.0f))) {
-            // A height rule, which is the one people reach for after the slope
-            // rock: snow above a line.
-            asset::TerrainRule rule;
-            rule.material = layers.size() >= 4 ? 4 : 1;
-            rule.slopeMin = 0.0f;
-            rule.slopeMax = 90.0f;
-            rule.heightMin = 40.0f;
-            rule.blend = 4.0f;
-            rule.noise = 0.25f;
-            rules.push_back(std::move(rule));
-            changed = true;
-            label = "Add Terrain Rule";
-            coalesce = 0;
-        }
-        ImGui::EndDisabled();
-        if (changed)
-            (void)editor.setTerrainRules(world, root, std::move(rules), label, coalesce);
-
-        ImGui::BeginDisabled(terrain->rules.empty() || terrain->field.empty());
-        if (labeledIconButton(icons, icons::ActionPaint, "Apply to Voxels", ImVec2(-FLT_MIN, 0.0f)))
-            (void)editor.applyTerrainRules(world, root);
-        ImGui::EndDisabled();
-        ImGui::SetItemTooltip("writes what the rules draw into the ground's own materials, so a rule can be "
-                              "turned off afterwards with nothing changing");
     }
 
-    // --- Foliage (ADR 0116) -----------------------------------------------
+    // --- Foliage (ADR 0116) -----------------------------------------------------
     //
     // The layers growing on this terrain, and a brush that paints a layer's
     // density by hand. A layer and a mesh are instances, so what they are is
-    // edited in Properties: this section makes them and chooses which one the
-    // brush paints.
-    if (terrain != nullptr && section("Foliage", icons::ActionPaint, 0)) {
-        std::vector<core::InstanceId> layers;
-        for (core::InstanceId child = world.firstChild(terrainId); child.valid(); child = world.nextSibling(child)) {
-            if (world.foliageLayers().find(child) != nullptr)
-                layers.push_back(child);
+    // edited in Properties; this makes them and chooses which the brush paints.
+    if (tab(TerrainMode::Foliage, "Foliage")) {
+        if (terrain == nullptr) {
+            needTerrain();
         }
-        if (layers.empty())
-            ImGui::TextWrapped("Nothing grows here yet. Add a layer, then give it a mesh.");
-        if (!layers.empty() && std::find(layers.begin(), layers.end(), editor.foliageLayer()) == layers.end())
-            editor.setFoliageLayer(layers.front());
-        for (core::usize index = 0; index < layers.size(); ++index) {
-            const core::InstanceId layer = layers[index];
-            core::usize meshes = 0;
-            for (core::InstanceId child = world.firstChild(layer); child.valid(); child = world.nextSibling(child))
-                meshes += world.foliageMeshes().find(child) != nullptr ? 1 : 0;
-            const std::string label = std::string(world.atoms().text(world.name(layer))) + "  (" +
-                                      std::to_string(meshes) + (meshes == 1 ? " mesh" : " meshes") +
-                                      ")###foliage-layer-" + std::to_string(index);
-            if (ImGui::Selectable(label.c_str(), layer == editor.foliageLayer())) {
-                editor.setFoliageLayer(layer);
-                inspector.select(layer);
+        else {
+            std::vector<core::InstanceId> layers;
+            for (core::InstanceId child = world.firstChild(terrainId); child.valid();
+                 child = world.nextSibling(child)) {
+                if (world.foliageLayers().find(child) != nullptr)
+                    layers.push_back(child);
             }
-        }
-        if (labeledIconButton(icons, icons::ActionAdd, "Add Layer", ImVec2(-FLT_MIN, 0.0f)))
-            (void)editor.createFoliageLayer(world, root, inspector);
-        ImGui::SetItemTooltip("a layer that grows on every material of this terrain; set its rules in Properties");
+            if (layers.empty())
+                ImGui::TextWrapped("Nothing grows here yet. Add a layer, then give it a mesh.");
+            if (!layers.empty() && std::find(layers.begin(), layers.end(), editor.foliageLayer()) == layers.end())
+                editor.setFoliageLayer(layers.front());
+            for (core::usize index = 0; index < layers.size(); ++index) {
+                const core::InstanceId layer = layers[index];
+                core::usize meshes = 0;
+                for (core::InstanceId child = world.firstChild(layer); child.valid(); child = world.nextSibling(child))
+                    meshes += world.foliageMeshes().find(child) != nullptr ? 1 : 0;
+                const std::string label = std::string(world.atoms().text(world.name(layer))) + "  (" +
+                                          std::to_string(meshes) + (meshes == 1 ? " mesh" : " meshes") +
+                                          ")###foliage-layer-" + std::to_string(index);
+                if (ImGui::Selectable(label.c_str(), layer == editor.foliageLayer())) {
+                    editor.setFoliageLayer(layer);
+                    inspector.select(layer);
+                }
+            }
+            const float half = std::floor((avail - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+            if (labeledIconButton(icons, icons::ActionAdd, "Add Layer", ImVec2(half, 0.0f)))
+                (void)editor.createFoliageLayer(world, root, inspector);
+            ImGui::SetItemTooltip("a layer that grows on every material of this terrain; set its rules in Properties");
+            ImGui::SameLine();
+            const scene::FoliageLayerComponent* chosen = world.foliageLayers().find(editor.foliageLayer());
+            ImGui::BeginDisabled(chosen == nullptr);
+            if (labeledIconButton(icons, icons::ActionAdd, "Add Mesh", ImVec2(-FLT_MIN, 0.0f)))
+                (void)editor.addFoliageMesh(world, editor.foliageLayer(), inspector);
+            ImGui::SetItemTooltip("a mesh the chosen layer grows; pick its Mesh in Properties");
 
-        const scene::FoliageLayerComponent* chosen = world.foliageLayers().find(editor.foliageLayer());
-        ImGui::BeginDisabled(chosen == nullptr);
-        if (labeledIconButton(icons, icons::ActionAdd, "Add Mesh", ImVec2(-FLT_MIN, 0.0f)))
-            (void)editor.addFoliageMesh(world, editor.foliageLayer(), inspector);
-        ImGui::SetItemTooltip("a mesh the chosen layer grows; pick its Mesh in Properties");
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Paint density");
-        const auto paintButton = [&](Editor::BrushOp op, std::string_view icon, const char* word, const char* tip) {
-            const bool on = editor.tool() == Editor::Tool::Foliage && editor.brush().op == op;
-            if (on)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            if (labeledIconButton(icons, icon, word, ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 2.0f, 0.0f))) {
-                editor.setBrushOp(op);
+            ImGui::SeparatorText("Paint density");
+            const bool painting = tool == Editor::Tool::Foliage;
+            const bool thin = painting ? editor.effectiveFoliageThin() : editor.foliageThin();
+            if (terrainTile(icons, icons::ActionPaint, "Grow", painting && !thin, false, half)) {
+                editor.setFoliageThin(false);
                 editor.setTool(Editor::Tool::Foliage);
+                g_terrainLastTool = Editor::Tool::Foliage;
             }
-            if (on)
-                ImGui::PopStyleColor();
-            ImGui::SetItemTooltip("%s", tip);
-        };
-        paintButton(Editor::BrushOp::Add, icons::ActionPaint, "Paint",
-                    "brings the chosen layer back towards what its rules grow");
-        ImGui::SameLine();
-        paintButton(Editor::BrushOp::Subtract, icons::ActionErase, "Thin", "thins the chosen layer, to nothing");
-        if (chosen != nullptr) {
-            ImGui::TextDisabled("%zu painted tile(s). The brush's size and strength are Sculpt's.",
-                                chosen->mask.size());
+            ImGui::SetItemTooltip("brings the chosen layer back towards what its rules grow. Ctrl thins");
+            ImGui::SameLine();
+            if (terrainTile(icons, icons::ActionErase, "Thin", painting && thin, false, -FLT_MIN)) {
+                editor.setFoliageThin(true);
+                editor.setTool(Editor::Tool::Foliage);
+                g_terrainLastTool = Editor::Tool::Foliage;
+            }
+            ImGui::SetItemTooltip("thins the chosen layer, to nothing at the brush's centre. Ctrl grows");
+            if (chosen != nullptr)
+                ImGui::TextDisabled("%zu painted tile(s)", chosen->mask.size());
+            ImGui::EndDisabled();
+            brushDown("Pick Grow or Thin, then drag over the ground.");
+            drawBrushControls(editor, true, false, false);
         }
-        ImGui::EndDisabled();
     }
 
-    if (terrain == nullptr && editor.tool() != Editor::Tool::Select) {
-        // Said rather than left to be discovered: the brush is selected,
-        // the ring is not drawing, and the reason is above.
+    // --- Create -----------------------------------------------------------------
+    if (tab(TerrainMode::Create, "Create")) {
+        ImGui::SeparatorText("Flat ground");
+        // **256 m, which is 256 columns square at the default voxel**: matched
+        // to the reference engines on sample count rather than metres, and
+        // four whole 64 m streaming cells on a side.
+        static f32 groundSize = 256.0f;
+        static f32 groundHeight = 0.0f;
+        const float label = ImGui::CalcTextSize("Height").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        ImGui::TextUnformatted("Size");
+        ImGui::SameLine(label);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::DragFloat("##ground-size", &groundSize, 1.0f, 8.0f, 2048.0f, "%.0f m square");
+        ImGui::TextUnformatted("Height");
+        ImGui::SameLine(label);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::DragFloat("##ground-height", &groundHeight, 0.25f, -256.0f, 256.0f, "%.1f m");
+        ImGui::SetItemTooltip("the world height the ground's surface is laid at");
+        {
+            // **The cost before the click**: a size field with no cost readout
+            // only reports its mistake afterwards.
+            const f32 voxel =
+                terrain != nullptr ? terrain->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
+            const auto columns = static_cast<int>(groundSize / std::max(voxel, 0.01f));
+            const auto side = static_cast<long long>(columns / static_cast<int>(asset::ChunkEdge) + 1);
+            ImGui::TextDisabled("%d x %d columns  |  ~%lld KB", columns, columns, side * side * 4);
+        }
+        if (const core::u8 fill = editor.brush().material;
+            terrain != nullptr && fill >= 1 && fill <= terrain->layers.size())
+            ImGui::TextDisabled("made of %s; choose another under Paint",
+                                terrainLayerName(terrain->layers[fill - 1]).c_str());
+        if (labeledIconButton(icons, icons::ActionAdd,
+                              terrain == nullptr ? "Create Terrain" : "Replace with Flat Ground",
+                              ImVec2(-FLT_MIN, ImGui::GetFrameHeight() * 1.4f))) {
+            if (editor.generateGround(world, root, inspector, groundSize, groundHeight, editor.brush().material)) {
+                // Straight on to shaping it, which is what somebody who just
+                // made ground wants next.
+                g_terrainMode = TerrainMode::Sculpt;
+            }
+        }
+        ImGui::SetItemTooltip(terrain == nullptr
+                                  ? "adds a Terrain to the world with flat ground, ready to sculpt"
+                                  : "levels the whole square to this height, ground sculpted inside it included; "
+                                    "ground outside the square stays. One ctrl-Z brings it back");
+
+        ImGui::SeparatorText("From a heightmap");
+        drawTerrainHeightmap(editor, world, root, inspector, commands);
+
+        if (terrain != nullptr) {
+            ImGui::SeparatorText("Start over");
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().warning));
+            if (labeledIconButton(icons, icons::ActionDelete, "Clear All Ground", ImVec2(-FLT_MIN, 0.0f)))
+                editor.clearTerrain(world, root, inspector);
+            ImGui::PopStyleColor();
+            ImGui::SetItemTooltip("removes every bit of ground, and keeps the terrain and its settings. One ctrl-Z "
+                                  "brings it back");
+        }
+    }
+
+    // --- Settings ---------------------------------------------------------------
+    if (tab(TerrainMode::Settings, "Settings")) {
+        drawTerrainSettings(editor, world, root, inspector);
+    }
+
+    // **The keys that make a brush quick**, written where the brush is.
+    if (terrain != nullptr && (g_terrainMode == TerrainMode::Sculpt || g_terrainMode == TerrainMode::Paint ||
+                               g_terrainMode == TerrainMode::Foliage)) {
+        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextWrapped("The brush has nothing to act on until this world has terrain.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled(g_terrainMode == TerrainMode::Sculpt
+                                ? "1-6 pick a tool  |  [ ] size  |  Shift+[ ] strength  |  hold Ctrl: the opposite  "
+                                  "|  hold Shift: smooth  |  Esc puts the brush down"
+                                : "[ ] size  |  Shift+[ ] strength  |  hold Ctrl: the opposite  |  Esc puts the brush "
+                                  "down");
+        ImGui::PopTextWrapPos();
     }
 }
 
@@ -12288,7 +12623,8 @@ void drawStatusBar(Editor& editor, const Inspector* inspector, EditorPanels& pan
             break;
         }
         if (!running && brush != nullptr) {
-            const std::string text = std::string(brush) + " brush";
+            const std::string words = terrainBrushWords(editor);
+            const std::string text = words.empty() ? std::string(brush) + " brush" : std::string(brush) + ": " + words;
             const float brushWidth = place(text);
             if (right > leftEnd &&
                 statusItem("##tool", brushWidth, height, "Ctrl+1 puts the brush down and selects again",
@@ -13103,8 +13439,12 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     }
 
     // **The brush follows the panel** (`Editor::setTerrainPanelShown`): only
-    // while the Terrain panel is open and on screen -- `Begin` answers false for
-    // a tab behind another in its dock, or a collapsed window.
+    // while the Terrain panel is open. **Open, not in front**: the panel shares
+    // its dock with Properties, and a brush that died whenever Properties came
+    // forward -- which selecting anything does -- was the owner's "I managed
+    // to break it and do not know how". What keeps a brush from lingering is
+    // the viewport saying it is in hand, Escape, and any click on something
+    // else putting it down.
     bool terrainShown = false;
     if (panels.terrain) {
         // `FirstUseEver`, so this decides only where a panel with no remembered
@@ -13122,14 +13462,14 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
                 ImGui::End();
                 goto terrainPanelDone;
             }
-            drawTerrainPanel(*editor, *world, treeRoot, *inspector, icons);
-            drawTerrainSetup(*editor, *world, treeRoot, *inspector, commands);
+            drawTerrainPanel(*editor, *world, treeRoot, *inspector, icons, commands);
         }
         ImGui::End();
     }
 terrainPanelDone:;
+    (void)terrainShown;
     if (editor != nullptr)
-        editor->setTerrainPanelShown(terrainShown && panels.terrain);
+        editor->setTerrainPanelShown(panels.terrain);
     if (panels.blocks) {
         if (rightColumn != 0)
             ImGui::SetNextWindowDockID(rightColumn, ImGuiCond_FirstUseEver);
@@ -13251,16 +13591,31 @@ terrainPanelDone:;
     // Tiles tool is left out of both: it paints the tilemap that IS selected.
     if (editor != nullptr && inspector != nullptr) {
         const auto isBrush = [](Editor::Tool tool) {
-            return tool == Editor::Tool::Sculpt || tool == Editor::Tool::Paint || tool == Editor::Tool::Blocks;
+            return tool == Editor::Tool::Sculpt || tool == Editor::Tool::Paint || tool == Editor::Tool::Blocks ||
+                   tool == Editor::Tool::Foliage;
         };
         const Editor::Tool tool = editor->tool();
         const core::InstanceId primary = inspector->selection();
         const core::usize count = inspector->selectionCount();
+        // **The ground is what the terrain brushes work on**: selecting the
+        // terrain or something growing on it -- which making ground and adding
+        // a foliage layer both do -- is not a new subject, and put the brush
+        // down in the middle of the work that made it.
+        const auto onTheGround = [&](core::InstanceId id) {
+            if (world == nullptr || !id.valid() || tool == Editor::Tool::Blocks)
+                return false;
+            for (core::InstanceId at = id; at.valid(); at = world->parentOf(at)) {
+                if (world->terrains().find(at) != nullptr)
+                    return true;
+            }
+            return false;
+        };
         if (isBrush(tool) && !isBrush(g_lastTool)) {
-            if (count > 0)
+            if (count > 0 && !(count == 1 && onTheGround(primary)))
                 commands.clearSelection = true;
         }
-        else if (isBrush(tool) && count > 0 && (primary != g_lastSelection || count != g_lastSelectionCount)) {
+        else if (isBrush(tool) && count > 0 && (primary != g_lastSelection || count != g_lastSelectionCount) &&
+                 !(count == 1 && onTheGround(primary))) {
             editor->setTool(Editor::Tool::Select);
             // And what was selected is shown, in front of the brush's panel.
             selectDockTab("Properties");
@@ -13290,6 +13645,12 @@ terrainPanelDone:;
     // the number somebody wants is far more often a round one, so the modifier
     // is for the exception rather than for the rule.
     const bool ctrlOnly = ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt;
+    // Held Ctrl turns a terrain brush round and held Shift smooths, for the
+    // stroke that starts while they are down (`Editor::setBrushModifiers`).
+    if (editor != nullptr) {
+        const bool typing = ImGui::GetIO().WantTextInput;
+        editor->setBrushModifiers(ImGui::GetIO().KeyCtrl && !typing, ImGui::GetIO().KeyShift && !typing);
+    }
     if (editor != nullptr && !ImGui::IsAnyItemActive() && !popupOpen && !editor->lookInput().active) {
         if (ctrlOnly && ImGui::IsKeyPressed(ImGuiKey_1, false)) {
             editor->setTool(Editor::Tool::Select);
@@ -13323,6 +13684,43 @@ terrainPanelDone:;
         if (editor->hasVoxels() && !ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
             editor->setTool(Editor::Tool::Blocks);
             panels.blocks = true;
+        }
+
+        // **The terrain brush's keys**, the set the reference editors share:
+        // [ and ] size it, with Shift its strength, and 1 to 6 pick a sculpt
+        // tool in the order the panel shows them. Not while text is typed.
+        const Editor::Tool held = editor->tool();
+        const bool terrainBrush =
+            held == Editor::Tool::Sculpt || held == Editor::Tool::Paint || held == Editor::Tool::Foliage;
+        if (terrainBrush && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt) {
+            const Editor::Brush& brush = editor->brush();
+            const bool shift = ImGui::GetIO().KeyShift;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true)) {
+                if (shift)
+                    editor->setBrushStrength(brush.strength - 0.05f);
+                else
+                    editor->setBrushRadius(brush.radius / 1.2f);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) {
+                if (shift)
+                    editor->setBrushStrength(brush.strength + 0.05f);
+                else
+                    editor->setBrushRadius(brush.radius * 1.2f);
+            }
+            if (held == Editor::Tool::Sculpt && !shift) {
+                constexpr std::array<std::pair<ImGuiKey, Editor::BrushOp>, 6> Keys{{
+                    {ImGuiKey_1, Editor::BrushOp::Grow},
+                    {ImGuiKey_2, Editor::BrushOp::Erode},
+                    {ImGuiKey_3, Editor::BrushOp::Smooth},
+                    {ImGuiKey_4, Editor::BrushOp::Flatten},
+                    {ImGuiKey_5, Editor::BrushOp::Add},
+                    {ImGuiKey_6, Editor::BrushOp::Subtract},
+                }};
+                for (const auto& [key, op] : Keys) {
+                    if (ImGui::IsKeyPressed(key, false))
+                        editor->setBrushOp(op);
+                }
+            }
         }
 
         // Q out of the Tiles tool, whatever else the world has.

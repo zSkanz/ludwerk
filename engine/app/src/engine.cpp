@@ -4852,7 +4852,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     const core::Vec3 centre{static_cast<f32>(aim->position.x - origin.x),
                                             static_cast<f32>(aim->position.y - origin.y),
                                             static_cast<f32>(aim->position.z - origin.z)};
-                    drawBrushRing(centre, aim->normal, editor.brush().radius, debugDraw);
+                    const Editor::Tool tool = editor.tool();
+                    const Editor::BrushOp op = editor.effectiveBrushOp();
+                    BrushRingStyle style;
+                    style.square = tool == Editor::Tool::Sculpt && editor.brush().shape == Editor::BrushShape::Box &&
+                                   (op == Editor::BrushOp::Add || op == Editor::BrushOp::Subtract);
+                    style.falloff =
+                        tool == Editor::Tool::Foliage ||
+                        (tool == Editor::Tool::Sculpt && op != Editor::BrushOp::Add && op != Editor::BrushOp::Subtract);
+                    drawBrushRing(centre, aim->normal, editor.brush().radius, style, debugDraw);
                 }
                 // **The cell a block click would change**, as a box a hair
                 // larger than the block so it is not buried in the faces it

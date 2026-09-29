@@ -1071,8 +1071,8 @@ local Classes: { Schema.Class } = {
             .. "neighbouring voxels, so a ball carved out of a hillside lands where you put it rather than "
             .. "on a grid line. Caves, arches, overhangs and flat ground are all the same data.\n\n"
             .. "Materials are numbered: 0 is air, and `n` is the terrain's layer `n` -- a material asset "
-            .. "(`GetLayers`). A new terrain's eight layers are the engine's own, so 1 to 8 are Grass, Sand, "
-            .. "Rock, Snow, Mud, Sandstone, Basalt and Ice until you change them.\n\n"
+            .. "(`GetLayers`). A new terrain has none -- its materials are the project's own files -- and "
+            .. "draws plain grey ground until `SetLayers` gives it some.\n\n"
             .. "There is one per `Workspace`, reached as `workspace.Terrain`, because a world has one "
             .. "ground. Creating a second is legal and it simply is not the one the workspace names.\n\n"
             .. "**Every verb here is a write to the voxels**, and the voxels are part of the world -- so a "
@@ -1354,8 +1354,8 @@ local Classes: { Schema.Class } = {
                 Returns = { "{ string }" },
                 ThreadSafety = "Safe",
                 Doc = "What each material id is: a list of material URNs, where entry `n` is what voxels of "
-                    .. "material `n` are drawn with. A new terrain's are the engine's eight, "
-                    .. "`engine://terrain/grass` to `engine://terrain/ice`.",
+                    .. "material `n` are drawn with. A new terrain has none; a scene saved before terrains "
+                    .. "started empty reads the engine's eight, `engine://terrain/grass` to `engine://terrain/ice`.",
             },
             {
                 Name = "SetLayers",
@@ -1378,7 +1378,7 @@ local Classes: { Schema.Class } = {
                     .. "`Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between "
                     .. "`HeightMin` and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer "
                     .. "but its own), with an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new "
-                    .. "terrain's one rule is the slope rock: steep ground drawn as layer 3.\n\n"
+                    .. "terrain has none.\n\n"
                     .. "**Rules are drawn, not written**: the voxels keep their materials until `ApplyRules`. "
                     .. "What a raycast reports is what is drawn.",
             },

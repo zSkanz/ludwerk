@@ -1269,8 +1269,8 @@ declare extern type Terrain extends Instance with
     --- Removes every voxel. The terrain is empty afterwards and `VoxelSize` becomes settable again.
     function Clear(self): ()
     --- What each material id is: a list of material URNs, where entry `n` is what voxels of material
-    --- `n` are drawn with. A new terrain's are the engine's eight, `engine://terrain/grass` to
-    --- `engine://terrain/ice`.
+    --- `n` are drawn with. A new terrain has none; a scene saved before terrains started empty reads
+    --- the engine's eight, `engine://terrain/grass` to `engine://terrain/ice`.
     function GetLayers(self): { string }
     --- Sets what each material id is, as `GetLayers` returns it: up to 255 material URNs, entry `n` for
     --- material `n`. The voxels keep their numbers, so replacing entry 3 repaints every rock at once;
@@ -1279,9 +1279,9 @@ declare extern type Terrain extends Instance with
     --- The rules that paint the ground by slope and height, in the order they paint: each draws
     --- `Material` where the ground is between `SlopeMin` and `SlopeMax` degrees and between `HeightMin`
     --- and `HeightMax` metres, over the layers in `AppliesTo` (empty is every layer but its own), with
-    --- an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new terrain's one rule is the
-    --- slope rock: steep ground drawn as layer 3. **Rules are drawn, not written**: the voxels keep
-    --- their materials until `ApplyRules`. What a raycast reports is what is drawn.
+    --- an edge `Blend` wide (degrees or metres) and `Noise` ragged. A new terrain has none. **Rules are
+    --- drawn, not written**: the voxels keep their materials until `ApplyRules`. What a raycast reports
+    --- is what is drawn.
     function GetRules(self): { { Enabled: boolean, Material: number, SlopeMin: number, SlopeMax: number, HeightMin: number, HeightMax: number, Blend: number, Noise: number, AppliesTo: { number } } }
     --- Sets the rules, as `GetRules` returns them: up to 16, painted in order. A missing field keeps
     --- its default -- `Enabled` true, the slopes 0 and 90, the heights open, `Blend` 10, `Noise` 0.12.

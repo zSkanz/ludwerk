@@ -6,9 +6,11 @@
 // off still draws. The owner's world was full of both before this grid existed
 // (D162, D163), so each of those has a test here in the new terms.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <vector>
@@ -531,6 +533,84 @@ TEST_CASE("smoothing takes the edge off a step")
     CHECK(top(field, 1.5, 0.5) - top(field, -1.5, 0.5) < step * 0.8);
 }
 
+namespace {
+
+// Ground shaped by `height(x, z)` over a square `columns` wide, centred.
+template <class Height>
+[[nodiscard]] TerrainField shapedField(core::u32 columns, Height&& height)
+{
+    TerrainField field(settingsOf());
+    std::vector<float> heights(static_cast<std::size_t>(columns) * columns);
+    const auto half = static_cast<int>(columns / 2);
+    for (core::u32 z = 0; z < columns; ++z) {
+        for (core::u32 x = 0; x < columns; ++x)
+            heights[z * columns + x] = height(static_cast<double>(static_cast<int>(x) - half) + 0.5,
+                                              static_cast<double>(static_cast<int>(z) - half) + 0.5);
+    }
+    (void)writeHeights(field, -half, -half, columns, heights, 1);
+    return field;
+}
+
+} // namespace
+
+TEST_CASE("a held smooth brush keeps wearing a gentle hill down, and never stalls")
+{
+    // **The owner's "I cannot smooth the mesh"** (2026-09-29). A hill four
+    // metres high and wide as a meadow, and the default brush held on its top:
+    // the old blur moved it a third of a metre and then every stamp rounded
+    // to nothing, because it blurred occupancy, which a gentle surface leaves
+    // almost linear. Smoothing the surface's distance keeps it going.
+    TerrainField field = shapedField(64, [](double x, double z) {
+        return static_cast<float>(4.0 * std::exp(-(x * x + z * z) / (2.0 * 6.0 * 6.0)));
+    });
+    const double peak = top(field, 0.5, 0.5);
+    const core::DVec3 aim{0.5, peak, 0.5};
+    int idle = 0;
+    double afterTen = 0.0;
+    for (int stamp = 0; stamp < 30; ++stamp) {
+        if (smoothBall(field, aim, 4.0, 0.35f).touched == 0)
+            ++idle;
+        if (stamp == 9)
+            afterTen = peak - top(field, 0.5, 0.5);
+    }
+    const double afterThirty = peak - top(field, 0.5, 0.5);
+    CHECK(idle == 0);
+    CHECK(afterThirty > 0.6);
+    CHECK(afterThirty > afterTen + 0.1);
+}
+
+TEST_CASE("smoothing leaves flat ground exactly where it is")
+{
+    TerrainField field = flatField(0.0f);
+    const std::vector<Voxel> before = voxelsIn(field, -10, -6, -10, 10, 6, 10);
+    CHECK(smoothBall(field, core::DVec3{0.0, 0.0, 0.0}, 6.0, 1.0f).touched == 0);
+    const std::vector<Voxel> after = voxelsIn(field, -10, -6, -10, 10, 6, 10);
+    for (std::size_t at = 0; at < before.size(); ++at)
+        CHECK(before[at].occupancy == after[at].occupancy);
+}
+
+TEST_CASE("smoothing fills a pit and flattens bumps smaller than the brush")
+{
+    TerrainField pit = shapedField(48, [](double x, double z) {
+        return static_cast<float>(-3.0 * std::exp(-(x * x + z * z) / (2.0 * 1.6 * 1.6)));
+    });
+    const double bottom = top(pit, 0.5, 0.5);
+    for (int stamp = 0; stamp < 10; ++stamp)
+        (void)smoothBall(pit, core::DVec3{0.5, -1.0, 0.5}, 4.0, 0.35f);
+    CHECK(top(pit, 0.5, 0.5) > bottom + 1.0);
+
+    // Bumps a metre high, eight metres apart, under a four-metre brush: the
+    // old blur left the one under it standing.
+    TerrainField bumps = shapedField(48, [](double x, double z) {
+        return static_cast<float>(std::sin(x * 2.0 * std::numbers::pi / 8.0) *
+                                  std::sin(z * 2.0 * std::numbers::pi / 8.0));
+    });
+    const double crest = top(bumps, 2.0, 2.0);
+    for (int stamp = 0; stamp < 30; ++stamp)
+        (void)smoothBall(bumps, core::DVec3{2.0, 1.0, 2.0}, 4.0, 0.35f);
+    CHECK(top(bumps, 2.0, 2.0) < crest - 0.3);
+}
+
 TEST_CASE("flattening pulls the ground in reach to the plane")
 {
     TerrainField field = flatField(0.0f);
@@ -660,4 +740,20 @@ TEST_CASE("field settings are checked as the floats they are (audit F9)")
     CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, -256.0f, infinity}));
     CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, 10.0f, 10.0f}));
     CHECK(asset::saneFieldSettings(asset::FieldSettings{0.01f, -1e6f, 1e6f}));
+}
+
+TEST_CASE("what a smooth stamp costs" * doctest::skip())
+{
+    for (const auto& [voxel, radius] :
+         {std::pair{1.0f, 4.0}, std::pair{1.0f, 16.0}, std::pair{0.5f, 16.0}, std::pair{0.5f, 32.0}}) {
+        TerrainField field(settingsOf(voxel));
+        (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 0.0f, 1);
+        (void)growBall(field, core::DVec3{0.0, 0.0, 0.0}, radius, static_cast<float>(radius) * 0.5f, 1);
+        const auto started = std::chrono::steady_clock::now();
+        int stamps = 0;
+        for (; stamps < 5; ++stamps)
+            (void)smoothBall(field, core::DVec3{0.0, 2.0, 0.0}, radius, 0.35f);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        MESSAGE("voxel " << voxel << " radius " << radius << ": " << ms / stamps << " ms a stamp");
+    }
 }

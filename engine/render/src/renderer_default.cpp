@@ -4004,6 +4004,17 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
         const auto layerCount = static_cast<u32>(std::min<usize>(terrain.layers.size(), kTerrainLayerSlots - 1));
         GpuTerrainSurfaceUniforms& block = entry.uniforms;
         block = GpuTerrainSurfaceUniforms{};
+        // **Ground no layer names draws plain**, a light matte grey, not
+        // black: a new terrain has no materials (2026-09-29), and its ground
+        // is the shape a person is sculpting before it is anything.
+        for (u32 index = layerCount + 1; index < kTerrainLayerSlots; ++index) {
+            for (u32 channel = 0; channel < 3; ++channel) {
+                block.layerFlat[index][channel] = 0.55f;
+                block.layerTint[index][channel] = 1.0f;
+            }
+            block.layerFlat[index][3] = 1.0f;
+            block.layerSurface[index][0] = 0.9f;
+        }
         bool waiting = false;
         std::vector<u32> sources;
         sources.reserve(static_cast<usize>(layerCount) * 3u);

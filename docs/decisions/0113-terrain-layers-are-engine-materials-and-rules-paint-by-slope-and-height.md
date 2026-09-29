@@ -97,3 +97,23 @@ What a survey of the code found on 2026-09-27:
 
 - Two materials in one voxel and gradual painting: ADR 0114.
 - Surface shaders on terrain layers.
+
+## Amendment, 2026-09-29: a new terrain has no materials
+
+The owner: the engine's eight came with every terrain, and nobody could open
+them in Content -- they are built in, not files. So a material a terrain wears
+is one a project can see and change, or none.
+
+- **A new terrain has no layers and no rules.** Its ground draws a plain matte
+  grey, and the first material given to it is what the ground already there
+  becomes (the voxels it was laid with are material 1).
+- **The engine's eight stay built in, as parents.** The editor's **Add Starter
+  Materials** writes eight files under `content/materials/terrain/`, each a
+  variant of one of them: finished-looking, listed in Content, and edited like
+  any material. **New Material** writes a base material and adds it as the next
+  layer. A layer list offers the project's materials only.
+- **Absent still means the eight.** A scene written before this has no
+  `terrainLayers` or `terrainRules` and reads the engine's eight and the slope
+  rock, so it looks as it did; a terrain with none writes its empty lists. A
+  script's `Instance.new("Terrain")` is empty, and the examples that build
+  terrain in a script carry their materials as files and set them.

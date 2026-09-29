@@ -1296,39 +1296,79 @@ TEST_CASE("a terrain larger than a streamed cell survives a save and a load")
     CHECK(after->field.digest() == digest);
 }
 
-TEST_CASE("a terrain's layers survive a save, and the engine's eight are not written")
+namespace {
+
+// The terrain of the first workspace in a scene read into a fresh fixture.
+[[nodiscard]] scene::TerrainComponent reloadedTerrain(const std::string& text)
 {
-    // ADR 0113: a scene that kept the default layers carries no list, so one
-    // written before layers existed and one written after read the same.
-    Fixture fixture;
-    const core::InstanceId workspace = makeWorkspace(fixture);
-    const core::InstanceId ground = terrainUnder(fixture, workspace);
-    CHECK(scene::writeScene(fixture.world).find("terrainLayers") == std::string::npos);
-
-    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
-    REQUIRE(component != nullptr);
-    REQUIRE(component->layers.size() == 8);
-    component->layers[2] = "asset://materials/cliff.material.json";
-    component->layers.push_back("asset://materials/moss.material.json");
-    const std::string text = scene::writeScene(fixture.world);
-    CHECK(text.find("terrainLayers") != std::string::npos);
-
     Fixture reloaded;
     const core::InstanceId target = makeWorkspace(reloaded);
     REQUIRE_FALSE(scene::readScene(reloaded.world, text).has_value());
-    const scene::TerrainComponent* after = nullptr;
+    scene::TerrainComponent out;
+    bool found = false;
     for (core::InstanceId child = reloaded.world.firstChild(target); child.valid();
          child = reloaded.world.nextSibling(child)) {
-        if (const scene::TerrainComponent* found = reloaded.world.terrains().find(child); found != nullptr)
-            after = found;
+        if (const scene::TerrainComponent* terrain = reloaded.world.terrains().find(child); terrain != nullptr) {
+            out = *terrain;
+            found = true;
+        }
     }
-    REQUIRE(after != nullptr);
-    REQUIRE(after->layers.size() == 9);
-    CHECK(after->layers[0] == "engine://terrain/grass");
-    // The default rule is not written either, and so reads back as itself.
-    CHECK(after->rules == asset::defaultTerrainRules());
-    CHECK(after->layers[2] == "asset://materials/cliff.material.json");
-    CHECK(after->layers[8] == "asset://materials/moss.material.json");
+    REQUIRE(found);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("a new terrain has no materials, and saves and reads back with none")
+{
+    // The owner, 2026-09-29: a terrain's materials are the project's own
+    // files; none come with it. Its empty list is written, because a list
+    // that is absent means something else (below).
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    const scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    CHECK(component->layers.empty());
+    CHECK(component->rules.empty());
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("terrainLayers") != std::string::npos);
+    const scene::TerrainComponent after = reloadedTerrain(text);
+    CHECK(after.layers.empty());
+    CHECK(after.rules.empty());
+}
+
+TEST_CASE("a scene from before terrains started empty reads the engine's eight and the slope rock")
+{
+    // A scene written while a terrain came with the engine's eight carried no
+    // list for them, and no list for the one rule: absent still means those,
+    // so every such scene looks as it did.
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    component->layers = asset::defaultTerrainLayers();
+    component->rules = asset::defaultTerrainRules();
+    const std::string text = scene::writeScene(fixture.world);
+    CHECK(text.find("terrainLayers") == std::string::npos);
+    CHECK(text.find("terrainRules") == std::string::npos);
+    const scene::TerrainComponent after = reloadedTerrain(text);
+    CHECK(after.layers == asset::defaultTerrainLayers());
+    CHECK(after.rules == asset::defaultTerrainRules());
+}
+
+TEST_CASE("a terrain's layers survive a save")
+{
+    Fixture fixture;
+    const core::InstanceId workspace = makeWorkspace(fixture);
+    const core::InstanceId ground = terrainUnder(fixture, workspace);
+    scene::TerrainComponent* component = fixture.world.terrains().find(ground);
+    REQUIRE(component != nullptr);
+    component->layers = {"asset://materials/terrain/grass.material.json", "asset://materials/cliff.material.json",
+                         "asset://materials/moss.material.json"};
+    const scene::TerrainComponent after = reloadedTerrain(scene::writeScene(fixture.world));
+    CHECK(after.layers == component->layers);
 }
 
 TEST_CASE("a terrain's rules survive a save, and turning the rock off is saved too")
@@ -1336,10 +1376,10 @@ TEST_CASE("a terrain's rules survive a save, and turning the rock off is saved t
     Fixture fixture;
     const core::InstanceId workspace = makeWorkspace(fixture);
     const core::InstanceId ground = terrainUnder(fixture, workspace);
-    CHECK(scene::writeScene(fixture.world).find("terrainRules") == std::string::npos);
 
     scene::TerrainComponent* component = fixture.world.terrains().find(ground);
     REQUIRE(component != nullptr);
+    component->rules = asset::defaultTerrainRules();
     asset::TerrainRule snow;
     snow.material = 4;
     snow.heightMin = 30.0f;

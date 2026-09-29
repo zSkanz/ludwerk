@@ -86,14 +86,13 @@ bool textureSlot(const char* label, ContentTree& content, scene::World& world, c
 
 } // namespace
 
-void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector,
-                      EditorCommands& commands)
+void drawTerrainHeightmap(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector,
+                          EditorCommands& commands)
 {
     const core::InstanceId terrainId = editor.terrainIn(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
-
-    // --- Heightmap ------------------------------------------------------------
-    if (ImGui::CollapsingHeader("Heightmap")) {
+    const float labelWidth = ImGui::CalcTextSize("White at").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("ground from a greyscale image: black is the lowest height, white the highest. "
                             "16-bit PNG and RAW keep smooth slopes; 8-bit shows steps");
@@ -111,18 +110,21 @@ void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root
         static f32 low = 0.0f;
         static f32 high = 64.0f;
         ImGui::TextUnformatted("Size");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::DragFloat("##heightmap-size", &size, 1.0f, 8.0f, 2048.0f, "%.0f m");
         ImGui::SetItemTooltip("how wide the image is laid, centred on the terrain's position");
         ImGui::TextUnformatted("Black at");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::DragFloat("##heightmap-low", &low, 0.25f, -1024.0f, 1024.0f, "%.1f m");
         ImGui::TextUnformatted("White at");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::DragFloat("##heightmap-high", &high, 0.25f, -1024.0f, 1024.0f, "%.1f m");
 
         // The cost before the click, as the flat-ground form shows it.
-        const f32 voxel = terrain != nullptr ? terrain->field.settings().voxelSize : 0.5f;
+        const f32 voxel = terrain != nullptr ? terrain->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
         const auto columns = static_cast<int>(std::lround(size / std::max(voxel, 0.01f))) + 1;
         ImGui::TextDisabled("%d columns across at %.2f m", columns, static_cast<double>(voxel));
         if (terrain != nullptr) {
@@ -146,9 +148,18 @@ void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::SetItemTooltip("replaces the ground's height across the square; caves are left as they are, and one "
                               "ctrl-Z takes it back");
     }
+}
 
-    // --- Settings -------------------------------------------------------------
-    if (terrain != nullptr && ImGui::CollapsingHeader("Settings")) {
+void drawTerrainSettings(Editor& editor, scene::World& world, core::InstanceId root, Inspector& inspector)
+{
+    const core::InstanceId terrainId = editor.terrainIn(world, root);
+    const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
+    if (terrain == nullptr) {
+        ImGui::TextWrapped("Settings are the terrain's own: create one first.");
+        return;
+    }
+    const float labelWidth = ImGui::CalcTextSize("Voxel size").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    {
         const asset::FieldSettings& settings = terrain->field.settings();
         const bool empty = terrain->field.empty();
         const auto write = [&](std::string_view property, f32 value) {
@@ -157,6 +168,7 @@ void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root
         };
 
         ImGui::TextUnformatted("Voxel size");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 voxel = settings.voxelSize;
         ImGui::BeginDisabled(!empty);
@@ -168,6 +180,7 @@ void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root
                                       "column. Clear Terrain first");
 
         ImGui::TextUnformatted("Lowest");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 lowest = settings.minHeight;
         if (ImGui::DragFloat("##min-height", &lowest, 0.5f, -4096.0f, settings.maxHeight - 1.0f, "%.1f m"))
@@ -175,6 +188,7 @@ void drawTerrainSetup(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::SetItemTooltip("the deepest anything may dig. Set it before digging: a collider's precision is "
                               "spread over this range");
         ImGui::TextUnformatted("Highest");
+        ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 highest = settings.maxHeight;
         if (ImGui::DragFloat("##max-height", &highest, 0.5f, settings.minHeight + 1.0f, 4096.0f, "%.1f m"))
@@ -228,7 +242,9 @@ void drawBlockLook(Editor& editor, scene::World& world, Inspector& inspector)
 
 namespace engine::app {
 
-void drawTerrainSetup(Editor&, scene::World&, core::InstanceId, Inspector&, EditorCommands&)
+void drawTerrainHeightmap(Editor&, scene::World&, core::InstanceId, Inspector&, EditorCommands&)
+{}
+void drawTerrainSettings(Editor&, scene::World&, core::InstanceId, Inspector&)
 {}
 void drawBlockLook(Editor&, scene::World&, Inspector&)
 {}

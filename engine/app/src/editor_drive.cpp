@@ -36,13 +36,28 @@ namespace {
             return static_cast<ImGuiKey>(ImGuiKey_F1 + index - 1);
     }
     static const std::pair<const char*, ImGuiKey> Named[] = {
-        {"enter", ImGuiKey_Enter},         {"escape", ImGuiKey_Escape},     {"tab", ImGuiKey_Tab},
-        {"backspace", ImGuiKey_Backspace}, {"delete", ImGuiKey_Delete},     {"space", ImGuiKey_Space},
-        {"up", ImGuiKey_UpArrow},          {"down", ImGuiKey_DownArrow},    {"left", ImGuiKey_LeftArrow},
-        {"right", ImGuiKey_RightArrow},    {"home", ImGuiKey_Home},         {"end", ImGuiKey_End},
-        {"pageup", ImGuiKey_PageUp},       {"pagedown", ImGuiKey_PageDown}, {"comma", ImGuiKey_Comma},
-        {"period", ImGuiKey_Period},       {"slash", ImGuiKey_Slash},       {"grave", ImGuiKey_GraveAccent},
-        {"minus", ImGuiKey_Minus},         {"equal", ImGuiKey_Equal},
+        {"enter", ImGuiKey_Enter},
+        {"escape", ImGuiKey_Escape},
+        {"tab", ImGuiKey_Tab},
+        {"backspace", ImGuiKey_Backspace},
+        {"delete", ImGuiKey_Delete},
+        {"space", ImGuiKey_Space},
+        {"up", ImGuiKey_UpArrow},
+        {"down", ImGuiKey_DownArrow},
+        {"left", ImGuiKey_LeftArrow},
+        {"right", ImGuiKey_RightArrow},
+        {"home", ImGuiKey_Home},
+        {"end", ImGuiKey_End},
+        {"pageup", ImGuiKey_PageUp},
+        {"pagedown", ImGuiKey_PageDown},
+        {"comma", ImGuiKey_Comma},
+        {"period", ImGuiKey_Period},
+        {"slash", ImGuiKey_Slash},
+        {"grave", ImGuiKey_GraveAccent},
+        {"minus", ImGuiKey_Minus},
+        {"equal", ImGuiKey_Equal},
+        {"bracketleft", ImGuiKey_LeftBracket},
+        {"bracketright", ImGuiKey_RightBracket},
     };
     for (const auto& [text, key] : Named) {
         if (name == text)

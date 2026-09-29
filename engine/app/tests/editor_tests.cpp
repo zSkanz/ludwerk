@@ -3178,6 +3178,39 @@ struct MaterialDesk
 
 } // namespace
 
+TEST_CASE("a new terrain has no materials; the starters are files in the project, and a new one is its next layer")
+{
+    // The owner, 2026-09-29: materials the ground came with could not be
+    // opened in Content. Now none come with it, and every one it has is a file.
+    MaterialDesk desk("terrain-materials");
+    // The desk's registry has no Terrain class; the component is what counts.
+    const core::InstanceId terrain = desk.world.create(desk.fixture.folderClass);
+    desk.world.terrains().add(terrain, scene::TerrainComponent{});
+    REQUIRE_FALSE(desk.world.setParent(terrain, desk.workspace).has_value());
+    REQUIRE(desk.editor.terrainIn(desk.world, desk.workspace) == terrain);
+    CHECK(desk.world.terrains().find(terrain)->layers.empty());
+
+    REQUIRE(desk.editor.addStarterTerrainMaterials(desk.world, desk.workspace));
+    const std::vector<std::string> layers = desk.world.terrains().find(terrain)->layers;
+    REQUIRE(layers.size() == 8);
+    CHECK(layers[0] == "asset://materials/terrain/grass.material.json");
+    CHECK(std::filesystem::exists(desk.content / "materials" / "terrain" / "rock.material.json"));
+    // A variant of the built-in one: it looks like it, texture and all.
+    const asset::ResolvedMaterial grass = desk.world.resolveMaterial(desk.world.atoms().intern(layers[0]), 0);
+    CHECK(grass.properties.colorMap == "engine://terrain/grass/color");
+
+    // Again: nothing new to add, and nothing written over.
+    const core::usize steps = desk.editor.history().depth();
+    (void)desk.editor.addStarterTerrainMaterials(desk.world, desk.workspace);
+    CHECK(desk.world.terrains().find(terrain)->layers == layers);
+    CHECK(desk.editor.history().depth() == steps);
+
+    const std::string made = desk.editor.addNewTerrainMaterial(desk.world, desk.workspace, "moss");
+    CHECK(made == "materials/moss.material.json");
+    CHECK(desk.world.terrains().find(terrain)->layers.size() == 9);
+    CHECK(desk.editor.brush().material == 9);
+}
+
 TEST_CASE("a new material is a file with the engine default's values, declaring nothing")
 {
     MaterialDesk desk("material-new");
@@ -4522,8 +4555,10 @@ TEST_CASE("the brush acts only while the Terrain panel is on screen")
 {
     // **The owner, 2026-09-23**: moving about the viewport, passing over the
     // ground brought up the terrain brush. The brush is the Terrain panel's,
-    // so with the panel closed or behind another tab there is none -- no ring,
-    // no stroke -- whatever tool was chosen last.
+    // so with the panel closed there is none -- no ring, no stroke -- whatever
+    // tool was chosen last. (Behind another tab it stays: selecting anything
+    // brings Properties forward, and a brush that died with it was the
+    // terrain editor's "broke and I do not know how", 2026-09-29.)
     BrushRig rig;
     rig.lookDown(60.0);
     rig.editor.setTool(Editor::Tool::Sculpt);
@@ -6029,4 +6064,155 @@ TEST_CASE("in the editor the game's pointer is in the viewport's pixels")
     CHECK(static_cast<double>(game[1].pointerX) == doctest::Approx(100.0));
     // Not a pointer event: left as it was.
     CHECK(static_cast<double>(game[2].pointerX) == doctest::Approx(7.0));
+}
+
+namespace {
+
+// One short stroke at `at`: a press, a few frames held, a release.
+void strokeAt(BrushRig& rig, core::DVec3 at, int frames = 6)
+{
+    const core::Vec2 pixel = rig.pixelOf(at);
+    rig.frame(pixel, true, true, 1.0 / 60.0);
+    for (int frame = 0; frame < frames; ++frame)
+        rig.frame(pixel, false, true, 1.0 / 60.0);
+    rig.frame(pixel, false, false, 1.0 / 60.0);
+}
+
+} // namespace
+
+TEST_CASE("a stroke that changes nothing leaves nothing to undo")
+{
+    // Painting ground the colour it already is changes no voxel, and used to
+    // push a step that ctrl-Z then spent a press on.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Paint);
+    rig.editor.setBrushMaterial(1);
+    const core::usize before = rig.editor.history().depth();
+    const core::u64 revision = rig.field().fieldRevision;
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    CHECK(rig.editor.history().depth() == before);
+    CHECK(rig.field().fieldRevision == revision);
+
+    // And one that did change something is one step, as before.
+    rig.editor.setBrushMaterial(3);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    CHECK(rig.editor.history().depth() == before + 1);
+}
+
+TEST_CASE("a brush too big for the voxels says so instead of doing nothing")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    // A tenth-of-a-metre field: a 30 m ball is 600 voxels across, past the
+    // most one stamp may touch.
+    scene::TerrainComponent& terrain = rig.field();
+    terrain.field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 0.1f, .minHeight = -64.0f, .maxHeight = 64.0f});
+    (void)asset::fillFlat(terrain.field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 0.0f, 1);
+    terrain.fieldRevision += 1;
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushRadius(30.0f);
+    const core::usize before = rig.editor.history().depth();
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0}, 2);
+    CHECK(rig.editor.status().failed);
+    CHECK(rig.editor.status().message.find("too big") != std::string::npos);
+    CHECK(rig.editor.history().depth() == before);
+}
+
+TEST_CASE("held Ctrl turns the brush round, and held Shift smooths, for the stroke it starts")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushRadius(3.0f);
+    CHECK(rig.editor.effectiveBrushOp() == Editor::BrushOp::Add);
+
+    const std::optional<float> before = asset::heightAt(rig.field().field, 0.0, 0.0);
+    REQUIRE(before.has_value());
+    rig.editor.setBrushModifiers(true, false);
+    CHECK(rig.editor.effectiveBrushOp() == Editor::BrushOp::Subtract);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    const std::optional<float> after = asset::heightAt(rig.field().field, 0.0, 0.0);
+    REQUIRE(after.has_value());
+    CHECK(static_cast<double>(*after) < static_cast<double>(*before) - 1.0);
+    CHECK(rig.editor.history().undoLabel() == "Dig");
+    // The brush's own choice is untouched.
+    CHECK(rig.editor.brush().op == Editor::BrushOp::Add);
+
+    rig.editor.setBrushModifiers(false, true);
+    CHECK(rig.editor.effectiveBrushOp() == Editor::BrushOp::Smooth);
+    strokeAt(rig, core::DVec3{0.0, 0.0, 0.0});
+    CHECK(rig.editor.history().undoLabel() == "Smooth");
+
+    rig.editor.setBrushModifiers(false, false);
+    CHECK(rig.editor.effectiveBrushOp() == Editor::BrushOp::Add);
+}
+
+TEST_CASE("the foliage brush's paint or thin is its own, not the sculpt brush's operation")
+{
+    // Picking Thin used to set the sculpt brush to Subtract, so the next
+    // sculpt stroke dug a hole nobody asked for.
+    BrushRig rig;
+    rig.editor.setBrushOp(Editor::BrushOp::Grow);
+    rig.editor.setFoliageThin(true);
+    CHECK(rig.editor.brush().op == Editor::BrushOp::Grow);
+    CHECK(rig.editor.foliageThin());
+    rig.editor.setTool(Editor::Tool::Foliage);
+    CHECK(rig.editor.effectiveFoliageThin());
+    rig.editor.setBrushModifiers(true, false);
+    CHECK_FALSE(rig.editor.effectiveFoliageThin());
+}
+
+TEST_CASE("the block and tile tools never sculpt the terrain under them")
+{
+    // With the Terrain panel open and the Blocks tool in hand, a click on the
+    // ground ran the terrain brush and never reached the block tool.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setBrushOp(Editor::BrushOp::Subtract);
+    for (const Editor::Tool tool : {Editor::Tool::Blocks, Editor::Tool::Tiles}) {
+        rig.editor.setTool(tool);
+        const core::u64 revision = rig.field().fieldRevision;
+        const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+        rig.editor.setPointer(pixel, true, true);
+        CHECK_FALSE(rig.editor.driveSculpt(rig.world, rig.workspace, rig.inspector, 1.0 / 60.0));
+        CHECK(rig.field().fieldRevision == revision);
+    }
+}
+
+TEST_CASE("Flatten levels to a fixed height across strokes when one is set")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Flatten);
+    rig.editor.setBrushRadius(5.0f);
+    rig.editor.setBrushStrength(1.0f);
+    rig.editor.setFlattenHeight(2.0f);
+    for (int stroke = 0; stroke < 4; ++stroke)
+        strokeAt(rig, core::DVec3{0.0, 0.0, 0.0}, 10);
+    const std::optional<float> top = asset::heightAt(rig.field().field, 0.0, 0.0);
+    REQUIRE(top.has_value());
+    CHECK(static_cast<double>(*top) == doctest::Approx(2.0).epsilon(0.2));
+}
+
+TEST_CASE("the first Create Terrain is one undo step, at the world height asked for")
+{
+    BrushRig rig;
+    // A world with no terrain yet.
+    rig.world.destroy(rig.terrain);
+    const core::usize before = rig.editor.history().depth();
+    REQUIRE(rig.editor.generateGround(rig.world, rig.root, rig.inspector, 64.0f, 3.0f, 1));
+    CHECK(rig.editor.history().depth() == before + 1);
+    const core::InstanceId made = rig.editor.terrainIn(rig.world, rig.root);
+    REQUIRE(made.valid());
+    const std::optional<float> top = asset::heightAt(rig.world.terrains().find(made)->field, 0.0, 0.0);
+    REQUIRE(top.has_value());
+    CHECK(static_cast<double>(*top) == doctest::Approx(3.0).epsilon(0.05));
+    // One ctrl-Z and there is no terrain, rather than an empty one.
+    REQUIRE(rig.editor.history().undo(rig.world));
+    CHECK_FALSE(rig.editor.terrainIn(rig.world, rig.root).valid());
 }

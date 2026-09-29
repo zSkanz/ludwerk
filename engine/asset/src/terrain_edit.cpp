@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <vector>
 
@@ -615,68 +616,249 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
         return report;
     }
 
-    // **A box blur a few voxels wide, separable, from a copy.** The occupancy
-    // ramps over four voxels (`RampVoxels`), and the mean of a linear ramp is
-    // the ramp: a three-voxel blur only rounded a step's two edges and left the
-    // step. The kernel grows with the brush, from one voxel either side to
-    // four, so a big brush softens big shapes. Read once, before any write: a
-    // blur that read its own writes would smear in the walk's direction.
+    // **The surface is smoothed, not the occupancy** (the owner, 2026-09-29:
+    // "I cannot smooth the mesh"). Occupancy ramps linearly across four voxels
+    // and saturates either side, so a blur of it moved the surface only where
+    // the ramp bent, by less than one quantisation step for anything gentler
+    // than a spike -- and each stamp re-read its own rounded result, so a
+    // stroke stalled a few stamps in. Here the field is turned back into a
+    // distance to the surface, that distance is blurred, and the surface is
+    // rebuilt from it: a hill loses its top, a pit fills, a cliff becomes a
+    // slope, and flat ground stays exactly where it is, because the blur of a
+    // plane's distance is the plane's distance.
     const double voxel = static_cast<double>(field.settings().voxelSize);
-    const i32 reach = std::clamp(static_cast<i32>(std::lround(radius / (3.0 * voxel))), 1, 4);
+    // A gaussian half the brush wide, from three box blurs of one width --
+    // within a few percent of the real thing, at a cost that does not grow
+    // with the width. Capped at six voxels, so a huge brush reads a bounded
+    // margin rather than a sphere five times its size.
+    const double sigma = std::clamp(radius / 2.0, voxel, 4.0 * voxel) / voxel;
+    const i32 half = std::max(1, static_cast<i32>(std::lround((std::sqrt(4.0 * sigma * sigma + 1.0) - 1.0) / 2.0)));
+    const i32 reach = 3 * half + 2;
     const i32 x0 = box.minX - reach;
     const i32 y0 = box.minY - reach;
     const i32 z0 = box.minZ - reach;
     const i32 sizeX = box.maxX - box.minX + 1 + 2 * reach;
     const i32 sizeY = box.maxY - box.minY + 1 + 2 * reach;
     const i32 sizeZ = box.maxZ - box.minZ + 1 + 2 * reach;
+    const auto strideY = static_cast<usize>(sizeX);
+    const auto strideZ = static_cast<usize>(sizeX) * static_cast<usize>(sizeY);
     const auto index = [&](i32 x, i32 y, i32 z) {
-        return (static_cast<usize>(z - z0) * static_cast<usize>(sizeY) + static_cast<usize>(y - y0)) *
-                   static_cast<usize>(sizeX) +
-               static_cast<usize>(x - x0);
+        return static_cast<usize>(z - z0) * strideZ + static_cast<usize>(y - y0) * strideY + static_cast<usize>(x - x0);
     };
     std::vector<Voxel> copy;
     readBox(field, x0, y0, z0, sizeX, sizeY, sizeZ, copy);
-    std::vector<float> blurred(copy.size());
-    for (usize at = 0; at < copy.size(); ++at)
-        blurred[at] = occupancyOf(copy[at]);
-    // One axis at a time, each pass reading the last; the copy's own edge is
-    // held rather than padded with air, so the blur does not eat into ground
-    // at the edge of what was read. **Each line is a running sum**, so a pass
-    // costs the same whatever the kernel's width.
-    const auto blurAlong = [&](i32 length, usize stride, i32 lines, auto&& lineStart) {
-        std::vector<double> sums(static_cast<usize>(length + 2 * reach) + 1);
-        const float width = static_cast<float>(2 * reach + 1);
-        for (i32 line = 0; line < lines; ++line) {
-            float* values = &blurred[lineStart(line)];
-            sums[0] = 0.0;
-            for (i32 k = 0; k < length + 2 * reach; ++k) {
-                const i32 from = std::clamp(k - reach, 0, length - 1);
-                sums[static_cast<usize>(k) + 1] =
-                    sums[static_cast<usize>(k)] + static_cast<double>(values[static_cast<usize>(from) * stride]);
+
+    // **The distance, signed, negative inside.** Exact across the ramp, where
+    // occupancy is a distance by construction; carried outwards from there by
+    // a two-pass chamfer walk, each voxel taking its neighbour's distance plus
+    // the step between them. **Only as far as the blur can carry it back**:
+    // past `cap` a distance cannot move a surface, so it is held at `cap`,
+    // and the walk visits only the voxels within that reach of the ground in
+    // their own column or a neighbour's -- terrain is a skin, and the box
+    // around a brush is mostly rock and sky.
+    const float rampMetres = RampVoxels * static_cast<float>(voxel);
+    const i32 capVoxels = 3 * half + RampReach + 1;
+    const float cap = static_cast<float>(capVoxels) * static_cast<float>(voxel);
+    std::vector<float> distance(copy.size());
+    const auto columns = static_cast<usize>(sizeX) * static_cast<usize>(sizeZ);
+    std::vector<i32> bandLow(columns, std::numeric_limits<i32>::max());
+    std::vector<i32> bandHigh(columns, std::numeric_limits<i32>::min());
+    const auto column = [&](i32 xi, i32 zi) {
+        return static_cast<usize>(zi) * static_cast<usize>(sizeX) + static_cast<usize>(xi);
+    };
+    bool anySurface = false;
+    for (i32 zi = 0; zi < sizeZ; ++zi) {
+        for (i32 yi = 0; yi < sizeY; ++yi) {
+            for (i32 xi = 0; xi < sizeX; ++xi) {
+                const usize at =
+                    static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY + static_cast<usize>(xi);
+                const u8 occupancy = copy[at].occupancy;
+                const bool band = occupancy != 0 && occupancy != FullOccupancy;
+                // A step straight from air to rock is a surface too.
+                const bool edge = yi + 1 < sizeY && (occupancy == 0) != (copy[at + strideY].occupancy == 0);
+                distance[at] = band ? (0.5f - occupancyOf(copy[at])) * rampMetres : (occupancy == 0 ? cap : -cap);
+                if (band || edge) {
+                    anySurface = true;
+                    bandLow[column(xi, zi)] = std::min(bandLow[column(xi, zi)], yi);
+                    bandHigh[column(xi, zi)] = std::max(bandHigh[column(xi, zi)], yi);
+                }
             }
-            for (i32 at = 0; at < length; ++at) {
-                const double sum = sums[static_cast<usize>(at + 2 * reach) + 1] - sums[static_cast<usize>(at)];
-                values[static_cast<usize>(at) * stride] = static_cast<float>(sum) / width;
+        }
+    }
+    // Nothing but rock and sky in reach: nothing to smooth.
+    if (!anySurface)
+        return report;
+    // Each column's range widened by `capVoxels` up and down, and to the
+    // columns within `capVoxels` of it -- one axis at a time.
+    const auto widen = [&](std::vector<i32>& values, bool low) {
+        std::vector<i32> next = values;
+        const auto better = [low](i32 a, i32 b) { return low ? std::min(a, b) : std::max(a, b); };
+        for (const bool alongX : {true, false}) {
+            for (i32 zi = 0; zi < sizeZ; ++zi) {
+                for (i32 xi = 0; xi < sizeX; ++xi) {
+                    i32 best = values[column(xi, zi)];
+                    for (i32 k = -capVoxels; k <= capVoxels; ++k) {
+                        const i32 nx = alongX ? xi + k : xi;
+                        const i32 nz = alongX ? zi : zi + k;
+                        if (nx >= 0 && nz >= 0 && nx < sizeX && nz < sizeZ)
+                            best = better(best, values[column(nx, nz)]);
+                    }
+                    next[column(xi, zi)] = best;
+                }
+            }
+            values = next;
+        }
+    };
+    widen(bandLow, true);
+    widen(bandHigh, false);
+    const auto pass = [&](bool forward) {
+        const float one = static_cast<float>(voxel);
+        const float two = one * std::numbers::sqrt2_v<float>;
+        const float three = one * std::numbers::sqrt3_v<float>;
+        // The thirteen neighbours already visited in this direction, as index
+        // offsets: the walk stays a voxel inside the box, so none leaves it.
+        std::array<std::ptrdiff_t, 13> offsets{};
+        std::array<float, 13> lengths{};
+        usize count = 0;
+        for (i32 dz = -1; dz <= 1; ++dz) {
+            for (i32 dy = -1; dy <= 1; ++dy) {
+                for (i32 dx = -1; dx <= 1; ++dx) {
+                    const i32 order = dz * 9 + dy * 3 + dx;
+                    if (order == 0 || (order < 0) != forward)
+                        continue;
+                    const int axes = (dx != 0) + (dy != 0) + (dz != 0);
+                    offsets[count] = static_cast<std::ptrdiff_t>(dz) * static_cast<std::ptrdiff_t>(strideZ) +
+                                     static_cast<std::ptrdiff_t>(dy) * static_cast<std::ptrdiff_t>(strideY) + dx;
+                    lengths[count] = axes == 1 ? one : (axes == 2 ? two : three);
+                    ++count;
+                }
+            }
+        }
+        for (i32 zs = 1; zs < sizeZ - 1; ++zs) {
+            const i32 zi = forward ? zs : sizeZ - 1 - zs;
+            for (i32 ys = 1; ys < sizeY - 1; ++ys) {
+                const i32 yi = forward ? ys : sizeY - 1 - ys;
+                for (i32 xs = 1; xs < sizeX - 1; ++xs) {
+                    const i32 xi = forward ? xs : sizeX - 1 - xs;
+                    const usize slot = column(xi, zi);
+                    if (yi < bandLow[slot] - capVoxels || yi > bandHigh[slot] + capVoxels)
+                        continue;
+                    const usize here =
+                        static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY + static_cast<usize>(xi);
+                    const u8 occupancy = copy[here].occupancy;
+                    if (occupancy != 0 && occupancy != FullOccupancy)
+                        continue;
+                    float best = distance[here];
+                    const float* base = distance.data() + here;
+                    if (occupancy == 0) {
+                        for (usize s = 0; s < count; ++s)
+                            best = std::min(best, std::max(base[offsets[s]], 0.0f) + lengths[s]);
+                    }
+                    else {
+                        for (usize s = 0; s < count; ++s)
+                            best = std::max(best, std::min(base[offsets[s]], 0.0f) - lengths[s]);
+                    }
+                    distance[here] = best;
+                }
             }
         }
     };
-    const auto strideY = static_cast<usize>(sizeX);
-    const auto strideZ = static_cast<usize>(sizeX) * static_cast<usize>(sizeY);
-    blurAlong(sizeX, 1, sizeY * sizeZ, [&](i32 line) { return static_cast<usize>(line) * strideY; });
-    blurAlong(sizeY, strideY, sizeX * sizeZ,
-              [&](i32 line) { return static_cast<usize>(line / sizeX) * strideZ + static_cast<usize>(line % sizeX); });
-    blurAlong(sizeZ, strideZ, sizeX * sizeY, [&](i32 line) { return static_cast<usize>(line); });
+    pass(true);
+    pass(false);
 
+    // **Three box blurs along each axis**, the read's own edge held. Only the
+    // slab of heights where the ground is changes -- above it is all sky at
+    // the cap and below all rock -- so only that slab is blurred, and each
+    // pass walks whole rows of x, which is how the box lies in memory.
+    i32 slabLow = sizeY;
+    i32 slabHigh = -1;
+    for (usize at = 0; at < columns; ++at) {
+        if (bandLow[at] <= bandHigh[at]) {
+            slabLow = std::min(slabLow, bandLow[at]);
+            slabHigh = std::max(slabHigh, bandHigh[at]);
+        }
+    }
+    slabLow = std::max(0, slabLow - capVoxels - 3 * half - 1);
+    slabHigh = std::min(sizeY - 1, slabHigh + capVoxels + 3 * half + 1);
+    std::vector<float> blurred = distance;
+    std::vector<float> prefix;
+    const float width = static_cast<float>(2 * half + 1);
+    // Along x: each row its own running sum.
+    const auto blurX = [&] {
+        prefix.resize(static_cast<usize>(sizeX + 2 * half) + 1);
+        for (i32 zi = 0; zi < sizeZ; ++zi) {
+            for (i32 yi = slabLow; yi <= slabHigh; ++yi) {
+                float* row = &blurred[static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY];
+                prefix[0] = 0.0f;
+                for (i32 k = 0; k < sizeX + 2 * half; ++k)
+                    prefix[static_cast<usize>(k) + 1] =
+                        prefix[static_cast<usize>(k)] + row[std::clamp(k - half, 0, sizeX - 1)];
+                for (i32 at = 0; at < sizeX; ++at)
+                    row[at] = (prefix[static_cast<usize>(at + 2 * half) + 1] - prefix[static_cast<usize>(at)]) / width;
+            }
+        }
+    };
+    // Along y or z: a plane at a time, every x of a row summed together.
+    const auto blurAcross = [&](i32 first, i32 last, usize stride, i32 planeFirst, i32 planeLast, usize planeStride) {
+        const i32 length = last - first + 1;
+        const auto rows = static_cast<usize>(length + 2 * half) + 1;
+        prefix.assign(rows * static_cast<usize>(sizeX), 0.0f);
+        for (i32 plane = planeFirst; plane <= planeLast; ++plane) {
+            float* base = &blurred[static_cast<usize>(plane) * planeStride];
+            for (i32 k = 0; k < length + 2 * half; ++k) {
+                const float* source = base + static_cast<usize>(std::clamp(k - half + first, first, last)) * stride;
+                const float* before = &prefix[static_cast<usize>(k) * static_cast<usize>(sizeX)];
+                float* after = &prefix[static_cast<usize>(k + 1) * static_cast<usize>(sizeX)];
+                for (i32 x = 0; x < sizeX; ++x)
+                    after[x] = before[x] + source[x];
+            }
+            for (i32 at = 0; at < length; ++at) {
+                const float* high = &prefix[static_cast<usize>(at + 2 * half + 1) * static_cast<usize>(sizeX)];
+                const float* low = &prefix[static_cast<usize>(at) * static_cast<usize>(sizeX)];
+                float* target = base + static_cast<usize>(at + first) * stride;
+                for (i32 x = 0; x < sizeX; ++x)
+                    target[x] = (high[x] - low[x]) / width;
+            }
+        }
+    };
+    for (int round = 0; round < 3; ++round) {
+        blurX();
+        // y, within the slab, a plane of z at a time: the slab's ends are the
+        // cap on either side, and the clamp repeats them as the whole column
+        // would have.
+        blurAcross(slabLow, slabHigh, strideY, 0, sizeZ - 1, strideZ);
+        // z, a height of the slab at a time.
+        blurAcross(0, sizeZ - 1, strideZ, slabLow, slabHigh, strideY);
+    }
+
+    // One occupancy step, as a distance: the smallest move a write can make.
+    const float step = rampMetres / static_cast<float>(FullOccupancy);
     FieldWriter writer(field);
+    // Rock that stays rock and sky that stays sky, whatever the weight: both
+    // ends past the ramp on one side.
+    const float saturated = 0.5f * rampMetres + step;
     walk(box, [&](i32 x, i32 y, i32 z) {
-        const double distance =
+        const usize here = index(x, y, z);
+        const float was = distance[here];
+        const float target = blurred[here];
+        if ((was >= saturated && target >= saturated) || (was <= -saturated && target <= -saturated))
+            return;
+        const double from =
             length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z);
-        const float weight = falloff(distance, radius) * amount;
+        const float weight = falloff(from, radius) * amount;
         if (weight <= 0.0f)
             return;
-        const Voxel old = copy[index(x, y, z)];
-        const float before = occupancyOf(old);
-        const u8 occupancy = quantiseOccupancy(before + (blurred[index(x, y, z)] - before) * weight);
+        const float next = was + (target - was) * weight;
+        const Voxel old = copy[here];
+        u8 occupancy = quantiseOccupancy(ramp(static_cast<double>(next), voxel));
+        // **Never stuck a step short** (why a stroke used to stall): where the
+        // surface still has somewhere to go but one stamp's share of it rounds
+        // to nothing, it moves one step. Flat ground has nowhere to go -- its
+        // blurred distance is its distance -- and is left alone.
+        if (occupancy == old.occupancy && old.occupancy != 0 && old.occupancy != FullOccupancy &&
+            std::abs(target - was) > 2.0f * step && std::abs(target - was) * weight > 0.1f * step) {
+            occupancy = static_cast<u8>(target < was ? old.occupancy + 1 : old.occupancy - 1);
+        }
         if (occupancy == old.occupancy)
             return;
         // Ground that appears where there was air takes its fullest

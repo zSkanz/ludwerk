@@ -817,17 +817,20 @@ struct TerrainComponent
     std::string cellIndex;
 
     // **What each material byte means** (ADR 0113): byte `n` is
-    // `layers[n - 1]`, a material URN. A new terrain has the engine's eight, so
-    // id 3 is still rock; a scene without a list reads those. At most 255.
-    std::vector<std::string> layers = asset::defaultTerrainLayers();
+    // `layers[n - 1]`, a material URN. **A new terrain has none** (the owner,
+    // 2026-09-29: materials nobody can open in Content should not come with
+    // the ground): its ground draws plain until a material is added, and the
+    // first one added is what it was laid with. A scene without a list is one
+    // written before this, and reads the engine's eight. At most 255.
+    std::vector<std::string> layers;
     // Bumped by every change to `layers`, so the renderer rebuilds its arrays
     // only when they are stale.
     core::u64 layersRevision = 0;
 
     // **What the ground is drawn as, by slope and height** (ADR 0113 §2), in
-    // the order they paint. A new terrain's is the slope rock of old; a scene
-    // without a list reads that. At most 16.
-    std::vector<asset::TerrainRule> rules = asset::defaultTerrainRules();
+    // the order they paint. A new terrain has none, having no rock to paint
+    // with; a scene without a list reads the old slope rock. At most 16.
+    std::vector<asset::TerrainRule> rules;
 };
 
 // --- The 2D layer (post-v1 phase 3, docs/briefs/p3-2d-kickoff.md) ------------

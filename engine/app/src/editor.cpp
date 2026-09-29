@@ -5,6 +5,7 @@
 #include <engine/app/editor.h>
 #include <engine/app/scene_definitions.h>
 #include <engine/asset/image.h>
+#include <engine/asset/terrain_layers.h>
 #include <engine/core/content_path.h>
 #include <engine/core/json.h>
 #include <engine/core/json_writer.h>
@@ -513,20 +514,22 @@ namespace {
 // What one stroke is called in the undo menu. A person reading "Undo Smooth"
 // knows what is about to come back; "Undo Sculpt" for six different tools does
 // not.
-[[nodiscard]] const char* strokeLabel(Editor::Tool tool, Editor::BrushOp op) noexcept
+[[nodiscard]] const char* strokeLabel(Editor::Tool tool, Editor::BrushOp op, bool thin) noexcept
 {
     if (tool == Editor::Tool::Paint) {
         return "Paint Terrain";
     }
     if (tool == Editor::Tool::Foliage)
-        return op == Editor::BrushOp::Subtract ? "Thin Foliage" : "Paint Foliage";
+        return thin ? "Thin Foliage" : "Paint Foliage";
+    // The words the Terrain panel shows, so the undo menu names what the
+    // person picked.
     switch (op) {
     case Editor::BrushOp::Subtract:
-        return "Subtract";
+        return "Dig";
     case Editor::BrushOp::Grow:
-        return "Grow";
+        return "Raise";
     case Editor::BrushOp::Erode:
-        return "Erode";
+        return "Lower";
     case Editor::BrushOp::Smooth:
         return "Smooth";
     case Editor::BrushOp::Flatten:
@@ -4204,14 +4207,32 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
     // stroke's `beginGesture` returned the same one, and every stroke of the
     // session coalesced into a single step that one ctrl+Z took back whole.
     const auto endStroke = [&] {
-        if (m_stroke.has_value() && inspector.gesture() == m_stroke->gesture)
-            inspector.endGesture();
+        if (m_stroke.has_value()) {
+            if (inspector.gesture() == m_stroke->gesture)
+                inspector.endGesture();
+            // **A stroke that changed nothing leaves nothing to undo**: a brush
+            // dragged over rock it cannot raise, or refused as too big, used to
+            // push a step that ctrl-Z spent a press on.
+            if (m_stroke->touched == 0)
+                m_history.retract();
+            // **And one that was refused says so** (the brush used to do
+            // nothing and say nothing): a stamp may touch at most
+            // `MaxEditVoxels`, which small voxels reach at a modest radius.
+            if (m_stroke->refused) {
+                m_status = EditorStatus{"the brush is too big for this terrain's voxels: make it smaller, or the "
+                                        "voxels bigger under Settings",
+                                        true};
+            }
+        }
         m_stroke.reset();
     };
 
-    // The brush is the Terrain panel's: with the panel out of sight there is
-    // no brush, whatever tool was last chosen (`setTerrainPanelShown`).
-    if (m_tool == Tool::Select || !m_terrainPanelShown) {
+    // **The brush is the Terrain panel's**: with the panel closed there is no
+    // brush, whatever tool was last chosen (`setTerrainPanelShown`). Only the
+    // three terrain tools stroke: the block and tile tools have brushes of
+    // their own, and a click with either used to sculpt the ground under it.
+    const bool terrainTool = m_tool == Tool::Sculpt || m_tool == Tool::Paint || m_tool == Tool::Foliage;
+    if (!terrainTool || !m_terrainPanelShown) {
         endStroke();
         return false;
     }
@@ -4312,10 +4333,12 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         // hillside levels it to where the stroke began rather than chasing its
         // own result downhill.
         stroke.plane = static_cast<f32>(m_brushAim->position.y);
-        stroke.carve = carves(m_tool, m_brush);
+        stroke.op = effectiveBrushOp();
+        stroke.thin = effectiveFoliageThin();
+        stroke.carve = carves(m_tool, stroke.op);
         if (stroke.carve)
             stroke.aimField = terrain->field;
-        m_history.record(world, strokeLabel(m_tool, m_brush.op), stroke.gesture);
+        m_history.record(world, strokeLabel(m_tool, stroke.op, stroke.thin), stroke.gesture);
         m_stroke = stroke;
 
         applyBrushAt(*terrain, m_brushAim->position);
@@ -4366,7 +4389,36 @@ constexpr double HeldStampsMax = 20.0;
 
 bool Editor::carves(Tool tool, const Brush& brush) noexcept
 {
-    return tool == Tool::Sculpt && (brush.op == BrushOp::Add || brush.op == BrushOp::Subtract);
+    return carves(tool, brush.op);
+}
+
+bool Editor::carves(Tool tool, BrushOp op) noexcept
+{
+    return tool == Tool::Sculpt && (op == BrushOp::Add || op == BrushOp::Subtract);
+}
+
+Editor::BrushOp Editor::effectiveBrushOp() const noexcept
+{
+    if (m_tool != Tool::Sculpt)
+        return m_brush.op;
+    if (m_brushSmoothHeld)
+        return BrushOp::Smooth;
+    if (!m_brushInvert)
+        return m_brush.op;
+    switch (m_brush.op) {
+    case BrushOp::Add:
+        return BrushOp::Subtract;
+    case BrushOp::Subtract:
+        return BrushOp::Add;
+    case BrushOp::Grow:
+        return BrushOp::Erode;
+    case BrushOp::Erode:
+        return BrushOp::Grow;
+    case BrushOp::Smooth:
+    case BrushOp::Flatten:
+        break;
+    }
+    return m_brush.op;
 }
 
 void Editor::holdStroke(scene::TerrainComponent& terrain, const PickRay& ray, double dt)
@@ -4441,62 +4493,77 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
     const auto side = static_cast<f32>(radius * 2.0);
     const core::Vec3 extent{side, side, side};
 
+    const BrushOp op = m_stroke.has_value() ? m_stroke->op : effectiveBrushOp();
+    asset::EditReport report;
+    const auto noted = [this](const asset::EditReport& stamp) {
+        if (!m_stroke.has_value())
+            return;
+        m_stroke->touched += stamp.touched;
+        m_stroke->refused = m_stroke->refused || stamp.refused;
+    };
+
     if (m_tool == Tool::Foliage) {
         // The layer's painted density, not the ground: a stamp brings it back
         // towards what the rules grow or thins it, by the brush's strength.
         if (m_strokeWorld != nullptr) {
-            const f32 amount =
-                std::clamp(m_brush.strength, 0.0f, 1.0f) * 0.35f * (m_brush.op == BrushOp::Subtract ? -1.0f : 1.0f);
-            if (paintFoliage(*m_strokeWorld, m_foliageLayer, at, radius, amount, terrain.field.settings().voxelSize))
+            const bool thin = m_stroke.has_value() ? m_stroke->thin : effectiveFoliageThin();
+            const f32 amount = std::clamp(m_brush.strength, 0.0f, 1.0f) * 0.35f * (thin ? -1.0f : 1.0f);
+            if (paintFoliage(*m_strokeWorld, m_foliageLayer, at, radius, amount, terrain.field.settings().voxelSize)) {
                 m_sceneDirty = true;
+                report.touched = 1;
+            }
         }
+        noted(report);
         return;
     }
     if (m_tool == Tool::Paint) {
-        asset::paintBall(terrain.field, at, radius, m_brush.material);
+        report = asset::paintBall(terrain.field, at, radius, m_brush.material);
     }
     else {
-        switch (m_brush.op) {
+        switch (op) {
         // **Add and Subtract are volume, centred on the aim** -- the reference
         // editor's, and the owner's words for it: "it models the terrain in
         // circles". Clicked on a field, a ball half in the ground; clicked on
         // the side of a cliff, a ball half in the cliff, never a column down
         // from it. The ground-shaped verb is Grow.
         case BrushOp::Add:
-            if (box)
-                asset::fillBlock(terrain.field, at, extent, m_brush.material);
-            else
-                asset::fillBall(terrain.field, at, radius, m_brush.material);
+            report = box ? asset::fillBlock(terrain.field, at, extent, m_brush.material)
+                         : asset::fillBall(terrain.field, at, radius, m_brush.material);
             break;
         case BrushOp::Subtract:
-            if (box)
-                asset::fillBlock(terrain.field, at, extent, 0);
-            else
-                asset::fillBall(terrain.field, at, radius, 0);
+            report =
+                box ? asset::fillBlock(terrain.field, at, extent, 0) : asset::fillBall(terrain.field, at, radius, 0);
             break;
         // **Round whichever shape is selected**, as Smooth is: the surface
         // moves along its normal by a falloff, and a square falloff would
         // leave corners on it.
         case BrushOp::Grow:
-            asset::growBall(terrain.field, at, radius, growAmount(m_brush), m_brush.material);
+            report = asset::growBall(terrain.field, at, radius, growAmount(m_brush), m_brush.material);
             break;
         case BrushOp::Erode:
-            asset::growBall(terrain.field, at, radius, -growAmount(m_brush));
+            report = asset::growBall(terrain.field, at, radius, -growAmount(m_brush));
             break;
         case BrushOp::Smooth:
             // **Round whichever shape is selected.** A square blur leaves
             // visible corners in ground that is supposed to be getting softer.
-            asset::smoothBall(terrain.field, at, radius, m_brush.strength);
+            report = asset::smoothBall(terrain.field, at, radius, m_brush.strength);
             break;
-        case BrushOp::Flatten:
-            asset::flattenBall(
-                terrain.field, at, radius,
-                static_cast<f32>((m_stroke.has_value() ? static_cast<double>(m_stroke->plane) : worldAt.y) -
-                                 terrain.origin.y),
-                m_brush.strength);
+        case BrushOp::Flatten: {
+            // A fixed height when one is set, else where the stroke began.
+            const double level = m_flattenHeight.has_value() ? static_cast<double>(*m_flattenHeight)
+                                 : m_stroke.has_value()      ? static_cast<double>(m_stroke->plane)
+                                                             : worldAt.y;
+            report = asset::flattenBall(terrain.field, at, radius, static_cast<f32>(level - terrain.origin.y),
+                                        m_brush.strength);
             break;
         }
+        }
     }
+    noted(report);
+    // A stamp that changed nothing changes no revision: the renderer, the
+    // physics mirror and the navmesh all key on it.
+    if (report.touched == 0)
+        return;
     // **Bumped here and nowhere else**, so the renderer and the physics mirror
     // both learn about a stamp through the one path they already read.
     terrain.fieldRevision += 1;
@@ -4810,21 +4877,26 @@ core::InstanceId Editor::createTerrain(scene::World& world, core::InstanceId roo
 bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector, f32 size,
                             f32 height, core::u8 material)
 {
+    if (!(size > 0.0f) || material == 0)
+        return false;
+    // **One step, whether or not the terrain was there**: a first Create used
+    // to be two, Create Terrain and Generate Ground, and the first ctrl-Z left
+    // an empty terrain behind.
+    const bool existed = terrainIn(world, rootOrWorkspace).valid();
     const core::InstanceId id = createTerrain(world, rootOrWorkspace, inspector);
     scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
-    if (terrain == nullptr || !(size > 0.0f) || material == 0) {
+    if (terrain == nullptr)
         return false;
-    }
-
-    m_history.record(world, "Generate Ground");
+    if (existed)
+        m_history.record(world, "Generate Ground");
 
     // **Laid with `fillFlat` rather than carved as a box.** Ground reaching the
     // world's floor is thousands of voxels a column; `fillFlat` lays the chunks
     // the ground covers entirely as one value each, and writes voxels only
-    // where the surface passes.
-    const core::DVec3 centre{terrain->origin.x, 0.0, terrain->origin.z};
-    asset::fillFlat(terrain->field, core::DVec3{centre.x - terrain->origin.x, 0.0, centre.z - terrain->origin.z}, size,
-                    height, material);
+    // where the surface passes. `height` is a WORLD height, as a heightmap's
+    // are: the field is laid at it less the terrain's own position.
+    asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, size,
+                    static_cast<f32>(static_cast<double>(height) - terrain->origin.y), material);
 
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
@@ -4960,6 +5032,61 @@ bool Editor::setTerrainLayers(scene::World& world, core::InstanceId root, std::v
     terrain->layersRevision += 1;
     m_sceneDirty = true;
     return true;
+}
+
+bool Editor::addStarterTerrainMaterials(scene::World& world, core::InstanceId root)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr)
+        return false;
+    std::vector<std::string> layers = terrain->layers;
+    core::usize written = 0;
+    for (core::u8 index = 1;; ++index) {
+        const std::string engine = asset::engineTerrainUrn(index);
+        if (engine.empty())
+            break;
+        const std::string name = engine.substr(asset::EngineTerrainPrefix.size());
+        const std::string relative = "materials/terrain/" + name + std::string(asset::MaterialSuffix);
+        const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
+        std::error_code ec;
+        if (!std::filesystem::exists(absolute, ec)) {
+            asset::MaterialAsset variant;
+            variant.parent = engine;
+            if (!writeMaterialFile(absolute, variant)) {
+                m_status = EditorStatus{"could not write " + relative, true};
+                return false;
+            }
+            ++written;
+        }
+        const std::string urn = contentUrn(relative);
+        if (std::find(layers.begin(), layers.end(), urn) == layers.end() && layers.size() < asset::MaxTerrainLayers)
+            layers.push_back(urn);
+    }
+    (void)m_content.refresh();
+    const bool changed = setTerrainLayers(world, root, std::move(layers), "Add Starter Terrain Materials");
+    m_status = EditorStatus{written > 0 ? "wrote " + std::to_string(written) +
+                                              " starter materials to materials/terrain, and gave them to the terrain"
+                                        : "the starter materials were already in the project",
+                            false};
+    return changed || written > 0;
+}
+
+std::string Editor::addNewTerrainMaterial(scene::World& world, core::InstanceId root, std::string_view name)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || terrain->layers.size() >= asset::MaxTerrainLayers)
+        return {};
+    const std::string made = createMaterial(name);
+    if (made.empty())
+        return {};
+    std::vector<std::string> layers = terrain->layers;
+    layers.push_back(contentUrn(made));
+    (void)setTerrainLayers(world, root, std::move(layers), "Add Terrain Material");
+    // The new layer is what the brush lays next.
+    setBrushMaterial(static_cast<core::u8>(world.terrains().find(id)->layers.size()));
+    return made;
 }
 
 bool Editor::setTerrainRules(scene::World& world, core::InstanceId root, std::vector<asset::TerrainRule> rules,

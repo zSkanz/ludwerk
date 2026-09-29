@@ -67,12 +67,15 @@ std::vector<DVec3> strokeStamps(DVec3 from, DVec3 to, double radius, double spac
 
     // **Counted before it is walked**, so a pointer that jumped a kilometre
     // costs a comparison rather than a hundred thousand edits. Past the ceiling
-    // the stroke is its endpoints and nothing between: a visible gap, which is
-    // recoverable, rather than a frame that never ends.
+    // the stroke is the ceiling's worth of stamps, spread evenly from end to
+    // end: a quick drag with a small brush is a sparser line, never a gap --
+    // the endpoints alone left one in every fast stroke.
     const auto count = static_cast<usize>(distance / step);
     if (count + 1 > MaxStrokeStamps) {
-        stamps.push_back(from);
-        stamps.push_back(to);
+        for (usize at = 0; at < MaxStrokeStamps; ++at) {
+            const double t = static_cast<double>(at) / static_cast<double>(MaxStrokeStamps - 1);
+            stamps.push_back(DVec3{from.x + dx * t, from.y + dy * t, from.z + dz * t});
+        }
         return stamps;
     }
 
@@ -116,8 +119,54 @@ bool strokeAdvanced(DVec3 from, DVec3 to, double radius, double spacing)
 
 void drawBrushRing(Vec3 centre, Vec3 normal, float radius, render::DebugDraw& debug)
 {
+    drawBrushRing(centre, normal, radius, BrushRingStyle{}, debug);
+}
+
+void drawBrushRing(Vec3 centre, Vec3 normal, float radius, BrushRingStyle style, render::DebugDraw& debug)
+{
     if (!(radius > 0.0f)) {
         return;
+    }
+    if (style.square) {
+        // The box the brush cuts is square in the world's axes whatever the
+        // ground's slope, so its outline is too: the top and the bottom of the
+        // box, and its four edges between them.
+        const render::DebugColor edge = render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 1.0f);
+        for (const float y : {-radius, radius}) {
+            const Vec3 a{centre.x - radius, centre.y + y, centre.z - radius};
+            const Vec3 b{centre.x + radius, centre.y + y, centre.z - radius};
+            const Vec3 c{centre.x + radius, centre.y + y, centre.z + radius};
+            const Vec3 d{centre.x - radius, centre.y + y, centre.z + radius};
+            debug.line(a, b, edge);
+            debug.line(b, c, edge);
+            debug.line(c, d, edge);
+            debug.line(d, a, edge);
+        }
+        for (const float x : {-radius, radius}) {
+            for (const float z : {-radius, radius})
+                debug.line(Vec3{centre.x + x, centre.y - radius, centre.z + z},
+                           Vec3{centre.x + x, centre.y + radius, centre.z + z}, edge);
+        }
+        return;
+    }
+    if (style.falloff) {
+        // Where a falloff brush does half: `smoothstep` of the distance is one
+        // half at half the radius.
+        Vec3 u;
+        Vec3 v;
+        basisFor(normal, u, v);
+        const render::DebugColor faint = render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 0.45f);
+        Vec3 previous{};
+        const float inner = radius * 0.5f;
+        for (int segment = 0; segment <= RingSegments; ++segment) {
+            const auto angle = static_cast<float>(segment) * (6.283185307179586f / static_cast<float>(RingSegments));
+            const float c = std::cos(angle) * inner;
+            const float s = std::sin(angle) * inner;
+            const Vec3 point{centre.x + u.x * c + v.x * s, centre.y + u.y * c + v.y * s, centre.z + u.z * c + v.z * s};
+            if (segment > 0 && segment % 2 == 1)
+                debug.line(previous, point, faint);
+            previous = point;
+        }
     }
 
     Vec3 u;

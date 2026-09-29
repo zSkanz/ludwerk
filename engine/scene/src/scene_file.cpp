@@ -1155,7 +1155,8 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
         }
         // **The layers, only when they are not the engine's eight** (ADR
         // 0113): a scene written before them and one that kept them read the
-        // same, and neither carries a list it does not need.
+        // same, and neither carries a list it does not need. A terrain with
+        // none writes an empty one, which is not what absent means.
         if (terrain->layers != asset::defaultTerrainLayers()) {
             out.key("terrainLayers");
             out.beginInlineArray();
@@ -1833,8 +1834,18 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
         }
     }
 
-    // What the terrain's material bytes mean (ADR 0113). Absent is the engine's
-    // eight, which the component already holds.
+    // What the terrain's material bytes mean (ADR 0113). **Absent is the
+    // engine's eight and its slope rock**, which is what every scene written
+    // before a terrain could start with none meant; a new terrain holds none
+    // (2026-09-29) and writes its empty list.
+    if (TerrainComponent* component = world.terrains().find(id);
+        component != nullptr && json["terrainLayers"].type() != core::JsonType::Array) {
+        component->layers = asset::defaultTerrainLayers();
+        component->layersRevision += 1;
+    }
+    if (TerrainComponent* component = world.terrains().find(id);
+        component != nullptr && json["terrainRules"].type() != core::JsonType::Array)
+        component->rules = asset::defaultTerrainRules();
     if (const JsonValue layers = json["terrainLayers"]; layers.type() == core::JsonType::Array) {
         if (TerrainComponent* component = world.terrains().find(id); component != nullptr) {
             std::vector<std::string> read;
