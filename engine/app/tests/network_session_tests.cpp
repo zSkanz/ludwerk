@@ -2,14 +2,18 @@
 // hosts in one process over the memory transport -- the same session the
 // engine runs over ENet.
 #include <doctest/doctest.h>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "engine/app/network_session.h"
 #include "engine/app/world_host.h"
 #include "engine/net/memory_transport.h"
 #include "engine/replication/replication.h"
+#include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
+#include "engine/scene/physics_sync.h"
 #include "engine/scene/world.h"
 #include "project_fixture.h"
 
@@ -43,6 +47,21 @@ struct Machine
         network = std::make_unique<app::NetworkSession>([this]() { return host.get(); }, base,
                                                         [wire]() { return net::createMemoryTransport(wire); });
         network->setJoinTimeout(0.5);
+    }
+
+    // The engine's own replication settings, over a transport that loses,
+    // holds and reorders what it carries when `loss` says so.
+    void bootOver(const std::shared_ptr<net::MemoryNetwork>& wire, const net::LossConfig* loss)
+    {
+        REQUIRE_FALSE(host->boot(bootOptions(project.root)).has_value());
+        const std::optional<net::LossConfig> lossy =
+            loss != nullptr ? std::optional<net::LossConfig>(*loss) : std::nullopt;
+        network = std::make_unique<app::NetworkSession>(
+            [this]() { return host.get(); }, replication::Config{},
+            [wire, lossy]() {
+                return lossy.has_value() ? net::createLossyTransport(net::createMemoryTransport(wire), *lossy)
+                                         : net::createMemoryTransport(wire);
+            });
     }
 
     void frame()
@@ -296,4 +315,231 @@ TEST_CASE("a script that joins again after leaving is welcomed back as the same 
     CHECK(log.contains("joined:1 user:2"));
     CHECK(log.contains("joined:2 user:2"));
     CHECK_FALSE(log.contains("joined:2 user:3"));
+}
+
+// --- Stage 2 (ADR 0133): what a jump onto a corner costs ------------------------------
+
+namespace {
+
+// The engine's own adapter, as `engine.cpp` builds it: a replica's corrections
+// replay through the host's physics.
+class HostReplay final : public scene::ICharacterReplay
+{
+public:
+    explicit HostReplay(app::WorldHost& host) noexcept : m_host(host) {}
+
+    [[nodiscard]] std::optional<scene::CharacterCommand> lastCommand(core::InstanceId character) const override
+    {
+        const scene::PhysicsSync* physics = m_host.physics();
+        return physics != nullptr ? physics->lastCommand(character) : std::nullopt;
+    }
+
+    [[nodiscard]] std::vector<core::CFrameD> replay(core::InstanceId character,
+                                                    const scene::CharacterReplayStart& start,
+                                                    std::span<const scene::CharacterCommand> commands) override
+    {
+        scene::PhysicsSync* physics = m_host.physics();
+        return physics != nullptr ? physics->replay(character, start, commands) : std::vector<core::CFrameD>{};
+    }
+
+private:
+    app::WorldHost& m_host;
+};
+
+// Both ends' game: a floor, a block 1.5 m tall, and every player's body walked
+// and jumped by their intents -- on the authority for all, on a replica for its
+// own (the owner's test game's `Movement.drive`).
+constexpr std::string_view CornerShared = R"(
+local Corner = {}
+function Corner.drive(player: Player, body: CharacterBody)
+    local move = player:GetIntent("Move")
+    if typeof(move) == "Vector2" then
+        local direction = vector.create(move.X, 0, -move.Y)
+        if vector.magnitude(direction) > 0.01 then
+            body:Move(vector.normalize(direction))
+        end
+    end
+    if player:GetIntent("Jump") == true and body.Grounded then
+        body:Jump()
+    end
+end
+return Corner
+)";
+
+constexpr std::string_view CornerServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Corner = require("@shared/corner")
+NetworkService:Host(47120)
+local function block(size: vector, position: vector)
+    local part = Instance.new("Part")
+    part.Anchored = true
+    part.Size = size
+    part.Position = position
+    part.Parent = workspace
+end
+block(vector.create(80, 1, 80), vector.create(0, -0.5, 0))
+block(vector.create(12, 1.5, 12), vector.create(6, 0.75, 0))
+local bodies: { [Player]: CharacterBody } = {}
+RunService.Heartbeat:Connect(function()
+    for _, player in NetworkService:GetPlayers() do
+        if player.UserId ~= 2 then
+            continue
+        end
+        local body = bodies[player]
+        if not body then
+            body = Instance.new("CharacterBody")
+            body.Size = vector.create(2, 4, 2)
+            body.Position = vector.create(-6, 3, 0)
+            body.WalkSpeed = 8
+            body.JumpSpeed = 6
+            body.Parent = workspace
+            bodies[player] = body
+            player.Character = body
+        end
+        Corner.drive(player, body :: CharacterBody)
+    end
+end)
+)";
+
+constexpr std::string_view CornerClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local InputService = game:GetService("InputService")
+local Corner = require("@shared/corner")
+local context = Instance.new("InputContext")
+context.Parent = workspace
+local move = Instance.new("InputAction")
+move.Name = "Move"
+move.Type = Enum.InputActionType.Direction2D
+move.Parent = context
+local stick = Instance.new("InputBinding")
+stick.KeyCode = Enum.KeyCode.VirtualStick1
+stick.Parent = move
+local jump = Instance.new("InputAction")
+jump.Name = "Jump"
+jump.Parent = context
+local key = Instance.new("InputBinding")
+key.KeyCode = Enum.KeyCode.Virtual3
+key.Parent = jump
+NetworkService:Join("memory:47120")
+
+-- A hundred runs at the block, each jumping from a little further along, so
+-- the landings fall at every offset across its edge.
+local attempt = 0
+local phase = "back"
+local held = 0
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    local body = if me then me.Character else nil
+    if NetworkService.State ~= Enum.NetworkState.Connected or not me or not body then
+        return
+    end
+    local x = body.Position.X
+    local run, press = 0, 0
+    if phase == "back" then
+        run = -1
+        if x < -6 then
+            phase = "run"
+            attempt += 1
+            workspace:SetAttribute("Attempt", attempt)
+        end
+    elseif phase == "run" then
+        run = 1
+        -- Takeoff between 3.5 m and 0.3 m before the edge -- the capsule's
+        -- front is a metre ahead of its centre -- so the feet meet the edge
+        -- rising, at the top, and falling.
+        if x >= -1.3 - 3.2 * ((attempt * 37) % 100) / 100 then
+            press = 1
+            phase = "air"
+            held = 0
+        end
+    elseif phase == "air" then
+        run = 1
+        held += 1
+        if held > 60 then
+            phase = "back"
+        end
+    end
+    workspace:SetAttribute("Phase", phase)
+    InputService:SetVirtualState(Enum.KeyCode.Virtual1, run)
+    InputService:SetVirtualState(Enum.KeyCode.Virtual2, 0)
+    InputService:SetVirtualState(Enum.KeyCode.Virtual3, press)
+    Corner.drive(me, body :: CharacterBody)
+    if attempt > 100 then
+        print("corner-done")
+    end
+end)
+)";
+
+} // namespace
+
+namespace {
+
+void measureCorner(bool lossy, bool withReplay)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    net::LossConfig loss;
+    loss.seed = 5;
+    loss.dropPerMille = 20;
+    loss.reorderPerMille = 50;
+    loss.jitterPolls = 2;
+
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/corner.luau", std::string(CornerShared));
+    server.project.write("src/server/init.luau", std::string(CornerServer));
+    server.bootOver(wire, lossy ? &loss : nullptr);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/corner.luau", std::string(CornerShared));
+    client.project.write("src/client/init.luau", std::string(CornerClient));
+    client.bootOver(wire, lossy ? &loss : nullptr);
+    HostReplay replay(*client.host);
+    if (withReplay)
+        client.network->setCharacterReplay(&replay);
+
+    core::u64 seen = 0;
+    std::map<std::string, std::pair<int, double>> byPhase;
+    double largest = 0.0;
+    int over = 0;
+    for (int frame = 0; frame < 30000 && !log.contains("corner-done"); ++frame) {
+        server.frame();
+        client.frame();
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr)
+            continue;
+        const replication::Stats stats = replica->stats();
+        if (stats.corrections != seen) {
+            seen = stats.corrections;
+            const scene::Value phase = client.host->world().getAttribute(client.host->workspace(),
+                                                                         client.host->world().atoms().lookup("Phase"));
+            const std::string name = std::holds_alternative<std::string>(phase) ? std::get<std::string>(phase) : "?";
+            byPhase[name].first += 1;
+            const scene::Value tried = client.host->world().getAttribute(
+                client.host->workspace(), client.host->world().atoms().lookup("Attempt"));
+            MESSAGE("MEASURE correction attempt="
+                    << (std::holds_alternative<double>(tried) ? std::get<double>(tried) : -1.0) << " phase=" << name
+                    << " size=" << stats.lastCorrectionMetres << " starved=" << stats.intentStarvations);
+            byPhase[name].second = std::max(byPhase[name].second, stats.lastCorrectionMetres);
+            largest = std::max(largest, stats.lastCorrectionMetres);
+            if (stats.lastCorrectionMetres > 0.01)
+                ++over;
+        }
+    }
+    CHECK(log.contains("corner-done"));
+    MESSAGE("MEASURE lossy=" << lossy << " replay=" << withReplay << " corrections=" << seen << " over1cm=" << over
+                             << " largest=" << largest);
+    for (const auto& [phase, count] : byPhase)
+        MESSAGE("MEASURE phase " << phase << ": " << count.first << " corrections, largest " << count.second);
+}
+
+} // namespace
+
+TEST_CASE("MEASURE a hundred jumps onto a block's corner (ADR 0133)")
+{
+    measureCorner(true, true);
+    measureCorner(false, true);
+    measureCorner(true, false);
 }

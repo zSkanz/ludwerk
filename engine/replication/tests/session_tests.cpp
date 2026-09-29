@@ -2338,3 +2338,46 @@ TEST_CASE("a connection that never says hello is let go, and a message naming to
     match.authority->receive(match.server.world, match.server.workspace);
     CHECK(match.server.world.engineState().remoteInbox.empty());
 }
+
+TEST_CASE("a press whose intent came after its tick was stood in for is applied late, not lost (ADR 0133)")
+{
+    PlayedMatch match;
+    match.run(10);
+    (void)match.server.atoms.intern("Jump");
+    const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
+    REQUIRE(player != nullptr);
+    const auto send = [&](core::u64 tick, bool jump) {
+        Bytes intent;
+        intent.u8v(7).u8v(1).u64v(tick);
+        if (jump)
+            intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+        else
+            intent.u16v(0);
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    };
+    const auto jumping = [&] {
+        return std::any_of(player->intents.begin(), player->intents.end(),
+                           [&](const scene::PlayerIntent& intent) { return intent.pressed; });
+    };
+    // The next two ticks arrive; the third does not, and the authority stands
+    // the second in for it -- run until it has.
+    const core::u64 first = match.tick + 1;
+    send(first, false);
+    send(first + 1, false);
+    const core::u64 starvedBefore = match.authority->stats().intentStarvations;
+    for (int at = 0; at < 30 && match.authority->stats().intentStarvations < starvedBefore + 2; ++at)
+        match.authority->receive(match.server.world, match.server.workspace);
+    REQUIRE(match.authority->stats().intentStarvations >= starvedBefore + 2);
+    CHECK_FALSE(jumping());
+    // Then the third arrives -- a jump, pressed for that one tick -- with the
+    // fourth, both too late for their ticks: the jump is applied once, late.
+    send(first + 2, true);
+    send(first + 3, false);
+    int jumped = 0;
+    for (int at = 0; at < 10; ++at) {
+        match.authority->receive(match.server.world, match.server.workspace);
+        jumped += jumping() ? 1 : 0;
+    }
+    CHECK(jumped == 1);
+}

@@ -976,7 +976,28 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     break;
                 }
                 for (auto& [tick, intents] : carried) {
-                    if ((peer->intentStarted && tick <= peer->appliedTick) || peer->intentQueue.contains(tick))
+                    if (peer->intentStarted && tick <= peer->appliedTick) {
+                        // Too late for its tick. If that tick was stood in
+                        // for, a press it held that the stand-in did not is
+                        // carried into the next tick rather than lost.
+                        const auto stood = peer->standIns.find(tick);
+                        if (stood == peer->standIns.end())
+                            continue;
+                        for (const scene::PlayerIntent& intent : intents) {
+                            if (intent.type != 0 || !intent.pressed)
+                                continue;
+                            const bool had = std::any_of(stood->second.begin(), stood->second.end(),
+                                                         [&](const scene::PlayerIntent& other) {
+                                                             return other.action == intent.action && other.pressed;
+                                                         });
+                            if (!had && std::find(peer->carriedPresses.begin(), peer->carriedPresses.end(),
+                                                  intent.action) == peer->carriedPresses.end())
+                                peer->carriedPresses.push_back(intent.action);
+                        }
+                        peer->standIns.erase(stood);
+                        continue;
+                    }
+                    if (peer->intentQueue.contains(tick))
                         continue;
                     peer->intentQueue.emplace(tick, std::move(intents));
                 }
@@ -1208,6 +1229,20 @@ void AuthoritySession::applyIntents(scene::World& world)
         });
     };
     m_stats.intentDepth = 0;
+    // A tick's intents, with any press a late intent carried applied on top.
+    const auto withCarried = [](Peer& peer) {
+        std::vector<scene::PlayerIntent> applied = peer.lastIntents;
+        for (const core::NameAtom action : peer.carriedPresses) {
+            auto same = std::find_if(applied.begin(), applied.end(),
+                                     [&](const scene::PlayerIntent& intent) { return intent.action == action; });
+            if (same != applied.end())
+                same->pressed = true;
+            else
+                applied.push_back(scene::PlayerIntent{action, 0, core::Vec3{}, true});
+        }
+        peer.carriedPresses.clear();
+        return applied;
+    };
     for (Peer& peer : m_peers) {
         scene::PlayerComponent* player =
             peer.welcomed && peer.player.valid() ? world.players().find(peer.player) : nullptr;
@@ -1230,8 +1265,13 @@ void AuthoritySession::applyIntents(scene::World& world)
         // **The delay adapts, and only while the player is idle**: holding a
         // tick or skipping one then moves nothing, so the change is never a
         // correction.
-        if (resting && depth + 1 < peer.intentDelay && !peer.intentQueue.empty()) {
-            player->intents = peer.lastIntents;
+        //
+        // One held tick for each new intent that arrives: a peer that stops
+        // sending does not fill the queue, and holding for it would hold for
+        // ever what it had already sent.
+        if (resting && depth + 1 < peer.intentDelay && !peer.intentQueue.empty() && newest != peer.pausedAtNewest) {
+            peer.pausedAtNewest = newest;
+            player->intents = withCarried(peer);
             continue;
         }
         u64 next = peer.appliedTick + 1;
@@ -1259,8 +1299,11 @@ void AuthoritySession::applyIntents(scene::World& world)
             m_stats.intentStarvations += 1;
             peer.ticksSinceStarved = 0;
             peer.intentDelay = std::min(peer.intentDelay + 1, MaxIntentDelay);
+            peer.standIns.emplace(next, peer.lastIntents);
+            while (peer.standIns.size() > IntentRedundancy * 4u)
+                peer.standIns.erase(peer.standIns.begin());
         }
-        player->intents = peer.lastIntents;
+        player->intents = withCarried(peer);
         peer.appliedTick = next;
         if (next >= peer.firstIntentTick)
             peer.intentTick = next;
@@ -2260,7 +2303,7 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
         return;
     // What this replica predicted for its own character at this tick, for the
     // snapshot that answers this intent to be compared against.
-    if (m_owned != 0 && m_ownedSynced) {
+    if (m_owned != 0) {
         const auto local = m_locals.find(m_owned);
         const scene::PartComponent* part =
             local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
@@ -2648,40 +2691,46 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         if (sample.tick == m_ackedIntent)
             predicted = &sample;
     }
-    if (m_ackedIntent == 0 || !m_ownedSynced) {
-        // None of this replica's intents applied yet, or a character that has
-        // just become this machine's: the authority is right, and the
-        // prediction starts from it.
+    if (m_ackedIntent == 0) {
+        // None of this replica's intents applied yet: the authority is right,
+        // and the prediction starts from it.
         part->cframe = authority;
         m_predicted.clear();
-        m_ownedSynced = true;
         return;
     }
-    if (predicted == nullptr) {
-        part->cframe = authority;
-        std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick <= m_ackedIntent; });
-        return;
-    }
-
-    const core::DVec3 error = authority.position - predicted->cframe.position;
-    const f64 distance = std::sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
-    // The turn the authority disagrees by, the same way.
-    const core::Mat3 turn = authority.rotation * core::transpose(predicted->cframe.rotation);
+    // **Taken, not compared** -- a character that has just become this
+    // machine's, or an answer naming a tick with no prediction: the authority
+    // is right, at the tick it answered, which is behind the one this
+    // replica is on. What it has not answered is stepped again from there
+    // below, as a correction's is. Taken as it stood, a character that joined
+    // while falling was that many ticks behind its own fall, and the first
+    // comparison corrected it by 27 cm (ADR 0133's measurement).
+    const bool comparing = m_ownedSynced && predicted != nullptr;
+    m_ownedSynced = true;
+    core::DVec3 error{};
+    core::Mat3 turn;
     bool turned = false;
-    for (int column = 0; column < 3 && !turned; ++column) {
-        for (int row = 0; row < 3; ++row) {
-            const core::f32 identity = column == row ? 1.0f : 0.0f;
-            if (std::abs(turn.m[column][row] - identity) > 1e-3f) {
-                turned = true;
-                break;
+    if (comparing) {
+        error = authority.position - predicted->cframe.position;
+        const f64 distance = std::sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
+        // The turn the authority disagrees by, the same way.
+        turn = authority.rotation * core::transpose(predicted->cframe.rotation);
+        for (int column = 0; column < 3 && !turned; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                const core::f32 identity = column == row ? 1.0f : 0.0f;
+                if (std::abs(turn.m[column][row] - identity) > 1e-3f) {
+                    turned = true;
+                    break;
+                }
             }
         }
+        // A centimetre is inside what floats and the two ends' frame timing
+        // make of the same motion; correcting it every snapshot would be a
+        // visible shimmer.
+        if (distance < 0.01 && !turned)
+            return;
+        m_stats.corrections += 1;
     }
-    // A centimetre is inside what floats and the two ends' frame timing make of
-    // the same motion; correcting it every snapshot would be a visible shimmer.
-    if (distance < 0.01 && !turned)
-        return;
-    m_stats.corrections += 1;
 
     // **Stepped again from where the authority put it** -- what every engine
     // that predicts a character does. The commands this replica has not had
@@ -2713,7 +2762,8 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
     if (complete) {
         const std::vector<core::CFrameD> frames = m_replay->replay(character, authoritative, commands);
         if (frames.size() == commands.size()) {
-            m_stats.replays += 1;
+            if (comparing)
+                m_stats.replays += 1;
             usize at = 0;
             for (Sample& sample : m_predicted) {
                 if (sample.tick <= m_ackedIntent)
@@ -2721,17 +2771,29 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
                 sample.cframe.position = frames[at].position;
                 if (turned)
                     sample.cframe.rotation = turn * sample.cframe.rotation;
+                else if (!comparing)
+                    sample.cframe.rotation = authority.rotation;
                 ++at;
             }
             // The rotation is the scripts', which a controller does not turn:
-            // corrected by the turn at that moment, as before.
+            // corrected by the turn at that moment, as before -- or, taken,
+            // the authority's.
             core::CFrameD now = part->cframe;
             now.position = frames.empty() ? authority.position : frames.back().position;
             if (turned)
                 now.rotation = turn * now.rotation;
+            else if (!comparing)
+                now.rotation = authority.rotation;
             part->cframe = now;
+            std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick < m_ackedIntent; });
             return;
         }
+    }
+    if (!comparing) {
+        // Nothing to step again: taken as it stands.
+        part->cframe = authority;
+        std::erase_if(m_predicted, [this](const Sample& sample) { return sample.tick <= m_ackedIntent; });
+        return;
     }
 
     // **The error at that moment, carried forward to now**, where there is no

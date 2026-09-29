@@ -90,7 +90,7 @@ inline constexpr u8 IntentRedundancy = 4;
 // every tick the queue ran dry, a tick less after `IntentDelayRelaxTicks`
 // without one -- changed only while the player is idle, so the change itself
 // moves nothing.
-inline constexpr u32 InitialIntentDelay = 2;
+inline constexpr u32 InitialIntentDelay = 3;
 inline constexpr u32 MaxIntentDelay = 6;
 inline constexpr u32 IntentDelayRelaxTicks = 600;
 // Queued past the delay by more than this, the queue is caught up at once: a
@@ -237,6 +237,14 @@ private:
         u32 intentDelay = InitialIntentDelay;
         u32 ticksSinceStarved = 0;
         u64 starvations = 0;
+        // **What stood in for a tick, and the presses it missed** (ADR 0133's
+        // measurement): a jump held for one tick whose intent came after the
+        // tick was stood in for was never applied at all. A press the stand-in
+        // lacked is carried into the next tick instead -- late, not lost.
+        std::map<u64, std::vector<scene::PlayerIntent>> standIns;
+        std::vector<core::NameAtom> carriedPresses;
+        // The newest tick queued when the delay last held a tick to grow.
+        u64 pausedAtNewest = 0;
         // The roster this peer was last sent, so it is sent again only when it
         // changes.
         std::vector<u32> roster;

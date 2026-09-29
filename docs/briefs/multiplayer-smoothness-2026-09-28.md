@@ -158,11 +158,35 @@ character inside it (the side-pass of D244), and jumping onto a block's corner
 rolls the character back repeatedly. The owner chose to do it as the large
 engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-touches-and-replays-it-exactly.md).
 
-- [ ] **Measure first:** a replica jumping onto a block's edge 100 times at
+- [x] **Measure first:** a replica jumping onto a block's edge 100 times at
   varied offsets over the jitter/loss transport; record corrections and their
   size, and find which of the three suspects causes them (the jump's tick at
   either end of the input buffer; `stepController`'s shorter path; state the
   snapshot does not carry).
+
+  **Measured on 2026-09-28** (`network_session_tests.cpp`, "MEASURE a hundred
+  jumps onto a block's corner"): two machines with the real physics, a block
+  1.5 m tall, `JumpSpeed` 6 and takeoffs from 0.3 m to 3.5 m before the edge.
+
+  | Variant | Corrections in 100 jumps |
+  |---|---|
+  | Physics replay, jitter and loss | 2: at join (27 cm), and one jump in the air (56 cm) |
+  | Physics replay, no jitter | 1: at join |
+  | No replay, jitter and loss | 29, in decaying runs (36, 16, 15 ... 1 cm) |
+
+  - **The jump's tick is the jitter cause.** A press held for one tick whose
+    intents all arrive after the authority has stood the previous one in for
+    that tick is never applied: the authority does not jump. It happens only
+    with jitter, and with starvations counted.
+  - **The runs are the error carried forward.** Where the replay cannot run,
+    the correction is carried forward and corrected again at every snapshot.
+    That is the "pulled back again and again".
+  - **The join correction** is the spawn fall before the first answer.
+
+  **After the first fixes** (D250): a press that came too late for its tick is
+  applied at the next, a take replays what is unanswered, and the delay starts
+  at 3. Result: 1 correction of 2.2 cm in 100 jumps with jitter (at join,
+  while the spawned character falls), and none without it.
 - [ ] **The replay is the live step:** retire `stepController` for predicting
   replicas; the snapshot carries every field the controller reads.
 - [ ] **Predicted set:** loose parts within `[network] predict_radius` (8 m) of
