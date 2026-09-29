@@ -163,10 +163,16 @@ describe("the module model", function()
     -- and saved inside whatever holds it. What was true before came from a
     -- script being a FILE, which it no longer is (ADR 0050).
 
+    -- **The modules' code comes from a stamp** (ADR 0137 §4): a script cannot
+    -- write `Source`, so each case takes a module the engine read from
+    -- `content/stamps/spec-modules.stamp.json`.
+    local function fixture(name: string): Instance
+        return (Instance.stamp("spec-modules"):FindFirstChild(name) :: Instance):Clone()
+    end
+
     it("makes a ModuleScript, and requiring it gives back what it returns", function()
-        local module = Instance.new("ModuleScript")
+        local module = fixture("Answer")
         module.Name = "Shared"
-        module.Source = "return { answer = 42 }"
 
         local required = (require :: any)(module)
         expect(typeof(required)):ToBe("table")
@@ -181,9 +187,8 @@ describe("the module model", function()
         -- **The shape every project has.** A script keeps its own helpers
         -- beside it, reaches them through `script.Name`, and never has to know
         -- where in the tree it was mounted.
-        local module = Instance.new("ModuleScript")
+        local module = fixture("Seven")
         module.Name = "Nested"
-        module.Source = "return { answer = 7 }"
         module.Parent = script
 
         local required = (require :: any)(script:FindFirstChild("Nested"))
@@ -196,18 +201,11 @@ describe("the module model", function()
         -- whatever required it -- `luaL_sandboxthread` chains the new globals
         -- table to the creating thread's -- so a nested module looked for its
         -- own children under somebody else's instance and found none.
-        local outer = Instance.new("ModuleScript")
-        outer.Name = "Outer"
+        -- The outer one reaches its own child, `Inner`, the same way a Script
+        -- does, which is what makes a module a place to put things rather
+        -- than a leaf.
+        local outer = fixture("Outer")
         outer.Parent = script
-
-        local inner = Instance.new("ModuleScript")
-        inner.Name = "Inner"
-        inner.Source = "return { depth = 2 }"
-        inner.Parent = outer
-
-        -- The outer one reaches its own child the same way a Script does, which
-        -- is what makes a module a place to put things rather than a leaf.
-        outer.Source = "return { inner = require(script:FindFirstChild('Inner')) }"
 
         local required = (require :: any)(outer)
         expect(required.inner.depth):ToBe(2)
@@ -218,9 +216,8 @@ describe("the module model", function()
         folder.Name = "Lib"
         folder.Parent = script
 
-        local module = Instance.new("ModuleScript")
+        local module = fixture("FromFolder")
         module.Name = "Helper"
-        module.Source = "return { from = 'folder' }"
         module.Parent = folder
 
         local lib = script:FindFirstChild("Lib") :: Instance
@@ -229,8 +226,7 @@ describe("the module model", function()
     end)
 
     it("refuses require of a Script, because a Script runs", function()
-        local runner = Instance.new("Script")
-        runner.Source = "return 1"
+        local runner = fixture("ReturnsOne")
 
         -- Requiring one would run it a second time somewhere else, which is
         -- exactly what the two classes exist to keep apart.
@@ -240,8 +236,7 @@ describe("the module model", function()
     end)
 
     it("propagates a module's error, and caches the failure", function()
-        local broken = Instance.new("ModuleScript")
-        broken.Source = "error('module said no')"
+        local broken = fixture("Broken")
 
         expect(function()
             return (require :: any)(broken)

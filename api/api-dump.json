@@ -362,6 +362,7 @@
         {
           "Name": "Source",
           "Type": "string",
+          "ScriptReadOnly": true,
           "Default": "\"\""
         }
       ],

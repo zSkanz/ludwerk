@@ -1,0 +1,50 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Folder",
+  "name": "SpecScripts",
+  "children": [
+   {
+    "class": "Script",
+    "name": "Maker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(script:GetAttribute(\"Into\") or \"ScriptEnabledSpec\")\nlocal p = Instance.new(\"Part\")\np.Name = script:GetAttribute(\"Make\") :: string\np.Parent = into\n",
+     "Enabled": false
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Ticker",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(script:GetAttribute(\"Into\") or \"ScriptEnabledSpec\")\nlocal RunService = game:GetService(\"RunService\")\nRunService.Heartbeat:Connect(function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"Tick\"\n    p.Parent = workspace:FindFirstChild(script:GetAttribute(\"Into\") :: string)\nend)\n",
+     "Enabled": false
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Late",
+    "properties": {
+     "Source": "--!strict\ntask.delay(0.1, function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"TooLate\"\n    p.Parent = workspace:FindFirstChild(\"ScriptEnabledSpec\")\nend)\n",
+     "Enabled": false
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Dying",
+    "properties": {
+     "Source": "--!strict\nlocal function mark(name: string)\n    local p = Instance.new(\"Part\")\n    p.Name = name\n    p.Parent = workspace:FindFirstChild(\"ScriptEnabledSpec\")\nend\nscript.Destroying:Connect(function()\n    mark(\"Cleaned\")\nend)\nmark(\"Connected\")\n",
+     "Enabled": false
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Watcher",
+    "properties": {
+     "Source": "--!strict\nlocal watched = workspace:FindFirstChild(\"ScriptDestroyedWatched\") :: Instance\nwatched.ChildAdded:Connect(function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"Heard\"\n    p.Parent = workspace:FindFirstChild(\"ScriptEnabledSpec\")\nend)\n",
+     "Enabled": false
+    }
+   }
+  ]
+ }
+}

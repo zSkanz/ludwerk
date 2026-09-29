@@ -94,8 +94,10 @@ describe("Instance construction", function()
             local made = Instance.new("Script")
             expect(made.ClassName):ToBe("Script")
             expect(made.Source):ToBe("")
-            made.Source = "return 1"
-            expect(made.Source):ToBe("return 1")
+            -- The editor writes it; a script only reads it (ADR 0137 §4).
+            expect(function()
+                (made :: any).Source = "return 1"
+            end):ToThrow()
 
             -- And the one that is required rather than run.
             local module = Instance.new("ModuleScript")

@@ -889,8 +889,11 @@ end
 declare extern type BaseScript extends Instance with
     --- The Luau this instance carries. It is data on the instance rather than a path to a file, which
     --- is what makes a script something you can create, copy, put inside a prefab and save in a scene
-    --- like anything else.
-    Source: string
+    --- like anything else. **The editor writes it, and a script only reads it** (ADR 0137 §4): a
+    --- script that could write another's `Source` and enable it would run text the sandbox never
+    --- loaded. A script made at run time takes its code from a copy -- `Clone` of one in the scene, or
+    --- `Instance.stamp`.
+    read Source: string
 end
 
 declare extern type Script extends BaseScript with

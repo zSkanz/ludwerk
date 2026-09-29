@@ -18,6 +18,30 @@ using core::I18nArg;
 
 } // namespace
 
+WorldHostOptions currentOptions(WorldHost& host, WorldHostOptions options)
+{
+    const scene::EngineState& now = host.world().engineState();
+    options.networkTopology = now.networkTopology;
+    const std::string& scene = now.currentScene;
+    if (scene.empty() || scene == options.bootScenePath)
+        return options;
+    // The content root is what the boot scene's path ends in its relative
+    // path under; the current scene is under the same one.
+    const std::string boot = options.bootScene.generic_string();
+    if (!options.bootScenePath.empty() && boot.ends_with(options.bootScenePath)) {
+        const std::filesystem::path root(boot.substr(0, boot.size() - options.bootScenePath.size()));
+        options.bootScene = root / std::filesystem::path(scene);
+    }
+    // A scene read from a pack is handed over as text; one on disk is read.
+    if (!options.bootSceneText.empty()) {
+        std::string text;
+        if (!host.readSceneText(scene, text, false).has_value())
+            options.bootSceneText = std::move(text);
+    }
+    options.bootScenePath = scene;
+    return options;
+}
+
 ReloadReport reloadWorld(std::unique_ptr<WorldHost>& host, const WorldHostOptions& options)
 {
     const auto started = std::chrono::steady_clock::now();
@@ -40,6 +64,11 @@ ReloadReport reloadWorld(std::unique_ptr<WorldHost>& host, const WorldHostOption
     WorldHostOptions freshOptions = options;
     freshOptions.isReload = true;
     freshOptions.preserved = &preserved;
+    // **The topology and the scene it is in NOW** (S0.7, ADR 0137 Â§6), not the
+    // ones it booted with: after a run-time `Join` or `LoadScene`, a reload
+    // came back solo, or as the host, in the first scene.
+    if (host)
+        freshOptions = currentOptions(*host, std::move(freshOptions));
 
     // **What the outgoing world saved, on disk before the fresh one reads it**
     // (audit A11). A slot is written a second after its last change, off the

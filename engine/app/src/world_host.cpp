@@ -1,5 +1,9 @@
 #include "engine/app/world_host.h"
 
+#if ENG_ENABLE_REPLICATION
+#include "engine/replication/extract.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -593,6 +597,16 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // them** (ADR 0058). The editor is the one caller that says no: a project
     // opened in a tool shows what its scene holds, and behaviour begins when
     // somebody presses play.
+#if ENG_ENABLE_REPLICATION
+    // **A replica starts no script its join is about to destroy** (S0.4, ADR
+    // 0137 §5): what the authority replicates is cleared from this copy of the
+    // scene before the first script starts, not after the boot drain -- a
+    // script inside a replicated part ran its file scope once on a joined
+    // client and then died with the part. `NetworkSession::start` clears again
+    // when the socket opens, and finds nothing left to clear.
+    if (options.networkTopology == scene::NetworkTopology::Replica)
+        (void)replication::clearForReplica(*m_world, m_workspace);
+#endif
     if (options.startScripts)
         script::startScripts(m_runtime->state());
 

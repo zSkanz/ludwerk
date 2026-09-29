@@ -247,3 +247,34 @@ TEST_CASE("a hot reload keeps what a script saved just before it (audit A11)")
     tickTimes(*host, 2);
     CHECK(log.contains("count=2"));
 }
+
+TEST_CASE("a reload boots again with the scene and the topology the world is in now (S0.7)")
+{
+    // The boot's options were kept and reused: a world that had changed scene,
+    // or joined, came back in the first scene, solo.
+    Captured log;
+    Project project;
+    project.write("content/scenes/a.scene.json",
+                  R"json({"format":"scene","version":2,"root":{"children":[{"class":"Folder","name":"InA"}]}})json");
+    project.write("content/scenes/b.scene.json",
+                  R"json({"format":"scene","version":2,"root":{"children":[{"class":"Folder","name":"InB"}]}})json");
+    // A reload refuses a project with no scripts at all.
+    project.write("src/client/init.luau", "print('here')");
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+
+    auto host = std::make_unique<app::WorldHost>();
+    REQUIRE_FALSE(host->boot(options).has_value());
+    REQUIRE_FALSE(host->loadScene("scenes/b.scene.json").has_value());
+    host->world().engineState().networkTopology = scene::NetworkTopology::Host;
+
+    const app::ReloadReport report = app::reloadWorld(host, options);
+    if (report.error.has_value())
+        FAIL(report.error->message);
+    const scene::World& world = host->world();
+    CHECK(world.engineState().currentScene == "scenes/b.scene.json");
+    CHECK(world.engineState().networkTopology == scene::NetworkTopology::Host);
+    CHECK(world.findFirstChild(host->workspace(), world.atoms().lookup("InB")).valid());
+    CHECK_FALSE(world.findFirstChild(host->workspace(), world.atoms().lookup("InA")).valid());
+}

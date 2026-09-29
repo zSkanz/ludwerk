@@ -1448,7 +1448,7 @@ exists:
 | `ludwerk build [path]` | The distributable folder: the host binary under the game's name and wearing its icon, the engine's content beside it, and the game in `game/` — which the player mounts when given no script. Ships Luau **source** rather than bytecode; ADR 0045 says why, and amends this row |
 | `ludwerk build-assets` | compile `content/` into a pack and a manifest — glTF 2.0 canonical → runtime formats (engine mesh, KTX2/BCn textures, ogg/wav), with a crypto-digest cache in `.engine/cache` |
 | `ludwerk test [path]` | run the conformance suite on the headless engine |
-| `ludwerk check [path]` | `luau-lsp analyze` with the generated settings/defs (CI-ready) + StyLua check + i18n lint |
+| `ludwerk check [path]` | `luau-lsp analyze` with the generated settings/defs (CI-ready) + StyLua check (the i18n lint is the repository's, `tools/repo/i18nlint.luau`) |
 | `ludwerk fmt [path]` | StyLua |
 
 **Five commands in this table were designed and never built**, and none of them

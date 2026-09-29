@@ -4,9 +4,13 @@
 
 	M3 brief, Decision 7: this is the implementation and
 	`scripts/gates/luau-check.sh` calls it, rather than the two drifting until
-	they disagree about whether the repository is green. Three checks, in the
-	order that gives the most useful first failure: types, then formatting, then
-	the i18n lint.
+	they disagree about whether the repository is green. Two checks, in the
+	order that gives the most useful first failure: types, then formatting.
+
+	**The i18n lint is not one of them** (S0.8): it checks the engine's own
+	`ENG_TR` keys against `i18n/en.json`, which a game does not have, so it is
+	the repository's -- `tools/repo/i18nlint.luau`, which the gate runs beside
+	this. The header said three until 2026-09-29, and `run` never had it.
 ]]
 
 local fs = require("@std/fs")

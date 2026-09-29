@@ -114,7 +114,10 @@ local function emitProperties(lines: { string }, properties: { Schema.Property }
     table.insert(lines, "| Name | Type | Default | Access | Description |")
     table.insert(lines, "|---|---|---|---|---|")
     for _, property in sortedByName(properties) do
-        local access = if property.ReadOnly then "read-only" else "read/write"
+        local access = if property.ReadOnly
+            then "read-only"
+            elseif property.ScriptReadOnly then "read-only to scripts; the editor writes it"
+            else "read/write"
         if property.Inert then
             -- **The one tag a reference must never omit.** `Inert` means the
             -- engine stores the value, reports it back faithfully, and acts on

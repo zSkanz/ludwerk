@@ -690,6 +690,15 @@ bool startScript(lua_State* L, core::InstanceId instance)
     if (!w.alive(instance) || w.classOf(instance) != scriptClass)
         return false;
 
+    // **Never started twice** (S0.5, ADR 0137 §2): a script that is running
+    // keeps its run. A scene change used to start the scripts that survived
+    // it -- a kept screen's, a player's -- again beside their first run.
+    if (instance.index < modules.runs.size()) {
+        const ModuleRegistry::Run& run = modules.runs[instance.index];
+        if (run.generation == instance.generation && run.envRef != -1)
+            return false;
+    }
+
     // **Where it is decides whether it runs here** (ADR 0105): the rules on the
     // authority, the HUD where a player sits, and everything else everywhere.
     if (!scriptSideRunsHere(w, scriptSideOf(w, instance)))
@@ -727,6 +736,19 @@ bool startScript(lua_State* L, core::InstanceId instance)
     pushInstance(co, instance);
     lua_setglobal(co, "script");
 
+    // The run: this start's globals table, which every thread and handler the
+    // script makes inherits.
+    const auto recordRun = [&modules, co, instance] {
+        if (modules.runs.size() <= instance.index)
+            modules.runs.resize(static_cast<usize>(instance.index) + 1);
+        ModuleRegistry::Run& run = modules.runs[instance.index];
+        lua_pushvalue(co, LUA_GLOBALSINDEX);
+        run.env = lua_topointer(co, -1);
+        run.envRef = lua_ref(co, -1);
+        lua_pop(co, 1);
+        run.generation = instance.generation;
+    };
+
     std::string error;
     if (!loadChunk(co, *source, chunkName, error)) {
         const core::I18nArg args[] = {
@@ -746,6 +768,8 @@ bool startScript(lua_State* L, core::InstanceId instance)
     // function, and would patch a `Proto` nothing is executing.
     if (Debugger* debugger = context(L).debugger; debugger != nullptr)
         debugger->bindChunk(L, co, chunkName, -1);
+
+    recordRun();
 
     // Deferred rather than resumed here, so every entry script's first
     // resumption happens inside a drain and in the order they were mounted.
@@ -864,6 +888,75 @@ SuppressReason suppressionFor(lua_State* L, core::InstanceId script)
 bool resumptionSuppressed(lua_State* L, core::InstanceId script)
 {
     return suppressionFor(L, script) != SuppressReason::None;
+}
+
+SuppressReason suppressionFor(lua_State* L, core::InstanceId script, const void* env)
+{
+    const SuppressReason reason = suppressionFor(L, script);
+    if (reason != SuppressReason::None || !script.valid() || env == nullptr)
+        return reason;
+    // A thread or handler of a run that is not the script's current one: the
+    // old run of a script disabled and enabled again. A script with no record
+    // was not started by `startScript` -- a thread the engine made -- and is
+    // left to the rules above.
+    const ModuleRegistry& modules = registry(L);
+    if (script.index < modules.runs.size()) {
+        const ModuleRegistry::Run& run = modules.runs[script.index];
+        if (run.generation == script.generation && run.envRef != -1 && run.env != env)
+            return SuppressReason::Ended;
+    }
+    return SuppressReason::None;
+}
+
+namespace {
+
+// The globals table on top of `L`'s stack as a run's identity, or null when it
+// is not a script's own: a run's table holds `script` itself, and a module's
+// only reaches the requirer's through its chain -- a function an `@engine`
+// module made for a script (a camera rig's render step) is no run's, and
+// comparing it with one would stop it. Pops the table.
+[[nodiscard]] const void* ownRunEnv(lua_State* L)
+{
+    const void* env = nullptr;
+    if (lua_istable(L, -1)) {
+        lua_rawgetfield(L, -1, "script");
+        if (!lua_isnil(L, -1))
+            env = lua_topointer(L, -2);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return env;
+}
+
+} // namespace
+
+const void* runEnvOfThread(lua_State* thread)
+{
+    if (thread == nullptr)
+        return nullptr;
+    lua_pushvalue(thread, LUA_GLOBALSINDEX);
+    return ownRunEnv(thread);
+}
+
+const void* runEnvOfFunction(lua_State* L, int index)
+{
+    if (!lua_isfunction(L, index))
+        return nullptr;
+    lua_getfenv(L, index);
+    return ownRunEnv(L);
+}
+
+void endRun(lua_State* L, core::InstanceId script)
+{
+    ModuleRegistry& modules = registry(L);
+    if (!script.valid() || script.index >= modules.runs.size())
+        return;
+    ModuleRegistry::Run& run = modules.runs[script.index];
+    if (run.generation != script.generation)
+        return;
+    if (run.envRef != -1)
+        (void)lua_unref(L, run.envRef);
+    run = ModuleRegistry::Run{};
 }
 
 std::vector<ModuleRegistry::Entry> mountedEntries(lua_State* L)

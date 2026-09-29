@@ -362,10 +362,15 @@ local Classes: { Schema.Class } = {
                 Name = "Source",
                 Type = "string",
                 Code = true,
+                ScriptReadOnly = true,
                 Default = '""',
                 Doc = "The Luau this instance carries. It is data on the instance rather than a path to a file, "
                     .. "which is what makes a script something you can create, copy, put inside a prefab and save "
-                    .. "in a scene like anything else.",
+                    .. "in a scene like anything else.\n\n"
+                    .. "**The editor writes it, and a script only reads it** (ADR 0137 §4): a script that could "
+                    .. "write another's `Source` and enable it would run text the sandbox never loaded. A script "
+                    .. "made at run time takes its code from a copy -- `Clone` of one in the scene, or "
+                    .. "`Instance.stamp`.",
             },
         },
     },

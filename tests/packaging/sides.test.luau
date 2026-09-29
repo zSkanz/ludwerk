@@ -43,6 +43,39 @@ local ClientStrings = {
     "SENTINEL-GLOBAL-CLIENT",
 }
 
+--- **In both sides' packages, compiled** (S0.3): a script in the scene's
+--- `Workspace` and one in a stamp run everywhere, so both packages carry them --
+--- as bytecode, so only their names are searchable, and their source is not.
+local BothStrings = {
+    "SENTINEL-WORKSPACE-SCRIPT",
+    "SENTINEL-STAMP-SCRIPT",
+}
+
+--- `own` and `BothStrings`, one list.
+local function withBoth(own: { string }): { string }
+    local all = table.clone(own)
+    for _, sentinel in BothStrings do
+        table.insert(all, sentinel)
+    end
+    return all
+end
+
+--- **In neither side's package** (S0.1): what the editor moved to
+--- `.engine/trash/` when a script's file was orphaned is the editor's, and it
+--- was server code as often as not.
+local NowhereStrings = {
+    "SENTINEL-TRASH",
+}
+
+--- `foreign` and `NowhereStrings`, one list.
+local function withNowhere(foreign: { string }): { string }
+    local all = table.clone(foreign)
+    for _, sentinel in NowhereStrings do
+        table.insert(all, sentinel)
+    end
+    return all
+end
+
 local function repositoryRoot(): string
     local here = string.match(debug.info(1, "s"), "^(.*)[/\\][^/\\]+$") or "tests/packaging"
     return projectlib.joined(here, "..", "..")
@@ -71,6 +104,21 @@ local function script(name: string): string
     return `--!strict\n-- {SourceOnly}\nprint("{name}")\n`
 end
 
+--- `text` as a JSON string literal.
+local function jsonString(text: string): string
+    local escaped = string.gsub(text, '[%c"\\]', function(c: string): string
+        if c == '"' then
+            return '\\"'
+        elseif c == "\\" then
+            return "\\\\"
+        elseif c == "\n" then
+            return "\\n"
+        end
+        return string.format("\\u%04x", string.byte(c) or 0)
+    end)
+    return `"{escaped}"`
+end
+
 local function folder(name: string): string
     return `\{"class": "Folder", "name": "{name}"\}`
 end
@@ -94,6 +142,10 @@ local function scaffold(parent: string): string
     write(projectlib.joined(src, "client", "Hud.luau"), script("SENTINEL-CLIENT-SCRIPT"))
     write(projectlib.joined(src, "scenes", "main", "server", "Rules.luau"), script("SENTINEL-SCENE-SERVER-SCRIPT"))
     write(projectlib.joined(src, "scenes", "main", "client", "View.luau"), script("SENTINEL-SCENE-CLIENT-SCRIPT"))
+    write(
+        projectlib.joined(project, ".engine", "trash", "20260929-120000", "src", "server", "Old.luau"),
+        script("SENTINEL-TRASH")
+    )
 
     local content = projectlib.joined(project, "content")
     write(
@@ -102,12 +154,29 @@ local function scaffold(parent: string): string
             "{",
             '  "format": "scene",',
             '  "version": 2,',
-            '  "root": {"class": "Workspace", "name": "Workspace"},',
+            '  "root": {"class": "Workspace", "name": "Workspace", "children": [',
+            `    \{"class": "Script", "name": "SENTINEL-WORKSPACE-SCRIPT", "properties": \{"Source": {jsonString(
+                script("SENTINEL-WORKSPACE-PRINT")
+            )}\}\}`,
+            "  ]},",
             '  "storage": {',
             "    " .. service("ServerStorage", "SENTINEL-SERVER-STORAGE") .. ",",
             "    " .. service("ServerScriptService", "SENTINEL-SERVER-SCRIPT-SERVICE") .. ",",
             "    " .. service("ClientScriptService", "SENTINEL-CLIENT-SCRIPT-SERVICE"),
             "  }",
+            "}",
+            "",
+        }, "\n")
+    )
+    write(
+        projectlib.joined(content, "stamps", "door.stamp.json"),
+        table.concat({
+            "{",
+            '  "format": "scene",',
+            '  "version": 2,',
+            `  "root": \{"class": "Model", "name": "Door", "children": [\{"class": "Script", "name": "SENTINEL-STAMP-SCRIPT", "properties": \{"Source": {jsonString(
+                script("SENTINEL-STAMP-PRINT")
+            )}\}\}]\}`,
             "}",
             "",
         }, "\n")
@@ -181,8 +250,12 @@ test.suite("dedicated sides", function(suite)
             0
         )
 
-        checkSide(projectlib.joined(project, "dist", desktop), ClientStrings, ServerStrings)
-        checkSide(projectlib.joined(project, "dist", `{desktop}-server`), ServerStrings, ClientStrings)
+        checkSide(projectlib.joined(project, "dist", desktop), withBoth(ClientStrings), withNowhere(ServerStrings))
+        checkSide(
+            projectlib.joined(project, "dist", `{desktop}-server`),
+            withBoth(ServerStrings),
+            withNowhere(ClientStrings)
+        )
 
         -- The server's package says what it is, so it serves with no arguments.
         local toml = fs.readFileToString(projectlib.joined(project, "dist", `{desktop}-server`, "game", "project.toml"))

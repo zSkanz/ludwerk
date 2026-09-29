@@ -611,8 +611,12 @@ void ScriptRuntime::drain(core::Phase)
         std::vector<core::InstanceId> everything;
         m_world.collectDescendants(dataModel(), everything);
         for (const core::InstanceId instance : everything) {
-            if (std::find(enabled.begin(), enabled.end(), instance) != enabled.end())
+            if (std::find(enabled.begin(), enabled.end(), instance) != enabled.end()) {
+                // A re-enable is a stop and a fresh run (S0.6, ADR 0137 §2):
+                // the old run's threads and handlers never come back.
+                endRun(m_impl->state, instance);
                 (void)startScript(m_impl->state, instance);
+            }
         }
     }
 

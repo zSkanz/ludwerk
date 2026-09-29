@@ -605,7 +605,7 @@ void invokeFire(lua_State* L, const DeferredEntry& entry)
             // script's connections stay connected and stop being invoked).
             lua_getref(L, ref);
             const core::InstanceId owningScript = scriptOfFunction(L, -1);
-            const SuppressReason reason = suppressionFor(L, owningScript);
+            const SuppressReason reason = suppressionFor(L, owningScript, runEnvOfFunction(L, -1));
             // **`Destroying` is the one exception, and only for its own fire**
             // (D132). Every other reason suppresses, and every other signal on a
             // destroyed script suppresses, which is what keeps D097 fixed.
@@ -1138,7 +1138,8 @@ usize drainDeferred(lua_State* L)
             // `task.cancel` raise `task_not_scheduled` for a thread the caller
             // is still holding. The queue does not grow, because a dropped entry
             // is a drained one.
-            const bool suppressed = co != nullptr && resumptionSuppressed(L, scriptOfThread(co));
+            const bool suppressed =
+                co != nullptr && suppressionFor(L, scriptOfThread(co), runEnvOfThread(co)) != SuppressReason::None;
             if (co != nullptr && !suppressed) {
                 if (entry.argCount > 0)
                     releaseArgumentsImpl(L, co, entry.argBase, entry.argCount);

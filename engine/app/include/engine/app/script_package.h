@@ -28,4 +28,15 @@ struct ScriptPackageReport
 // cannot be written; the scripts before it are already compiled.
 [[nodiscard]] bool compileGameScripts(const std::filesystem::path& game, ScriptPackageReport& report);
 
+// **The scripts a scene, a stamp or `global.json` carries, compiled too**
+// (S0.3, ADR 0138 §5): every `"Source"` string in every `*.scene.json`,
+// `*.stamp.json` and `global.json` under `content` becomes
+// `scene::CompiledSourcePrefix` and its bytecode in base64, which the scene
+// reader turns back into the bytecode a script loads. `ludwerk build` runs it on
+// the STAGED content before the pack is made, so neither the pack nor the folder
+// carries a scene script's text. A file it changes is removed before it is
+// written: the staged copy is hard links, and the project's own file must never
+// be written through one. False, with `report.failed` named, as above.
+[[nodiscard]] bool compileContentScripts(const std::filesystem::path& content, ScriptPackageReport& report);
+
 } // namespace engine::app

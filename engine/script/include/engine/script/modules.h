@@ -175,6 +175,20 @@ public:
     };
     std::vector<Entry> entries;
 
+    // **The scripts running now, and each one's run** (S0.5, S0.6; ADR 0137
+    // §2), by instance index. A run is identified by the globals table its
+    // start gave the script's thread: every thread, handler and callback the
+    // run makes inherits that table, so it is the question "which run is this"
+    // in the form the rest of the VM can already ask. `envRef` keeps the table
+    // alive, so its address cannot be reused while the record holds it.
+    struct Run
+    {
+        core::u32 generation = 0;
+        int envRef = -1;
+        const void* env = nullptr;
+    };
+    std::vector<Run> runs;
+
     // Entry scripts that failed to compile at `startScripts`. Boot is
     // deliberately forgiving about this -- one bad script must not stop the
     // engine -- but a hot reload is not, because it has the world that was
@@ -343,9 +357,23 @@ enum class SuppressReason : core::u8
     Destroyed,
     // Live, and `Enabled` is false (ADR 0059 rule 2).
     Disabled,
+    // **Of a run that has ended** (S0.6, ADR 0137 §2): the script was disabled
+    // and enabled again, and this thread or handler is the old run's. It never
+    // comes back beside the new one.
+    Ended,
 };
 
 [[nodiscard]] SuppressReason suppressionFor(lua_State* L, core::InstanceId script);
+// The same, for a thread or a handler whose run is `env` -- the globals table
+// it carries (`runEnvOfThread`, `runEnvOfFunction`): `Ended` when that is not
+// the script's current run.
+[[nodiscard]] SuppressReason suppressionFor(lua_State* L, core::InstanceId script, const void* env);
+[[nodiscard]] const void* runEnvOfThread(lua_State* thread);
+// The function at `index` on `L`'s stack.
+[[nodiscard]] const void* runEnvOfFunction(lua_State* L, int index);
+// Ends `script`'s run, if it has one: its threads and handlers stop being
+// resumed. What a disable-and-enable does before the new run starts.
+void endRun(lua_State* L, core::InstanceId script);
 
 // The ordinary question, for every caller that has no exception to make.
 //

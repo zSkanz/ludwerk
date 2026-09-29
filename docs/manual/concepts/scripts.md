@@ -22,18 +22,16 @@ Anywhere. A script inside a part, a model, a folder or a service is saved with
 that thing and copied with it. `Clone` copies its `Source`, and a stamp carries
 the scripts inside it.
 
+**A script reads `Source` and never writes it** (ADR 0137): the editor writes
+it. A script that could write another's code and enable it would run text the
+sandbox never loaded. So a door with its own logic, made at run time, comes from
+a copy -- a stamp authored in the editor, or a model already in the scene:
+
 ```luau
 --!strict
-local door = Instance.new("Part")
-door.Name = "Door"
+-- `content/stamps/door.stamp.json`: a part with a `Script` inside it.
+local door = Instance.stamp("door")
 door.Parent = workspace
-
-local logic = Instance.new("Script")
-logic.Source = [[
-    local door = script.Parent
-    print(door.Name, "is ready")
-]]
-logic.Parent = door
 ```
 
 **`script` is the instance that is running.** `script.Parent` is what it was put

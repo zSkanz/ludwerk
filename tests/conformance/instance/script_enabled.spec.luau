@@ -30,17 +30,21 @@ local function folder(): Folder
     return assert(sandbox, "the sandbox folder is created in beforeEach")
 end
 
---- A `Script` that is in the tree and has never started.
----
---- Created disabled, because creating one enabled would not start it either --
---- scripts start when the world does, and this is long after -- and a spec that
---- relied on that would be asserting the absence of a feature rather than the
---- presence of this one.
-local function sleeping(name: string, source: string): Script
-    local script = Instance.new("Script")
+--- **The scripts' code comes from a stamp** (ADR 0137 §4): a script cannot
+--- write `Source`, so each case clones a template the engine read from
+--- `content/stamps/spec-scripts.stamp.json`, disabled, and tells it what to do
+--- through attributes.
+local Templates = Instance.stamp("spec-scripts")
+
+--- A `Script` that is in the tree and has never started: a clone of the
+--- template `kind`, disabled, with its attributes set before it can run.
+local function sleeping(name: string, kind: string, attributes: { [string]: string }?): Script
+    local script = (Templates:FindFirstChild(kind) :: Script):Clone() :: Script
     script.Name = name
     script.Enabled = false
-    script.Source = source
+    for key, value in attributes or {} do
+        script:SetAttribute(key, value)
+    end
     script.Parent = folder()
     return script
 end
@@ -62,11 +66,9 @@ local function made(): string
     return table.concat(names, ",")
 end
 
---- Source that parents one part named `name` into the sandbox, found by name
---- because a script has no reference to anything the spec holds.
-local function makes(name: string): string
-    return `local p = Instance.new("Part") p.Name = "{name}" `
-        .. `p.Parent = workspace:FindFirstChild("ScriptEnabledSpec")`
+--- A `Maker` that parents one part named `name` into the sandbox.
+local function maker(name: string, made: string): Script
+    return sleeping(name, "Maker", { Make = made })
 end
 
 describe("Script.Enabled", function()
@@ -84,7 +86,7 @@ describe("Script.Enabled", function()
 
     describe("false to true", function()
         it("starts the script, once, at the next drain", function()
-            local waker = sleeping("Waker", makes("MadeOnEnable"))
+            local waker = maker("Waker", "MadeOnEnable")
             expect(made()):ToBe("")
 
             waker.Enabled = true
@@ -101,7 +103,7 @@ describe("Script.Enabled", function()
         end)
 
         it("writing true over true does not start it a second time", function()
-            local script = sleeping("Idempotent", makes("Once"))
+            local script = maker("Idempotent", "Once")
             script.Enabled = true
             task.wait()
             expect(made()):ToBe("Once")
@@ -115,7 +117,7 @@ describe("Script.Enabled", function()
             -- **A re-enable is a start and not a resume.** There is no old thread
             -- to hand back, and pretending otherwise would make `Enabled` two
             -- different operations depending on a history nobody can see.
-            local script = sleeping("Twice", makes("Ran"))
+            local script = maker("Twice", "Ran")
             script.Enabled = true
             task.wait()
             expect(made()):ToBe("Ran")
@@ -133,8 +135,8 @@ describe("Script.Enabled", function()
             -- The R10 claim. Written in the reverse order they are enabled, so a
             -- pass cannot come from the writes happening to be in tree order --
             -- and a pool artefact deciding this would show up as `Second, First`.
-            local first = sleeping("First", makes("FromFirst"))
-            local second = sleeping("Second", makes("FromSecond"))
+            local first = maker("First", "FromFirst")
+            local second = maker("Second", "FromSecond")
 
             second.Enabled = true
             first.Enabled = true
@@ -161,17 +163,7 @@ describe("Script.Enabled", function()
                 return #ticks:GetChildren()
             end
 
-            local script = sleeping(
-                "Ticker",
-                [[
-					local RunService = game:GetService("RunService")
-					RunService.Heartbeat:Connect(function()
-						local p = Instance.new("Part")
-						p.Name = "Tick"
-						p.Parent = workspace:FindFirstChild("ScriptEnabledTicks")
-					end)
-				]]
-            )
+            local script = sleeping("Ticker", "Ticker", { Into = "ScriptEnabledTicks" })
 
             script.Enabled = true
             task.wait()
@@ -185,13 +177,14 @@ describe("Script.Enabled", function()
             task.wait()
             expect(ticked()):ToBe(whileEnabled)
 
-            -- **And it is still connected**, which is the half that makes this one
-            -- sentence rather than a lifetime rule: re-enabling starts a second file
-            -- scope, and the count moves again.
+            -- **A re-enable is a fresh run** (ADR 0137 §2, S0.6): the old run's
+            -- handler never comes back beside the new run's, so one heartbeat
+            -- makes one part, not two.
             script.Enabled = true
             task.wait()
+            local settled = ticked()
             task.wait()
-            expect(ticked() > whileEnabled):ToBe(true)
+            expect(ticked() - settled):ToBe(1)
 
             script.Enabled = false
             task.wait()
@@ -199,16 +192,7 @@ describe("Script.Enabled", function()
         end)
 
         it("drops a task.delay that comes due after the disable", function()
-            local script = sleeping(
-                "Late",
-                [[
-					task.delay(0.1, function()
-						local p = Instance.new("Part")
-						p.Name = "TooLate"
-						p.Parent = workspace:FindFirstChild("ScriptEnabledSpec")
-					end)
-				]]
-            )
+            local script = sleeping("Late", "Late")
 
             script.Enabled = true
             task.wait()
@@ -225,7 +209,7 @@ describe("Script.Enabled", function()
             -- Somebody will expect a disable to clean up. It does not, and the
             -- alternative is this rule growing into ownership semantics for
             -- every instance a script ever touched.
-            local script = sleeping("Builder", makes("Survivor"))
+            local script = maker("Builder", "Survivor")
             script.Enabled = true
             task.wait()
             expect(made()):ToBe("Survivor")
@@ -264,17 +248,7 @@ describe("Script.Enabled", function()
                 return #ticks:GetChildren()
             end
 
-            local script = sleeping(
-                "Ticker",
-                [[
-					local RunService = game:GetService("RunService")
-					RunService.Heartbeat:Connect(function()
-						local p = Instance.new("Part")
-						p.Name = "Tick"
-						p.Parent = workspace:FindFirstChild("ScriptDestroyedTicks")
-					end)
-				]]
-            )
+            local script = sleeping("Ticker", "Ticker", { Into = "ScriptDestroyedTicks" })
 
             script.Enabled = true
             task.wait()
@@ -292,16 +266,7 @@ describe("Script.Enabled", function()
         end)
 
         it("drops a task.delay that comes due after the destroy", function()
-            local script = sleeping(
-                "Late",
-                [[
-					task.delay(0.1, function()
-						local p = Instance.new("Part")
-						p.Name = "TooLate"
-						p.Parent = workspace:FindFirstChild("ScriptEnabledSpec")
-					end)
-				]]
-            )
+            local script = sleeping("Late", "Late")
 
             script.Enabled = true
             task.wait()
@@ -317,7 +282,7 @@ describe("Script.Enabled", function()
             -- The same sentence the disable case makes, and it has to hold for
             -- the stronger operation too: a part a script made before it died is
             -- a part, not a script.
-            local script = sleeping("Builder", makes("Survivor"))
+            local script = maker("Builder", "Survivor")
             script.Enabled = true
             task.wait()
             expect(made()):ToBe("Survivor")
@@ -339,20 +304,7 @@ describe("Script.Enabled", function()
             -- The `Connected` marker goes first, so a failure here says which
             -- half broke: no marker means the script never started, marker and
             -- no `Cleaned` means the handler was suppressed.
-            local script = sleeping(
-                "Dying",
-                [[
-					local function mark(name)
-						local p = Instance.new("Part")
-						p.Name = name
-						p.Parent = workspace:FindFirstChild("ScriptEnabledSpec")
-					end
-					script.Destroying:Connect(function()
-						mark("Cleaned")
-					end)
-					mark("Connected")
-				]]
-            )
+            local script = sleeping("Dying", "Dying")
 
             script.Enabled = true
             task.wait()
@@ -373,17 +325,7 @@ describe("Script.Enabled", function()
             other.Name = "ScriptDestroyedWatched"
             other.Parent = workspace
 
-            local script = sleeping(
-                "Watcher",
-                [[
-					local watched = workspace:FindFirstChild("ScriptDestroyedWatched")
-					watched.ChildAdded:Connect(function()
-						local p = Instance.new("Part")
-						p.Name = "Heard"
-						p.Parent = workspace:FindFirstChild("ScriptEnabledSpec")
-					end)
-				]]
-            )
+            local script = sleeping("Watcher", "Watcher")
 
             script.Enabled = true
             task.wait()

@@ -64,6 +64,13 @@
 // dangling reference restored as nil.
 
 namespace engine::scene {
+
+// **A compiled script in a scene file** (S0.3, ADR 0138 §5): a package's scene,
+// stamp and `global.json` carry a script's `Source` as this prefix and its
+// bytecode in base64, since bytecode is not text and a JSON string is. The
+// reader turns it back into the bytecode, which a script loads as it loads a
+// compiled file; the writer writes bytecode back this way.
+inline constexpr std::string_view CompiledSourcePrefix = "luauc:";
 class World;
 
 // What a load or a save actually did. Not a bool: a scene that loaded with

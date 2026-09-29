@@ -19,6 +19,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **A script can read `Source` and cannot write it** (ADR 0137 §4, D332).
+  `Script.Source` and `ModuleScript.Source` are the editor's to write: a
+  script that could write another's code and enable it ran text the sandbox
+  never loaded. A script made at run time takes its code from a copy -- `Clone`
+  one in the scene, or `Instance.stamp`. The IDL mark is `ScriptReadOnly`.
+- **A package's scene, stamp and `global.json` scripts are compiled** (D333),
+  as `src/` already was, unless `[export] ship_source = true`: their `Source`
+  is `luauc:` and the bytecode in base64 in the packaged file.
+
 - **`SceneService.CurrentScene` is a `Scene`, not a path** (ADR 0124). Read
   `SceneService.CurrentScene.Path` where the path was compared.
 - **A scene's scripts' close handlers go with the scene** (ADR 0124). A
@@ -503,6 +512,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- The script lifecycle's defects (the script-sides ledger's S0): `.engine/trash`
+  no longer ships (D331); a replica starts no script its join will destroy
+  (D334); a script that survives a scene change is not started again, and a
+  re-enabled script's old handlers stay stopped (D335); a hot reload comes back
+  in the scene and topology the world was in (D337).
 - Two flat-coloured terrain materials painted over each other meet in a
   crossfade, not a step at half cover (D329).
 - **Typing reaches a `TextInput` in an exported game**, and on a phone the

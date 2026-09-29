@@ -60,4 +60,9 @@ struct ReloadReport
 // already running, which is strictly more useful than a broken one.
 [[nodiscard]] ReloadReport reloadWorld(std::unique_ptr<WorldHost>& host, const WorldHostOptions& options);
 
+// `options` -- the boot's -- with the topology and the scene `host` is in now
+// (S0.7): what a reload boots again, so a world that joined or changed scene
+// at run time comes back where it was.
+[[nodiscard]] WorldHostOptions currentOptions(WorldHost& host, WorldHostOptions options);
+
 } // namespace engine::app

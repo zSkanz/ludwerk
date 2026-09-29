@@ -152,6 +152,10 @@ struct PropertyDesc
 
     ThreadSafety threadSafety = ThreadSafety::Unsafe;
     bool readOnly = false;
+    // Written by the editor and the engine, refused to a script (ADR 0137 §4).
+    // `set` is there and the inspector and the scene reader use it; only the
+    // Luau binding refuses.
+    bool scriptReadOnly = false;
     // Backed, stored, read back faithfully -- and nothing acts on it yet. Not
     // the same as unbacked: an inert property round-trips perfectly, so every
     // way of checking it from a script agrees with what was written, which is

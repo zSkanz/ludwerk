@@ -303,7 +303,10 @@ int deliverTrampoline(lua_State* L)
     const int count = static_cast<int>(lua_tointeger(L, -1));
     lua_pop(L, 1);
     for (const MessageBinding& binding : matching) {
-        if (resumptionSuppressed(L, binding.owner))
+        lua_getref(L, binding.functionRef);
+        const void* env = runEnvOfFunction(L, -1);
+        lua_pop(L, 1);
+        if (suppressionFor(L, binding.owner, env) != SuppressReason::None)
             continue;
         lua_State* co = lua_newthread(L);
         // The binder's globals, so the thread is the binder's: suppressed with
@@ -807,6 +810,13 @@ void runRenderSteps(lua_State* L, double dt)
         const std::vector<RenderStep>& bound = scenes(L).renderSteps;
         if (std::find_if(bound.begin(), bound.end(), [&](const RenderStep& now) { return now.order == step.order; }) ==
             bound.end())
+            continue;
+        // A step of a script that is disabled, destroyed, or of a run that has
+        // ended does not run: it belongs to its run (ADR 0137 §2).
+        lua_getref(L, step.functionRef);
+        const SuppressReason reason = suppressionFor(L, scriptOfFunction(L, -1), runEnvOfFunction(L, -1));
+        lua_pop(L, 1);
+        if (reason != SuppressReason::None)
             continue;
         lua_State* co = lua_newthread(L);
         lua_getref(L, step.functionRef);

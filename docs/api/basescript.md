@@ -16,4 +16,4 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `Source` | `string` | `""` | read/write | The Luau this instance carries. It is data on the instance rather than a path to a file, which is what makes a script something you can create, copy, put inside a prefab and save in a scene like anything else. |
+| `Source` | `string` | `""` | read-only to scripts; the editor writes it | The Luau this instance carries. It is data on the instance rather than a path to a file, which is what makes a script something you can create, copy, put inside a prefab and save in a scene like anything else.<br><br>**The editor writes it, and a script only reads it** (ADR 0137 §4): a script that could write another's `Source` and enable it would run text the sandbox never loaded. A script made at run time takes its code from a copy -- `Clone` of one in the scene, or `Instance.stamp`. |

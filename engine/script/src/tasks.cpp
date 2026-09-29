@@ -263,7 +263,7 @@ void resumeDueTimers(lua_State* L, u64 tick)
         // due and is dropped** (ADR 0059 rule 4). Dropped rather than left on
         // the list, because "never resumed" and "resumed later" are different
         // promises and only the first is the one `Enabled` makes.
-        if (resumptionSuppressed(L, scriptOfThread(co))) {
+        if (suppressionFor(L, scriptOfThread(co), runEnvOfThread(co)) != SuppressReason::None) {
             lua_pop(L, 1);
             (void)lua_unref(L, entry.threadRef);
             continue;

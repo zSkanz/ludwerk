@@ -12,10 +12,12 @@
 
 #include "engine/app/inspector.h"
 #include "engine/app/script_complete.h"
+#include "engine/app/script_package.h"
 #include "engine/app/world_host.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/input/input.h"
+#include "engine/platform/file.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/lighting.h"
 #include "engine/render/render_world.h"
@@ -1325,6 +1327,75 @@ TEST_CASE("an empty boot scene leaves a scripted world alone")
     CHECK(host.world().alive(built));
 }
 
+TEST_CASE("a scene script compiled for a package runs, and its text is gone from the file (S0.3)")
+{
+    // A package's scene carried its scripts' text: the bytecode option covered
+    // `src/` only. Compiled in place, the file holds bytecode, and the script
+    // it holds still runs.
+    Captured log;
+    Project project;
+    project.write(
+        "content/scenes/main.scene.json",
+        R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace","children":[)"
+        R"({"class":"Script","name":"Builder","properties":{"Source":)"
+        R"("-- SOURCE-ONLY-MARK\nlocal p = Instance.new(\"Part\")\np.Name = \"BuiltByCompiled\"\np.Parent = workspace\n"}}]}})");
+
+    app::ScriptPackageReport report;
+    REQUIRE(app::compileContentScripts(project.root / "content", report));
+    CHECK(report.compiled == 1);
+    std::string text;
+    REQUIRE(platform::readTextFile(project.root / "content" / "scenes" / "main.scene.json", text));
+    CHECK(text.find("SOURCE-ONLY-MARK") == std::string::npos);
+    CHECK(text.find(scene::CompiledSourcePrefix) != std::string::npos);
+    // Again: compiled already, nothing to do.
+    REQUIRE(app::compileContentScripts(project.root / "content", report));
+    CHECK(report.compiled == 0);
+
+    app::WorldHost host;
+    app::WorldHostOptions options = app::testing::bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    CHECK(bootChildNamed(host, "BuiltByCompiled").valid());
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+
+    // Saved again, a compiled script stays compiled -- and still no text.
+    const std::string saved = scene::writeScene(host.world());
+    CHECK(saved.find(scene::CompiledSourcePrefix) != std::string::npos);
+}
+
+TEST_CASE("a replica starts no script its join is about to destroy (S0.4)")
+{
+    // A script inside a part the authority replicates ran its file scope once
+    // on a joined client and was then destroyed with the part: the join
+    // cleared the scene after the first drain. Cleared before the first
+    // script starts, it never runs there at all.
+    Captured log;
+    Project project;
+    project.write("content/scenes/main.scene.json",
+                  R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace","children":[)"
+                  R"({"class":"Part","name":"Crate","children":[)"
+                  R"json({"class":"Script","name":"Talker","properties":{"Source":"print(\"talker ran\")"}}]}]}})json");
+
+    app::WorldHost host;
+    app::WorldHostOptions options = app::testing::bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+    options.networkTopology = scene::NetworkTopology::Replica;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_FALSE(log.contains("talker ran"));
+    CHECK_FALSE(bootChildNamed(host, "Crate").valid());
+
+    // The same scene alone runs it: the script is fine, its side is not.
+    Captured solo;
+    app::WorldHost alone;
+    options.networkTopology = scene::NetworkTopology::Solo;
+    REQUIRE_FALSE(alone.boot(options).has_value());
+    alone.tick();
+    CHECK(solo.contains("talker ran"));
+}
+
 TEST_CASE("a scene the entry scripts can see, because it is there before they run")
 {
     Captured log;
@@ -2079,6 +2150,45 @@ void writeTwoScenes(Project& project)
 }
 
 } // namespace
+
+TEST_CASE("a script that survives a scene change keeps its one run, and is never started again (S0.5)")
+{
+    // A kept screen's script was started again by every scene change while its
+    // first run went on: two file scopes, one script.
+    Captured log;
+    Project project;
+    project.write(
+        "content/scenes/a.scene.json",
+        R"json({"format":"scene","version":2,"root":{},"storage":{)json"
+        R"json("UIService":{"class":"UIService","name":"UIService","children":[)json"
+        R"json({"class":"ScreenGui","name":"Loading","properties":{"KeepOnSceneLoad":true},"children":[)json"
+        R"json({"class":"Script","name":"Kept","properties":{"Source":)json"
+        R"json("script:SetAttribute('Runs', ((script:GetAttribute('Runs') :: number?) or 0) + 1)"}}]}]}}})json");
+    project.write("content/scenes/b.scene.json", R"json({"format":"scene","version":2,"root":{}})json");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    host.tick();
+    // The kept screen's own script, counted by itself: the scene's next copy of
+    // the screen is another instance, with its own run.
+    scene::World& world = host.world();
+    const core::InstanceId screen = childNamed(host, serviceOf(host, "UIService"), "Loading");
+    REQUIRE(screen.valid());
+    const core::InstanceId kept = world.findFirstChild(screen, world.atoms().lookup("Kept"));
+    REQUIRE(kept.valid());
+    const auto runs = [&world, kept] {
+        const scene::Value value = world.getAttribute(kept, world.atoms().intern("Runs"));
+        const auto* number = std::get_if<core::f64>(&value);
+        return number != nullptr ? *number : 0.0;
+    };
+    REQUIRE(runs() == doctest::Approx(1.0));
+    REQUIRE_FALSE(host.loadScene("scenes/b.scene.json").has_value());
+    host.tick();
+    REQUIRE_FALSE(host.loadScene("scenes/a.scene.json").has_value());
+    host.tick();
+    REQUIRE(world.alive(kept));
+    CHECK(runs() == doctest::Approx(1.0));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
 
 TEST_CASE("a game changes scene at run time, and the game's own code and a kept screen go with it")
 {

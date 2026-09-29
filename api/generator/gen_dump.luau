@@ -304,6 +304,7 @@ local function propertyNode(property: Schema.Property): Node
         field("Type", stringNode(property.Type)),
     }
     appendFlag(fields, "ReadOnly", property.ReadOnly)
+    appendFlag(fields, "ScriptReadOnly", property.ScriptReadOnly)
     appendOptional(fields, "Default", property.Default)
     appendOptional(fields, "ThreadSafety", property.ThreadSafety)
     appendFlag(fields, "Transient", property.Transient)

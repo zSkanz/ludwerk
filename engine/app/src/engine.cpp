@@ -1597,7 +1597,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // the two loads it.
         // A file first, and the pack when there is none -- the same rule the
         // scene is found by.
-        .bootStamps = [contentRoot, packed](std::string_view stamp) -> std::optional<std::string> {
+        .bootStamps = [contentRoot, packed,
+                       specContent = options.conformanceRoot.empty() ? std::filesystem::path{}
+                                                                     : options.conformanceRoot / "content"](
+                          std::string_view stamp) -> std::optional<std::string> {
             // A stamp's name is a scene file's word, and under `content/` or
             // nothing (audit F5).
             const std::optional<std::filesystem::path> file = core::resolveUnder(contentRoot, stamp);
@@ -1606,6 +1609,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             std::string text;
             if (platform::readTextFile(*file, text))
                 return text;
+            // **A conformance run's own stamps** (ADR 0137 §4): the specs take
+            // a script's code from a stamp, since a script cannot write
+            // `Source`, and the suite's content is not the project's.
+            if (!specContent.empty()) {
+                if (const std::optional<std::filesystem::path> spec = core::resolveUnder(specContent, stamp);
+                    spec.has_value() && platform::readTextFile(*spec, text))
+                    return text;
+            }
             return packed(std::string(stamp));
         },
         .bootScene = bootScene,

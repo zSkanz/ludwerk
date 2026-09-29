@@ -667,6 +667,19 @@ int main(int argc, char** argv)
     // **A build step, and nothing else** (ADR 0112): `ludwerk build` hands the
     // laid-out game here so its scripts are compiled by this engine's compiler
     // with the options it runs them with. No window, no world.
+    // The scripts a scene, a stamp or `global.json` carries (S0.3), in a staged
+    // content directory `ludwerk build` is about to pack.
+    if (args.size() == 2 && args[0] == "--compile-content-scripts") {
+        engine::app::ScriptPackageReport report;
+        if (!engine::app::compileContentScripts(std::filesystem::path(args[1]), report)) {
+            const std::array<I18nArg, 2> failed{I18nArg{"path", report.failed}, I18nArg{"message", report.message}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.compile_script"), failed);
+            return kExitScriptError;
+        }
+        const std::array<I18nArg, 1> compiled{I18nArg{"count", static_cast<engine::core::i64>(report.compiled)}};
+        engine::core::log(LogLevel::Info, ENG_TR("engine.cli.compiled_scripts"), compiled);
+        return kExitOk;
+    }
     if (args.size() == 2 && args[0] == "--compile-scripts") {
         engine::app::ScriptPackageReport report;
         if (!engine::app::compileGameScripts(std::filesystem::path(args[1]), report)) {

@@ -441,9 +441,20 @@ void writeValue(JsonWriter& out, const World& world, const Value& value,
     case ValueType::Number:
         out.value(std::get<core::f64>(value));
         break;
-    case ValueType::String:
-        out.value(std::get<std::string>(value));
+    case ValueType::String: {
+        // **Bytecode is not text** (S0.3): a compiled script -- a package's,
+        // saved back at run time -- is written as a JSON string can carry it.
+        // The test is bytecode's own first two bytes, a version below a space
+        // and a types version below four, which no text begins with.
+        const std::string& text = std::get<std::string>(value);
+        if (text.size() >= 2 && static_cast<unsigned char>(text[0]) < 0x20 && static_cast<unsigned char>(text[1]) < 4) {
+            const std::span<const core::u8> bytes(reinterpret_cast<const core::u8*>(text.data()), text.size());
+            out.value(std::string(CompiledSourcePrefix) + core::base64Encode(bytes));
+            break;
+        }
+        out.value(text);
         break;
+    }
     case ValueType::Vector3: {
         const core::Vec3 v = std::get<core::Vec3>(value);
         out.beginArray();
@@ -1613,6 +1624,20 @@ void applyProperties(World& world, core::InstanceId id, const JsonValue& propert
             if (!value.has_value()) {
                 ++report.refusedProperties;
                 continue;
+            }
+            // **A script compiled for a package** (S0.3): its bytecode, back
+            // from the base64 a JSON string can carry.
+            if (property->code) {
+                if (const auto* text = std::get_if<std::string>(&*value);
+                    text != nullptr && text->starts_with(CompiledSourcePrefix)) {
+                    const std::optional<std::vector<core::u8>> bytes =
+                        core::base64Decode(std::string_view(*text).substr(CompiledSourcePrefix.size()));
+                    if (!bytes.has_value()) {
+                        ++report.refusedProperties;
+                        continue;
+                    }
+                    value = Value{std::string(reinterpret_cast<const char*>(bytes->data()), bytes->size())};
+                }
             }
             if (world.setProperty(id, atom, *value) == World::SetResult::InvalidValue)
                 ++report.refusedProperties;

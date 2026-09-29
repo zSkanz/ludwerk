@@ -75,6 +75,12 @@ export type Property = {
     --- Whether the property survives serialization; the default is that it
     --- does, so only the exceptions are marked.
     Transient: boolean?,
+    --- **Written by the editor and the engine, read by scripts** (ADR 0137 §4):
+    --- the Properties panel edits it, a scene saves and loads it, and a
+    --- script's write raises `script.err.property_not_script_writable`.
+    --- `Source` is the one that made it necessary: a script that could write
+    --- another's `Source` and enable it ran text the sandbox never loaded.
+    ScriptReadOnly: boolean?,
     --- **Backed, stored, read back faithfully -- and nothing acts on it yet.**
     ---
     --- Distinct from an absent `Native`, which means the property is not backed

@@ -289,16 +289,25 @@ local function run(options: Options): number
     local sideManifest: string? = nil
     if fs.exists(content) then
         local packed = progress.step(reporter, "pack", function(): string?
-            if side == "all" then
-                local result = buildAssets.run({ path = project.root, output = nil, verify = false })
-                return if result == 0 then nil else tr("cli.assets.err.failed")
-            end
             local assetc = projectlib.findTool("assetc")
             if assetc == nil then
                 return tr("cli.assets.err.no_compiler")
             end
+            -- **Staged for every side**, a one-sided game's too: the scripts a
+            -- scene, a stamp or `global.json` carries are compiled in the
+            -- staged copy before it is packed (S0.3), so the pack holds no
+            -- script's text -- and the project's own files are never touched.
             local stage = projectlib.joined(exportRoot, side)
             local staged = game.stageContent(content, projectlib.joined(stage, "content"), side)
+            if not shipsSource(project) then
+                if host == nil then
+                    return tr("cli.build.err.no_script_compiler")
+                end
+                local compiled = process.run({ host :: string, "--compile-content-scripts", staged })
+                if not compiled.ok then
+                    return compiled.stdout .. compiled.stderr
+                end
+            end
             local pack = projectlib.joined(stage, "content.lpack")
             local manifest = projectlib.joined(stage, "content.manifest.json")
             local built = process.run({ assetc, "--input", staged, "--output", pack, "--manifest", manifest })

@@ -1,0 +1,62 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Folder",
+  "name": "SpecModules",
+  "children": [
+   {
+    "class": "ModuleScript",
+    "name": "Answer",
+    "properties": {
+     "Source": "return { answer = 42 }"
+    }
+   },
+   {
+    "class": "ModuleScript",
+    "name": "Outer",
+    "properties": {
+     "Source": "return { inner = require(script:FindFirstChild('Inner')) }"
+    },
+    "children": [
+     {
+      "class": "ModuleScript",
+      "name": "Inner",
+      "properties": {
+       "Source": "return { depth = 2 }"
+      }
+     }
+    ]
+   },
+   {
+    "class": "ModuleScript",
+    "name": "Seven",
+    "properties": {
+     "Source": "return { answer = 7 }"
+    }
+   },
+   {
+    "class": "ModuleScript",
+    "name": "FromFolder",
+    "properties": {
+     "Source": "return { from = 'folder' }"
+    }
+   },
+   {
+    "class": "ModuleScript",
+    "name": "Broken",
+    "properties": {
+     "Source": "error('module said no')"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "ReturnsOne",
+    "properties": {
+     "Source": "return 1",
+     "Enabled": false
+    }
+   }
+  ]
+ }
+}

@@ -188,7 +188,7 @@ local function emitMembers(
     callbacks: { Schema.Callback }?
 )
     for _, property in orEmpty(properties) do
-        local access = if property.ReadOnly then "read " else ""
+        local access = if property.ReadOnly or property.ScriptReadOnly then "read " else ""
         emitDoc(lines, "    ", property.Doc)
         table.insert(lines, `    {access}{property.Name}: {translateType(property.Type)}`)
     end

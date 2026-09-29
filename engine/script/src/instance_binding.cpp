@@ -222,6 +222,11 @@ int instanceNewIndex(lua_State* L)
     }
     if (property->readOnly || property->set == nullptr)
         raisePropertyError(L, ENG_TR("scene.err.read_only_property"), id, *property);
+    // **The editor's and the engine's to write** (ADR 0137 §4): a script that
+    // could write another's `Source` and enable it would run text the sandbox
+    // never loaded.
+    if (property->scriptReadOnly)
+        raisePropertyError(L, ENG_TR("script.err.property_not_script_writable"), id, *property);
 
     const std::optional<scene::Value> value = toValue(L, 3, property->type);
     if (!value.has_value())

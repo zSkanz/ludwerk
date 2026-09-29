@@ -27,9 +27,11 @@ local projectlib = require("../project")
 export type Side = "all" | "client" | "server"
 
 --- **What `.engine/` holds that is the editor's, not the game's**: its layout,
---- its settings, the import and check caches. A game carries the pack, its
---- manifest and the partition cache, and none of these.
-local EditorOnly = { "editor.json", "import", "check", "types", "match", "export" }
+--- its settings, the import and check caches, and the trash -- script files the
+--- editor moved aside when their instance went, server code as often as not
+--- (S0.1). A game carries the pack, its manifest and the partition cache, and
+--- none of these.
+local EditorOnly = { "editor.json", "import", "check", "types", "match", "export", "trash" }
 local EditorOnlyPrefixes = { "editor-layout" }
 
 local function editorOnly(name: string): boolean
