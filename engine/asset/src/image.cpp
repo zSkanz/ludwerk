@@ -226,6 +226,105 @@ std::optional<core::EngineError> decodeHeightmap(std::span<const std::byte> enco
     return std::nullopt;
 }
 
+namespace {
+
+// PNG's CRC-32 (ISO 3309), by table: what every chunk ends with.
+[[nodiscard]] u32 pngCrc(std::span<const std::byte> bytes) noexcept
+{
+    static const std::array<u32, 256> table = [] {
+        std::array<u32, 256> out{};
+        for (u32 n = 0; n < 256; ++n) {
+            u32 c = n;
+            for (int k = 0; k < 8; ++k)
+                c = (c & 1u) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            out[n] = c;
+        }
+        return out;
+    }();
+    u32 crc = 0xFFFFFFFFu;
+    for (const std::byte b : bytes)
+        crc = table[(crc ^ static_cast<u32>(b)) & 0xFFu] ^ (crc >> 8);
+    return crc ^ 0xFFFFFFFFu;
+}
+
+void putBig32(std::vector<std::byte>& out, u32 value)
+{
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out.push_back(static_cast<std::byte>((value >> shift) & 0xFFu));
+}
+
+void putChunk(std::vector<std::byte>& out, const char (&type)[5], std::span<const std::byte> data)
+{
+    putBig32(out, static_cast<u32>(data.size()));
+    const std::size_t typed = out.size();
+    for (int at = 0; at < 4; ++at)
+        out.push_back(static_cast<std::byte>(type[at]));
+    out.insert(out.end(), data.begin(), data.end());
+    putBig32(out, pngCrc(std::span<const std::byte>(out.data() + typed, 4 + data.size())));
+}
+
+} // namespace
+
+std::optional<core::EngineError> encodeHeightmap(const HeightImage& image, HeightmapFormat format,
+                                                 std::vector<std::byte>& out)
+{
+    out.clear();
+    if (!image.valid())
+        return core::makeError(ENG_TR("asset.image.err.bad_pixels"));
+    const auto sample = [&](std::size_t at) {
+        const float value = image.samples[at];
+        const float unit = value == value ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+        return static_cast<u16>(std::lround(unit * 65535.0f));
+    };
+    if (format == HeightmapFormat::Raw16) {
+        // Square only, as the reader is: the side is the square root of the
+        // sample count, and nothing else says what it is.
+        if (image.width != image.height)
+            return core::makeError(ENG_TR("asset.image.err.bad_pixels"), {}, "a RAW heightmap is square");
+        out.reserve(image.samples.size() * 2);
+        for (std::size_t at = 0; at < image.samples.size(); ++at) {
+            const u16 value = sample(at);
+            out.push_back(static_cast<std::byte>(value & 0xFFu));
+            out.push_back(static_cast<std::byte>(value >> 8));
+        }
+        return std::nullopt;
+    }
+    // Sixteen-bit greyscale PNG: each row a filter byte (none) and big-endian
+    // samples, deflated whole by stb's own compressor.
+    std::vector<unsigned char> rows;
+    rows.reserve(static_cast<std::size_t>(image.height) * (1 + image.width * 2u));
+    for (u32 y = 0; y < image.height; ++y) {
+        rows.push_back(0);
+        for (u32 x = 0; x < image.width; ++x) {
+            const u16 value = sample(static_cast<std::size_t>(y) * image.width + x);
+            rows.push_back(static_cast<unsigned char>(value >> 8));
+            rows.push_back(static_cast<unsigned char>(value & 0xFFu));
+        }
+    }
+    int length = 0;
+    unsigned char* deflated = stbi_zlib_compress(rows.data(), static_cast<int>(rows.size()), &length, 8);
+    if (deflated == nullptr)
+        return core::makeError(ENG_TR("asset.image.err.encode_failed"));
+    static constexpr std::array<unsigned char, 8> Signature{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    for (const unsigned char b : Signature)
+        out.push_back(static_cast<std::byte>(b));
+    std::vector<std::byte> header;
+    putBig32(header, image.width);
+    putBig32(header, image.height);
+    // Sixteen bits, greyscale, deflate, no filter method beyond the per-row
+    // byte, not interlaced.
+    static constexpr std::array<unsigned char, 5> Depth{16, 0, 0, 0, 0};
+    for (const unsigned char b : Depth)
+        header.push_back(static_cast<std::byte>(b));
+    putChunk(out, "IHDR", header);
+    putChunk(
+        out, "IDAT",
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(deflated), static_cast<std::size_t>(length)));
+    STBIW_FREE(deflated);
+    putChunk(out, "IEND", std::span<const std::byte>{});
+    return std::nullopt;
+}
+
 std::vector<float> resampleHeights(const HeightImage& image, u32 columns, u32 rows, float low, float high)
 {
     std::vector<float> heights;

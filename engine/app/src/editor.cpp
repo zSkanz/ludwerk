@@ -4393,6 +4393,28 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
             // still the manipulator's and the pick's.
             return false;
 
+        // **The eyedropper** (B4): Alt and a click with Paint takes what the
+        // ground there shows -- what is painted over it where that shows more
+        // -- as the brush's material, and paints nothing.
+        if (m_tool == Tool::Paint && m_brushPicking) {
+            const core::DVec3 at{
+                m_brushAim->position.x - terrain->origin.x - static_cast<double>(m_brushAim->normal.x) * 0.25,
+                m_brushAim->position.y - terrain->origin.y - static_cast<double>(m_brushAim->normal.y) * 0.25,
+                m_brushAim->position.z - terrain->origin.z - static_cast<double>(m_brushAim->normal.z) * 0.25};
+            const asset::TerrainField& field = terrain->field;
+            const asset::Voxel voxel =
+                field.voxel(field.voxelIndex(at.x), field.voxelIndex(at.y), field.voxelIndex(at.z));
+            const core::u8 shown = voxel.cover >= 128 ? voxel.top : voxel.material;
+            if (shown != 0) {
+                setBrushMaterial(shown);
+                const bool named = shown <= terrain->layers.size();
+                m_status = EditorStatus{
+                    "picked " + (named ? terrain->layers[shown - 1u] : "material " + std::to_string(shown)), false};
+            }
+            m_pending.reset();
+            return true;
+        }
+
         // **One undo step for the whole stroke**, recorded before the first
         // stamp writes anything. A terrain snapshot is a vector of shared
         // pointers to tiles nobody is about to change, so this costs a copy of
@@ -4642,8 +4664,11 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
         // Its mode, strength and falloff (ADR 0114); Ctrl turns a Blend into
         // an Erase for the stroke.
         const asset::PaintMode mode = m_stroke.has_value() ? m_stroke->paintMode : effectivePaintMode();
+        asset::PaintMask mask = m_paintMask;
+        mask.heightMin = static_cast<f32>(static_cast<double>(mask.heightMin) - terrain.origin.y);
+        mask.heightMax = static_cast<f32>(static_cast<double>(mask.heightMax) - terrain.origin.y);
         report = asset::paintBall(terrain.field, at, radius, material,
-                                  asset::PaintOptions{mode, m_brush.strength, m_brush.falloff});
+                                  asset::PaintOptions{mode, m_brush.strength, m_brush.falloff, mask});
     }
     else {
         switch (op) {
@@ -5047,6 +5072,149 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
 
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
+    return true;
+}
+
+bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
+                           const HillSpec& spec)
+{
+    if (!(spec.size > 0.0f) || !std::isfinite(spec.low) || !std::isfinite(spec.high) || !(spec.high > spec.low) ||
+        !(spec.scale > 0.0f) || spec.material == 0) {
+        m_status = EditorStatus{"hills need a size, a scale, and a top above their bottom", true};
+        return false;
+    }
+    const core::InstanceId existing = terrainIn(world, rootOrWorkspace);
+    const scene::TerrainComponent* before = existing.valid() ? world.terrains().find(existing) : nullptr;
+    const f32 voxel = before != nullptr ? before->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
+    constexpr core::u32 MaxColumns = 4096;
+    const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
+    if (across > static_cast<double>(MaxColumns)) {
+        m_status = EditorStatus{"that is more than 4096 columns across at this voxel size; make it smaller", true};
+        return false;
+    }
+    const core::InstanceId id = createTerrain(world, rootOrWorkspace, inspector);
+    if (world.terrains().find(id) == nullptr) {
+        m_status = EditorStatus{"this world has nowhere to put terrain", true};
+        return false;
+    }
+    m_history.record(world, "Generate Hills");
+    scene::TerrainComponent& terrain = *world.terrains().find(id);
+    const auto columns = static_cast<core::u32>(across);
+    const double half = 0.5 * static_cast<double>(columns - 1u) * static_cast<double>(voxel);
+    const core::i32 first = terrain.field.voxelIndex(-half);
+    // Every cell of the square read first on a streamed terrain (terrain
+    // audit U2's reason).
+    world.loadGround(core::DVec3{terrain.origin.x - half - 8.0 * static_cast<double>(voxel), 0.0,
+                                 terrain.origin.z - half - 8.0 * static_cast<double>(voxel)},
+                     core::DVec3{terrain.origin.x + half + 8.0 * static_cast<double>(voxel), 0.0,
+                                 terrain.origin.z + half + 8.0 * static_cast<double>(voxel)},
+                     4096);
+    const auto originY = static_cast<f32>(terrain.origin.y);
+    const std::vector<float> heights = asset::hillHeights(
+        terrain.field, first, first, columns, columns,
+        asset::HillSettings{spec.seed, spec.octaves, spec.scale, spec.low - originY, spec.high - originY});
+    (void)asset::writeHeights(terrain.field, first, first, columns, heights, groundMaterial(terrain, spec.material));
+    terrain.fieldRevision += 1;
+    m_sceneDirty = true;
+    m_status =
+        EditorStatus{"hills across " + std::to_string(columns) + " x " + std::to_string(columns) + " columns", false};
+    return true;
+}
+
+std::optional<std::filesystem::path> Editor::exportHeightmap(const scene::World& world, core::InstanceId root, f32 size)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || terrain->field.empty() || !(size > 0.0f)) {
+        m_status = EditorStatus{"there is no ground to export", true};
+        return std::nullopt;
+    }
+    if (m_content.root().empty()) {
+        m_status = EditorStatus{"open a project to export into", true};
+        return std::nullopt;
+    }
+    const asset::FieldSettings& settings = terrain->field.settings();
+    const double voxel = static_cast<double>(settings.voxelSize);
+    const double across = std::round(static_cast<double>(size) / voxel) + 1.0;
+    if (across > 4096.0) {
+        m_status = EditorStatus{"that is more than 4096 columns across at this voxel size; export it smaller", true};
+        return std::nullopt;
+    }
+    const auto columns = static_cast<core::u32>(across);
+    const double half = 0.5 * static_cast<double>(columns - 1u) * voxel;
+    const core::i32 first = terrain->field.voxelIndex(-half);
+    const std::vector<float> tops =
+        asset::columnHeights(terrain->field, first, first, columns, columns, settings.minHeight);
+    // The world's floor black and its ceiling white, in field metres.
+    asset::HeightImage image;
+    image.width = columns;
+    image.height = columns;
+    image.samples.resize(tops.size());
+    const float range = settings.maxHeight - settings.minHeight;
+    for (std::size_t at = 0; at < tops.size(); ++at)
+        image.samples[at] = (tops[at] - settings.minHeight) / range;
+    const std::filesystem::path folder = m_content.root().parent_path() / "heightmaps";
+    const std::string stem = world.atoms().text(world.name(id)).empty()
+                                 ? std::string("terrain")
+                                 : std::string(world.atoms().text(world.name(id)));
+    std::vector<std::byte> png;
+    std::vector<std::byte> raw;
+    if (asset::encodeHeightmap(image, asset::HeightmapFormat::Png16, png).has_value() ||
+        asset::encodeHeightmap(image, asset::HeightmapFormat::Raw16, raw).has_value() ||
+        !platform::createDirectories(folder) || !platform::writeFile(folder / (stem + ".png"), png) ||
+        !platform::writeFile(folder / (stem + ".r16"), raw)) {
+        m_status = EditorStatus{"could not write the heightmap under " + folder.string(), true};
+        return std::nullopt;
+    }
+    const auto floor = static_cast<double>(settings.minHeight) + terrain->origin.y;
+    const auto ceiling = static_cast<double>(settings.maxHeight) + terrain->origin.y;
+    char heights[96];
+    std::snprintf(heights, sizeof(heights), "black %.1f m, white %.1f m", floor, ceiling);
+    m_status = EditorStatus{"heightmaps/" + stem + ".png and .r16, " + std::to_string(columns) + " x " +
+                                std::to_string(columns) + ", " + heights,
+                            false};
+    return folder / (stem + ".png");
+}
+
+bool Editor::replaceMaterialEverywhere(scene::World& world, core::InstanceId root, core::u8 from, core::u8 to)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || from == 0 || to == 0 || from == to || terrain->field.empty())
+        return false;
+    const asset::FieldSettings& settings = terrain->field.settings();
+    // Over what the field holds: its chunks' extent, and its height band.
+    core::i32 minX = std::numeric_limits<core::i32>::max();
+    core::i32 maxX = std::numeric_limits<core::i32>::min();
+    core::i32 minZ = minX;
+    core::i32 maxZ = maxX;
+    for (const auto& entry : terrain->field.chunks()) {
+        minX = std::min(minX, entry.first.x);
+        maxX = std::max(maxX, entry.first.x);
+        minZ = std::min(minZ, entry.first.z);
+        maxZ = std::max(maxZ, entry.first.z);
+    }
+    const double chunk = static_cast<double>(asset::ChunkEdge) * static_cast<double>(settings.voxelSize);
+    scene::WorldSnapshot before = world.snapshot();
+    const asset::EditReport report = asset::replaceMaterial(
+        terrain->field,
+        core::DVec3{static_cast<double>(minX) * chunk, static_cast<double>(settings.minHeight),
+                    static_cast<double>(minZ) * chunk},
+        core::DVec3{static_cast<double>(maxX + 1) * chunk, static_cast<double>(settings.maxHeight),
+                    static_cast<double>(maxZ + 1) * chunk},
+        from, to);
+    if (report.refused) {
+        m_status = EditorStatus{"this terrain is too big to replace a material across at once", true};
+        return false;
+    }
+    if (report.touched == 0) {
+        m_status = EditorStatus{"no ground of that material to replace", false};
+        return false;
+    }
+    m_history.record(std::move(before), "Replace Material");
+    terrain->fieldRevision += 1;
+    m_sceneDirty = true;
+    m_status = EditorStatus{"replaced " + std::to_string(report.touched) + " voxel(s)", false};
     return true;
 }
 

@@ -23,6 +23,7 @@
 
 namespace engine::asset {
 
+using core::u16;
 using core::u32;
 
 // Decoded pixels, always 8-bit RGBA, top row first, tightly packed.
@@ -98,6 +99,17 @@ struct HeightImage
 //   grey one already is.
 [[nodiscard]] std::optional<core::EngineError> decodeHeightmap(std::span<const std::byte> encoded,
                                                                std::string_view fileName, HeightImage& out);
+
+// **Writes a heightmap** as the terrain tools read one (B4): a sixteen-bit
+// greyscale PNG, or headerless little-endian sixteen-bit RAW, which must be
+// square. Samples are clamped to 0 to 1.
+enum class HeightmapFormat : core::u8
+{
+    Png16,
+    Raw16,
+};
+[[nodiscard]] std::optional<core::EngineError> encodeHeightmap(const HeightImage& image, HeightmapFormat format,
+                                                               std::vector<std::byte>& out);
 
 // Resamples a heightmap onto `columns` x `rows` terrain columns, bilinearly,
 // and maps 0 to `low` and 1 to `high`. Row-major, first row first: the image's

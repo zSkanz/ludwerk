@@ -177,15 +177,20 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage B4 — terrain tools
 
-- [ ] The brush: *Shape* applies to painting; soft falloff visible in the
-  cursor.
-- [ ] Eyedropper (pick the material under the cursor, `Alt`+click).
-- [ ] Masks: paint only within a slope range, a height range, or over chosen
-  materials.
-- [ ] *Replace Material* in a region, in the editor.
-- [ ] A noise generator (hills and mountains: octaves, scale, height, seed)
-  beside *Generate Flat Ground*; heightmap export (16-bit PNG and RAW).
-- [ ] Tests: each mask limits a stroke; export then import round-trips heights.
+- [~] The brush: soft falloff visible in the cursor (the ring a soft brush
+  draws where it does half, D303), and Paint's own Softness. **Not yet:**
+  *Shape* for painting -- a stroke of paint is a ball.
+- [x] Eyedropper (pick the material under the cursor, `Alt`+click): what shows
+  there, the paint over it where that shows more.
+- [x] Masks: paint only within a slope range, a height range, or over chosen
+  materials (`PaintOptions::mask`, *Only where* in the panel).
+- [x] *Replace Material* in the editor, across the whole terrain, one step.
+- [x] A noise generator (hills: octaves, scale, heights, seed -- a pure
+  function of them) beside *Generate Flat Ground*; heightmap export (16-bit
+  PNG and RAW) under `heightmaps/`.
+- [x] Tests: each mask limits a stroke; export then decode round-trips
+  heights at both formats; the same seed gives the same hills; the
+  eyedropper; hills are one undo step.
 
 ## Stage B8 — water (ADR 0118)
 

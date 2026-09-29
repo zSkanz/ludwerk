@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/asset/terrain.h"
+#include "engine/core/dmath.h"
 
 namespace engine::asset {
 namespace {
@@ -1244,8 +1245,30 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         if (distance > radius)
             return;
         const Voxel old = writer.get(x, y, z);
-        if (old.occupancy == 0)
+        if (old.occupancy == 0 || !options.mask.allows(old.material))
             return;
+        const PaintMask& mask = options.mask;
+        if (mask.byHeight) {
+            const double height = field.voxelCenter(y);
+            if (height < static_cast<double>(mask.heightMin) || height > static_cast<double>(mask.heightMax))
+                return;
+        }
+        if (mask.bySlope) {
+            // The ground's slope at the voxel, from its occupancy's gradient:
+            // level inside the ground, where there is none, and nothing there
+            // shows anyway.
+            const auto occupancyAt = [&](i32 ox, i32 oy, i32 oz) {
+                return static_cast<double>(writer.get(ox, oy, oz).occupancy);
+            };
+            const double gx = occupancyAt(x - 1, y, z) - occupancyAt(x + 1, y, z);
+            const double gy = occupancyAt(x, y - 1, z) - occupancyAt(x, y + 1, z);
+            const double gz = occupancyAt(x, y, z - 1) - occupancyAt(x, y, z + 1);
+            const double size = std::sqrt(gx * gx + gy * gy + gz * gz);
+            const double degrees =
+                size < 1e-6 ? 0.0 : core::dmath::acos(std::clamp(gy / size, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+            if (degrees < static_cast<double>(mask.slopeMin) || degrees > static_cast<double>(mask.slopeMax))
+                return;
+        }
         // Hard is the whole strength to the rim; soft falls away to nothing
         // at it, smoothly.
         const float weight = strength * ((1.0f - soft) + soft * falloff(distance, radius));
@@ -1256,6 +1279,87 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
     writer.finish();
     report.touched = writer.changed();
     return report;
+}
+
+namespace {
+
+// An integer hash of a lattice point and a seed: the hills' noise, the same
+// bits everywhere (R10).
+[[nodiscard]] core::u32 latticeHash(i32 x, i32 z, core::u32 seed) noexcept
+{
+    core::u32 h =
+        static_cast<core::u32>(x) * 0x8DA6B343u ^ static_cast<core::u32>(z) * 0xD8163841u ^ seed * 0xCB1AB31Fu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+
+// Value noise at a point in lattice units, 0 to 1, smoothly between corners.
+[[nodiscard]] double valueNoise(double px, double pz, core::u32 seed) noexcept
+{
+    const double cx = std::floor(px);
+    const double cz = std::floor(pz);
+    const double fx = px - cx;
+    const double fz = pz - cz;
+    const double ux = fx * fx * (3.0 - 2.0 * fx);
+    const double uz = fz * fz * (3.0 - 2.0 * fz);
+    const auto ix = static_cast<i32>(cx);
+    const auto iz = static_cast<i32>(cz);
+    const auto unit = [seed](i32 x, i32 z) {
+        return static_cast<double>(latticeHash(x, z, seed) & 0xFFFFFFu) / 16777215.0;
+    };
+    const double near = unit(ix, iz) + (unit(ix + 1, iz) - unit(ix, iz)) * ux;
+    const double far = unit(ix, iz + 1) + (unit(ix + 1, iz + 1) - unit(ix, iz + 1)) * ux;
+    return near + (far - near) * uz;
+}
+
+} // namespace
+
+std::vector<float> hillHeights(const TerrainField& field, i32 firstX, i32 firstZ, core::u32 columns, core::u32 rows,
+                               const HillSettings& settings)
+{
+    std::vector<float> heights(static_cast<usize>(columns) * rows);
+    const double voxel = static_cast<double>(field.settings().voxelSize);
+    const core::u32 octaves = std::clamp<core::u32>(settings.octaves, 1, 10);
+    const double scale = std::max(static_cast<double>(settings.scale), voxel);
+    // The largest amplitude first; the sum of them all is what 1 is.
+    double total = 0.0;
+    for (core::u32 octave = 0; octave < octaves; ++octave)
+        total += std::ldexp(1.0, -static_cast<int>(octave));
+    for (core::u32 row = 0; row < rows; ++row) {
+        for (core::u32 column = 0; column < columns; ++column) {
+            const double x = field.voxelCenter(firstX + static_cast<i32>(column)) / scale;
+            const double z = field.voxelCenter(firstZ + static_cast<i32>(row)) / scale;
+            double sum = 0.0;
+            for (core::u32 octave = 0; octave < octaves; ++octave) {
+                const double frequency = std::ldexp(1.0, static_cast<int>(octave));
+                sum += valueNoise(x * frequency, z * frequency, settings.seed + octave * 7919u) *
+                       std::ldexp(1.0, -static_cast<int>(octave));
+            }
+            const double unit = sum / total;
+            heights[static_cast<usize>(row) * columns + column] = static_cast<float>(
+                static_cast<double>(settings.low) + unit * static_cast<double>(settings.high - settings.low));
+        }
+    }
+    return heights;
+}
+
+std::vector<float> columnHeights(const TerrainField& field, i32 firstX, i32 firstZ, core::u32 columns, core::u32 rows,
+                                 float empty)
+{
+    std::vector<float> heights(static_cast<usize>(columns) * rows, empty);
+    for (core::u32 row = 0; row < rows; ++row) {
+        for (core::u32 column = 0; column < columns; ++column) {
+            if (const std::optional<float> top =
+                    field.columnTop(firstX + static_cast<i32>(column), firstZ + static_cast<i32>(row));
+                top.has_value())
+                heights[static_cast<usize>(row) * columns + column] = *top;
+        }
+    }
+    return heights;
 }
 
 EditReport replaceMaterial(TerrainField& field, DVec3 minCorner, DVec3 maxCorner, u8 from, u8 to)

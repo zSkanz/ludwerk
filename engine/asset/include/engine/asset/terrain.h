@@ -613,6 +613,30 @@ enum class PaintMode : core::u8
     Erase,
 };
 
+// **Where a stroke may paint at all** (the terrain tools, B4): only ground
+// within a slope, within a height, or of chosen materials -- a road that stays
+// off the cliffs, snow above a line, moss over rock and nothing else.
+struct PaintMask
+{
+    bool bySlope = false;
+    // Degrees from level, both ends included.
+    float slopeMin = 0.0f;
+    float slopeMax = 90.0f;
+    bool byHeight = false;
+    // The field's own metres.
+    float heightMin = 0.0f;
+    float heightMax = 0.0f;
+    bool byMaterial = false;
+    // Which materials under the paint it may touch, one bit an id.
+    std::array<core::u64, 4> materials{};
+
+    [[nodiscard]] bool allows(core::u8 material) const noexcept
+    {
+        return !byMaterial || (materials[material / 64u] & (core::u64{1} << (material % 64u))) != 0;
+    }
+    void allow(core::u8 material) noexcept { materials[material / 64u] |= core::u64{1} << (material % 64u); }
+};
+
 struct PaintOptions
 {
     PaintMode mode = PaintMode::Replace;
@@ -621,12 +645,34 @@ struct PaintOptions
     float strength = 1.0f;
     // 0 hard to 1 soft: how much less it moves towards the rim.
     float falloff = 0.0f;
+    PaintMask mask;
 };
 
 // Changes what the ground is made of in a ball, without moving it. Zero is
 // refused rather than treated as erase (`Erase` is the mode for that).
 EditReport paintBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material,
                      PaintOptions options = {});
+
+// **Hills from noise** (the terrain tools, B4): a height for each of
+// `columns` x `rows` columns from `firstX`, `firstZ`, layered value noise --
+// `octaves` of it, the largest `scale` metres across -- between `low` and
+// `high` field metres. A pure function of its arguments and the seed: the same
+// hills on every machine, for `writeHeights`.
+struct HillSettings
+{
+    core::u32 seed = 1;
+    core::u32 octaves = 5;
+    float scale = 128.0f;
+    float low = 0.0f;
+    float high = 32.0f;
+};
+[[nodiscard]] std::vector<float> hillHeights(const TerrainField& field, core::i32 firstX, core::i32 firstZ,
+                                             core::u32 columns, core::u32 rows, const HillSettings& settings);
+
+// **The top of each column** of a square, field metres, first row first -- a
+// column with no ground at `empty`. What a heightmap is exported from.
+[[nodiscard]] std::vector<float> columnHeights(const TerrainField& field, core::i32 firstX, core::i32 firstZ,
+                                               core::u32 columns, core::u32 rows, float empty);
 
 // Every voxel of material `from` in the box between the two corners becomes
 // `to`. Zero for either is refused.

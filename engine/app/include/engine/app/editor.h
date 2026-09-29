@@ -2193,6 +2193,42 @@ public:
         core::u8 material = 1;
     };
     bool importHeightmap(scene::World& world, core::InstanceId root, Inspector& inspector, const HeightmapImport& spec);
+
+    // --- The terrain tools (B4) ------------------------------------------------
+
+    // **Hills from noise** over a square round the terrain's origin, one undo
+    // step, laid as the brush's material; heights in the world's metres.
+    struct HillSpec
+    {
+        f32 size = 256.0f;
+        f32 low = 0.0f;
+        f32 high = 48.0f;
+        core::u32 octaves = 5;
+        f32 scale = 128.0f;
+        core::u32 seed = 1;
+        core::u8 material = 1;
+    };
+    bool generateHills(scene::World& world, core::InstanceId root, Inspector& inspector, const HillSpec& spec);
+
+    // **Writes the terrain's heights** over a square round its origin, one
+    // sample a voxel, as a sixteen-bit PNG -- and, since it is square, as RAW
+    // beside it -- under the project's `heightmaps/`, black at the world's
+    // floor and white at its ceiling, so an import at those heights gives the
+    // same ground back. Answers the PNG's path, or nothing.
+    std::optional<std::filesystem::path> exportHeightmap(const scene::World& world, core::InstanceId root, f32 size);
+
+    // Every voxel of one material becomes another, across the whole terrain:
+    // one undo step.
+    bool replaceMaterialEverywhere(scene::World& world, core::InstanceId root, core::u8 from, core::u8 to);
+
+    // **Where Paint may paint** (B4): the mask every Paint stroke carries,
+    // heights in the world's metres.
+    [[nodiscard]] const asset::PaintMask& paintMask() const noexcept { return m_paintMask; }
+    void setPaintMask(const asset::PaintMask& mask) noexcept { m_paintMask = mask; }
+
+    // **The eyedropper**: with Paint in hand and Alt held, a click takes the
+    // material under the pointer as the brush's rather than painting.
+    void setBrushPicking(bool picking) noexcept { m_brushPicking = picking; }
     // The file the Terrain panel imports from, as the picker last answered.
     [[nodiscard]] const std::filesystem::path& heightmapSource() const noexcept { return m_heightmapSource; }
     void setHeightmapSource(std::filesystem::path source) { m_heightmapSource = std::move(source); }
@@ -2968,6 +3004,8 @@ private:
     MatchSettings m_match;
     bool m_matchRunning = false;
     UndoStack m_history;
+    asset::PaintMask m_paintMask;
+    bool m_brushPicking = false;
 
     bool m_sceneDirty = false;
     bool m_sceneScriptsUnsaved = false;

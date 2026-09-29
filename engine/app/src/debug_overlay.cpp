@@ -10913,6 +10913,88 @@ bool terrainTile(const IconAtlas* icons, std::string_view icon, const char* word
 }
 
 // Size and strength, which every brush has, and what only some have.
+// **Where Paint may paint** (B4): a slope band, a height band, and the
+// materials under it -- a road that keeps off the cliffs, snow above a line,
+// moss over the rock and nothing else.
+void drawPaintMask(Editor& editor, const scene::TerrainComponent& terrain)
+{
+    if (!ImGui::CollapsingHeader("Only where"))
+        return;
+    asset::PaintMask mask = editor.paintMask();
+    bool changed = false;
+    changed |= ImGui::Checkbox("the slope is between", &mask.bySlope);
+    if (mask.bySlope) {
+        float range[2] = {mask.slopeMin, mask.slopeMax};
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::DragFloat2("##mask-slope", range, 0.5f, 0.0f, 90.0f, "%.0f deg")) {
+            mask.slopeMin = std::min(range[0], range[1]);
+            mask.slopeMax = std::max(range[0], range[1]);
+            changed = true;
+        }
+        ImGui::SetItemTooltip("0 is level ground, 90 a wall");
+    }
+    changed |= ImGui::Checkbox("the height is between", &mask.byHeight);
+    if (mask.byHeight) {
+        float range[2] = {mask.heightMin, mask.heightMax};
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::DragFloat2("##mask-height", range, 0.25f, -4096.0f, 4096.0f, "%.1f m")) {
+            mask.heightMin = std::min(range[0], range[1]);
+            mask.heightMax = std::max(range[0], range[1]);
+            changed = true;
+        }
+        ImGui::SetItemTooltip("world heights: only ground whose voxels lie between them is painted");
+    }
+    changed |= ImGui::Checkbox("the ground is", &mask.byMaterial);
+    if (mask.byMaterial) {
+        for (std::size_t at = 0; at < terrain.layers.size() && at < 255; ++at) {
+            const auto id = static_cast<core::u8>(at + 1);
+            bool on = mask.allows(id);
+            if (ImGui::Checkbox((terrainLayerName(terrain.layers[at]) + "##mask-" + std::to_string(at)).c_str(), &on)) {
+                if (on)
+                    mask.allow(id);
+                else
+                    mask.materials[id / 64u] &= ~(core::u64{1} << (id % 64u));
+                changed = true;
+            }
+        }
+    }
+    if (changed)
+        editor.setPaintMask(mask);
+}
+
+// Every voxel of one material made another, across the terrain (B4).
+void drawReplaceMaterial(Editor& editor, scene::World& world, core::InstanceId root,
+                         const scene::TerrainComponent& terrain)
+{
+    if (terrain.layers.size() < 2 || !ImGui::CollapsingHeader("Replace a material everywhere"))
+        return;
+    static int from = 0;
+    static int to = 1;
+    const auto count = static_cast<int>(std::min<std::size_t>(terrain.layers.size(), 255));
+    from = std::clamp(from, 0, count - 1);
+    to = std::clamp(to, 0, count - 1);
+    const auto pick = [&](const char* id, int& which) {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo(id, terrainLayerName(terrain.layers[static_cast<std::size_t>(which)]).c_str())) {
+            for (int at = 0; at < count; ++at) {
+                if (ImGui::Selectable(terrainLayerName(terrain.layers[static_cast<std::size_t>(at)]).c_str(),
+                                      at == which))
+                    which = at;
+            }
+            ImGui::EndCombo();
+        }
+    };
+    pick("##replace-from", from);
+    ImGui::TextDisabled("becomes");
+    pick("##replace-to", to);
+    ImGui::BeginDisabled(from == to);
+    if (ImGui::Button("Replace", ImVec2(-FLT_MIN, 0.0f)))
+        (void)editor.replaceMaterialEverywhere(world, root, static_cast<core::u8>(from + 1),
+                                               static_cast<core::u8>(to + 1));
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("every voxel of the first, wherever it is, becomes the second. One ctrl-Z brings it back");
+}
+
 // **How Paint goes on** (ADR 0114): the four modes, and how soft its rim is.
 void drawPaintMode(Editor& editor)
 {
@@ -11520,6 +11602,8 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
             brushDown("Press Paint, then drag over the ground.");
             drawPaintMode(editor);
             drawBrushControls(editor, true, false, false);
+            drawPaintMask(editor, *terrain);
+            drawReplaceMaterial(editor, world, root, *terrain);
             ImGui::Spacing();
             if (ImGui::CollapsingHeader("Paint by slope and height"))
                 drawTerrainRules(editor, world, root, *terrain, icons);
@@ -11639,8 +11723,65 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                                   : "levels the whole square to this height, ground sculpted inside it included; "
                                     "ground outside the square stays. One ctrl-Z brings it back");
 
+        ImGui::SeparatorText("Hills");
+        {
+            // **Hills from noise** (B4): a seed, how big the largest are and
+            // how many sizes of smaller ones ride on them, between two heights.
+            static Editor::HillSpec hills;
+            const float wide = ImGui::CalcTextSize("Octaves").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+            ImGui::TextUnformatted("Size");
+            ImGui::SameLine(wide);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::DragFloat("##hills-size", &hills.size, 1.0f, 16.0f, 2048.0f, "%.0f m square");
+            ImGui::TextUnformatted("Heights");
+            ImGui::SameLine(wide);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            float range[2] = {hills.low, hills.high};
+            if (ImGui::DragFloat2("##hills-heights", range, 0.25f, -256.0f, 256.0f, "%.1f m")) {
+                hills.low = std::min(range[0], range[1]);
+                hills.high = std::max(range[0], range[1]);
+            }
+            ImGui::SetItemTooltip("the lowest valley and the highest top, in world heights");
+            ImGui::TextUnformatted("Scale");
+            ImGui::SameLine(wide);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::DragFloat("##hills-scale", &hills.scale, 1.0f, 8.0f, 2048.0f, "%.0f m");
+            ImGui::SetItemTooltip("how far apart the largest hills are");
+            ImGui::TextUnformatted("Octaves");
+            ImGui::SameLine(wide);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            int octaves = static_cast<int>(hills.octaves);
+            if (ImGui::SliderInt("##hills-octaves", &octaves, 1, 8))
+                hills.octaves = static_cast<core::u32>(octaves);
+            ImGui::SetItemTooltip("how many sizes of smaller hills ride on the large ones: more is rougher");
+            ImGui::TextUnformatted("Seed");
+            ImGui::SameLine(wide);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            int seed = static_cast<int>(hills.seed);
+            if (ImGui::InputInt("##hills-seed", &seed))
+                hills.seed = static_cast<core::u32>(std::max(seed, 0));
+            if (labeledIconButton(icons, icons::ActionAdd, terrain == nullptr ? "Create Hills" : "Replace with Hills",
+                                  ImVec2(-FLT_MIN, 0.0f))) {
+                hills.material = editor.brush().material;
+                if (editor.generateHills(world, root, inspector, hills))
+                    g_terrainMode = TerrainMode::Sculpt;
+            }
+            ImGui::SetItemTooltip(
+                "lays hills across the square, made of the brush's material. One ctrl-Z brings it back");
+        }
+
         ImGui::SeparatorText("From a heightmap");
         drawTerrainHeightmap(editor, world, root, inspector, commands);
+        if (terrain != nullptr) {
+            static f32 exportSize = 256.0f;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+            ImGui::DragFloat("##export-size", &exportSize, 1.0f, 16.0f, 4096.0f, "%.0f m square");
+            ImGui::SameLine();
+            if (ImGui::Button("Export Heightmap", ImVec2(-FLT_MIN, 0.0f)))
+                (void)editor.exportHeightmap(world, root, exportSize);
+            ImGui::SetItemTooltip("writes the ground's heights across the square as a 16-bit PNG and a RAW under the "
+                                  "project's heightmaps/, black at the world's floor and white at its ceiling");
+        }
 
         if (terrain != nullptr) {
             ImGui::SeparatorText("Start over");
@@ -13696,6 +13837,8 @@ terrainPanelDone:;
     if (editor != nullptr) {
         const bool typing = ImGui::GetIO().WantTextInput;
         editor->setBrushModifiers(ImGui::GetIO().KeyCtrl && !typing, ImGui::GetIO().KeyShift && !typing);
+        // Alt with Paint in hand is the eyedropper (B4).
+        editor->setBrushPicking(ImGui::GetIO().KeyAlt && !typing);
     }
     // **Not while the game plays** (terrain audit E6): a game's own 1 to 6, T
     // and B changed the editor's brush and opened its panels behind it.

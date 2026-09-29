@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/asset/image.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_cell.h"
 #include "engine/asset/terrain_palette.h"
@@ -729,6 +730,20 @@ TEST_CASE("a brush no world has is refused whole, and fast (audit S10)")
     CHECK(small.touched > 0);
 }
 
+namespace {
+
+// A stroke's options, the mask left open.
+[[nodiscard]] asset::PaintOptions paintWith(asset::PaintMode mode, float strength = 1.0f, float falloff = 0.0f)
+{
+    asset::PaintOptions options;
+    options.mode = mode;
+    options.strength = strength;
+    options.falloff = falloff;
+    return options;
+}
+
+} // namespace
+
 TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 0114)")
 {
     asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
@@ -737,7 +752,7 @@ TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 01
     const auto voxel = [&] { return field.voxel(0, -1, 0); };
 
     // Blend: the cover rises with each stamp, over the ground that was there.
-    const asset::PaintOptions blend{asset::PaintMode::Blend, 0.25f, 0.0f};
+    const asset::PaintOptions blend = paintWith(asset::PaintMode::Blend, 0.25f, 0.0f);
     CHECK(asset::paintBall(field, at, 2.0, 3, blend).touched > 0);
     CHECK(voxel().material == 1);
     CHECK(voxel().top == 3);
@@ -753,18 +768,18 @@ TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 01
     CHECK(voxel().cover == 0);
 
     // A soft brush does less towards its rim.
-    (void)asset::paintBall(field, at, 4.0, 5, asset::PaintOptions{asset::PaintMode::Blend, 0.5f, 1.0f});
+    (void)asset::paintBall(field, at, 4.0, 5, paintWith(asset::PaintMode::Blend, 0.5f, 1.0f));
     CHECK(field.voxel(2, -1, 0).cover < field.voxel(0, -1, 0).cover);
 
     // Under: the ground beneath changes and what is over it stays.
     const core::u8 over = voxel().cover;
-    (void)asset::paintBall(field, at, 1.0, 2, asset::PaintOptions{asset::PaintMode::Under});
+    (void)asset::paintBall(field, at, 1.0, 2, paintWith(asset::PaintMode::Under));
     CHECK(voxel().material == 2);
     CHECK(voxel().top == 5);
     CHECK(voxel().cover == over);
 
     // Erase: what is over it shows less, and then not at all.
-    (void)asset::paintBall(field, at, 1.0, 0, asset::PaintOptions{asset::PaintMode::Erase, 1.0f, 0.0f});
+    (void)asset::paintBall(field, at, 1.0, 0, paintWith(asset::PaintMode::Erase, 1.0f, 0.0f));
     CHECK(voxel().cover == 0);
     CHECK(voxel().material == 2);
 
@@ -784,8 +799,7 @@ TEST_CASE("a painted chunk codes and reads back whole, and an unpainted one code
     const std::vector<std::byte> before = asset::encodeTerrainChunk(plain);
     const core::u64 digest = plain.digest();
 
-    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 4,
-                           asset::PaintOptions{asset::PaintMode::Blend, 0.4f, 0.5f});
+    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 4, paintWith(asset::PaintMode::Blend, 0.4f, 0.5f));
     const asset::TerrainChunk& painted = *field.findChunk(asset::ChunkKey{0, -1, 0});
     REQUIRE(painted.painted());
     CHECK(painted.digest() != digest);
@@ -797,12 +811,91 @@ TEST_CASE("a painted chunk codes and reads back whole, and an unpainted one code
     CHECK(back->get(0, 31, 0) == painted.get(0, 31, 0));
 
     // Paint taken off again: the chunk is the one it was, bytes and digest.
-    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 0,
-                           asset::PaintOptions{asset::PaintMode::Erase, 1.0f, 0.0f});
+    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 0, paintWith(asset::PaintMode::Erase, 1.0f, 0.0f));
     const asset::TerrainChunk& clean = *field.findChunk(asset::ChunkKey{0, -1, 0});
     CHECK_FALSE(clean.painted());
     CHECK(clean.digest() == digest);
     CHECK(asset::encodeTerrainChunk(clean) == before);
+}
+
+TEST_CASE("a paint mask keeps a stroke to a slope, a height and a material (B4)")
+{
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    // A step: ground to 0 on one side, a block to 6 on the other -- a level
+    // top, a wall, and a level floor.
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{32.0f, 16.0f, 32.0f}, 1);
+    (void)asset::fillBlock(field, core::DVec3{8.0, 3.0, 0.0}, core::Vec3{16.0f, 6.0f, 32.0f}, 2);
+    const auto painted = [&](core::i32 x, core::i32 y, core::i32 z) { return field.voxel(x, y, z).top == 3; };
+
+    // Level ground only: the tops, not the wall.
+    asset::PaintOptions level = paintWith(asset::PaintMode::Blend, 0.5f, 0.0f);
+    level.mask.bySlope = true;
+    level.mask.slopeMax = 30.0f;
+    (void)asset::paintBall(field, core::DVec3{0.0, 3.0, 0.0}, 6.0, 3, level);
+    CHECK(painted(-2, -1, 0));
+    CHECK_FALSE(painted(0, 3, 0));
+
+    // Above a height only.
+    asset::TerrainField high = field;
+    asset::PaintOptions above = paintWith(asset::PaintMode::Replace);
+    above.mask.byHeight = true;
+    above.mask.heightMin = 2.0f;
+    above.mask.heightMax = 32.0f;
+    (void)asset::paintBall(high, core::DVec3{0.0, 3.0, 0.0}, 8.0, 4, above);
+    CHECK(high.voxel(4, 5, 0).material == 4);
+    CHECK(high.voxel(-2, -1, 0).material != 4);
+
+    // Over one material only.
+    asset::TerrainField over = field;
+    asset::PaintOptions onRock = paintWith(asset::PaintMode::Replace);
+    onRock.mask.byMaterial = true;
+    onRock.mask.allow(2);
+    (void)asset::paintBall(over, core::DVec3{0.0, 3.0, 0.0}, 8.0, 5, onRock);
+    CHECK(over.voxel(4, 5, 0).material == 5);
+    CHECK(over.voxel(-2, -1, 0).material == 1);
+}
+
+TEST_CASE("hills are the same from the same seed, other from another, and within their heights (B4)")
+{
+    const asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -64.0f, .maxHeight = 64.0f});
+    const asset::HillSettings settings{7, 5, 64.0f, 4.0f, 40.0f};
+    const std::vector<float> first = asset::hillHeights(field, -32, -32, 65, 65, settings);
+    CHECK(asset::hillHeights(field, -32, -32, 65, 65, settings) == first);
+    asset::HillSettings other = settings;
+    other.seed = 8;
+    CHECK(asset::hillHeights(field, -32, -32, 65, 65, other) != first);
+    const auto [lowest, highest] = std::minmax_element(first.begin(), first.end());
+    CHECK(*lowest >= 4.0f);
+    CHECK(*highest <= 40.0f);
+    CHECK(*highest - *lowest > 8.0f);
+}
+
+TEST_CASE("a heightmap written as a 16-bit PNG and as RAW reads back as it was (B4)")
+{
+    asset::HeightImage image;
+    image.width = 33;
+    image.height = 33;
+    for (core::u32 at = 0; at < image.width * image.height; ++at)
+        image.samples.push_back(static_cast<float>(at % 97) / 96.0f);
+    for (const auto& [format, name] : {std::pair{asset::HeightmapFormat::Png16, "ground.png"},
+                                       std::pair{asset::HeightmapFormat::Raw16, "ground.r16"}}) {
+        std::vector<std::byte> bytes;
+        REQUIRE_FALSE(asset::encodeHeightmap(image, format, bytes).has_value());
+        asset::HeightImage back;
+        REQUIRE_FALSE(asset::decodeHeightmap(bytes, name, back).has_value());
+        REQUIRE(back.width == image.width);
+        REQUIRE(back.height == image.height);
+        float worst = 0.0f;
+        for (std::size_t at = 0; at < image.samples.size(); ++at)
+            worst = std::max(worst, std::abs(back.samples[at] - image.samples[at]));
+        CHECK(worst < 2.0f / 65535.0f);
+    }
+    // RAW has no header to say its shape, so it is square or nothing.
+    image.width = 32;
+    image.height = 34;
+    image.samples.resize(32 * 34);
+    std::vector<std::byte> bytes;
+    CHECK(asset::encodeHeightmap(image, asset::HeightmapFormat::Raw16, bytes).has_value());
 }
 
 TEST_CASE("field settings are checked as the floats they are (audit F9)")

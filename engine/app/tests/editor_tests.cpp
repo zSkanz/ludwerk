@@ -4856,6 +4856,43 @@ TEST_CASE("the editor's paint blends a little at a time, and Ctrl takes it off (
     (void)under;
 }
 
+TEST_CASE("Alt and a click with Paint picks the material under the pointer, and paints nothing (B4)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    (void)asset::paintBall(rig.field().field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 6, asset::PaintOptions{});
+    const core::u64 digest = rig.field().field.digest();
+    rig.editor.setTool(Editor::Tool::Paint);
+    rig.editor.setBrushMaterial(2);
+    rig.editor.setBrushPicking(true);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+    rig.frame(pixel, true, true, 0.0);
+    rig.frame(pixel, false, false, 0.0);
+    rig.editor.setBrushPicking(false);
+    CHECK(rig.editor.brush().material == 6);
+    CHECK(rig.field().field.digest() == digest);
+}
+
+TEST_CASE("hills replace the ground in one step (B4)")
+{
+    BrushRig rig;
+    const std::optional<float> before = asset::heightAt(rig.field().field, 10.0, 10.0);
+    const core::usize depth = rig.editor.history().depth();
+    Editor::HillSpec spec;
+    spec.size = 64.0f;
+    spec.low = 2.0f;
+    spec.high = 20.0f;
+    spec.scale = 32.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    CHECK(rig.editor.history().depth() == depth + 1);
+    const std::optional<float> after = asset::heightAt(rig.field().field, 10.0, 10.0);
+    REQUIRE(after.has_value());
+    CHECK(*after >= 1.0f);
+    CHECK(*after <= 21.0f);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(asset::heightAt(rig.field().field, 10.0, 10.0) == before);
+}
+
 TEST_CASE("painting through the editor changes material and not height")
 {
     BrushRig rig;

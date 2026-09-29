@@ -278,7 +278,14 @@ materials in the selected layer's place, adds one, or removes the last.
 **Paint** paints the selected material under the brush without moving the
 ground. **How it goes on** chooses Blend (a little with every stamp, by the
 brush's Strength), Replace, Under or Erase, and **Softness** how much less it
-paints towards the rim; hold Ctrl while blending to take paint off.
+paints towards the rim; hold Ctrl while blending to take paint off. **Alt and a
+click** picks the material under the pointer instead of painting.
+
+**Only where** keeps a stroke to ground within a slope (0 is level, 90 a
+wall), within two heights, or of chosen materials -- a road that stays off the
+cliffs, snow above a line, moss over the rock and nothing else. **Replace a
+material everywhere** makes every voxel of one material another, across the
+whole terrain, in one step.
 
 **Paint by slope and height** lists the terrain's rules in order, each with
 its fields, a switch, and up, down and remove; every change shows at once,
@@ -286,6 +293,13 @@ and a drag is one undo step. **Apply to Voxels** writes what the rules draw
 into the ground.
 
 ### Create
+
+**Hills** lays ground from noise across a square: between two heights, the
+largest hills **Scale** metres apart, **Octaves** sizes of smaller ones riding
+on them, and a **Seed** -- the same seed is the same hills. **Export
+Heightmap** writes the ground's heights across a square as a 16-bit PNG and a
+RAW under the project's `heightmaps/`, black at the world's floor and white at
+its ceiling, so importing it at those heights gives the same ground back.
 
 **Flat ground** lays a square of the size and at the world height asked for
 -- on a new world it makes the terrain, and it is one undo step either way.
