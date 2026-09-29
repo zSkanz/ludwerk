@@ -156,8 +156,12 @@ void toViewportEvents(std::span<const platform::Event> events, const ViewportRec
     }
 }
 
-std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId root, const PickRay& ray) noexcept
+std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId root, const PickRay& ray,
+                                   const render::DrawPoses* poses)
 {
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     std::optional<PickHit> best;
 
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) {
@@ -168,7 +172,7 @@ std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId r
         if (!inWorld(world, id, root))
             return;
 
-        const std::optional<f32> distance = intersectBox(ray, part.cframe, part.size);
+        const std::optional<f32> distance = intersectBox(ray, posed.part(id), part.size);
         if (!distance.has_value())
             return;
 
@@ -212,9 +216,10 @@ std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId r
                 if (!inWorld(world, id, root))
                     return;
                 // Into the sprite's own frame, turned back by its rotation.
-                const double angle = static_cast<double>(sprite.rotation) * 3.14159265358979323846 / 180.0;
-                const double dx = x - static_cast<double>(sprite.position.x);
-                const double dy = y - static_cast<double>(sprite.position.y);
+                const render::Pose2D pose = posed.part2d(id);
+                const double angle = static_cast<double>(pose.rotation) * 3.14159265358979323846 / 180.0;
+                const double dx = x - pose.position.x;
+                const double dy = y - pose.position.y;
                 const double localX = dx * std::cos(angle) + dy * std::sin(angle);
                 const double localY = -dx * std::sin(angle) + dy * std::cos(angle);
                 const double halfX = static_cast<double>(sprite.size.x) * 0.5;
@@ -236,34 +241,38 @@ std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId r
 
 // --- What is not a part (S5.1) -----------------------------------------------
 
-std::optional<core::DVec3> markerPoint(const scene::World& world, core::InstanceId id)
+std::optional<core::DVec3> markerPoint(const scene::World& world, core::InstanceId id, const render::DrawPoses* poses)
 {
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     // Its own transform first, in the order a thing is most specifically
     // located: an attachment knows where it is in the world, a camera and a part
     // know where they are outright.
-    if (const scene::AttachmentComponent* attachment = world.attachments().find(id); attachment != nullptr)
-        return attachment->worldCFrame.position;
-    if (const scene::CameraComponent* camera = world.cameras().find(id); camera != nullptr)
-        return camera->cframe.position;
-    if (const scene::PartComponent* part = world.parts().find(id); part != nullptr)
-        return part->cframe.position;
+    if (world.attachments().find(id) != nullptr)
+        return posed.attachment(id).position;
+    if (world.cameras().find(id) != nullptr)
+        return posed.camera(id).position;
+    if (world.parts().find(id) != nullptr)
+        return posed.part(id).position;
 
     // **Otherwise the nearest ancestor that has one**, which is not a fallback
     // but the rule the renderer already follows: a `PointLight` has no position
     // and is lit from the part it hangs on, so a marker anywhere else would be a
     // marker for a light that is not there.
     for (core::InstanceId walk = world.parentOf(id); walk.valid(); walk = world.parentOf(walk)) {
-        if (const scene::PartComponent* part = world.parts().find(walk); part != nullptr)
-            return part->cframe.position;
-        if (const scene::AttachmentComponent* attachment = world.attachments().find(walk); attachment != nullptr)
-            return attachment->worldCFrame.position;
-        if (const scene::CameraComponent* camera = world.cameras().find(walk); camera != nullptr)
-            return camera->cframe.position;
+        if (world.parts().find(walk) != nullptr)
+            return posed.part(walk).position;
+        if (world.attachments().find(walk) != nullptr)
+            return posed.attachment(walk).position;
+        if (world.cameras().find(walk) != nullptr)
+            return posed.camera(walk).position;
     }
     return std::nullopt;
 }
 
-void collectPickMarkers(const scene::World& world, core::InstanceId root, std::vector<PickMarker>& out)
+void collectPickMarkers(const scene::World& world, core::InstanceId root, std::vector<PickMarker>& out,
+                        const render::DrawPoses* poses)
 {
     out.clear();
 
@@ -279,7 +288,7 @@ void collectPickMarkers(const scene::World& world, core::InstanceId root, std::v
             // second, smaller target on top of a bigger correct one.
             if (world.parts().find(id) != nullptr)
                 return;
-            if (const std::optional<core::DVec3> at = markerPoint(world, id); at.has_value())
+            if (const std::optional<core::DVec3> at = markerPoint(world, id, poses); at.has_value())
                 out.push_back(PickMarker{id, *at});
         });
     };

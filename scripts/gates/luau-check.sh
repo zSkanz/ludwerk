@@ -183,6 +183,12 @@ fi
 echo "== stored-and-unread properties =="
 lute tools/repo/inertcheck.luau
 
+# **Nothing visual reads a simulated transform** (ADR 0134): what draws the
+# world, or something placed in it, asks where it is drawn this frame. The name
+# over a character read the simulated place, and it smeared in a match.
+echo "== visual code reads drawn positions =="
+lute tools/repo/drawcheck.luau
+
 # **Every concrete class is a replication decision, and absence is not one.**
 # A class nobody thought about and a class deliberately left off the wire look
 # identical in a schema; this is what makes the difference visible. It also holds

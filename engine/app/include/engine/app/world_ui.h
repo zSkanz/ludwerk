@@ -94,10 +94,25 @@ void fillUiCorner(const ui::DrawQuad& quad, core::f32 x, core::f32 y, core::f32 
 // under `workspace` or `uiService`, and appends the result to `out`'s world UI
 // geometry, back to front. `textures` is the screen UI's texture table --
 // the glyph atlas and the images -- which world UI shares; `gradients` the
-// frame's gradient rows, null to draw every gradient as none.
+// frame's gradient rows, null to draw every gradient as none. Each canvas
+// hangs where its part is DRAWN this frame (`poses`, ADR 0134); null is where
+// it is, for a world drawn at its tick.
 void buildWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService, core::Vec2 viewport,
                   std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
-                  UiGradientRows* gradients = nullptr);
+                  UiGradientRows* gradients = nullptr, const render::DrawPoses* poses = nullptr);
+
+// **Where each world canvas is this frame**, as `buildWorldUi` draws it and
+// `pickWorldUi` hits it, in pool order: what the drawing and the click agree
+// on, and what a test holds against where its part is drawn (ADR 0134).
+struct PlacedCanvas
+{
+    core::InstanceId canvas;
+    CanvasPlacement placement;
+};
+[[nodiscard]] std::vector<PlacedCanvas> placeWorldCanvases(scene::World& world, core::InstanceId workspace,
+                                                           core::InstanceId uiService, core::Vec2 viewport,
+                                                           const render::RenderCamera& camera,
+                                                           const render::DrawPoses* poses = nullptr);
 
 // What the pointer's ray met in the world's UI: the element, and how far along
 // the ray it is.
@@ -121,10 +136,12 @@ using SolidAlong =
 // with something solid in front of it is not either, unless it is
 // `AlwaysOnTop` -- which is also drawn over everything, so it wins over one
 // that is not. Otherwise the nearest wins. A canvas's empty space is not a hit:
-// the ray goes on to what is behind it.
+// the ray goes on to what is behind it. The canvases are where they are drawn
+// (`poses`), so a click lands on what the player sees.
 [[nodiscard]] std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId workspace,
                                                      core::InstanceId uiService, core::Vec2 viewport,
                                                      const render::RenderCamera& camera, core::Vec2 pointer,
-                                                     const SolidAlong& solidAlong);
+                                                     const SolidAlong& solidAlong,
+                                                     const render::DrawPoses* poses = nullptr);
 
 } // namespace engine::app

@@ -221,5 +221,11 @@ engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-t
 - [x] **Tests:** pushing a crate for 10 s over jitter/loss — zero corrections
   above 1 cm and no overlap; 100 corner jumps — zero corrections above 1 cm;
   the authority's determinism traces unchanged.
-- [ ] Re-export the owner's test game and measure it windowed with a real key;
-  record the re-simulation cost in `docs/perf-baselines.md`.
+- [x] Re-export the owner's test game and measure it windowed with a real key;
+  record the re-simulation cost in `docs/perf-baselines.md`. Measured
+  2026-09-29 on the owner's machine, S and W held in turn through the game's
+  twelve crates for eleven seconds (663 ticks walking, up to eleven crates
+  predicted at once): the first run had one correction of 4.8 cm, which D252
+  found and fixed; the run after it had **none**, re-simulating once or twice
+  a second at about 0.3 ms each. **Stage 2 is done.** The owner's match over
+  the VPN is the check still to come.

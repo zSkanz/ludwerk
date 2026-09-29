@@ -41,6 +41,14 @@ public:
     // A frame that runs no ticks leaves both alone, which is exactly right: the
     // interval has not changed, only where in it the frame sits.
     void capture(const scene::World& world);
+    // **One subtree's last place, moved by `by`**: a replica's own character,
+    // which a correction just moved by that much. Its slide (`setVisualOffset`)
+    // already draws it where it was; moved with it, its last place keeps the
+    // step between ticks what it was, rather than the correction counted a
+    // second time (ADR 0134). Everything else keeps the capture from before
+    // the snapshot, so what the snapshot moved -- another player, a part the
+    // authority moves -- is drawn getting there.
+    void shift(const scene::World& world, core::InstanceId root, core::DVec3 by);
 
     // Where this instance was at the last capture, or null when it was not
     // there -- something that streamed in, or was created, has no previous and
@@ -51,7 +59,8 @@ public:
 
     // **One instance drawn off where it is** (the multiplayer smoothness
     // brief): a replica's own character, after a correction, sliding to where
-    // the simulation already is. Drawn, never simulated -- it is not the
+    // the simulation already is -- and with it everything under it, which
+    // `DrawPoses` applies (ADR 0134). Drawn, never simulated -- it is not the
     // world's, for the reason this class is not.
     void setVisualOffset(core::InstanceId id, core::DVec3 offset) noexcept
     {
@@ -86,12 +95,11 @@ private:
 // tick is a teleport.
 [[nodiscard]] core::f64 teleportReach(core::Vec3 size) noexcept;
 
-// **Where `id` is drawn this frame**: `alpha` of the way from where the last
-// capture saw it to `current`. Anything with no previous transform is drawn
-// where it is, and a move longer than `teleport` is drawn where it landed.
-// One function, because everything drawn over the world -- the collision
-// wireframe included -- has to sit where the world itself is drawn (the
-// owner: the collision box lagged the spinning cube it belongs to).
+// **Where `id` is between two ticks**: `alpha` of the way from where the last
+// capture saw it to `current`. Anything with no previous transform is where
+// it is, and a move longer than `teleport` is where it landed. Not where it is
+// DRAWN -- that adds a correction's slide, and is `DrawPoses`, which
+// everything visual asks (ADR 0134).
 [[nodiscard]] core::CFrameD interpolatedCFrame(const TransformHistory* history, core::InstanceId id,
                                                const core::CFrameD& current, core::f32 alpha,
                                                core::f64 teleport = std::numeric_limits<core::f64>::infinity());

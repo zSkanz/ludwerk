@@ -694,10 +694,11 @@ TEST_CASE("a frame between two ticks is drawn between two states")
     REQUIRE(halfway.parts.size() == 1);
     CHECK(nearly(static_cast<core::f32>(halfway.parts[0].cframe.position.x), 5.0f));
 
-    // And the two ends are the two ticks themselves.
+    // And the two ends are the two ticks themselves: zero the one before,
+    // which the frame just short of one reached from the other side (D253).
     render::RenderWorld atTick;
     render::extract(fixture.world, root, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 0.0f, &history, atTick);
-    CHECK(atTick.parts[0].cframe.position.x == 10.0);
+    CHECK(atTick.parts[0].cframe.position.x == 0.0);
 
     render::RenderWorld nextTick;
     render::extract(fixture.world, root, core::InstanceId{}, kNoMeshes, 1.0f, 0.0f, nullptr, 1.0f, &history, nextTick);
@@ -798,6 +799,30 @@ TEST_CASE("a slot reused by a different instance has no history")
     const core::InstanceId stale{first.index, first.generation + 1};
     CHECK(history.previous(stale) == nullptr);
     CHECK(history.previous(first) != nullptr);
+}
+
+TEST_CASE("a corrected character's last place moves with it, and so does everything on it (ADR 0134)")
+{
+    // A correction moves a replica's own character, and its slide draws it
+    // where it was; its last captured place has to move by as much, or the
+    // step between ticks counts the correction a second time. Only its
+    // subtree: another part keeps its own last place.
+    Fixture fixture;
+    const core::InstanceId root = fixture.world.create(fixture.folderClass);
+    const core::InstanceId body = fixture.part(root);
+    const core::InstanceId hat = fixture.part(body);
+    const core::InstanceId crate = fixture.part(root);
+    for (const core::InstanceId id : {body, hat, crate})
+        fixture.world.parts().find(id)->cframe.position = core::DVec3{1.0, 2.0, 3.0};
+
+    render::TransformHistory history;
+    history.capture(fixture.world);
+    history.shift(fixture.world, body, core::DVec3{0.5, 0.0, -0.25});
+
+    CHECK(history.previous(body)->position.x == 1.5);
+    CHECK(history.previous(body)->position.z == 2.75);
+    CHECK(history.previous(hat)->position.x == 1.5);
+    CHECK(history.previous(crate)->position.x == 1.0);
 }
 
 // --- D070: a history whose world has been replaced under it -----------------

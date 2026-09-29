@@ -146,6 +146,10 @@ void WorldHost::stepSubWorlds()
     // replay of them too.
     for (SubWorldRun& run : m_subWorlds) {
         const scene::SubWorldComponent* self = w.subWorlds().find(run.owner);
+        // Captured whether it steps or not: one held still has a previous
+        // place that is its current one, and is drawn standing, not swinging
+        // between its last two ticks.
+        run.history->capture(run.host->world());
         if (self != nullptr && self->running)
             run.host->tick();
 

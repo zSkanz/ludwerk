@@ -222,11 +222,11 @@ class PhysicsWireframe final : public physics::IDebugDrawSink
 public:
     explicit PhysicsWireframe(render::DebugDraw& draw) noexcept : m_draw(draw) {}
 
-    // Drawn where the frame draws the parts: between the last two ticks, as
-    // `render::extract` places them, rather than where the bodies are.
+    // Drawn where the frame draws the parts (ADR 0134), rather than where the
+    // bodies are.
     PhysicsWireframe(render::DebugDraw& draw, const scene::PhysicsSync& physics, const scene::World& world,
-                     const render::TransformHistory& history, f32 alpha) noexcept
-        : m_draw(draw), m_physics(&physics), m_world(&world), m_history(&history), m_alpha(alpha)
+                     const render::DrawPoses& poses) noexcept
+        : m_draw(draw), m_physics(&physics), m_world(&world), m_poses(&poses)
     {}
 
     [[nodiscard]] std::optional<core::CFrameD> drawnPose(core::u64 userData) override
@@ -234,10 +234,9 @@ public:
         if (m_physics == nullptr)
             return std::nullopt;
         const core::InstanceId id = m_physics->instanceOf(userData);
-        const scene::PartComponent* part = id.valid() ? m_world->parts().find(id) : nullptr;
-        if (part == nullptr)
+        if (!id.valid() || m_world->parts().find(id) == nullptr)
             return std::nullopt;
-        return render::interpolatedCFrame(m_history, id, part->cframe, m_alpha, render::teleportReach(part->size));
+        return m_poses->part(id);
     }
 
     void line(core::DVec3 from, core::DVec3 to, core::u32 color) override
@@ -256,8 +255,7 @@ private:
     render::DebugDraw& m_draw;
     const scene::PhysicsSync* m_physics = nullptr;
     const scene::World* m_world = nullptr;
-    const render::TransformHistory* m_history = nullptr;
-    f32 m_alpha = 0.0f;
+    const render::DrawPoses* m_poses = nullptr;
 };
 
 // A fixed camera looking at the origin from slightly above. Fixed on purpose:
@@ -406,8 +404,8 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
 // camera comes off it, which is about half a millimetre four kilometres out and
 // worse beyond. `toRenderMatrix` does the subtraction in f64, and an outline
 // somebody is trying to drag a handle on cannot afford the other one.
-void submitSelection(const scene::World& world, std::span<const core::InstanceId> selection, core::DVec3 cameraOrigin,
-                     render::DebugDraw& draw)
+void submitSelection(const scene::World& world, const render::DrawPoses& poses,
+                     std::span<const core::InstanceId> selection, core::DVec3 cameraOrigin, render::DebugDraw& draw)
 {
     for (usize index = 0; index < selection.size(); ++index) {
         const core::InstanceId id = selection[index];
@@ -424,7 +422,7 @@ void submitSelection(const scene::World& world, std::span<const core::InstanceId
         // a face z-fights along every edge, which reads as a flicker rather
         // than as a selection.
         constexpr f32 kOutlineMargin = 1.01f;
-        draw.wireBox(core::toRenderMatrix(part->cframe, cameraOrigin),
+        draw.wireBox(core::toRenderMatrix(poses.part(id), cameraOrigin),
                      core::Vec3{part->size.x * 0.5f * kOutlineMargin, part->size.y * 0.5f * kOutlineMargin,
                                 part->size.z * 0.5f * kOutlineMargin},
                      primary ? render::DebugColor::fromLinear(1.0f, 0.45f, 0.05f)
@@ -492,12 +490,17 @@ void submitCameraVolumes(const scene::World& world, std::span<const core::Instan
 // where it hangs, the key on its left -- a ring filling under it for a held
 // prompt -- and the two texts. The same box, at the same place, the tick
 // hit-tests a tap against (`scene::PromptWidth`).
-void appendPrompts(const scene::World& world, const render::RenderCamera& camera, core::Vec2 viewport,
-                   ui::DrawList& out)
+void appendPrompts(scene::World& world, const render::DrawPoses& poses, const render::RenderCamera& camera,
+                   core::Vec2 viewport, ui::DrawList& out)
 {
-    const scene::EngineState& state = world.engineState();
-    if (state.shownPrompts.empty() || !camera.valid || viewport.x <= 0.0f || viewport.y <= 0.0f)
+    scene::EngineState& state = world.engineState();
+    if (state.shownPrompts.empty() || !camera.valid || viewport.x <= 0.0f || viewport.y <= 0.0f) {
+        // Drawn nowhere this frame -- a minimised window -- so a tap is not
+        // tested against where it was drawn the last time it was.
+        for (scene::ShownPrompt& shown : state.shownPrompts)
+            shown.drawn = false;
         return;
+    }
     const ViewportRect rect{0.0f, 0.0f, viewport.x, viewport.y};
     const auto keyName = [&world](core::i32 keyCode) -> std::string {
         const scene::EnumItemDesc* item = world.enums().findValue(scene::generated::KeyCodeEnumId, keyCode);
@@ -518,15 +521,27 @@ void appendPrompts(const scene::World& world, const render::RenderCamera& camera
     const core::Color3 ink{0.08f, 0.09f, 0.11f};
     const core::Color3 white{1.0f, 1.0f, 1.0f};
     const core::Color3 muted{0.72f, 0.74f, 0.78f};
-    for (const scene::ShownPrompt& shown : state.shownPrompts) {
+    for (scene::ShownPrompt& shown : state.shownPrompts) {
         const scene::ProximityPromptComponent* prompt = world.proximityPrompts().find(shown.prompt);
         if (prompt == nullptr)
             continue;
+        // Where what it hangs from is drawn (ADR 0134), not where the tick
+        // left it: a prompt over a moving cart otherwise shook against it.
+        core::DVec3 anchor = shown.anchor;
+        if (world.alive(shown.hangsFrom)) {
+            anchor = world.attachments().find(shown.hangsFrom) != nullptr ? poses.attachment(shown.hangsFrom).position
+                                                                          : poses.part(shown.hangsFrom).position;
+        }
         const std::optional<core::Vec2> at =
-            worldToViewport(camera.projection, camera.view, camera.origin, rect, shown.anchor);
-        if (!at.has_value())
+            worldToViewport(camera.projection, camera.view, camera.origin, rect, anchor);
+        if (!at.has_value()) {
+            shown.drawn = false;
             continue;
+        }
         const core::Vec2 centre{at->x + prompt->uiOffset.x, at->y + prompt->uiOffset.y - scene::PromptLift};
+        // And a tap is tested here, on the box drawn.
+        shown.drawnAt = centre;
+        shown.drawn = true;
         const core::Vec2 min{centre.x - scene::PromptWidth * 0.5f, centre.y - scene::PromptHeight * 0.5f};
         const core::Vec2 max{centre.x + scene::PromptWidth * 0.5f, centre.y + scene::PromptHeight * 0.5f};
 
@@ -1096,6 +1111,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // second notion of "the world is not the one it was" would be inventing
     // somewhere for the two to disagree.
     core::u64 transformHistoryWorld = 0;
+    // **Where everything is drawn this frame** (ADR 0134): resolved once per
+    // instance from the history and the frame's alpha, and asked by all of
+    // the frame -- the world, its UI, particles, views, prompts, the pointer.
+    render::DrawPoses framePoses;
 
     render::MeshLibrary meshLibrary;
     // The textures the scene's `Material` instances name. Beside the mesh
@@ -3424,8 +3443,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // The root the VIEWPORT is drawing, so a click can only land
                 // on something that is on screen -- the stage's workspace while
                 // a stamp is open, the host's otherwise.
+                // The last frame's poses, which is the picture clicked -- in
+                // Play only: a Stop, a reload or an undo this frame replaced
+                // the world under them, and editing draws at the tick anyway.
                 editor.resolvePick(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                                   inspector);
+                                   inspector, advancing(editor.runState()) ? &framePoses : nullptr);
 
             // An editor says what you picked. It is the cheapest confirmation
             // that a click landed on the thing under the cursor rather than on
@@ -3757,15 +3779,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // -- a server that terminates on one bad message is everybody's
             // game ended by one player.
             try {
-                network.receive();
                 // BEFORE the tick, so that once the loop is done the history
                 // holds where everything was one tick ago and the world holds
-                // where it is now -- the two ends `render::extract`
-                // interpolates between (D047).
-                transformHistory.capture(host->world());
-                host->tick();
-                network.send();
-                network.sendMessages();
+                // where it is now -- the two ends the frame interpolates
+                // between (D047). **And before the snapshot**: another
+                // player's character, which the snapshot moves, captured after
+                // it had no earlier place and stepped at 60 Hz (ADR 0134).
+                app::runDrawnTick(*host, network, transformHistory);
             } catch (const std::exception& error) {
                 const std::array<core::I18nArg, 1> args{core::I18nArg{"message", std::string_view{error.what()}}};
                 core::log(core::LogLevel::Error, ENG_TR("engine.err.tick_exception"), args);
@@ -3779,7 +3799,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // editor, or a frame that arrived early, must not look like a peer
         // that stopped answering.
         if (network.active() && simTicks == 0)
-            network.receive(false);
+            app::receiveDrawn(*host, network, transformHistory, false);
         // What a script asked of the network, and what the connection did.
         network.update();
         // The own character drawn sliding after a correction, never popping
@@ -3933,7 +3953,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // stopped moving, that is a part drawn somewhere different every frame,
         // which is what "the capsule flickers after stop" is.
         const bool worldAdvancing = !options.editor || advancing(editor.runState());
-        const f32 renderAlpha = syntheticClock || !worldAdvancing ? 0.0f : frame.alpha;
+        const bool drawnBetweenTicks = !syntheticClock && worldAdvancing;
+        const f32 renderAlpha = drawnBetweenTicks ? frame.alpha : 0.0f;
+        // A world held at its tick is drawn AT it, which is no history
+        // (D253); alpha zero with one is the tick before.
+        framePoses.begin(host->world(), drawnBetweenTicks ? &transformHistory : nullptr, renderAlpha);
 
         // What the speakers do is a consequence of the simulation and never an
         // input to it (M6 brief, Decision 9), which is why this is after the
@@ -4017,7 +4041,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // world being built was always empty.
             if (host->world().engineState().paused || (options.editor && editing(editor.runState())))
                 physics->mirror();
-            PhysicsWireframe sink(debugDraw, *physics, host->world(), transformHistory, renderAlpha);
+            PhysicsWireframe sink(debugDraw, *physics, host->world(), framePoses);
             physics->backend().debugDraw(physics->worldHandle(), sink);
         }
 
@@ -4032,7 +4056,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         if (overlay.has_value() && overlay->panels().showSkeletons) {
             host->loadSkeletons();
             if (const render::AnimationSystem* animation = host->animation(); animation != nullptr)
-                drawSkeletons(host->world(), *animation, debugDraw);
+                drawSkeletons(host->world(), *animation, debugDraw, &framePoses);
         }
 
         // **What is not a part, drawn** (S5.1). A `Camera`, a `PointLight`, an
@@ -4046,7 +4070,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // world and has no business showing the author's furniture.
         if (options.editor) {
             static std::vector<PickMarker> markers;
-            collectPickMarkers(host->world(), authoredRoot(), markers);
+            collectPickMarkers(host->world(), authoredRoot(), markers, &framePoses);
             for (const PickMarker& marker : markers) {
                 // Not the one the eye is inside (`eyeInsideMarker`): from in
                 // there it is two lines across the whole picture.
@@ -4335,6 +4359,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const bool worldIsRunning = !options.editor || advancing(editor.runState());
             if (!options.headless && worldIsRunning)
                 host->preRender(frame.renderDt);
+            // **Again, after `PreRender`** (ADR 0134): a camera a game writes
+            // on the frame's clock -- `PreRender`, a `Rate = Render` look -- is
+            // drawn where it was written this frame, not where the poses
+            // resolved before the scripts ran left it.
+            framePoses.begin(host->world(), drawnBetweenTicks ? &transformHistory : nullptr, renderAlpha);
+            // The camera as this frame draws it, for the next tick's pointer
+            // -- only where a window shows it: a headless client, networked
+            // or driven, points at nothing (ADR 0134, "What this touches").
+            {
+                scene::World& world = host->world();
+                const scene::WorkspaceComponent* space = world.workspaces().find(host->workspace());
+                const bool drawnCamera = !options.headless && drawnBetweenTicks && space != nullptr &&
+                                         world.cameras().find(space->currentCamera) != nullptr;
+                world.engineState().drawnCameraValid = drawnCamera;
+                if (drawnCamera)
+                    world.engineState().drawnCamera = framePoses.camera(space->currentCamera);
+            }
 
             // Loading comes BEFORE extraction, and the order is load-bearing:
             // `extract` reads the mesh library, so a MeshPart whose file has not
@@ -4370,7 +4411,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // The camera textures of the game's own world -- not of a stamp
                 // being edited, which has no game running in it.
                 if (&world == &host->world() && stageOf() == nullptr) {
-                    viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get());
+                    viewHost.sync(*device, *cmd, world, workspace, textureLibrary, renderer.get(), &framePoses);
                     // The pictures the UI lends from those views, remade or
                     // gone, before anything copies the table.
                     uiText.refreshViews();
@@ -4555,7 +4596,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const std::vector<render::TerrainNodeDraw> terrainNodes = terrainLoader.draws(authored());
             render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                             stageOf() != nullptr ? stageOf()->lighting() : host->lighting(), meshLibrary, aspect,
-                            shadowRadius, host->animation(), renderAlpha, &transformHistory, snapshot,
+                            shadowRadius, host->animation(), framePoses, snapshot,
                             useEditorView ? &editorView : nullptr, outlined, &textureLibrary, terrainNodes);
             // The terrains' palettes, which their shader reads, for the same
             // world and the same root.
@@ -4567,7 +4608,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // with sparks in it is still one picture -- and appended for the
             // same root the extract drew.
             particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                             frame.renderDt);
+                             frame.renderDt, &framePoses);
             particles.append(snapshot);
             // The foliage the tiles hold, as runs and buckets for the cull.
             foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
@@ -4655,7 +4696,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 };
                 if (const std::optional<app::WorldUiPick> picked =
                         app::pickWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport,
-                                         snapshot.camera, devices.pointer, solidAlong))
+                                         snapshot.camera, devices.pointer, solidAlong, &framePoses))
                     interaction.worldOver = picked->element;
             }
             lastUiPointerDown = uiPointerDown;
@@ -4675,7 +4716,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
             ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
             // Prompts over the game's own screen, never under it (ADR 0126).
-            appendPrompts(host->world(), snapshot.camera, uiViewport, uiDrawList);
+            appendPrompts(host->world(), framePoses, snapshot.camera, uiViewport, uiDrawList);
             // Index 0 is "no texture" and every entry after it is a texture the
             // UI can name. The glyph atlas is index 1 when a face has been
             // rasterised; images follow it.
@@ -4697,7 +4738,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // placed on its parts and billboards, and sharing the screen's
             // glyph atlas and images.
             buildWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport, uiTextures, worldUiDrawList,
-                         snapshot, &uiGradients);
+                         snapshot, &uiGradients, &framePoses);
 
             frameVisibleObjects = 0;
             frameTriangles = 0;
@@ -4764,7 +4805,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // path, which draws the world as wire boxes and has no outline.
                 const bool outlinedByRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
                 if (!outlinedByRenderer)
-                    submitSelection(host->world(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
+                    submitSelection(host->world(), framePoses, inspector.selectionSet(), snapshot.camera.origin,
+                                    debugDraw);
                 if (editing(editor.runState())) {
                     submitCameraVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, aspect,
                                         debugDraw);
@@ -4944,9 +4986,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 for (ViewHost::View* view : viewHost.due(host->world(), frame.index, subWorldRunning)) {
                     const scene::World& world = host->world();
                     // **A `SubWorld`** (ADR 0107 §3): its world, from its own
-                    // current camera, with its own meshes. Drawn at the tick, as
-                    // a headless run is: its transforms keep no history to
-                    // interpolate between.
+                    // current camera, with its own meshes -- between its ticks,
+                    // which are this world's (ADR 0134).
                     if (view->subWorld) {
                         const scene::SubWorldComponent* self = world.subWorlds().find(view->owner);
                         const WorldHost::SubWorldRun* run = nullptr;
@@ -4962,9 +5003,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             continue;
                         WorldHost& inner = *run->host;
                         const core::u64 started = platform::nowNs();
+                        render::DrawPoses innerPoses;
+                        // A paused world steps none of its sub-worlds, whose
+                        // history then stands still: drawn at the tick.
+                        const bool innerBetween = drawnBetweenTicks && !world.engineState().paused;
+                        innerPoses.begin(inner.world(), innerBetween ? run->history.get() : nullptr, renderAlpha);
                         render::extract(inner.world(), inner.workspace(), inner.lighting(), (*gpu)->library,
                                         static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
-                                        inner.animation(), 0.0f, nullptr, viewSnapshot, nullptr, {}, &(*gpu)->textures,
+                                        inner.animation(), innerPoses, viewSnapshot, nullptr, {}, &(*gpu)->textures,
                                         {});
                         if (!viewSnapshot.camera.valid)
                             continue;
@@ -4995,13 +5041,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     if (view->frame) {
                         const scene::ViewportFrameComponent* self = world.viewportFrames().find(view->owner);
                         const f32 shape = static_cast<f32>(view->width) / static_cast<f32>(view->height);
-                        const std::optional<render::ViewOverride> lens = frameLens(world, view->owner, shape);
+                        const std::optional<render::ViewOverride> lens =
+                            frameLens(world, view->owner, shape, &framePoses);
                         if (self == nullptr || !lens.has_value())
                             continue;
                         const core::u64 started = platform::nowNs();
                         render::extract(world, view->owner, core::InstanceId{}, meshLibrary, shape, shadowRadius,
-                                        host->animation(), 0.0f, nullptr, viewSnapshot, &*lens, {}, &textureLibrary,
-                                        {});
+                                        host->animation(), framePoses, viewSnapshot, &*lens, {}, &textureLibrary, {});
                         render::RenderEnvironment& light = viewSnapshot.environment;
                         const core::Vec3 d = self->lightDirection;
                         const f32 length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -5040,7 +5086,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // out of the library while it draws, it is simply absent
                     // from its own picture.
                     const rhi::TextureHandle own = textureLibrary.take(view->urn);
-                    const render::ViewOverride lens{.cframe = camera->cframe,
+                    // Where that camera is DRAWN, as the world around it is
+                    // (ADR 0134): a feed from a camera on a moving part
+                    // otherwise jumped a tick at a time.
+                    const render::ViewOverride lens{.cframe = framePoses.camera(source->camera),
                                                     .fieldOfView = camera->fieldOfView,
                                                     .nearPlane = camera->nearPlane,
                                                     .farPlane = camera->farPlane,
@@ -5050,8 +5099,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                     .clipPlaneOn = camera->clipPlaneOn};
                     render::extract(world, host->workspace(), host->lighting(), meshLibrary,
                                     static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
-                                    host->animation(), renderAlpha, &transformHistory, viewSnapshot, &lens, {},
-                                    &textureLibrary, terrainNodes);
+                                    host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
+                                    terrainNodes);
                     terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
                     particles.append(viewSnapshot);
                     skyLoader.append(viewSnapshot);

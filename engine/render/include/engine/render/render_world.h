@@ -28,6 +28,7 @@
 #include "engine/core/name_atom.h"
 #include "engine/core/types.h"
 #include "engine/render/animation.h"
+#include "engine/render/draw_poses.h"
 #include "engine/render/look.h"
 #include "engine/render/mesh_cache.h"
 #include "engine/render/shader_types.h"
@@ -911,5 +912,14 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
              // for this world. Empty draws no terrain, which is what a harness
              // with no loader gets.
              std::span<const TerrainNodeDraw> terrainNodes = {});
+
+// **The same, with every pose from `poses`** (ADR 0134): what a frame that
+// draws more than the world -- its UI, particles, views and pointer -- passes,
+// so that all of it and the world are drawn at one place each. The overload
+// above resolves its own from `alpha` and `history`.
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
+             RenderWorld& out, const ViewOverride* view = nullptr, std::span<const core::InstanceId> outlined = {},
+             const TextureLibrary* textures = nullptr, std::span<const TerrainNodeDraw> terrainNodes = {});
 
 } // namespace engine::render

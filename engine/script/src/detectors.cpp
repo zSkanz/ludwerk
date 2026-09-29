@@ -69,9 +69,13 @@ struct Ray
     Vec3 direction;
 };
 
-// The camera the world is seen through. Tick data only -- its frame and the
-// viewport the frame last drew -- so what the pointer is on is a function of
-// the input and the world, and the same in a replay.
+// The camera the world is seen through, and what the pointer is on a function
+// of the input and the world, and the same in a replay. **With a window, the
+// camera as the last frame drew it is part of the input** (ADR 0134): sampled
+// once a frame with the pointer, it is the picture the player pointed at --
+// the tick's camera, a following one, is up to a tick ahead of that picture.
+// Without a window there is no drawn camera -- a replay, a gate, a server --
+// and it is the tick's, as it always was, so a replay stays exact.
 struct View
 {
     core::CFrameD cframe;
@@ -145,7 +149,7 @@ private:
             camera = w.cameras().find(workspace.currentCamera);
     });
     if (camera != nullptr) {
-        view.cframe = camera->cframe;
+        view.cframe = w.engineState().drawnCameraValid ? w.engineState().drawnCamera : camera->cframe;
         view.fieldOfView = camera->fieldOfView;
         view.orthographic = camera->projection == 1;
         view.orthographicSize = camera->orthographicSize;
@@ -155,25 +159,31 @@ private:
 
 // Where a prompt hangs: its part's centre, its attachment, or its model's
 // primary part -- the first part in it when it names none.
-[[nodiscard]] std::optional<DVec3> anchorOf(const World& w, const Classes& classes, InstanceId detector)
+[[nodiscard]] std::optional<DVec3> anchorOf(const World& w, const Classes& classes, InstanceId detector,
+                                            InstanceId* from = nullptr)
 {
     const InstanceId parent = w.parentOf(detector);
     if (!parent.valid())
         return std::nullopt;
+    const auto hung = [from](InstanceId id, const DVec3& at) {
+        if (from != nullptr)
+            *from = id;
+        return std::optional<DVec3>(at);
+    };
     if (const scene::PartComponent* part = w.parts().find(parent))
-        return part->cframe.position;
+        return hung(parent, part->cframe.position);
     if (const scene::AttachmentComponent* attachment = w.attachments().find(parent))
-        return attachment->worldCFrame.position;
+        return hung(parent, attachment->worldCFrame.position);
     if (w.isA(parent, classes.model)) {
         if (const scene::ModelComponent* model = w.models().find(parent); model != nullptr) {
             if (const scene::PartComponent* primary = w.parts().find(model->primaryPart))
-                return primary->cframe.position;
+                return hung(model->primaryPart, primary->cframe.position);
         }
         std::vector<InstanceId> inside;
         w.collectDescendants(parent, inside);
         for (const InstanceId id : inside) {
             if (const scene::PartComponent* part = w.parts().find(id))
-                return part->cframe.position;
+                return hung(id, part->cframe.position);
         }
     }
     return std::nullopt;
@@ -442,12 +452,14 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
         InstanceId prompt;
         DVec3 anchor;
         f64 distance = 0.0;
+        InstanceId hangsFrom;
     };
     std::vector<Candidate> candidates;
     w.proximityPrompts().forEach([&](InstanceId id, const scene::ProximityPromptComponent& prompt) {
         if (!prompt.enabled || w.destroyed(id) || !w.isAncestorOf(services.dataModel, id))
             return;
-        const std::optional<DVec3> anchor = anchorOf(w, classes, id);
+        InstanceId hangsFrom;
+        const std::optional<DVec3> anchor = anchorOf(w, classes, id, &hangsFrom);
         if (!anchor.has_value())
             return;
         const f64 away = distance(*anchor, origin);
@@ -466,7 +478,7 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
                     return;
             }
         }
-        candidates.push_back(Candidate{id, *anchor, away});
+        candidates.push_back(Candidate{id, *anchor, away, hangsFrom});
     });
     // Nearest first, and by id at a tie: the pool's order must not decide.
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
@@ -493,7 +505,19 @@ void stepClicks(lua_State* L, const Classes& classes, InstanceId player, const V
                 continue;
             globalTaken = true;
         }
-        shown.push_back(scene::ShownPrompt{candidate.prompt, candidate.anchor, 0.0f, static_cast<core::u8>(inputType)});
+        scene::ShownPrompt now{.prompt = candidate.prompt,
+                               .anchor = candidate.anchor,
+                               .inputType = static_cast<core::u8>(inputType),
+                               .hangsFrom = candidate.hangsFrom};
+        // Where the frame drew it last, kept across the tick that lists it
+        // again: a tap is tested on the box the player saw.
+        for (const scene::ShownPrompt& before : w.engineState().shownPrompts) {
+            if (before.prompt == now.prompt && before.drawn) {
+                now.drawnAt = before.drawnAt;
+                now.drawn = true;
+            }
+        }
+        shown.push_back(now);
     }
     return shown;
 }
@@ -528,6 +552,10 @@ void stepPrompts(lua_State* L, const Classes& classes, InstanceId player, const 
     std::vector<std::pair<InstanceId, Vec2>> onScreen;
     if (view.valid()) {
         for (const scene::ShownPrompt& now : shown) {
+            if (now.drawn) {
+                onScreen.emplace_back(now.prompt, now.drawnAt);
+                continue;
+            }
             if (const std::optional<Vec2> at = view.project(now.anchor)) {
                 const scene::ProximityPromptComponent& prompt = *w.proximityPrompts().find(now.prompt);
                 onScreen.emplace_back(now.prompt,
@@ -653,6 +681,10 @@ void stepDetectors(lua_State* L, core::f64 dt, std::span<const input::RawInputEv
     std::vector<Vec2> taps;
     if (view.valid()) {
         for (const scene::ShownPrompt& now : w.engineState().shownPrompts) {
+            if (now.drawn) {
+                taps.push_back(now.drawnAt);
+                continue;
+            }
             if (const std::optional<Vec2> at = view.project(now.anchor)) {
                 const scene::ProximityPromptComponent* prompt = w.proximityPrompts().find(now.prompt);
                 const Vec2 offset = prompt != nullptr ? prompt->uiOffset : Vec2{};

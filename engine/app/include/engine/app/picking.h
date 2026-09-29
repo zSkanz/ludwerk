@@ -4,6 +4,7 @@
 #include <engine/core/math.h>
 #include <engine/core/types.h>
 #include <engine/platform/event.h>
+#include <engine/render/draw_poses.h>
 #include <optional>
 #include <span>
 #include <vector>
@@ -121,9 +122,11 @@ struct PickHit
 //
 // The rule is one sentence: **you can pick what could be drawn.** Transparent
 // and non-colliding stay pickable, for the reasons above; not-in-the-world does
-// not, because it is not a thing the person is looking at.
-[[nodiscard]] std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId root,
-                                                 const PickRay& ray) noexcept;
+// not, because it is not a thing the person is looking at. And it is picked
+// where it IS drawn (`poses`, ADR 0134): a part moving in a running game was
+// picked a tick ahead of the picture. Null is where the tick left it.
+[[nodiscard]] std::optional<PickHit> pickNearest(const scene::World& world, core::InstanceId root, const PickRay& ray,
+                                                 const render::DrawPoses* poses = nullptr);
 
 // --- What is not a part (S5.1) -----------------------------------------------
 //
@@ -143,7 +146,8 @@ struct PickHit
 // one.** That is not a fallback, it is the rule the renderer already follows: a
 // `PointLight` has no position and is lit from the part it hangs on, so a marker
 // anywhere else would be a marker for a light that is not there.
-[[nodiscard]] std::optional<core::DVec3> markerPoint(const scene::World& world, core::InstanceId id);
+[[nodiscard]] std::optional<core::DVec3> markerPoint(const scene::World& world, core::InstanceId id,
+                                                     const render::DrawPoses* poses = nullptr);
 
 struct PickMarker
 {
@@ -158,7 +162,8 @@ struct PickMarker
 // **A part is never a marker**, because a part has a shape and clicking its
 // shape is what picking already does. A marker over one would be a second,
 // smaller target on top of a bigger correct one.
-void collectPickMarkers(const scene::World& world, core::InstanceId root, std::vector<PickMarker>& out);
+void collectPickMarkers(const scene::World& world, core::InstanceId root, std::vector<PickMarker>& out,
+                        const render::DrawPoses* poses = nullptr);
 
 // The marker the ray passes closest to the centre of, within `radius` metres,
 // or nothing.

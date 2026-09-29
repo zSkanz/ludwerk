@@ -331,8 +331,13 @@ struct Tree
 // Every enabled canvas the camera could see, placed, in pool order.
 [[nodiscard]] std::vector<Tree> collectCanvases(scene::World& world, core::InstanceId workspace,
                                                 core::InstanceId uiService, Vec2 viewport,
-                                                const render::RenderCamera& camera)
+                                                const render::RenderCamera& camera, const render::DrawPoses* poses)
 {
+    // Where each part is drawn: a name over a character that read the
+    // simulated place smeared across it in a match (ADR 0134).
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     std::vector<Tree> trees;
     const auto reachable = [&](core::InstanceId id) {
         return (workspace.valid() && under(world, id, workspace)) || (uiService.valid() && under(world, id, uiService));
@@ -345,9 +350,9 @@ struct Tree
         const scene::PartComponent* component = part.valid() ? world.parts().find(part) : nullptr;
         if (component == nullptr)
             return;
-        const core::DVec3 anchor{component->cframe.position.x + static_cast<f64>(gui.worldOffset.x),
-                                 component->cframe.position.y + static_cast<f64>(gui.worldOffset.y),
-                                 component->cframe.position.z + static_cast<f64>(gui.worldOffset.z)};
+        const core::DVec3 at = posed.part(part).position;
+        const core::DVec3 anchor{at.x + static_cast<f64>(gui.worldOffset.x), at.y + static_cast<f64>(gui.worldOffset.y),
+                                 at.z + static_cast<f64>(gui.worldOffset.z)};
         if (const std::optional<CanvasPlacement> placement = placeBillboard(gui, anchor, camera, viewport))
             trees.push_back(Tree{id, *placement, gui.brightness, gui.alwaysOnTop, part});
     });
@@ -359,7 +364,7 @@ struct Tree
         if (component == nullptr)
             return;
         if (const std::optional<CanvasPlacement> placement =
-                placeSurface(gui, component->cframe, component->size, camera.origin))
+                placeSurface(gui, posed.part(part), component->size, camera.origin))
             trees.push_back(Tree{id, *placement, gui.brightness, gui.alwaysOnTop, part});
     });
     return trees;
@@ -367,14 +372,24 @@ struct Tree
 
 } // namespace
 
+std::vector<PlacedCanvas> placeWorldCanvases(scene::World& world, core::InstanceId workspace,
+                                             core::InstanceId uiService, Vec2 viewport,
+                                             const render::RenderCamera& camera, const render::DrawPoses* poses)
+{
+    std::vector<PlacedCanvas> placed;
+    for (const Tree& tree : collectCanvases(world, workspace, uiService, viewport, camera, poses))
+        placed.push_back(PlacedCanvas{tree.id, tree.placement});
+    return placed;
+}
+
 void buildWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService, Vec2 viewport,
                   std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
-                  UiGradientRows* gradients)
+                  UiGradientRows* gradients, const render::DrawPoses* poses)
 {
     if (!out.camera.valid)
         return;
 
-    std::vector<Tree> trees = collectCanvases(world, workspace, uiService, viewport, out.camera);
+    std::vector<Tree> trees = collectCanvases(world, workspace, uiService, viewport, out.camera, poses);
 
     // **Back to front**, as every blended surface has to be: a near label over
     // a far one, never the reverse. Stable, so two at one distance keep pool
@@ -391,7 +406,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
 
 std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService,
                                        Vec2 viewport, const render::RenderCamera& camera, Vec2 pointer,
-                                       const SolidAlong& solidAlong)
+                                       const SolidAlong& solidAlong, const render::DrawPoses* poses)
 {
     if (!camera.valid || !(viewport.x > 0.0f) || !(viewport.y > 0.0f))
         return std::nullopt;
@@ -402,7 +417,7 @@ std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId wor
 
     std::optional<WorldUiPick> best;
     bool bestOnTop = false;
-    for (const Tree& tree : collectCanvases(world, workspace, uiService, viewport, camera)) {
+    for (const Tree& tree : collectCanvases(world, workspace, uiService, viewport, camera, poses)) {
         const CanvasPlacement& at = tree.placement;
         // The rectangle's plane: `right` and `down` are one pixel each, and
         // the face looks along the opposite of their cross product.

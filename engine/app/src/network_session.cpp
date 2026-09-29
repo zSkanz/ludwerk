@@ -4,6 +4,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/platform/platform.h"
+#include "engine/render/transform_history.h"
 #include "engine/replication/extract.h"
 #include "engine/replication/replication.h"
 #include "engine/scene/players.h"
@@ -392,6 +393,25 @@ void NetworkSession::update()
     if (status.lost && !m_redial)
         goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
 #endif
+}
+
+void receiveDrawn(WorldHost& host, NetworkSession& network, render::TransformHistory& history, bool ticking)
+{
+    const core::DVec3 before = network.visualCorrection().displaced;
+    network.receive(ticking);
+    const replication::VisualCorrection after = network.visualCorrection();
+    const core::DVec3 by{after.displaced.x - before.x, after.displaced.y - before.y, after.displaced.z - before.z};
+    if (after.character.valid() && (by.x != 0.0 || by.y != 0.0 || by.z != 0.0))
+        history.shift(host.world(), after.character, by);
+}
+
+void runDrawnTick(WorldHost& host, NetworkSession& network, render::TransformHistory& history)
+{
+    history.capture(host.world());
+    receiveDrawn(host, network, history, true);
+    host.tick();
+    network.send();
+    network.sendMessages();
 }
 
 } // namespace engine::app

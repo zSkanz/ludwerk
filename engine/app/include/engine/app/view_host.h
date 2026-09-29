@@ -44,16 +44,19 @@ struct ViewCandidate
 [[nodiscard]] std::vector<core::usize> chooseViews(std::span<const ViewCandidate> views, core::u32 budget);
 
 // **What a `ViewportFrame`'s picture depends on**, as one number: the parts,
-// meshes and cameras inside it, where they are, how big and what they wear,
-// and the frame's own light. The picture is redrawn when this changes and at no
-// other time -- forty still items in an inventory are forty pictures once.
-[[nodiscard]] core::u64 frameSignature(const scene::World& world, core::InstanceId frame) noexcept;
+// meshes and cameras inside it, where they are DRAWN (`poses`, ADR 0134) --
+// between ticks, a moving item's picture changes every frame -- how big and
+// what they wear, and the frame's own light. The picture is redrawn when this
+// changes and at no other time -- forty still items in an inventory are forty
+// pictures once.
+[[nodiscard]] core::u64 frameSignature(const scene::World& world, core::InstanceId frame,
+                                       const render::DrawPoses* poses = nullptr);
 
 // The camera a `ViewportFrame` looks through: its `CurrentCamera` when that is a
 // camera inside it, and otherwise one that frames everything inside from the
 // front and a little above. Nothing when there is nothing inside to frame.
 [[nodiscard]] std::optional<render::ViewOverride> frameLens(const scene::World& world, core::InstanceId frame,
-                                                            float aspect);
+                                                            float aspect, const render::DrawPoses* poses = nullptr);
 
 // Whether a view is due on `frame`: never drawn, or `interval` frames (one or
 // more) since it last was.
@@ -106,7 +109,7 @@ public:
     // gone gives its texture and its renderer state back. Records the first
     // clear of a new texture into `cmd`.
     void sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& world, core::InstanceId workspace,
-              render::TextureLibrary& library, render::IRenderer* renderer);
+              render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses = nullptr);
 
     // The views to draw on frame `frame`, within the budget.
     // A `SubWorld`'s view is due only while `running` says its world is up

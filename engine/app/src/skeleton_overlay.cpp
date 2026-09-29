@@ -1,6 +1,7 @@
 #include "engine/app/skeleton_overlay.h"
 
 #include "engine/render/debug_draw.h"
+#include "engine/render/draw_poses.h"
 #include "engine/scene/skeleton_host.h"
 #include "engine/scene/world.h"
 
@@ -18,8 +19,13 @@ constexpr f32 kJointCrossMetres = 0.02f;
 
 } // namespace
 
-void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleton, render::DebugDraw& draw)
+void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleton, render::DebugDraw& draw,
+                   const render::DrawPoses* poses)
 {
+    // Over the mesh as it is drawn (ADR 0134).
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     // Every skinned mesh in the world, in pool order. Pool order rather than
     // tree order because nothing here depends on the order -- lines are
     // commutative -- and a pool walk skips the parts with no rig for free.
@@ -28,9 +34,9 @@ void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleto
         if (joints == 0)
             return;
 
-        const scene::PartComponent* part = world.parts().find(id);
-        if (part == nullptr)
+        if (world.parts().find(id) == nullptr)
             return;
+        const core::CFrameD drawn = posed.part(id);
 
         // Model space, composed with the part's own world `CFrame` -- the same
         // composition `PhysicsSync::resolveAttachment` does, so a bone drawn
@@ -39,7 +45,7 @@ void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleto
             core::CFrameD model;
             if (!skeleton.jointModel(id, joint, model))
                 return false;
-            out = (part->cframe * model).position;
+            out = (drawn * model).position;
             return true;
         };
 

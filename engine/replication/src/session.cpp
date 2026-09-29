@@ -3176,6 +3176,8 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
         const core::DVec3& o = m_visualOffset;
         if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
             m_visualOffset = core::DVec3{};
+        else
+            m_displaced = m_displaced - moved;
         if (m_stats.corrections != counted)
             m_stats.lastCorrectionMetres = std::max(distance, m_lastBodyCorrection);
     }

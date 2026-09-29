@@ -498,6 +498,23 @@ Frame:
  On quit: fire BindToClose handlers, wait ≤ 30 s (configurable), shutdown in reverse init order.
 ```
 
+**One drawn position per instance** (ADR 0134). Each tick's history is captured
+before the network's snapshot moves anything, and a correction of the own
+character moves its captured place by as much as it moved the character
+(`app::runDrawnTick`, `app::receiveDrawn`). Once the
+ticks are done, `render::DrawPoses` resolves where each part, camera,
+attachment and 2D part is drawn this frame, once each: between the last two
+ticks, and slid off with everything under it after a replica's correction.
+Everything visual asks it -- the extraction, the world's UI drawn and clicked,
+particles, the cameras of views and sub-worlds, prompts, the pointer's ray and
+the editor's pick -- and `tools/repo/drawcheck.luau` fails a visual file that
+reads a raw `cframe` or `worldCFrame`. A world drawn at its tick (headless, or an
+editor holding it still) passes no history, and alpha zero with one is the tick
+before the last, never the last (D253). **Sound stays with the simulation**:
+`audio::update` hears from the listener and emitters where the tick left them,
+because what is heard is a consequence of the simulation and a tick's worth of
+position is inaudible.
+
 **Resumption points (RP):** each RP = run the engine phase systems, then
 **drain the deferred queue**: every queued fire invokes each eligible handler
 on its own coroutine; handlers that defer further work re-enqueue into the same

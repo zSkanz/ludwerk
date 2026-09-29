@@ -40,13 +40,13 @@ constexpr f32 kPi = 3.14159265358979f;
 
 } // namespace
 
-bool ParticleSystem::anchorOf(const scene::World& world, core::InstanceId id, core::CFrameD& frame,
-                              core::Vec3& extent) noexcept
+bool ParticleSystem::anchorOf(const scene::World& world, const DrawPoses& poses, core::InstanceId id,
+                              core::CFrameD& frame, core::Vec3& extent)
 {
     const core::InstanceId parent = world.parentOf(id);
     // An attachment is a point, and a direction -- the usual way to aim a jet.
-    if (const scene::AttachmentComponent* attachment = world.attachments().find(parent); attachment != nullptr) {
-        frame = attachment->worldCFrame;
+    if (world.attachments().find(parent) != nullptr) {
+        frame = poses.attachment(parent);
         extent = core::Vec3{0.0f, 0.0f, 0.0f};
         return true;
     }
@@ -54,7 +54,7 @@ bool ParticleSystem::anchorOf(const scene::World& world, core::InstanceId id, co
     // makes a burning crate burn all over rather than from its centre.
     for (core::InstanceId cursor = parent; cursor.valid(); cursor = world.parentOf(cursor)) {
         if (const scene::PartComponent* part = world.parts().find(cursor); part != nullptr) {
-            frame = part->cframe;
+            frame = poses.part(cursor);
             extent = cursor == parent ? part->size : core::Vec3{0.0f, 0.0f, 0.0f};
             return true;
         }
@@ -103,8 +103,11 @@ void ParticleSystem::spawn(Emitter& emitter, const core::CFrameD& frame, core::V
     }
 }
 
-void ParticleSystem::update(const scene::World& world, core::InstanceId root, f64 dt)
+void ParticleSystem::update(const scene::World& world, core::InstanceId root, f64 dt, const DrawPoses* poses)
 {
+    DrawPoses still;
+    const DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     const auto step = static_cast<f32>(std::clamp(dt, 0.0, MaxStep));
     for (Emitter& emitter : m_emitters)
         emitter.seen = false;
@@ -163,7 +166,7 @@ void ParticleSystem::update(const scene::World& world, core::InstanceId root, f6
 
         core::CFrameD frame;
         core::Vec3 extent;
-        if (!anchorOf(world, id, frame, extent)) {
+        if (!anchorOf(world, posed, id, frame, extent)) {
             emitter.carry = 0.0;
             emitter.spawnedBursts = config.emitted;
             return;

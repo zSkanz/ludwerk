@@ -30,6 +30,7 @@ engine_add_module(render
         src/renderer_default.cpp
         src/settings.cpp
         src/transform_history.cpp
+        src/draw_poses.cpp
         src/mesh_loader.cpp
         src/terrain_loader.cpp
         src/foliage.cpp

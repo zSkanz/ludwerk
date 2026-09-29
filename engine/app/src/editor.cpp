@@ -5465,8 +5465,8 @@ void submitGizmo(const GizmoFrame& frame, GizmoMode mode, std::optional<GizmoHan
     draw.wireBox(centre, Vec3{middle, middle, middle}, centreColour);
 }
 
-std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::InstanceId root,
-                                           Inspector& inspector) noexcept
+std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::InstanceId root, Inspector& inspector,
+                                           const render::DrawPoses* poses)
 {
     if (!m_pending.has_value())
         return std::nullopt;
@@ -5507,7 +5507,7 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
 
     const PickRay ray = rayThrough(request.pixel);
     std::optional<PickHit> hit =
-        uiHit.valid() ? std::optional<PickHit>(PickHit{uiHit, 0.0f}) : pickNearest(world, root, ray);
+        uiHit.valid() ? std::optional<PickHit>(PickHit{uiHit, 0.0f}) : pickNearest(world, root, ray, poses);
     if (!uiHit.valid()) {
 
         // **What is not a part** (S5.1). Picking walked the part pool and nothing
@@ -5520,7 +5520,7 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
         // shape, so being smaller must not make it harder to click, and being behind
         // a wall must still make it unreachable.
         static std::vector<PickMarker> markers;
-        collectPickMarkers(world, root, markers);
+        collectPickMarkers(world, root, markers, poses);
         // Not the one the eye is inside (`eyeInsideMarker`).
         std::erase_if(markers, [&ray](const PickMarker& marker) { return eyeInsideMarker(ray.origin, marker.at); });
         if (const std::optional<PickHit> marker =

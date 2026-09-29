@@ -1900,7 +1900,10 @@ public:
     // `root` is the world root the viewport is DRAWING -- the stage's workspace
     // while a stamp is open, the host's otherwise. It has to be the renderer's,
     // or a click can land on something the renderer never put on screen.
-    std::optional<PickHit> resolvePick(const scene::World& world, core::InstanceId root, Inspector& inspector) noexcept;
+    // Picked where things are drawn (`poses`, ADR 0134): the last frame, the
+    // one the click was made on.
+    std::optional<PickHit> resolvePick(const scene::World& world, core::InstanceId root, Inspector& inspector,
+                                       const render::DrawPoses* poses = nullptr);
 
     // --- The editor's own camera ---------------------------------------------
     //

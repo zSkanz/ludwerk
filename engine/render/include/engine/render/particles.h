@@ -19,6 +19,7 @@
 #include "engine/core/math.h"
 #include "engine/core/random.h"
 #include "engine/core/types.h"
+#include "engine/render/draw_poses.h"
 #include "engine/scene/components.h"
 
 namespace engine::scene {
@@ -43,8 +44,11 @@ public:
     static constexpr core::u64 MaxBurstPerFrame = 1000;
 
     // Advances every emitter under `root` by `dt` seconds: births, motion and
-    // deaths. An emitter that has gone takes its particles with it.
-    void update(const scene::World& world, core::InstanceId root, core::f64 dt);
+    // deaths. An emitter that has gone takes its particles with it. Born where
+    // the emitter is drawn this frame (`poses`, ADR 0134) -- from the simulated
+    // place, a moving emitter's particles came out ahead of it, a tick at a
+    // time; null is the simulated place, for a world drawn at its tick.
+    void update(const scene::World& world, core::InstanceId root, core::f64 dt, const DrawPoses* poses = nullptr);
 
     // Appends this frame's particles to `out`, relative to its camera and
     // sorted back to front, which is the order blending needs.
@@ -79,8 +83,8 @@ private:
 
     // Where an emitter's parent is, and the box particles are born in: a part's
     // volume, or a point for an attachment. False when it has neither.
-    [[nodiscard]] static bool anchorOf(const scene::World& world, core::InstanceId id, core::CFrameD& frame,
-                                       core::Vec3& extent) noexcept;
+    [[nodiscard]] static bool anchorOf(const scene::World& world, const DrawPoses& poses, core::InstanceId id,
+                                       core::CFrameD& frame, core::Vec3& extent);
     static void spawn(Emitter& emitter, const core::CFrameD& frame, core::Vec3 extent, core::u64 count);
 
     // Sorted by instance id, so an update walks them in one order on every run.

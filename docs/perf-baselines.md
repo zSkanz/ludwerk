@@ -1057,3 +1057,26 @@ cost of keeping it doubled the per-tick figure (it was 5.4 µs). Most of the re-
 steps the island again whenever it disagrees with the authority by 10 µm or
 more, because a disagreement that small and left alone grew to a centimetre the
 next time two crates met.
+
+## One drawn position per instance (ADR 0134)
+
+What routing every visual consumer through `render::DrawPoses` costs a frame.
+The package before the change (`a6cf7b93`) against the package with it, the
+same `player` profile, `engine-host <example> --headless --frames=900 --exit
+--frame-stats --width=1920 --height=1080`, three runs each, measured
+2026-09-29 on a quiet machine; the "before" runs were taken twice, an hour
+apart, and are both shown.
+
+| Median frame, 1080p | Before | After |
+|---|---|---|
+| `10-open-world` | 2.52, 2.50 ms | 2.54 ms |
+| `20-platformer` | 0.121, 0.119 ms | 0.122 ms |
+| `28-arcade` | 0.566, 0.564 ms | 0.572 ms |
+
+**Within the spread of the two "before" sets, or a hair over it: about 1% on
+the open world.** A headless run draws at its tick and passes no history, so
+this is the cost of the calls and not of the between-tick answers, which are
+kept for the frame; the windowed frame, which does interpolate, is held at the
+display's 120 Hz on this machine and has no uncapped mode to measure it with.
+The interpolation itself is what the extraction already did before this
+change -- the same function, once per instance.

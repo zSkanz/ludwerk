@@ -20,8 +20,9 @@
 #pragma once
 
 namespace engine::render {
+class DrawPoses;
 class DebugDraw;
-}
+} // namespace engine::render
 
 namespace engine::scene {
 class World;
@@ -35,6 +36,7 @@ namespace engine::app {
 // buffer once after extraction, when the camera is finally known (D011).
 //
 // Appends nothing for a world with no skinned mesh in it, which is most of them.
-void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleton, render::DebugDraw& draw);
+void drawSkeletons(const scene::World& world, const scene::SkeletonHost& skeleton, render::DebugDraw& draw,
+                   const render::DrawPoses* poses = nullptr);
 
 } // namespace engine::app

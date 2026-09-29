@@ -42,6 +42,10 @@ namespace engine::scene {
 class ICharacterReplay;
 }
 
+namespace engine::render {
+class TransformHistory;
+}
+
 namespace engine::app {
 
 class WorldHost;
@@ -138,5 +142,17 @@ private:
     // update: a hot reload replaces the world, and the connection outlives it.
     core::i32 m_state = 0;
 };
+
+// **One tick of a drawn frame, in the order a frame runs it** (ADR 0134):
+// where everything was, captured BEFORE the snapshot moves anything -- so
+// another player's character is drawn getting where the snapshot put it --
+// then the receive (`receiveDrawn`), the tick, and what it produced, sent. The
+// engine's loop and the tests that hold its drawing down both run this.
+void runDrawnTick(WorldHost& host, NetworkSession& network, render::TransformHistory& history);
+
+// **What arrived, with the drawing kept whole**: a correction of the own
+// character moves its last captured place -- and everything under it -- by as
+// much as it moved the character, on a frame with a tick or without one.
+void receiveDrawn(WorldHost& host, NetworkSession& network, render::TransformHistory& history, bool ticking);
 
 } // namespace engine::app

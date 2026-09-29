@@ -532,6 +532,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
              std::span<const core::InstanceId> outlined, const TextureLibrary* materials,
              std::span<const TerrainNodeDraw> terrainNodes)
 {
+    DrawPoses poses;
+    poses.begin(world, history, alpha);
+    extract(world, root, lightingHost, meshes, viewportAspect, shadowRadius, animation, poses, out, view, outlined,
+            materials, terrainNodes);
+}
+
+void extract(const scene::World& world, core::InstanceId root, core::InstanceId lightingHost, const MeshLibrary& meshes,
+             f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
+             RenderWorld& out, const ViewOverride* view, std::span<const core::InstanceId> outlined,
+             const TextureLibrary* materials, std::span<const TerrainNodeDraw> terrainNodes)
+{
+    const f32 alpha = poses.world() == &world ? poses.alpha() : 0.0f;
     out.clear();
     if (!root.valid())
         return;
@@ -562,24 +574,14 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     };
 
     // Where a thing is at the fractional time this frame is being drawn at
-    // (`transform_history.h`, D047). Every transform below goes through it, so
-    // the whole frame -- camera, parts, meshes, the anchors lights hang off --
-    // is evaluated at one time rather than at several.
-    //
-    // Anything with no previous transform is drawn where it is: something that
-    // streamed in this tick has no earlier position to come from, and smearing
-    // it in from a stale slot would be worse than the step it replaces.
-    //
-    // **A move longer than `teleport` in one tick is a teleport**, drawn where
-    // it landed: a part's own largest side, for a part. The owner's snake moved
-    // its tail to the front of its head with one `CFrame` write, and the frames
-    // between two ticks drew the tail sliding through the body to get there.
-    // Something that GLIDES -- a lift, a platform, a falling crate -- moves far
-    // less than its own size per tick and is interpolated as before.
-    const auto at = [&](core::InstanceId id, const CFrameD& current,
-                        core::f64 teleport = std::numeric_limits<core::f64>::infinity()) -> CFrameD {
-        return interpolatedCFrame(history, id, current, alpha, teleport);
-    };
+    // (`draw_poses.h`, ADR 0134; `transform_history.h`, D047). Every transform
+    // below goes through `poses`, so the whole frame -- camera, parts, meshes,
+    // the anchors lights hang off, and outside this function the world's UI,
+    // particles and pointer -- is evaluated at one time rather than at several.
+    // Poses resolved for another world (a sub-world's frame asking the main
+    // one's) are none: that world is drawn as its last tick left it.
+    DrawPoses still;
+    const DrawPoses& posed = poses.world() == &world ? poses : (still.begin(world, nullptr, 0.0f), still);
 
     // --- The camera, and therefore the space everything else is expressed in --
     //
@@ -599,6 +601,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // is already the camera's position at that instant.
     scene::CameraComponent overrideCamera;
     if (view != nullptr) {
+        // raw: an override is not the world's; it is drawn where it is given.
         overrideCamera.cframe = view->cframe;
         overrideCamera.fieldOfView = view->fieldOfView;
         overrideCamera.nearPlane = view->nearPlane;
@@ -611,7 +614,8 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     const scene::CameraComponent* camera = view != nullptr ? &overrideCamera : worldCamera;
 
     if (camera != nullptr) {
-        const CFrameD cameraFrame = view != nullptr ? camera->cframe : at(cameraId, camera->cframe);
+        // raw: with a view, `camera` is the override above, not the world's.
+        const CFrameD cameraFrame = view != nullptr ? camera->cframe : posed.camera(cameraId);
         out.camera.valid = true;
         out.camera.origin = cameraFrame.position;
         out.camera.nearPlane = camera->nearPlane;
@@ -766,7 +770,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // nothing else, which is what a wire box can show of a material.
         const asset::ResolvedMaterial surface = world.surfaceOf(part);
         out.parts.push_back(RenderPart{
-            .cframe = at(id, part.cframe, teleportReach(part.size)),
+            .cframe = posed.part(id),
             .size = part.size,
             .color = surface.properties.color,
             .transparency = surface.properties.transparency,
@@ -790,8 +794,9 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         const std::optional<LightAnchor> anchored = lightAnchorOf(world, id);
         if (!anchored.has_value())
             return;
-        const CFrameD anchor =
-            (anchored->part.valid() ? at(anchored->part, anchored->partFrame) : anchored->partFrame) * anchored->offset;
+        // raw: with no part to follow, a light hangs from a frame nothing simulates.
+        const CFrameD base = anchored->part.valid() ? posed.part(anchored->part) : anchored->partFrame;
+        const CFrameD anchor = base * anchored->offset;
         out.lights.push_back(RenderLight{
             .kind = LightKind::Point,
             .position = core::toVec3(anchor.position - origin),
@@ -816,8 +821,9 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         const std::optional<LightAnchor> anchored = lightAnchorOf(world, id);
         if (!anchored.has_value())
             return;
-        const CFrameD anchor =
-            (anchored->part.valid() ? at(anchored->part, anchored->partFrame) : anchored->partFrame) * anchored->offset;
+        // raw: with no part to follow, a light hangs from a frame nothing simulates.
+        const CFrameD base = anchored->part.valid() ? posed.part(anchored->part) : anchored->partFrame;
+        const CFrameD anchor = base * anchored->offset;
         // A spot points along its anchor's LookVector, which is -Z (ADR
         // 0013's convention, stated in core/math.h).
         const Vec3 forward = core::transformDirection(anchor, Vec3{0.0f, 0.0f, -1.0f});
@@ -899,7 +905,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // written before this existed produces exactly the matrix it did then --
         // and the multiply is skipped outright when they match, which is every
         // part nobody has resized.
-        Mat4 transform = core::toRenderMatrix(at(id, part->cframe, teleportReach(part->size)), origin);
+        Mat4 transform = core::toRenderMatrix(posed.part(id), origin);
         const Vec3 stretch{part->size.x / meshPart.meshSize.x, part->size.y / meshPart.meshSize.y,
                            part->size.z / meshPart.meshSize.z};
         if (stretch.x != 1.0f || stretch.y != 1.0f || stretch.z != 1.0f)
@@ -1214,9 +1220,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     world.decals().forEach([&](core::InstanceId id, const scene::DecalComponent& decal) {
         if (!inWorld(world, id, root) || decal.transparency >= 1.0f)
             return;
-        CFrameD frame = decal.cframe;
-        if (const scene::PartComponent* part = world.parts().find(world.parentOf(id)); part != nullptr)
-            frame = at(world.parentOf(id), part->cframe) * decal.cframe;
+        // A decal's own `CFrame` is its offset from its part, carried by the
+        // part as drawn; a decal on no part is placed by hand, never simulated.
+        CFrameD frame = decal.cframe; // raw: the offset, or a placement by hand.
+        if (world.parts().find(world.parentOf(id)) != nullptr)
+            frame = posed.part(world.parentOf(id)) * decal.cframe; // raw: the offset, as above.
         RenderDecal drawn;
         drawn.boxToWorld = core::toRenderMatrixScaled(frame, origin, decal.size);
         const AABB bounds =
@@ -1268,8 +1276,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             const f64 hx = static_cast<f64>(half.x);
             const f64 hy = static_cast<f64>(half.y);
             const f64 reach = std::sqrt(hx * hx + hy * hy);
-            const f64 cx = static_cast<f64>(part.position.x);
-            const f64 cy = static_cast<f64>(part.position.y);
+            // Between ticks like everything else (ADR 0134): a 2D game at
+            // 120 Hz moved a tick at a time, every other frame the same.
+            const Pose2D pose = posed.part2d(id);
+            const f64 cx = pose.position.x;
+            const f64 cy = pose.position.y;
             if (!visible(cx - reach, cy - reach, cx + reach, cy + reach))
                 return;
 
@@ -1282,9 +1293,9 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             sprite.rect[2] = static_cast<f32>(cx + hx - origin.x);
             sprite.rect[3] = static_cast<f32>(cy + hy - origin.y);
             sprite.z = planeZ;
-            const f32 angle = part.rotation * kDegreesToRadians;
-            sprite.cosine = part.rotation == 0.0f ? 1.0f : std::cos(angle);
-            sprite.sine = part.rotation == 0.0f ? 0.0f : std::sin(angle);
+            const f32 angle = pose.rotation * kDegreesToRadians;
+            sprite.cosine = pose.rotation == 0.0f ? 1.0f : std::cos(angle);
+            sprite.sine = pose.rotation == 0.0f ? 0.0f : std::sin(angle);
             sprite.shape = part.shape;
             sprite.texture = textureOf(part.image);
             // A pixel rectangle of the image, where one is set and the size of
@@ -1420,8 +1431,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         if (opacity <= 0.0f)
             return;
 
-        const Mat4 transform = core::toRenderMatrixScaled(at(id, part.cframe, teleportReach(part.size)), origin,
-                                                          primitiveScale(shape, part.size));
+        const Mat4 transform = core::toRenderMatrixScaled(posed.part(id), origin, primitiveScale(shape, part.size));
         const AABB worldBounds = core::transformed(transform, entry->bounds);
 
         ++out.candidateDraws;

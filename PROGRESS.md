@@ -426,14 +426,19 @@ on the wire (protocol 23), the side-pass (D244) kept only for what is not
 predicted, and the Network panel and `GetStats` showing what that costs (D251).
 Ten seconds pushing three crates over loss and jitter: no correction past a
 centimetre and no overlap; the resimulation's cost is in
-`docs/perf-baselines.md`. The owner's test game re-exported and measured
-windowed is what closes it.
+`docs/perf-baselines.md`. **Done on 2026-09-29**: the owner's test game,
+re-exported and pushed through its crates windowed with a real key, first
+showed one 4.8 cm correction -- a replay with crates in it was not the live
+step (D252, `a6cf7b93`) -- and then none in eleven seconds.
 
-**Next after it: one drawn position per instance** (the owner, 2026-09-28): the
-name over a character smeared in a match because the world UI, particles,
-views, 2D sprites and picking read the simulated position while parts draw an
-interpolated one. Everything visual will read one position resolved per frame,
-with rule tests and a lint so nothing reads the raw one again.
+**Then one drawn position per instance** (ADR 0134, the owner, 2026-09-29):
+the name over a character smeared in a match because the world UI, particles,
+views, 2D sprites, prompts and picking read the simulated position while parts
+were drawn between ticks. Everything visual now reads `render::DrawPoses`,
+resolved once per instance per frame, and `tools/repo/drawcheck.luau` holds it.
+Measuring it found three more: other machines' parts were never drawn between
+ticks (D255), a correction's slide moved one part (D254), and a frame landing
+on a tick drew the next one, every other frame at 120 Hz (D253).
 
 **The audit of 2026-09-28 comes first**
 ([`audit-2026-09-28.md`](docs/briefs/audit-2026-09-28.md)), the owner's

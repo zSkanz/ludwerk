@@ -201,6 +201,13 @@ struct VisualCorrection
 {
     core::InstanceId character;
     core::DVec3 offset{};
+    // **Every move a correction made to the character's simulated place,
+    // summed** (ADR 0134): what the drawing's history moves the character's
+    // last place by, so it slides from where it was drawn rather than being
+    // counted twice -- once by the offset, once by the step between ticks. A
+    // teleport past `VisualSnapMetres` is not in it: that is drawn where it
+    // lands.
+    core::DVec3 displaced{};
 };
 
 } // namespace engine::replication

@@ -20,6 +20,36 @@ void TransformHistory::capture(const scene::World& world)
     world.parts().forEach([&](core::InstanceId id, const scene::PartComponent& part) { record(id, part.cframe); });
     world.cameras().forEach(
         [&](core::InstanceId id, const scene::CameraComponent& camera) { record(id, camera.cframe); });
+    // A 2D part in the same slots, ids being unique across pools: x, y, and
+    // its turn in degrees where z would be (`DrawPoses::part2d` reads it).
+    world.parts2d().forEach([&](core::InstanceId id, const scene::Part2DComponent& part) {
+        core::CFrameD pose;
+        pose.position = core::DVec3{static_cast<core::f64>(part.position.x), static_cast<core::f64>(part.position.y),
+                                    static_cast<core::f64>(part.rotation)};
+        record(id, pose);
+    });
+}
+
+void TransformHistory::shift(const scene::World& world, core::InstanceId root, core::DVec3 by)
+{
+    // Every place the last capture holds for the subtree, moved as the
+    // correction moved it -- a part, a camera, and a 2D part's x and y, whose z
+    // slot is its turn.
+    if (!root.valid() || stamp_ == 0)
+        return;
+    std::vector<core::InstanceId> below{root};
+    world.collectDescendants(root, below);
+    for (const core::InstanceId id : below) {
+        if (id.index >= entries_.size())
+            continue;
+        Entry& entry = entries_[id.index];
+        if (entry.generation != id.generation || entry.stamp != stamp_)
+            continue;
+        entry.cframe.position.x += by.x;
+        entry.cframe.position.y += by.y;
+        if (world.parts2d().find(id) == nullptr)
+            entry.cframe.position.z += by.z;
+    }
 }
 
 const core::CFrameD* TransformHistory::previous(core::InstanceId id) const noexcept
@@ -51,7 +81,12 @@ core::CFrameD betweenTicks(const TransformHistory* history, core::InstanceId id,
 {
     using core::CFrameD;
     using core::DVec3;
-    if (history == nullptr || alpha <= 0.0f)
+    // **No history is the tick; alpha zero is the tick BEFORE it** (D253).
+    // Zero used to answer the tick itself, as no history does -- so a frame
+    // landing exactly on a tick drew the next state, and the frame after it
+    // went back: at 120 Hz, every other frame, the world jumped ahead and back
+    // again. A caller that wants the tick passes no history.
+    if (history == nullptr)
         return current;
     const CFrameD* earlier = history->previous(id);
     if (earlier == nullptr)
@@ -90,10 +125,7 @@ core::CFrameD betweenTicks(const TransformHistory* history, core::InstanceId id,
 core::CFrameD interpolatedCFrame(const TransformHistory* history, core::InstanceId id, const core::CFrameD& current,
                                  core::f32 alpha, core::f64 teleport)
 {
-    core::CFrameD drawn = betweenTicks(history, id, current, alpha, teleport);
-    if (history != nullptr && id.valid() && id == history->visualOffsetId())
-        drawn.position = drawn.position + history->visualOffset();
-    return drawn;
+    return betweenTicks(history, id, current, alpha, teleport);
 }
 
 } // namespace engine::render

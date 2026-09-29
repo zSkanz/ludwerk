@@ -12,7 +12,10 @@
 
 #include "engine/app/network_session.h"
 #include "engine/app/world_host.h"
+#include "engine/app/world_ui.h"
 #include "engine/net/memory_transport.h"
+#include "engine/render/draw_poses.h"
+#include "engine/render/transform_history.h"
 #include "engine/replication/replication.h"
 #include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
@@ -843,4 +846,112 @@ part("Crate3", vector.create(2, 2, 2), vector.create(14, 1, 0), false))";
             predicted = replica->stats().predictedBodies;
     }
     CHECK(predicted == 2);
+}
+
+TEST_CASE("another machine's moving part is drawn between ticks, with what hangs on it (ADR 0134)")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/init.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local RunService = game:GetService("RunService")
+        NetworkService:Host(47122)
+        local cart = Instance.new("Part")
+        cart.Name = "Cart"
+        cart.Anchored = true
+        cart.Size = vector.create(2, 2, 2)
+        cart.Position = vector.create(0, 3, 0)
+        cart.Parent = workspace
+        RunService.Heartbeat:Connect(function()
+            cart.Position += vector.create(0.1, 0, 0)
+        end)
+    )");
+    server.bootOver(wire, nullptr);
+    Machine client;
+    client.project.write("src/client/init.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local RunService = game:GetService("RunService")
+        NetworkService:Join("memory:47122")
+        -- A name over the other machine's cart, as a player's is.
+        RunService.Heartbeat:Connect(function()
+            local cart = workspace:FindFirstChild("Cart")
+            if cart and not cart:FindFirstChild("Tag") then
+                local tag = Instance.new("BillboardGui")
+                tag.Name = "Tag"
+                tag.WorldOffset = vector.create(0, 2, 0)
+                tag.Parent = cart
+            end
+        end)
+    )");
+    client.bootOver(wire, nullptr);
+
+    // Joined, and the cart has been moving a while.
+    for (int frame = 0; frame < 240; ++frame) {
+        server.frame();
+        client.frame();
+    }
+    scene::World& world = client.host->world();
+    const core::InstanceId cart = world.findFirstChild(client.host->workspace(), world.atoms().lookup("Cart"));
+    REQUIRE(cart.valid());
+    const core::InstanceId tag = world.findFirstChild(cart, world.atoms().lookup("Tag"));
+    REQUIRE(tag.valid());
+
+    // The frame's own order, at 144 Hz: the server a tick for each of the
+    // client's, and the client drawn between.
+    render::TransformHistory history;
+    render::DrawPoses poses;
+    render::RenderCamera camera;
+    camera.valid = true;
+    camera.view = core::Mat4{};
+    camera.projection = core::perspective(1.2f, 16.0f / 9.0f, 0.1f, 1000.0f);
+    std::vector<double> xs;
+    std::vector<core::DVec3> tagOffsets;
+    double nextTick = 0.0;
+    for (int frame = 0; frame < 288; ++frame) {
+        const double now = static_cast<double>(frame) / 144.0;
+        while (nextTick <= now) {
+            server.frame();
+            app::runDrawnTick(*client.host, *client.network, history);
+            client.network->update();
+            nextTick += 1.0 / 60.0;
+        }
+        const auto alpha = static_cast<core::f32>((now - (nextTick - 1.0 / 60.0)) * 60.0);
+        poses.begin(world, &history, alpha);
+        const core::DVec3 at = poses.part(cart).position;
+        xs.push_back(at.x);
+        camera.origin = core::DVec3{at.x, at.y, at.z + 15.0};
+        for (const app::PlacedCanvas& placed : app::placeWorldCanvases(world, client.host->workspace(), {},
+                                                                       core::Vec2{1280.0f, 720.0f}, camera, &poses)) {
+            if (placed.canvas != tag)
+                continue;
+            const app::CanvasPlacement& p = placed.placement;
+            const core::Vec3 middle = p.topLeft + p.right * (p.canvas.x * 0.5f) + p.down * (p.canvas.y * 0.5f);
+            tagOffsets.push_back(core::DVec3{camera.origin.x + static_cast<double>(middle.x) - at.x,
+                                             camera.origin.y + static_cast<double>(middle.y) - at.y,
+                                             camera.origin.z + static_cast<double>(middle.z) - at.z});
+        }
+    }
+
+    // Six metres a second: about 4.2 cm every frame at 144 Hz, never a whole
+    // tick's 10 cm and then nothing. Snapshots arrive when they arrive, so a
+    // frame may differ from the next by a little; none by a tick.
+    REQUIRE(xs.size() == 288);
+    int still = 0;
+    double largest = 0.0;
+    for (std::size_t at = 1; at < xs.size(); ++at) {
+        const double step = xs[at] - xs[at - 1];
+        still += step < 0.01 ? 1 : 0;
+        largest = std::max(largest, step);
+    }
+    MESSAGE("MEASURE remote cart: still frames " << still << ", largest step " << largest);
+    CHECK(still == 0);
+    CHECK(largest < 0.07);
+    // And the name over it rides on it.
+    REQUIRE(tagOffsets.size() == 288);
+    double drift = 0.0;
+    for (const core::DVec3& offset : tagOffsets)
+        drift = std::max(drift, std::hypot(offset.x - tagOffsets.front().x, offset.y - tagOffsets.front().y,
+                                           offset.z - tagOffsets.front().z));
+    CHECK(drift < 1e-3);
 }

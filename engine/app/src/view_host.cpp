@@ -58,7 +58,7 @@ namespace {
 } // namespace
 
 void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& world, core::InstanceId workspace,
-                    render::TextureLibrary& library, render::IRenderer* renderer)
+                    render::TextureLibrary& library, render::IRenderer* renderer, const render::DrawPoses* poses)
 {
     std::vector<bool> seen(views_.size(), false);
 
@@ -126,7 +126,7 @@ void ViewHost::sync(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& worl
             view = views_.end() - 1;
         }
         seen[static_cast<core::usize>(view - views_.begin())] = true;
-        view->signature = frameSignature(world, id);
+        view->signature = frameSignature(world, id, poses);
         const core::Vec2 size = viewSize(element->absoluteSize, maxResolution_);
         ensureTexture(device, cmd, library, *view, static_cast<core::u32>(size.x), static_cast<core::u32>(size.y),
                       {0.0f, 0.0f, 0.0f, 0.0f});
@@ -288,8 +288,11 @@ void forEachInside(const scene::World& world, core::InstanceId frame, Visit&& vi
 
 } // namespace
 
-core::u64 frameSignature(const scene::World& world, core::InstanceId frame) noexcept
+core::u64 frameSignature(const scene::World& world, core::InstanceId frame, const render::DrawPoses* poses)
 {
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     Signature signature;
     if (const scene::ViewportFrameComponent* self = world.viewportFrames().find(frame); self != nullptr) {
         signature.pod(self->currentCamera.index);
@@ -300,8 +303,9 @@ core::u64 frameSignature(const scene::World& world, core::InstanceId frame) noex
     forEachInside(world, frame, [&](core::InstanceId id) {
         signature.pod(id.index);
         if (const scene::PartComponent* part = world.parts().find(id); part != nullptr) {
-            signature.pod(part->cframe.position);
-            signature.pod(part->cframe.rotation);
+            const core::CFrameD drawn = posed.part(id);
+            signature.pod(drawn.position);
+            signature.pod(drawn.rotation);
             signature.pod(part->size);
             signature.pod(part->material.id);
             signature.pod(part->materialClone);
@@ -317,16 +321,23 @@ core::u64 frameSignature(const scene::World& world, core::InstanceId frame) noex
         if (const scene::MeshPartComponent* mesh = world.meshParts().find(id); mesh != nullptr)
             signature.pod(mesh->meshContent.id);
         if (const scene::CameraComponent* camera = world.cameras().find(id); camera != nullptr) {
-            signature.pod(camera->cframe.position);
-            signature.pod(camera->cframe.rotation);
+            const core::CFrameD drawn = posed.camera(id);
+            signature.pod(drawn.position);
+            signature.pod(drawn.rotation);
             signature.pod(camera->fieldOfView);
         }
     });
     return signature.value;
 }
 
-std::optional<render::ViewOverride> frameLens(const scene::World& world, core::InstanceId frame, float aspect)
+std::optional<render::ViewOverride> frameLens(const scene::World& world, core::InstanceId frame, float aspect,
+                                              const render::DrawPoses* poses)
 {
+    // Where things are drawn this frame (ADR 0134): a script moving what is
+    // inside moves it between ticks like anything else.
+    render::DrawPoses still;
+    const render::DrawPoses& posed =
+        poses != nullptr && poses->world() == &world ? *poses : (still.begin(world, nullptr, 0.0f), still);
     const scene::ViewportFrameComponent* self = world.viewportFrames().find(frame);
     if (self == nullptr)
         return std::nullopt;
@@ -336,7 +347,7 @@ std::optional<render::ViewOverride> frameLens(const scene::World& world, core::I
         for (core::InstanceId at = world.parentOf(self->currentCamera); at.valid(); at = world.parentOf(at))
             inside = inside || at == frame;
         if (inside) {
-            return render::ViewOverride{.cframe = camera->cframe,
+            return render::ViewOverride{.cframe = posed.camera(self->currentCamera),
                                         .fieldOfView = camera->fieldOfView,
                                         .nearPlane = camera->nearPlane,
                                         .farPlane = camera->farPlane,
@@ -359,7 +370,7 @@ std::optional<render::ViewOverride> frameLens(const scene::World& world, core::I
         const double sy = static_cast<double>(part->size.y);
         const double sz = static_cast<double>(part->size.z);
         const double reach = 0.5 * std::sqrt(sx * sx + sy * sy + sz * sz);
-        const core::DVec3& at = part->cframe.position;
+        const core::DVec3 at = posed.part(id).position;
         low = core::DVec3{std::min(low.x, at.x - reach), std::min(low.y, at.y - reach), std::min(low.z, at.z - reach)};
         high =
             core::DVec3{std::max(high.x, at.x + reach), std::max(high.y, at.y + reach), std::max(high.z, at.z + reach)};

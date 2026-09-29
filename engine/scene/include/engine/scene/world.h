@@ -207,12 +207,19 @@ inline constexpr f32 PromptLift = 48.0f;
 struct ShownPrompt
 {
     core::InstanceId prompt;
-    // Where it hangs, in the world.
+    // Where it hangs, in the world, as the simulation has it.
     core::DVec3 anchor;
     // How far a hold has got, 0 to 1.
     f32 holdProgress = 0.0f;
     // `Enum.ProximityPromptInputType`.
     u8 inputType = 0;
+    // **What it hangs from** -- a part or an attachment -- so the frame draws
+    // it where that is drawn (ADR 0134); and where the frame last drew the
+    // box's centre, in pixels, which is where a tap on it is tested. A
+    // prompt no frame has drawn is tested where the tick's camera sees it.
+    core::InstanceId hangsFrom;
+    core::Vec2 drawnAt{};
+    bool drawn = false;
 };
 
 struct EngineState
@@ -271,6 +278,13 @@ struct EngineState
     // once per frame, like M5's keyboard: two reads inside one tick agree, and a
     // recorded input stream can hand the same answer back with no mouse.
     core::Vec2 pointerPosition;
+    // **Where the frame last drew the current camera** (ADR 0134): the ray
+    // under the pointer is the one through the picture the player clicked,
+    // not the tick's camera, which a following camera leaves up to a tick
+    // ahead of it. Written by a frame; a world no frame draws has none, and
+    // its pointer goes through the tick's camera.
+    core::CFrameD drawnCamera;
+    bool drawnCameraValid = false;
     bool pointerLocked = false;
     bool pointerVisible = true;
     // `Enum.InputDeviceType`: 0 KeyboardMouse, 1 Gamepad, 2 Touch.

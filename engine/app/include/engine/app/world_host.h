@@ -31,6 +31,7 @@
 #include "engine/nav/nav.h"
 #include "engine/physics/backends.h"
 #include "engine/render/animation.h"
+#include "engine/render/transform_history.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/physics_sync.h"
@@ -391,6 +392,10 @@ public:
         // meshes for it -- cannot take a reloaded world for the one before.
         core::u64 serial = 0;
         std::unique_ptr<WorldHost> host;
+        // Where its world was before its last tick, so its feed is drawn
+        // between ticks like the world around it (ADR 0134). Drawn, never
+        // simulated.
+        std::unique_ptr<render::TransformHistory> history = std::make_unique<render::TransformHistory>();
     };
     [[nodiscard]] std::span<const SubWorldRun> subWorlds() const noexcept { return m_subWorlds; }
     // The world a `SubWorld` runs, or null while it is not loaded.

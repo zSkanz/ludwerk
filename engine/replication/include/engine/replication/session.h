@@ -464,7 +464,7 @@ public:
     // The own character's drawn offset (`VisualCorrection`).
     [[nodiscard]] VisualCorrection visualCorrection() const noexcept
     {
-        return VisualCorrection{m_visualCharacter, m_visualOffset};
+        return VisualCorrection{m_visualCharacter, m_visualOffset, m_displaced};
     }
 
 private:
@@ -548,6 +548,7 @@ private:
     // What is left to slide of the corrections so far, and whose.
     core::InstanceId m_visualCharacter;
     core::DVec3 m_visualOffset{};
+    core::DVec3 m_displaced{};
     // The parts this replica owns (ADR 0099): simulated here, sent up, and
     // never overwritten by a snapshot.
     std::set<u32> m_ownedParts;

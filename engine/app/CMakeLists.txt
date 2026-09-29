@@ -304,6 +304,7 @@ engine_add_module_tests(app
         tests/reload_state_tests.cpp
         tests/reload_tests.cpp
         tests/world_host_tests.cpp
+        tests/draw_poses_tests.cpp
         tests/script_files_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
