@@ -78,7 +78,13 @@ bool WorldHost::bootSubWorld(core::InstanceId owner)
     options.bootSceneText = std::move(text);
     options.bootScenePath = scenePath;
     options.readContent = m_readContent;
-    options.networkTopology = scene::NetworkTopology::Solo;
+    // **Its own authority, with a display only where this world has one**
+    // (ADR 0137 §6): its server code runs wherever it is loaded, its client
+    // code never on a dedicated server -- where it always booted solo and ran
+    // a HUD for nobody.
+    options.networkTopology = w.engineState().networkTopology == scene::NetworkTopology::Dedicated
+                                  ? scene::NetworkTopology::Dedicated
+                                  : scene::NetworkTopology::Solo;
     options.subWorld = true;
     if (std::optional<core::EngineError> error = host->boot(options); error.has_value()) {
         core::logText(core::LogLevel::Error, error->message);

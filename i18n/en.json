@@ -449,6 +449,7 @@
   "script.err.nav_agent_size": "DefineAgent takes a radius and a height greater than zero, a climb of zero or more, and a slope from 0 to 89 degrees.",
   "script.err.nav_area_cost": "SetAreaCost takes a cost of zero or more; math.huge forbids the area.",
   "scene.err.nav_slope": "Cannot set {className}.{property}: it takes an angle from 0 to 89 degrees.",
+  "scene.warn.script_in_storage": "{count} Script(s) in {storage} will not run -- storage holds templates and modules, and a template must not run itself. The first is {script}: move it into the world, ServerScriptService or ClientScriptService, or clone it from there.",
   "scene.err.size2_positive": "Cannot set {className}.{property}: it takes a size greater than zero on both axes.",
   "scene.err.water_size": "Cannot set {className}.{property}: it takes a width and a depth greater than zero, and a length of zero or more.",
   "scene.err.number_at_least_zero": "Cannot set {className}.{property}: it takes a number that is zero or more.",

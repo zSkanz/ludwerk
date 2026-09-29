@@ -1177,3 +1177,25 @@ about one percent of one core. The frame itself did not move: 8.6 to 8.9 ms,
 the display's own interval. `--frame-stats` prints the phase's line only where
 a window runs it.
 
+
+## A script runs while it is live (ADR 0137)
+
+What finding the scripts a move carries costs: `World::setParent` compares each
+moved instance's class with `Script`'s, in the walk of the subtree it already
+made, and the runtime starts the ones that became live. A clone of a 10 000-part
+model is parented into `Workspace` and a frame run, five times, best and mean
+of the five. Measured 2026-09-29 on `win-msvc-editor`, headless, the null RHI,
+three runs of each binary, alternating: before is the package built from
+`09501c84`, after is S1. The 1 000 scripts each add one to an attribute, so the
+count shows they started: 5 000 after, none before.
+
+| Clone of a 10 000-part model | Before (best of five) | After (best of five) |
+|---|---|---|
+| No scripts | 191.5, 220.1, 191.9 ms | 198.3, 195.0, 203.9 ms |
+| With 1 000 scripts | 192.0, 198.8, 207.2 ms -- none started | 203.8, 217.4, 201.6 ms -- all started |
+
+Inside the run-to-run spread both ways: the clone and the physics taking ten
+thousand parts cost the 200 ms, and a thousand scripts starting costs less than
+that spread. A move with no script in it walks nothing that it did not already
+walk; a move that brings scripts in starts them in the order of the moves,
+without a walk of the world.

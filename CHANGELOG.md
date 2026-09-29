@@ -19,6 +19,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **A `Script` in `ServerStorage` or `ReplicatedStorage` does not run**
+  (ADR 0137 §3, D341). Storage holds templates and modules, and a template
+  must not run itself; a scene that has one there says so in the log when it
+  loads. Move it into the world or a script service, or clone it from storage
+  into the world at run time.
+- **A script runs exactly while it is live** (ADR 0137, D339, D340): a clone
+  parented into the world, a model carrying scripts and a stamp placed with
+  `Instance.stamp` start their scripts, and a script that leaves the world --
+  parented to nil, into storage, or with the model holding it -- stops. A game
+  that counted on a cloned script staying dead, or on a removed one going on,
+  changes.
 - **A script can read `Source` and cannot write it** (ADR 0137 §4, D332).
   `Script.Source` and `ModuleScript.Source` are the editor's to write: a
   script that could write another's code and enable it ran text the sandbox

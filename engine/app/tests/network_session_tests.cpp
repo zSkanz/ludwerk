@@ -42,10 +42,14 @@ struct Machine
     std::unique_ptr<app::NetworkSession> network;
 
     void boot(const std::shared_ptr<net::MemoryNetwork>& wire,
-              scene::NetworkTopology topology = scene::NetworkTopology::Solo)
+              scene::NetworkTopology topology = scene::NetworkTopology::Solo, std::string_view scene = {})
     {
         app::WorldHostOptions options = bootOptions(project.root);
         options.networkTopology = topology;
+        if (!scene.empty()) {
+            options.bootScene = project.root / "content" / std::filesystem::path(scene);
+            options.bootScenePath = std::string(scene);
+        }
         REQUIRE_FALSE(host->boot(options).has_value());
         replication::Config base;
         base.ticksPerSnapshot = 1;
@@ -162,6 +166,44 @@ TEST_CASE("a solo game hosts, another joins it, and a server that goes puts the 
     // Solo again, so its server code started again, fresh.
     CHECK(client.serverCode() == 1);
     CHECK(occurrences(log, "client-rules-started") == 2);
+}
+
+TEST_CASE("back solo after a join, a machine runs what a solo boot of its scene runs (ADR 0137 §5)")
+{
+    // Only the file-mounted server code came back: a script inside a part the
+    // join had replaced stayed gone, and the solo game was not the game.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+
+    Machine server;
+    server.project.write("src/client/host.luau", R"(
+        game:GetService("NetworkService"):Host(47102)
+    )");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("content/scenes/main.scene.json",
+                         R"json({"format":"scene","version":2,"root":{"children":[{"class":"Part","name":"Crate",)json"
+                         R"json("children":[{"class":"Script","name":"Lid","properties":{"Source":)json"
+                         R"json("print('crate-lid-started')"}}]}]}})json");
+    client.project.write("src/client/join.luau", R"(
+        game:GetService("NetworkService"):Join("memory:47102")
+    )");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+
+    run(server, client, 2);
+    CHECK(occurrences(log, "crate-lid-started") == 1);
+    run(server, client, 30);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+
+    server.host->world().engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+    run(server, client, 30);
+    REQUIRE(client.topology() == scene::NetworkTopology::Solo);
+    // The scene again, as a solo boot of it has it: its crate, and its script.
+    CHECK(occurrences(log, "crate-lid-started") == 2);
+    const scene::World& world = client.host->world();
+    CHECK(world.findFirstChild(client.host->workspace(), world.atoms().lookup("Crate")).valid());
 }
 
 TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")

@@ -1,6 +1,6 @@
 # 0137 — A script runs while it is in the running world, and stops when it leaves
 
-- Status: accepted (to be built; see `docs/briefs/script-sides-kickoff.md`, stage 1)
+- Status: accepted, built 2026-09-29 (`docs/briefs/script-sides-kickoff.md`, S0 and S1; see the amendment)
 - Date: 2026-09-29
 - Decided by: the owner, on 2026-09-29, as an emergency: *"vamos corrigir esses
   problemas, tudo ... isso aí é emergência"*, after a survey of the script
@@ -144,3 +144,73 @@ clone, a stamp, `Instance.new`, a `Parent` write on it or on any ancestor,
 - Where a script runs, per script: ADR 0138.
 - Two VMs in a solo game, so that a module's state is not shared between the
   server's and the client's code as it is today: a later decision.
+
+## Amendment -- 2026-09-29, as built (S0 and S1)
+
+- **Live is one function**, `script::scriptLive`: a `Script`, enabled, with a
+  non-empty `Source`, a descendant of the `DataModel`, with no `ServerStorage`
+  or `ReplicatedStorage` above it, its side running here. `startScript` asks
+  it, so boot, a scene load, an `Enabled` write and a move all start by the
+  same rule.
+- **A run is the globals table its start made** (S0.5, S0.6):
+  `ModuleRegistry::runs`, one record per instance slot, holding that table.
+  Every thread, handler, render step and close handler knows the globals it
+  was made under. **A stop is `endRun`**: the record is cleared, and from then
+  on anything of a `Script` whose globals are not its script's current run's
+  is suppressed when it comes up -- a thread is not resumed, a handler, a
+  render step and a close handler are not called. That is ADR 0059's
+  mechanism for `Enabled = false`, applied to every stop, **not an eager kill
+  or disconnect**: what a reader can tell apart is that a stopped run's
+  connection still reads `Connected` true until it is disconnected or its
+  signal's owner goes. A `ModuleScript`'s functions are not
+  a run's, and are never suppressed by one: a module required by a stopped
+  script still serves the scripts that are running. The `@engine/*` modules'
+  own functions run under a globals table with no raw `script` field, and so
+  belong to no run either -- without that rule, stopping the camera rig's
+  caller stopped the rig.
+- **Becoming or leaving live is found by the move that caused it, with no
+  per-subtree count.** `World::setParent` already walks the moved subtree for
+  its change fan-out; it compares each member's class with `Script`'s and
+  queues the scripts (`World::takeMovedScripts`). A subtree with no script in
+  it costs one class compare per instance, inside a walk that was already
+  there. `ScriptRuntime`'s drain hands the queue and the `Enabled` writes to
+  `script::reconcileScripts`: every queued script that is running and no longer
+  live stops; then every `Enabled` write is a stop and a fresh start, in
+  document order, as boot starts scripts; then every queued script that is live
+  and not running starts, **in the order of the moves**, and within one moved
+  subtree in its document order (the preorder `setParent` walked). That order
+  is deterministic (R10) without walking the world, which a game cloning one
+  scripted projectile a frame would otherwise pay every frame; only an
+  `Enabled` write pays the walk, as it did before. A script queued twice starts
+  once. `script_live.spec.luau` holds each path and the order.
+- **Nothing moved starts before the world's scripts have**
+  (`ModuleRegistry::started`, set by `startScripts`): in the editor, with the
+  game stopped, a move is an edit. A stop needs no such guard -- nothing has a
+  run to stop.
+- **The storage warning** (`scene.warn.script_in_storage`) is logged once per
+  storage service per scene load, after the scene's scripts started: how many
+  `Script`s it holds and the first one's name. No example, template or
+  conformance scene had one.
+- **Changing topology** (§5): a Join clears what the authority replicates and
+  then checks every script (`script::reconcileAllScripts`); a Host checks every
+  script. **Back to solo** -- a Disconnect, a JoinFailed, a lost server -- is
+  `WorldHost::returnToSolo`: the current scene loaded again from this
+  machine's own package, which puts back the parts and the scripts inside them
+  that the join replaced; then `restartServerCode`, which starts the
+  file-mounted server code afresh; then every script checked. A script in
+  something the scene keeps across a load keeps its run. **Not restored:** a
+  non-code item authored in `content/global.json` under
+  `GlobalScriptService.Server` that the join destroyed -- a `Folder` of values
+  kept there comes back only with a restart. No example has one.
+- **Hot reload** re-boots with `WorldHost::currentOptions`: the topology and
+  the scene the world is in now (S0.7).
+- **A sub-world** (§6) boots with the `Dedicated` topology when the world that
+  holds it is dedicated, and `Solo` otherwise, so its client-side scripts run
+  only where there is a display. `sub_world_tests.cpp` holds it.
+- **What it cost** (§7), 2026-09-29, `win-msvc-editor`, a clone of a
+  10 000-part model, parented and a frame run, best of five, three runs each:
+  no scripts, 190 to 223 ms before and 190 to 210 ms after; with 1 000 scripts,
+  192 to 207 ms before (none of them started) and 198 to 227 ms after (all of
+  them started). Both inside the run-to-run spread. `docs/perf-baselines.md`
+  has the table.
+- **No determinism trace moved.**

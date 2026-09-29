@@ -188,6 +188,10 @@ public:
         const void* env = nullptr;
     };
     std::vector<Run> runs;
+    // The world's scripts have been started -- boot, or the editor's Play --
+    // so a script that becomes live starts. False while a project is open in
+    // the editor and nothing plays (ADR 0058): moving a script then is editing.
+    bool started = false;
 
     // Entry scripts that failed to compile at `startScripts`. Boot is
     // deliberately forgiving about this -- one bad script must not stop the
@@ -374,6 +378,24 @@ enum class SuppressReason : core::u8
 // Ends `script`'s run, if it has one: its threads and handlers stop being
 // resumed. What a disable-and-enable does before the new run starts.
 void endRun(lua_State* L, core::InstanceId script);
+
+// **Whether `script` is live** (ADR 0137 §1): a `Script`, enabled, with code,
+// under the `DataModel`, under no inert storage (`ServerStorage`,
+// `ReplicatedStorage`), its side running on this machine.
+[[nodiscard]] bool scriptLive(lua_State* L, core::InstanceId script);
+// Whether `script` has a run now.
+[[nodiscard]] bool scriptRunning(lua_State* L, core::InstanceId script);
+// **A script runs exactly while it is live** (ADR 0137 §1): each of `moved`
+// that stopped being live stops, each that became live starts, and each of
+// `enabled` -- `Enabled` written true -- ends any old run and starts afresh.
+// Re-enables start first, in document order; then the moves' starts, in the
+// order of the moves (R10). Nothing moved starts before the world's scripts
+// have (`ModuleRegistry::started`).
+void reconcileScripts(lua_State* L, const std::vector<core::InstanceId>& moved,
+                      const std::vector<core::InstanceId>& enabled);
+// Every script checked against "live" at once: what a topology change does
+// (ADR 0137 §5).
+void reconcileAllScripts(lua_State* L);
 
 // The ordinary question, for every caller that has no exception to make.
 //

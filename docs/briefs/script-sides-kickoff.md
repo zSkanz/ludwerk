@@ -85,27 +85,33 @@ extends them, not replaces them.
 
 ## Stage S1 — a script runs while it is live (ADR 0137)
 
-- [ ] The run record and "live" (§1, §2): a start creates a run. Threads,
+- [x] The run record and "live" (§1, §2): a start creates a run. Threads,
   connections, render steps and close handlers belong to it, and a stop ends
   all of them.
-- [ ] Start on becoming live, stop on leaving, for every path: clone,
+- [x] Start on becoming live, stop on leaving, for every path: clone,
   `Instance.stamp`, `Instance.new` plus `Parent`, a `Parent` write on the script
   or any ancestor, `Enabled`, `Destroy`. Conformance specs for each path.
   `instance/script_enabled.spec.luau` today asserts that a script created
   enabled does not start. That assertion is reversed, with the ADR named.
-- [ ] Inert storage (§3): `ServerStorage`, `ReplicatedStorage`. One keyed
+- [x] Inert storage (§3): `ServerStorage`, `ReplicatedStorage`. One keyed
   warning per scene that has a `Script` there. Fix the examples, templates and
   conformance scenes that rely on it (search them all).
-- [ ] `Source` refused to scripts (§4), if S0.2 did not already finish it.
-- [ ] Topology changes (§5): every script re-checked on Join, Host,
+- [x] `Source` refused to scripts (§4), if S0.2 did not already finish it.
+- [x] Topology changes (§5): every script re-checked on Join, Host,
   Disconnect, JoinFailed and a lost server. Back in solo, the machine runs what
   a fresh solo boot of the current scene would run. State the mechanism in
   ADR 0137's amendment.
-- [ ] Sub-worlds (§6): client-side scripts only where there is a display.
-- [ ] Cost (§7): a subtree with no scripts costs nothing extra.
+- [x] Sub-worlds (§6): client-side scripts only where there is a display.
+- [x] Cost (§7): a subtree with no scripts costs nothing extra.
   `docs/perf-baselines.md` gets a clone of 10 000 parts with no scripts and one
   with 1 000 scripts, before and after.
-- [ ] ADR 0137's amendment, as built.
+- [x] ADR 0137's amendment, as built.
+
+S1 done 2026-09-29 (D339 to D343). `instance/script_live.spec.luau` holds every
+path in and out and the order of the starts; `script_enabled.spec.luau` no
+longer asserted the old rule by the time S1 came, because S0.2 had already
+rewritten it around stamps. `network_session_tests.cpp` holds back to solo and
+`sub_world_tests.cpp` the dedicated sub-world.
 
 ## Stage S2 — a script carries its side (ADR 0138)
 
@@ -200,3 +206,22 @@ test for each before its fix; defects that share a root fixed together.
 - **S0.8's lint is the repository's.** It checks the engine's `ENG_TR` keys,
   which a game has none of; the header was corrected rather than the call
   added.
+- **S1 needed no per-subtree script count.** `setParent` already walks the
+  moved subtree for the change fan-out, so a class compare per member finds
+  the scripts; the measured clone of 10 000 parts did not move (the amendment
+  and `docs/perf-baselines.md`).
+- **The first build walked the whole world on every drain a script moved in**,
+  to start the moved scripts in document order. A game that clones a scripted
+  projectile a frame would have paid a walk of the world a frame. Moved
+  scripts now start in the order of the moves, which is as deterministic;
+  only an `Enabled` write walks, as before S1.
+- **A stop suppresses; it does not disconnect.** The run record made the
+  eager version unnecessary, and ADR 0059 already worked this way for
+  `Enabled`. What a reader can see is `Connected` still true on a stopped
+  run's connection. For S3 to weigh: whether that is worth a disconnect pass.
+- **An `@engine/*` module's functions belong to no run.** S0.6's first
+  version suppressed them with the script that called them, and stopped the
+  camera rig; a run's globals now need a raw `script` field.
+- **Back to solo could not be "restart the server code" alone**: the join had
+  replaced the scene's parts, and the scripts inside them, with the
+  authority's. Loading the current scene again is what a solo boot of it is.

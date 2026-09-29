@@ -69,7 +69,7 @@ once, at migration.
 |---|---|---|
 | `RemoteEvent.OnServerEvent` / `OnClientEvent` | **`RemoteEvent.ServerReceived` / `ClientReceived`** | An event is named as a fact that happened, everywhere in this API. `FireServer`, `FireClient` and `FireAllClients` keep their names. |
 | `RemoteFunction:InvokeServer` / `InvokeClient` | **`InvokeServerAsync`**, and no `InvokeClient` | A call that parks its caller says so in its name, everywhere in this API. The server never waits on a client, because a client that never answered would hold the server's script forever. |
-| `ReplicatedStorage` / `ServerStorage` | **The same two**, saved with the scene | What they hold reaches every replica, or stays on the authority. Scripts are files rather than instances, so neither holds modules. |
+| `ReplicatedStorage` / `ServerStorage` | **The same two**, saved with the scene | What they hold reaches every replica, or stays on the authority. **A `Script` in either never runs** (ADR 0137): they hold templates and modules, and the log says so when a scene has one there. |
 
 ## Naming
 

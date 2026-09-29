@@ -180,3 +180,35 @@ TEST_CASE("unloading a sub-world, or destroying it, throws its world away (ADR 0
     CHECK(host.subWorlds().empty());
     CHECK(log.firstError().empty());
 }
+
+TEST_CASE("a sub-world on a dedicated server runs its server code and none of its client code (ADR 0137 §6)")
+{
+    // A sub-world always booted solo, so on a server with no display it ran its
+    // scene's client code -- a HUD for nobody.
+    Captured log;
+    Project project;
+    project.write("content/scenes/arcade.scene.json", ArcadeScene);
+    // On a dedicated server the game's code is its server code.
+    project.write("src/server/main.luau", HostScript);
+    project.write("src/scenes/arcade/server/boot.luau", R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "SceneCodeRan"
+        marker.Parent = workspace
+    )");
+    project.write("src/scenes/arcade/client/hud.luau", R"(
+        local marker = Instance.new("Folder")
+        marker.Name = "SceneClientRan"
+        marker.Parent = workspace
+    )");
+
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.networkTopology = scene::NetworkTopology::Dedicated;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    host.tick();
+    app::WorldHost* inner = host.subWorld(cabinetOf(host));
+    REQUIRE(inner != nullptr);
+    CHECK(hasChildNamed(*inner, "SceneCodeRan"));
+    CHECK_FALSE(hasChildNamed(*inner, "SceneClientRan"));
+}

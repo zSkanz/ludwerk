@@ -607,18 +607,12 @@ void ScriptRuntime::drain(core::Phase)
     // preorder, the same order `startScripts` uses; taking them in the order the
     // writes happened would let a pool artefact decide which of two scripts
     // enabled by one tick runs first, which R10 forbids.
-    if (std::vector<core::InstanceId> enabled = takeEnabledScripts(m_impl->state); !enabled.empty()) {
-        std::vector<core::InstanceId> everything;
-        m_world.collectDescendants(dataModel(), everything);
-        for (const core::InstanceId instance : everything) {
-            if (std::find(enabled.begin(), enabled.end(), instance) != enabled.end()) {
-                // A re-enable is a stop and a fresh run (S0.6, ADR 0137 §2):
-                // the old run's threads and handlers never come back.
-                endRun(m_impl->state, instance);
-                (void)startScript(m_impl->state, instance);
-            }
-        }
-    }
+    //
+    // **And a script that became live or stopped being live since** (ADR 0137
+    // §1): every `Script` a move carried -- a clone parented, a stamp placed, a
+    // model put into storage or taken out of the world, a destroy -- starts or
+    // stops here, in the same drain.
+    reconcileScripts(m_impl->state, m_world.takeMovedScripts(), takeEnabledScripts(m_impl->state));
 
     (void)drainDeferred(m_impl->state);
 

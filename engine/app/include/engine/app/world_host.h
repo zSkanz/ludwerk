@@ -373,6 +373,11 @@ public:
     // started. For a machine that becomes the authority again after leaving a
     // match, whose server code went when it joined.
     void restartServerCode();
+    // Solo again after a join (ADR 0137 §5): the current scene loaded again,
+    // the server code restarted, every script checked against "live".
+    void returnToSolo();
+    // One warning for each storage holding a `Script`, which does not run there.
+    void warnScriptsInStorage();
     [[nodiscard]] const scene::SceneIoReport& bootSceneReport() const noexcept { return m_bootSceneReport; }
 
     [[nodiscard]] core::u64 mountedScriptCount() const;

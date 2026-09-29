@@ -1001,6 +1001,19 @@ public:
     // count; a reader that cares about those says so.
     [[nodiscard]] core::u64 mutations() const noexcept { return m_mutations; }
 
+    // **Every `Script` moved since the last take** (ADR 0137 §1): each one in a
+    // subtree `setParent` moved -- a clone parented, a stamp placed, a model
+    // moved into storage or out of the world, a destroy. What the script
+    // runtime checks against "live" at its next drain, starting or stopping
+    // each. Found in the walk of the subtree `setParent` already makes, so a
+    // subtree with no script in it costs a class compare per instance.
+    [[nodiscard]] std::vector<core::InstanceId> takeMovedScripts()
+    {
+        std::vector<core::InstanceId> taken;
+        taken.swap(m_movedScripts);
+        return taken;
+    }
+
     // --- Frame plumbing ------------------------------------------------------
 
     [[nodiscard]] ChangeQueue& changes() noexcept { return m_changes; }
@@ -1350,6 +1363,9 @@ private:
     core::u64 m_groundRevisionFloor = 0;
     GroundLoader m_groundLoader;
     core::u64 m_mutations = 0;
+    std::vector<core::InstanceId> m_movedScripts;
+    // `Script`'s class, once the registry has it: `setParent` asks per move.
+    ClassId m_scriptClass = InvalidClass;
 
     asset::MaterialLibrary* m_materialLibrary = nullptr;
     MaterialClones m_materialClones;

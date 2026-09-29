@@ -607,8 +607,10 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     if (options.networkTopology == scene::NetworkTopology::Replica)
         (void)replication::clearForReplica(*m_world, m_workspace);
 #endif
-    if (options.startScripts)
+    if (options.startScripts) {
         script::startScripts(m_runtime->state());
+        warnScriptsInStorage();
+    }
 
     // The boot drain. api-design.md §3's lifecycle reads "start each Script on
     // its own coroutine via `task.defer` … → first frame", and the arrow is
@@ -1554,6 +1556,7 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     const core::InstanceId global =
         w.findFirstChildOfClass(dataModel, w.classes().findId(w.atoms().lookup("GlobalScriptService")));
     script::startScriptsExcept(m_runtime->state(), global);
+    warnScriptsInStorage();
     // What was sent to it while it was prepared, behind its scripts' first
     // resumption and ahead of `SceneLoaded` (ADR 0124 §6).
     script::deliverHeldMessages(m_runtime->state());
@@ -1562,6 +1565,53 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
                                       I18nArg{"count", static_cast<core::i64>(report.instances)}};
     core::log(LogLevel::Info, ENG_TR("scene.info.scene_changed"), args);
     return std::nullopt;
+}
+
+// **A script kept in storage does not run** (ADR 0137 §3): one warning a
+// scene, naming the first, so a game that relied on it is told where to move
+// it. `ModuleScript`s are what storage is for, and are not counted.
+void WorldHost::warnScriptsInStorage()
+{
+    scene::World& w = *m_world;
+    const scene::ClassId scriptClass = w.classes().findId(w.atoms().lookup("Script"));
+    const core::InstanceId dataModel = m_runtime->dataModel();
+    for (const std::string_view storage : {std::string_view("ServerStorage"), std::string_view("ReplicatedStorage")}) {
+        const core::InstanceId service =
+            w.findFirstChildOfClass(dataModel, w.classes().findId(w.atoms().lookup(storage)));
+        if (!service.valid())
+            continue;
+        std::vector<core::InstanceId> below;
+        w.collectDescendants(service, below);
+        core::i64 count = 0;
+        core::InstanceId first;
+        for (const core::InstanceId id : below) {
+            if (w.classOf(id) != scriptClass)
+                continue;
+            if (count++ == 0)
+                first = id;
+        }
+        if (count == 0)
+            continue;
+        const std::array<I18nArg, 3> args{I18nArg{"count", count}, I18nArg{"storage", storage},
+                                          I18nArg{"script", std::string(w.atoms().text(w.name(first)))}};
+        core::log(LogLevel::Warn, ENG_TR("scene.warn.script_in_storage"), args);
+    }
+}
+
+// **Back to solo is a solo boot of the scene it is in** (ADR 0137 §5): the
+// scene read again from this machine's own package -- its parts and the
+// scripts inside them, which the join had replaced with the authority's --
+// and the server code started again, fresh. The simplest honest mechanism, as
+// the ADR allows: a game that went solo is a game that just loaded its scene.
+void WorldHost::returnToSolo()
+{
+    const std::string current = m_world->engineState().currentScene;
+    if (!current.empty()) {
+        if (const std::optional<core::EngineError> error = loadScene(current); error.has_value())
+            core::logText(LogLevel::Error, error->message);
+    }
+    restartServerCode();
+    script::reconcileAllScripts(m_runtime->state());
 }
 
 void WorldHost::restartServerCode()

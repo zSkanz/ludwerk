@@ -699,25 +699,13 @@ bool startScript(lua_State* L, core::InstanceId instance)
             return false;
     }
 
-    // **Where it is decides whether it runs here** (ADR 0105): the rules on the
-    // authority, the HUD where a player sits, and everything else everywhere.
-    if (!scriptSideRunsHere(w, scriptSideOf(w, instance)))
+    // **Only a live script starts** (ADR 0137 §1): enabled, with code, in
+    // the world, under no inert storage, its side running here (ADR 0105).
+    if (!scriptLive(L, instance))
         return false;
-
-    // A Script whose `Enabled` is false never starts -- it is still in the tree,
-    // but no coroutine is created for it (api-design.md 3).
-    const std::optional<scene::Value> value = w.getProperty(instance, w.atoms().intern("Enabled"));
-    if (value.has_value()) {
-        if (const auto* flag = std::get_if<bool>(&value.value()); flag != nullptr && !*flag)
-            return false;
-    }
-
     const std::optional<scene::Value> stored = w.getProperty(instance, w.atoms().intern("Source"));
     const auto* source = stored.has_value() ? std::get_if<std::string>(&stored.value()) : nullptr;
-    // Nothing to run is not a failure. An empty Script is what somebody has
-    // the moment they create one, and reporting it would put an error in the
-    // log for every script anybody starts writing.
-    if (source == nullptr || source->empty())
+    if (source == nullptr)
         return false;
 
     // The file it was mounted from, when there was one; its place in the
@@ -783,6 +771,7 @@ bool startScript(lua_State* L, core::InstanceId instance)
 void startScripts(lua_State* L)
 {
     scene::World& w = world(L);
+    registry(L).started = true;
 
     // **Every enabled Script in the WORLD, in document order** (ADR 0057). The
     // mounted-file list is no longer the population: a Script the scene brought,
@@ -797,6 +786,9 @@ void startScripts(lua_State* L)
 
     for (const core::InstanceId instance : everything)
         (void)startScript(L, instance);
+    // Every script in the world was just weighed: the moves that built it
+    // are answered, and a script that failed to load is not tried again.
+    (void)w.takeMovedScripts();
 
     lua_State* loaded = lua_newthread(L);
     const int rooted = lua_gettop(L);
@@ -817,6 +809,8 @@ void startScriptsExcept(lua_State* L, core::InstanceId excluded)
             continue;
         (void)startScript(L, instance);
     }
+    // The scene's moves are answered by the walk above.
+    (void)w.takeMovedScripts();
 }
 
 core::InstanceId scriptOfThread(lua_State* thread)
@@ -895,17 +889,20 @@ SuppressReason suppressionFor(lua_State* L, core::InstanceId script, const void*
     const SuppressReason reason = suppressionFor(L, script);
     if (reason != SuppressReason::None || !script.valid() || env == nullptr)
         return reason;
-    // A thread or handler of a run that is not the script's current one: the
-    // old run of a script disabled and enabled again. A script with no record
-    // was not started by `startScript` -- a thread the engine made -- and is
-    // left to the rules above.
+    // **A `Script`'s thread or handler runs only in its current run**: the old
+    // run of a script disabled and enabled again, and every run of one that
+    // left the world, stay stopped. Only a `Script`: a module's table carries
+    // its `ModuleScript`, which has no run and is not stopped by one.
+    scene::World& w = world(L);
+    if (w.classOf(script) != w.classes().findId(w.atoms().lookup("Script")))
+        return SuppressReason::None;
     const ModuleRegistry& modules = registry(L);
     if (script.index < modules.runs.size()) {
         const ModuleRegistry::Run& run = modules.runs[script.index];
-        if (run.generation == script.generation && run.envRef != -1 && run.env != env)
-            return SuppressReason::Ended;
+        if (run.generation == script.generation && run.envRef != -1 && run.env == env)
+            return SuppressReason::None;
     }
-    return SuppressReason::None;
+    return SuppressReason::Ended;
 }
 
 namespace {
@@ -944,6 +941,117 @@ const void* runEnvOfFunction(lua_State* L, int index)
         return nullptr;
     lua_getfenv(L, index);
     return ownRunEnv(L);
+}
+
+bool scriptLive(lua_State* L, core::InstanceId instance)
+{
+    scene::World& w = world(L);
+    if (!w.alive(instance) || w.destroyed(instance))
+        return false;
+    if (w.classOf(instance) != w.classes().findId(w.atoms().lookup("Script")))
+        return false;
+    const core::InstanceId dataModel = context(L).services->dataModel;
+    if (!dataModel.valid() || !w.isAncestorOf(dataModel, instance))
+        return false;
+    // **Storage does not run** (ADR 0137 §3): a template kept there must not
+    // run itself.
+    const scene::ClassId serverStorage = w.classes().findId(w.atoms().lookup("ServerStorage"));
+    const scene::ClassId replicatedStorage = w.classes().findId(w.atoms().lookup("ReplicatedStorage"));
+    for (core::InstanceId walk = w.parentOf(instance); walk.valid(); walk = w.parentOf(walk)) {
+        const scene::ClassId classId = w.classOf(walk);
+        if (classId == serverStorage || classId == replicatedStorage)
+            return false;
+    }
+    if (!scriptSideRunsHere(w, scriptSideOf(w, instance)))
+        return false;
+    // A Script whose `Enabled` is false never starts -- it is still in the tree,
+    // but no coroutine is created for it (api-design.md 3).
+    const std::optional<scene::Value> enabled = w.getProperty(instance, w.atoms().intern("Enabled"));
+    if (enabled.has_value()) {
+        if (const auto* flag = std::get_if<bool>(&enabled.value()); flag != nullptr && !*flag)
+            return false;
+    }
+    // Nothing to run is not a failure. An empty Script is what somebody has
+    // the moment they create one, and reporting it would put an error in the
+    // log for every script anybody starts writing.
+    const std::optional<scene::Value> stored = w.getProperty(instance, w.atoms().intern("Source"));
+    const auto* source = stored.has_value() ? std::get_if<std::string>(&stored.value()) : nullptr;
+    return source != nullptr && !source->empty();
+}
+
+bool scriptRunning(lua_State* L, core::InstanceId script)
+{
+    const ModuleRegistry& modules = registry(L);
+    if (!script.valid() || script.index >= modules.runs.size())
+        return false;
+    const ModuleRegistry::Run& run = modules.runs[script.index];
+    return run.generation == script.generation && run.envRef != -1;
+}
+
+void reconcileScripts(lua_State* L, const std::vector<core::InstanceId>& moved,
+                      const std::vector<core::InstanceId>& enabled)
+{
+    if (moved.empty() && enabled.empty())
+        return;
+    // Before the world's scripts have started, a move is an edit: nothing
+    // starts, and nothing has a run to stop.
+    const bool started = registry(L).started;
+    // **Stopped: what is no longer live** -- moved out of the world, into
+    // storage, destroyed, onto a side this machine does not run.
+    for (const core::InstanceId script : moved) {
+        if (scriptRunning(L, script) && !scriptLive(L, script))
+            endRun(L, script);
+    }
+    // **Re-enabled: a stop and a fresh run** (ADR 0137 §2), in document order,
+    // as boot starts scripts. The walk is the whole world, and only an
+    // `Enabled` write pays it; sorted so that a thousand writes are not a
+    // thousand-by-world scan.
+    if (!enabled.empty()) {
+        const auto before = [](core::InstanceId a, core::InstanceId b) {
+            return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+        };
+        std::vector<core::InstanceId> enabledSorted = enabled;
+        std::sort(enabledSorted.begin(), enabledSorted.end(), before);
+        std::vector<core::InstanceId> everything;
+        world(L).collectDescendants(context(L).services->dataModel, everything);
+        for (const core::InstanceId instance : everything) {
+            if (std::binary_search(enabledSorted.begin(), enabledSorted.end(), instance, before)) {
+                endRun(L, instance);
+                (void)startScript(L, instance);
+            }
+        }
+    }
+    if (!started)
+        return;
+    // **Moved in: what became live**, in the order of the moves, and within one
+    // moved subtree in its document order -- `setParent` queues a subtree's
+    // scripts in the preorder it walks it in. Deterministic (R10) without a
+    // walk of the world, which a game cloning one scripted projectile a frame
+    // would otherwise pay every frame. A script queued twice starts once: the
+    // second finds it running.
+    for (const core::InstanceId script : moved) {
+        if (!scriptRunning(L, script))
+            (void)startScript(L, script);
+    }
+}
+
+void reconcileAllScripts(lua_State* L)
+{
+    if (!registry(L).started)
+        return;
+    scene::World& w = world(L);
+    std::vector<core::InstanceId> everything;
+    w.collectDescendants(context(L).services->dataModel, everything);
+    const scene::ClassId scriptClass = w.classes().findId(w.atoms().lookup("Script"));
+    // Stopped first, then started, each in document order.
+    for (const core::InstanceId instance : everything) {
+        if (w.classOf(instance) == scriptClass && scriptRunning(L, instance) && !scriptLive(L, instance))
+            endRun(L, instance);
+    }
+    for (const core::InstanceId instance : everything) {
+        if (w.classOf(instance) == scriptClass && !scriptRunning(L, instance))
+            (void)startScript(L, instance);
+    }
 }
 
 void endRun(lua_State* L, core::InstanceId script)

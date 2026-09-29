@@ -9,6 +9,7 @@
 #include "engine/replication/replication.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
+#include "engine/script/modules.h"
 #include "engine/script/services.h"
 
 #if ENG_ENABLE_REPLICATION
@@ -241,9 +242,10 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     for (const core::InstanceId player : others)
         (void)world.destroy(player);
 
-    // This machine decides the world again: its server code starts, fresh.
+    // This machine decides the world again: what a solo boot of its scene runs,
+    // starts (ADR 0137 §5).
     if (!wasAuthority)
-        host->restartServerCode();
+        host->returnToSolo();
     script::fireNetworkEvent(host->runtime().state(), event, reason);
 }
 
@@ -283,6 +285,9 @@ void NetworkSession::update()
             // the authority replicates is cleared, and server code with it.
             (void)replication::clearForReplica(host->world(), host->workspace());
 #endif
+            // And every script is checked against "live" for a replica (ADR
+            // 0137 §5): what does not run here stops.
+            script::reconcileAllScripts(host->runtime().state());
             m_connecting = true;
             m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
             m_address = request.address;
@@ -303,6 +308,7 @@ void NetworkSession::update()
                 break;
             }
             state.networkTopology = scene::NetworkTopology::Host;
+            script::reconcileAllScripts(host->runtime().state());
             setState(StateHosting);
             const std::array<core::I18nArg, 1> args{core::I18nArg{"port", static_cast<core::i64>(request.port)}};
             core::log(core::LogLevel::Info, ENG_TR("net.info.hosting"), args);

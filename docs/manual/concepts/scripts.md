@@ -4,9 +4,11 @@ A script is an **instance**. Its code is a property, `Source`, and it lives
 wherever it is put in the tree, the way a part does (ADRs 0050, 0092). There are
 two kinds:
 
-- **`Script` runs.** Every enabled `Script` starts on its own coroutine when
-  the world does. **Where it is decides on which machine it runs**: see
-  [Server code, client code](#server-code-client-code) below.
+- **`Script` runs.** An enabled `Script` in the world runs on its own
+  coroutine, from the moment it is there until it leaves (see
+  [Starting and stopping](#starting-and-stopping)). **Where it is decides on
+  which machine it runs**: see [Server code, client code](#server-code-client-code)
+  below.
 - **`ModuleScript` is required.** It never starts by itself. `require(module)`
   evaluates it once, and every later require of the same instance gives back the
   same value.
@@ -155,6 +157,29 @@ release, with a warning that says to move it.
 
 ## Starting and stopping
 
+**A script runs exactly while it is live** (ADR 0137). Live is all of:
+
+- `Enabled`, with code in `Source`;
+- in the world -- a descendant of the game;
+- under neither `ServerStorage` nor `ReplicatedStorage`, which hold templates
+  and modules. A template must not run itself, so a `Script` there never runs,
+  and a scene that has one says so in the log when it loads;
+- its side running on this machine (see
+  [Server code, client code](#server-code-client-code)).
+
+It starts when it becomes live and stops when it stops being live, whatever
+made it change. A clone parented into the world starts, and so does a stamp
+placed with `Instance.stamp` and a model carrying scripts moved out of storage.
+A script moved out of the world, into storage, or destroyed with what holds it
+stops. So does one on a side a Join or a Disconnect took off this machine.
+Moving a running script from one place in the world to another is not a stop:
+it keeps its run. Coming back after a stop is a fresh start, and the old run's
+handlers never come back beside the new one.
+
+A stop takes everything the run started with it: its threads, its connections'
+handlers, its render steps and its close handlers stop being called. What it
+built stays where it is.
+
 Each script starts on **its own coroutine**, deferred, in the tree's document
 order. `DataModel.Loaded` fires once every script has had its first resumption,
 so a `game.Loaded:Connect` written at file scope does run, and it observes a
@@ -175,7 +200,7 @@ carries on.
   undone. Its queued `task.defer`, `task.delay` and signal entries are dropped
   when they come up;
 - both take effect at the next deferred drain, in document order, so a replay
-  reproduces them;
+  reproduces them. So does a start or a stop that a move caused;
 - **while the editor is stopped**, `Enabled` is a scene edit. It decides what
   the next play starts.
 

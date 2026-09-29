@@ -45,8 +45,8 @@ instance.
 | `Workspace` | The 3D scene, and the spatial queries against it. |
 | `RunService` | The frame loop: the phase signals, and the clock they run on. |
 | `Lighting` | The sun, the sky, the fog and the exposure. |
-| `ReplicatedStorage` | What every machine keeps and nobody sees: templates to clone, `RemoteEvent`s. |
-| `ServerStorage` | What only the authority keeps. |
+| `ReplicatedStorage` | What every machine keeps and nobody sees: templates to clone, `RemoteEvent`s. A `Script` here does not run until a copy of it is in the world. |
+| `ServerStorage` | What only the authority keeps. A `Script` here does not run either. |
 | `NetworkService` | Who is playing, and whether this machine decides the world. |
 | `VoxelService` | The block world. |
 | `PhysicsService` | The simulation tick grid, and the controls that are not per-part. |

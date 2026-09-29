@@ -432,6 +432,16 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
         record->parent = core::InstanceId{};
     }
 
+    // The scripts it moved, for the runtime to start or stop (ADR 0137 §1).
+    if (m_scriptClass == InvalidClass)
+        m_scriptClass = m_classes.findId(m_atoms.lookup("Script"));
+    if (m_scriptClass != InvalidClass) {
+        for (const core::InstanceId member : subtree) {
+            if (classOf(member) == m_scriptClass)
+                m_movedScripts.push_back(member);
+        }
+    }
+
     // Every member's ancestry changed, not just the moved instance's, and each
     // is told about its OWN parent rather than about the moved one's.
     for (const core::InstanceId member : subtree) {
