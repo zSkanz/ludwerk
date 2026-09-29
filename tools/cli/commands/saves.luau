@@ -32,6 +32,16 @@ local function joined(...: string): string
     return path.format(path.join(...))
 end
 
+--- `text` as one folder's name, as the engine's `platform::pathComponent`
+--- makes it: separators, characters Windows refuses and control characters
+--- become `-`, and dots and spaces at either end go (audit T9).
+local function component(text: string): string
+    local out = string.gsub(text, '[%c/\\:%*%?"<>|]', "-")
+    out = string.gsub(out, "^[%. ]+", "")
+    out = string.gsub(out, "[%. ]+$", "")
+    return if out == "" then "game" else out
+end
+
 --- The player's folder for this game, as the engine's `preferencePath` asks
 --- SDL for it: the company, then the name.
 local function playerFolder(project: projectlib.Project): string?
@@ -43,7 +53,8 @@ local function playerFolder(project: projectlib.Project): string?
     if game == nil then
         return nil
     end
-    local owner = company or game
+    game = component(game :: string)
+    local owner = component(company or game :: string)
     if platform.win32 then
         local appdata = process.env.APPDATA
         return if appdata ~= nil then joined(appdata, owner, game, "saves") else nil

@@ -243,3 +243,27 @@ TEST_CASE("depth of field and sun rays are the machine's to turn off, by preset 
     CHECK_FALSE(config.graphics.depthOfField);
     CHECK_FALSE(config.graphics.sunRays);
 }
+
+TEST_CASE("numbers no setting can hold are ignored before they are converted (audit F14)")
+{
+    // A negative or huge value converted to an unsigned integer is undefined
+    // behaviour, not a large number; each of these is a key the file did not
+    // give, and the preset's value stands.
+    const ProjectDir project("[project]\n"
+                             "name = \"Wild\"\n"
+                             "[graphics]\n"
+                             "quality = \"high\"\n"
+                             "shadow_resolution = -5\n"
+                             "shadow_cascades = 1e30\n"
+                             "light_budget = -1\n"
+                             "[window]\n"
+                             "size = [1e30, 720]\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
+    const render::GraphicsSettings preset = render::settingsFor(render::QualityLevel::High);
+    CHECK(config.graphics.shadowTileResolution == preset.shadowTileResolution);
+    CHECK(config.graphics.shadowCascades == preset.shadowCascades);
+    CHECK(config.graphics.lightBudget == preset.lightBudget);
+    const app::ProjectConfig defaults = app::loadProjectConfig(std::filesystem::path("no-such-project-dir"), {});
+    CHECK(config.windowWidth == defaults.windowWidth);
+    CHECK(config.windowHeight == defaults.windowHeight);
+}

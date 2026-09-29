@@ -124,11 +124,15 @@ bool PhysicsSync::inWorld(core::InstanceId id) const
     // ten thousand times. A single-entry memo rather than a map: the parts of a
     // scene arrive in pool order, which is creation order, which groups them by
     // parent for free.
+    // **And for as long as the world is unchanged** (audit E15): a script
+    // between two passes of the same tick could move the parent out of the
+    // world, and the memo answered for it until the next tick began.
     const core::InstanceId parent = m_scene.parentOf(id);
-    if (parent == m_lastParent)
+    if (parent == m_lastParent && m_scene.mutations() == m_lastParentMutations)
         return m_lastParentInWorld;
 
     m_lastParent = parent;
+    m_lastParentMutations = m_scene.mutations();
     m_lastParentInWorld = parent == m_workspace || m_scene.isAncestorOf(m_workspace, parent);
     return m_lastParentInWorld;
 }
@@ -1854,7 +1858,7 @@ namespace {
 
 // "LGSS": a saved simulation, and the version of its layout.
 constexpr u32 SimulationMagic = 0x5353474Cu;
-constexpr u32 SimulationVersion = 1;
+constexpr u32 SimulationVersion = 2;
 
 template <class T>
 void put(std::vector<u8>& out, const T& value)
@@ -1930,6 +1934,12 @@ bool PhysicsSync::saveSimulation(std::vector<u8>& out) const
             put(out, body->angularVelocity);
             put(out, body->pendingImpulse);
             put(out, static_cast<u8>(body->active ? 1 : 0));
+            // **Until when an anchored part stays kinematic** (audit E7): the
+            // tick a script's write moved it, part of what the next ticks do
+            // with it, and a restore that kept the later value re-simulated a
+            // platform as moving before anything had moved it.
+            const bool recorded = id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation;
+            put(out, recorded ? m_bodies[id.index].movingUntilTick : u64{0});
         }
         if (character != nullptr) {
             put(out, static_cast<u8>(character->grounded ? 1 : 0));
@@ -1968,6 +1978,7 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
         core::Vec3 angular{};
         core::Vec3 impulse{};
         u8 active = 0;
+        u64 movingUntil = 0;
         u8 grounded = 0;
         i32 state = 0;
         core::InstanceId groundPart;
@@ -1985,8 +1996,9 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             return false;
         if ((entry.has & 1) != 0 && !take(bytes, at, entry.cframe))
             return false;
-        if ((entry.has & 2) != 0 && (!take(bytes, at, entry.linear) || !take(bytes, at, entry.angular) ||
-                                     !take(bytes, at, entry.impulse) || !take(bytes, at, entry.active)))
+        if ((entry.has & 2) != 0 &&
+            (!take(bytes, at, entry.linear) || !take(bytes, at, entry.angular) || !take(bytes, at, entry.impulse) ||
+             !take(bytes, at, entry.active) || !take(bytes, at, entry.movingUntil)))
             return false;
         if ((entry.has & 4) != 0 &&
             (!take(bytes, at, entry.grounded) || !take(bytes, at, entry.state) || !take(bytes, at, entry.groundPart) ||
@@ -2029,6 +2041,8 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             body->angularVelocity = entry.angular;
             body->pendingImpulse = entry.impulse;
             body->active = entry.active != 0;
+            if (entry.id.index < m_bodies.size() && m_bodies[entry.id.index].generation == entry.id.generation)
+                m_bodies[entry.id.index].movingUntilTick = entry.movingUntil;
         }
         if (CharacterBodyComponent* character = m_scene.characterBodies().find(entry.id); character != nullptr) {
             character->grounded = entry.grounded != 0;

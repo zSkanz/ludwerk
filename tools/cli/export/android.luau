@@ -113,23 +113,43 @@ local function readStore(): { [string]: Passwords }
     return out
 end
 
---- Keeps a keystore's passwords in the per-user store, keyed by its absolute
---- path, so a release export of any project that names it finds them.
-local function rememberPasswords(keystore: string, store: string, key: string)
-    local entries = readStore()
-    entries[keystore] = { store = store, key = key }
-    fs.createDirectory(preferencesFolder(), { makeParents = true })
-    fs.writeStringToFile(passwordStore(), json.serialize(entries :: any))
+--- **Whose passwords these are**: the project that remembered them and the
+--- keystore, both absolute (audit T5). Keyed by the keystore alone, any
+--- project that named its path -- one downloaded, say -- signed with a key
+--- whose password was remembered for another.
+local function storeKey(project: string, keystore: string): string
+    local function absolute(text: string): string
+        local resolved = path.format(path.resolve(text))
+        return if platform.win32 then string.lower(resolved) else resolved
+    end
+    return `{absolute(project)}|{absolute(keystore)}`
 end
 
---- A release key's passwords: the environment, then the per-user store.
-local function releasePasswords(keystore: string): Passwords?
+--- Keeps a keystore's passwords in the per-user store, for `project` alone.
+--- The file is the user's own: under their profile on Windows, and readable
+--- by them alone elsewhere (audit T6). It is not encrypted -- a key kept
+--- beside what it opens would protect nothing -- which is why remembering is
+--- a choice the person makes, and the environment is the other way in.
+local function rememberPasswords(project: string, keystore: string, store: string, key: string)
+    local entries = readStore()
+    entries[storeKey(project, keystore)] = { store = store, key = key }
+    fs.createDirectory(preferencesFolder(), { makeParents = true })
+    local file = passwordStore()
+    fs.writeStringToFile(file, json.serialize(entries :: any))
+    if not platform.win32 then
+        process.run({ "chmod", "600", file })
+    end
+end
+
+--- A release key's passwords: the environment, then the per-user store's for
+--- this project and this keystore.
+local function releasePasswords(project: string, keystore: string): Passwords?
     local store = process.env.ENG_ANDROID_KEYSTORE_PASSWORD
     if store ~= nil and store ~= "" then
         local key = process.env.ENG_ANDROID_KEY_PASSWORD
         return { store = store, key = if key ~= nil and key ~= "" then key else store }
     end
-    return readStore()[keystore]
+    return readStore()[storeKey(project, keystore)]
 end
 
 --- Where a build of the engine keeps its toolchains, then where an

@@ -145,7 +145,12 @@ ENG_ANDROID_KEYSTORE_PASSWORD=... ludwerk keystore remember --out keys/release.k
 
 Makes the key an Android game is released with, and refuses to replace one
 that exists. The password comes from the environment, never the command line;
-`--remember` keeps it in the per-user store so a release export finds it.
+`--remember` keeps it in the per-user store so a release export finds it. A
+remembered password is for one project and one keystore: `--project` names
+the project (the current folder when it is left out), and a release export of
+another project that names the same keystore does not find it. The store is
+a file only you can read, not an encrypted one; the environment variable is
+the way to sign without it.
 
 ### ludwerk android install-tools
 

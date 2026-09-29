@@ -62,12 +62,21 @@ class FrameClock
 public:
     [[nodiscard]] bool synthetic(bool headless, bool devSession, bool networked) noexcept
     {
+        const bool before = m_real;
         m_real = m_real || !headless || devSession || networked;
+        m_switched = m_asked && before != m_real;
+        m_asked = true;
         return !m_real;
     }
 
+    // Whether the last `synthetic` changed the answer: the frame the scheduler
+    // must be told the clock it is fed is another clock (`rebase`).
+    [[nodiscard]] bool switched() const noexcept { return m_switched; }
+
 private:
     bool m_real = false;
+    bool m_asked = false;
+    bool m_switched = false;
 };
 
 class FrameScheduler
@@ -87,6 +96,16 @@ public:
     // that debt is the same number of seconds whatever the tick becomes.
     void setFixedDt(f64 seconds) noexcept { timing_.fixedDt = seconds; }
 
+    // **The clock it is fed changed** (audit A9): the synthetic clock counts
+    // from zero and the real one from boot, so the first real frame after a
+    // headless run joined a match measured the machine's uptime -- "Frame took
+    // 5391574 ms". The next frame measures from `nowNs` instead.
+    void rebase(u64 nowNs) noexcept
+    {
+        if (started_)
+            lastNs_ = nowNs;
+    }
+
     // How long until the accumulator owes the next tick, at `nowNs`. Zero when
     // one is already owed.
     [[nodiscard]] u64 nanosUntilNextTick(u64 nowNs) const noexcept;
@@ -102,6 +121,10 @@ private:
     f64 accumulator_ = 0.0;
     u64 totalTicks_ = 0;
     u64 totalFrames_ = 0;
+    // When the catch-up warning was last written, so a machine that cannot
+    // keep up says so every few seconds and not every frame (audit A14).
+    u64 lastWarnNs_ = 0;
+    bool warned_ = false;
 };
 
 } // namespace engine::app

@@ -32,6 +32,9 @@ export type Options = {
     -- In years.
     validity: number?,
     remember: boolean,
+    -- The project the remembered passwords are for (audit T5); the current
+    -- folder when not given.
+    project: string?,
 }
 
 local function run(options: Options): number
@@ -81,7 +84,7 @@ local function run(options: Options): number
         return 1
     end
     if options.remember then
-        android.rememberPasswords(out, password :: string, keyPassword :: string)
+        android.rememberPasswords(options.project or ".", out, password :: string, keyPassword :: string)
         print(tr("cli.keystore.remembered"))
     end
     print(tr("cli.keystore.created", { path = out, alias = alias }))
@@ -93,7 +96,7 @@ end
 --- passwords, from the same two variables, in the per-user store -- what the
 --- Export window's "remember on this machine" does once a release export has
 --- proved the password opens the key.
-local function remember(out: string?): number
+local function remember(out: string?, project: string?): number
     local password = process.env.ENG_ANDROID_KEYSTORE_PASSWORD
     if out == nil or password == nil or password == "" then
         print(tr("cli.keystore.err.usage"))
@@ -106,6 +109,7 @@ local function remember(out: string?): number
     end
     local keyPassword = process.env.ENG_ANDROID_KEY_PASSWORD
     android.rememberPasswords(
+        project or ".",
         keystore,
         password :: string,
         if keyPassword ~= nil and keyPassword ~= "" then keyPassword else password :: string

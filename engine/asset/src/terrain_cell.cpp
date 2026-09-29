@@ -634,7 +634,7 @@ std::optional<core::EngineError> decodeTerrainCell(std::span<const std::byte> by
         key.x = static_cast<i32>(reader.u32v());
         key.y = static_cast<i32>(reader.u32v());
         key.z = static_cast<i32>(reader.u32v());
-        if (at > 0 && !(keys[at - 1] < key))
+        if ((at > 0 && !(keys[at - 1] < key)) || !chunkKeyInRange(key))
             return malformed();
         keys.push_back(key);
     }

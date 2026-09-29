@@ -1,5 +1,6 @@
 #include "engine/app/project_config.h"
 
+#include <cmath>
 #include <fstream>
 #include <span>
 #include <sstream>
@@ -32,17 +33,29 @@ using render::GraphicsSettings;
 // command line. Every key is optional and an absent one leaves the preset's
 // value, which is what makes `[graphics] quality = "low"` plus one override a
 // two-line section rather than a full recital.
+// **A number the file gives, if it is one this key can hold** (audit F14):
+// checked as the double it was read as, before any cast -- a negative, a huge
+// or a NaN `u32` conversion is undefined behaviour, not a large number. One
+// outside the range is ignored, as a key the file did not give.
+[[nodiscard]] std::optional<f64> numberIn(const core::TomlDocument& document, const char* key, f64 lowest, f64 highest)
+{
+    const std::optional<f64> value = document.number(key);
+    if (!value.has_value() || !std::isfinite(*value) || *value < lowest || *value > highest)
+        return std::nullopt;
+    return value;
+}
+
 void applyFile(const core::TomlDocument& document, GraphicsSettings& settings)
 {
-    if (const std::optional<f64> value = document.number("graphics.render_scale"))
+    if (const std::optional<f64> value = numberIn(document, "graphics.render_scale", 0.05, 4.0))
         settings.renderScale = static_cast<f32>(*value);
-    if (const std::optional<f64> value = document.number("graphics.shadow_resolution"))
+    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_resolution", 0.0, 16384.0))
         settings.shadowTileResolution = static_cast<u32>(*value);
-    if (const std::optional<f64> value = document.number("graphics.shadow_cascades"))
+    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_cascades", 0.0, 16.0))
         settings.shadowCascades = static_cast<u32>(*value);
-    if (const std::optional<f64> value = document.number("graphics.shadow_distance"))
+    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_distance", 0.0, 1.0e6))
         settings.shadowDistance = static_cast<f32>(*value);
-    if (const std::optional<f64> value = document.number("graphics.light_budget"))
+    if (const std::optional<f64> value = numberIn(document, "graphics.light_budget", 0.0, 65536.0))
         settings.lightBudget = static_cast<u32>(*value);
     if (const std::optional<bool> value = document.boolean("graphics.bloom"))
         settings.bloom = *value;
@@ -189,16 +202,18 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         }
     }
 
+    // A window from a pixel to sixteen thousand, checked before the cast.
+    const auto side = [](f64 value) { return std::isfinite(value) && value >= 1.0 && value <= 16384.0; };
     const std::span<const f64> size = document.numbers("window.size");
-    if (size.size() == 2) {
+    if (size.size() == 2 && side(size[0]) && side(size[1])) {
         config.windowWidth = static_cast<i32>(size[0]);
         config.windowHeight = static_cast<i32>(size[1]);
     }
     // **`width` and `height` are `size` too**, which ten examples wrote and
     // nothing read. `size` wins when a file says both.
-    else if (const std::optional<f64> width = document.number("window.width"),
-             height = document.number("window.height");
-             width.has_value() && height.has_value()) {
+    else if (const std::optional<f64> width = numberIn(document, "window.width", 1.0, 16384.0),
+             height = numberIn(document, "window.height", 1.0, 16384.0);
+             size.size() != 2 && width.has_value() && height.has_value()) {
         config.windowWidth = static_cast<i32>(*width);
         config.windowHeight = static_cast<i32>(*height);
     }

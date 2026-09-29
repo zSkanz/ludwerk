@@ -223,10 +223,14 @@ void extractVoxels(std::string_view scene, const PartitionSettings& settings, Pa
         // inline, and the reader says what is wrong, once, where it always has.
         if (!bytes.has_value() || !asset::decodeVoxelChunk(*bytes, blocks))
             return;
-        grid.setChunk(asset::VoxelChunkKey{static_cast<core::i32>(chunk["x"].asNumber()),
-                                           static_cast<core::i32>(chunk["y"].asNumber()),
-                                           static_cast<core::i32>(chunk["z"].asNumber())},
-                      blocks);
+        // Held to the block world's reach before the cast: a double past an
+        // `i32` converts with undefined behaviour (audit F12).
+        const auto coordinate = [&chunk](const char* axis) {
+            const double value = chunk[axis].asNumber();
+            return std::isfinite(value) && std::fabs(value) <= asset::MaxVoxelChunkKey ? static_cast<core::i32>(value)
+                                                                                       : asset::MaxVoxelChunkKey + 1;
+        };
+        grid.setChunk(asset::VoxelChunkKey{coordinate("x"), coordinate("y"), coordinate("z")}, blocks);
     }
 
     const std::vector<asset::VoxelCell> cells = asset::splitVoxels(grid, blockSize);

@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "engine/app/frame_scheduler.h"
+#include "engine/core/log.h"
 
 using namespace engine;
 
@@ -39,4 +40,53 @@ TEST_CASE("a headless process that has had real time keeps it")
 
     app::FrameClock windowed;
     CHECK_FALSE(windowed.synthetic(/*headless=*/false, false, false));
+}
+
+TEST_CASE("a clock that becomes another clock is measured from the switch, not from boot (audit A9)")
+{
+    // A headless run on the synthetic clock, then a `Join`: the real clock is
+    // the machine's uptime, and the first real frame took all of it -- "Frame
+    // took 5391574 ms", clamped, and the catch-up ticks run for nothing.
+    app::FrameClock clock;
+    app::FrameScheduler scheduler;
+    REQUIRE(clock.synthetic(true, false, false));
+    CHECK_FALSE(clock.switched());
+    (void)scheduler.beginFrame(0);
+    (void)scheduler.beginFrame(16'666'667ull);
+
+    const engine::core::u64 uptime = 5'391'574'000'000ull;
+    REQUIRE_FALSE(clock.synthetic(true, false, /*networked=*/true));
+    REQUIRE(clock.switched());
+    scheduler.rebase(uptime);
+    const app::Frame joined = scheduler.beginFrame(uptime);
+    CHECK_FALSE(joined.clamped);
+    CHECK(joined.renderDt == 0.0);
+
+    const app::Frame next = scheduler.beginFrame(uptime + 16'666'667ull);
+    CHECK_FALSE(next.clamped);
+    CHECK(next.simTicks == 1);
+    // And only on the frame it changed.
+    (void)clock.synthetic(true, false, true);
+    CHECK_FALSE(clock.switched());
+}
+
+TEST_CASE("a machine that cannot keep up says so every few seconds, not every frame (audit A14)")
+{
+    int warnings = 0;
+    const engine::core::LogSink previous =
+        engine::core::setLogSink([&warnings](engine::core::LogLevel level, std::string_view) {
+            if (level == engine::core::LogLevel::Warn)
+                ++warnings;
+        });
+    app::FrameScheduler scheduler;
+    engine::core::u64 now = 0;
+    (void)scheduler.beginFrame(now);
+    // Two hundred frames of 100 ms each: every one clamped, twenty seconds.
+    for (int frame = 0; frame < 200; ++frame) {
+        now += 100'000'000ull;
+        CHECK(scheduler.beginFrame(now).clamped);
+    }
+    engine::core::setLogSink(previous);
+    CHECK(warnings >= 4);
+    CHECK(warnings <= 5);
 }

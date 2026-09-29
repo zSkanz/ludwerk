@@ -8,7 +8,9 @@
 	token on its command line, and receives everything over that one connection.
 	Every other client -- the M3 gate's end-to-end test today, the overlay
 	console later -- is an ordinary WebSocket client of the same server and gets
-	the engine's replies relayed verbatim.
+	the engine's replies relayed verbatim, the engine's token taken out. What it
+	sends reaches the engine only once it has proved it holds the token too, with
+	`{ type = "hello", role = "observer", token = ... }` (audit T4).
 
 	The watcher does not trust its own events. `fs.watch` reports the top-level
 	entry rather than the changed file, fires two to six times per save, and on
@@ -18,6 +20,7 @@
 	is the real changed-file list.
 ]]
 
+local crypto = require("@lute/crypto")
 local fsRaw = require("@lute/fs")
 local json = require("@std/json")
 local net = require("@lute/net")
@@ -50,19 +53,31 @@ export type Handle = {
 
 local DefaultDebounce = 0.05
 
---- Not a secret in the cryptographic sense and not pretending to be one. What
---- it buys is that another process on this machine cannot drive your engine by
---- guessing a port, which is the whole exposure a loopback listener has.
----
---- Drawn from `math.random` rather than from a clock: `time.now()` returns an
---- `instant` userdata that `string.format` will not take, and the value here
---- needs to be unguessable rather than unique-in-time.
+--- What buys that another process on this machine -- or a web page, which can
+--- open a WebSocket to a loopback port -- cannot drive your engine by finding
+--- the port, the whole exposure a loopback listener has. **From the system's
+--- random source** (audit T4): `math.random` is a generator a watcher of a few
+--- outputs can predict, and it was seeded once per process.
 local function mintToken(): string
+    local key = crypto.secretbox.keygen()
     local parts: { string } = {}
-    for _ = 1, 8 do
-        table.insert(parts, string.format("%04x", math.random(0, 0xFFFF)))
+    for at = 0, buffer.len(key) - 1 do
+        table.insert(parts, string.format("%02x", buffer.readu8(key, at)))
     end
     return table.concat(parts)
+end
+
+--- The engine's `hello` without its token, which is the one thing about it an
+--- observer must not learn (audit T4): it was relayed to every observer and
+--- replayed to each one that connected, and a client holding it could claim to
+--- be the engine the moment the real one dropped.
+local function withoutToken(text: string): string
+    local message = json.asObject(json.deserialize(text))
+    if message == nil or message.token == nil then
+        return text
+    end
+    message.token = nil
+    return json.serialize(message :: any)
 end
 
 local function start(options: Options): Handle
@@ -71,6 +86,9 @@ local function start(options: Options): Handle
 
     local engineSocket: net.ServerWebSocket? = nil
     local observers: { net.ServerWebSocket } = {}
+    -- The observers that proved they hold the token, and so may ask the
+    -- engine for things (audit T4). Any other may listen and nothing more.
+    local trusted: { [net.ServerWebSocket]: boolean } = {}
     local nextId = 1
 
     -- "The engine is attached, and this is who it is" is STATE, not an event.
@@ -87,10 +105,11 @@ local function start(options: Options): Handle
     end
 
     local function handleFromEngine(text: string)
-        relayToObservers(text)
         if string.find(text, '"type":"hello"', 1, true) ~= nil then
+            text = withoutToken(text)
             lastHello = text
         end
+        relayToObservers(text)
 
         local decoded = json.deserialize(text)
         local message = json.asObject(decoded)
@@ -144,7 +163,18 @@ local function start(options: Options): Handle
                     return
                 end
 
-                if engineSocket ~= nil and message ~= nil then
+                -- An observer proves itself the same way, and only then is heard.
+                if
+                    message ~= nil
+                    and message.type == "hello"
+                    and message.role == "observer"
+                    and message.token == options.token
+                then
+                    trusted[socket] = true
+                    return
+                end
+
+                if engineSocket ~= nil and message ~= nil and trusted[socket] then
                     (engineSocket :: net.ServerWebSocket):send(text)
                 end
             end,
@@ -153,6 +183,7 @@ local function start(options: Options): Handle
                     engineSocket = nil
                     return
                 end
+                trusted[socket] = nil
                 for index, observer in observers do
                     if observer == socket then
                         table.remove(observers, index)

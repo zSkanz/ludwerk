@@ -19,6 +19,7 @@
 	which the Export window's **Install** button says before it runs this.
 ]]
 
+local crypto = require("@lute/crypto")
 local fs = require("@std/fs")
 local platform = require("@std/system/platform")
 local process = require("@std/process")
@@ -36,6 +37,19 @@ local CmdlineToolsBuild = "13114758"
 local GradleVersion = "8.12"
 local SdkPackages = { "platforms;android-35", "build-tools;35.0.0", "platform-tools" }
 
+-- **What each pinned archive's bytes are** (audit T2), SHA-256: the JDK's as
+-- Adoptium publishes it, Gradle's as Gradle does, and the command-line tools'
+-- as computed from the archives whose SHA-1 Google's repository lists. A
+-- download that is not these bytes is not installed, and neither is a cached
+-- one -- a truncated or replaced archive was trusted for ever.
+local Sha256: { [string]: string } = {
+    ["jdk-windows"] = "e53a79c3c3d86865bd7e787903884331068e71321714ffd44f145785affc7cb0",
+    ["jdk-linux"] = "3808d1d15e3ec6bd5b84057fb5d84c33d8a1536a258146bcea2e603fc726e08e",
+    ["gradle"] = "7a00d51fb93147819aab76024feece20b6b84e420694101f276be952e08bef03",
+    ["cmdline-tools-windows"] = "98b565cb657b012dae6794cefc0f66ae1efb4690c699b78a614b4a6a3505b003",
+    ["cmdline-tools-linux"] = "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee",
+}
+
 local function exe(name: string): string
     return if platform.win32 then `{name}.exe` else name
 end
@@ -48,16 +62,39 @@ local function step(message: string)
     print(tr("cli.android.step", { step = message }))
 end
 
---- `url` into `file`, unless it is already there.
-local function download(url: string, file: string): string?
+--- A file's SHA-256, as lowercase hex.
+local function sha256Of(file: string): string
+    local digest = crypto.digest(crypto.hash.sha256, fs.readFileToString(file))
+    local hex = table.create(buffer.len(digest))
+    for at = 0, buffer.len(digest) - 1 do
+        table.insert(hex, string.format("%02x", buffer.readu8(digest, at)))
+    end
+    return table.concat(hex)
+end
+
+--- `url` into `file`, unless it is already there with the bytes `expected`
+--- names. A cached file that is not is downloaded again; a download that is
+--- not is refused and removed.
+local function download(url: string, file: string, expected: string): string?
     if fs.exists(file) then
-        return nil
+        if sha256Of(file) == expected then
+            return nil
+        end
+        fs.remove(file)
     end
     step(tr("cli.android.downloading", { url = url }))
     local partial = `{file}.partial`
+    if fs.exists(partial) then
+        fs.remove(partial)
+    end
     local fetched = process.run({ "curl", "-fL", "--retry", "3", "-o", partial, url })
     if not fetched.ok then
         return fetched.stdout .. fetched.stderr .. "\n" .. tr("cli.android.err.download", { url = url })
+    end
+    local found = sha256Of(partial)
+    if found ~= expected then
+        fs.remove(partial)
+        return tr("cli.android.err.checksum", { url = url, expected = expected, found = found })
     end
     fs.copy(partial, file)
     fs.remove(partial)
@@ -105,7 +142,7 @@ local function installJdk(toolchains: string, downloads: string): (string?, stri
     local archive = projectlib.joined(downloads, `jdk-{JdkVersion}.{extension}`)
     local encoded = string.gsub(JdkVersion, "%+", "%%2B")
     local url = `https://api.adoptium.net/v3/binary/version/jdk-{encoded}/{osName()}/x64/jdk/hotspot/normal/eclipse`
-    local failed = download(url, archive)
+    local failed = download(url, archive, Sha256[`jdk-{osName()}`])
     if failed ~= nil then
         return nil, failed
     end
@@ -126,7 +163,8 @@ local function installGradle(toolchains: string, downloads: string, jdk: string)
         return nil
     end
     local archive = projectlib.joined(downloads, `gradle-{GradleVersion}-bin.zip`)
-    local failed = download(`https://services.gradle.org/distributions/gradle-{GradleVersion}-bin.zip`, archive)
+    local failed =
+        download(`https://services.gradle.org/distributions/gradle-{GradleVersion}-bin.zip`, archive, Sha256.gradle)
     if failed ~= nil then
         return failed
     end
@@ -144,7 +182,8 @@ local function installCmdlineTools(sdk: string, downloads: string, jdk: string):
     local archive = projectlib.joined(downloads, `commandlinetools-{osName()}-{CmdlineToolsBuild}.zip`)
     local failed = download(
         `https://dl.google.com/android/repository/commandlinetools-{if platform.win32 then "win" else "linux"}-{CmdlineToolsBuild}_latest.zip`,
-        archive
+        archive,
+        Sha256[`cmdline-tools-{osName()}`]
     )
     if failed ~= nil then
         return nil, failed

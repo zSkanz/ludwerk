@@ -1889,6 +1889,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const bool syntheticClock =
             frameClock.synthetic(options.headless, !options.devControlUrl.empty(), network.active());
         const u64 nowNs = syntheticClock ? scheduler.totalFrames() * headlessStepNs : platform::nowNs();
+        if (frameClock.switched())
+            scheduler.rebase(nowNs);
 
         const Frame frame = scheduler.beginFrame(nowNs);
 
@@ -5295,6 +5297,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // a whole core.
         if (options.headless && !syntheticClock)
             platform::sleepNs(scheduler.nanosUntilNextTick(platform::nowNs()));
+        // **Nor a window with nothing to present to** (audit A13): a minimized
+        // window acquires no image, so nothing waited for the display, and the
+        // loop spun as fast as it could on a whole core for a game nobody saw.
+        else if (!options.headless && !target.valid())
+            platform::sleepNs(std::max<u64>(scheduler.nanosUntilNextTick(platform::nowNs()), 1'000'000ull));
 
         if (options.frames != 0 && options.exitAfterFrames && frame.index + 1 >= options.frames)
             quit = true;

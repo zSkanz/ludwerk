@@ -41,6 +41,29 @@ namespace engine::platform {
 // No transcoding and no newline translation: the bytes are the file's.
 [[nodiscard]] bool readTextFile(const std::filesystem::path& path, std::string& out);
 
+// **A file's bytes mapped into memory, read only** (audit F10): a shipped
+// game's content pack is gigabytes, and reading it whole at mount held all of
+// it for the life of the process. The system pages in what is touched and can
+// drop it again. Only a real file maps -- an APK entry is not one -- and
+// `open` answers false for anything it cannot map, so the caller reads it the
+// ordinary way instead.
+class MappedFile
+{
+public:
+    MappedFile() = default;
+    ~MappedFile() { close(); }
+    MappedFile(const MappedFile&) = delete;
+    MappedFile& operator=(const MappedFile&) = delete;
+
+    [[nodiscard]] bool open(const std::filesystem::path& path);
+    void close() noexcept;
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return {m_data, m_size}; }
+
+private:
+    const std::byte* m_data = nullptr;
+    std::size_t m_size = 0;
+};
+
 // Whether a file can be opened for reading.
 //
 // **Opens and closes rather than stats**, for the reason `readFile` exists at
@@ -141,6 +164,12 @@ namespace engine::platform {
 // Removes a file, or an empty directory. True when it is gone, including when
 // it was never there.
 bool removeFile(const std::filesystem::path& path);
+
+// `text` as ONE folder's name: a path separator, a character Windows refuses
+// in a name and a control character become `-`, and dots and spaces at either
+// end go. Never empty -- `game` stands for nothing left. `ludwerk saves`
+// builds the same folder the same way.
+[[nodiscard]] std::string pathComponent(std::string_view text);
 
 // **Where a game keeps its own files on this machine**, by the company and the
 // name it declares (ADR 0111): `%APPDATA%/<company>/<name>/` on Windows,

@@ -9118,7 +9118,9 @@ void finishExport(ExportUi& ui)
             options.workingDirectory = ui.cli->workingDirectory;
             options.environment.emplace_back("ENG_ANDROID_KEYSTORE_PASSWORD", std::string(ui.password.data()));
             (void)platform::runProcess(
-                ui.cli->command({"keystore", "remember", "--out", (ui.root / ui.keystore.data()).string()}), options);
+                ui.cli->command({"keystore", "remember", "--out", (ui.root / ui.keystore.data()).string(), "--project",
+                                 ui.root.string()}),
+                options);
         }
     }
     else if (const ExportStep* failed = ui.progress.failure()) {
@@ -9470,7 +9472,8 @@ void drawKeystoreDialog(ExportUi& ui)
                 "--alias",    ui.newAlias.data(),
                 "--out",      (ui.root / "keys" / (std::string(ui.newAlias.data()) + ".keystore")).string(),
                 "--name",     ui.newName.data(),
-                "--validity", std::to_string(ui.newYears)};
+                "--validity", std::to_string(ui.newYears),
+                "--project",  ui.root.string()};
             if (ui.newRemember)
                 arguments.emplace_back("--remember");
             ui.keystoreOutput.clear();

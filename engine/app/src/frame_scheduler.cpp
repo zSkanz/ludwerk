@@ -51,7 +51,10 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     totalTicks_ += frame.simTicks;
     frame.alpha = static_cast<f32>(accumulator_ / timing_.fixedDt);
 
-    if (frame.clamped) {
+    constexpr u64 WarnEveryNs = 5'000'000'000ull;
+    if (frame.clamped && (!warned_ || nowNs - lastWarnNs_ >= WarnEveryNs)) {
+        warned_ = true;
+        lastWarnNs_ = nowNs;
         const std::array<core::I18nArg, 2> args{core::I18nArg{"ticks", static_cast<core::i64>(frame.simTicks)},
                                                 core::I18nArg{"ms", frame.renderDt * 1000.0}};
         core::log(core::LogLevel::Warn, ENG_TR("engine.frame.warn.catch_up_clamped"), args);

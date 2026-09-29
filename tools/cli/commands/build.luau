@@ -91,17 +91,38 @@ end
 
 --- What the game is called and who made it (ADR 0104 §1). The file name is
 --- sanitised, because it becomes a path: `My Game/2` would otherwise make one.
+---
+--- **Every field is held to what it is written into** (audit T3, T7): the
+--- version names the archive and the APK, so it is a file name's characters
+--- too -- `../../x` put them outside `dist/` -- and no field may carry a control
+--- character, which in a Linux `.desktop` file is a line of its own.
+local function withoutControls(text: string?): string?
+    if text == nil then
+        return nil
+    end
+    local cleaned = string.gsub(text, "%c", "")
+    return if cleaned == "" then nil else cleaned
+end
+
 local function identityOf(project: projectlib.Project): desktop.Identity
     local section = project.config.project
-    local displayName = stringField(section, "name") or path.basename(project.root) or "game"
+    local displayName = withoutControls(stringField(section, "name")) or path.basename(project.root) or "game"
     local fileName = string.gsub(displayName, "[^%w_%-%.]", "-")
     local icon = stringField(section, "icon")
     local resolved = if icon ~= nil then projectlib.joined(project.root, icon) else nil
+    local version = stringField(section, "version")
+    if version ~= nil then
+        version = string.gsub(version, "[^%w_%-%.%+]", "-")
+        -- Dots alone are a directory's name; a version is never only dots.
+        if string.match(version :: string, "^%.+$") ~= nil then
+            version = nil
+        end
+    end
     return {
         displayName = displayName,
-        fileName = if fileName == "" then "game" else fileName,
-        version = stringField(section, "version"),
-        company = stringField(section, "company"),
+        fileName = if fileName == "" or string.match(fileName, "^%.+$") ~= nil then "game" else fileName,
+        version = version,
+        company = withoutControls(stringField(section, "company")),
         icon = if resolved ~= nil and fs.exists(resolved) then resolved else nil,
     }
 end
@@ -190,7 +211,10 @@ local function run(options: Options): number
     end
 
     local identity = identityOf(project)
-    local content = buildAssets.contentDirectory(project)
+    local content, contentOutside = buildAssets.contentDirectory(project)
+    if content == nil then
+        return fail(contentOutside :: string)
+    end
     local exportRoot = projectlib.joined(project.root, ".engine", "export")
 
     -- **check**: the project's settings, the player, and the tools the target needs.
@@ -418,7 +442,7 @@ local function run(options: Options): number
             if settings.release then
                 keystore = settings.keystore :: string
                 keyAlias = settings.keyAlias :: string
-                passwords = android.releasePasswords(keystore)
+                passwords = android.releasePasswords(project.root, keystore)
                 if passwords == nil then
                     return tr("cli.build.err.android_no_password", { path = keystore })
                 end
@@ -459,6 +483,12 @@ local function run(options: Options): number
                 return android.verify(tools, apk)
             end)
         then
+            -- **Not left beside the good ones** (audit T10): an APK whose
+            -- signature did not verify sat in `dist/` under the game's name,
+            -- the file a person picks up and installs.
+            if apk ~= "" and fs.exists(apk) then
+                fs.remove(apk)
+            end
             return 1
         end
         progress.note(reporter, tr("cli.build.done_android", { path = apk }))

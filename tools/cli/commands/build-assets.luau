@@ -14,6 +14,8 @@
 ]]
 
 local fs = require("@std/fs")
+local path = require("@std/path")
+local platform = require("@std/system/platform")
 local process = require("@std/process")
 
 local catalog = require("../catalog")
@@ -37,12 +39,25 @@ local DefaultOutputDir = ".engine"
 --- `[assets] content = "..."` in project.toml, or `content/`. A project that
 --- keeps its source art elsewhere says so once rather than passing a flag
 --- every time.
-local function contentDirectory(project: projectlib.Project): string
+---
+--- **Inside the project, or refused** (audit T11): `content = "../../.ssh"`
+--- packed whatever it named into the game, and a project someone downloaded
+--- could ship the builder's files to its players.
+local function contentDirectory(project: projectlib.Project): (string?, string?)
     local assets = project.config.assets
-    if typeof(assets) == "table" and typeof(assets.content) == "string" then
-        return projectlib.joined(project.root, assets.content)
+    if not (typeof(assets) == "table" and typeof(assets.content) == "string") then
+        return projectlib.joined(project.root, DefaultContentDir), nil
     end
-    return projectlib.joined(project.root, DefaultContentDir)
+    local wanted = path.format(path.resolve(projectlib.joined(project.root, assets.content)))
+    local root = path.format(path.resolve(project.root))
+    local fold = function(text: string): string
+        return if platform.win32 then string.lower((string.gsub(text, "\\", "/"))) else text
+    end
+    local inside = fold(wanted) == fold(root) or string.sub(fold(wanted), 1, #root + 1) == fold(root) .. "/"
+    if not inside then
+        return nil, tr("cli.assets.err.content_outside", { path = assets.content })
+    end
+    return wanted, nil
 end
 
 local function runCompiler(tool: string, input: string, pack: string, manifest: string): (boolean, string)
@@ -65,7 +80,11 @@ local function run(options: Options): number
         return 1
     end
 
-    local content = contentDirectory(project)
+    local content, outside = contentDirectory(project)
+    if content == nil then
+        print(outside)
+        return 1
+    end
     if not fs.exists(content) then
         -- Named rather than silently producing an empty pack. A build that ran,
         -- said nothing and produced nothing is the failure this project keeps

@@ -122,9 +122,30 @@ bool removeFile(const std::filesystem::path& path)
     return !SDL_GetPathInfo(toUtf8(path).c_str(), &info);
 }
 
+std::string pathComponent(std::string_view text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        const bool reserved = byte < 0x20 || byte == 0x7F || c == '/' || c == '\\' || c == ':' || c == '*' ||
+                              c == '?' || c == '"' || c == '<' || c == '>' || c == '|';
+        out.push_back(reserved ? '-' : c);
+    }
+    // Windows drops a trailing dot or space from a name, and a name of dots
+    // alone is this directory or its parent.
+    while (!out.empty() && (out.back() == '.' || out.back() == ' '))
+        out.pop_back();
+    while (!out.empty() && (out.front() == '.' || out.front() == ' '))
+        out.erase(out.begin());
+    return out.empty() ? std::string("game") : out;
+}
+
 std::filesystem::path preferencePath(std::string_view company, std::string_view name)
 {
-    char* pref = SDL_GetPrefPath(std::string(company).c_str(), std::string(name).c_str());
+    // **Each part one folder** (audit T9): a company of `../..` put a game's
+    // saves wherever it pointed, and `ludwerk saves clear` followed it there.
+    char* pref = SDL_GetPrefPath(pathComponent(company).c_str(), pathComponent(name).c_str());
     if (pref == nullptr)
         return {};
     std::filesystem::path out(pref);

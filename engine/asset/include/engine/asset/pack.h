@@ -30,6 +30,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -38,6 +39,10 @@
 #include "engine/core/content_hash.h"
 #include "engine/core/error.h"
 #include "engine/core/types.h"
+
+namespace engine::platform {
+class MappedFile;
+} // namespace engine::platform
 
 namespace engine::asset {
 
@@ -159,7 +164,8 @@ private:
 // Whole-file rather than a file handle with seeks: a pack is read by the
 // streaming pipeline through `platform::readFileAsync`, which delivers bytes,
 // and a reader that also knew how to open files would have two ways in and one
-// of them untested.
+// of them untested. A pack opened from disk (`openPackFile`) is the whole file
+// MAPPED, not read (audit F10): the same bytes, paged in as they are touched.
 class Pack
 {
 public:
@@ -173,6 +179,11 @@ public:
     // structure -- and the table of contents, which `open` hashes either way.
     [[nodiscard]] static std::optional<core::EngineError> openVerified(std::vector<std::byte> bytes, Pack& out);
 
+    // The same over a file mapped into memory, which the pack keeps mapped
+    // for as long as it lives (audit F10).
+    [[nodiscard]] static std::optional<core::EngineError> openMapped(std::shared_ptr<platform::MappedFile> file,
+                                                                     bool verify, Pack& out);
+
     [[nodiscard]] usize count() const noexcept { return m_entries.size(); }
     [[nodiscard]] std::span<const PackEntry> entries() const noexcept { return m_entries; }
 
@@ -184,10 +195,14 @@ public:
     [[nodiscard]] std::span<const std::byte> blob(const ContentHash& hash) const noexcept;
 
 private:
-    [[nodiscard]] static std::optional<core::EngineError> openImpl(std::vector<std::byte> bytes, bool verify,
-                                                                   Pack& out);
+    [[nodiscard]] static std::optional<core::EngineError> validate(std::span<const std::byte> bytes, bool verify,
+                                                                   std::vector<PackEntry>& entries);
+    [[nodiscard]] std::span<const std::byte> storage() const noexcept;
 
+    // What the pack's bytes are: a buffer it owns, or a file mapped into
+    // memory (audit F10), whichever `storage` finds.
     std::vector<std::byte> m_bytes;
+    std::shared_ptr<platform::MappedFile> m_mapped;
     std::vector<PackEntry> m_entries;
 };
 

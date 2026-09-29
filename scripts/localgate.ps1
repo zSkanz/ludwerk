@@ -133,6 +133,10 @@ function Invoke-Stage {
     # and Docker's buildkit writes its progress there, so `$?` reported every
     # successful image build as a failure. Each stage below raises explicitly on
     # a non-zero exit code, which is the only signal that means anything here.
+    # A stage that finds nothing to run says so, and is not counted as a pass
+    # (audit T10): "ok android" on a machine with no NDK claimed a build that
+    # never happened.
+    $script:stageSkipped = $false
     try {
         & $Body
         $ok = $true
@@ -143,7 +147,9 @@ function Invoke-Stage {
     $watch.Stop()
 
     $seconds = [math]::Round($watch.Elapsed.TotalSeconds, 1)
-    if ($ok) {
+    if ($ok -and $script:stageSkipped) {
+        $script:results += "  skip  $Name"
+    } elseif ($ok) {
         $script:results += "  ok    $Name ($seconds s)"
     } else {
         $script:results += "  FAIL  $Name ($seconds s)"
@@ -342,6 +348,7 @@ Invoke-Stage 'asan' {
     # slower instrumented build into the gate a person runs before every push.
     if (-not $Only) {
         Write-Host '[gate] asan: skipped (opt-in; run scripts/localgate.ps1 -Only asan)' -ForegroundColor DarkGray
+        $script:stageSkipped = $true
         return
     }
     Initialize-Tier2Image
@@ -446,6 +453,7 @@ Invoke-Stage 'shipping' {
 Invoke-Stage 'winprofiles' {
     if (-not $Only) {
         Write-Host '[gate] winprofiles: skipped (opt-in; run scripts/localgate.ps1 -Only winprofiles)' -ForegroundColor DarkGray
+        $script:stageSkipped = $true
         return
     }
 
@@ -489,6 +497,7 @@ set ENG_EDITOR_PRESET=win-msvc-editor
 Invoke-Stage 'lavapipe' {
     if (-not $Only) {
         Write-Host '[gate] lavapipe: skipped (opt-in; run scripts/localgate.ps1 -Only lavapipe)' -ForegroundColor DarkGray
+        $script:stageSkipped = $true
         return
     }
     Initialize-Tier2Image
@@ -521,6 +530,7 @@ Invoke-Stage 'android' {
     if (-not $sdkRoot -or -not (Test-Path (Join-Path $sdkRoot "ndk\$ndkVersion"))) {
         if ($Only) { throw "Android NDK $ndkVersion is not installed; run scripts/install-android.ps1" }
         Write-Host "[gate] android: skipped (no NDK $ndkVersion; scripts/install-android.ps1 installs it)" -ForegroundColor DarkGray
+        $script:stageSkipped = $true
         return
     }
 

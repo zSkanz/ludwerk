@@ -271,11 +271,11 @@ local function main(): number
     end
 
     if parsed.command == "keystore" then
-        if not rejectUnknownFlags(parsed, { "alias", "out", "name", "validity", "remember" }) then
+        if not rejectUnknownFlags(parsed, { "alias", "out", "name", "validity", "remember", "project" }) then
             return 2
         end
         if parsed.positional[1] == "remember" then
-            return keystore.remember(parsed.flags.out)
+            return keystore.remember(parsed.flags.out, parsed.flags.project)
         end
         if parsed.positional[1] ~= "new" then
             print(tr("cli.keystore.err.usage"))
@@ -287,6 +287,7 @@ local function main(): number
             name = parsed.flags.name,
             validity = tonumber(parsed.flags.validity),
             remember = parsed.flags.remember ~= nil,
+            project = parsed.flags.project,
         })
     end
 

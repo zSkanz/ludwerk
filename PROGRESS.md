@@ -470,7 +470,11 @@ plan where it stopped.
       11.1 to 2.6 ms, and a headless run's memory holds instead of growing a
       gigabyte a second (`docs/perf-baselines.md`, "The audit's performance
       band").
-- [ ] **P2.**
+- [x] **P2** (2026-09-29): determinism (E6, E7, E12, E13, E15, S14), weld
+      cycles (E11), the frame clock (A9, A13, A14), files and bounds (F10, F12
+      to F14, S15) and the tooling (T2 to T11) -- D273 to D294. F11 is
+      scheduled into the terrain work that follows, with its reason in the
+      audit's findings.
 
 **The owner's defect list of 2026-09-28**, ahead of the plan
 ([`owner-queue-2026-09-27.md`](docs/briefs/owner-queue-2026-09-27.md)):

@@ -184,19 +184,49 @@ std::vector<std::byte> PackWriter::build() const
 
 std::optional<core::EngineError> Pack::open(std::vector<std::byte> bytes, Pack& out)
 {
-    return openImpl(std::move(bytes), false, out);
+    out = Pack{};
+    std::vector<PackEntry> entries;
+    if (auto error = validate(bytes, false, entries))
+        return error;
+    out.m_bytes = std::move(bytes);
+    out.m_entries = std::move(entries);
+    return std::nullopt;
 }
 
 std::optional<core::EngineError> Pack::openVerified(std::vector<std::byte> bytes, Pack& out)
 {
-    return openImpl(std::move(bytes), true, out);
+    out = Pack{};
+    std::vector<PackEntry> entries;
+    if (auto error = validate(bytes, true, entries))
+        return error;
+    out.m_bytes = std::move(bytes);
+    out.m_entries = std::move(entries);
+    return std::nullopt;
 }
 
-std::optional<core::EngineError> Pack::openImpl(std::vector<std::byte> bytes, bool verify, Pack& out)
+std::optional<core::EngineError> Pack::openMapped(std::shared_ptr<platform::MappedFile> file, bool verify, Pack& out)
 {
-    out.m_bytes.clear();
-    out.m_entries.clear();
+    out = Pack{};
+    if (file == nullptr)
+        return core::makeError(ENG_TR("asset.pack.err.truncated"));
+    std::vector<PackEntry> entries;
+    if (auto error = validate(file->bytes(), verify, entries))
+        return error;
+    out.m_mapped = std::move(file);
+    out.m_entries = std::move(entries);
+    return std::nullopt;
+}
 
+std::span<const std::byte> Pack::storage() const noexcept
+{
+    if (m_mapped != nullptr)
+        return m_mapped->bytes();
+    return m_bytes;
+}
+
+std::optional<core::EngineError> Pack::validate(std::span<const std::byte> bytes, bool verify,
+                                                std::vector<PackEntry>& out)
+{
     const u64 fileSize = bytes.size();
     if (fileSize < PackHeaderBytes) {
         return core::makeError(ENG_TR("asset.pack.err.truncated"));
@@ -289,8 +319,7 @@ std::optional<core::EngineError> Pack::openImpl(std::vector<std::byte> bytes, bo
         }
     }
 
-    out.m_bytes = std::move(bytes);
-    out.m_entries = std::move(entries);
+    out = std::move(entries);
     return std::nullopt;
 }
 
@@ -310,11 +339,15 @@ std::span<const std::byte> Pack::blob(const ContentHash& hash) const noexcept
     if (entry == nullptr) {
         return {};
     }
-    return std::span<const std::byte>(m_bytes.data() + entry->offset, static_cast<usize>(entry->storedSize));
+    return storage().subspan(static_cast<usize>(entry->offset), static_cast<usize>(entry->storedSize));
 }
 
 std::optional<core::EngineError> openPackFile(const std::filesystem::path& path, Pack& out, bool verify)
 {
+    // Mapped where the system can map it; read whole where it cannot -- an
+    // APK entry, which is no file at all.
+    if (auto mapped = std::make_shared<platform::MappedFile>(); mapped->open(path))
+        return Pack::openMapped(std::move(mapped), verify, out);
     std::vector<std::byte> bytes;
     if (!platform::readFile(path, bytes)) {
         const I18nArg args[] = {{"content", path.string()}};

@@ -356,6 +356,10 @@ int saveServiceGetSlotAsync(lua_State* L)
         raise(L, ENG_TR("script.err.save_slot_name"), args);
     }
     SaveStore& saves = store(L);
+    if (const std::string_view held = saves.otherSpelling(name); !held.empty()) {
+        const core::I18nArg args[] = {{"name", std::string_view{name}}, {"held", held}};
+        raise(L, ENG_TR("script.err.save_slot_case"), args);
+    }
     SaveDamage damage = SaveDamage::None;
     SaveSlotData* slot = saves.open(name, &damage);
     if (slot == nullptr) {

@@ -2339,6 +2339,16 @@ void readVoxels(World& world, const JsonValue& root, SceneIoReport& out)
                 ++out.refusedProperties;
                 continue;
             }
+            // A key past the block world's reach is refused, not wrapped into
+            // one inside it (audit F12).
+            const auto inReach = [&chunk](const char* axis) {
+                const auto value = chunk[axis].asInteger();
+                return value >= -asset::MaxVoxelChunkKey && value <= asset::MaxVoxelChunkKey;
+            };
+            if (!inReach("x") || !inReach("y") || !inReach("z")) {
+                ++out.refusedProperties;
+                continue;
+            }
             voxels->grid.setChunk(asset::VoxelChunkKey{static_cast<core::i32>(chunk["x"].asInteger()),
                                                        static_cast<core::i32>(chunk["y"].asInteger()),
                                                        static_cast<core::i32>(chunk["z"].asInteger())},

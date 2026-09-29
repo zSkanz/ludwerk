@@ -12,6 +12,7 @@ engine_add_module(platform
         src/platform.cpp
         src/async_io.cpp
         src/file.cpp
+        src/mapped_file.cpp
         src/window.cpp
         src/process.cpp
         src/events.cpp

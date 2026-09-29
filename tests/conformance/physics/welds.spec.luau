@@ -136,6 +136,24 @@ describe("Weld", function()
         end):ToThrow()
     end)
 
+    it("refuses to enable a weld that would close a cycle (audit E11)", function()
+        local a = anchoredPart("A", vector.create(0, 10, 0))
+        local b = part("B", vector.create(0, 10, 3))
+        local reverse = Instance.new("Weld")
+        reverse.Enabled = false
+        reverse.Parent = workspace
+        table.insert(spawned, reverse)
+        reverse.Part0 = b
+        reverse.Part1 = a
+        -- The loop is closed while the reverse weld is off, which the walk
+        -- skips, and would be complete the moment it came back on.
+        weld(a, b)
+        expect(function()
+            reverse.Enabled = true
+        end):ToThrow()
+        expect(reverse.Enabled):ToBe(false)
+    end)
+
     it("refuses a part welded to itself", function()
         local a = anchoredPart("A", vector.create(0, 10, 0))
         local joint = Instance.new("Weld")

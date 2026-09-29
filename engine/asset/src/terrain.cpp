@@ -497,6 +497,8 @@ bool TerrainField::setVoxel(i32 x, i32 y, i32 z, Voxel voxel)
 
 void TerrainField::setChunk(ChunkKey key, std::shared_ptr<TerrainChunk> chunk)
 {
+    if (!chunkKeyInRange(key))
+        return;
     const auto at = lowerBound(m_chunks, key);
     const bool exists = at != m_chunks.end() && at->first == key;
     if (chunk == nullptr || chunk->empty()) {

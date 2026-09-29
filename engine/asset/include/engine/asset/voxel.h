@@ -109,6 +109,24 @@ struct VoxelChunk
     return (y * VoxelChunkEdge + z) * VoxelChunkEdge + x;
 }
 
+// **How far a block world reaches** (audit F12): a chunk key within a million
+// of the origin either way, sixteen million blocks. Past it, `key * edge` and
+// `base + offset` overflow an `i32` in the mesher, the fill and the physics
+// mirror; a block there is refused as it is written, and a file naming a
+// chunk there is read without it.
+inline constexpr core::i32 MaxVoxelChunkKey = 1 << 20;
+[[nodiscard]] constexpr bool voxelChunkKeyInRange(VoxelChunkKey key) noexcept
+{
+    const auto in = [](core::i32 value) { return value >= -MaxVoxelChunkKey && value <= MaxVoxelChunkKey; };
+    return in(key.x) && in(key.y) && in(key.z);
+}
+[[nodiscard]] constexpr bool voxelInRange(core::i32 x, core::i32 y, core::i32 z) noexcept
+{
+    constexpr core::i32 Reach = MaxVoxelChunkKey * static_cast<core::i32>(VoxelChunkEdge);
+    const auto in = [](core::i32 value) { return value >= -Reach && value < Reach; };
+    return in(x) && in(y) && in(z);
+}
+
 // The whole block world: a sorted set of chunks, and nothing else. No hash map
 // (R10): what an iteration order decides here -- the mesh order, the save file,
 // the world hash -- must be a fact about the blocks, not the allocator.

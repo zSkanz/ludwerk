@@ -37,11 +37,38 @@ $downloads = Join-Path $tools 'dl'
 $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
 New-Item -ItemType Directory -Force $downloads | Out-Null
 
+# **What each archive's bytes are** (audit T8), SHA-256, the same pins as
+# `ludwerk android install-tools`: the JDK's as Adoptium publishes it, Gradle's
+# as Gradle does, the command-line tools' from the archive whose SHA-1 Google's
+# repository lists. The JDK is a version, not "the latest 17".
+$jdkVersion = '17.0.20.1+1'
+$sha256 = @{
+    'jdk17.zip'         = 'e53a79c3c3d86865bd7e787903884331068e71321714ffd44f145785affc7cb0'
+    'gradle-8.12.zip'   = '7a00d51fb93147819aab76024feece20b6b84e420694101f276be952e08bef03'
+    'cmdline-tools.zip' = '98b565cb657b012dae6794cefc0f66ae1efb4690c699b78a614b4a6a3505b003'
+}
+
+# A file downloaded once and checked every time: a cached archive that is not
+# the pinned bytes -- a download cut short, a file replaced -- is fetched again,
+# and a download that is not them is refused. Written beside its name first,
+# so an interrupted download never looks like a finished one.
 function Get-Once([string]$Url, [string]$File) {
     $path = Join-Path $downloads $File
+    $expected = $sha256[$File]
+    if (-not $expected) { throw "no SHA-256 is pinned for $File -- add it before downloading" }
+    if ((Test-Path $path) -and (Get-FileHash -Algorithm SHA256 $path).Hash -ne $expected) {
+        Remove-Item -Force $path
+    }
     if (-not (Test-Path $path)) {
         Write-Host "[android] downloading $Url"
-        Invoke-WebRequest $Url -OutFile $path
+        $partial = "$path.partial"
+        Invoke-WebRequest $Url -OutFile $partial
+        $found = (Get-FileHash -Algorithm SHA256 $partial).Hash
+        if ($found -ne $expected) {
+            Remove-Item -Force $partial
+            throw "$Url is not the pinned archive (SHA-256 $found, expected $expected)"
+        }
+        Move-Item -Force $partial $path
     }
     return $path
 }
@@ -49,7 +76,8 @@ function Get-Once([string]$Url, [string]$File) {
 # JDK 17, portable.
 $jdkRoot = Join-Path $tools 'jdk17'
 if (-not (Get-ChildItem $jdkRoot -Directory -ErrorAction SilentlyContinue)) {
-    $zip = Get-Once 'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse' 'jdk17.zip'
+    $encoded = $jdkVersion -replace '\+', '%2B'
+    $zip = Get-Once "https://api.adoptium.net/v3/binary/version/jdk-$encoded/windows/x64/jdk/hotspot/normal/eclipse" 'jdk17.zip'
     Expand-Archive $zip $jdkRoot -Force
 }
 $jdk = (Get-ChildItem $jdkRoot -Directory | Select-Object -First 1).FullName

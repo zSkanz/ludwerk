@@ -152,6 +152,16 @@ struct ChunkKey
     [[nodiscard]] constexpr bool operator==(const ChunkKey&) const noexcept = default;
 };
 
+// **How far a field reaches** (audit F12): a chunk key within a million of the
+// origin either way. Past it, `key * ChunkEdge` overflows an `i32` in the
+// mesher and the samplers; a file naming a chunk there is malformed.
+inline constexpr core::i32 MaxChunkKey = 1 << 20;
+[[nodiscard]] constexpr bool chunkKeyInRange(ChunkKey key) noexcept
+{
+    const auto in = [](core::i32 value) { return value >= -MaxChunkKey && value <= MaxChunkKey; };
+    return in(key.x) && in(key.y) && in(key.z);
+}
+
 // Floor division, which `-1 / 32` in C++ is not. Here once so a world with its
 // origin in the middle does not put the left half of every cave in the wrong
 // chunk.

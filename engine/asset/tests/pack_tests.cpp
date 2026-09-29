@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstring>
 #include <doctest/doctest.h>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -292,4 +294,37 @@ TEST_CASE("a pack from a future format version says so")
     const auto error = Pack::open(std::move(pack), opened);
     REQUIRE(error.has_value());
     CHECK(error->message.find("asset.pack.err.version") != std::string::npos);
+}
+
+TEST_CASE("a pack opened from a file is mapped, not read, and answers as one read would (audit F10)")
+{
+    seedRealCatalog();
+    PackWriter writer;
+    const ContentHash mesh = writer.addContent(AssetKind::Mesh, bytesOf("vertices and indices"));
+    const ContentHash texture = writer.addContent(AssetKind::Texture, bytesOf(std::string(70000, 'x')));
+    const std::vector<std::byte> built = writer.build();
+
+    std::error_code ignored;
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path(ignored) / ("engine-pack-map-" + std::to_string(built.size()) + ".pack");
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(built.data()), static_cast<std::streamsize>(built.size()));
+    }
+    {
+        Pack pack;
+        REQUIRE_FALSE(openPackFile(file, pack, true).has_value());
+        CHECK(pack.count() == 2);
+        CHECK(textOf(pack.blob(mesh)) == "vertices and indices");
+        CHECK(textOf(pack.blob(texture)) == std::string(70000, 'x'));
+        // A copy of the pack keeps the mapping alive after the first goes.
+        Pack copy = pack;
+        pack = Pack{};
+        CHECK(textOf(copy.blob(mesh)) == "vertices and indices");
+    }
+    std::filesystem::remove(file, ignored);
+
+    // A file that is not there is an error, not a crash.
+    Pack missing;
+    CHECK(openPackFile(file, missing).has_value());
 }

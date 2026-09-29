@@ -11,6 +11,7 @@
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/random.h"
 #include "engine/script/builtins.h"
 #include "engine/script/bytecode.h"
 #include "engine/script/datatypes.h"
@@ -307,6 +308,20 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
     m_impl->context.wellKnown.name = m_world.atoms().intern("Name");
 
     luaL_openlibs(L);
+
+    // **`math.random` from the world, not from the clock** (audit S14):
+    // `luaopen_math` seeds its generator from the time and an address, so the
+    // same world ran differently on every run and every machine (R10). The
+    // seed is drawn from a COPY of the world's stream, which leaves the
+    // world's own draws exactly as they were.
+    {
+        core::Pcg32 derived = m_world.rng();
+        lua_getglobal(L, "math");
+        lua_getfield(L, -1, "randomseed");
+        lua_pushinteger(L, static_cast<int>(derived.nextU32() & 0x7FFFFFFFu));
+        lua_call(L, 1, 0);
+        lua_pop(L, 1);
+    }
 
     // `luaL_sandbox` removes nothing (see sandbox.h). Everything api-design.md
     // §1.1 calls removed goes here, before the freeze.

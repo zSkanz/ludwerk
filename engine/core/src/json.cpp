@@ -1,5 +1,6 @@
 #include "engine/core/json.h"
 
+#include <algorithm>
 #include <charconv>
 #include <clocale>
 #include <cmath>
@@ -73,6 +74,11 @@ struct JsonValue::Node
     // array has children and no keys.
     std::vector<Text> keys;
     std::vector<usize> children;
+    // **An object of many keys, found by binary search** (audit F13): the
+    // members' indices sorted by key and then by place, so the last of equal
+    // keys is the one a lookup answers. Empty for a small object, which a
+    // walk answers faster. A lookup per key of a large save walked every key.
+    std::vector<u32> byKey;
 };
 
 struct JsonDocument::Impl
@@ -280,6 +286,15 @@ struct JsonDocument::Impl
                 return fail("expected ',' or '}' after an object member");
             }
 
+            constexpr usize IndexedKeys = 16;
+            if (keys.size() > IndexedKeys) {
+                std::vector<u32> byKey(keys.size());
+                for (usize at = 0; at < keys.size(); ++at)
+                    byKey[at] = static_cast<u32>(at);
+                std::stable_sort(byKey.begin(), byKey.end(),
+                                 [&](u32 a, u32 b) { return document.view(keys[a]) < document.view(keys[b]); });
+                document.nodes[self].byKey = std::move(byKey);
+            }
             document.nodes[self].keys = std::move(keys);
             document.nodes[self].children = std::move(children);
             index = self;
@@ -645,6 +660,15 @@ JsonValue JsonValue::operator[](std::string_view key) const noexcept
     // not reject them outright does. Both remain visible through keyAt(), so a
     // caller for whom a duplicate is an error -- the i18n catalog is one -- can
     // still see it by iterating.
+    if (!node_->byKey.empty()) {
+        const auto after =
+            std::upper_bound(node_->byKey.begin(), node_->byKey.end(), key, [this](std::string_view probe, u32 member) {
+                return probe < owner_->view(node_->keys[member]);
+            });
+        if (after == node_->byKey.begin() || owner_->view(node_->keys[*(after - 1)]) != key)
+            return JsonValue{};
+        return JsonValue{&owner_->nodes[node_->children[*(after - 1)]], owner_};
+    }
     for (usize i = node_->keys.size(); i > 0; --i) {
         if (owner_->view(node_->keys[i - 1]) == key)
             return JsonValue{&owner_->nodes[node_->children[i - 1]], owner_};

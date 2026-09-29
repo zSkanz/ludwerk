@@ -95,6 +95,8 @@ const VoxelChunk* VoxelGrid::findChunk(VoxelChunkKey key) const noexcept
 
 BlockId VoxelGrid::get(i32 x, i32 y, i32 z) const noexcept
 {
+    if (!voxelInRange(x, y, z))
+        return AirBlock;
     const VoxelChunk* chunk = findChunk(voxelChunkOf(x, y, z));
     if (chunk == nullptr)
         return AirBlock;
@@ -126,6 +128,8 @@ void VoxelGrid::dropIfEmpty(VoxelChunkKey key)
 
 bool VoxelGrid::set(i32 x, i32 y, i32 z, BlockId id)
 {
+    if (!voxelInRange(x, y, z))
+        return false;
     const VoxelChunkKey key = voxelChunkOf(x, y, z);
     const auto edge = static_cast<i32>(VoxelChunkEdge);
     const u32 index = voxelIndex(floorModulo(x, edge), floorModulo(y, edge), floorModulo(z, edge));
@@ -155,6 +159,16 @@ u32 VoxelGrid::fill(i32 minX, i32 minY, i32 minZ, i32 maxX, i32 maxY, i32 maxZ, 
         std::swap(minY, maxY);
     if (minZ > maxZ)
         std::swap(minZ, maxZ);
+    // Held to the world's reach, where `cx * edge + edge` cannot overflow.
+    constexpr i32 Reach = MaxVoxelChunkKey * static_cast<i32>(VoxelChunkEdge);
+    minX = std::max(minX, -Reach);
+    minY = std::max(minY, -Reach);
+    minZ = std::max(minZ, -Reach);
+    maxX = std::min(maxX, Reach - 1);
+    maxY = std::min(maxY, Reach - 1);
+    maxZ = std::min(maxZ, Reach - 1);
+    if (minX > maxX || minY > maxY || minZ > maxZ)
+        return 0;
 
     const auto edge = static_cast<i32>(VoxelChunkEdge);
     u32 changed = 0;
@@ -256,7 +270,7 @@ void VoxelGrid::removeAll(std::span<const VoxelChunkKey> keys)
 
 void VoxelGrid::setChunk(VoxelChunkKey key, std::span<const BlockId> blocks)
 {
-    if (blocks.size() != VoxelChunkVolume)
+    if (blocks.size() != VoxelChunkVolume || !voxelChunkKeyInRange(key))
         return;
     auto chunk = std::make_shared<VoxelChunk>();
     std::copy(blocks.begin(), blocks.end(), chunk->blocks);

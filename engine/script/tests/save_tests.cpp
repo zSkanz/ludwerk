@@ -52,6 +52,21 @@ TEST_CASE("a slot name is letters, digits, underscore and dash, never a path")
     CHECK_FALSE(SaveStore::validName("a/b"));
     CHECK_FALSE(SaveStore::validName("with space"));
     CHECK_FALSE(SaveStore::validName(std::string(65, 'a')));
+    // Devices on Windows, whatever the case and the extension (audit S15).
+    for (const char* device : {"CON", "con", "Nul", "PRN", "aux", "COM1", "lpt9"})
+        CHECK_FALSE(SaveStore::validName(device));
+    CHECK(SaveStore::validName("COM10"));
+    CHECK(SaveStore::validName("console"));
+}
+
+TEST_CASE("a slot is one spelling: another case of an open one is refused (audit S15)")
+{
+    SaveStore store(SaveStore::Options{});
+    REQUIRE(store.open("Profile") != nullptr);
+    CHECK(store.otherSpelling("profile") == "Profile");
+    CHECK(store.open("profile") == nullptr);
+    CHECK(store.open("Profile") != nullptr);
+    CHECK(store.otherSpelling("Profile").empty());
 }
 
 TEST_CASE("every kind of value a slot holds comes back as what it was")
@@ -310,6 +325,27 @@ TEST_CASE("a slot's size is kept as it changes, and the limit reads it (audit S1
     REQUIRE(slot != nullptr);
     REQUIRE(slot->entryBytesKnown);
     CHECK(SaveStore::payloadSize(slot->entryBytes, slot->values.size()) == SaveStore::encodedSize(*slot));
+}
+
+TEST_CASE("a save file larger than any slot could write is not read (audit F13)")
+{
+    TempFolder folder;
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        SaveSlotData* slot = store.open("big");
+        REQUIRE(slot != nullptr);
+        slot->values["text"] = scalar(scene::Value{std::string(4000, 'x')});
+        ++slot->generation;
+        store.flush(1.0);
+    }
+    // A store whose slots are held to a kilobyte never wrote this file, and
+    // does not load four of them to find out.
+    SaveStore store(SaveStore::Options{.directory = folder.path, .maxSlotBytes = 1024});
+    script::SaveDamage damage = script::SaveDamage::None;
+    SaveSlotData* slot = store.open("big", &damage);
+    REQUIRE(slot != nullptr);
+    CHECK(slot->values.empty());
+    CHECK(damage == script::SaveDamage::Lost);
 }
 
 TEST_CASE("an older slot is migrated once before it is handed over")

@@ -268,6 +268,8 @@ test.suite("hot reload", function(suite)
         end)
         assert.eq(hello.role, "engine")
         assert.eq(hello.protocol, 1)
+        -- Relayed without the token that proves it is the engine (audit T4).
+        assert.eq(hello.token, nil)
 
         local before = sampleAt(session, SampleTick)
 

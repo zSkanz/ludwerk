@@ -437,3 +437,26 @@ TEST_CASE("a byte-order mark anywhere but the start is still what it was")
     // was skipped is a prefix, not a value.
     CHECK_FALSE(document.parse("\xEF\xBB\xBF", "empty.json").ok);
 }
+
+TEST_CASE("a large object is found by key as a small one is, the last duplicate winning (audit F13)")
+{
+    // Past sixteen keys an object is searched through a sorted index rather
+    // than walked; the answers must be the walk's, duplicates included.
+    std::string text = "{";
+    for (int at = 0; at < 200; ++at)
+        text += "\"k" + std::to_string(at) + "\":" + std::to_string(at) + ",";
+    text += "\"k7\":-7,\"\":42}";
+    JsonDocument document;
+    REQUIRE(document.parse(text).ok);
+    const JsonValue root = document.root();
+    for (int at = 0; at < 200; ++at) {
+        if (at == 7)
+            continue;
+        CHECK(root["k" + std::to_string(at)].asInteger() == at);
+    }
+    CHECK(root["k7"].asInteger() == -7);
+    CHECK(root[""].asInteger() == 42);
+    CHECK_FALSE(static_cast<bool>(root["k200"]));
+    CHECK_FALSE(static_cast<bool>(root["a"]));
+    CHECK_FALSE(static_cast<bool>(root["zzz"]));
+}

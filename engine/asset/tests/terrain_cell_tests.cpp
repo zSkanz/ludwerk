@@ -354,3 +354,19 @@ TEST_CASE("chunks a field shares are saved once each, and come back shared")
     CHECK(back.field.findChunk(ChunkKey{1, 0, 2}) == first);
     CHECK(back.field.findChunk(ChunkKey{0, 0, 0}) != first);
 }
+
+TEST_CASE("a chunk key past the field's reach is a malformed file (audit F12)")
+{
+    // `key * ChunkEdge` past an i32 overflows in the mesher and the samplers;
+    // a file naming such a chunk is refused where it is read.
+    seedCatalog();
+    std::vector<std::byte> bytes = encodeTerrainCell(sampleCell(), TerrainCellCompression::None);
+    TerrainCell back;
+    REQUIRE_FALSE(decodeTerrainCell(bytes, back).has_value());
+    // The LAST chunk's `x`, so the keys stay in order and only the reach is
+    // wrong. The count is the header's ninth word; each key is three.
+    const auto count = static_cast<core::usize>(bytes[32]) | (static_cast<core::usize>(bytes[33]) << 8u);
+    REQUIRE(count > 0);
+    putWord(bytes, TerrainCellHeaderBytes + (count - 1) * 12, static_cast<core::u32>(MaxChunkKey + 1));
+    CHECK(decodeTerrainCell(bytes, back).has_value());
+}

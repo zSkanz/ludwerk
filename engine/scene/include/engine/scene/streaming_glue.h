@@ -15,6 +15,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -75,34 +76,13 @@ private:
         std::vector<core::InstanceId> instances;
     };
 
-    struct ChunkKey
-    {
-        [[nodiscard]] usize operator()(const asset::ChunkId& id) const noexcept
-        {
-            // Three small integers into one hash. Multiplicative rather than
-            // xor, because a world's chunk ids differ in low bits and an xor
-            // would collide (3, 5) with (5, 3).
-            usize hash = static_cast<usize>(static_cast<u32>(id.x));
-            hash = hash * 1000003u + static_cast<usize>(static_cast<u32>(id.z));
-            hash = hash * 1000003u + static_cast<usize>(static_cast<u32>(id.layer));
-            return hash;
-        }
-    };
-
-    struct ChunkEqual
-    {
-        [[nodiscard]] bool operator()(const asset::ChunkId& a, const asset::ChunkId& b) const noexcept
-        {
-            return a == b;
-        }
-    };
-
     World& m_world;
     core::InstanceId m_root;
-    // Keyed by chunk, and the ITERATION order of this map never reaches
-    // observable output: eviction is driven by the manager's sorted list and
-    // every read here is a lookup (R10).
-    std::unordered_map<asset::ChunkId, Resident, ChunkKey, ChunkEqual> m_chunks;
+    // Keyed by chunk, and ORDERED (audit E12): `clear` destroys walking it,
+    // and the order instances are destroyed in is the order their slots come
+    // back in -- a hash map's was MSVC's on one machine and libstdc++'s on
+    // the next, and so were the ids of whatever was made after (R10).
+    std::map<asset::ChunkId, Resident> m_chunks;
     std::function<bool(core::InstanceId)> m_probe;
     std::vector<core::InstanceId> m_streamedOut;
     u32 m_residentInstances = 0;

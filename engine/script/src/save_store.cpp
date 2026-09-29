@@ -259,9 +259,39 @@ bool SaveStore::validName(std::string_view name) noexcept
 {
     if (name.empty() || name.size() > 64)
         return false;
-    return std::all_of(name.begin(), name.end(), [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-    });
+    if (!std::all_of(name.begin(), name.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        }))
+        return false;
+    // **Not a device** (audit S15): on Windows `CON.save`, `nul.save` and
+    // `COM1.save` are the console, nothing and a serial port, whatever the
+    // extension -- a save to one is lost or blocks.
+    std::string upper(name);
+    for (char& c : upper)
+        c = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    if (upper == "CON" || upper == "PRN" || upper == "AUX" || upper == "NUL")
+        return false;
+    if (upper.size() == 4 && (upper.starts_with("COM") || upper.starts_with("LPT")) && upper[3] >= '0' &&
+        upper[3] <= '9')
+        return false;
+    return true;
+}
+
+std::string_view SaveStore::otherSpelling(std::string_view name) const
+{
+    const auto folded = [](std::string_view text) {
+        std::string out(text);
+        for (char& c : out)
+            c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        return out;
+    };
+    const std::string wanted = folded(name);
+    for (const auto& [held, ignored] : m_slots) {
+        (void)ignored;
+        if (held != name && folded(held) == wanted)
+            return held;
+    }
+    return {};
 }
 
 std::string SaveStore::encode(const SaveSlotData& slot, core::f64 version)
@@ -339,6 +369,11 @@ SaveSlotData* SaveStore::open(std::string_view name, SaveDamage* damage)
         return nullptr;
     if (const auto found = m_slots.find(name); found != m_slots.end())
         return found->second.get();
+    // **One file per name whatever its case** (audit S15): Windows and macOS
+    // fold case, so `Profile` and `profile` are one file there and two slots
+    // here, each overwriting the other. The second spelling is refused.
+    if (!otherSpelling(name).empty())
+        return nullptr;
     if (m_slots.size() >= m_options.maxSlots)
         return nullptr;
 
@@ -348,10 +383,24 @@ SaveSlotData* SaveStore::open(std::string_view name, SaveDamage* damage)
         std::string text;
         const std::filesystem::path main = fileOf(m_options.directory, name, SaveSuffix);
         const std::filesystem::path backup = fileOf(m_options.directory, name, BackupSuffix);
-        const bool hadMain = platform::readTextFile(main, text);
+        // **Read only what a slot could have written** (audit F13): the limit
+        // a `Set` is held to, and room for the header. A file past it was not
+        // written by this store and reads as a damaged one, without being
+        // loaded whole first.
+        const core::u64 ceiling = m_options.maxSlotBytes + 256;
+        const auto readCapped = [ceiling](const std::filesystem::path& file, std::string& out) {
+            std::error_code error;
+            const std::uintmax_t size = std::filesystem::file_size(file, error);
+            if (!error && size > ceiling) {
+                out.clear();
+                return true;
+            }
+            return platform::readTextFile(file, out);
+        };
+        const bool hadMain = readCapped(main, text);
         if (!hadMain || !decode(text, *slot)) {
             std::string saved;
-            const bool hadBackup = platform::readTextFile(backup, saved);
+            const bool hadBackup = readCapped(backup, saved);
             if (hadBackup && decode(saved, *slot)) {
                 if (hadMain && damage != nullptr)
                     *damage = SaveDamage::FromBackup;

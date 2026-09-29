@@ -107,6 +107,11 @@ public:
     // its name is never a path.
     [[nodiscard]] static bool validName(std::string_view name) noexcept;
 
+    // A slot this store holds under another spelling of `name` -- the same
+    // letters in another case, one file on Windows and macOS -- or empty.
+    // `open` refuses such a name (audit S15).
+    [[nodiscard]] std::string_view otherSpelling(std::string_view name) const;
+
     // The slot, read from disk the first time it is asked for and kept after.
     // A stable address: slots are never destroyed while the store lives, so a
     // handle a script holds stays valid (`remove` empties one). `damage` says

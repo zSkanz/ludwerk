@@ -529,8 +529,11 @@ private:
     // Set while `stepQuietly` runs: contacts are drained and not published.
     bool m_quiet = false;
     [[nodiscard]] std::vector<core::InstanceId> simulatedIds() const;
-    // Characters are few and are not on this path, so a map stays a map.
-    std::unordered_map<u64, CharacterRecord> m_characters;
+    // Characters are few and are not on this path, so a map stays a map --
+    // an ORDERED one (audit E6): `writeCharacters` fires `Landed` and writes
+    // state walking it, and retirement destroys walking it, and a hash map's
+    // order is MSVC's on one machine and libstdc++'s on the next (R10).
+    std::map<u64, CharacterRecord> m_characters;
     // How many slots in `m_bodies` are live, so `bodyCount` does not walk.
     usize m_bodyCount = 0;
 
@@ -572,6 +575,7 @@ private:
     // outlive the frame it happened in.
     mutable core::InstanceId m_lastParent;
     mutable bool m_lastParentInWorld = false;
+    mutable core::u64 m_lastParentMutations = 0;
 
     u32 m_groupRevision = 0xffffffffu;
     core::InstanceId m_workspace;

@@ -10,6 +10,7 @@
 
 #include "engine/script/sandbox.h"
 #include "engine/script/stdlib.h"
+#include "script_fixture.h"
 
 using namespace engine::script;
 
@@ -289,4 +290,32 @@ TEST_CASE("the standard-library list has everything the VM has")
             CHECK(listed);
         }
     }
+}
+
+TEST_CASE("math.random is the same stream for the same world, run after run (audit S14)")
+{
+    // Seeded from the time and an address by the library, it was a different
+    // stream on every run; seeded from the world, two VMs over worlds with the
+    // same seed draw the same numbers. One fixture at a time: the log sink is
+    // process-global.
+    const auto draws = [] {
+        engine::script::testing::Fixture fixture;
+        REQUIRE(fixture.booted);
+        CHECK(fixture.failure(R"(
+            local drawn = {}
+            for _ = 1, 8 do
+                table.insert(drawn, tostring(math.random(1, 1000000)))
+            end
+            print("draws " .. table.concat(drawn, ","))
+        )") == "");
+        for (const auto& [level, text] : fixture.logged) {
+            (void)level;
+            if (text.find("draws ") != std::string::npos)
+                return text;
+        }
+        return std::string();
+    };
+    const std::string first = draws();
+    REQUIRE_FALSE(first.empty());
+    CHECK(draws() == first);
 }

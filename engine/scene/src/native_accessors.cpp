@@ -1732,6 +1732,16 @@ bool setWeldEnabled(World& world, core::InstanceId id, const Value& value)
     WeldComponent* weld = writeWeld(world, id);
     if (flag == nullptr || weld == nullptr)
         return false;
+    // **Off to on is checked as a new pair is** (audit E11): the cycle walk
+    // skips disabled welds, so a loop closed while this one was off -- or by
+    // enabling it last -- was accepted, and the resolver met a cycle it is
+    // promised it never will.
+    if (*flag && !weld->enabled && weld->part0.valid() && weld->part1.valid()) {
+        const core::InstanceId anchor0 =
+            world.parts().find(weld->part0) == nullptr ? world.parentOf(weld->part0) : weld->part0;
+        if (anchor0 == weld->part1 || weldReaches(world, anchor0, weld->part1, id))
+            return false;
+    }
     // Off to on re-captures, which is how a part is re-welded somewhere else:
     // move it, then enable.
     if (*flag && !weld->enabled && weld->captures)

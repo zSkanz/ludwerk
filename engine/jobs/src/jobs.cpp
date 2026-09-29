@@ -443,6 +443,12 @@ JobHandle scheduleErased(const char* name, Domain domain, JobFn invoke, void* pa
     // here rather than refusing is the honest behaviour: the caller asked for
     // work to happen, and a dropped job is a bug that surfaces somewhere else.
     const auto runInline = [&]() noexcept {
+        // **After what it depends on** (audit E13): a job run here because the
+        // slots ran out, or its payload did not fit, ran at once whatever it
+        // was scheduled to follow. `wait` helps the pool while it waits, so a
+        // worker scheduling this cannot starve the dependency it waits for.
+        if (p.running.load(std::memory_order_acquire))
+            waitAll(dependencies);
         // The caller's own copy, which is alive for the duration of this call
         // and is exactly what "runs on the calling thread" means.
         invoke(payload);

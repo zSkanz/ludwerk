@@ -306,3 +306,24 @@ TEST_CASE("what meshing a block world costs" * doctest::skip())
                       << " ms, " << remeshed.mesh.indices.size() / 3 << " triangles");
     CHECK(triangles > 0);
 }
+
+TEST_CASE("a block past the world's reach is refused, and a fill up to INT_MAX stops at it (audit F12)")
+{
+    // Near INT_MAX, `cx * edge + edge - 1` in the fill and `key * edge` in the
+    // mesher overflowed an i32 -- undefined behaviour from one script call.
+    VoxelGrid grid;
+    constexpr core::i32 Far = 2147483647;
+    CHECK_FALSE(grid.set(Far, 0, 0, 1));
+    CHECK_FALSE(grid.set(0, -Far - 1, 0, 1));
+    CHECK(grid.get(Far, 0, 0) == AirBlock);
+    CHECK(grid.chunkCount() == 0);
+
+    constexpr core::i32 Reach = MaxVoxelChunkKey * static_cast<core::i32>(VoxelChunkEdge);
+    CHECK(grid.fill(Reach - 2, 0, 0, Far, 0, 0, 1) == 2);
+    CHECK(grid.get(Reach - 1, 0, 0) == 1);
+    CHECK(grid.fill(Far - 5, 0, 0, Far, 0, 0, 1) == 0);
+
+    std::vector<BlockId> blocks(VoxelChunkVolume, 1);
+    grid.setChunk(VoxelChunkKey{MaxVoxelChunkKey + 1, 0, 0}, blocks);
+    CHECK(grid.findChunk(VoxelChunkKey{MaxVoxelChunkKey + 1, 0, 0}) == nullptr);
+}
