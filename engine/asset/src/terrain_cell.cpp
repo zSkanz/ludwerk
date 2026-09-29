@@ -444,7 +444,7 @@ void resample(const Field& old, TerrainField& into)
         return malformed();
     if (tileCount > legacy::MaxTiles || brickCount > legacy::MaxBricks)
         return core::makeError(ENG_TR("asset.terrain.err.too_large"));
-    if (!(settings.voxelSize > 0.0f) || !(settings.maxHeight > settings.minHeight))
+    if (!saneFieldSettings(settings))
         return malformed();
 
     const u64 needed = static_cast<u64>(tileCount) * (8 + legacy::TileBytes) +
@@ -598,8 +598,9 @@ std::optional<core::EngineError> decodeTerrainCell(std::span<const std::byte> by
     if (chunkCount > limits.chunks)
         return core::makeError(ENG_TR("asset.terrain.err.too_large"));
     // A settings block that cannot describe a field is refused rather than
-    // clamped: a zero voxel size divides by zero in every sampler above this.
-    if (!(settings.voxelSize > 0.0f) || !(settings.maxHeight > settings.minHeight))
+    // clamped: a zero voxel size divides by zero in every sampler above this,
+    // and an infinite or a denormal one is no better (audit F9).
+    if (!saneFieldSettings(settings))
         return malformed();
     // The body cannot be longer than its chunks could ever code to, nor shorter
     // than their directory and one run each.

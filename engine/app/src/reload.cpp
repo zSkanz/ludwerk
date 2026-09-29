@@ -41,6 +41,14 @@ ReloadReport reloadWorld(std::unique_ptr<WorldHost>& host, const WorldHostOption
     freshOptions.isReload = true;
     freshOptions.preserved = &preserved;
 
+    // **What the outgoing world saved, on disk before the fresh one reads it**
+    // (audit A11). A slot is written a second after its last change, off the
+    // main thread; the fresh host boots from disk at once, and the outgoing
+    // one is let go without writing -- a change a script made just before the
+    // save that reloaded was lost.
+    if (host)
+        host->flushSaves();
+
     auto fresh = std::make_unique<WorldHost>();
     // What the outgoing host read content through, before `boot`: a script's
     // file scope may load a material, and the new world must mean by a URN

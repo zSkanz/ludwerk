@@ -394,6 +394,7 @@
   "scene.err.no_host_world": "SendToHost works inside a SubWorld, and this world is not in one.",
   "scene.err.sub_world_scene_missing": "A SubWorld could not start: no scene at '{path}'.",
   "scene.err.scene_not_found": "No scene at {path}: it is not in the project's content, nor in its pack.",
+  "scene.err.cancelled_by_join": "The scene change to {path} was cancelled: this machine joined a match, whose scene is the server's.",
   "scene.err.script_service_retired": "ScriptService is retired. A scene's player code lives in ClientScriptService, and the game's in GlobalScriptService.Client (src/client/).",
   "scene.err.invalid_size": "Invalid Size for {instance}: components must be positive.",
   "scene.err.unknown_class": "No class named \"{className}\".",

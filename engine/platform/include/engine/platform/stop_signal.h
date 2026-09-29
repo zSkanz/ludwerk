@@ -28,4 +28,22 @@ void installStopSignals();
 // for a host that has honoured a request and carries on.
 void clearStopRequest() noexcept;
 
+// **How long the operating system lets a stop run, in seconds** (audit A7).
+// A console closed, a logoff or a shutdown on Windows ends the process a few
+// seconds after it is announced, however the announcement is answered; the
+// engine closes within this, `BindToClose` handlers and all, rather than in
+// the thirty seconds a request from a terminal allows. Infinite when nothing
+// is counting down.
+[[nodiscard]] double stopDeadlineSeconds() noexcept;
+
+// **The engine has done what the stop asked**: closed, its saves on disk. The
+// console handler waits for this before it lets Windows end the process --
+// returning at once, as it did, meant the process was gone before the first
+// close handler ran.
+void stopFinished() noexcept;
+
+// For tests: the console-close path on the calling thread. Asks, then waits up
+// to `wait` seconds for `stopFinished`, as the handler does; true when it came.
+[[nodiscard]] bool simulateConsoleClose(double wait) noexcept;
+
 } // namespace engine::platform

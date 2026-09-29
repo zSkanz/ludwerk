@@ -337,6 +337,11 @@ public:
                                                              bool closeHandlersRan = false,
                                                              const scene::ParsedScene* prepared = nullptr,
                                                              core::u32 preparedScene = 0);
+    // A scene's text, found under `content/` and, with `parse`, read through
+    // -- or why it cannot be: what `LoadScene` checks before anything closes
+    // (audit A8).
+    [[nodiscard]] std::optional<core::EngineError> readSceneText(const std::string& path, std::string& text,
+                                                                 bool parse) const;
     // Mounts the code of the scene at `path` from `src/scenes/<scene>/`, after
     // taking out what the scene before it mounted. What `loadScene` does
     // between reading and starting, exposed for the editor's own scene opening.
@@ -344,6 +349,11 @@ public:
     // Takes a `LoadScene` a script asked for and carries it out. Called at the
     // safe point between ticks, which is the end of `tick`.
     bool applyPendingScene();
+    // **A match's scene is the server's** (audit A10): every scene change this
+    // machine had asked for -- queued, closing, or prepared in the background
+    // -- is dropped, and a `LoadSceneAsync` waiting on one is told it failed.
+    // A `Join` calls it; a replica's own requests never get as far.
+    void cancelSceneChanges();
     // **A scene prepared in the background** (ADR 0125): a `LoadSceneAsync`
     // started, its parse polled, its content warmed, `Ready` fired, and its
     // activation handed to the close above. At the same safe point, before it.

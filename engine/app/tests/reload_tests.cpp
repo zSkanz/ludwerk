@@ -219,3 +219,31 @@ TEST_CASE("the reload reports the span its budget is measured against")
     CHECK(report.spanMs > 0.0);
     CHECK(report.spanMs < 5000.0);
 }
+
+TEST_CASE("a hot reload keeps what a script saved just before it (audit A11)")
+{
+    // A slot is written a second after its last change, off the main thread;
+    // the reload booted the fresh host from disk before that second was up, and
+    // the old host went without writing, so the change was lost.
+    Captured log;
+    Project project;
+    project.write("src/client/main.luau", R"(
+        local slot = game:GetService("SaveService"):GetSlotAsync("reloaded")
+        local count = (slot:Get("count") or 0) + 1
+        slot:Set("count", count)
+        print(`count={count}`)
+    )");
+
+    // On disk, as `ludwerk dev` keeps them: a reload reads them back from there.
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.saveDirectory = project.root / ".engine" / "saves";
+    auto host = std::make_unique<app::WorldHost>();
+    REQUIRE_FALSE(host->boot(options).has_value());
+    tickTimes(*host, 2);
+    REQUIRE(log.contains("count=1"));
+
+    const app::ReloadReport report = app::reloadWorld(host, options);
+    REQUIRE(report.ok);
+    tickTimes(*host, 2);
+    CHECK(log.contains("count=2"));
+}

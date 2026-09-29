@@ -89,6 +89,10 @@ struct SceneIoReport
     // should still open, minus what is gone.
     core::u32 stamped = 0;
     core::u32 missingStamps = 0;
+    // **How many instances this load may build before it stops placing
+    // stamps** (audit F6) -- an input, set before the read: a million unless
+    // a caller wants fewer. A stamp past it is counted missing and kept.
+    core::u32 instanceLimit = 1'000'000;
     // Property overrides written or applied: what an instance has of its own
     // (ADR 0051).
     core::u32 overrides = 0;

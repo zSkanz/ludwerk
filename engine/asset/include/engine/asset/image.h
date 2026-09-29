@@ -45,7 +45,7 @@ struct Image
     }
 };
 
-// Decodes PNG, JPEG and the rest of stb_image's set from memory.
+// Decodes PNG, JPEG or TGA from memory, up to 8192 x 8192 pixels (audit F8).
 //
 // Takes bytes rather than a path because the caller that matters reads from a
 // glTF buffer view -- an image embedded in a `.glb` is a span in the middle of

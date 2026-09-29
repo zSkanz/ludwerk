@@ -2768,6 +2768,10 @@ declare extern type SceneService extends Instance with
     read SceneLoading: Signal<string>
     --- The new scene is in place and its scripts have started.
     read SceneLoaded: Signal<string>
+    --- A `LoadScene` that could not happen: the scene is not there, or does not read. The scene that
+    --- was open stays as it was -- its close handlers have not run -- and `message` says why, as the
+    --- log does.
+    read SceneLoadFailed: Signal<string, string>
     --- Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the `SubWorld`'s
     --- `Send`, on the tick after it sent them. Never fires anywhere else.
     read HostMessageReceived: Signal<...any>

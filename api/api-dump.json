@@ -3397,6 +3397,19 @@
           ]
         },
         {
+          "Name": "SceneLoadFailed",
+          "Parameters": [
+            {
+              "Name": "path",
+              "Type": "string"
+            },
+            {
+              "Name": "message",
+              "Type": "string"
+            }
+          ]
+        },
+        {
           "Name": "SceneLoaded",
           "Parameters": [
             {

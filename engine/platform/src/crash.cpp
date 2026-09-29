@@ -13,6 +13,8 @@
 #include <windows.h>
 #include <dbghelp.h>
 // clang-format on
+#include <csignal>
+#include <cstdlib>
 #else
 #include <csignal>
 #include <cstring>
@@ -272,11 +274,10 @@ void terminateHandler() noexcept
 
 #ifdef _WIN32
 
-LONG WINAPI writeMinidump(EXCEPTION_POINTERS* exception) noexcept
+// The dump, then the note saying `headline`: what every Windows path below
+// leaves, whichever door the process went out of.
+void writeDumpAndNote(EXCEPTION_POINTERS* exception, const char* headline) noexcept
 {
-    if (alreadyHandling().exchange(true))
-        return EXCEPTION_CONTINUE_SEARCH;
-
     const HANDLE file =
         ::CreateFileA(artifactPath().c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
@@ -304,12 +305,47 @@ LONG WINAPI writeMinidump(EXCEPTION_POINTERS* exception) noexcept
 
     // The dump is safe on disk; everything from here is best-effort, and a note
     // that comes out short is still a note somebody can read without a debugger.
-    writeNote(ENG_BRAND_NAME " died on a fault.", exception);
+    writeNote(headline, exception);
+}
+
+LONG WINAPI writeMinidump(EXCEPTION_POINTERS* exception) noexcept
+{
+    if (alreadyHandling().exchange(true))
+        return EXCEPTION_CONTINUE_SEARCH;
+    writeDumpAndNote(exception, ENG_BRAND_NAME " died on a fault.");
 
     // Search on, so a debugger still breaks and the process still dies with the
     // exception code it faulted with. Swallowing it would turn a crash into a
     // silent exit, which is worse than the crash.
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// **Three doors the filter above never sees** (audit A15). `abort()` -- an
+// assertion, or `std::terminate` on any thread but the main one, whose own
+// terminate handler is the default one on MSVC -- raises SIGABRT and ends the
+// process without an exception; the C runtime's invalid-argument check and a
+// pure virtual call end it through handlers of their own. Each left nothing.
+// (`__fastfail` cannot be caught by anything in the process, by design.)
+void onAbort(int) noexcept
+{
+    if (alreadyHandling().exchange(true))
+        return;
+    writeDumpAndNote(nullptr, ENG_BRAND_NAME " stopped itself: abort() was called -- a check that failed, or an "
+                                             "exception no thread caught.");
+}
+
+void onInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) noexcept
+{
+    if (!alreadyHandling().exchange(true))
+        writeDumpAndNote(nullptr, ENG_BRAND_NAME " stopped on an invalid argument to the C runtime.");
+    std::abort();
+}
+
+void onPureCall() noexcept
+{
+    if (!alreadyHandling().exchange(true))
+        writeDumpAndNote(nullptr, ENG_BRAND_NAME " stopped on a call to a pure virtual function.");
+    std::abort();
 }
 
 #else
@@ -375,6 +411,9 @@ bool installCrashHandler(const std::filesystem::path& directory)
 
 #ifdef _WIN32
     ::SetUnhandledExceptionFilter(&writeMinidump);
+    (void)std::signal(SIGABRT, &onAbort);
+    (void)::_set_invalid_parameter_handler(&onInvalidParameter);
+    (void)::_set_purecall_handler(&onPureCall);
     return true;
 #else
     // The four that mean "this process is in an invalid state". `SIGINT` and

@@ -455,11 +455,13 @@ plan where it stopped.
       - the exported `TesteMultiplayer` was exported again and driven with
         real input: the IP typed, the join made, the walk taken, and the
         reconnection after its server was killed and restarted.
-- [ ] **P1, failures and data loss**: S2 with S3, S6, S7, S10, A1 to A12,
-      A15, F6 to F9. Done through A6, with A12 and the medium items (D233 to
-      D241, D247 to D249). **Paused on 2026-09-28** for the multiplayer
-      smoothness brief and its stage 2, then one drawn position per instance;
-      A7 is next when the audit resumes.
+- [x] **P1, failures and data loss**: S2 with S3, S6, S7, S10, A1 to A12,
+      A15, F6 to F9 -- D233 to D241, D247 to D249 and D256 to D264, the last
+      nine on 2026-09-29 after the multiplayer work: a console closed saves
+      (A7), a scene change that cannot happen leaves the scene whole (A8) and
+      a join cancels one (A10), a reload and a recovered backup keep their
+      saves (A11, F7), stamps, images and field sizes are bounded (F6, F8,
+      F9), and every way out of the process leaves a report (A15).
 - [ ] **P1, performance**: the frame statistics first (p95, the CPU and GPU
       split, time per phase), then each fix measured before and after.
 - [ ] **P2.**

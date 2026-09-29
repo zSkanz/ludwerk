@@ -1496,3 +1496,34 @@ TEST_CASE("what a scene read could not build is written back by the next save, a
     REQUIRE_FALSE(scene::readScene(again.world, written).has_value());
     CHECK(scene::writeScene(again.world).find("FromAFutureBuild") != std::string::npos);
 }
+
+TEST_CASE("a stamp that names itself many times is read once, and stops at the load's limit (audit F6)")
+{
+    // A hand-edited stamp whose children are twenty of itself: bounded only in
+    // depth, it built 1 + 20 + 400 + 8000 + 160000 instances, re-reading and
+    // re-parsing the file at every one.
+    std::string children;
+    for (int at = 0; at < 20; ++at)
+        children += std::string(at == 0 ? "" : ",") + R"({"stamp":"self","name":"c)" + std::to_string(at) + R"("})";
+    const std::string stampText =
+        R"({"format":"scene","version":2,"root":{"class":"Part","name":"Node","children":[)" + children + "]}}";
+    int reads = 0;
+    const scene::StampSource source = [&](std::string_view) -> std::optional<std::string> {
+        ++reads;
+        return stampText;
+    };
+    const std::string sceneText =
+        R"({"format":"scene","version":2,"root":{"children":[{"stamp":"self","name":"top"}]},"storage":{}})";
+
+    Fixture fixture;
+    (void)makeWorkspace(fixture);
+    SceneIoReport read;
+    read.instanceLimit = 5000;
+    REQUIRE_FALSE(scene::readScene(fixture.world, sceneText, &read, source).has_value());
+    // Read and parsed once, however many times it was placed.
+    CHECK(reads == 1);
+    // Wide stops where the load says: past its limit by at most one stamp's
+    // worth, and not the 168,421 the depth alone allowed.
+    CHECK(read.instances <= 5000 + 21);
+    CHECK(read.missingStamps > 0);
+}

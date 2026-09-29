@@ -797,13 +797,36 @@ int main(int argc, char** argv)
     // An app's working directory is `/`, which it may not write; its own
     // storage is where the log and a crash report can go (and `adb pull` finds
     // them).
-    const std::filesystem::path artifactDir =
+    std::filesystem::path artifactDir =
         engine::platform::paths().userDir.empty() ? std::filesystem::current_path() : engine::platform::paths().userDir;
 #else
-    const std::filesystem::path artifactDir = std::filesystem::current_path();
+    std::filesystem::path artifactDir = std::filesystem::current_path();
 #endif
-    const std::filesystem::path logPath = options.logFile.empty() ? artifactDir / "engine.log" : options.logFile;
-    const bool logOpened = engine::core::openLogFile(logPath);
+    // **The run before keeps its log** (audit A15): the log was opened over
+    // itself, so the run that crashed lost its log to the run started to see
+    // why. One generation, beside it.
+    const auto openRotated = [](const std::filesystem::path& path) {
+        std::error_code error;
+        if (std::filesystem::exists(path, error)) {
+            std::filesystem::path previous = path;
+            previous.replace_filename(path.stem().string() + ".previous" + path.extension().string());
+            std::filesystem::rename(path, previous, error);
+        }
+        return engine::core::openLogFile(path);
+    };
+    std::filesystem::path logPath = options.logFile.empty() ? artifactDir / "engine.log" : options.logFile;
+    bool logOpened = openRotated(logPath);
+    // **Where it can write, when it cannot write here** (audit A15): a game
+    // installed where a player may not write -- Program Files -- had no log
+    // and no crash report at all. Its own folder then, as a phone's already is.
+    if (!logOpened && options.logFile.empty() && !engine::platform::paths().userDir.empty()) {
+        std::error_code error;
+        const std::filesystem::path fallback = engine::platform::paths().userDir / "logs";
+        std::filesystem::create_directories(fallback, error);
+        artifactDir = fallback;
+        logPath = artifactDir / "engine.log";
+        logOpened = openRotated(logPath);
+    }
     const bool handlerInstalled = engine::platform::installCrashHandler(artifactDir);
 
     const std::array<I18nArg, 1> bootArgs{I18nArg{"version", ENG_VERSION_STRING}};

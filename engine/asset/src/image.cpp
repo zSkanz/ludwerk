@@ -17,9 +17,18 @@
 // performs is from memory -- a glTF's embedded image is a span in the middle of
 // a buffer, never a file of its own -- and letting stb open files would add a
 // path-handling surface with no caller.
+//
+// **Three formats, and a size** (audit F8): the ones a project's content is
+// (`.png`, `.jpg`, `.tga`, and what a glTF embeds), not the dozen stb reads --
+// every decoder compiled in is a parser an untrusted file can reach. The
+// dimension limit is stb's own guard, checked before a pixel is allocated.
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
 #define STBI_FAILURE_USERMSG
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_TGA
+#define STBI_MAX_DIMENSIONS 16384
 #include <stb_image.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -28,6 +37,9 @@
 
 namespace engine::asset {
 namespace {
+
+// Eight thousand pixels square: 256 MiB of RGBA, decoded (audit F8).
+constexpr std::size_t MaxDecodedPixels = 8192u * 8192u;
 
 // STBI_WRITE_NO_STDIO, so stb hands us the encoded bytes and we do the file
 // ourselves. That is deliberate: stb's own stdio path takes a `const char*`,
@@ -64,6 +76,21 @@ std::optional<core::EngineError> decodeImage(std::span<const std::byte> encoded,
     int width = 0;
     int height = 0;
     int channels = 0;
+    // **What it says it is, before anything is allocated for it** (audit F8):
+    // a header of a few bytes can claim a picture of any size, and the decode
+    // allocates what it claims -- twice, with the copy below. Past eight
+    // thousand pixels square is past any texture this engine draws.
+    if (stbi_info_from_memory(reinterpret_cast<const stbi_uc*>(encoded.data()), static_cast<int>(encoded.size()),
+                              &width, &height, &channels) == 0) {
+        const char* reason = stbi_failure_reason();
+        return core::makeError(ENG_TR("asset.image.err.decode_failed"), {}, reason != nullptr ? reason : "unknown");
+    }
+    if (width <= 0 || height <= 0 ||
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) > MaxDecodedPixels) {
+        return core::makeError(ENG_TR("asset.image.err.decode_failed"), {},
+                               std::to_string(width) + " x " + std::to_string(height) +
+                                   " is larger than an image may be");
+    }
     // 4 forces RGBA out whatever went in; `channels` still reports the source's
     // own count, which is how a caller tells "opaque by design" from "opaque by
     // accident".

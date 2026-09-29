@@ -315,3 +315,51 @@ TEST_CASE("an older slot is migrated once before it is handed over")
     CHECK(fixture.errors() == "");
     CHECK(fixture.logContains("migrate-done"));
 }
+
+TEST_CASE("a slot read from its backup keeps that backup through the next save (audit F7)")
+{
+    // Recovered from `.bak`, the next write made the damaged main the backup
+    // -- over the only good copy -- so a second damage lost everything.
+    TempFolder folder;
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        SaveSlotData* slot = store.open("hero");
+        REQUIRE(slot != nullptr);
+        slot->values["level"] = scalar(scene::Value{core::f64{3.0}});
+        ++slot->generation;
+        store.flush(1.0);
+        slot->values["level"] = scalar(scene::Value{core::f64{4.0}});
+        ++slot->generation;
+        store.flush(1.0);
+    }
+    {
+        std::ofstream broken(folder.path / "hero.save", std::ios::binary | std::ios::trunc);
+        broken << "not a save";
+    }
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        script::SaveDamage damage = script::SaveDamage::None;
+        SaveSlotData* slot = store.open("hero", &damage);
+        REQUIRE(slot != nullptr);
+        REQUIRE(damage == script::SaveDamage::FromBackup);
+        slot->values["level"] = scalar(scene::Value{core::f64{5.0}});
+        ++slot->generation;
+        store.flush(1.0);
+    }
+    // The damaged file is kept aside, not made the backup.
+    CHECK(std::filesystem::exists(folder.path / "hero.corrupt"));
+    // Damaged again: the backup is still a good one.
+    {
+        std::ofstream broken(folder.path / "hero.save", std::ios::binary | std::ios::trunc);
+        broken << "damaged again";
+    }
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        script::SaveDamage damage = script::SaveDamage::None;
+        SaveSlotData* slot = store.open("hero", &damage);
+        REQUIRE(slot != nullptr);
+        CHECK(damage == script::SaveDamage::FromBackup);
+        REQUIRE(slot->values.contains("level"));
+        CHECK(std::get<core::f64>(slot->values.at("level").scalar) == doctest::Approx(3.0));
+    }
+}

@@ -1173,9 +1173,44 @@ void WorldHost::tick()
     stepSubWorlds();
 }
 
+void WorldHost::cancelSceneChanges()
+{
+    scene::EngineState& state = m_world->engineState();
+    std::string path;
+    if (state.pendingSceneLoad.has_value())
+        path = state.pendingSceneLoad->path;
+    state.pendingSceneLoad.reset();
+    if (m_sceneClose.has_value()) {
+        path = m_sceneClose->path;
+        // The handlers that were saving on the way out finish as a join's
+        // clear finishes them: given up, their scene going with the match.
+        script::abandonCloseHandlers(m_runtime->state());
+        m_sceneClose.reset();
+    }
+    m_activationPending = false;
+    if (script::SceneLoadRecord* record = script::activeSceneLoad(m_runtime->state()); record != nullptr) {
+        path = record->path;
+        const std::array<I18nArg, 1> args{I18nArg{"path", record->path}};
+        script::sceneLoadFailed(m_runtime->state(),
+                                core::makeError(ENG_TR("scene.err.cancelled_by_join"), args).message);
+    }
+    dropPrepared();
+    if (!path.empty()) {
+        const std::array<I18nArg, 1> args{I18nArg{"path", path}};
+        core::log(LogLevel::Warn, ENG_TR("scene.err.cancelled_by_join"), args);
+    }
+}
+
 bool WorldHost::applyPendingScene()
 {
     scene::EngineState& state = m_world->engineState();
+    // A replica's scene is its authority's, followed through the network:
+    // nothing it asked for itself opens a scene here (audit A10).
+    if (state.networkTopology == scene::NetworkTopology::Replica) {
+        if (state.pendingSceneLoad.has_value() || m_sceneClose.has_value() || m_prepared.has_value())
+            cancelSceneChanges();
+        return false;
+    }
     // **A scene closes before the next opens** (ADR 0124 §4): its
     // `scene:BindToClose` handlers run, and the change waits for them -- a
     // tick at a time, so the old scene goes on running under whatever loading
@@ -1185,7 +1220,17 @@ bool WorldHost::applyPendingScene()
     if (state.pendingSceneLoad.has_value()) {
         scene::EngineState::PendingSceneLoad pending = std::move(*state.pendingSceneLoad);
         state.pendingSceneLoad.reset();
-        if (m_sceneClose.has_value()) {
+        // **Found and read before anything closes** (audit A8): a scene that
+        // is not there, or does not parse, is refused while the open one is
+        // still whole -- its close handlers not run, its scripts running --
+        // and the game is told. Checked, it was torn down first.
+        std::string text;
+        if (const std::optional<core::EngineError> problem = readSceneText(pending.path, text, true);
+            problem.has_value()) {
+            core::logText(LogLevel::Error, problem->message);
+            script::fireSceneLoadFailed(m_runtime->state(), pending.path, problem->message);
+        }
+        else if (m_sceneClose.has_value()) {
             // Another `LoadScene` while this scene closes: the close goes on,
             // and ends in the scene asked for last.
             m_sceneClose->path = std::move(pending.path);
@@ -1226,6 +1271,8 @@ bool WorldHost::applyPendingScene()
         core::logText(LogLevel::Error, error->message);
         if (close.prepared != nullptr)
             script::sceneLoadFailed(m_runtime->state(), error->message);
+        else
+            script::fireSceneLoadFailed(m_runtime->state(), close.path, error->message);
         dropPrepared();
         return false;
     }
@@ -1365,9 +1412,7 @@ void WorldHost::stepSceneLoad()
     }
 }
 
-std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, std::vector<core::u8> data,
-                                                      bool closeHandlersRan, const scene::ParsedScene* prepared,
-                                                      core::u32 preparedScene)
+std::optional<core::EngineError> WorldHost::readSceneText(const std::string& path, std::string& text, bool parse) const
 {
     // **Under `content/` or refused** (audit F5), whoever asked: a script, the
     // editor, or an authority whose scene a replica follows.
@@ -1375,19 +1420,40 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
         const std::array<I18nArg, 1> args{I18nArg{"path", path}};
         return core::makeError(ENG_TR("scene.err.scene_path_invalid"), args);
     }
-    std::string text;
-    if (prepared != nullptr) {
-        // Read and parsed already, off the main thread (ADR 0125).
-    }
-    else if (m_readContent) {
+    if (m_readContent) {
         if (std::optional<std::string> read = m_readContent(path); read.has_value())
             text = std::move(*read);
     }
     const std::optional<std::filesystem::path> file = core::resolveUnder(m_root / "content", path);
-    if (prepared == nullptr && text.empty() && (!file.has_value() || !readFile(*file, text))) {
+    if (text.empty() && (!file.has_value() || !readFile(*file, text))) {
         const std::array<I18nArg, 1> args{I18nArg{"path", path}};
         return core::makeError(ENG_TR("scene.err.scene_not_found"), args);
     }
+    if (parse) {
+        const std::unique_ptr<scene::ParsedScene> parsed = scene::parseScene(text);
+        if (parsed != nullptr && parsed->error.has_value())
+            return parsed->error;
+    }
+    return std::nullopt;
+}
+
+std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, std::vector<core::u8> data,
+                                                      bool closeHandlersRan, const scene::ParsedScene* prepared,
+                                                      core::u32 preparedScene)
+{
+    std::string text;
+    // Read and parsed already, off the main thread (ADR 0125) -- or read and
+    // parsed here, **before anything is torn down** (audit A8): a file that
+    // does not parse leaves the open scene as it was.
+    if (prepared == nullptr) {
+        if (const std::optional<core::EngineError> problem = readSceneText(path, text, true); problem.has_value())
+            return problem;
+    }
+    else if (!core::safeRelativePath(path).has_value()) {
+        const std::array<I18nArg, 1> args{I18nArg{"path", path}};
+        return core::makeError(ENG_TR("scene.err.scene_path_invalid"), args);
+    }
+    const std::optional<std::filesystem::path> file = core::resolveUnder(m_root / "content", path);
 
     scene::World& w = *m_world;
     const core::InstanceId dataModel = m_runtime->dataModel();

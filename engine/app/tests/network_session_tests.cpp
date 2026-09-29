@@ -955,3 +955,52 @@ TEST_CASE("another machine's moving part is drawn between ticks, with what hangs
                                            offset.z - tagOffsets.front().z));
     CHECK(drift < 1e-3);
 }
+
+TEST_CASE("a Join during a scene change cancels the change, and no scene of its own opens on the replica (audit A10)")
+{
+    // The scene's close waits a second for its handler; the Join lands inside
+    // that wait. Before, the change went on after the Join and opened scene B
+    // on a replica -- mounting B's server code there.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/init.luau", R"(game:GetService("NetworkService"):Host(47123))");
+    server.boot(wire);
+
+    Machine client;
+    client.project.write("content/scenes/a.scene.json",
+                         R"json({"format":"scene","version":2,"root":{},"storage":{}})json");
+    client.project.write("content/scenes/b.scene.json",
+                         R"json({"format":"scene","version":2,"root":{},"storage":{}})json");
+    client.project.write("src/scenes/b/server/code.luau", "print('b-server started')");
+    client.project.write("src/scenes/b/client/code.luau", "print('b-client started')");
+    client.project.write("src/client/init.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local NetworkService = game:GetService("NetworkService")
+        SceneService.CurrentScene:BindToClose(function()
+            task.wait(1)
+        end)
+        SceneService.SceneLoaded:Connect(function(path: string)
+            print(`loaded:{path}`)
+        end)
+        SceneService:LoadScene("scenes/b.scene.json")
+        task.delay(0.2, function()
+            NetworkService:Join("memory:47123")
+        end)
+    )");
+    app::WorldHostOptions options = bootOptions(client.project.root);
+    options.bootScene = client.project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+    REQUIRE_FALSE(client.host->boot(options).has_value());
+    replication::Config base;
+    base.ticksPerSnapshot = 1;
+    base.interpolationDelayTicks = 0;
+    client.network = std::make_unique<app::NetworkSession>([&client]() { return client.host.get(); }, base,
+                                                           [wire]() { return net::createMemoryTransport(wire); });
+
+    run(server, client, 240);
+    CHECK(client.state() == Connected);
+    CHECK_FALSE(log.contains("loaded:scenes/b.scene.json"));
+    CHECK_FALSE(log.contains("b-server started"));
+    CHECK(log.contains("cancelled"));
+}

@@ -30,6 +30,10 @@ constexpr std::string_view Magic = "ESAV";
 constexpr int FormatVersion = 1;
 constexpr std::string_view SaveSuffix = ".save";
 constexpr std::string_view BackupSuffix = ".bak";
+// A main file that would not read, kept aside once its backup has been read in
+// its place (audit F7): made the backup at the next write, it went over the
+// only good copy.
+constexpr std::string_view CorruptSuffix = ".corrupt";
 
 void tagged(JsonWriter& out, std::string_view type, std::span<const core::f64> numbers)
 {
@@ -340,7 +344,13 @@ SaveSlotData* SaveStore::open(std::string_view name, SaveDamage* damage)
             if (hadBackup && decode(saved, *slot)) {
                 if (hadMain && damage != nullptr)
                     *damage = SaveDamage::FromBackup;
-                // Written again, so the damaged file goes at the next write.
+                // **The damaged file out of the way first**: the next write
+                // then finds no main to make the backup, and the backup read
+                // here stays the backup (audit F7). Kept, not deleted -- it is
+                // what somebody looks at to learn why it broke.
+                if (hadMain)
+                    (void)platform::renameFile(main, fileOf(m_options.directory, name, CorruptSuffix));
+                // Written again, so a good main is back at the next write.
                 ++slot->generation;
             }
             else if (hadMain || hadBackup) {

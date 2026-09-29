@@ -5368,10 +5368,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     control.stop();
     // The window's events while the close handlers run, so the system does
     // not call a game that is saving on its way out unresponsive (audit A1).
-    host->close(30.0, [&] {
+    // Within what the operating system allows, when a console closed under
+    // it: three and a half seconds, not thirty (audit A7).
+    host->close(std::min(30.0, platform::stopDeadlineSeconds()), [&] {
         if (window != nullptr)
             (void)platform::pumpEvents();
     });
+    // Closed and saved: a console handler holding the process open for this
+    // may let it go.
+    platform::stopFinished();
     device->waitIdle();
 
     if (!options.screenshotPath.empty() && offscreen.valid()) {

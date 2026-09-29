@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../generated/class_descriptors.gen.h"
+#include "engine/asset/terrain.h"
 #include "engine/core/finite.h"
 #include "engine/physics/types.h"
 #include "engine/scene/pivot.h"
@@ -466,13 +467,18 @@ bool setVoxelServiceBlockSize(World& world, core::InstanceId id, const Value& va
 {
     const auto* size = std::get_if<f64>(&value);
     VoxelComponent* voxels = world.voxels().find(id);
-    if (size == nullptr || voxels == nullptr || !finite(*size) || *size <= 0.0)
+    if (size == nullptr || voxels == nullptr || !finite(*size))
+        return false;
+    // Checked as the float it becomes (audit F9): a positive double narrows to
+    // zero, a denormal or an infinity as easily as to a size.
+    const auto narrowed = static_cast<f32>(*size);
+    if (!(narrowed >= asset::MinVoxelSize && narrowed <= asset::MaxVoxelSize))
         return false;
     // Only while empty: resizing a built world would move every block. Refused
     // by name (`scene.err.voxel_not_empty`) rather than done quietly.
     if (voxels->grid.chunkCount() > 0)
         return false;
-    voxels->blockSize = static_cast<f32>(*size);
+    voxels->blockSize = narrowed;
     voxels->revision += 1;
     return true;
 }

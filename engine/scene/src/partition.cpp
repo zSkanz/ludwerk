@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "engine/asset/field_cells.h"
+#include "engine/asset/terrain.h"
 #include "engine/core/base64.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
@@ -209,6 +210,9 @@ void extractVoxels(std::string_view scene, const PartitionSettings& settings, Pa
         return;
     const core::JsonValue node = document.root();
     const auto blockSize = static_cast<core::f32>(node["blockSize"].asNumber(1.0));
+    // A block size the scene reader would refuse is left to it (audit F9).
+    if (!(blockSize >= asset::MinVoxelSize && blockSize <= asset::MaxVoxelSize))
+        return;
     asset::VoxelGrid grid;
     const core::JsonValue chunks = node["chunks"];
     std::vector<asset::BlockId> blocks;

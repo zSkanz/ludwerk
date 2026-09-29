@@ -145,3 +145,29 @@ else()
     require_note("${throw_note}" "crash probe threw this on purpose")
 endif()
 message("crash gate: an uncaught throw left a note naming itself and where it came from")
+
+# --- The doors the fault filter never sees (audit A15) --------------------------
+# `abort()`; a throw on a thread of its own, which MSVC ends through that thread's
+# default terminate handler, so through `abort()`; and on Windows an invalid
+# argument to the C runtime. Each left nothing before.
+run_probe(abort abort_artifact abort_note)
+if(WIN32)
+    require_note("${abort_note}" "abort() was called" "Stack")
+else()
+    require_note("${abort_note}" "signal")
+endif()
+message("crash gate: abort() left a note")
+
+run_probe(thread thread_artifact thread_note)
+if(WIN32)
+    require_note("${thread_note}" "abort() was called" "Stack")
+else()
+    require_note("${thread_note}" "crash probe threw this on a thread")
+endif()
+message("crash gate: a throw on another thread left a note")
+
+if(WIN32)
+    run_probe(invalid invalid_artifact invalid_note)
+    require_note("${invalid_note}" "invalid argument to the C runtime" "Stack")
+    message("crash gate: an invalid argument to the C runtime left a note")
+endif()

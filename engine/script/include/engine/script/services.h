@@ -358,6 +358,8 @@ void fireStreamedOut(lua_State* L, core::InstanceId instance);
 // is in place and its scripts are started -- deferred, so it runs after their
 // first resumption.
 void fireSceneLoaded(lua_State* L, std::string_view path);
+// `SceneLoadFailed` (audit A8): a `LoadScene` refused before anything closed.
+void fireSceneLoadFailed(lua_State* L, std::string_view path, std::string_view message);
 // `SceneLoading`, fired by the host when a prepared scene's switch begins
 // (ADR 0125 §3); `LoadScene` fires it at the call.
 void fireSceneLoading(lua_State* L, std::string_view path);

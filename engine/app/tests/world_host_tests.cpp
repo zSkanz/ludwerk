@@ -2075,6 +2075,52 @@ TEST_CASE("a game changes scene at run time, and the game's own code and a kept 
     CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
 }
 
+TEST_CASE("a LoadScene that cannot happen leaves the open scene as it was, and says so (audit A8)")
+{
+    // A scene that is not there, and one that does not read. The open scene
+    // must not close for either: before, a missing one ran its close handlers
+    // and stayed, and a malformed one was torn down before the parse failed --
+    // old instances left, scripts gone, `SceneLoaded` never fired.
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("content/scenes/broken.scene.json", R"json({"format":"scene","version":2,"root":{"children":[)json");
+    project.write("src/client/try.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local failures = 0
+        SceneService.SceneLoadFailed:Connect(function(path: string, message: string)
+            failures += 1
+            print(`failed:{path} said:{#message > 0} current:{SceneService.CurrentScene.Path}`)
+            if failures == 1 then
+                SceneService:LoadScene("scenes/broken.scene.json")
+            end
+        end)
+        SceneService.SceneLoaded:Connect(function(path: string)
+            print(`loaded:{path}`)
+        end)
+        game:BindToClose(function() end)
+        SceneService:LoadScene("scenes/missing.scene.json")
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 12; ++tick)
+        host.tick();
+
+    CHECK(log.contains("failed:scenes/missing.scene.json said:true current:scenes/a.scene.json"));
+    CHECK(log.contains("failed:scenes/broken.scene.json said:true current:scenes/a.scene.json"));
+    CHECK_FALSE(log.contains("loaded:"));
+    // Scene A is still whole and still running: its script goes on beating.
+    const int alive = occurrences(log, "A-alive");
+    host.tick();
+    CHECK(occurrences(log, "A-alive") == alive + 1);
+    CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+    const core::InstanceId ui = host.world().findFirstChildOfClass(
+        host.runtime().dataModel(), host.world().classes().findId(host.world().atoms().lookup("UIService")));
+    REQUIRE(ui.valid());
+    CHECK(host.world().findFirstChild(ui, host.world().atoms().lookup("MenuUI")).valid());
+}
+
 TEST_CASE("LoadScene is the authority's: a client in a match is refused, and the change waits for the tick's end")
 {
     Captured log;
@@ -2702,4 +2748,33 @@ TEST_CASE("require and LoadScene refuse a path that is not a path under the proj
     // an authority's scene a replica follows.
     CHECK(host.loadScene("..\\..\\x.scene.json").has_value());
     CHECK(host.world().engineState().currentScene == "scenes/a.scene.json");
+}
+
+TEST_CASE("a block size that narrows to nothing is refused, from a file and from a script (audit F9)")
+{
+    // 1e-300 is positive as a double and zero as the float it becomes; 1e300
+    // becomes an infinity. Every loop over a block's metres divides by it.
+    Captured log;
+    Project project;
+    project.write("content/scenes/a.scene.json",
+                  R"json({"format":"scene","version":2,"root":{},"storage":{},"voxels":{"blockSize":1e-300}})json");
+    project.write("src/client/try.luau", R"(
+        local VoxelService = game:GetService("VoxelService")
+        print(`read:{VoxelService.BlockSize}`)
+        local tiny = pcall(function()
+            VoxelService.BlockSize = 1e-300
+        end)
+        local huge = pcall(function()
+            VoxelService.BlockSize = 1e300
+        end)
+        print(`tiny:{tiny} huge:{huge} now:{VoxelService.BlockSize}`)
+    )");
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    CHECK(log.contains("read:1"));
+    CHECK(log.contains("tiny:false huge:false now:1"));
 }

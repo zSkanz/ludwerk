@@ -2296,6 +2296,22 @@ void fireSceneLoaded(lua_State* L, std::string_view path)
     fireSceneEvent(L, "SceneLoaded", path);
 }
 
+void fireSceneLoadFailed(lua_State* L, std::string_view path, std::string_view message)
+{
+    World& w = world(L);
+    const ClassId sceneServiceClass = w.classes().findId(w.atoms().lookup("SceneService"));
+    const core::InstanceId service = findServiceOfClass(L, sceneServiceClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(sceneServiceClass, w.atoms().intern("SceneLoadFailed"));
+    if (descriptor == nullptr)
+        return;
+    lua_pushlstring(L, path.data(), path.size());
+    lua_pushlstring(L, message.data(), message.size());
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - 1, 2);
+    lua_pop(L, 2);
+}
+
 void fireSceneLoading(lua_State* L, std::string_view path)
 {
     fireSceneEvent(L, "SceneLoading", path);

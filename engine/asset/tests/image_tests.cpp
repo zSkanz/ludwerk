@@ -3,6 +3,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine/asset/image.h"
@@ -239,4 +240,51 @@ TEST_CASE("heightmap: resampling lands the corners on the corners and blends bet
     CHECK(wide[2] == 8.0f);
 
     CHECK(engine::asset::resampleHeights(image, 0, 2, 0.0f, 1.0f).empty());
+}
+
+namespace {
+
+// A PNG that is its signature and a header claiming `width` x `height`, and
+// nothing else: what a hostile file costs to make.
+[[nodiscard]] std::vector<std::byte> pngClaiming(unsigned width, unsigned height)
+{
+    std::vector<unsigned> bytes{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 'I', 'H', 'D', 'R'};
+    for (const unsigned value : {width, height}) {
+        for (int shift = 24; shift >= 0; shift -= 8)
+            bytes.push_back((value >> shift) & 0xFFu);
+    }
+    for (const unsigned rest : {8u, 6u, 0u, 0u, 0u, 0u, 0u, 0u, 0u})
+        bytes.push_back(rest);
+    std::vector<std::byte> out;
+    for (const unsigned value : bytes)
+        out.push_back(static_cast<std::byte>(value));
+    return out;
+}
+
+} // namespace
+
+TEST_CASE_FIXTURE(CatalogFixture,
+                  "image: a header claiming a huge picture is refused before anything is allocated (audit F8)")
+{
+    // Past stb's own dimension limit, and inside it but past the area an
+    // image may have: both refused from the header alone.
+    for (const auto& [width, height] : {std::pair{60000u, 60000u}, std::pair{10000u, 10000u}}) {
+        Image decoded;
+        const auto error = decodeImage(pngClaiming(width, height), decoded);
+        REQUIRE(error.has_value());
+        CHECK_FALSE(decoded.valid());
+    }
+}
+
+TEST_CASE_FIXTURE(CatalogFixture, "image: a format this engine does not use is not decoded (audit F8)")
+{
+    // A 1 x 1 BMP: stb would read it, and nothing in a project is one.
+    const std::vector<unsigned> bmp{'B', 'M', 58, 0, 0, 0, 0, 0, 0,  0, 54, 0, 0, 0, 40, 0, 0,   0, 1, 0,
+                                    0,   0,   1,  0, 0, 0, 1, 0, 24, 0, 0,  0, 0, 0, 4,  0, 0,   0, 0, 0,
+                                    0,   0,   0,  0, 0, 0, 0, 0, 0,  0, 0,  0, 0, 0, 0,  0, 255, 0};
+    std::vector<std::byte> bytes;
+    for (const unsigned value : bmp)
+        bytes.push_back(static_cast<std::byte>(value));
+    Image decoded;
+    CHECK(decodeImage(bytes, decoded).has_value());
 }

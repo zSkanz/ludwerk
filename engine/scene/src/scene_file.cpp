@@ -13,6 +13,9 @@
 #include <engine/scene/scene_file.h>
 #include <engine/scene/voxel_fluid.h>
 #include <engine/scene/world.h>
+#include <map>
+#include <memory>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -1437,9 +1440,22 @@ struct PendingReference
     return true;
 }
 
+// **One load's stamps** (audit F6): where they are read from, and each one
+// read and parsed once however often the load places it. A stamp whose
+// children name it again was re-read and re-parsed at every placement, which
+// with K children is K^4 of work before the depth limit said no.
+struct StampLoad
+{
+    explicit StampLoad(const StampSource* from) noexcept : source(from) {}
+
+    const StampSource* source = nullptr;
+    // By name; a null document is a stamp that could not be read or parsed.
+    std::map<std::string, std::shared_ptr<const core::JsonDocument>, std::less<>> parsed;
+};
+
 core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonValue& json,
                               std::vector<PendingReference>& pending, SceneIoReport& report,
-                              const StampSource* stamps = nullptr, int depth = 0);
+                              StampLoad* stamps = nullptr, int depth = 0);
 
 // How deep a stamp may name another stamp before this stops asking.
 //
@@ -1516,7 +1532,7 @@ private:
 // `parent`, marked. An invalid id means the source had nothing, the text was
 // not a stamp, or the class it names is one this build does not have.
 [[nodiscard]] core::InstanceId placeStamp(World& world, core::InstanceId parent, std::string_view name,
-                                          SceneIoReport& report, const StampSource* stamps, int depth);
+                                          SceneIoReport& report, StampLoad* stamps, int depth);
 
 // A dotted path BELOW `root`. Defined beside `resolvePath`, declared here
 // because a stamped node applies its overrides through it.
@@ -1770,7 +1786,8 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
             settings.maxHeight =
                 static_cast<core::f32>(cells["maxHeight"].asNumber(static_cast<core::f64>(settings.maxHeight)));
             const std::string_view index = cells["index"].asString();
-            if (settings.voxelSize > 0.0f && settings.maxHeight > settings.minHeight && !index.empty()) {
+            // Checked as the floats they now are (audit F9).
+            if (asset::saneFieldSettings(settings) && !index.empty()) {
                 component->field = asset::TerrainField(settings);
                 component->minHeight = settings.minHeight;
                 component->maxHeight = settings.maxHeight;
@@ -1920,7 +1937,7 @@ void applyOverrides(World& world, core::InstanceId placed, const JsonValue& over
 }
 
 core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonValue& json,
-                              std::vector<PendingReference>& pending, SceneIoReport& report, const StampSource* stamps,
+                              std::vector<PendingReference>& pending, SceneIoReport& report, StampLoad* stamps,
                               int depth)
 {
     // **A node that names a stamp is not built; it is STAMPED** (ADR 0049).
@@ -1929,9 +1946,14 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
     // the mark is worth having, and the reason changing a stamp changes every
     // unbroken instance of it.
     if (const std::string_view stampName = json["stamp"].asString(); !stampName.empty()) {
-        const core::InstanceId placed = stamps != nullptr && *stamps && depth < kMaxStampDepth
-                                            ? placeStamp(world, parent, stampName, report, stamps, depth)
-                                            : core::InstanceId{};
+        // **Deep and wide both bounded** (audit F6): the depth limit stops a
+        // hand-edited stamp that names itself going down for ever, and the
+        // load's instance limit stops it going wide -- K children of one are
+        // K^3 instances at depth four.
+        const bool placeable = stamps != nullptr && stamps->source != nullptr && *stamps->source &&
+                               depth < kMaxStampDepth && report.instances < report.instanceLimit;
+        const core::InstanceId placed =
+            placeable ? placeStamp(world, parent, stampName, report, stamps, depth) : core::InstanceId{};
         if (!placed.valid()) {
             // Counted rather than fatal, for the same reason an unknown class
             // is: a scene that names a stamp somebody deleted should still
@@ -2093,17 +2115,24 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
 // -- `Post.Lantern` is the lantern on this post -- and resolving it against the
 // scene would find some other instance with that path, or nothing.
 core::InstanceId placeStamp(World& world, core::InstanceId parent, std::string_view name, SceneIoReport& report,
-                            const StampSource* stamps, int depth)
+                            StampLoad* stamps, int depth)
 {
-    const std::optional<std::string> text = (*stamps)(name);
-    if (!text.has_value())
+    std::shared_ptr<const core::JsonDocument> document;
+    if (const auto known = stamps->parsed.find(name); known != stamps->parsed.end()) {
+        document = known->second;
+    }
+    else {
+        if (const std::optional<std::string> text = (*stamps->source)(name); text.has_value()) {
+            auto fresh = std::make_shared<core::JsonDocument>();
+            if (fresh->parse(*text).ok)
+                document = std::move(fresh);
+        }
+        stamps->parsed.emplace(std::string(name), document);
+    }
+    if (document == nullptr)
         return {};
 
-    core::JsonDocument document;
-    if (const core::JsonDocument::ParseResult parsed = document.parse(*text); !parsed.ok)
-        return {};
-
-    const JsonValue root = document.root();
+    const JsonValue root = document->root();
     if (root["format"].asString() != kFormat || !readableVersion(root["version"].asInteger()))
         return {};
     const ReadingVersion reading(root["version"].asInteger());
@@ -2251,9 +2280,12 @@ void readVoxels(World& world, const JsonValue& root, SceneIoReport& out)
     const JsonValue node = root["voxels"];
     if (node.type() != core::JsonType::Object)
         return;
-    const f64 size = node["blockSize"].asNumber(1.0);
-    if (size > 0.0)
-        voxels->blockSize = static_cast<f32>(size);
+    // **As the float it becomes, and within what a block can be** (audit F9):
+    // a positive double can still narrow to zero, a denormal or an infinity,
+    // and every loop over a block's metres divides by it.
+    const auto size = static_cast<f32>(node["blockSize"].asNumber(1.0));
+    if (size >= asset::MinVoxelSize && size <= asset::MaxVoxelSize)
+        voxels->blockSize = size;
     if (const JsonValue types = node["types"]; types.type() == core::JsonType::Array) {
         for (core::usize at = 0; at < types.size(); ++at) {
             const JsonValue type = types.at(at);
@@ -2524,8 +2556,9 @@ std::optional<core::EngineError> readGlobal(World& world, std::string_view json,
     if (const JsonValue node = root["root"]; node.type() == core::JsonType::Object) {
         applyNode(world, service, node, pending, out);
         if (const JsonValue children = node["children"]; children.type() == core::JsonType::Array) {
+            StampLoad load{source};
             for (core::usize index = 0; index < children.size(); ++index)
-                (void)readInstance(world, service, children.at(index), pending, out, source, 0);
+                (void)readInstance(world, service, children.at(index), pending, out, &load, 0);
         }
     }
 
@@ -2631,6 +2664,8 @@ namespace {
 std::optional<core::EngineError> applyScene(World& world, const JsonValue root, SceneIoReport& out,
                                             const StampSource& stamps)
 {
+    StampLoad load{&stamps};
+
     const ReadingVersion reading(root["version"].asInteger());
 
     const core::InstanceId workspace = workspaceOf(world);
@@ -2649,7 +2684,7 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
         applyNode(world, workspace, rootNode, pending, out);
         if (const JsonValue children = rootNode["children"]; children.type() == core::JsonType::Array) {
             for (core::usize index = 0; index < children.size(); ++index)
-                (void)readInstance(world, workspace, children.at(index), pending, out, &stamps, 0);
+                (void)readInstance(world, workspace, children.at(index), pending, out, &load, 0);
         }
     }
 
@@ -2673,7 +2708,7 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
             applyNode(world, service, node, pending, out);
             if (const JsonValue children = node["children"]; children.type() == core::JsonType::Array) {
                 for (core::usize index = 0; index < children.size(); ++index)
-                    (void)readInstance(world, service, children.at(index), pending, out, &stamps, 0);
+                    (void)readInstance(world, service, children.at(index), pending, out, &load, 0);
             }
             roots.emplace_back(std::string(world.atoms().text(world.name(service))), service);
             // A reference written as `ScriptService.X` still finds X.
@@ -2721,7 +2756,8 @@ core::InstanceId readSceneNode(World& world, std::string_view nodeJson, core::In
         return {};
 
     std::vector<PendingReference> pending;
-    const core::InstanceId built = readInstance(world, parent, node, pending, out, &stamps, 0);
+    StampLoad load{&stamps};
+    const core::InstanceId built = readInstance(world, parent, node, pending, out, &load, 0);
     if (!built.valid())
         return {};
 
@@ -2831,7 +2867,8 @@ core::InstanceId readStamp(World& world, std::string_view json, core::InstanceId
     const StampSource source = [json, stamp](std::string_view wanted) -> std::optional<std::string> {
         return wanted == stamp ? std::optional<std::string>(std::string(json)) : std::nullopt;
     };
-    return placeStamp(world, parent, stamp, out, &source, 0);
+    StampLoad load{&source};
+    return placeStamp(world, parent, stamp, out, &load, 0);
 }
 
 namespace {
@@ -3028,9 +3065,10 @@ core::u32 restamp(World& world, core::InstanceId root, std::string_view stamp, s
 
         std::vector<PendingReference> pending;
         applyNode(world, target, rootNode, pending, out);
+        StampLoad load{&source};
         if (const JsonValue nodes = rootNode["children"]; nodes.type() == core::JsonType::Array) {
             for (core::usize index = 0; index < nodes.size(); ++index)
-                (void)readInstance(world, target, nodes.at(index), pending, out, &source, 1);
+                (void)readInstance(world, target, nodes.at(index), pending, out, &load, 1);
         }
         if (hasOverrides)
             applyOverrides(world, target, overrides.root()["overrides"], pending, out);

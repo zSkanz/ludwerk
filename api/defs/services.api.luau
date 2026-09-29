@@ -709,6 +709,13 @@ local Classes: { Schema.Class } = {
                 Doc = "The new scene is in place and its scripts have started.",
             },
             {
+                Name = "SceneLoadFailed",
+                Parameters = { { Name = "path", Type = "string" }, { Name = "message", Type = "string" } },
+                Doc = "A `LoadScene` that could not happen: the scene is not there, or does not read. The scene "
+                    .. "that was open stays as it was -- its close handlers have not run -- and `message` says "
+                    .. "why, as the log does.",
+            },
+            {
                 Name = "HostMessageReceived",
                 Parameters = { { Name = "arguments", Type = "...any" } },
                 Doc = "Inside a `SubWorld` (ADR 0107): the values the game running this one passed to the "

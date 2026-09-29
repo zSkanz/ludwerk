@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,7 +28,7 @@
 int main(int argc, char** argv)
 {
     if (argc < 2) {
-        std::fputs("usage: engine_crash_probe <directory> [fault|throw]\n", stderr);
+        std::fputs("usage: engine_crash_probe <directory> [fault|throw|abort|thread|invalid]\n", stderr);
         return 2;
     }
 
@@ -36,8 +37,11 @@ int main(int argc, char** argv)
     // `std::terminate` and used to arrive nowhere at all, producing a dump with
     // no cause in it. A gate that only faulted would have proved half of it.
     const std::string_view mode = argc >= 3 ? std::string_view(argv[2]) : std::string_view("fault");
-    if (mode != "fault" && mode != "throw") {
-        std::fputs("crash probe: mode must be fault or throw\n", stderr);
+    // And three more (audit A15): `abort()`, a throw on a thread of its own --
+    // which MSVC ends through that thread's terminate handler, the default one
+    // -- and an invalid argument to the C runtime.
+    if (mode != "fault" && mode != "throw" && mode != "abort" && mode != "thread" && mode != "invalid") {
+        std::fputs("crash probe: mode must be fault, throw, abort, thread or invalid\n", stderr);
         return 2;
     }
 
@@ -65,6 +69,21 @@ int main(int argc, char** argv)
         // The message is checked by the driver, so it has to be something no
         // other part of the note could produce by accident.
         throw std::runtime_error("crash probe threw this on purpose");
+    }
+    if (mode == "abort")
+        std::abort();
+    if (mode == "thread") {
+        std::thread thrower([] { throw std::runtime_error("crash probe threw this on a thread"); });
+        thrower.join();
+    }
+    if (mode == "invalid") {
+#ifdef _WIN32
+        // A null stream to the C runtime: its argument check, not a fault.
+        std::FILE* nothing = nullptr;
+        (void)std::fclose(nothing);
+#else
+        std::abort();
+#endif
     }
 
     // A null store, through a volatile pointer so no compiler is entitled to

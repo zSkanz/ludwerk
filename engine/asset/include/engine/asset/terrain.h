@@ -275,6 +275,22 @@ struct FieldSettings
     float maxHeight = 256.0f;
 };
 
+// **Settings a field can be built from** (audit F9), checked after they are
+// floats: a voxel between a centimetre and 64 m, a floor and ceiling within a
+// million metres, the ceiling above the floor. `voxelSize > 0` alone let an
+// infinity or a denormal through -- a division by it in every sampler, and a
+// loop of a billion steps across one column.
+inline constexpr float MinVoxelSize = 0.01f;
+inline constexpr float MaxVoxelSize = 64.0f;
+inline constexpr float MaxFieldHeight = 1.0e6f;
+[[nodiscard]] inline bool saneFieldSettings(const FieldSettings& settings) noexcept
+{
+    const auto within = [](float value, float low, float high) { return value >= low && value <= high; };
+    return within(settings.voxelSize, MinVoxelSize, MaxVoxelSize) &&
+           within(settings.minHeight, -MaxFieldHeight, MaxFieldHeight) &&
+           within(settings.maxHeight, -MaxFieldHeight, MaxFieldHeight) && settings.maxHeight > settings.minHeight;
+}
+
 // A sample of the field: a signed distance in metres, and what it is made of.
 //
 // **The distance is `(0.5 - occupancy) * RampVoxels * VoxelSize`**: negative

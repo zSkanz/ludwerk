@@ -647,3 +647,17 @@ TEST_CASE("a brush no world has is refused whole, and fast (audit S10)")
     CHECK_FALSE(small.refused);
     CHECK(small.touched > 0);
 }
+
+TEST_CASE("field settings are checked as the floats they are (audit F9)")
+{
+    // `voxelSize > 0` let an infinity and a denormal through, and a height of
+    // 1e30 made a column a loop of a billion steps.
+    CHECK(asset::saneFieldSettings(asset::FieldSettings{}));
+    const float infinity = std::numeric_limits<float>::infinity();
+    for (const float voxel : {0.0f, -1.0f, 1e-40f, 0.001f, 100.0f, infinity, std::numeric_limits<float>::quiet_NaN()})
+        CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{voxel, -256.0f, 256.0f}));
+    CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, -1e30f, 256.0f}));
+    CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, -256.0f, infinity}));
+    CHECK_FALSE(asset::saneFieldSettings(asset::FieldSettings{1.0f, 10.0f, 10.0f}));
+    CHECK(asset::saneFieldSettings(asset::FieldSettings{0.01f, -1e6f, 1e6f}));
+}

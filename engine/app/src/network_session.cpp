@@ -275,6 +275,9 @@ void NetworkSession::update()
                 break;
             }
             state.networkTopology = scene::NetworkTopology::Replica;
+            // Any scene change this machine was making is the server's to make
+            // now (audit A10).
+            host->cancelSceneChanges();
 #if ENG_ENABLE_REPLICATION
             // **Joining replaces this machine's scene with the server's**: what
             // the authority replicates is cleared, and server code with it.
