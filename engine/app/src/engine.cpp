@@ -190,6 +190,12 @@ public:
         return physics != nullptr ? physics->replay(character, start, commands) : std::vector<core::CFrameD>{};
     }
 
+    void remember(core::u64 tick) override
+    {
+        if (scene::PhysicsSync* physics = m_host != nullptr ? m_host->physics() : nullptr; physics != nullptr)
+            physics->remember(tick);
+    }
+
 private:
     std::unique_ptr<WorldHost>& m_host;
 };

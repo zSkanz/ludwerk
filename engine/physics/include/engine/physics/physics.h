@@ -220,6 +220,16 @@ public:
     [[nodiscard]] virtual bool saveState(WorldHandle world, std::vector<u8>& out) const = 0;
     [[nodiscard]] virtual bool restoreState(WorldHandle world, std::span<const u8> blob) = 0;
 
+    // **Some bodies and characters, not the world** (ADR 0133): what a replica
+    // simulates itself -- its own character, what it predicts and owns --
+    // saved each tick and put back when the authority corrects it, while
+    // everything else stays where it is now. Each body's motion and each
+    // character's controller; not the contacts between them, which the next
+    // step finds again. A restore refuses a body or character that is gone.
+    [[nodiscard]] virtual bool saveIsland(WorldHandle world, std::span<const BodyHandle> bodies,
+                                          std::span<const CharacterHandle> characters, std::vector<u8>& out) const = 0;
+    [[nodiscard]] virtual bool restoreIsland(WorldHandle world, std::span<const u8> blob) = 0;
+
     // --- Debug ---------------------------------------------------------------
 
     // Draws the shapes the simulation actually holds. Does nothing when the

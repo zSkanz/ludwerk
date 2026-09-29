@@ -588,6 +588,93 @@ std::optional<CharacterCommand> PhysicsSync::lastCommand(core::InstanceId charac
     return found->second.last;
 }
 
+void PhysicsSync::remember(u64 tick)
+{
+    if (!m_world.valid() || tick == 0)
+        return;
+    Island island;
+    std::vector<physics::BodyHandle> bodies;
+    for (usize index = 0; index < m_bodies.size(); ++index) {
+        const BodyRecord& record = m_bodies[index];
+        if (record.generation == 0 || !record.live || record.backendMotion != physics::MotionType::Dynamic)
+            continue;
+        const core::InstanceId id{static_cast<u32>(index), record.generation};
+        const PartComponent* part = m_scene.parts().find(id);
+        const RigidBodyComponent* body = m_scene.rigidBodies().find(id);
+        if (part == nullptr || body == nullptr)
+            continue;
+        bodies.push_back(record.handle);
+        island.entities.push_back(IslandEntity{.id = id,
+                                               .cframe = part->cframe,
+                                               .body = true,
+                                               .linear = body->linearVelocity,
+                                               .angular = body->angularVelocity});
+    }
+    // In id order, whatever order the map holds them in (R10).
+    std::vector<u64> keys;
+    for (const auto& [key, record] : m_characters) {
+        if (!record.follower)
+            keys.push_back(key);
+    }
+    std::sort(keys.begin(), keys.end());
+    std::vector<physics::CharacterHandle> characters;
+    for (const u64 key : keys) {
+        const core::InstanceId id = unpackInstance(key);
+        const PartComponent* part = m_scene.parts().find(id);
+        const CharacterBodyComponent* body = m_scene.characterBodies().find(id);
+        if (part == nullptr || body == nullptr)
+            continue;
+        characters.push_back(m_characters.at(key).handle);
+        island.entities.push_back(IslandEntity{.id = id,
+                                               .cframe = part->cframe,
+                                               .character = true,
+                                               .grounded = body->grounded,
+                                               .state = body->state,
+                                               .groundPart = body->groundPart,
+                                               .move = body->moveDirection,
+                                               .jump = body->jumpRequested,
+                                               .vertical = body->verticalVelocity});
+    }
+    if (!m_backend.saveIsland(m_world, bodies, characters, island.solver))
+        return;
+    m_islands.insert_or_assign(tick, std::move(island));
+    while (m_islands.size() > IslandMemory)
+        m_islands.erase(m_islands.begin());
+}
+
+bool PhysicsSync::restoreIsland(const Island& island)
+{
+    // Every one of them still here, as it was, or nothing is touched.
+    for (const IslandEntity& entity : island.entities) {
+        if (m_scene.parts().find(entity.id) == nullptr)
+            return false;
+    }
+    if (!m_backend.restoreIsland(m_world, island.solver))
+        return false;
+    for (const IslandEntity& entity : island.entities) {
+        PartComponent* part = m_scene.parts().find(entity.id);
+        part->cframe = entity.cframe;
+        if (entity.id.index < m_bodies.size() && m_bodies[entity.id.index].generation == entity.id.generation)
+            m_bodies[entity.id.index].written = entity.cframe;
+        if (const auto found = m_characters.find(packInstance(entity.id)); found != m_characters.end())
+            found->second.written = entity.cframe;
+        if (RigidBodyComponent* body = m_scene.rigidBodies().find(entity.id); body != nullptr && entity.body) {
+            body->linearVelocity = entity.linear;
+            body->angularVelocity = entity.angular;
+        }
+        if (CharacterBodyComponent* body = m_scene.characterBodies().find(entity.id);
+            body != nullptr && entity.character) {
+            body->grounded = entity.grounded;
+            body->state = entity.state;
+            body->groundPart = entity.groundPart;
+            body->moveDirection = entity.move;
+            body->jumpRequested = entity.jump;
+            body->verticalVelocity = entity.vertical;
+        }
+    }
+    return true;
+}
+
 std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const CharacterReplayStart& start,
                                                std::span<const CharacterCommand> commands)
 {
@@ -598,6 +685,48 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
     if (found == m_characters.end() || part == nullptr || body == nullptr)
         return frames;
     CharacterRecord& record = found->second;
+
+    // **The live step, again** (ADR 0133): the island as it was after the
+    // answered tick, the authority's word on the character put in, and every
+    // unanswered command stepped through the same step the tick takes --
+    // gravity, the walk, the jump, the sweep, the bodies it pushes. Its
+    // shorter path below replayed the character alone, from less state, and
+    // at a corner the two came apart.
+    if (const auto island = m_islands.find(start.tick); start.tick != 0 && island != m_islands.end()) {
+        const Island saved = island->second;
+        // **What is waiting for the next step stays waiting**: a script's
+        // `Move` and `Jump` this tick are the next step's, and the steps
+        // taken again below consume and clear the same fields. Consumed here,
+        // the next live step moved nothing -- a step behind at every
+        // correction.
+        const core::Vec3 pendingMove = body->moveDirection;
+        const bool pendingJump = body->jumpRequested;
+        const f32 pendingWalk = body->walkSpeed;
+        const f32 pendingJumpSpeed = body->jumpSpeed;
+        if (restoreIsland(saved)) {
+            part->cframe = start.transform;
+            record.written = start.transform;
+            m_backend.setCharacterTransform(m_world, record.handle, start.transform);
+            body->verticalVelocity = start.verticalVelocity;
+            body->grounded = start.grounded;
+            frames.reserve(commands.size());
+            for (usize at = 0; at < commands.size(); ++at) {
+                const CharacterCommand& command = commands[at];
+                body->moveDirection = command.moveDirection;
+                body->jumpRequested = command.jump;
+                body->walkSpeed = command.walkSpeed;
+                body->jumpSpeed = command.jumpSpeed;
+                stepQuietly(static_cast<f64>(command.dt));
+                frames.push_back(part->cframe);
+                remember(start.tick + 1 + at);
+            }
+            body->moveDirection = pendingMove;
+            body->jumpRequested = pendingJump;
+            body->walkSpeed = pendingWalk;
+            body->jumpSpeed = pendingJumpSpeed;
+            return frames;
+        }
+    }
 
     // **The first step's ground is the authority's**: a controller put
     // somewhere new still holds the contacts of where it was, and the

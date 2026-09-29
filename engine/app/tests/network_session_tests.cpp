@@ -342,6 +342,12 @@ public:
         return physics != nullptr ? physics->replay(character, start, commands) : std::vector<core::CFrameD>{};
     }
 
+    void remember(core::u64 tick) override
+    {
+        if (scene::PhysicsSync* physics = m_host.physics(); physics != nullptr)
+            physics->remember(tick);
+    }
+
 private:
     app::WorldHost& m_host;
 };
@@ -476,7 +482,16 @@ end)
 
 namespace {
 
-void measureCorner(bool lossy, bool withReplay)
+// What a hundred corner jumps cost: every correction, and those past a
+// centimetre once the jumps begin -- the join's own take is not a corner's.
+struct CornerRun
+{
+    int corrections = 0;
+    int overDuringJumps = 0;
+    double largest = 0.0;
+};
+
+[[nodiscard]] CornerRun measureCorner(bool lossy, bool withReplay)
 {
     Captured log;
     auto wire = net::createMemoryNetwork();
@@ -504,6 +519,7 @@ void measureCorner(bool lossy, bool withReplay)
     std::map<std::string, std::pair<int, double>> byPhase;
     double largest = 0.0;
     int over = 0;
+    int overDuringJumps = 0;
     for (int frame = 0; frame < 30000 && !log.contains("corner-done"); ++frame) {
         server.frame();
         client.frame();
@@ -526,6 +542,9 @@ void measureCorner(bool lossy, bool withReplay)
             largest = std::max(largest, stats.lastCorrectionMetres);
             if (stats.lastCorrectionMetres > 0.01)
                 ++over;
+            if (stats.lastCorrectionMetres > 0.01 && std::holds_alternative<double>(tried) &&
+                std::get<double>(tried) >= 2.0)
+                ++overDuringJumps;
         }
     }
     CHECK(log.contains("corner-done"));
@@ -533,13 +552,18 @@ void measureCorner(bool lossy, bool withReplay)
                              << " largest=" << largest);
     for (const auto& [phase, count] : byPhase)
         MESSAGE("MEASURE phase " << phase << ": " << count.first << " corrections, largest " << count.second);
+    return CornerRun{static_cast<int>(seen), overDuringJumps, largest};
 }
 
 } // namespace
 
-TEST_CASE("MEASURE a hundred jumps onto a block's corner (ADR 0133)")
+TEST_CASE("a hundred jumps onto a block's corner over jitter and loss are not corrected (ADR 0133)")
 {
-    measureCorner(true, true);
-    measureCorner(false, true);
-    measureCorner(true, false);
+    // Over a lossy, jittering link: the one take at join aside, no jump is
+    // corrected past a centimetre.
+    const CornerRun lossy = measureCorner(true, true);
+    CHECK(lossy.overDuringJumps == 0);
+    // And over a clean one, nothing at all.
+    const CornerRun clean = measureCorner(false, true);
+    CHECK(clean.corrections == 0);
 }

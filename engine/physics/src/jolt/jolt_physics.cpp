@@ -1321,6 +1321,79 @@ public:
         out.assign(data.begin(), data.end());
     }
 
+    // A replica's island (ADR 0133): each body's own state and each
+    // character's, by handle, and nothing between them.
+    [[nodiscard]] bool saveIsland(std::span<const BodyHandle> bodies, std::span<const CharacterHandle> characters,
+                                  std::vector<u8>& out) const
+    {
+        JPH::StateRecorderImpl recorder;
+        const u64 bodyCount = bodies.size();
+        recorder.Write(bodyCount);
+        for (const BodyHandle handle : bodies) {
+            const BodyRecord* record = resolve(handle);
+            if (record == nullptr)
+                return false;
+            recorder.Write(packHandle(handle));
+            const JPH::BodyLockRead lock(m_system.GetBodyLockInterface(), record->id);
+            if (!lock.Succeeded())
+                return false;
+            m_system.SaveBodyState(lock.GetBody(), recorder);
+        }
+        const u64 characterCount = characters.size();
+        recorder.Write(characterCount);
+        for (const CharacterHandle handle : characters) {
+            const CharacterRecord* record = resolve(handle);
+            if (record == nullptr || record->character == nullptr)
+                return false;
+            recorder.Write(packHandle(handle));
+            record->character->SaveState(recorder);
+        }
+        const std::string data = recorder.GetData();
+        out.assign(data.begin(), data.end());
+        return true;
+    }
+
+    [[nodiscard]] bool restoreIsland(std::span<const u8> blob)
+    {
+        JPH::StateRecorderImpl recorder;
+        recorder.WriteBytes(blob.data(), blob.size());
+        recorder.Rewind();
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        u64 bodyCount = 0;
+        recorder.Read(bodyCount);
+        for (u64 at = 0; at < bodyCount && !recorder.IsFailed(); ++at) {
+            u64 packed = 0;
+            recorder.Read(packed);
+            const BodyRecord* record = resolve(unpackHandle(packed));
+            if (record == nullptr)
+                return false;
+            {
+                const JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), record->id);
+                if (!lock.Succeeded())
+                    return false;
+                m_system.RestoreBodyState(lock.GetBody(), recorder);
+            }
+            // The broad phase learns where it is now, and a body that moves
+            // is awake.
+            bodies.SetPositionAndRotation(record->id, bodies.GetPosition(record->id), bodies.GetRotation(record->id),
+                                          JPH::EActivation::DontActivate);
+            if (!bodies.GetLinearVelocity(record->id).IsNearZero() ||
+                !bodies.GetAngularVelocity(record->id).IsNearZero())
+                bodies.ActivateBody(record->id);
+        }
+        u64 characterCount = 0;
+        recorder.Read(characterCount);
+        for (u64 at = 0; at < characterCount && !recorder.IsFailed(); ++at) {
+            u64 packed = 0;
+            recorder.Read(packed);
+            CharacterRecord* record = resolve(unpackCharacter(packed));
+            if (record == nullptr || record->character == nullptr)
+                return false;
+            record->character->RestoreState(recorder);
+        }
+        return !recorder.IsFailed();
+    }
+
     [[nodiscard]] bool restoreState(std::span<const u8> blob)
     {
         JPH::StateRecorderImpl recorder;
@@ -3005,6 +3078,19 @@ public:
     {
         JoltWorld* world = resolve(handle);
         return world != nullptr && world->restoreState(blob);
+    }
+
+    [[nodiscard]] bool saveIsland(WorldHandle handle, std::span<const BodyHandle> bodies,
+                                  std::span<const CharacterHandle> characters, std::vector<u8>& out) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr && world->saveIsland(bodies, characters, out);
+    }
+
+    [[nodiscard]] bool restoreIsland(WorldHandle handle, std::span<const u8> blob) override
+    {
+        JoltWorld* world = resolve(handle);
+        return world != nullptr && world->restoreIsland(blob);
     }
 
     void debugDraw(WorldHandle handle, IDebugDrawSink& sink) override

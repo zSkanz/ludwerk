@@ -34,6 +34,9 @@ struct CharacterCommand
 // last answered, including the two things a transform does not say.
 struct CharacterReplayStart
 {
+    // The intent tick the authority answered: where a replay that re-steps
+    // the simulation itself restores from (ADR 0133). Zero: unknown.
+    core::u64 tick = 0;
     core::CFrameD transform;
     core::f32 verticalVelocity = 0.0f;
     bool grounded = false;
@@ -63,6 +66,11 @@ public:
     [[nodiscard]] virtual std::vector<core::CFrameD> replay(core::InstanceId character,
                                                             const CharacterReplayStart& start,
                                                             std::span<const CharacterCommand> commands) = 0;
+
+    // **What this machine simulates, as it stands after the step of `tick`**
+    // (ADR 0133): kept, so a correction can restore it at the tick the
+    // authority answers and step it again for real. Nothing by default.
+    virtual void remember(core::u64 tick) { (void)tick; }
 };
 
 } // namespace engine::scene

@@ -23,6 +23,7 @@
 // the accumulator (R10).
 #pragma once
 
+#include <map>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -55,6 +56,13 @@ public:
     [[nodiscard]] std::optional<CharacterCommand> lastCommand(core::InstanceId character) const override;
     [[nodiscard]] std::vector<core::CFrameD> replay(core::InstanceId character, const CharacterReplayStart& start,
                                                     std::span<const CharacterCommand> commands) override;
+    // **The island, remembered after each tick's step** (ADR 0133): every
+    // character this machine steps and every body it simulates -- on a
+    // replica, its own character and what it owns or predicts. A replay that
+    // finds the answered tick here restores it and steps the simulation again
+    // with the live step, so the prediction redone is the prediction made.
+    void remember(u64 tick) override;
+    [[nodiscard]] usize rememberedTicks() const noexcept { return m_islands.size(); }
 
     // --- Rollback (ADR 0101) ----------------------------------------------
     //
@@ -464,6 +472,32 @@ private:
     // chunk to have a collider.
     static constexpr double VoxelCollisionReach = 24.0;
     void applyVoxels();
+
+    // One remembered island: the solver's half and ours.
+    struct IslandEntity
+    {
+        core::InstanceId id{};
+        core::CFrameD cframe{};
+        bool body = false;
+        core::Vec3 linear{};
+        core::Vec3 angular{};
+        bool character = false;
+        bool grounded = false;
+        i32 state = 0;
+        core::InstanceId groundPart{};
+        core::Vec3 move{};
+        bool jump = false;
+        f32 vertical = 0.0f;
+    };
+    struct Island
+    {
+        std::vector<u8> solver;
+        std::vector<IslandEntity> entities;
+    };
+    // By tick, the newest `IslandMemory` of them.
+    static constexpr usize IslandMemory = 128;
+    std::map<u64, Island> m_islands;
+    [[nodiscard]] bool restoreIsland(const Island& island);
 
     std::vector<BodyRecord> m_bodies;
     // Set while `stepQuietly` runs: contacts are drained and not published.

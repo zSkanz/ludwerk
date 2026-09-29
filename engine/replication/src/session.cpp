@@ -2312,6 +2312,10 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
                 Sample{tick, part->cframe, m_replay != nullptr ? m_replay->lastCommand(local->second) : std::nullopt});
             while (m_predicted.size() > PredictionHistory)
                 m_predicted.pop_front();
+            // And what the simulation holds after this tick, for a correction
+            // to restore and step again for real (ADR 0133).
+            if (m_replay != nullptr)
+                m_replay->remember(tick);
         }
     }
     const InstanceId local = scene::localPlayerOf(world);
@@ -2760,7 +2764,9 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
             commands.back().jumpSpeed = *authoritative.jumpSpeed;
     }
     if (complete) {
-        const std::vector<core::CFrameD> frames = m_replay->replay(character, authoritative, commands);
+        scene::CharacterReplayStart from = authoritative;
+        from.tick = m_ackedIntent;
+        const std::vector<core::CFrameD> frames = m_replay->replay(character, from, commands);
         if (frames.size() == commands.size()) {
             if (comparing)
                 m_stats.replays += 1;

@@ -187,8 +187,17 @@ engines do: [ADR 0133](../decisions/0133-a-replica-predicts-what-its-character-t
   applied at the next, a take replays what is unanswered, and the delay starts
   at 3. Result: 1 correction of 2.2 cm in 100 jumps with jitter (at join,
   while the spawned character falls), and none without it.
-- [ ] **The replay is the live step:** retire `stepController` for predicting
+- [x] **The replay is the live step:** retire `stepController` for predicting
   replicas; the snapshot carries every field the controller reads.
+
+  **Done differently, and better** (D250): instead of a longer snapshot, the
+  replica remembers its own simulated island after every step, and a
+  correction restores it at the answered tick and steps the whole physics
+  again. So every field the controller reads is the replica's own, exactly,
+  and only the authority's word on the character is put in. The
+  `stepController` path stays only as the fallback where no island was
+  remembered, which is at join. The corner test: no correction past a
+  centimetre in 100 jumps over jitter and loss, the join's take aside.
 - [ ] **Predicted set:** loose parts within `[network] predict_radius` (8 m) of
   the own character plus what they touch, capped at `predict_max_bodies` (32),
   entering at the authority's full motion state, leaving after

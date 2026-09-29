@@ -385,6 +385,77 @@ TEST_CASE("a character stepped again from where it was, through the commands it 
     CHECK(host.world().parts().find(walker)->cframe.position.x == doctest::Approx(walked.back().x).epsilon(1e-4));
 }
 
+TEST_CASE("a replay from a remembered tick is the live step again, to the bit (ADR 0133)")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local function block(name: string, position: vector, size: vector)
+            local part = Instance.new("Part")
+            part.Name = name
+            part.Size = size
+            part.Position = position
+            part.Anchored = true
+            part.Parent = workspace
+        end
+        block("Ground", vector.create(0, -1, 0), vector.create(200, 2, 200))
+        block("Ledge", vector.create(7, 0.75, 0), vector.create(4, 1.5, 20))
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(0, 3, 0)
+        walker.JumpSpeed = 6
+        walker.Parent = workspace
+        local ticks = 0
+        game:GetService("RunService").Heartbeat:Connect(function()
+            ticks += 1
+            if ticks > 90 then
+                walker:Move(vector.create(1, 0, 0.1))
+            end
+            if ticks == 100 then
+                walker:Jump()
+            end
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 91; ++tick)
+        host.tick();
+    const core::InstanceId walker =
+        host.world().findFirstChild(host.workspace(), host.world().atoms().lookup("Walker"));
+    REQUIRE(walker.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+    physics->remember(1000);
+    scene::CharacterReplayStart start;
+    start.tick = 1000;
+    start.transform = host.world().parts().find(walker)->cframe;
+    start.verticalVelocity = host.world().characterBodies().find(walker)->verticalVelocity;
+    start.grounded = host.world().characterBodies().find(walker)->grounded;
+
+    // Walked onto the ledge's edge and over it, a command a tick, the island
+    // remembered after every step as a replica remembers it.
+    std::vector<scene::CharacterCommand> commands;
+    std::vector<core::DVec3> walked;
+    for (int tick = 0; tick < 40; ++tick) {
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        commands.push_back(*command);
+        walked.push_back(host.world().parts().find(walker)->cframe.position);
+        physics->remember(1001 + static_cast<core::u64>(tick));
+    }
+
+    const std::vector<core::CFrameD> replayed = physics->replay(walker, start, commands);
+    REQUIRE(replayed.size() == commands.size());
+    for (std::size_t at = 0; at < walked.size(); ++at) {
+        CAPTURE(at);
+        CHECK(replayed[at].position.x == walked[at].x);
+        CHECK(replayed[at].position.y == walked[at].y);
+        CHECK(replayed[at].position.z == walked[at].z);
+    }
+}
+
 TEST_CASE("a BindToClose handler that yields is waited for")
 {
     Captured log;

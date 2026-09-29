@@ -291,6 +291,12 @@ public:
 
     [[nodiscard]] bool saveState(physics::WorldHandle, std::vector<u8>&) const override { return false; }
     [[nodiscard]] bool restoreState(physics::WorldHandle, std::span<const u8>) override { return false; }
+    [[nodiscard]] bool saveIsland(physics::WorldHandle, std::span<const physics::BodyHandle>,
+                                  std::span<const physics::CharacterHandle>, std::vector<u8>&) const override
+    {
+        return false;
+    }
+    [[nodiscard]] bool restoreIsland(physics::WorldHandle, std::span<const u8>) override { return false; }
     void debugDraw(physics::WorldHandle, physics::IDebugDrawSink&) override {}
 
     u32 nextBody = 1;
