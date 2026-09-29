@@ -1016,6 +1016,25 @@ TEST_CASE("every Value alternative reaches the hasher")
     }
 }
 
+TEST_CASE("the world hash reads a player's intents by action name, not by atom number (D304)")
+{
+    // The same intent in two worlds whose atom tables were filled in another
+    // order -- which is what one method more in a build does to every name
+    // interned after it, and what moved the character replay's trace.
+    const auto hashWith = [](bool internFirst) {
+        Fixture fixture;
+        if (internFirst)
+            (void)fixture.atom("SomethingInternedEarlier");
+        const InstanceId player = fixture.folder("Player");
+        engine::scene::PlayerComponent component;
+        component.userId = 7;
+        component.intents.push_back(engine::scene::PlayerIntent{fixture.atom("Jump"), 0, Vec3{}, true});
+        (void)fixture.world.players().add(player, std::move(component));
+        return fixture.world.worldHash();
+    };
+    CHECK(hashWith(false) == hashWith(true));
+}
+
 TEST_CASE("the world hash changes when anything observable does")
 {
     Fixture fixture;

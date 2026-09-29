@@ -1790,6 +1790,7 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
             // Checked as the floats they now are (audit F9).
             if (asset::saneFieldSettings(settings) && !index.empty()) {
                 component->field = asset::TerrainField(settings);
+                component->shipped = asset::TerrainField(settings);
                 component->minHeight = settings.minHeight;
                 component->maxHeight = settings.maxHeight;
                 component->cellIndex = std::string(index);
@@ -1900,6 +1901,7 @@ void applyNode(World& world, core::InstanceId id, const JsonValue& json, std::ve
                      .has_value();
             if (decoded) {
                 component->field = std::move(cell.field);
+                component->shipped = component->field;
                 // **The settings ride with the field**, so `MinHeight` and
                 // `MaxHeight` are whatever the ground was actually sculpted
                 // under rather than whatever the properties happened to say.
@@ -2371,6 +2373,7 @@ void readVoxels(World& world, const JsonValue& root, SceneIoReport& out)
     // editor and saved runs when the game does; a lake that is already level
     // settles in that one look and costs nothing after it.
     wakeAllFluids(*voxels);
+    voxels->shipped = voxels->grid;
 }
 
 } // namespace

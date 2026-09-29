@@ -90,8 +90,10 @@ void FieldStreamer::reconcile()
     scene::TerrainComponent* component = terrain();
     if (component == nullptr)
         return;
-    for (const auto& held : m_terrainCells)
+    for (const auto& held : m_terrainCells) {
         component->field.shareFrom(held.second.field);
+        component->shipped.shareFrom(held.second.field);
+    }
     component->fieldRevision += 1;
 }
 
@@ -284,6 +286,8 @@ f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> byt
         // ground; the cell counts as resident, and costs what reading it did.
         if (scene::TerrainComponent* component = terrain(); component != nullptr) {
             component->field.shareFrom(cell.field);
+            // What the package ships, for the ground's replication (ADR 0135).
+            component->shipped.shareFrom(cell.field);
             component->fieldRevision += 1;
             m_terrainCells[id] = std::move(cell);
         }
@@ -295,6 +299,7 @@ f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> byt
         return -1.0;
     if (scene::VoxelComponent* component = voxels(); component != nullptr) {
         component->grid.shareFrom(cell.grid);
+        component->shipped.shareFrom(cell.grid);
         component->revision += 1;
         // Its water was saved without the steps it was due. A still lake
         // settles in one look; water that moves makes the cell one somebody
@@ -315,6 +320,7 @@ void FieldStreamer::evict(asset::ChunkId id)
             const core::u32 across = asset::terrainCellChunks(held->second.settings.voxelSize);
             if (asset::terrainCellUntouched(component->field, held->second, across)) {
                 asset::removeTerrainCell(component->field, held->second);
+                asset::removeTerrainCell(component->shipped, held->second);
                 component->fieldRevision += 1;
             }
             else {
@@ -332,6 +338,7 @@ void FieldStreamer::evict(asset::ChunkId id)
         const core::u32 across = asset::voxelCellChunks(held->second.blockSize);
         if (asset::voxelCellUntouched(component->grid, held->second, across)) {
             asset::removeVoxelCell(component->grid, held->second);
+            asset::removeVoxelCell(component->shipped, held->second);
             component->revision += 1;
         }
         else {

@@ -675,4 +675,16 @@ std::optional<core::EngineError> decodeTerrainCell(std::span<const std::byte> by
     return std::nullopt;
 }
 
+std::vector<std::byte> encodeTerrainChunk(const TerrainChunk& chunk)
+{
+    std::vector<std::byte> out;
+    encodeChunk(chunk, out);
+    return out;
+}
+
+bool decodeTerrainChunk(std::span<const std::byte> bytes, std::shared_ptr<TerrainChunk>& out)
+{
+    return bytes.size() <= MaxTerrainChunkCode && decodeChunk(bytes, out);
+}
+
 } // namespace engine::asset

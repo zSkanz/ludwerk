@@ -1106,7 +1106,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 21> terrainMethods;
+    static std::array<MethodDesc, 22> terrainMethods;
     terrainMethods = {{
         MethodDesc{
             .name = atoms.intern("FillBall"),
@@ -1131,6 +1131,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Raises the ground around `center` by `amount` metres at the middle, falling smoothly to nothing at `radius` -- or lowers it, when `amount` is negative. Returns how many voxels it changed.\012\012**It moves the surface rather than adding a ball**: the ground within `radius` above and below `center` is pushed up, so a hill rises without an overhang at its rim, and a tunnel further down stays where it is. This is the verb for shaping hills and valleys; `FillBall` is the one for a boulder or a tunnel.\012\012Where a column within reach has no ground at all and `material` is given, raising lays new ground of it from `center`'s height up.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GrowBall"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Moves the surface near `center` outwards along its own slope by `amount` metres at the middle, falling smoothly to nothing at `radius` -- or inwards, when `amount` is negative. Returns how many voxels it changed.\012\012The editor's Raise and Lower: a field rises, a cliff comes forward, an overhang grows down, and ground worn away goes back the way it came. Where it grows new ground, it is `material`, or the neighbouring ground's when that is not given.",
         },
         MethodDesc{
             .name = atoms.intern("SmoothBall"),

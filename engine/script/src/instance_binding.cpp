@@ -1378,6 +1378,35 @@ int methodTerrainRaiseBall(lua_State* L)
     return 1;
 }
 
+int methodTerrainGrowBall(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::Vec3 center = checkVector3(L, 2);
+    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const auto amount = static_cast<float>(luaL_checknumber(L, 4));
+    const lua_Integer material = luaL_optinteger(L, 5, 0);
+    if (material < 0 || material > 255)
+        luaL_argerror(L, 5, "a material id from 1 to 255");
+    if (!std::isfinite(amount))
+        luaL_argerror(L, 4, "a finite number of metres");
+
+    scene::TerrainComponent* terrain = world(L).terrains().find(id);
+    if (terrain == nullptr) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    // The field's own space; see `FillBall` above.
+    const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
+                           static_cast<double>(center.y) - terrain->origin.y,
+                           static_cast<double>(center.z) - terrain->origin.z};
+    const asset::EditReport report =
+        asset::growBall(terrain->field, wide, radius, amount, static_cast<core::u8>(material));
+    if (report.touched > 0)
+        terrain->fieldRevision += 1;
+    pushTouched(L, report);
+    return 1;
+}
+
 int methodTerrainFillBlock(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -2056,6 +2085,7 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"CharacterBody", "Jump", methodCharacterJump},
     {"Ragdoll", "Build", methodRagdollBuild},
     {"Terrain", "FillBall", methodTerrainFillBall},
+    {"Terrain", "GrowBall", methodTerrainGrowBall},
     {"Terrain", "RaiseBall", methodTerrainRaiseBall},
     {"Terrain", "FillBlock", methodTerrainFillBlock},
     {"Terrain", "PaintBall", methodTerrainPaintBall},

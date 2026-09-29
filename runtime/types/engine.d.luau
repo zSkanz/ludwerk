@@ -1219,6 +1219,12 @@ declare extern type Terrain extends Instance with
     --- boulder or a tunnel. Where a column within reach has no ground at all and `material` is given,
     --- raising lays new ground of it from `center`'s height up.
     function RaiseBall(self, center: vector, radius: number, amount: number, material: number?): number
+    --- Moves the surface near `center` outwards along its own slope by `amount` metres at the middle,
+    --- falling smoothly to nothing at `radius` -- or inwards, when `amount` is negative. Returns how
+    --- many voxels it changed. The editor's Raise and Lower: a field rises, a cliff comes forward, an
+    --- overhang grows down, and ground worn away goes back the way it came. Where it grows new ground,
+    --- it is `material`, or the neighbouring ground's when that is not given.
+    function GrowBall(self, center: vector, radius: number, amount: number, material: number?): number
     --- Softens the ground in a ball: every voxel moves towards the average of its neighbours by
     --- `strength` (0 to 1, default 0.5), less towards the rim. Returns how many voxels it changed.
     function SmoothBall(self, center: vector, radius: number, strength: number?): number

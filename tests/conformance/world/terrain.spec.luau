@@ -196,6 +196,20 @@ describe("terrain", function()
         expect(terrain:SmoothBall(vector.create(0, 1, 0), 5) > 0):ToBe(true)
     end)
 
+    it("grows the surface out along its slope, and wears it back in", function()
+        -- The editor's Raise and Lower, from a script.
+        terrain:FillBlock(vector.create(0, -20, 0), vector.create(32, 40, 32), Rock)
+        local flat = terrain:HeightAt(0, 0) :: number
+        expect(terrain:GrowBall(vector.create(0, flat, 0), 5, 2) > 0):ToBe(true)
+        local grown = terrain:HeightAt(0, 0) :: number
+        expect(grown > flat + 1):ToBe(true)
+        expect(terrain:GrowBall(vector.create(0, grown, 0), 5, -3) > 0):ToBe(true)
+        expect((terrain:HeightAt(0, 0) :: number) < grown - 1):ToBe(true)
+        expect(function()
+            terrain:GrowBall(vector.create(0, 0, 0), 5, 0 / 0)
+        end):ToThrow()
+    end)
+
     it("a ray meets the ground with nothing moving anywhere near it", function()
         -- Colliders are built near things that move, and there are none here:
         -- the ray is answered by the voxels themselves (ADR 0082).

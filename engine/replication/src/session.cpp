@@ -12,10 +12,12 @@
 #include <string>
 #include <string_view>
 
+#include "engine/asset/terrain_cell.h"
 #include "engine/core/finite.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
 #include "engine/scene/players.h"
+#include "engine/scene/voxel_fluid.h"
 #include "engine/scene/world.h"
 #include "wire_schema.gen.h"
 
@@ -753,6 +755,302 @@ void AuthoritySession::diffAttributes(const scene::World& world, InstanceId root
     m_attributeShadows = std::move(now);
 }
 
+// --- The ground (ADR 0135) ------------------------------------------------------
+//
+// The workspace's terrain and the block world, sent as whole chunks: every
+// chunk that differs from the scene to a peer that joins, then every chunk an
+// edit changed. A chunk received twice is simply the truth.
+
+namespace {
+
+constexpr usize GroundChunksPerMessage = 64;
+// The longest code a block chunk can have: a run for every block.
+constexpr usize MaxVoxelChunkCode = static_cast<usize>(asset::VoxelChunkVolume) * 4;
+
+[[nodiscard]] InstanceId groundTerrainUnder(const scene::World& world, InstanceId root)
+{
+    for (InstanceId child = root.valid() ? world.firstChild(root) : InstanceId{}; child.valid();
+         child = world.nextSibling(child)) {
+        if (world.terrains().find(child) != nullptr)
+            return child;
+    }
+    return {};
+}
+
+[[nodiscard]] InstanceId groundVoxelsOf(const scene::World& world)
+{
+    InstanceId found;
+    world.voxels().forEach([&found](InstanceId id, const scene::VoxelComponent&) {
+        if (!found.valid())
+            found = id;
+    });
+    return found;
+}
+
+// The chunk `entries` holds at `key`, or null.
+template <class Entry, class Key>
+[[nodiscard]] const void* chunkAt(std::span<const Entry> entries, const Key& key) noexcept
+{
+    const auto at = std::lower_bound(entries.begin(), entries.end(), key,
+                                     [](const Entry& entry, const Key& probe) { return entry.first < probe; });
+    return at != entries.end() && at->first == key ? static_cast<const void*>(at->second.get()) : nullptr;
+}
+
+// **What changed between two sends**: every key whose chunk now is not the
+// chunk it was, in key order -- less a key that was the package's chunk and
+// still is, which is ground a streamed cell brought in or took out on both
+// ends alike. An emptied key comes back with no chunk.
+template <class Entry>
+[[nodiscard]] std::vector<Entry> changedChunks(std::span<const Entry> now, std::span<const Entry> was,
+                                               std::span<const Entry> shippedNow, std::span<const Entry> shippedWas)
+{
+    std::vector<Entry> out;
+    const auto consider = [&](const auto& key, const auto& chunk, const void* before) {
+        if (chunk.get() == chunkAt(shippedNow, key) && before == chunkAt(shippedWas, key))
+            return;
+        out.emplace_back(key, chunk);
+    };
+    auto a = now.begin();
+    auto b = was.begin();
+    while (a != now.end() || b != was.end()) {
+        if (b == was.end() || (a != now.end() && a->first < b->first)) {
+            consider(a->first, a->second, nullptr);
+            ++a;
+        }
+        else if (a == now.end() || b->first < a->first) {
+            consider(b->first, decltype(b->second){}, b->second.get());
+            ++b;
+        }
+        else {
+            if (a->second != b->second)
+                consider(a->first, a->second, b->second.get());
+            ++a;
+            ++b;
+        }
+    }
+    return out;
+}
+
+// Every key whose chunk is not the package's: what a peer that loaded the
+// scene lacks.
+template <class Entry>
+[[nodiscard]] std::vector<Entry> unshippedChunks(std::span<const Entry> now, std::span<const Entry> shipped)
+{
+    return changedChunks<Entry>(now, shipped, std::span<const Entry>{}, std::span<const Entry>{});
+}
+
+void writeKey(Writer& out, core::i32 x, core::i32 y, core::i32 z)
+{
+    out.u32v(static_cast<u32>(x));
+    out.u32v(static_cast<u32>(y));
+    out.u32v(static_cast<u32>(z));
+}
+
+[[nodiscard]] std::vector<std::vector<u8>> terrainChunkMessages(const asset::FieldSettings& settings,
+                                                                const std::vector<asset::TerrainField::Entry>& chunks)
+{
+    std::vector<std::vector<u8>> messages;
+    for (usize first = 0; first < chunks.size(); first += GroundChunksPerMessage) {
+        const usize last = std::min(chunks.size(), first + GroundChunksPerMessage);
+        Writer out;
+        out.u8v(static_cast<u8>(MessageType::TerrainChunks));
+        writeF32(out, settings.voxelSize);
+        writeF32(out, settings.minHeight);
+        writeF32(out, settings.maxHeight);
+        out.u16v(static_cast<u16>(last - first));
+        for (usize at = first; at < last; ++at) {
+            const auto& [key, chunk] = chunks[at];
+            writeKey(out, key.x, key.y, key.z);
+            if (chunk == nullptr) {
+                out.u32v(0);
+                continue;
+            }
+            const std::vector<std::byte> code = asset::encodeTerrainChunk(*chunk);
+            out.u32v(static_cast<u32>(code.size()));
+            for (const std::byte byte : code)
+                out.u8v(static_cast<u8>(byte));
+        }
+        messages.push_back(std::move(out.bytes));
+    }
+    return messages;
+}
+
+[[nodiscard]] std::vector<std::vector<u8>> voxelChunkMessages(f32 blockSize,
+                                                              const std::vector<asset::VoxelGrid::Entry>& chunks)
+{
+    std::vector<std::vector<u8>> messages;
+    for (usize first = 0; first < chunks.size(); first += GroundChunksPerMessage) {
+        const usize last = std::min(chunks.size(), first + GroundChunksPerMessage);
+        Writer out;
+        out.u8v(static_cast<u8>(MessageType::VoxelChunks));
+        writeF32(out, blockSize);
+        out.u16v(static_cast<u16>(last - first));
+        for (usize at = first; at < last; ++at) {
+            const auto& [key, chunk] = chunks[at];
+            writeKey(out, key.x, key.y, key.z);
+            if (chunk == nullptr) {
+                out.u32v(0);
+                continue;
+            }
+            const std::vector<core::u8> code = asset::encodeVoxelChunk(*chunk);
+            out.u32v(static_cast<u32>(code.size()));
+            for (const core::u8 byte : code)
+                out.u8v(byte);
+        }
+        messages.push_back(std::move(out.bytes));
+    }
+    return messages;
+}
+
+[[nodiscard]] std::vector<u8> terrainLookMessage(const scene::TerrainComponent& terrain)
+{
+    Writer out;
+    out.u8v(static_cast<u8>(MessageType::TerrainLook));
+    const usize layers = std::min<usize>(terrain.layers.size(), asset::MaxTerrainLayers);
+    out.u16v(static_cast<u16>(layers));
+    for (usize at = 0; at < layers; ++at)
+        out.text(terrain.layers[at]);
+    const usize rules = std::min<usize>(terrain.rules.size(), asset::MaxTerrainRules);
+    out.u16v(static_cast<u16>(rules));
+    for (usize at = 0; at < rules; ++at) {
+        const asset::TerrainRule& rule = terrain.rules[at];
+        out.u8v(rule.enabled ? 1 : 0);
+        out.u8v(rule.material);
+        for (const f32 value : {rule.slopeMin, rule.slopeMax, rule.heightMin, rule.heightMax, rule.blend, rule.noise})
+            writeF32(out, value);
+        const usize applies = std::min<usize>(rule.appliesTo.size(), 255);
+        out.u16v(static_cast<u16>(applies));
+        for (usize index = 0; index < applies; ++index)
+            out.u8v(rule.appliesTo[index]);
+    }
+    return std::move(out.bytes);
+}
+
+[[nodiscard]] std::vector<u8> voxelTypesMessage(const scene::World& world, const scene::VoxelComponent& voxels)
+{
+    Writer out;
+    out.u8v(static_cast<u8>(MessageType::VoxelTypes));
+    const usize count = std::min<usize>(voxels.types.size(), 0xFFFF);
+    out.u16v(static_cast<u16>(count));
+    const auto atom = [&world](core::NameAtom name) {
+        return name.valid() ? world.atoms().text(name) : std::string_view{};
+    };
+    for (usize at = 0; at < count; ++at) {
+        const scene::VoxelBlockType& type = voxels.types[at];
+        out.text(atom(type.name));
+        for (const core::Color3& color : {type.color, type.side, type.bottom}) {
+            writeF32(out, color.r);
+            writeF32(out, color.g);
+            writeF32(out, color.b);
+        }
+        out.text(atom(type.texture));
+        out.text(atom(type.sideTexture));
+        out.text(atom(type.bottomTexture));
+        out.u8v(static_cast<u8>(std::clamp(type.opacity, 0, 2)));
+        writeF32(out, type.transparency);
+        out.u8v(type.fluidReach);
+        out.u32v(type.fluidTicks);
+    }
+    const usize reactions = std::min<usize>(voxels.fluidReactions.size(), 0xFFFF);
+    out.u16v(static_cast<u16>(reactions));
+    for (usize at = 0; at < reactions; ++at) {
+        const scene::VoxelComponent::FluidReaction& reaction = voxels.fluidReactions[at];
+        out.u16v(reaction.from);
+        out.u16v(reaction.touching);
+        out.u16v(reaction.result);
+    }
+    return std::move(out.bytes);
+}
+
+} // namespace
+
+void AuthoritySession::diffGround(const scene::World& world, InstanceId root)
+{
+    m_groundEdits.clear();
+    const bool restored = m_ground.restores != world.restores();
+    m_ground.restores = world.restores();
+
+    // The terrain. A new one -- made by a script, or a scene's -- starts from
+    // no shadow, so what it holds past the package reaches every peer.
+    const InstanceId terrainId = groundTerrainUnder(world, root);
+    const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
+    if (terrainId != m_ground.terrain) {
+        m_ground.terrain = terrainId;
+        m_ground.terrainChunks.clear();
+        m_ground.terrainShipped.clear();
+        m_ground.terrainRevision = ~u64{0};
+        m_ground.terrainLook.clear();
+    }
+    if (terrain != nullptr) {
+        if (restored || terrain->fieldRevision != m_ground.terrainRevision) {
+            const std::vector<asset::TerrainField::Entry> changed = changedChunks<asset::TerrainField::Entry>(
+                terrain->field.chunks(), m_ground.terrainChunks, terrain->shipped.chunks(), m_ground.terrainShipped);
+            for (std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), changed))
+                m_groundEdits.push_back(std::move(message));
+            m_ground.terrainChunks.assign(terrain->field.chunks().begin(), terrain->field.chunks().end());
+            m_ground.terrainShipped.assign(terrain->shipped.chunks().begin(), terrain->shipped.chunks().end());
+            m_ground.terrainRevision = terrain->fieldRevision;
+        }
+        std::vector<u8> look = terrainLookMessage(*terrain);
+        if (look != m_ground.terrainLook) {
+            m_groundEdits.push_back(look);
+            m_ground.terrainLook = std::move(look);
+        }
+    }
+
+    // The block world, the same way.
+    const InstanceId voxelsId = groundVoxelsOf(world);
+    const scene::VoxelComponent* voxels = voxelsId.valid() ? world.voxels().find(voxelsId) : nullptr;
+    if (voxels == nullptr) {
+        m_ground.voxelChunks.clear();
+        m_ground.voxelShipped.clear();
+        m_ground.voxelTypes.clear();
+        m_ground.voxelRevision = ~u64{0};
+        return;
+    }
+    if (restored || voxels->revision != m_ground.voxelRevision) {
+        const std::vector<asset::VoxelGrid::Entry> changed = changedChunks<asset::VoxelGrid::Entry>(
+            voxels->grid.chunks(), m_ground.voxelChunks, voxels->shipped.chunks(), m_ground.voxelShipped);
+        for (std::vector<u8>& message : voxelChunkMessages(voxels->blockSize, changed))
+            m_groundEdits.push_back(std::move(message));
+        m_ground.voxelChunks.assign(voxels->grid.chunks().begin(), voxels->grid.chunks().end());
+        m_ground.voxelShipped.assign(voxels->shipped.chunks().begin(), voxels->shipped.chunks().end());
+        m_ground.voxelRevision = voxels->revision;
+    }
+    std::vector<u8> types = voxelTypesMessage(world, *voxels);
+    if (types != m_ground.voxelTypes) {
+        // Before the chunks that may use them: a block of a type the replica
+        // has not been told of draws as nothing.
+        m_groundEdits.insert(m_groundEdits.begin(), types);
+        m_ground.voxelTypes = std::move(types);
+    }
+}
+
+void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
+{
+    const auto send = [&](const std::vector<u8>& bytes) {
+        sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    };
+    if (const scene::TerrainComponent* terrain =
+            m_ground.terrain.valid() ? world.terrains().find(m_ground.terrain) : nullptr;
+        terrain != nullptr) {
+        const std::vector<asset::TerrainField::Entry> differing =
+            unshippedChunks<asset::TerrainField::Entry>(terrain->field.chunks(), terrain->shipped.chunks());
+        for (const std::vector<u8>& message : terrainChunkMessages(terrain->field.settings(), differing))
+            send(message);
+        send(terrainLookMessage(*terrain));
+    }
+    const InstanceId voxelsId = groundVoxelsOf(world);
+    if (const scene::VoxelComponent* voxels = voxelsId.valid() ? world.voxels().find(voxelsId) : nullptr;
+        voxels != nullptr) {
+        send(voxelTypesMessage(world, *voxels));
+        const std::vector<asset::VoxelGrid::Entry> differing =
+            unshippedChunks<asset::VoxelGrid::Entry>(voxels->grid.chunks(), voxels->shipped.chunks());
+        for (const std::vector<u8>& message : voxelChunkMessages(voxels->blockSize, differing))
+            send(message);
+    }
+}
+
 void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& entering)
 {
     const auto send = [&](const AttributeOwner& owner, const std::vector<u8>& body) {
@@ -1437,6 +1735,7 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
     capture(world, root, tick);
     diffTilemaps(world);
     diffAttributes(world, root);
+    diffGround(world, root);
     const WorldState& current = *m_history.back();
 
     // Everybody taking part, in join order -- the children of `NetworkService`,
@@ -1672,6 +1971,18 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     }
     peer.known = std::move(now);
 
+    // --- The ground (ADR 0135): whole to a peer that has not got this scene's,
+    // and what this send changed to one that has.
+    if (const std::string& scene = m_world->engineState().currentScene; !peer.groundSent || peer.groundScene != scene) {
+        sendGroundWhole(peer, *m_world);
+        peer.groundSent = true;
+        peer.groundScene = scene;
+    }
+    else {
+        for (const std::vector<u8>& message : m_groundEdits)
+            sendBytes(m_transport, peer.id, message, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
+
     // --- What this peer owns, whole, when it changed -- after the spawns, so
     // it never names a part the peer has not been sent.
     if (peer.owned != owned) {
@@ -1865,6 +2176,18 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             break;
         case MessageType::TilemapBlocks:
             onTilemapBlocks(world, event.payload);
+            break;
+        case MessageType::TerrainChunks:
+            onTerrainChunks(world, root, event.payload);
+            break;
+        case MessageType::TerrainLook:
+            onTerrainLook(world, root, event.payload);
+            break;
+        case MessageType::VoxelChunks:
+            onVoxelChunks(world, event.payload);
+            break;
+        case MessageType::VoxelTypes:
+            onVoxelTypes(world, event.payload);
             break;
         case MessageType::SceneChange:
             onSceneChange(world, event.payload);
@@ -2346,6 +2669,299 @@ void ReplicaSession::onTilemapBlocks(scene::World& world, std::span<const u8> by
     // What rebuilds from the cells -- the colliders and the drawing -- watches
     // this, as it does for an edit made here.
     tilemap->revision += 1;
+}
+
+// --- The ground, received (ADR 0135) ----------------------------------------------
+//
+// Each message is read whole before any of it is applied, so one cut short or
+// malformed changes nothing -- and it is the authority's ground either way, so
+// a chunk received twice is simply the truth.
+
+namespace {
+
+struct ChunkKeyOnWire
+{
+    core::i32 x = 0;
+    core::i32 y = 0;
+    core::i32 z = 0;
+};
+
+[[nodiscard]] ChunkKeyOnWire readKey(Reader& in) noexcept
+{
+    ChunkKeyOnWire key;
+    key.x = static_cast<core::i32>(in.u32v());
+    key.y = static_cast<core::i32>(in.u32v());
+    key.z = static_cast<core::i32>(in.u32v());
+    return key;
+}
+
+// `length` bytes of the message, or an empty span and a failed reader.
+[[nodiscard]] std::span<const u8> readCode(Reader& in, usize length) noexcept
+{
+    if (!in.ok() || in.remaining() < length) {
+        in.fail();
+        return {};
+    }
+    const std::span<const u8> code = in.bytes().subspan(in.at(), length);
+    in.at() += length;
+    return code;
+}
+
+} // namespace
+
+void ReplicaSession::onTerrainChunks(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    asset::FieldSettings settings;
+    settings.voxelSize = readF32(reader);
+    settings.minHeight = readF32(reader);
+    settings.maxHeight = readF32(reader);
+    const u16 count = reader.u16v();
+    if (!reader.ok() || count > GroundChunksPerMessage || !asset::saneFieldSettings(settings)) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    std::vector<asset::TerrainField::Entry> chunks;
+    chunks.reserve(count);
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        const ChunkKeyOnWire wire = readKey(reader);
+        const asset::ChunkKey key{wire.x, wire.y, wire.z};
+        const u32 length = reader.u32v();
+        if (!asset::chunkKeyInRange(key) || length > asset::MaxTerrainChunkCode) {
+            reader.fail();
+            break;
+        }
+        const std::span<const u8> code = readCode(reader, length);
+        std::shared_ptr<asset::TerrainChunk> chunk;
+        if (length > 0 &&
+            !asset::decodeTerrainChunk(
+                std::span<const std::byte>{reinterpret_cast<const std::byte*>(code.data()), code.size()}, chunk)) {
+            reader.fail();
+            break;
+        }
+        chunks.emplace_back(key, std::move(chunk));
+    }
+    if (!reader.ok() || !reader.done()) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+
+    // The workspace's terrain, made when the authority's has ground and this
+    // one has none -- a server that made its terrain in a script.
+    InstanceId id = groundTerrainUnder(world, root);
+    if (!id.valid()) {
+        const scene::ClassId terrainClass = world.classes().findId(world.atoms().intern("Terrain"));
+        if (terrainClass == scene::InvalidClass)
+            return;
+        id = world.create(terrainClass);
+        if (!id.valid())
+            return;
+        world.setName(id, world.atoms().intern("Terrain"));
+        if (world.setParent(id, root).has_value()) {
+            world.destroy(id);
+            return;
+        }
+        if (scene::TerrainComponent* made = world.terrains().find(id); made != nullptr) {
+            made->field = asset::TerrainField(settings);
+            made->shipped = asset::TerrainField(settings);
+            made->minHeight = settings.minHeight;
+            made->maxHeight = settings.maxHeight;
+        }
+    }
+    scene::TerrainComponent* terrain = world.terrains().find(id);
+    if (terrain == nullptr)
+        return;
+    // Another voxel is another ground: the replica loaded some other scene.
+    if (std::abs(terrain->field.settings().voxelSize - settings.voxelSize) > 1e-6f) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    for (auto& [key, chunk] : chunks) {
+        if (chunk != nullptr)
+            terrain->field.setChunk(key, std::move(chunk));
+        else
+            terrain->field.removeChunk(key);
+    }
+    terrain->fieldRevision += 1;
+}
+
+void ReplicaSession::onTerrainLook(scene::World& world, InstanceId root, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u16 layerCount = reader.u16v();
+    if (!reader.ok() || layerCount > asset::MaxTerrainLayers) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    std::vector<std::string> layers;
+    layers.reserve(layerCount);
+    for (u16 at = 0; at < layerCount && reader.ok(); ++at)
+        layers.emplace_back(reader.text());
+    const u16 ruleCount = reader.u16v();
+    if (!reader.ok() || ruleCount > asset::MaxTerrainRules) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    std::vector<asset::TerrainRule> rules;
+    rules.reserve(ruleCount);
+    for (u16 at = 0; at < ruleCount && reader.ok(); ++at) {
+        asset::TerrainRule rule;
+        rule.enabled = reader.u8v() != 0;
+        rule.material = reader.u8v();
+        rule.slopeMin = readF32(reader);
+        rule.slopeMax = readF32(reader);
+        rule.heightMin = readF32(reader);
+        rule.heightMax = readF32(reader);
+        rule.blend = readF32(reader);
+        rule.noise = readF32(reader);
+        const u16 applies = reader.u16v();
+        if (!reader.ok() || applies > 255 || rule.material == 0 || !core::isFinite(rule.slopeMin) ||
+            !core::isFinite(rule.slopeMax) || !core::isFinite(rule.heightMin) || !core::isFinite(rule.heightMax) ||
+            !core::isFinite(rule.blend) || !core::isFinite(rule.noise)) {
+            reader.fail();
+            break;
+        }
+        for (u16 index = 0; index < applies; ++index)
+            rule.appliesTo.push_back(reader.u8v());
+        rules.push_back(std::move(rule));
+    }
+    if (!reader.ok() || !reader.done()) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    const InstanceId id = groundTerrainUnder(world, root);
+    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr)
+        return;
+    if (terrain->layers != layers) {
+        terrain->layers = std::move(layers);
+        terrain->layersRevision += 1;
+    }
+    terrain->rules = std::move(rules);
+}
+
+void ReplicaSession::onVoxelChunks(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const f32 blockSize = readF32(reader);
+    const u16 count = reader.u16v();
+    if (!reader.ok() || count > GroundChunksPerMessage || !core::isFinite(blockSize) || !(blockSize >= 0.01f) ||
+        blockSize > 64.0f) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    std::vector<std::pair<asset::VoxelChunkKey, std::vector<asset::BlockId>>> chunks;
+    chunks.reserve(count);
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        const ChunkKeyOnWire wire = readKey(reader);
+        const asset::VoxelChunkKey key{wire.x, wire.y, wire.z};
+        const u32 length = reader.u32v();
+        if (!asset::voxelChunkKeyInRange(key) || length > MaxVoxelChunkCode) {
+            reader.fail();
+            break;
+        }
+        const std::span<const u8> code = readCode(reader, length);
+        std::vector<asset::BlockId> blocks;
+        if (length > 0 && !asset::decodeVoxelChunk(code, blocks)) {
+            reader.fail();
+            break;
+        }
+        chunks.emplace_back(key, std::move(blocks));
+    }
+    if (!reader.ok() || !reader.done()) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    const InstanceId id = groundVoxelsOf(world);
+    scene::VoxelComponent* voxels = id.valid() ? world.voxels().find(id) : nullptr;
+    if (voxels == nullptr)
+        return;
+    // A world with no blocks yet takes the authority's size; one with blocks
+    // of another size is another world.
+    if (std::abs(voxels->blockSize - blockSize) > 1e-6f) {
+        if (voxels->grid.chunkCount() != 0) {
+            m_stats.messagesDropped += 1;
+            return;
+        }
+        voxels->blockSize = blockSize;
+    }
+    for (const auto& [key, blocks] : chunks) {
+        if (blocks.empty())
+            voxels->grid.removeChunk(key);
+        else
+            voxels->grid.setChunk(key, blocks);
+    }
+    voxels->revision += 1;
+}
+
+void ReplicaSession::onVoxelTypes(scene::World& world, std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u16 count = reader.u16v();
+    std::vector<scene::VoxelBlockType> types;
+    types.reserve(count);
+    const auto atom = [&world](std::string_view text) {
+        return text.empty() ? core::NameAtom{} : world.atoms().intern(text);
+    };
+    // Read first, interned only once the whole message is known good: a
+    // hostile message must not grow the atom table.
+    struct Read
+    {
+        std::string_view name, texture, sideTexture, bottomTexture;
+        scene::VoxelBlockType type;
+    };
+    std::vector<Read> read;
+    read.reserve(count);
+    for (u16 at = 0; at < count && reader.ok(); ++at) {
+        Read entry;
+        entry.name = reader.text();
+        for (core::Color3* color : {&entry.type.color, &entry.type.side, &entry.type.bottom}) {
+            color->r = readF32(reader);
+            color->g = readF32(reader);
+            color->b = readF32(reader);
+        }
+        entry.texture = reader.text();
+        entry.sideTexture = reader.text();
+        entry.bottomTexture = reader.text();
+        entry.type.opacity = std::min<core::i32>(reader.u8v(), 2);
+        entry.type.transparency = readF32(reader);
+        entry.type.fluidReach = std::min<core::u8>(reader.u8v(), static_cast<core::u8>(asset::MaxFluidReach));
+        entry.type.fluidTicks = std::clamp<u32>(reader.u32v(), 1, 1'000'000);
+        read.push_back(entry);
+    }
+    const u16 reactionCount = reader.u16v();
+    std::vector<scene::VoxelComponent::FluidReaction> reactions;
+    for (u16 at = 0; at < reactionCount && reader.ok(); ++at) {
+        scene::VoxelComponent::FluidReaction reaction;
+        reaction.from = reader.u16v();
+        reaction.touching = reader.u16v();
+        reaction.result = reader.u16v();
+        reactions.push_back(reaction);
+    }
+    if (!reader.ok() || !reader.done()) {
+        m_stats.messagesDropped += 1;
+        return;
+    }
+    const InstanceId id = groundVoxelsOf(world);
+    scene::VoxelComponent* voxels = id.valid() ? world.voxels().find(id) : nullptr;
+    if (voxels == nullptr)
+        return;
+    for (Read& entry : read) {
+        entry.type.name = atom(entry.name);
+        entry.type.texture = atom(entry.texture);
+        entry.type.sideTexture = atom(entry.sideTexture);
+        entry.type.bottomTexture = atom(entry.bottomTexture);
+        types.push_back(entry.type);
+    }
+    voxels->types = std::move(types);
+    voxels->fluidReactions.clear();
+    for (const scene::VoxelComponent::FluidReaction& reaction : reactions)
+        scene::setFluidReaction(*voxels, reaction.from, reaction.touching, reaction.result);
+    voxels->revision += 1;
 }
 
 void ReplicaSession::onOwnership(scene::World& world, std::span<const u8> bytes)

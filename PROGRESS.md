@@ -489,9 +489,13 @@ audited end to end:
 - [x] **No materials by default** (the owner, same day; ADR 0113's
       amendment): a new terrain has none, the starters are files in Content,
       and a scene saved before reads the engine's eight as it did.
-- [ ] **Terrain edits replicate** (the owner, same day: a digging game, ground
-      generated while a match runs): today a terrain arrives with the world
-      and a script's edit stays on the machine that made it.
+- [x] **Terrain edits replicate** (the owner, same day: a digging game, ground
+      generated while a match runs; ADR 0135, protocol 24): the server sends
+      each chunk a script or the editor changed, whole to a player who joins
+      and by chunks as they change, with the layers, the rules and the block
+      types; `Terrain:GrowBall` gives a script the editor's Raise and Lower.
+      The world hash read a player intent's action by atom number, which one
+      method more in a build moved (D304).
 - [ ] **The terrain system's audit** -- quality, performance, security,
       function, the editor with it -- and its fixes. Known going in: F11, a
       big brush over unloaded cells writing air, ctrl-Z in the middle of a

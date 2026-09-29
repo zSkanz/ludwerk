@@ -273,6 +273,11 @@ private:
         // Whether it has been sent the attributes of the owners that are not
         // spawned -- players, `GlobalScriptService` -- since it was welcomed.
         bool attributesSeeded = false;
+        // **The ground it holds** (ADR 0135): sent every chunk that differs
+        // from the scene, for the scene named here; a scene change sends it
+        // again, since the peer then loads that scene's ground.
+        bool groundSent = false;
+        std::string groundScene;
         // The parts it owns as it was last told (ADR 0099), and the newest
         // tick of theirs it has taken a state from.
         std::vector<u32> owned;
@@ -328,6 +333,12 @@ private:
     // Every owner's attributes against what was last sent (ADR 0106), into
     // `m_attributeEdits`.
     void diffAttributes(const scene::World& world, core::InstanceId root);
+    // The ground -- the workspace's terrain and the block world -- against
+    // what was last sent (ADR 0135), into `m_groundEdits`.
+    void diffGround(const scene::World& world, core::InstanceId root);
+    // Everything of the ground that differs from the scene, to a peer that
+    // has not been sent it.
+    void sendGroundWhole(Peer& peer, const scene::World& world);
     // One intent a peer, the next in tick order, as this tick's.
     void applyIntents(scene::World& world);
     void sendAttributes(Peer& peer, const std::vector<u32>& entering);
@@ -378,6 +389,29 @@ private:
     using AttributeOwner = std::pair<u8, u32>;
     std::map<AttributeOwner, std::vector<u8>> m_attributeShadows;
     std::vector<std::pair<AttributeOwner, std::vector<u8>>> m_attributeEdits;
+    // **The ground as last sent to every peer** (ADR 0135): its chunks,
+    // SHARED -- an edit clones a chunk, so a chunk that is not the same one
+    // here changed -- its look and its block types, encoded. One copy for all
+    // peers, as a tilemap's is.
+    struct GroundShadow
+    {
+        core::InstanceId terrain;
+        std::vector<asset::TerrainField::Entry> terrainChunks;
+        // The package's chunks at that send: a key that was the package's
+        // and still is changed only by streaming, on every machine alike.
+        std::vector<asset::TerrainField::Entry> terrainShipped;
+        u64 terrainRevision = 0;
+        std::vector<u8> terrainLook;
+        std::vector<asset::VoxelGrid::Entry> voxelChunks;
+        std::vector<asset::VoxelGrid::Entry> voxelShipped;
+        u64 voxelRevision = 0;
+        std::vector<u8> voxelTypes;
+        u64 restores = 0;
+    };
+    GroundShadow m_ground;
+    // This send's changes, as whole messages for every peer already holding
+    // the ground.
+    std::vector<std::vector<u8>> m_groundEdits;
     const scene::World* m_world = nullptr;
     u64 m_tick = 0;
     Stats m_stats;
@@ -490,6 +524,12 @@ private:
     void resolveCharacters(scene::World& world, core::InstanceId root);
     void onOwnership(scene::World& world, std::span<const u8> bytes);
     void onTilemapBlocks(scene::World& world, std::span<const u8> bytes);
+    // The ground (ADR 0135): the workspace's terrain, made if there is none,
+    // and the block world, their chunks and their looks.
+    void onTerrainChunks(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    void onTerrainLook(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
+    void onVoxelChunks(scene::World& world, std::span<const u8> bytes);
+    void onVoxelTypes(scene::World& world, std::span<const u8> bytes);
     void onSceneChange(scene::World& world, std::span<const u8> bytes);
     void onAttributes(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void sendOwned(const scene::World& world, u64 tick);

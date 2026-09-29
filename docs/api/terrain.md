@@ -78,6 +78,12 @@ The rules that paint the ground by slope and height, in the order they paint: ea
 
 **Rules are drawn, not written**: the voxels keep their materials until `ApplyRules`. What a raycast reports is what is drawn.
 
+### `GrowBall(center: vector, radius: number, amount: number, material: number?): number`
+
+Moves the surface near `center` outwards along its own slope by `amount` metres at the middle, falling smoothly to nothing at `radius` -- or inwards, when `amount` is negative. Returns how many voxels it changed.
+
+The editor's Raise and Lower: a field rises, a cliff comes forward, an overhang grows down, and ground worn away goes back the way it came. Where it grows new ground, it is `material`, or the neighbouring ground's when that is not given.
+
 ### `HeightAt(x: number, z: number): number`
 
 The height of the top of the ground here, in metres, or nil where there is none.

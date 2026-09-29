@@ -151,6 +151,11 @@ public:
     [[nodiscard]] core::usize chunkCount() const noexcept { return m_chunks.size(); }
     // Every chunk key, sorted.
     [[nodiscard]] std::vector<VoxelChunkKey> chunkKeys() const;
+    // Every chunk, sorted by key, SHARED: a chunk an edit touched is a
+    // different chunk, which is how a copy of this list tells what changed
+    // since it was taken (ADR 0135).
+    using Entry = std::pair<VoxelChunkKey, std::shared_ptr<VoxelChunk>>;
+    [[nodiscard]] std::span<const Entry> chunks() const noexcept { return m_chunks; }
 
     // Replaces a chunk wholesale -- the load path. An all-air chunk is not kept.
     void setChunk(VoxelChunkKey key, std::span<const BlockId> blocks);

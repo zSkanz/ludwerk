@@ -769,6 +769,13 @@ struct WorkspaceComponent
 struct TerrainComponent
 {
     asset::TerrainField field;
+    // **The ground as the package ships it**, as far as it is loaded (ADR
+    // 0135): the scene's field when the scene was read, and each streamed
+    // cell's as it arrives or leaves. Its chunks are SHARED with `field`'s
+    // until an edit clones one, so a chunk of `field` that is not the same
+    // chunk here is one the game changed -- what the ground's replication
+    // sends a machine that loaded the same scene.
+    asset::TerrainField shipped;
 
     // **Where the field's own origin sits in the world.**
     //
@@ -1178,6 +1185,9 @@ private:
 struct VoxelComponent
 {
     asset::VoxelGrid grid;
+    // The blocks as the package ships them, as `TerrainComponent::shipped` is
+    // the ground (ADR 0135).
+    asset::VoxelGrid shipped;
     f32 blockSize = 1.0f;
     std::vector<VoxelBlockType> types;
     // **Bumped on every write to `grid`**, the same trick the terrain uses: the

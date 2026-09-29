@@ -471,7 +471,9 @@ u64 World::worldHash() const
             hasher.pod(static_cast<core::u64>(player->local ? 1 : 0));
             hasher.pod(static_cast<core::u64>(player->intents.size()));
             for (const PlayerIntent& intent : player->intents) {
-                hasher.pod(static_cast<core::u64>(intent.action.id));
+                // By text, like every other name here: the action's atom number
+                // moved with each method a build added (D304).
+                hasher.text(m_atoms.text(intent.action));
                 hasher.pod(static_cast<core::u64>(static_cast<core::u32>(intent.type)));
                 hasher.number(static_cast<f64>(intent.axis.x));
                 hasher.number(static_cast<f64>(intent.axis.y));

@@ -15,6 +15,9 @@
 #include "../../scene/tests/scene_fixture.h"
 #include "class_descriptors.gen.h"
 #include "engine/asset/material.h"
+#include "engine/asset/terrain.h"
+#include "engine/asset/terrain_rules.h"
+#include "engine/asset/voxel.h"
 #include "engine/core/i18n.h"
 #include "engine/net/memory_transport.h"
 #include "engine/replication/extract.h"
@@ -2380,4 +2383,150 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
         jumped += jumping() ? 1 : 0;
     }
     CHECK(jumped == 1);
+}
+
+// --- The ground (ADR 0135) ------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] core::InstanceId terrainIn(scene::World& world, core::InstanceId workspace)
+{
+    for (core::InstanceId child = world.firstChild(workspace); child.valid(); child = world.nextSibling(child)) {
+        if (world.terrains().find(child) != nullptr)
+            return child;
+    }
+    return {};
+}
+
+[[nodiscard]] core::InstanceId makeTerrain(RealSide& side)
+{
+    const core::InstanceId id = side.world.create(side.classes.findId(side.atoms.intern("Terrain")));
+    REQUIRE(id.valid());
+    side.world.setName(id, side.atoms.intern("Terrain"));
+    REQUIRE_FALSE(side.world.setParent(id, side.workspace).has_value());
+    return id;
+}
+
+[[nodiscard]] core::InstanceId makeVoxels(RealSide& side)
+{
+    const core::InstanceId id = side.world.create(side.classes.findId(side.atoms.intern("VoxelService")));
+    REQUIRE(id.valid());
+    REQUIRE(side.world.voxels().find(id) != nullptr);
+    REQUIRE_FALSE(side.world.setParent(id, side.dataModel).has_value());
+    return id;
+}
+
+} // namespace
+
+TEST_CASE("ground a server makes in a script reaches a replica whole, and each edit after it by chunks (ADR 0135)")
+{
+    // **The owner, 2026-09-29**: a digging game, and a world generated while
+    // the match runs. Before, the ground was each machine's own scene, and what
+    // a script did to it stayed where it was done.
+    PlayedMatch match;
+    const core::InstanceId ground = makeTerrain(match.server);
+    scene::TerrainComponent* terrain = match.server.world.terrains().find(ground);
+    terrain->field.setHeightRange(-32.0f, 32.0f);
+    (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+    terrain->layers = {"asset://materials/terrain/grass.material.json", "asset://materials/terrain/rock.material.json"};
+    terrain->fieldRevision += 1;
+    match.run(4);
+
+    const core::InstanceId copy = terrainIn(match.client.world, match.client.workspace);
+    REQUIRE(copy.valid());
+    const scene::TerrainComponent* seen = match.client.world.terrains().find(copy);
+    REQUIRE(seen != nullptr);
+    CHECK(seen->field.digest() == terrain->field.digest());
+    CHECK(seen->layers == terrain->layers);
+
+    // A crater dug on the server: the chunks it touched, and no others.
+    terrain = match.server.world.terrains().find(ground);
+    (void)asset::fillBall(terrain->field, core::DVec3{3.0, 2.0, 3.0}, 5.0, 0);
+    terrain->fieldRevision += 1;
+    match.run(2);
+    seen = match.client.world.terrains().find(copy);
+    CHECK(seen->field.digest() == terrain->field.digest());
+    CHECK(asset::sampleField(seen->field, core::DVec3{3.0, 1.0, 3.0}).distance > 0.0f);
+
+    // A rule added: the look travels whole.
+    terrain->rules = asset::defaultTerrainRules();
+    match.run(2);
+    CHECK(match.client.world.terrains().find(copy)->rules == terrain->rules);
+
+    // Quiet, it sends nothing more.
+    const core::u64 revision = match.client.world.terrains().find(copy)->fieldRevision;
+    match.run(4);
+    CHECK(match.client.world.terrains().find(copy)->fieldRevision == revision);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("ground both ends loaded from the scene is not sent; what a script changed of it is (ADR 0135)")
+{
+    PlayedMatch match;
+    // The same scene's ground on both machines, as a scene read leaves it: the
+    // field, and the package's copy of it sharing every chunk.
+    for (RealSide* side : {&match.server, &match.client}) {
+        scene::TerrainComponent* terrain = side->world.terrains().find(makeTerrain(*side));
+        terrain->field.setHeightRange(-32.0f, 32.0f);
+        (void)asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 2.0f, 1);
+        terrain->shipped = terrain->field;
+        terrain->fieldRevision += 1;
+    }
+    match.run(3);
+    const core::InstanceId serverGround = terrainIn(match.server.world, match.server.workspace);
+    const core::InstanceId clientGround = terrainIn(match.client.world, match.client.workspace);
+    scene::TerrainComponent* server = match.server.world.terrains().find(serverGround);
+    const scene::TerrainComponent* client = match.client.world.terrains().find(clientGround);
+    // Nothing differed, so the replica's chunks are still its own.
+    const asset::ChunkKey far{0, 0, 0};
+    const asset::TerrainChunk* untouched = nullptr;
+    for (const auto& [key, chunk] : client->field.chunks()) {
+        if (key == far)
+            untouched = chunk.get();
+    }
+    REQUIRE(untouched != nullptr);
+
+    // A hole dug near the origin: the replica gets it, and keeps the rest.
+    (void)asset::fillBall(server->field, core::DVec3{-4.0, 2.0, -4.0}, 3.0, 0);
+    server->fieldRevision += 1;
+    match.run(2);
+    client = match.client.world.terrains().find(clientGround);
+    CHECK(client->field.digest() == server->field.digest());
+    const asset::TerrainChunk* still = nullptr;
+    for (const auto& [key, chunk] : client->field.chunks()) {
+        if (key == far)
+            still = chunk.get();
+    }
+    CHECK(still == untouched);
+}
+
+TEST_CASE("a block world's types and blocks reach a replica, and a block broken after (ADR 0135)")
+{
+    PlayedMatch match;
+    const core::InstanceId service = makeVoxels(match.server);
+    (void)makeVoxels(match.client);
+    scene::VoxelComponent* voxels = match.server.world.voxels().find(service);
+    scene::VoxelBlockType stone;
+    stone.name = match.server.atoms.intern("Stone");
+    stone.color = core::Color3{0.5f, 0.5f, 0.5f};
+    voxels->types.push_back(stone);
+    (void)voxels->grid.fill(0, 0, 0, 20, 2, 20, 1);
+    voxels->revision += 1;
+    match.run(4);
+
+    const scene::VoxelComponent* seen = nullptr;
+    match.client.world.voxels().forEach([&seen](core::InstanceId, const scene::VoxelComponent& found) {
+        if (seen == nullptr)
+            seen = &found;
+    });
+    REQUIRE(seen != nullptr);
+    REQUIRE(seen->types.size() == 1);
+    CHECK(match.client.atoms.text(seen->types[0].name) == "Stone");
+    CHECK(seen->grid.digest() == voxels->grid.digest());
+
+    (void)voxels->grid.set(5, 2, 5, asset::AirBlock);
+    voxels->revision += 1;
+    match.run(2);
+    CHECK(seen->grid.get(5, 2, 5) == asset::AirBlock);
+    CHECK(seen->grid.digest() == voxels->grid.digest());
 }

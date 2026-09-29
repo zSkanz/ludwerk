@@ -18,6 +18,7 @@
 // voxels, so a save and a reload reproduce the same field and therefore the
 // same world hash.
 
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -113,5 +114,14 @@ inline constexpr core::usize TerrainCellHeaderBytes = 12 * 4;
 // `WholeFieldLimits`. A version 2 cell is converted into voxels on the way in.
 [[nodiscard]] std::optional<core::EngineError> decodeTerrainCell(std::span<const std::byte> bytes, TerrainCell& out,
                                                                  TerrainCellLimits limits = {});
+
+// **One chunk's voxels, coded as a cell codes them** (ADR 0135): runs of
+// packed voxels in the chunk's row order, four bytes a run. What the ground's
+// replication sends for a chunk that changed. `decodeTerrainChunk` refuses
+// runs that do not cover exactly one chunk or name a voxel no writer makes.
+[[nodiscard]] std::vector<std::byte> encodeTerrainChunk(const TerrainChunk& chunk);
+[[nodiscard]] bool decodeTerrainChunk(std::span<const std::byte> bytes, std::shared_ptr<TerrainChunk>& out);
+// The longest code a chunk can have: a run for every voxel.
+inline constexpr core::u64 MaxTerrainChunkCode = static_cast<core::u64>(ChunkVolume) * 4;
 
 } // namespace engine::asset

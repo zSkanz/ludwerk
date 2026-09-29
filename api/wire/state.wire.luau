@@ -2244,6 +2244,171 @@ local Messages: { Schema.Message } = {
             .. "sender's character -- and fires it there with the connection's player, never one the message "
             .. "names. Counted against the same per-tick limit as `RemoteToAuthority`.",
     },
+    {
+        Name = "TerrainChunks",
+        Id = 17,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            {
+                Name = "voxelSize",
+                Type = "f32",
+                Doc = "The field's voxel, metres. A replica whose terrain has another refuses the message.",
+            },
+            { Name = "minHeight", Type = "f32", Doc = "The world's floor, for a terrain the replica makes." },
+            { Name = "maxHeight", Type = "f32", Doc = "And its ceiling." },
+            { Name = "count", Type = "u16", Doc = "At most 64 chunks a message." },
+            {
+                Name = "chunks",
+                Type = "repeat",
+                Count = "count",
+                Each = {
+                    {
+                        Name = "x",
+                        Type = "u32",
+                        Doc = "The chunk's key, two's complement, within a million of the origin.",
+                    },
+                    { Name = "y", Type = "u32" },
+                    { Name = "z", Type = "u32" },
+                    { Name = "codeLength", Type = "u32", Doc = "0 is a chunk that is gone; at most 131072." },
+                    {
+                        Name = "code",
+                        Type = "repeat",
+                        Count = "codeLength",
+                        Doc = "The chunk's voxels as a terrain cell codes them: runs of a u16 packed voxel and a "
+                            .. "u16 count, covering the chunk's 32768 voxels in row order.",
+                        Each = {
+                            { Name = "byte", Type = "u8" },
+                        },
+                    },
+                },
+            },
+        },
+        Doc = "The workspace's terrain, a chunk at a time (ADR 0135, protocol 24). Every chunk that differs "
+            .. "from the scene both ends loaded, to a replica that joins; then every chunk an edit changed. "
+            .. "Whole chunks, so a chunk received twice is simply the truth; a replica with no terrain makes "
+            .. "one. Reliable and after the spawns of the same send.",
+    },
+    {
+        Name = "TerrainLook",
+        Id = 18,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "layerCount", Type = "u16", Doc = "At most 255." },
+            {
+                Name = "layers",
+                Type = "repeat",
+                Count = "layerCount",
+                Each = {
+                    { Name = "urn", Type = "text", Doc = "The material of that id." },
+                },
+            },
+            { Name = "ruleCount", Type = "u16", Doc = "At most 16." },
+            {
+                Name = "rules",
+                Type = "repeat",
+                Count = "ruleCount",
+                Each = {
+                    { Name = "enabled", Type = "u8" },
+                    { Name = "material", Type = "u8" },
+                    { Name = "slopeMin", Type = "f32" },
+                    { Name = "slopeMax", Type = "f32" },
+                    { Name = "heightMin", Type = "f32" },
+                    { Name = "heightMax", Type = "f32" },
+                    { Name = "blend", Type = "f32" },
+                    { Name = "noise", Type = "f32" },
+                    { Name = "appliesCount", Type = "u16", Doc = "At most 255." },
+                    {
+                        Name = "appliesTo",
+                        Type = "repeat",
+                        Count = "appliesCount",
+                        Each = {
+                            { Name = "layer", Type = "u8" },
+                        },
+                    },
+                },
+            },
+        },
+        Doc = "The workspace's terrain's layers and rules, whole (ADR 0135, protocol 24): once to a replica that "
+            .. "joins, and whenever either changed. The replica's become exactly these.",
+    },
+    {
+        Name = "VoxelChunks",
+        Id = 19,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "blockSize", Type = "f32", Doc = "The block world's block, metres." },
+            { Name = "count", Type = "u16", Doc = "At most 64 chunks a message." },
+            {
+                Name = "chunks",
+                Type = "repeat",
+                Count = "count",
+                Each = {
+                    {
+                        Name = "x",
+                        Type = "u32",
+                        Doc = "The chunk's key, two's complement, within a million of the origin.",
+                    },
+                    { Name = "y", Type = "u32" },
+                    { Name = "z", Type = "u32" },
+                    { Name = "codeLength", Type = "u32", Doc = "0 is a chunk that is gone; at most 16384." },
+                    {
+                        Name = "code",
+                        Type = "repeat",
+                        Count = "codeLength",
+                        Doc = "The chunk's blocks as a scene codes them: runs of a u16 block and a u16 count.",
+                        Each = {
+                            { Name = "byte", Type = "u8" },
+                        },
+                    },
+                },
+            },
+        },
+        Doc = "The block world's chunks (ADR 0135, protocol 24), on `TerrainChunks`' terms: every chunk that "
+            .. "differs from the scene to a replica that joins, then every chunk that changed.",
+    },
+    {
+        Name = "VoxelTypes",
+        Id = 20,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "count", Type = "u16", Doc = "At most 65535; type `n` is block id `n`." },
+            {
+                Name = "types",
+                Type = "repeat",
+                Count = "count",
+                Each = {
+                    { Name = "name", Type = "text" },
+                    { Name = "color", Type = "Color3", Doc = "The top, and every face of a one-colour block." },
+                    { Name = "side", Type = "Color3" },
+                    { Name = "bottom", Type = "Color3" },
+                    { Name = "texture", Type = "text", Doc = "An image by content URN; empty for none." },
+                    { Name = "sideTexture", Type = "text" },
+                    { Name = "bottomTexture", Type = "text" },
+                    { Name = "opacity", Type = "u8", Doc = "0 opaque, 1 cutout, 2 translucent." },
+                    { Name = "transparency", Type = "f32" },
+                    { Name = "fluidReach", Type = "u8", Doc = "0 for a block that is not a fluid." },
+                    { Name = "fluidTicks", Type = "u32" },
+                },
+            },
+            { Name = "reactionCount", Type = "u16" },
+            {
+                Name = "reactions",
+                Type = "repeat",
+                Count = "reactionCount",
+                Each = {
+                    { Name = "from", Type = "u16" },
+                    { Name = "touching", Type = "u16" },
+                    { Name = "result", Type = "u16" },
+                },
+            },
+        },
+        Doc = "The block world's types and fluid reactions, whole (ADR 0135, protocol 24): once to a replica "
+            .. "that joins, and whenever they changed.",
+    },
 }
 
 local Definition: Schema.Definition = {

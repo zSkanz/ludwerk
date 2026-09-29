@@ -1199,6 +1199,23 @@ local Classes: { Schema.Class } = {
                     .. "lays new ground of it from `center`'s height up.",
             },
             {
+                Name = "GrowBall",
+                Parameters = {
+                    { Name = "center", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                    { Name = "amount", Type = "number" },
+                    { Name = "material", Type = "number?" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Doc = "Moves the surface near `center` outwards along its own slope by `amount` metres at the "
+                    .. "middle, falling smoothly to nothing at `radius` -- or inwards, when `amount` is negative. "
+                    .. "Returns how many voxels it changed.\n\n"
+                    .. "The editor's Raise and Lower: a field rises, a cliff comes forward, an overhang grows "
+                    .. "down, and ground worn away goes back the way it came. Where it grows new ground, it is "
+                    .. "`material`, or the neighbouring ground's when that is not given.",
+            },
+            {
                 Name = "SmoothBall",
                 Parameters = {
                     { Name = "center", Type = "vector" },

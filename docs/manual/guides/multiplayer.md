@@ -129,8 +129,12 @@ the controls and camera in `src/client/`, and how a racer is driven in
 A replica builds nothing it expects the authority to send. Everything under
 `Workspace` that replicates arrives from the authority: parts, models,
 folders, their names, colours and motion, the `Lighting` service's time of day
-and fog, decals, particle emitters, `RemoteEvent`s and `RemoteFunction`s. `Terrain` does not
-replicate. A world's ground arrives with the world, from its scene.
+and fog, decals, particle emitters, `RemoteEvent`s and `RemoteFunction`s. The
+ground -- `Terrain` and the block world -- arrives with the world, from each
+machine's own scene, and the authority sends what its scripts changed of it:
+to a player who joins, every chunk that differs from the scene, and after that
+each chunk as it changes ([Terrain in a match](manual:world/terrain)). A
+digging game digs on the server, and every player sees the hole.
 
 ## Players
 

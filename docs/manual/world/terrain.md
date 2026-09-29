@@ -47,7 +47,8 @@ below `MinHeight`. `VoxelSize` can only change while the terrain is empty.
 | `FillBlock(center, size, material)` | The same, as a box. |
 | `FillCylinder(center, height, radius, material)` | The same, as an upright cylinder: a pillar, a well. |
 | `RaiseBall(center, radius, amount, material?)` | Pushes the surface up under a disc, falling smoothly to nothing at the rim, or down for a negative amount. It never makes an overhang, which makes it the verb for a hill. Given a material, it lays new ground of it where there was none. |
-| `SmoothBall(center, radius, strength?)` | Softens the ground in a ball. |
+| `GrowBall(center, radius, amount, material?)` | Moves the surface out along its own slope, or in for a negative amount: the editor's Raise and Lower. A field rises, a cliff comes forward. |
+| `SmoothBall(center, radius, strength?)` | Softens the ground in a ball: bumps go, pits fill, flat ground stays. |
 | `FlattenBall(center, radius, height, strength?)` | Pulls the ground in a ball towards a level plane. |
 | `PaintBall(center, radius, material)` | Changes what the ground is made of and leaves it where it is. |
 | `ReplaceMaterial(minCorner, maxCorner, from, to)` | Every voxel of one material in a box becomes another. |
@@ -299,8 +300,21 @@ player before the first frame, loads cells ahead of the camera and evicts them
 behind it. **A cell somebody changed is never evicted**, so a crater stays a
 crater. See [Streaming a large world](manual:assets/streaming).
 
-A terrain does not replicate: a world's ground arrives with the world, on
-every machine, from its scene.
+## In a match
+
+**The ground replicates** ([ADR 0135](../../decisions/0135-the-ground-replicates-terrain-and-block-edits-travel-as-whole-chunks.md)).
+Every machine loads the scene's ground from its own package; the server sends
+what differs from it -- to a player who joins, every chunk a script or the
+editor changed, and from then on each chunk as it changes, with the layers and
+rules when they change. The block world travels the same way, with its block
+types. So a digging game is multiplayer as it is: a player asks the server to
+dig through a remote, the server digs, and every player sees the hole, a late
+joiner included. A server that makes its terrain in a script sends it whole.
+
+- **The server's ground is the truth.** A client's script may dig its own copy
+  for the feel of an instant hole; the next chunk the server sends over it wins.
+- **What it costs is what changes**: a crater sends the few chunks it touched,
+  and a quiet match sends nothing.
 
 **Worlds saved by an earlier version**, when terrain was stored as heights with
 voxels only where caves were, open as they were and are saved as voxels from
