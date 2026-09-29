@@ -61,10 +61,17 @@ constexpr std::array<std::array<int, 2>, 12> CellEdges{{
 // **The voxels of a box, at one level, read a chunk at a time.** Sampling voxel
 // by voxel through the field is a binary search per sample; a node is tens of
 // thousands of samples, and this is one search per chunk the box touches.
+// **And their paint beside them** (ADR 0114), into `paint` -- left empty when
+// no chunk the box touches has any, which is every region nobody painted.
 void gather(const TerrainField& field, u32 level, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 sizeY, i32 sizeZ,
-            std::vector<u16>& out)
+            std::vector<u16>& out, std::vector<u16>& paint)
 {
     out.assign(static_cast<usize>(sizeX) * static_cast<usize>(sizeY) * static_cast<usize>(sizeZ), 0);
+    paint.clear();
+    const auto painting = [&] {
+        if (paint.empty())
+            paint.assign(out.size(), 0);
+    };
     const i32 edge = static_cast<i32>(ChunkEdge) >> level;
     const auto slot = [&](i32 x, i32 y, i32 z) {
         return (static_cast<usize>(z - z0) * static_cast<usize>(sizeY) + static_cast<usize>(y - y0)) *
@@ -87,12 +94,19 @@ void gather(const TerrainField& field, u32 level, i32 x0, i32 y0, i32 z0, i32 si
                 const i32 lowZ = std::max(z0, cz * edge);
                 const i32 highZ = std::min(z0 + sizeZ, (cz + 1) * edge);
                 const TerrainChunk& chunk = *entry.second;
+                const bool painted = chunk.painted();
+                if (painted)
+                    painting();
                 if (chunk.uniform()) {
-                    const u16 value = packVoxel(chunk.value());
+                    const Voxel voxel = chunk.value();
+                    const u16 value = packVoxel(voxel);
                     for (i32 z = lowZ; z < highZ; ++z) {
                         for (i32 y = lowY; y < highY; ++y) {
                             u16* first = &out[slot(lowX, y, z)];
                             std::fill(first, first + (highX - lowX), value);
+                            if (painted)
+                                std::fill(&paint[slot(lowX, y, z)], &paint[slot(lowX, y, z)] + (highX - lowX),
+                                          packPaint(voxel));
                         }
                     }
                     continue;
@@ -107,11 +121,19 @@ void gather(const TerrainField& field, u32 level, i32 x0, i32 y0, i32 z0, i32 si
                             chunk.readRow(ly, lz, row);
                             for (i32 x = lowX; x < highX; ++x)
                                 out[slot(x, y, z)] = row[static_cast<usize>(x - cx * edge)];
+                            if (painted) {
+                                chunk.readPaintRow(ly, lz, row);
+                                for (i32 x = lowX; x < highX; ++x)
+                                    paint[slot(x, y, z)] = row[static_cast<usize>(x - cx * edge)];
+                            }
                         }
                         else {
-                            for (i32 x = lowX; x < highX; ++x)
-                                out[slot(x, y, z)] =
-                                    packVoxel(chunk.mip(level, static_cast<u32>(x - cx * edge), ly, lz));
+                            for (i32 x = lowX; x < highX; ++x) {
+                                const Voxel voxel = chunk.mip(level, static_cast<u32>(x - cx * edge), ly, lz);
+                                out[slot(x, y, z)] = packVoxel(voxel);
+                                if (painted)
+                                    paint[slot(x, y, z)] = packPaint(voxel);
+                            }
                         }
                     }
                 }
@@ -348,7 +370,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     const i32 sizeY = ny + 4;
     const i32 sizeZ = nz + 4;
     std::vector<u16> samples;
-    gather(field, level, sx0, sy0, sz0, sizeX, sizeY, sizeZ, samples);
+    std::vector<u16> paints;
+    gather(field, level, sx0, sy0, sz0, sizeX, sizeY, sizeZ, samples, paints);
     const auto sampleIndex = [&](i32 sx, i32 sy, i32 sz) {
         return (static_cast<usize>(sz) * static_cast<usize>(sizeY) + static_cast<usize>(sy)) *
                    static_cast<usize>(sizeX) +
@@ -360,6 +383,11 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     };
     const auto materialAt = [&](i32 sx, i32 sy, i32 sz) {
         return static_cast<u8>(samples[sampleIndex(sx, sy, sz)] >> 8);
+    };
+    // A sample's paint (ADR 0114): `top` low, `cover` high; zero where nobody
+    // painted, and everywhere in a region with none.
+    const auto paintAt = [&](i32 sx, i32 sy, i32 sz) -> u16 {
+        return paints.empty() ? u16{0} : paints[sampleIndex(sx, sy, sz)];
     };
     // The surface normal at a sample: the negative gradient of occupancy, by
     // central differences. Read from the field rather than from the triangles,
@@ -625,6 +653,9 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     // of: 1 low x, 2 high x, 4 low z, 8 high z. What the skirts hang from.
     std::vector<u8> vertexRing;
     std::vector<u8> vertexMaterial;
+    // What is painted over it, and how much (ADR 0114).
+    std::vector<u8> vertexTop;
+    std::vector<u8> vertexCover;
 
     for (i32 cz = 0; cz < cellsZ; ++cz) {
         for (i32 cy = 0; cy < cellsY; ++cy) {
@@ -708,6 +739,51 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     }
                 }
 
+                // **What is painted over it, as a weight** (ADR 0114): the
+                // material painted most over the cell's solid corners, and how
+                // much of it shows across them -- a mean, not a vote, so a
+                // stroke fades across the ground rather than stepping a cell at
+                // a time. Lowest id on a tie.
+                u8 top = 0;
+                u8 cover = 0;
+                if (!paints.empty()) {
+                    std::array<u8, 8> overs{};
+                    std::array<int, 8> covers{};
+                    int topKinds = 0;
+                    int solid = 0;
+                    for (int at = 0; at < 8; ++at) {
+                        if ((inside & (1 << at)) == 0)
+                            continue;
+                        ++solid;
+                        const auto& offset = CornerOffsets[static_cast<usize>(at)];
+                        const u16 painted = paintAt(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]);
+                        const auto over = static_cast<u8>(painted & 0xFF);
+                        if (over == 0 || (painted >> 8) == 0)
+                            continue;
+                        int slot = 0;
+                        while (slot < topKinds && overs[static_cast<usize>(slot)] != over)
+                            ++slot;
+                        if (slot == topKinds) {
+                            overs[static_cast<usize>(topKinds)] = over;
+                            ++topKinds;
+                        }
+                        covers[static_cast<usize>(slot)] += painted >> 8;
+                    }
+                    int most = 0;
+                    for (int slot = 0; slot < topKinds; ++slot) {
+                        const int sum = covers[static_cast<usize>(slot)];
+                        const u8 candidate = overs[static_cast<usize>(slot)];
+                        if (sum > most || (sum == most && candidate < top)) {
+                            top = candidate;
+                            most = sum;
+                        }
+                    }
+                    if (top != 0 && solid > 0 && top != material)
+                        cover = static_cast<u8>(std::min(255, (most + solid / 2) / solid));
+                    else
+                        top = 0;
+                }
+
                 Vertex vertex;
                 vertex.position = position;
                 vertex.normal = normal;
@@ -719,8 +795,9 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                 // asserted, so this is where they fit without a second stream.
                 vertex.tangent[0] = static_cast<float>(material);
                 vertex.tangent[1] = skyVisibility(position, normal);
+                // The paint's two slots, filled with the triangle's three below.
                 vertex.tangent[2] = 0.0f;
-                vertex.tangent[3] = 1.0f;
+                vertex.tangent[3] = 0.0f;
 
                 u8 ring = 0;
                 if (cx == 0)
@@ -736,6 +813,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                 out.mesh.vertices.push_back(vertex);
                 out.colliderPoints.push_back(position);
                 vertexMaterial.push_back(material);
+                vertexTop.push_back(top);
+                vertexCover.push_back(cover);
                 vertexRing.push_back(ring);
             }
         }
@@ -893,6 +972,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             const auto made = static_cast<u32>(out.mesh.vertices.size());
             out.mesh.vertices.push_back(copy);
             vertexMaterial.push_back(vertexMaterial[index]);
+            vertexTop.push_back(vertexTop[index]);
+            vertexCover.push_back(vertexCover[index]);
             vertexRing.push_back(0);
             lowered.emplace(index, made);
             return made;
@@ -920,35 +1001,51 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         }
     }
 
-    // --- The materials a pixel blends between (ADR 0113) --------------------
+    // --- The materials a pixel blends between (ADR 0113, 0114) --------------
     //
     // **Every vertex carries its triangle's three materials and which corner it
     // is**, so the shader can weigh the three layers by where in the triangle a
     // pixel is: `uv[0]` is the three ids packed as `a + b * 256 + c * 65536`
-    // (exact in a float) and `uv[1]` the corner, 0 to 2. A vertex inside one
-    // material says that material three times and needs nothing more. A
-    // triangle whose corners differ gets three vertices of its own -- only
-    // along the seams, so a field of one material costs nothing.
+    // (exact in a float) and `uv[1]` the corner, 0 to 2. **And what is painted
+    // over each corner**: the three tops packed the same way in the tangent's
+    // z, and their three covers in its w. A vertex inside one material, painted
+    // alike all round, says so three times and needs nothing more. A triangle
+    // whose corners differ gets three vertices of its own -- only along the
+    // seams and across a painted fade, so a field nobody painted costs what it
+    // did.
     constexpr float PackB = 256.0f;
     constexpr float PackC = 65536.0f;
+    const auto pack3 = [](u8 a, u8 b, u8 c) {
+        return static_cast<float>(a) + static_cast<float>(b) * PackB + static_cast<float>(c) * PackC;
+    };
     for (usize index = 0; index < out.mesh.vertices.size(); ++index) {
-        const auto own = static_cast<float>(vertexMaterial[index]);
-        out.mesh.vertices[index].uv[0] = own + own * PackB + own * PackC;
+        out.mesh.vertices[index].uv[0] = pack3(vertexMaterial[index], vertexMaterial[index], vertexMaterial[index]);
         out.mesh.vertices[index].uv[1] = 0.0f;
+        out.mesh.vertices[index].tangent[2] = pack3(vertexTop[index], vertexTop[index], vertexTop[index]);
+        out.mesh.vertices[index].tangent[3] = pack3(vertexCover[index], vertexCover[index], vertexCover[index]);
     }
     const auto separate = [&](std::vector<u32>& list) {
         for (usize at = 0; at + 2 < list.size(); at += 3) {
-            const u8 ma = vertexMaterial[list[at]];
-            const u8 mb = vertexMaterial[list[at + 1]];
-            const u8 mc = vertexMaterial[list[at + 2]];
-            if (ma == mb && mb == mc)
+            const u32 a = list[at];
+            const u32 b = list[at + 1];
+            const u32 c = list[at + 2];
+            const u8 ma = vertexMaterial[a];
+            const u8 mb = vertexMaterial[b];
+            const u8 mc = vertexMaterial[c];
+            const bool sameGround = ma == mb && mb == mc;
+            const bool samePaint = vertexTop[a] == vertexTop[b] && vertexTop[b] == vertexTop[c] &&
+                                   vertexCover[a] == vertexCover[b] && vertexCover[b] == vertexCover[c];
+            if (sameGround && samePaint)
                 continue;
-            const float packed =
-                static_cast<float>(ma) + static_cast<float>(mb) * PackB + static_cast<float>(mc) * PackC;
+            const float packed = pack3(ma, mb, mc);
+            const float overs = pack3(vertexTop[a], vertexTop[b], vertexTop[c]);
+            const float covers = pack3(vertexCover[a], vertexCover[b], vertexCover[c]);
             for (usize corner = 0; corner < 3; ++corner) {
                 Vertex copy = out.mesh.vertices[list[at + corner]];
                 copy.uv[0] = packed;
                 copy.uv[1] = static_cast<float>(corner);
+                copy.tangent[2] = overs;
+                copy.tangent[3] = covers;
                 list[at + corner] = static_cast<u32>(out.mesh.vertices.size());
                 out.mesh.vertices.push_back(copy);
             }

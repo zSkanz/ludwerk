@@ -2041,8 +2041,27 @@ public:
         // because a material picker whose first entry deleted the world would be
         // the worst possible reading of one shared convention.
         core::u8 material = 1;
+        // **How Paint goes on** (ADR 0114): over what is there outright, a
+        // little at a time, under what was painted, or off it -- and how much
+        // softer towards the rim, 0 hard to 1 soft. `strength` is how much a
+        // `Blend` or an `Erase` stamp moves.
+        asset::PaintMode paintMode = asset::PaintMode::Blend;
+        f32 falloff = 0.5f;
     };
     [[nodiscard]] const Brush& brush() const noexcept { return m_brush; }
+    void setBrushPaintMode(asset::PaintMode mode) noexcept
+    {
+        m_brush.paintMode = mode;
+        m_preferencesDirty = true;
+    }
+    void setBrushFalloff(f32 falloff) noexcept;
+    // The paint mode the held keys make of it: Ctrl turns a `Blend` into an
+    // `Erase`, as it turns every other brush round.
+    [[nodiscard]] asset::PaintMode effectivePaintMode() const noexcept
+    {
+        return m_brushInvert && m_brush.paintMode == asset::PaintMode::Blend ? asset::PaintMode::Erase
+                                                                             : m_brush.paintMode;
+    }
     void setBrushRadius(f32 metres) noexcept;
     void setBrushSpacing(f32 fraction) noexcept;
     void setBrushMaterial(core::u8 material) noexcept;
@@ -2810,6 +2829,7 @@ private:
         // as the held keys turned it (`effectiveBrushOp`), and for foliage
         // whether it thins.
         BrushOp op = BrushOp::Add;
+        asset::PaintMode paintMode = asset::PaintMode::Blend;
         bool thin = false;
         // What its stamps did: how many voxels changed, and whether one was
         // refused as too big. A stroke that changed nothing leaves no undo

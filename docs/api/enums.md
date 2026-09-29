@@ -597,6 +597,17 @@ What a `UIStroke`'s `Thickness` is measured in.
 | `FixedSize` | 0 | Pixels. |
 | `ScaledSize` | 1 | A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke grows with what it outlines. |
 
+## Enum.TerrainPaintMode
+
+What a stroke of `Terrain:PaintBall` does with the two materials a voxel holds (ADR 0114).
+
+| Item | Value | Description |
+|---|---|---|
+| `Replace` | 0 | The ground becomes the material, whatever showed before. |
+| `Blend` | 1 | The material shows more over what is there, by the strength. |
+| `Under` | 2 | The material goes under what was painted over it. |
+| `Erase` | 3 | What was painted over shows less, revealing what is under. |
+
 ## Enum.TextureFilter
 
 How a picture is sampled when it is drawn larger or smaller than it is.

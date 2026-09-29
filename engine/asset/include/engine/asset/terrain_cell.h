@@ -39,7 +39,12 @@ namespace engine::asset {
 // chunk keys, then each chunk as a byte count and its voxels run-length coded
 // in storage order: pairs of little-endian u16, a packed voxel
 // (`packVoxel`) and how many times it repeats. A uniform chunk is one pair.
-inline constexpr core::u32 TerrainCellFormatVersion = 3;
+//
+// **Version 4 carries paint** (ADR 0114): a chunk with any follows its voxels'
+// runs with its paint's (`packPaint`), which cover the chunk the same way; a
+// chunk with none codes exactly as in version 3, which is still read.
+inline constexpr core::u32 TerrainCellFormatVersion = 4;
+inline constexpr core::u32 TerrainCellUnpaintedVersion = 3;
 inline constexpr core::u32 TerrainCellLegacyVersion = 2;
 
 // How a cell's body is coded. The header is never compressed -- a reader has to
@@ -122,6 +127,6 @@ inline constexpr core::usize TerrainCellHeaderBytes = 12 * 4;
 [[nodiscard]] std::vector<std::byte> encodeTerrainChunk(const TerrainChunk& chunk);
 [[nodiscard]] bool decodeTerrainChunk(std::span<const std::byte> bytes, std::shared_ptr<TerrainChunk>& out);
 // The longest code a chunk can have: a run for every voxel.
-inline constexpr core::u64 MaxTerrainChunkCode = static_cast<core::u64>(ChunkVolume) * 4;
+inline constexpr core::u64 MaxTerrainChunkCode = static_cast<core::u64>(ChunkVolume) * 8;
 
 } // namespace engine::asset

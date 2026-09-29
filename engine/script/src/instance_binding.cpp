@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "class_descriptors.gen.h"
 #include "engine/core/finite.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/players.h"
@@ -1807,6 +1808,39 @@ int methodTerrainPaintBall(lua_State* L)
     const core::Vec3 center = checkVector3(L, 2);
     const auto radius = static_cast<double>(luaL_checknumber(L, 3));
     const core::u8 material = checkMaterial(L, 4);
+    // `{ Mode, Strength, Falloff }` (ADR 0114), each optional.
+    asset::PaintOptions options;
+    if (!lua_isnoneornil(L, 5)) {
+        luaL_checktype(L, 5, LUA_TTABLE);
+        lua_getfield(L, 5, "Mode");
+        if (!lua_isnil(L, -1)) {
+            const scene::EnumValue mode = checkEnumItem(L, lua_gettop(L));
+            if (mode.enumId != scene::generated::TerrainPaintModeEnumId)
+                luaL_argerror(L, 5, "a Mode from Enum.TerrainPaintMode");
+            options.mode = static_cast<asset::PaintMode>(mode.value);
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 5, "Strength");
+        if (!lua_isnil(L, -1)) {
+            const double strength = luaL_checknumber(L, -1);
+            if (!std::isfinite(strength))
+                luaL_argerror(L, 5, "a finite Strength");
+            options.strength = static_cast<float>(strength);
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 5, "Falloff");
+        if (!lua_isnil(L, -1)) {
+            const double falloff = luaL_checknumber(L, -1);
+            if (!std::isfinite(falloff))
+                luaL_argerror(L, 5, "a finite Falloff");
+            options.falloff = static_cast<float>(falloff);
+        }
+        lua_pop(L, 1);
+    }
+    if (material == 0 && options.mode != asset::PaintMode::Erase) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -1819,7 +1853,7 @@ int methodTerrainPaintBall(lua_State* L)
     const core::DVec3 wide{static_cast<double>(center.x) - terrain->origin.x,
                            static_cast<double>(center.y) - terrain->origin.y,
                            static_cast<double>(center.z) - terrain->origin.z};
-    const asset::EditReport report = asset::paintBall(terrain->field, wide, radius, material);
+    const asset::EditReport report = asset::paintBall(terrain->field, wide, radius, material, options);
     // **Only when something changed.** Painting a hillside the colour it already
     // is has to leave the revision alone, or a script calling it in a loop would
     // rebuild every collider in range every tick.

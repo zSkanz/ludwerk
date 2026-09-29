@@ -42,25 +42,37 @@ namespace engine::asset {
 // A voxel that is entirely ground.
 inline constexpr core::u8 FullOccupancy = 255;
 
-// What one voxel holds.
+// What one voxel holds (ADR 0114): how full it is, the material under
+// (`material`, the ADR's `base`), and a material over it (`top`) showing by
+// `cover`, 0 to 255 -- so paint can go on a little at a time, and over
+// something else.
 //
-// **Air is occupancy zero with material zero, always.** A voxel emptied by a
-// dig keeps no memory of what it was made of: the digest is over bytes, and two
-// equal worlds must hash equal. Every write path goes through `canonical`.
+// **Air is all zero, always.** A voxel emptied by a dig keeps no memory of what
+// it was made of: the digest is over bytes, and two equal worlds must hash
+// equal. And **a voxel of one material has no top**: `cover` zero, or `top`
+// the material under, is written `top = cover = 0`. Every write path goes
+// through `canonical`.
 struct Voxel
 {
     core::u8 occupancy = 0;
     core::u8 material = 0;
+    core::u8 top = 0;
+    core::u8 cover = 0;
 
     [[nodiscard]] constexpr bool operator==(const Voxel&) const noexcept = default;
 };
 
 [[nodiscard]] constexpr Voxel canonical(Voxel voxel) noexcept
 {
-    return voxel.occupancy == 0 || voxel.material == 0 ? Voxel{} : voxel;
+    if (voxel.occupancy == 0 || voxel.material == 0)
+        return Voxel{};
+    if (voxel.top == 0 || voxel.cover == 0 || voxel.top == voxel.material)
+        return Voxel{voxel.occupancy, voxel.material, 0, 0};
+    return voxel;
 }
 
-// Two bytes, occupancy low. What a chunk stores and what the file carries.
+// Two bytes, occupancy low: the voxel under its paint. What a chunk stores and
+// what the file carries.
 [[nodiscard]] constexpr core::u16 packVoxel(Voxel voxel) noexcept
 {
     return static_cast<core::u16>(voxel.occupancy | (voxel.material << 8));
@@ -69,6 +81,20 @@ struct Voxel
 [[nodiscard]] constexpr Voxel unpackVoxel(core::u16 packed) noexcept
 {
     return Voxel{static_cast<core::u8>(packed & 0xFF), static_cast<core::u8>(packed >> 8)};
+}
+
+// And its paint, two bytes more, `top` low -- stored apart, in a chunk that has
+// any, so ground nobody painted costs what it did.
+[[nodiscard]] constexpr core::u16 packPaint(Voxel voxel) noexcept
+{
+    return static_cast<core::u16>(voxel.top | (voxel.cover << 8));
+}
+
+[[nodiscard]] constexpr Voxel withPaint(Voxel voxel, core::u16 paint) noexcept
+{
+    voxel.top = static_cast<core::u8>(paint & 0xFF);
+    voxel.cover = static_cast<core::u8>(paint >> 8);
+    return voxel;
 }
 
 // Occupancy as a fraction, and back. Rounded to nearest, so a round trip of a
@@ -199,32 +225,43 @@ class TerrainChunk
 {
 public:
     TerrainChunk() = default;
-    explicit TerrainChunk(Voxel fill) noexcept : m_value(packVoxel(canonical(fill))) {}
+    explicit TerrainChunk(Voxel fill) noexcept
+    {
+        const Voxel voxel = canonical(fill);
+        m_main.value = packVoxel(voxel);
+        m_paint.value = packPaint(voxel);
+    }
 
     [[nodiscard]] Voxel get(core::u32 x, core::u32 y, core::u32 z) const noexcept;
 
-    // Writes one voxel, answering whether it changed. Leaves the chunk
-    // un-normalised: call `normalize` when a batch of writes is done.
+    // Writes one voxel, paint and all, answering whether it changed. Leaves the
+    // chunk un-normalised: call `normalize` when a batch of writes is done.
     bool set(core::u32 x, core::u32 y, core::u32 z, Voxel voxel);
 
-    // The 32 voxels of one row, packed.
+    // The 32 voxels of one row, packed: under their paint, and their paint.
     void readRow(core::u32 y, core::u32 z, std::span<core::u16, ChunkEdge> out) const noexcept;
-    // Replaces one row. Stored uniform when it is.
+    void readPaintRow(core::u32 y, core::u32 z, std::span<core::u16, ChunkEdge> out) const noexcept;
+    // Replaces one row. Stored uniform when it is. A row written under paint
+    // keeps the paint, and `normalize` drops any the row made non-canonical.
     void writeRow(core::u32 y, core::u32 z, std::span<const core::u16, ChunkEdge> row);
+    void writePaintRow(core::u32 y, core::u32 z, std::span<const core::u16, ChunkEdge> row);
 
     // Collapses rows that became uniform, compacts the dense storage in row
-    // order and collapses a chunk of one value. **Canonical afterwards**, so two
-    // chunks holding the same voxels hold the same bytes -- which is what the
-    // digest and the save file rely on.
+    // order and collapses a chunk of one value; drops paint on air and paint of
+    // the material under. **Canonical afterwards**, so two chunks holding the
+    // same voxels hold the same bytes -- which is what the digest and the save
+    // file rely on.
     void normalize();
 
-    [[nodiscard]] bool uniform() const noexcept { return m_rows.empty(); }
+    [[nodiscard]] bool uniform() const noexcept { return m_main.rows.empty() && m_paint.rows.empty(); }
     // The one value, when `uniform`.
-    [[nodiscard]] Voxel value() const noexcept { return unpackVoxel(m_value); }
-    [[nodiscard]] bool empty() const noexcept { return uniform() && m_value == 0; }
+    [[nodiscard]] Voxel value() const noexcept { return withPaint(unpackVoxel(m_main.value), m_paint.value); }
+    [[nodiscard]] bool empty() const noexcept { return uniform() && m_main.value == 0; }
+    // Whether any voxel of it carries paint (ADR 0114).
+    [[nodiscard]] bool painted() const noexcept { return !m_paint.rows.empty() || m_paint.value != 0; }
 
     // How many rows are stored voxel by voxel. For the memory figures and tests.
-    [[nodiscard]] core::usize denseRows() const noexcept { return m_dense.size() / ChunkEdge; }
+    [[nodiscard]] core::usize denseRows() const noexcept { return m_main.dense.size() / ChunkEdge; }
     [[nodiscard]] core::usize bytes() const noexcept;
 
     // xxh3 over the canonical form. Lazy, and dropped by any write.
@@ -252,22 +289,38 @@ public:
     void prepareMip(core::u32 level) const;
 
 private:
-    [[nodiscard]] core::u32 rowIndex(core::u32 y, core::u32 z) const noexcept { return y * ChunkEdge + z; }
-    void expand();
+    [[nodiscard]] static core::u32 rowIndex(core::u32 y, core::u32 z) noexcept { return y * ChunkEdge + z; }
     void invalidate() noexcept;
+    // Paint the voxels under it cannot carry, dropped.
+    void canonicalizePaint();
 
-    // Uniform: `m_rows` empty and `m_value` the value. Otherwise one entry per
-    // row: bit 31 set means dense, and the low bits index `m_dense` in whole
-    // rows; clear means the low sixteen bits are the row's one packed value.
-    core::u16 m_value = 0;
-    std::vector<core::u32> m_rows;
-    std::vector<core::u16> m_dense;
+    // **Sixteen bits a voxel, stored by rows.** Uniform: `rows` empty and
+    // `value` the value. Otherwise one entry per row: bit 31 set means dense,
+    // and the low bits index `dense` in whole rows; clear means the low sixteen
+    // bits are the row's one value. A chunk has two: the voxels under their
+    // paint, and the paint, which is all zero -- and costs nothing -- where
+    // nobody painted.
+    struct Layer
+    {
+        core::u16 value = 0;
+        std::vector<core::u32> rows;
+        std::vector<core::u16> dense;
+
+        [[nodiscard]] core::u16 get(core::u32 x, core::u32 row) const noexcept;
+        void readRow(core::u32 row, std::span<core::u16, ChunkEdge> out) const noexcept;
+        bool set(core::u32 x, core::u32 row, core::u16 packed);
+        void writeRow(core::u32 row, std::span<const core::u16, ChunkEdge> values);
+        void normalize();
+    };
+    Layer m_main;
+    Layer m_paint;
 
     mutable core::u64 m_digest = 0;
     mutable bool m_digestValid = false;
     mutable std::array<core::u64, 27> m_borders{};
     mutable core::u32 m_bordersValid = 0;
-    mutable std::array<std::vector<core::u16>, ChunkLevels> m_mips;
+    // Each level's voxels, the voxel under its paint low and the paint high.
+    mutable std::array<std::vector<core::u32>, ChunkLevels> m_mips;
 };
 
 // --- The field ---------------------------------------------------------------
@@ -433,8 +486,11 @@ public:
     FieldWriter& operator=(const FieldWriter&) = delete;
 
     [[nodiscard]] Voxel get(core::i32 x, core::i32 y, core::i32 z) const noexcept { return m_field.voxel(x, y, z); }
-    // Answers whether the voxel changed.
+    // Answers whether the voxel changed. A voxel written with no paint over
+    // the material it already is keeps the paint it had (ADR 0114).
     bool set(core::i32 x, core::i32 y, core::i32 z, Voxel voxel);
+    // Written as it is, paint and all: the paint verbs.
+    bool setExact(core::i32 x, core::i32 y, core::i32 z, Voxel voxel);
 
     // Normalises and drops what the batch left empty. Idempotent.
     void finish();
@@ -444,6 +500,8 @@ public:
     [[nodiscard]] const std::vector<ChunkKey>& touched() const noexcept { return m_touched; }
 
 private:
+    [[nodiscard]] TerrainChunk* chunkAt(core::i32 x, core::i32 y, core::i32 z, bool air);
+
     TerrainField& m_field;
     std::vector<ChunkKey> m_touched;
     ChunkKey m_lastKey{};
@@ -541,9 +599,34 @@ EditReport raiseBall(TerrainField& field, core::DVec3 center, double radius, flo
 // neighbour's material, or `material` where there is none (1 if that is zero).
 EditReport growBall(TerrainField& field, core::DVec3 center, double radius, float amount, core::u8 material = 0);
 
+// **How a stroke of paint goes on** (ADR 0114): over what is there, a little at
+// a time, under it, or off it.
+enum class PaintMode : core::u8
+{
+    // The ground becomes `material`, whatever showed before.
+    Replace,
+    // `material` shows more over what is there, by the stroke's strength.
+    Blend,
+    // `material` goes under: what was painted over it stays.
+    Under,
+    // What was painted over the ground shows less, revealing what is under.
+    Erase,
+};
+
+struct PaintOptions
+{
+    PaintMode mode = PaintMode::Replace;
+    // 0 to 1: how much a `Blend` or an `Erase` stamp moves the cover, at the
+    // middle of the ball.
+    float strength = 1.0f;
+    // 0 hard to 1 soft: how much less it moves towards the rim.
+    float falloff = 0.0f;
+};
+
 // Changes what the ground is made of in a ball, without moving it. Zero is
-// refused rather than treated as erase.
-EditReport paintBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material);
+// refused rather than treated as erase (`Erase` is the mode for that).
+EditReport paintBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material,
+                     PaintOptions options = {});
 
 // Every voxel of material `from` in the box between the two corners becomes
 // `to`. Zero for either is refused.

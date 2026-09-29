@@ -51,7 +51,7 @@ the terrain is empty.
 | `GrowBall(center, radius, amount, material?)` | Moves the surface out along its own slope, or in for a negative amount: the editor's Raise and Lower. A field rises, a cliff comes forward. |
 | `SmoothBall(center, radius, strength?)` | Softens the ground in a ball: bumps go, pits fill, flat ground stays. |
 | `FlattenBall(center, radius, height, strength?)` | Pulls the ground in a ball towards a level plane. |
-| `PaintBall(center, radius, material)` | Changes what the ground is made of and leaves it where it is. |
+| `PaintBall(center, radius, material, options?)` | Changes what the ground is made of and leaves it where it is: outright, or blended over it a little at a time (see *Painting over*). |
 | `ReplaceMaterial(minCorner, maxCorner, from, to)` | Every voxel of one material in a box becomes another. |
 | `WriteHeights(corner, columns, heights, material)` | Writes a heightmap in one call, one height per column of voxels, row after row along +Z. It is the verb for ground from a generator or an image. `material` is one id, or a table of ids beside `heights` (0 leaves a column alone). |
 | `ReadVoxels(minCorner, maxCorner)` | Materials and occupancies of a box of voxels, and how many there are on each axis. |
@@ -162,6 +162,36 @@ terrain:SetLayers(layers)
 - **Where layers meet**, a pixel blends the layers of its triangle's corners,
   so a painted edge is soft rather than stepped.
 
+## Painting over
+
+**A voxel holds two materials and how much of the one over shows** (ADR
+0114): the ground's own, and one painted over it. `PaintBall`'s options say
+what a stroke does with them:
+
+```luau
+--!strict
+local terrain = workspace:WaitForChild("Terrain") :: Terrain
+-- A little sand over the grass, softer towards the rim of the ball.
+terrain:PaintBall(vector.create(0, 0, 0), 6, 2, {
+    Mode = Enum.TerrainPaintMode.Blend,
+    Strength = 0.3,
+    Falloff = 0.8,
+})
+```
+
+- **`Replace`** (the default) makes the ground the material outright.
+- **`Blend`** shows the material more with every stroke, over what is there,
+  by `Strength` at the middle and less towards the rim as `Falloff` says.
+  Blended until it is all that shows, it is simply what the ground is made of.
+  A third material over two puts the one that shows more underneath first.
+- **`Under`** changes the ground under what was painted, and leaves the paint.
+- **`Erase`** takes off what was painted, revealing what is under.
+
+**Where paint meets the ground under it**, the one painted over fills the dark
+cracks of the other first -- sand in the seams of rock -- and the painted
+material's `BlendSharpness` says how hard that edge is: 0 a fade, 1 a line.
+Sculpting keeps the paint on the ground it moves.
+
 ## Rules: painting by slope and height
 
 A terrain also has **rules**, which draw a layer wherever the ground is steep
@@ -246,7 +276,9 @@ colour and textures); **Add Starter Materials** writes the eight starters
 under `materials/terrain/`. **Change Layers...** puts one of the project's
 materials in the selected layer's place, adds one, or removes the last.
 **Paint** paints the selected material under the brush without moving the
-ground.
+ground. **How it goes on** chooses Blend (a little with every stamp, by the
+brush's Strength), Replace, Under or Erase, and **Softness** how much less it
+paints towards the rim; hold Ctrl while blending to take paint off.
 
 **Paint by slope and height** lists the terrain's rules in order, each with
 its fields, a switch, and up, down and remove; every change shows at once,

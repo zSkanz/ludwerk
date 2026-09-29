@@ -177,25 +177,21 @@ void writeU16(std::vector<std::byte>& out, u16 value)
     out.push_back(static_cast<std::byte>((value >> 8) & 0xFFu));
 }
 
-// Upper bound of one chunk's voxel runs: a run per voxel, four bytes each.
-constexpr u64 MaxChunkPayload = static_cast<u64>(ChunkVolume) * 4;
+// Upper bound of one chunk's runs: a run per voxel, four bytes each, for its
+// voxels and for their paint.
+constexpr u64 MaxChunkPayload = static_cast<u64>(ChunkVolume) * 8;
 
-// One chunk's voxels as (packed, count) runs in storage order -- y, then z, then
-// x innermost, the order a chunk's rows lie in.
-void encodeChunk(const TerrainChunk& chunk, std::vector<std::byte>& out)
+// One layer of a chunk as (packed, count) runs in storage order -- y, then z,
+// then x innermost, the order a chunk's rows lie in.
+template <class ReadRow>
+void encodeRuns(ReadRow&& readRow, std::vector<std::byte>& out)
 {
-    if (chunk.uniform()) {
-        writeU16(out, packVoxel(chunk.value()));
-        // A run is at most 65,535; a chunk is 32,768 voxels, so one run is it.
-        writeU16(out, static_cast<u16>(ChunkVolume));
-        return;
-    }
     std::array<u16, ChunkEdge> row{};
     u16 current = 0;
     u32 run = 0;
     for (u32 y = 0; y < ChunkEdge; ++y) {
         for (u32 z = 0; z < ChunkEdge; ++z) {
-            chunk.readRow(y, z, row);
+            readRow(y, z, row);
             for (const u16 value : row) {
                 if (run > 0 && value == current && run < 0xFFFFu) {
                     ++run;
@@ -214,6 +210,27 @@ void encodeChunk(const TerrainChunk& chunk, std::vector<std::byte>& out)
     writeU16(out, static_cast<u16>(run));
 }
 
+// A chunk's voxels as runs, then -- only when it has any -- their paint as
+// runs of its own (ADR 0114): a chunk nobody painted codes exactly as a
+// version-3 file had it.
+void encodeChunk(const TerrainChunk& chunk, std::vector<std::byte>& out)
+{
+    if (chunk.uniform()) {
+        const Voxel voxel = chunk.value();
+        writeU16(out, packVoxel(voxel));
+        // A run is at most 65,535; a chunk is 32,768 voxels, so one run is it.
+        writeU16(out, static_cast<u16>(ChunkVolume));
+        if (chunk.painted()) {
+            writeU16(out, packPaint(voxel));
+            writeU16(out, static_cast<u16>(ChunkVolume));
+        }
+        return;
+    }
+    encodeRuns([&chunk](u32 y, u32 z, std::span<u16, ChunkEdge> row) { chunk.readRow(y, z, row); }, out);
+    if (chunk.painted())
+        encodeRuns([&chunk](u32 y, u32 z, std::span<u16, ChunkEdge> row) { chunk.readPaintRow(y, z, row); }, out);
+}
+
 // The inverse, into a fresh chunk. False when the runs do not cover exactly one
 // chunk or name a voxel that is not canonical -- air with a material, which no
 // writer produces and a reader must not invent.
@@ -225,32 +242,51 @@ void encodeChunk(const TerrainChunk& chunk, std::vector<std::byte>& out)
         return static_cast<u16>(static_cast<unsigned>(static_cast<u8>(bytes[at])) |
                                 (static_cast<unsigned>(static_cast<u8>(bytes[at + 1])) << 8));
     };
-    if (bytes.size() == 4) {
+    // A chunk of one voxel, and one painted all alike: made as the value it is.
+    if (bytes.size() == 4 || (bytes.size() == 8 && read16(2) == ChunkVolume && read16(6) == ChunkVolume)) {
         const u16 value = read16(0);
         if (read16(2) != ChunkVolume || packVoxel(canonical(unpackVoxel(value))) != value)
             return false;
-        out = std::make_shared<TerrainChunk>(unpackVoxel(value));
+        const Voxel voxel = bytes.size() == 8 ? withPaint(unpackVoxel(value), read16(4)) : unpackVoxel(value);
+        out = std::make_shared<TerrainChunk>(voxel);
         return true;
     }
     auto chunk = std::make_shared<TerrainChunk>();
     std::array<u16, ChunkEdge> row{};
-    u32 written = 0;
-    for (usize at = 0; at < bytes.size(); at += 4) {
-        const u16 value = read16(at);
-        const u32 count = read16(at + 2);
-        if (count == 0 || written + count > ChunkVolume || packVoxel(canonical(unpackVoxel(value))) != value)
-            return false;
-        for (u32 n = 0; n < count; ++n) {
-            const u32 index = written + n;
-            row[index % ChunkEdge] = value;
-            if (index % ChunkEdge == ChunkEdge - 1) {
-                const u32 rowIndex = index / ChunkEdge;
-                chunk->writeRow(rowIndex / ChunkEdge, rowIndex % ChunkEdge, row);
+    // The voxels' runs cover the chunk exactly, and then -- when bytes are
+    // left -- the paint's do.
+    usize at = 0;
+    for (const bool paint : {false, true}) {
+        if (paint && at == bytes.size())
+            break;
+        u32 written = 0;
+        while (written < ChunkVolume) {
+            if (at + 4 > bytes.size())
+                return false;
+            const u16 value = read16(at);
+            const u32 count = read16(at + 2);
+            at += 4;
+            // An under-voxel no writer produces -- air with a material -- is
+            // not one a reader invents; paint the voxels under it cannot carry
+            // is dropped by `normalize`.
+            if (count == 0 || written + count > ChunkVolume ||
+                (!paint && packVoxel(canonical(unpackVoxel(value))) != value))
+                return false;
+            for (u32 n = 0; n < count; ++n) {
+                const u32 index = written + n;
+                row[index % ChunkEdge] = value;
+                if (index % ChunkEdge == ChunkEdge - 1) {
+                    const u32 rowIndex = index / ChunkEdge;
+                    if (paint)
+                        chunk->writePaintRow(rowIndex / ChunkEdge, rowIndex % ChunkEdge, row);
+                    else
+                        chunk->writeRow(rowIndex / ChunkEdge, rowIndex % ChunkEdge, row);
+                }
             }
+            written += count;
         }
-        written += count;
     }
-    if (written != ChunkVolume)
+    if (at != bytes.size())
         return false;
     chunk->normalize();
     out = std::move(chunk);
@@ -569,7 +605,7 @@ std::optional<core::EngineError> decodeTerrainCell(std::span<const std::byte> by
     const u32 version = reader.u32v();
     if (version == TerrainCellLegacyVersion && reader.ok())
         return decodeLegacyCell(bytes, out);
-    if (version != TerrainCellFormatVersion) {
+    if (version != TerrainCellFormatVersion && version != TerrainCellUnpaintedVersion) {
         const I18nArg args[] = {{"found", static_cast<core::i64>(version)},
                                 {"expected", static_cast<core::i64>(TerrainCellFormatVersion)}};
         return core::makeError(ENG_TR("asset.terrain.err.version"), args);

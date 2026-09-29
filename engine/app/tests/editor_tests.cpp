@@ -4820,6 +4820,42 @@ TEST_CASE("Add clicked on the side of the terrain builds out from it, and stands
     CHECK_FALSE(solid(34.0, -25.0));
 }
 
+TEST_CASE("the editor's paint blends a little at a time, and Ctrl takes it off (ADR 0114)")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Paint);
+    rig.editor.setBrushMaterial(3);
+    rig.editor.setBrushRadius(6.0f);
+    rig.editor.setBrushStrength(0.3f);
+    rig.editor.setBrushFalloff(0.0f);
+    REQUIRE(rig.editor.brush().paintMode == asset::PaintMode::Blend);
+    const core::DVec3 under{0.2, -0.3, 0.2};
+
+    // One click: some of it shows, over the ground that was there.
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+    rig.frame(pixel, true, true, 0.0);
+    rig.frame(pixel, false, false, 0.0);
+    const asset::Voxel once = rig.field().field.voxel(0, -1, 0);
+    CHECK(once.material == 1);
+    CHECK(once.top == 3);
+    CHECK(once.cover > 40);
+    CHECK(once.cover < 120);
+
+    // Another: more of it.
+    rig.frame(pixel, true, true, 0.0);
+    rig.frame(pixel, false, false, 0.0);
+    CHECK(rig.field().field.voxel(0, -1, 0).cover > once.cover);
+
+    // Held Ctrl: it comes off again.
+    rig.editor.setBrushModifiers(true, false);
+    rig.frame(pixel, true, true, 0.0);
+    rig.frame(pixel, false, false, 0.0);
+    rig.editor.setBrushModifiers(false, false);
+    CHECK(rig.field().field.voxel(0, -1, 0).cover < 200);
+    (void)under;
+}
+
 TEST_CASE("painting through the editor changes material and not height")
 {
     BrushRig rig;
@@ -4827,6 +4863,8 @@ TEST_CASE("painting through the editor changes material and not height")
     rig.editor.setTool(Editor::Tool::Paint);
     rig.editor.setBrushMaterial(7);
     rig.editor.setBrushRadius(6.0f);
+    // Outright: what the ground is made of becomes the material.
+    rig.editor.setBrushPaintMode(asset::PaintMode::Replace);
 
     const std::optional<float> before = asset::heightAt(rig.field().field, 0.0, 0.0);
     REQUIRE(before.has_value());

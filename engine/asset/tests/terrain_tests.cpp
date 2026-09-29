@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "engine/asset/terrain.h"
+#include "engine/asset/terrain_cell.h"
 #include "engine/asset/terrain_palette.h"
 
 using namespace engine;
@@ -726,6 +727,82 @@ TEST_CASE("a brush no world has is refused whole, and fast (audit S10)")
     const EditReport small = fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
     CHECK_FALSE(small.refused);
     CHECK(small.touched > 0);
+}
+
+TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 0114)")
+{
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{16.0f, 16.0f, 16.0f}, 1);
+    const core::DVec3 at{0.5, -0.5, 0.5};
+    const auto voxel = [&] { return field.voxel(0, -1, 0); };
+
+    // Blend: the cover rises with each stamp, over the ground that was there.
+    const asset::PaintOptions blend{asset::PaintMode::Blend, 0.25f, 0.0f};
+    CHECK(asset::paintBall(field, at, 2.0, 3, blend).touched > 0);
+    CHECK(voxel().material == 1);
+    CHECK(voxel().top == 3);
+    const core::u8 first = voxel().cover;
+    CHECK(first > 50);
+    CHECK(first < 80);
+    (void)asset::paintBall(field, at, 2.0, 3, blend);
+    CHECK(voxel().cover > first);
+    // Until it is all that shows: then it is simply what the ground is.
+    for (int stamp = 0; stamp < 4; ++stamp)
+        (void)asset::paintBall(field, at, 2.0, 3, blend);
+    CHECK(voxel().material == 3);
+    CHECK(voxel().cover == 0);
+
+    // A soft brush does less towards its rim.
+    (void)asset::paintBall(field, at, 4.0, 5, asset::PaintOptions{asset::PaintMode::Blend, 0.5f, 1.0f});
+    CHECK(field.voxel(2, -1, 0).cover < field.voxel(0, -1, 0).cover);
+
+    // Under: the ground beneath changes and what is over it stays.
+    const core::u8 over = voxel().cover;
+    (void)asset::paintBall(field, at, 1.0, 2, asset::PaintOptions{asset::PaintMode::Under});
+    CHECK(voxel().material == 2);
+    CHECK(voxel().top == 5);
+    CHECK(voxel().cover == over);
+
+    // Erase: what is over it shows less, and then not at all.
+    (void)asset::paintBall(field, at, 1.0, 0, asset::PaintOptions{asset::PaintMode::Erase, 1.0f, 0.0f});
+    CHECK(voxel().cover == 0);
+    CHECK(voxel().material == 2);
+
+    // A sculpt keeps the paint it moves.
+    (void)asset::paintBall(field, at, 3.0, 4, blend);
+    const asset::Voxel painted = field.voxel(0, -1, 0);
+    REQUIRE(painted.cover > 0);
+    (void)asset::smoothBall(field, core::DVec3{0.5, 0.0, 0.5}, 3.0, 1.0f);
+    CHECK(field.voxel(0, -1, 0).top == painted.top);
+}
+
+TEST_CASE("a painted chunk codes and reads back whole, and an unpainted one codes as version 3 did (ADR 0114)")
+{
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{16.0f, 16.0f, 16.0f}, 1);
+    const asset::TerrainChunk& plain = *field.findChunk(asset::ChunkKey{0, -1, 0});
+    const std::vector<std::byte> before = asset::encodeTerrainChunk(plain);
+    const core::u64 digest = plain.digest();
+
+    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 4,
+                           asset::PaintOptions{asset::PaintMode::Blend, 0.4f, 0.5f});
+    const asset::TerrainChunk& painted = *field.findChunk(asset::ChunkKey{0, -1, 0});
+    REQUIRE(painted.painted());
+    CHECK(painted.digest() != digest);
+    const std::vector<std::byte> code = asset::encodeTerrainChunk(painted);
+    CHECK(code.size() > before.size());
+    std::shared_ptr<asset::TerrainChunk> back;
+    REQUIRE(asset::decodeTerrainChunk(code, back));
+    CHECK(back->digest() == painted.digest());
+    CHECK(back->get(0, 31, 0) == painted.get(0, 31, 0));
+
+    // Paint taken off again: the chunk is the one it was, bytes and digest.
+    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 3.0, 0,
+                           asset::PaintOptions{asset::PaintMode::Erase, 1.0f, 0.0f});
+    const asset::TerrainChunk& clean = *field.findChunk(asset::ChunkKey{0, -1, 0});
+    CHECK_FALSE(clean.painted());
+    CHECK(clean.digest() == digest);
+    CHECK(asset::encodeTerrainChunk(clean) == before);
 }
 
 TEST_CASE("field settings are checked as the floats they are (audit F9)")

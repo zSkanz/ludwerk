@@ -44,10 +44,10 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 2 | **B1** terrain layers are materials · **B2** rules by slope and height | world | The base of everything the terrain does next |
 | [~] 2b | **A2b** a scene closes as a game does, and `game` and `scene` are mailboxes (ADR 0124) · **A2c** a scene prepared in the background (ADR 0125), built together | foundation | Found in use on 2026-09-27: a close handler never ran under Stop; loading screens freeze |
 | [x] 2c | **F8** `ContentProvider:PreloadAsync` | toolkit | Shares A2c's warming path |
-| [ ] 2d | **F1** `ClickDetector`, `ProximityPrompt`, `DragDetector` | toolkit | The owner: "certain we need it" |
+| [x] 2d | **F1** `ClickDetector`, `ProximityPrompt`, `DragDetector` | toolkit | The owner: "certain we need it" |
 | [x] 3 | **B5** wind | world | Small, and foliage needs it |
 | [~] 4 | **B6** foliage | world | The largest visual gain |
-| [ ] 5 | **B3** two materials a voxel, paint modes, the seam · **B4** terrain tools | world | Painting as a person expects it |
+| [~] 5 | **B3** two materials a voxel, paint modes, the seam · **B4** terrain tools | world | Painting as a person expects it |
 | [ ] 6 | **B8** water, and the ocean example rewritten | world | Fixes an example that exists; any game with a boat |
 | [ ] 6b | **F2** movers and constraints (motor, servo, align, rope, rod, spring) | toolkit | Builds on B8's impulses at a point; a part moves without code |
 | [ ] 7 | **C1** `Request` and WebSocket in `NetworkService` | network | What people ask of a network first |

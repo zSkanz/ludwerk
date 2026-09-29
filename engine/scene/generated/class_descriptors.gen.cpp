@@ -1154,7 +1154,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("PaintBall"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Changes what the ground is MADE OF in a ball, without moving it. Returns how many voxels it changed.\012\012A `material` of zero is refused rather than treated as erase. Zero means erase to `FillBall`, and picking the first entry of a material list must not delete the ground you were about to paint.",
+            .doc = "Changes what the ground is MADE OF in a ball, without moving it. Returns how many voxels it changed.\012\012**A voxel holds two materials and how much the one over shows** (ADR 0114), and `options.Mode` says what the stroke does with them: `Replace` (the default) makes the ground `material` outright; `Blend` shows `material` more over what is there, by `Strength` (0 to 1, default 1) at the middle -- less towards the rim as `Falloff` (0 hard to 1 soft, default 0) says; `Under` puts `material` under what was painted over; `Erase` shows what was painted over less, revealing what is under.\012\012A `material` of zero is refused rather than treated as erase, except by `Erase`, which takes none. Zero means erase to `FillBall`, and picking the first entry of a material list must not delete the ground you were about to paint.",
         },
         MethodDesc{
             .name = atoms.intern("ReplaceMaterial"),
@@ -6320,6 +6320,36 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     dragDetectorResponseStyleDesc.docKey = {};
     dragDetectorResponseStyleDesc.items = dragDetectorResponseStyleItems;
     enums.registerEnum(dragDetectorResponseStyleDesc);
+
+    // --- TerrainPaintMode ---
+    static std::array<EnumItemDesc, 4> terrainPaintModeItems;
+    terrainPaintModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Replace"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Blend"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Under"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Erase"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor terrainPaintModeDesc;
+    terrainPaintModeDesc.name = atoms.intern("TerrainPaintMode");
+    terrainPaintModeDesc.docKey = {};
+    terrainPaintModeDesc.items = terrainPaintModeItems;
+    enums.registerEnum(terrainPaintModeDesc);
 }
 
 } // namespace engine::scene::generated

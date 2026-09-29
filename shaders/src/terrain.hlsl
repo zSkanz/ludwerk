@@ -23,7 +23,8 @@
 // Per terrain, indexed by material id (0 is air and unused).
 cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
 {
-    // What a layer looks like with no texture yet: its colour, flat.
+    // What a layer looks like with no texture yet: its colour, flat; and in a,
+    // how hard its paint meets what is under it (`BlendSharpness`, ADR 0114).
     float4 LayerFlat[256];
     // The material's colour factor in rgb, and one over its repeat in metres.
     float4 LayerTint[256];
@@ -69,6 +70,10 @@ struct TerrainInterpolants
     // How near the pixel is to each of the triangle's corners.
     float3 Corners : TEXCOORD5;
     nointerpolation uint3 Materials : TEXCOORD6;
+    // What is painted over each corner, and how much of it shows, 0 to 255
+    // (ADR 0114).
+    nointerpolation uint3 Tops : TEXCOORD7;
+    nointerpolation uint3 Covers : TEXCOORD8;
     float4 Position : SV_Position;
 };
 
@@ -88,6 +93,11 @@ TerrainInterpolants VertexMain(VertexInput input)
     output.Materials = uint3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u);
     const uint corner = uint(input.Uv.y + 0.5f);
     output.Corners = float3(corner == 0u ? 1.0f : 0.0f, corner == 1u ? 1.0f : 0.0f, corner == 2u ? 1.0f : 0.0f);
+    // The paint's two slots of the tangent, packed as the materials are.
+    const uint tops = uint(input.Tangent.z + 0.5f);
+    output.Tops = uint3(tops & 255u, (tops >> 8) & 255u, (tops >> 16) & 255u);
+    const uint covers = uint(input.Tangent.w + 0.5f);
+    output.Covers = uint3(covers & 255u, (covers >> 8) & 255u, (covers >> 16) & 255u);
     return output;
 }
 
@@ -304,6 +314,57 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         mix = weighted(mix, layerAt(ids.y, input.Ground, dx, dy, normal, planes), corners.y);
     [branch] if (corners.z > 0.001f)
         mix = weighted(mix, layerAt(ids.z, input.Ground, dx, dy, normal, planes), corners.z);
+
+    // **What is painted over it** (ADR 0114): the layers over each corner,
+    // weighed by how near the pixel is to the corner and how much of it shows
+    // there, and laid over the ground by a height blend -- each layer's
+    // occlusion is its height, so what is painted over fills the cracks of what
+    // is under before it covers its tops, and the painted layer's material's
+    // `BlendSharpness` says how hard that edge is. At no paint and at full cover it is exactly the one or the
+    // other: the height only moves the middle.
+    [branch] if (any(input.Covers > 0u))
+    {
+        uint3 tops = input.Tops;
+        float3 shares = input.Corners * (float3(input.Covers) / 255.0f);
+        if (tops.y == tops.x) {
+            shares.x += shares.y;
+            shares.y = 0.0f;
+        }
+        if (tops.z == tops.x) {
+            shares.x += shares.z;
+            shares.z = 0.0f;
+        }
+        else if (tops.z == tops.y) {
+            shares.y += shares.z;
+            shares.z = 0.0f;
+        }
+        const float cover = saturate(shares.x + shares.y + shares.z);
+        [branch] if (cover > 0.001f)
+        {
+            LayerSample over = (LayerSample)0;
+            [branch] if (shares.x > 0.0005f)
+                over = weighted(over, layerAt(tops.x, input.Ground, dx, dy, normal, planes), shares.x);
+            [branch] if (shares.y > 0.0005f)
+                over = weighted(over, layerAt(tops.y, input.Ground, dx, dy, normal, planes), shares.y);
+            [branch] if (shares.z > 0.0005f)
+                over = weighted(over, layerAt(tops.z, input.Ground, dx, dy, normal, planes), shares.z);
+            const float inverse = 1.0f / max(shares.x + shares.y + shares.z, 1e-5f);
+            over.Albedo *= inverse;
+            over.Normal *= inverse;
+            over.Roughness *= inverse;
+            over.Metalness *= inverse;
+            over.Occlusion *= inverse;
+            const float lift = (over.Occlusion - mix.Occlusion) * cover * (1.0f - cover) * 4.0f;
+            const uint lead = shares.x >= shares.y && shares.x >= shares.z ? tops.x : (shares.y >= shares.z ? tops.y : tops.z);
+            const float width = lerp(0.5f, 0.02f, saturate(LayerFlat[lead].a));
+            const float shows = smoothstep(0.5f - width, 0.5f + width, cover + lift);
+            mix.Albedo = lerp(mix.Albedo, over.Albedo, shows);
+            mix.Normal = lerp(mix.Normal, over.Normal, shows);
+            mix.Roughness = lerp(mix.Roughness, over.Roughness, shows);
+            mix.Metalness = lerp(mix.Metalness, over.Metalness, shows);
+            mix.Occlusion = lerp(mix.Occlusion, over.Occlusion, shows);
+        }
+    }
 
     // **The rules, in order** (ADR 0113 §2): each covers the pixel by how far
     // it is inside the rule's slope and height bands, ragged by the rule's

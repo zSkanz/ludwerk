@@ -466,6 +466,32 @@ namespace {
 // The tool's name in the preferences file, and back. Unknown reads as `Select`,
 // which is the tool that cannot lose work: a file written by a newer editor
 // naming a tool this one does not have should open in the safe one.
+[[nodiscard]] std::string_view paintModeName(asset::PaintMode mode) noexcept
+{
+    switch (mode) {
+    case asset::PaintMode::Replace:
+        return "replace";
+    case asset::PaintMode::Blend:
+        return "blend";
+    case asset::PaintMode::Under:
+        return "under";
+    case asset::PaintMode::Erase:
+        return "erase";
+    }
+    return "blend";
+}
+
+[[nodiscard]] asset::PaintMode paintModeFrom(std::string_view name) noexcept
+{
+    if (name == "replace")
+        return asset::PaintMode::Replace;
+    if (name == "under")
+        return asset::PaintMode::Under;
+    if (name == "erase")
+        return asset::PaintMode::Erase;
+    return asset::PaintMode::Blend;
+}
+
 [[nodiscard]] std::string_view brushOpName(Editor::BrushOp op) noexcept
 {
     switch (op) {
@@ -674,6 +700,8 @@ void Editor::rememberState(const std::filesystem::path& stateDirectory) const
     writer.field("material", static_cast<core::f64>(m_brush.material));
     writer.field("op", brushOpName(m_brush.op));
     writer.field("shape", m_brush.shape == BrushShape::Box ? "box" : "sphere");
+    writer.field("falloff", static_cast<core::f64>(m_brush.falloff));
+    writer.field("paint", paintModeName(m_brush.paintMode));
     writer.endObject();
     writer.key("blocks");
     writer.beginObject();
@@ -771,6 +799,10 @@ void Editor::recallState(const std::filesystem::path& stateDirectory)
                 setBrushStrength(static_cast<f32>(strength.asNumber()));
             m_brush.op = brushOpFrom(brush["op"].asString());
             m_brush.shape = brush["shape"].asString() == "box" ? BrushShape::Box : BrushShape::Sphere;
+            if (const core::JsonValue falloff = brush["falloff"]; falloff.type() == core::JsonType::Number)
+                setBrushFalloff(static_cast<f32>(falloff.asNumber()));
+            if (const core::JsonValue paint = brush["paint"]; paint.type() == core::JsonType::String)
+                m_brush.paintMode = paintModeFrom(paint.asString());
         }
         if (const core::JsonValue blocks = tools["blocks"]; blocks.type() == core::JsonType::Object) {
             const std::string_view op = blocks["op"].asString();
@@ -4170,6 +4202,14 @@ void Editor::setBrushSpacing(f32 fraction) noexcept
     m_preferencesDirty = true;
 }
 
+void Editor::setBrushFalloff(f32 falloff) noexcept
+{
+    if (!(falloff == falloff))
+        return;
+    m_brush.falloff = std::clamp(falloff, 0.0f, 1.0f);
+    m_preferencesDirty = true;
+}
+
 void Editor::setBrushStrength(f32 strength) noexcept
 {
     // A strength of zero is a tool that does nothing and one of one is a tool
@@ -4366,6 +4406,7 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         // own result downhill.
         stroke.plane = static_cast<f32>(m_brushAim->position.y);
         stroke.op = effectiveBrushOp();
+        stroke.paintMode = effectivePaintMode();
         stroke.thin = effectiveFoliageThin();
         stroke.carve = carves(m_tool, stroke.op);
         if (stroke.carve)
@@ -4598,7 +4639,11 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
             m_status = EditorStatus{"this terrain has no materials yet: add one under Paint first", true};
             return;
         }
-        report = asset::paintBall(terrain.field, at, radius, material);
+        // Its mode, strength and falloff (ADR 0114); Ctrl turns a Blend into
+        // an Erase for the stroke.
+        const asset::PaintMode mode = m_stroke.has_value() ? m_stroke->paintMode : effectivePaintMode();
+        report = asset::paintBall(terrain.field, at, radius, material,
+                                  asset::PaintOptions{mode, m_brush.strength, m_brush.falloff});
     }
     else {
         switch (op) {

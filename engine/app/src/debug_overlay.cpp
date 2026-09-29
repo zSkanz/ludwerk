@@ -10913,6 +10913,40 @@ bool terrainTile(const IconAtlas* icons, std::string_view icon, const char* word
 }
 
 // Size and strength, which every brush has, and what only some have.
+// **How Paint goes on** (ADR 0114): the four modes, and how soft its rim is.
+void drawPaintMode(Editor& editor)
+{
+    const Editor::Brush& brush = editor.brush();
+    ImGui::SeparatorText("How it goes on");
+    struct Mode
+    {
+        asset::PaintMode mode;
+        const char* label;
+        const char* tip;
+    };
+    static constexpr std::array<Mode, 4> Modes{{
+        {asset::PaintMode::Blend, "Blend", "shows the material more with every stamp, over what is there"},
+        {asset::PaintMode::Replace, "Replace", "makes the ground the material outright"},
+        {asset::PaintMode::Under, "Under", "puts the material under what was painted over it"},
+        {asset::PaintMode::Erase, "Erase", "takes off what was painted over, a little at a time"},
+    }};
+    for (std::size_t at = 0; at < Modes.size(); ++at) {
+        if (at > 0)
+            ImGui::SameLine();
+        if (ImGui::RadioButton(Modes[at].label, brush.paintMode == Modes[at].mode))
+            editor.setBrushPaintMode(Modes[at].mode);
+        ImGui::SetItemTooltip("%s", Modes[at].tip);
+    }
+    const float label = ImGui::CalcTextSize("Strength").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    ImGui::TextUnformatted("Softness");
+    ImGui::SameLine(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    int percent = static_cast<int>(std::lround(brush.falloff * 100.0f));
+    if (ImGui::SliderInt("##paint-softness", &percent, 0, 100, "%d%%"))
+        editor.setBrushFalloff(static_cast<f32>(percent) / 100.0f);
+    ImGui::SetItemTooltip("how much less the brush paints towards its rim: 0 is a hard edge, 100 fades to nothing");
+}
+
 void drawBrushControls(Editor& editor, bool strength, bool shape, bool flatten)
 {
     const Editor::Brush brush = editor.brush();
@@ -11484,7 +11518,8 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
             }
             ImGui::SetItemTooltip("changes what the ground is made of under the brush, without moving it");
             brushDown("Press Paint, then drag over the ground.");
-            drawBrushControls(editor, false, false, false);
+            drawPaintMode(editor);
+            drawBrushControls(editor, true, false, false);
             ImGui::Spacing();
             if (ImGui::CollapsingHeader("Paint by slope and height"))
                 drawTerrainRules(editor, world, root, *terrain, icons);
@@ -11635,7 +11670,8 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                                 ? "1-6 pick a tool  |  [ ] size  |  Shift+[ ] strength  |  hold Ctrl: the opposite  "
                                   "|  hold Shift: smooth  |  Esc puts the brush down"
                             : g_terrainMode == TerrainMode::Paint
-                                ? "[ ] size  |  Esc puts the brush down"
+                                ? "[ ] size  |  Shift+[ ] strength  |  hold Ctrl: erase while blending  |  Esc puts "
+                                  "the brush down"
                                 : "[ ] size  |  Shift+[ ] strength  |  hold Ctrl: thin  |  Esc puts the brush down");
         ImGui::PopTextWrapPos();
     }

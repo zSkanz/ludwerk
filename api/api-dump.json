@@ -4528,6 +4528,11 @@
             {
               "Name": "material",
               "Type": "number"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Mode: Enum.TerrainPaintMode?, Strength: number?, Falloff: number? }?",
+              "Default": "nil"
             }
           ],
           "Returns": ["number"],
@@ -9914,6 +9919,27 @@
         {
           "Name": "ScaledSize",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "TerrainPaintMode",
+      "Items": [
+        {
+          "Name": "Blend",
+          "Value": 1
+        },
+        {
+          "Name": "Erase",
+          "Value": 3
+        },
+        {
+          "Name": "Replace",
+          "Value": 0
+        },
+        {
+          "Name": "Under",
+          "Value": 2
         }
       ]
     },

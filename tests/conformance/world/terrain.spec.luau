@@ -210,6 +210,38 @@ describe("terrain", function()
         end):ToThrow()
     end)
 
+    it("paints over the ground a little at a time, under it, and off it again (ADR 0114)", function()
+        terrain:FillBlock(vector.create(0, -8, 0), vector.create(16, 16, 16), Rock)
+        local low = vector.create(-1, -2, -1)
+        local high = vector.create(1, 0, 1)
+        local before = terrain:ReadVoxels(low, high)
+        -- Blended over: the ground under is what it was, and something changed.
+        expect(terrain:PaintBall(vector.create(0, -0.5, 0), 3, Sand, {
+            Mode = Enum.TerrainPaintMode.Blend,
+            Strength = 0.3,
+            Falloff = 0.5,
+        }) > 0):ToBe(true)
+        local blended = terrain:ReadVoxels(low, high)
+        expect(blended[1]):ToBe(before[1])
+        -- Taken off again, and then painted outright.
+        expect(terrain:PaintBall(vector.create(0, -0.5, 0), 3, 0, { Mode = Enum.TerrainPaintMode.Erase }) > 0):ToBe(
+            true
+        )
+        terrain:PaintBall(vector.create(0, -0.5, 0), 3, Sand, { Mode = Enum.TerrainPaintMode.Replace })
+        expect(terrain:ReadVoxels(low, high)[1]):ToBe(Sand)
+        expect(function()
+            terrain:PaintBall(vector.create(0, 0, 0), 3, Sand, { Strength = 0 / 0 })
+        end):ToThrow()
+        expect(function()
+            terrain:PaintBall(
+                vector.create(0, 0, 0),
+                3,
+                Sand,
+                { Mode = Enum.DragDetectorDragStyle.TranslateLine } :: any
+            )
+        end):ToThrow()
+    end)
+
     it("refuses what no terrain can hold, rather than wrapping it or running out of memory", function()
         -- Terrain audit B1, B3, B4 and B6: each of these used to be a wrapped
         -- id that erased, a height that allocated gigabytes a column, a

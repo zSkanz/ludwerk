@@ -76,3 +76,28 @@ take a mode:
 
 - More than two materials per voxel (splat weights of four or eight). Two and
   a blend is what the owner asked for; a third is added by painting, not stored.
+
+## Amendment -- 2026-09-29, as built (B3, protocol 27)
+
+- **The paint is stored apart from the voxel under it.** A chunk keeps its
+  `{occupancy, base}` rows as before and, only when any voxel of it is painted,
+  a second set of rows of `{top, cover}`. A chunk nobody painted costs, codes and
+  hashes exactly as it did -- so the terrain memory of §Consequences does not
+  double: it grows only where paint is -- and no recorded trace moved. The code
+  keeps the name `material` for the ADR's `base`.
+- **`.lterrain` version 4** follows a painted chunk's voxel runs with its paint
+  runs; a chunk with none codes as in version 3, which is still read. The
+  ground's replication carries the same code (protocol 27).
+- **A sculpt keeps the paint it moves**: a voxel written with no paint over the
+  material it already is keeps the paint it had, so a raise or a smooth does
+  not scrub a painted hillside. The paint verbs write it whole.
+- **`Blend` over a voxel already fully covered makes the painted material its
+  base** (cover back to 0): the same look, one material less to carry.
+- **The height blend reads a layer's occlusion as its height**: the terrain's
+  texture arrays are colour, normal and occlusion-roughness-metalness, and a
+  material's `HeightMap` is not uploaded to them yet. What is painted over fills
+  the dark cracks of what is under first. The sharpness is **the painted
+  material's own `BlendSharpness`** (ADR 0113's field), not a terrain property.
+- The editor's Paint defaults to `Blend`; Ctrl turns a `Blend` stroke into an
+  `Erase`. Scripts default to `Replace`, as `PaintBall` always did.
+

@@ -157,17 +157,23 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage B3 — two materials a voxel, paint modes, the seam (ADR 0114)
 
-- [ ] The voxel `{occupancy, base, top, cover}`; codec, world hash, scene and
-  `.lterrain` v4 (reads v3), terrain replication, rollback snapshot.
-- [ ] `PaintBall(center, radius, material, options?)` with `Mode`
-  (`Replace`, `Blend`, `Under`, `Erase`), `Strength`, `Falloff`; the sculpt
-  tools honour `Strength` and `Falloff` too.
-- [ ] The mesher carries interpolated `base`/`top`/`cover` per vertex.
-- [ ] The height blend per pixel, `BlendSharpness`; up to four layers where
-  pairs differ; the rules apply after.
-- [ ] The traces that edit terrain re-recorded once, with the reason.
-- [ ] Tests: `Blend` raises cover gradually; `Under` changes only the base;
-  `Erase` reveals it; v3 files open identical; a screenshot of a soft seam.
+- [x] The voxel `{occupancy, base, top, cover}` -- the paint in rows of its
+  own, only in a painted chunk; codec, world hash, `.lterrain` v4 (reads v3),
+  terrain replication (protocol 27), the rollback snapshot (the chunk is
+  shared, so it carries it). A sculpt keeps the paint it moves.
+- [x] `PaintBall(center, radius, material, options?)` with `Mode`
+  (`Replace`, `Blend`, `Under`, `Erase`), `Strength`, `Falloff`; the editor's
+  Paint with the four modes, Softness, and Ctrl to erase while blending.
+  **Not yet:** the sculpt tools' own `Falloff`.
+- [x] The mesher carries `base`/`top`/`cover` per vertex: the cover a mean of
+  the cell's solid corners, the triangle's three packed like its materials.
+- [x] The height blend per pixel, by occlusion, at the painted material's
+  `BlendSharpness`; up to three layers over three; the rules apply after.
+  **Not yet:** a material's `HeightMap` in the arrays (occlusion stands in).
+- [x] No trace moved: ground nobody painted hashes as it did.
+- [~] Tests: `Blend` raises cover gradually; `Under` changes only the base;
+  `Erase` reveals it; an unpainted chunk codes as v3; the editor's blend and
+  Ctrl. **Not yet:** a screenshot of a soft seam.
 
 ## Stage B4 — terrain tools
 

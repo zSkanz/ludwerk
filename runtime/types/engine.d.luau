@@ -171,6 +171,9 @@ end
 declare extern type EnumDragDetectorResponseStyle extends EnumItem with
 end
 
+declare extern type EnumTerrainPaintMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -1239,10 +1242,15 @@ declare extern type Terrain extends Instance with
     --- many voxels it changed.
     function FlattenBall(self, center: vector, radius: number, height: number, strength: number?): number
     --- Changes what the ground is MADE OF in a ball, without moving it. Returns how many voxels it
-    --- changed. A `material` of zero is refused rather than treated as erase. Zero means erase to
-    --- `FillBall`, and picking the first entry of a material list must not delete the ground you were
-    --- about to paint.
-    function PaintBall(self, center: vector, radius: number, material: number): number
+    --- changed. **A voxel holds two materials and how much the one over shows** (ADR 0114), and
+    --- `options.Mode` says what the stroke does with them: `Replace` (the default) makes the ground
+    --- `material` outright; `Blend` shows `material` more over what is there, by `Strength` (0 to 1,
+    --- default 1) at the middle -- less towards the rim as `Falloff` (0 hard to 1 soft, default 0)
+    --- says; `Under` puts `material` under what was painted over; `Erase` shows what was painted over
+    --- less, revealing what is under. A `material` of zero is refused rather than treated as erase,
+    --- except by `Erase`, which takes none. Zero means erase to `FillBall`, and picking the first entry
+    --- of a material list must not delete the ground you were about to paint.
+    function PaintBall(self, center: vector, radius: number, material: number, options: { Mode: EnumTerrainPaintMode?, Strength: number?, Falloff: number? }?): number
     --- Every voxel of material `from` in the box between the two corners becomes `to`. Returns how many
     --- it changed. Zero for either is refused: this changes what ground is made of, never whether it is
     --- there.
@@ -3890,6 +3898,13 @@ declare Enum: {
         Physical: EnumDragDetectorResponseStyle,
         Custom: EnumDragDetectorResponseStyle,
         GetEnumItems: (self: any) -> { EnumDragDetectorResponseStyle },
+    },
+    TerrainPaintMode: {
+        Replace: EnumTerrainPaintMode,
+        Blend: EnumTerrainPaintMode,
+        Under: EnumTerrainPaintMode,
+        Erase: EnumTerrainPaintMode,
+        GetEnumItems: (self: any) -> { EnumTerrainPaintMode },
     },
 }
 

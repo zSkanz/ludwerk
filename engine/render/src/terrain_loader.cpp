@@ -630,7 +630,9 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
             layer.flat[0] = flat.x;
             layer.flat[1] = flat.y;
             layer.flat[2] = flat.z;
-            layer.flat[3] = 1.0f;
+            // The flat colour's free slot: how hard paint of this layer meets
+            // what is under it (ADR 0114), the material's own `BlendSharpness`.
+            layer.flat[3] = std::clamp(p.blendSharpness, 0.0f, 1.0f);
             layer.tint[0] = p.color.r;
             layer.tint[1] = p.color.g;
             layer.tint[2] = p.color.b;

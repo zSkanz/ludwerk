@@ -194,6 +194,7 @@ void readBox(const TerrainField& field, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 s
                static_cast<usize>(x - x0);
     };
     std::array<core::u16, ChunkEdge> row{};
+    std::array<core::u16, ChunkEdge> paint{};
     for (i32 cz = floorDiv(z0, edge); cz <= floorDiv(z0 + sizeZ - 1, edge); ++cz) {
         for (i32 cx = floorDiv(x0, edge); cx <= floorDiv(x0 + sizeX - 1, edge); ++cx) {
             for (const TerrainField::Entry& entry : field.column(cx, cz)) {
@@ -214,7 +215,18 @@ void readBox(const TerrainField& field, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 s
                             std::fill(first, first + (highX - lowX), chunk.value());
                             continue;
                         }
-                        chunk.readRow(static_cast<u32>(y - cy * edge), static_cast<u32>(z - cz * edge), row);
+                        const auto ly = static_cast<u32>(y - cy * edge);
+                        const auto lz = static_cast<u32>(z - cz * edge);
+                        chunk.readRow(ly, lz, row);
+                        // With its paint (ADR 0114), which a smooth carries.
+                        if (chunk.painted()) {
+                            chunk.readPaintRow(ly, lz, paint);
+                            for (i32 x = lowX; x < highX; ++x) {
+                                const auto at = static_cast<usize>(x - cx * edge);
+                                first[x - lowX] = withPaint(unpackVoxel(row[at]), paint[at]);
+                            }
+                            continue;
+                        }
                         for (i32 x = lowX; x < highX; ++x)
                             first[x - lowX] = unpackVoxel(row[static_cast<usize>(x - cx * edge)]);
                     }
@@ -1164,10 +1176,60 @@ EditReport growBall(TerrainField& field, DVec3 center, double radius, float amou
     return report;
 }
 
-EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 material)
+namespace {
+
+// **One voxel painted** (ADR 0114): what `mode` makes of it, `weight` of the
+// way -- 0 to 1, the stroke's strength less its falloff there.
+[[nodiscard]] Voxel paintedVoxel(Voxel old, u8 material, PaintMode mode, float weight) noexcept
+{
+    const auto step = static_cast<i32>(std::lround(std::clamp(weight, 0.0f, 1.0f) * 255.0f));
+    Voxel voxel = old;
+    switch (mode) {
+    case PaintMode::Replace:
+        return Voxel{old.occupancy, material, 0, 0};
+    case PaintMode::Under:
+        voxel.material = material;
+        return canonical(voxel);
+    case PaintMode::Erase:
+        voxel.cover = static_cast<u8>(std::max(0, static_cast<i32>(old.cover) - step));
+        return canonical(voxel);
+    case PaintMode::Blend:
+        break;
+    }
+    if (step == 0)
+        return old;
+    // The material under painted over itself: what is over it shows less.
+    if (old.material == material) {
+        voxel.cover = static_cast<u8>(std::max(0, static_cast<i32>(old.cover) - step));
+        return canonical(voxel);
+    }
+    // The same over it again, or nothing over it yet: it shows more.
+    if (old.cover == 0 || old.top == material) {
+        const i32 cover = (old.top == material ? static_cast<i32>(old.cover) : 0) + step;
+        // Covered wholly, it is simply what the ground is made of.
+        if (cover >= 255)
+            return Voxel{old.occupancy, material, 0, 0};
+        return canonical(Voxel{old.occupancy, old.material, material, static_cast<u8>(cover)});
+    }
+    // **A third over two**: the one that shows more goes under first, and
+    // the new one starts over it.
+    const u8 under = old.cover >= 128 ? old.top : old.material;
+    if (step >= 255)
+        return Voxel{old.occupancy, material, 0, 0};
+    return canonical(Voxel{old.occupancy, under, material, static_cast<u8>(step)});
+}
+
+} // namespace
+
+EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 material, PaintOptions options)
 {
     EditReport report;
-    if (!(radius > 0.0) || material == 0)
+    if (!(radius > 0.0) || (material == 0 && options.mode != PaintMode::Erase))
+        return report;
+    const float strength = std::clamp(options.strength, 0.0f, 1.0f);
+    const float soft = std::clamp(options.falloff, 0.0f, 1.0f);
+    // A NaN in either is no stroke at all (terrain audit B6's rule).
+    if (!(strength == strength) || !(soft == soft))
         return report;
     const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
                           DVec3{center.x + radius, center.y + radius, center.z + radius});
@@ -1177,12 +1239,19 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
     }
     FieldWriter writer(field);
     walk(box, [&](i32 x, i32 y, i32 z) {
-        if (length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z) >
-            radius)
+        const double distance =
+            length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z);
+        if (distance > radius)
             return;
         const Voxel old = writer.get(x, y, z);
-        if (old.occupancy > 0 && old.material != material)
-            writer.set(x, y, z, Voxel{old.occupancy, material});
+        if (old.occupancy == 0)
+            return;
+        // Hard is the whole strength to the rim; soft falls away to nothing
+        // at it, smoothly.
+        const float weight = strength * ((1.0f - soft) + soft * falloff(distance, radius));
+        const Voxel painted = paintedVoxel(old, material, options.mode, weight);
+        if (!(painted == old))
+            writer.setExact(x, y, z, painted);
     });
     writer.finish();
     report.touched = writer.changed();

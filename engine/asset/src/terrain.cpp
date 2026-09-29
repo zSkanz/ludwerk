@@ -47,138 +47,197 @@ u8 quantiseOccupancy(float fraction) noexcept
 
 // --- TerrainChunk --------------------------------------------------------------
 
+u16 TerrainChunk::Layer::get(u32 x, u32 row) const noexcept
+{
+    if (rows.empty())
+        return value;
+    const u32 entry = rows[row];
+    if (!isDense(entry))
+        return static_cast<u16>(entry);
+    return dense[static_cast<usize>(entry & ~DenseFlag) * ChunkEdge + x];
+}
+
+void TerrainChunk::Layer::readRow(u32 row, std::span<u16, ChunkEdge> out) const noexcept
+{
+    if (rows.empty()) {
+        std::fill(out.begin(), out.end(), value);
+        return;
+    }
+    const u32 entry = rows[row];
+    if (!isDense(entry)) {
+        std::fill(out.begin(), out.end(), static_cast<u16>(entry));
+        return;
+    }
+    const u16* first = &dense[static_cast<usize>(entry & ~DenseFlag) * ChunkEdge];
+    std::copy(first, first + ChunkEdge, out.begin());
+}
+
+bool TerrainChunk::Layer::set(u32 x, u32 row, u16 packed)
+{
+    if (rows.empty()) {
+        if (packed == value)
+            return false;
+        rows.assign(ChunkRows, static_cast<u32>(value));
+    }
+    u32& entry = rows[row];
+    if (!isDense(entry)) {
+        if (static_cast<u16>(entry) == packed)
+            return false;
+        // The row becomes voxel by voxel, appended; `normalize` puts the dense
+        // rows back in row order.
+        const auto index = static_cast<u32>(dense.size() / ChunkEdge);
+        dense.insert(dense.end(), ChunkEdge, static_cast<u16>(entry));
+        entry = DenseFlag | index;
+    }
+    u16& slot = dense[static_cast<usize>(entry & ~DenseFlag) * ChunkEdge + x];
+    if (slot == packed)
+        return false;
+    slot = packed;
+    return true;
+}
+
+void TerrainChunk::Layer::writeRow(u32 row, std::span<const u16, ChunkEdge> values)
+{
+    const u16 first = values[0];
+    const bool same = std::all_of(values.begin(), values.end(), [first](u16 at) { return at == first; });
+    if (rows.empty()) {
+        if (same && first == value)
+            return;
+        rows.assign(ChunkRows, static_cast<u32>(value));
+    }
+    u32& entry = rows[row];
+    if (same) {
+        // Left as a stale dense row if it was one; `normalize` drops it.
+        entry = static_cast<u32>(first);
+    }
+    else {
+        if (!isDense(entry)) {
+            const auto index = static_cast<u32>(dense.size() / ChunkEdge);
+            dense.insert(dense.end(), ChunkEdge, 0);
+            entry = DenseFlag | index;
+        }
+        std::copy(values.begin(), values.end(), dense.begin() + static_cast<std::ptrdiff_t>(entry & ~DenseFlag) * Edge);
+    }
+}
+
+void TerrainChunk::Layer::normalize()
+{
+    if (rows.empty())
+        return;
+    std::vector<u16> compact;
+    compact.reserve(dense.size());
+    bool allSame = true;
+    u32 firstValue = 0xFFFFFFFFu;
+    for (u32& entry : rows) {
+        if (isDense(entry)) {
+            const u16* voxels = &dense[static_cast<usize>(entry & ~DenseFlag) * ChunkEdge];
+            const u16 head = voxels[0];
+            if (std::all_of(voxels, voxels + ChunkEdge, [head](u16 at) { return at == head; })) {
+                entry = static_cast<u32>(head);
+            }
+            else {
+                const auto index = static_cast<u32>(compact.size() / ChunkEdge);
+                compact.insert(compact.end(), voxels, voxels + ChunkEdge);
+                entry = DenseFlag | index;
+            }
+        }
+        if (isDense(entry)) {
+            allSame = false;
+        }
+        else if (firstValue == 0xFFFFFFFFu) {
+            firstValue = entry;
+        }
+        else if (entry != firstValue) {
+            allSame = false;
+        }
+    }
+    if (allSame) {
+        value = static_cast<u16>(firstValue);
+        rows.clear();
+        rows.shrink_to_fit();
+        dense.clear();
+        dense.shrink_to_fit();
+    }
+    else {
+        dense = std::move(compact);
+    }
+}
+
 Voxel TerrainChunk::get(u32 x, u32 y, u32 z) const noexcept
 {
-    if (m_rows.empty())
-        return unpackVoxel(m_value);
-    const u32 row = m_rows[rowIndex(y, z)];
-    if (!isDense(row))
-        return unpackVoxel(static_cast<u16>(row));
-    return unpackVoxel(m_dense[static_cast<usize>(row & ~DenseFlag) * ChunkEdge + x]);
+    const u32 row = rowIndex(y, z);
+    return withPaint(unpackVoxel(m_main.get(x, row)), m_paint.get(x, row));
 }
 
 void TerrainChunk::readRow(u32 y, u32 z, std::span<u16, ChunkEdge> out) const noexcept
 {
-    if (m_rows.empty()) {
-        std::fill(out.begin(), out.end(), m_value);
-        return;
-    }
-    const u32 row = m_rows[rowIndex(y, z)];
-    if (!isDense(row)) {
-        std::fill(out.begin(), out.end(), static_cast<u16>(row));
-        return;
-    }
-    const u16* first = &m_dense[static_cast<usize>(row & ~DenseFlag) * ChunkEdge];
-    std::copy(first, first + ChunkEdge, out.begin());
+    m_main.readRow(rowIndex(y, z), out);
+}
+
+void TerrainChunk::readPaintRow(u32 y, u32 z, std::span<u16, ChunkEdge> out) const noexcept
+{
+    m_paint.readRow(rowIndex(y, z), out);
 }
 
 void TerrainChunk::invalidate() noexcept
 {
     m_digestValid = false;
     m_bordersValid = 0;
-    for (std::vector<u16>& level : m_mips)
+    for (std::vector<u32>& level : m_mips)
         level.clear();
-}
-
-void TerrainChunk::expand()
-{
-    if (!m_rows.empty())
-        return;
-    m_rows.assign(ChunkRows, static_cast<u32>(m_value));
 }
 
 bool TerrainChunk::set(u32 x, u32 y, u32 z, Voxel voxel)
 {
-    const u16 packed = packVoxel(canonical(voxel));
-    if (m_rows.empty()) {
-        if (packed == m_value)
-            return false;
-        expand();
-    }
-    u32& row = m_rows[rowIndex(y, z)];
-    if (!isDense(row)) {
-        if (static_cast<u16>(row) == packed)
-            return false;
-        // The row becomes voxel by voxel, appended; `normalize` puts the dense
-        // rows back in row order.
-        const auto index = static_cast<u32>(m_dense.size() / ChunkEdge);
-        m_dense.insert(m_dense.end(), ChunkEdge, static_cast<u16>(row));
-        row = DenseFlag | index;
-    }
-    u16& slot = m_dense[static_cast<usize>(row & ~DenseFlag) * ChunkEdge + x];
-    if (slot == packed)
+    const Voxel written = canonical(voxel);
+    const u32 row = rowIndex(y, z);
+    const bool under = m_main.set(x, row, packVoxel(written));
+    const bool paint = m_paint.set(x, row, packPaint(written));
+    if (!under && !paint)
         return false;
-    slot = packed;
     invalidate();
     return true;
 }
 
 void TerrainChunk::writeRow(u32 y, u32 z, std::span<const u16, ChunkEdge> values)
 {
-    const u16 first = values[0];
-    const bool same = std::all_of(values.begin(), values.end(), [first](u16 value) { return value == first; });
-    if (m_rows.empty()) {
-        if (same && first == m_value)
-            return;
-        expand();
-    }
-    u32& row = m_rows[rowIndex(y, z)];
-    if (same) {
-        // Left as a stale dense row if it was one; `normalize` drops it.
-        row = static_cast<u32>(first);
-    }
-    else {
-        if (!isDense(row)) {
-            const auto index = static_cast<u32>(m_dense.size() / ChunkEdge);
-            m_dense.insert(m_dense.end(), ChunkEdge, 0);
-            row = DenseFlag | index;
-        }
-        std::copy(values.begin(), values.end(), m_dense.begin() + static_cast<std::ptrdiff_t>(row & ~DenseFlag) * Edge);
-    }
+    m_main.writeRow(rowIndex(y, z), values);
     invalidate();
+}
+
+void TerrainChunk::writePaintRow(u32 y, u32 z, std::span<const u16, ChunkEdge> values)
+{
+    m_paint.writeRow(rowIndex(y, z), values);
+    invalidate();
+}
+
+void TerrainChunk::canonicalizePaint()
+{
+    if (!painted())
+        return;
+    std::array<u16, ChunkEdge> under{};
+    std::array<u16, ChunkEdge> paint{};
+    for (u32 row = 0; row < ChunkRows; ++row) {
+        m_paint.readRow(row, paint);
+        if (std::all_of(paint.begin(), paint.end(), [](u16 at) { return at == 0; }))
+            continue;
+        m_main.readRow(row, under);
+        bool changed = false;
+        for (u32 x = 0; x < ChunkEdge; ++x) {
+            const u16 kept = packPaint(canonical(withPaint(unpackVoxel(under[x]), paint[x])));
+            changed = changed || kept != paint[x];
+            paint[x] = kept;
+        }
+        if (changed)
+            m_paint.writeRow(row, paint);
+    }
 }
 
 void TerrainChunk::normalize()
 {
-    if (m_rows.empty())
-        return;
-    std::vector<u16> dense;
-    dense.reserve(m_dense.size());
-    bool allSame = true;
-    u32 firstValue = 0xFFFFFFFFu;
-    for (u32& row : m_rows) {
-        if (isDense(row)) {
-            const u16* voxels = &m_dense[static_cast<usize>(row & ~DenseFlag) * ChunkEdge];
-            const u16 head = voxels[0];
-            if (std::all_of(voxels, voxels + ChunkEdge, [head](u16 value) { return value == head; })) {
-                row = static_cast<u32>(head);
-            }
-            else {
-                const auto index = static_cast<u32>(dense.size() / ChunkEdge);
-                dense.insert(dense.end(), voxels, voxels + ChunkEdge);
-                row = DenseFlag | index;
-            }
-        }
-        if (isDense(row)) {
-            allSame = false;
-        }
-        else if (firstValue == 0xFFFFFFFFu) {
-            firstValue = row;
-        }
-        else if (row != firstValue) {
-            allSame = false;
-        }
-    }
-    if (allSame) {
-        m_value = static_cast<u16>(firstValue);
-        m_rows.clear();
-        m_rows.shrink_to_fit();
-        m_dense.clear();
-        m_dense.shrink_to_fit();
-    }
-    else {
-        m_dense = std::move(dense);
-    }
+    canonicalizePaint();
+    m_main.normalize();
+    m_paint.normalize();
     // The bytes are the same voxels either way; only the digest's input moved.
     m_digestValid = false;
     m_bordersValid = 0;
@@ -186,9 +245,11 @@ void TerrainChunk::normalize()
 
 usize TerrainChunk::bytes() const noexcept
 {
-    usize total = sizeof(TerrainChunk) + m_rows.capacity() * sizeof(u32) + m_dense.capacity() * sizeof(u16);
-    for (const std::vector<u16>& level : m_mips)
-        total += level.capacity() * sizeof(u16);
+    usize total = sizeof(TerrainChunk);
+    for (const Layer* layer : {&m_main, &m_paint})
+        total += layer->rows.capacity() * sizeof(u32) + layer->dense.capacity() * sizeof(u16);
+    for (const std::vector<u32>& level : m_mips)
+        total += level.capacity() * sizeof(u32);
     return total;
 }
 
@@ -198,17 +259,30 @@ u64 TerrainChunk::digest() const noexcept
         // Over the canonical form: a uniform chunk is its value, and a rowed one
         // is its row table and its dense rows. Two chunks with the same voxels
         // only share a digest once both are normalised, which every write path
-        // does before anything reads this.
+        // does before anything reads this. **Paint is hashed only where there
+        // is some**, so ground nobody painted hashes as it did before paint
+        // existed (ADR 0114) -- and every recorded trace still holds.
         XXH3_state_t state;
         XXH3_64bits_reset(&state);
-        const u8 kind = m_rows.empty() ? 0 : 1;
+        const u8 kind = m_main.rows.empty() ? 0 : 1;
         XXH3_64bits_update(&state, &kind, 1);
-        if (m_rows.empty()) {
-            XXH3_64bits_update(&state, &m_value, sizeof(m_value));
+        if (m_main.rows.empty()) {
+            XXH3_64bits_update(&state, &m_main.value, sizeof(m_main.value));
         }
         else {
-            XXH3_64bits_update(&state, m_rows.data(), m_rows.size() * sizeof(u32));
-            XXH3_64bits_update(&state, m_dense.data(), m_dense.size() * sizeof(u16));
+            XXH3_64bits_update(&state, m_main.rows.data(), m_main.rows.size() * sizeof(u32));
+            XXH3_64bits_update(&state, m_main.dense.data(), m_main.dense.size() * sizeof(u16));
+        }
+        if (painted()) {
+            const u8 paintKind = m_paint.rows.empty() ? 2 : 3;
+            XXH3_64bits_update(&state, &paintKind, 1);
+            if (m_paint.rows.empty()) {
+                XXH3_64bits_update(&state, &m_paint.value, sizeof(m_paint.value));
+            }
+            else {
+                XXH3_64bits_update(&state, m_paint.rows.data(), m_paint.rows.size() * sizeof(u32));
+                XXH3_64bits_update(&state, m_paint.dense.data(), m_paint.dense.size() * sizeof(u16));
+            }
         }
         m_digest = XXH3_64bits_digest(&state);
         m_digestValid = true;
@@ -227,8 +301,11 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
         XXH3_state_t state;
         XXH3_64bits_reset(&state);
         XXH3_64bits_update(&state, &slot, sizeof(slot));
-        if (m_rows.empty()) {
-            XXH3_64bits_update(&state, &m_value, sizeof(m_value));
+        const bool painted = this->painted();
+        if (uniform()) {
+            XXH3_64bits_update(&state, &m_main.value, sizeof(m_main.value));
+            if (painted)
+                XXH3_64bits_update(&state, &m_paint.value, sizeof(m_paint.value));
         }
         else {
             // The layers the neighbour at that offset reads: the two against
@@ -247,11 +324,15 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
             const auto [y0, y1] = range(dy);
             const auto [z0, z1] = range(dz);
             std::vector<u16> part;
-            part.reserve(static_cast<usize>(x1 - x0) * (y1 - y0) * (z1 - z0));
+            part.reserve(static_cast<usize>(x1 - x0) * (y1 - y0) * (z1 - z0) * (painted ? 2u : 1u));
             for (u32 y = y0; y < y1; ++y) {
                 for (u32 z = z0; z < z1; ++z) {
-                    for (u32 x = x0; x < x1; ++x)
-                        part.push_back(packVoxel(get(x, y, z)));
+                    for (u32 x = x0; x < x1; ++x) {
+                        const Voxel voxel = get(x, y, z);
+                        part.push_back(packVoxel(voxel));
+                        if (painted)
+                            part.push_back(packPaint(voxel));
+                    }
                 }
             }
             XXH3_64bits_update(&state, part.data(), part.size() * sizeof(u16));
@@ -264,31 +345,35 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
 
 void TerrainChunk::prepareMip(u32 level) const
 {
-    if (level == 0 || level >= ChunkLevels || m_rows.empty() || !m_mips[level].empty())
+    if (level == 0 || level >= ChunkLevels || uniform() || !m_mips[level].empty())
         return;
     const u32 edge = ChunkEdge >> level;
     const u32 span = 1u << level;
-    std::vector<u16>& out = m_mips[level];
+    std::vector<u32>& out = m_mips[level];
     out.assign(static_cast<usize>(edge) * edge * edge, 0);
     // Sums per level cell, read row by row so the rows' own storage is walked
     // once in order.
     std::vector<u32> sums(out.size(), 0);
     std::vector<u8> best(out.size(), 0);
-    std::vector<u8> material(out.size(), 0);
+    std::vector<Voxel> fullest(out.size());
     std::array<u16, ChunkEdge> row{};
+    std::array<u16, ChunkEdge> paint{};
+    const bool painted = this->painted();
     for (u32 y = 0; y < ChunkEdge; ++y) {
         for (u32 z = 0; z < ChunkEdge; ++z) {
             readRow(y, z, row);
+            if (painted)
+                readPaintRow(y, z, paint);
             const usize base = (static_cast<usize>(y / span) * edge + z / span) * edge;
             for (u32 x = 0; x < ChunkEdge; ++x) {
-                const Voxel voxel = unpackVoxel(row[x]);
+                const Voxel voxel = painted ? withPaint(unpackVoxel(row[x]), paint[x]) : unpackVoxel(row[x]);
                 const usize cell = base + x / span;
                 sums[cell] += voxel.occupancy;
-                // The fullest voxel's material, the first one met on a tie: the
-                // walk order is fixed, so so is the answer.
+                // The fullest voxel's materials, the first one met on a tie:
+                // the walk order is fixed, so so is the answer.
                 if (voxel.occupancy > best[cell]) {
                     best[cell] = voxel.occupancy;
-                    material[cell] = voxel.material;
+                    fullest[cell] = voxel;
                 }
             }
         }
@@ -296,7 +381,8 @@ void TerrainChunk::prepareMip(u32 level) const
     const u32 count = span * span * span;
     for (usize at = 0; at < out.size(); ++at) {
         const auto occupancy = static_cast<u8>((sums[at] + count / 2) / count);
-        out[at] = packVoxel(canonical(Voxel{occupancy, material[at]}));
+        const Voxel voxel = canonical(Voxel{occupancy, fullest[at].material, fullest[at].top, fullest[at].cover});
+        out[at] = static_cast<u32>(packVoxel(voxel)) | (static_cast<u32>(packPaint(voxel)) << 16);
     }
 }
 
@@ -304,12 +390,13 @@ Voxel TerrainChunk::mip(u32 level, u32 x, u32 y, u32 z) const noexcept
 {
     if (level == 0)
         return get(x, y, z);
-    if (m_rows.empty())
-        return unpackVoxel(m_value);
+    if (uniform())
+        return value();
     if (m_mips[level].empty())
         prepareMip(level);
     const u32 edge = ChunkEdge >> level;
-    return unpackVoxel(m_mips[level][(static_cast<usize>(y) * edge + z) * edge + x]);
+    const u32 packed = m_mips[level][(static_cast<usize>(y) * edge + z) * edge + x];
+    return withPaint(unpackVoxel(static_cast<u16>(packed & 0xFFFF)), static_cast<u16>(packed >> 16));
 }
 
 // --- TerrainField --------------------------------------------------------------
@@ -592,24 +679,56 @@ void TerrainField::setHeightRange(float minHeight, float maxHeight) noexcept
 
 // --- FieldWriter ---------------------------------------------------------------
 
-bool FieldWriter::set(i32 x, i32 y, i32 z, Voxel voxel)
+TerrainChunk* FieldWriter::chunkAt(i32 x, i32 y, i32 z, bool air)
 {
     const ChunkKey key = chunkOf(x, y, z);
     if (m_last == nullptr || !(key == m_lastKey)) {
         // Never a chunk no save or message can carry (terrain audit B4).
         if (!chunkKeyInRange(key))
-            return false;
-        const bool air = canonical(voxel) == Voxel{};
+            return nullptr;
         if (air && m_field.findChunk(key) == nullptr)
-            return false;
+            return nullptr;
         m_last = m_field.chunkFor(key);
         m_lastKey = key;
         const auto at = std::lower_bound(m_touched.begin(), m_touched.end(), key);
         if (at == m_touched.end() || !(*at == key))
             m_touched.insert(at, key);
     }
-    const bool changed = m_last->set(static_cast<u32>(floorMod(x, Edge)), static_cast<u32>(floorMod(y, Edge)),
-                                     static_cast<u32>(floorMod(z, Edge)), voxel);
+    return m_last;
+}
+
+bool FieldWriter::set(i32 x, i32 y, i32 z, Voxel voxel)
+{
+    TerrainChunk* chunk = chunkAt(x, y, z, canonical(voxel) == Voxel{});
+    if (chunk == nullptr)
+        return false;
+    const auto lx = static_cast<u32>(floorMod(x, Edge));
+    const auto ly = static_cast<u32>(floorMod(y, Edge));
+    const auto lz = static_cast<u32>(floorMod(z, Edge));
+    // **A sculpt keeps the paint it moves** (ADR 0114): a voxel written with
+    // no paint over the material it already is keeps the paint it had, so a
+    // raise or a smooth does not scrub a painted hillside back to its base.
+    // The paint verbs write it whole (`setExact`).
+    if (voxel.top == 0 && voxel.cover == 0 && chunk->painted()) {
+        const Voxel was = chunk->get(lx, ly, lz);
+        if (was.material == voxel.material && was.cover != 0) {
+            voxel.top = was.top;
+            voxel.cover = was.cover;
+        }
+    }
+    const bool changed = chunk->set(lx, ly, lz, voxel);
+    if (changed)
+        m_changed += 1;
+    return changed;
+}
+
+bool FieldWriter::setExact(i32 x, i32 y, i32 z, Voxel voxel)
+{
+    TerrainChunk* chunk = chunkAt(x, y, z, canonical(voxel) == Voxel{});
+    if (chunk == nullptr)
+        return false;
+    const bool changed = chunk->set(static_cast<u32>(floorMod(x, Edge)), static_cast<u32>(floorMod(y, Edge)),
+                                    static_cast<u32>(floorMod(z, Edge)), voxel);
     if (changed)
         m_changed += 1;
     return changed;

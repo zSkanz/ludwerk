@@ -2411,7 +2411,11 @@ local Messages: { Schema.Message } = {
                     },
                     { Name = "y", Type = "u32" },
                     { Name = "z", Type = "u32" },
-                    { Name = "codeLength", Type = "u32", Doc = "0 is a chunk that is gone; at most 131072." },
+                    {
+                        Name = "codeLength",
+                        Type = "u32",
+                        Doc = "0 is a chunk that is gone; at most 262144, its voxels and then its paint (protocol 27).",
+                    },
                     {
                         Name = "code",
                         Type = "repeat",

@@ -1185,6 +1185,16 @@ local Definition: Schema.Definition = {
                 { Name = "Custom", Value = 2, Doc = "Nothing: the events report, and the game moves it." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "TerrainPaintMode",
+            Doc = "What a stroke of `Terrain:PaintBall` does with the two materials a voxel holds (ADR 0114).",
+            Items = {
+                { Name = "Replace", Value = 0, Doc = "The ground becomes the material, whatever showed before." },
+                { Name = "Blend", Value = 1, Doc = "The material shows more over what is there, by the strength." },
+                { Name = "Under", Value = 2, Doc = "The material goes under what was painted over it." },
+                { Name = "Erase", Value = 3, Doc = "What was painted over shows less, revealing what is under." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 
