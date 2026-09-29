@@ -356,7 +356,13 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             over.Occlusion *= inverse;
             const float lift = (over.Occlusion - mix.Occlusion) * cover * (1.0f - cover) * 4.0f;
             const uint lead = shares.x >= shares.y && shares.x >= shares.z ? tops.x : (shares.y >= shares.z ? tops.y : tops.z);
-            const float width = lerp(0.5f, 0.02f, saturate(LayerFlat[lead].a));
+            // **The sharpness is of the edge the heights draw** (D329): where
+            // the two are the same height there is no edge to draw, and a hard
+            // one made a threshold at half cover -- a flat-coloured material
+            // painted over another came out stepped, voxel by voxel, however
+            // soft the brush. There it is a crossfade by the cover instead.
+            const float relief = saturate(abs(over.Occlusion - mix.Occlusion) * 4.0f);
+            const float width = lerp(0.5f, lerp(0.5f, 0.02f, saturate(LayerFlat[lead].a)), relief);
             const float shows = smoothstep(0.5f - width, 0.5f + width, cover + lift);
             mix.Albedo = lerp(mix.Albedo, over.Albedo, shows);
             mix.Normal = lerp(mix.Normal, over.Normal, shows);

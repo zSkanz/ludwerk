@@ -100,4 +100,11 @@ take a mode:
   material's own `BlendSharpness`** (ADR 0113's field), not a terrain property.
 - The editor's Paint defaults to `Blend`; Ctrl turns a `Blend` stroke into an
   `Erase`. Scripts default to `Replace`, as `PaintBall` always did.
-
+- **Corrected 2026-09-29 (D328, D329), after the owner painted with it.**
+  `Falloff` is how much of the radius fades, ending at nothing on the rim (it
+  was a mix of a hard brush and a soft one); a `Blend` or `Erase` stamp moves
+  the cover by its share of what is left, as an opacity brush does (it added a
+  fixed amount, so a stroke's stamps summed to a hard edge); and the height
+  blend is a crossfade where the two materials have no relief between them (a
+  sharp one drew a step at half cover between flat colours). The cover is still
+  a voxel's, so the softest edge a brush can draw is a voxel or two wide.

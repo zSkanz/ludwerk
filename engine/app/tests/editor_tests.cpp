@@ -3178,37 +3178,61 @@ struct MaterialDesk
 
 } // namespace
 
-TEST_CASE("a new terrain has no materials; the starters are files in the project, and a new one is its next layer")
+TEST_CASE("a terrain's materials are given it from Content, and it never makes one (D330)")
 {
     // The owner, 2026-09-29: materials the ground came with could not be
-    // opened in Content. Now none come with it, and every one it has is a file.
+    // opened in Content, so none come with it; and a terrain is given the
+    // project's materials, as in every engine -- its panel made materials of
+    // its own, which said the opposite.
     MaterialDesk desk("terrain-materials");
     // The desk's registry has no Terrain class; the component is what counts.
     const core::InstanceId terrain = desk.world.create(desk.fixture.folderClass);
     desk.world.terrains().add(terrain, scene::TerrainComponent{});
     REQUIRE_FALSE(desk.world.setParent(terrain, desk.workspace).has_value());
     REQUIRE(desk.editor.terrainIn(desk.world, desk.workspace) == terrain);
-    CHECK(desk.world.terrains().find(terrain)->layers.empty());
+    const auto layers = [&] { return desk.world.terrains().find(terrain)->layers; };
+    CHECK(layers().empty());
 
-    REQUIRE(desk.editor.addStarterTerrainMaterials(desk.world, desk.workspace));
-    const std::vector<std::string> layers = desk.world.terrains().find(terrain)->layers;
-    REQUIRE(layers.size() == 8);
-    CHECK(layers[0] == "asset://materials/terrain/grass.material.json");
+    // The starters are a Content action: files in the project, and the terrain
+    // is not touched.
+    CHECK(desk.editor.writeStarterTerrainMaterials() == 8);
     CHECK(std::filesystem::exists(desk.content / "materials" / "terrain" / "rock.material.json"));
+    CHECK(layers().empty());
+    // Again: nothing written over.
+    CHECK(desk.editor.writeStarterTerrainMaterials() == 0);
+
+    // Given one: its next layer, and what the brush lays.
+    REQUIRE(desk.editor.addTerrainLayer(desk.world, desk.workspace, "materials/terrain/grass.material.json"));
+    REQUIRE(layers().size() == 1);
+    CHECK(layers()[0] == "asset://materials/terrain/grass.material.json");
+    CHECK(desk.editor.brush().material == 1);
     // A variant of the built-in one: it looks like it, texture and all.
-    const asset::ResolvedMaterial grass = desk.world.resolveMaterial(desk.world.atoms().intern(layers[0]), 0);
+    const asset::ResolvedMaterial grass = desk.world.resolveMaterial(desk.world.atoms().intern(layers()[0]), 0);
     CHECK(grass.properties.colorMap == "engine://terrain/grass/color");
 
-    // Again: nothing new to add, and nothing written over.
-    const core::usize steps = desk.editor.history().depth();
-    (void)desk.editor.addStarterTerrainMaterials(desk.world, desk.workspace);
-    CHECK(desk.world.terrains().find(terrain)->layers == layers);
-    CHECK(desk.editor.history().depth() == steps);
+    // A material of the project's own, made in Content, is given the same way.
+    const std::string moss = desk.editor.createMaterial("moss");
+    REQUIRE(moss == "materials/moss.material.json");
+    REQUIRE(desk.editor.addTerrainLayer(desk.world, desk.workspace, moss));
+    CHECK(layers().size() == 2);
+    CHECK(desk.editor.brush().material == 2);
 
-    const std::string made = desk.editor.addNewTerrainMaterial(desk.world, desk.workspace, "moss");
-    CHECK(made == "materials/moss.material.json");
-    CHECK(desk.world.terrains().find(terrain)->layers.size() == 9);
-    CHECK(desk.editor.brush().material == 9);
+    // Twice, or something that is not a material: refused.
+    CHECK_FALSE(desk.editor.addTerrainLayer(desk.world, desk.workspace, moss));
+    CHECK_FALSE(desk.editor.addTerrainLayer(desk.world, desk.workspace, "textures/moss.png"));
+    CHECK(layers().size() == 2);
+
+    // In a layer's place: the voxels of that number become it.
+    REQUIRE(desk.editor.replaceTerrainLayer(desk.world, desk.workspace, 1, "materials/terrain/sand.material.json"));
+    CHECK(layers()[0] == "asset://materials/terrain/sand.material.json");
+    CHECK(desk.editor.brush().material == 1);
+    CHECK_FALSE(desk.editor.replaceTerrainLayer(desk.world, desk.workspace, 3, moss));
+
+    // Only the last goes, and the brush follows it back.
+    desk.editor.setBrushMaterial(2);
+    REQUIRE(desk.editor.removeLastTerrainLayer(desk.world, desk.workspace));
+    CHECK(layers().size() == 1);
+    CHECK(desk.editor.brush().material == 1);
 }
 
 TEST_CASE("a new material is a file with the engine default's values, declaring nothing")

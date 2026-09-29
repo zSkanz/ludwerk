@@ -2150,19 +2150,24 @@ public:
     // **What the terrain's material ids mean** (ADR 0113), as one undoable
     // step: the Paint section's add, remove, replace and reorder. At most 255.
     // **A terrain's materials are the project's own** (the owner, 2026-09-29):
-    // a new terrain has none, and these are the two ways to give it some.
+    // a new terrain has none, and it is given them from Content -- as a
+    // terrain is in every engine, it never makes one (D330).
     //
-    // `addStarterTerrainMaterials` writes the engine's eight into the project
-    // as files under `materials/terrain/`, each a variant of the built-in one
-    // -- it looks the same, shows in Content, and opens and edits like any
-    // material -- and makes any the terrain lacks its layers, after what it
-    // has. A file already there is used as it is. One undo step for the layers;
-    // the files stay, as a new material's always do.
-    bool addStarterTerrainMaterials(scene::World& world, core::InstanceId root);
-    // Writes a new material called `name` and adds it as the terrain's next
-    // layer; answers its content-relative path, or empty with `status()`
-    // saying why.
-    std::string addNewTerrainMaterial(scene::World& world, core::InstanceId root, std::string_view name);
+    // `addTerrainLayer` puts a project material after the last layer, and
+    // `replaceTerrainLayer` puts one in layer `id`'s place (1-based: the voxels
+    // of that id become it). Both take a content-relative material path and
+    // refuse anything else, and a material the terrain already has -- with
+    // `status()` saying why. The brush takes the layer given.
+    bool addTerrainLayer(scene::World& world, core::InstanceId root, std::string_view materialPath);
+    bool replaceTerrainLayer(scene::World& world, core::InstanceId root, core::u8 id, std::string_view materialPath);
+    // Only the last can go: another would renumber the voxels after it.
+    bool removeLastTerrainLayer(scene::World& world, core::InstanceId root);
+    // **Starter terrain materials are a Content action**, not a terrain one:
+    // the engine's eight written into the project under `materials/terrain/`,
+    // each a variant of the built-in one, to be given to a terrain like any
+    // other material. A file already there is left as it is. Answers how many
+    // it wrote.
+    core::usize writeStarterTerrainMaterials();
 
     bool setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
                           std::string_view label);

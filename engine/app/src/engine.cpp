@@ -4871,6 +4871,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     style.falloff =
                         tool == Editor::Tool::Foliage ||
                         (tool == Editor::Tool::Sculpt && op != Editor::BrushOp::Add && op != Editor::BrushOp::Subtract);
+                    // Paint's fade is its softness's share of the radius, so
+                    // half is halfway across that share (D328).
+                    if (tool == Editor::Tool::Paint && editor.brush().falloff > 0.0f) {
+                        style.falloff = true;
+                        style.halfAt = 1.0f - 0.5f * editor.brush().falloff;
+                    }
                     drawBrushRing(centre, aim->normal, editor.brush().radius, style, debugDraw);
                 }
                 // **The cell a block click would change**, as a box a hair

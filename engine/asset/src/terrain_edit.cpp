@@ -1183,7 +1183,20 @@ namespace {
 // way -- 0 to 1, the stroke's strength less its falloff there.
 [[nodiscard]] Voxel paintedVoxel(Voxel old, u8 material, PaintMode mode, float weight) noexcept
 {
-    const auto step = static_cast<i32>(std::lround(std::clamp(weight, 0.0f, 1.0f) * 255.0f));
+    const float amount = std::clamp(weight, 0.0f, 1.0f);
+    // **Towards the end by a share of what is left** (D328): a stamp takes
+    // `weight` of the way from where the cover is to all or none, as an
+    // opacity brush does, and never less than one step. The stamps of a stroke
+    // summed, so a soft brush's fading edge reached whole cover a stamp or two
+    // behind its middle and the edge came out hard; a share of what is left
+    // keeps the brush's own profile across its edge however many stamps pass.
+    const auto towards = [amount](i32 from, i32 to) {
+        const i32 gap = to - from;
+        if (gap == 0 || amount <= 0.0f)
+            return from;
+        const auto step = static_cast<i32>(std::lround(static_cast<float>(gap) * amount));
+        return from + (step != 0 ? step : (gap > 0 ? 1 : -1));
+    };
     Voxel voxel = old;
     switch (mode) {
     case PaintMode::Replace:
@@ -1192,21 +1205,21 @@ namespace {
         voxel.material = material;
         return canonical(voxel);
     case PaintMode::Erase:
-        voxel.cover = static_cast<u8>(std::max(0, static_cast<i32>(old.cover) - step));
+        voxel.cover = static_cast<u8>(towards(old.cover, 0));
         return canonical(voxel);
     case PaintMode::Blend:
         break;
     }
-    if (step == 0)
+    if (amount <= 0.0f)
         return old;
     // The material under painted over itself: what is over it shows less.
     if (old.material == material) {
-        voxel.cover = static_cast<u8>(std::max(0, static_cast<i32>(old.cover) - step));
+        voxel.cover = static_cast<u8>(towards(old.cover, 0));
         return canonical(voxel);
     }
     // The same over it again, or nothing over it yet: it shows more.
     if (old.cover == 0 || old.top == material) {
-        const i32 cover = (old.top == material ? static_cast<i32>(old.cover) : 0) + step;
+        const i32 cover = towards(old.top == material ? static_cast<i32>(old.cover) : 0, 255);
         // Covered wholly, it is simply what the ground is made of.
         if (cover >= 255)
             return Voxel{old.occupancy, material, 0, 0};
@@ -1215,9 +1228,10 @@ namespace {
     // **A third over two**: the one that shows more goes under first, and
     // the new one starts over it.
     const u8 under = old.cover >= 128 ? old.top : old.material;
-    if (step >= 255)
+    const i32 cover = towards(0, 255);
+    if (cover >= 255)
         return Voxel{old.occupancy, material, 0, 0};
-    return canonical(Voxel{old.occupancy, under, material, static_cast<u8>(step)});
+    return canonical(Voxel{old.occupancy, under, material, static_cast<u8>(cover)});
 }
 
 } // namespace
@@ -1269,9 +1283,14 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
             if (degrees < static_cast<double>(mask.slopeMin) || degrees > static_cast<double>(mask.slopeMax))
                 return;
         }
-        // Hard is the whole strength to the rim; soft falls away to nothing
-        // at it, smoothly.
-        const float weight = strength * ((1.0f - soft) + soft * falloff(distance, radius));
+        // **Softness is how much of the radius fades** (D328): the inner
+        // `1 - soft` of it is the whole strength, and the rest falls away
+        // smoothly to nothing at the rim -- hard is the strength to the rim,
+        // wholly soft falls from the centre. It was a mix of the two, so at
+        // one half the rim still took half the strength, and the stamps of a
+        // stroke summed there to a hard edge.
+        const double core = radius * (1.0 - static_cast<double>(soft));
+        const float weight = distance <= core ? strength : strength * falloff(distance - core, radius - core);
         const Voxel painted = paintedVoxel(old, material, options.mode, weight);
         if (!(painted == old))
             writer.setExact(x, y, z, painted);

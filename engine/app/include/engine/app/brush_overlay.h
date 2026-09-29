@@ -94,6 +94,10 @@ struct BrushRingStyle
 {
     bool square = false;
     bool falloff = false;
+    // Where the fainter ring is, as a fraction of the radius: a half for the
+    // sculpt brushes, whose fade starts at the centre; further out for a paint
+    // brush, whose fade starts where its softness says (D328).
+    float halfAt = 0.5f;
 };
 void drawBrushRing(core::Vec3 centre, core::Vec3 normal, float radius, BrushRingStyle style, render::DebugDraw& debug);
 

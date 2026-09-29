@@ -1,5 +1,6 @@
 #include "engine/app/brush_overlay.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "engine/render/debug_draw.h"
@@ -151,13 +152,13 @@ void drawBrushRing(Vec3 centre, Vec3 normal, float radius, BrushRingStyle style,
     }
     if (style.falloff) {
         // Where a falloff brush does half: `smoothstep` of the distance is one
-        // half at half the radius.
+        // half at half the fade, which the style places.
         Vec3 u;
         Vec3 v;
         basisFor(normal, u, v);
         const render::DebugColor faint = render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 0.45f);
         Vec3 previous{};
-        const float inner = radius * 0.5f;
+        const float inner = radius * std::clamp(style.halfAt, 0.0f, 1.0f);
         for (int segment = 0; segment <= RingSegments; ++segment) {
             const auto angle = static_cast<float>(segment) * (6.283185307179586f / static_cast<float>(RingSegments));
             const float c = std::cos(angle) * inner;

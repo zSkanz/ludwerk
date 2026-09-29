@@ -424,6 +424,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **A terrain's materials come from Content** (D330), as in other engines: the
+  Paint panel's `+` picks one of the project's materials, a material dragged
+  from Content onto it adds it and onto a swatch replaces that layer, and a
+  swatch's right-click replaces, opens or removes it. The panel no longer makes
+  materials; *New Terrain Starter Materials* is in Content's right-click menu.
+- **`Terrain:PaintBall`'s `Falloff` is how much of the radius fades** (D328):
+  the inner rest is the whole `Strength` and the fade ends at nothing on the
+  rim -- it was a mix of a hard brush and a soft one. A `Blend` or `Erase` stamp
+  takes its share of what is left, so a soft stroke keeps a soft edge however
+  many stamps pass.
 - **The editor is laid out as a game engine** (the owner, 2026-09-27: the look
   may be the code editor's, the layout has to be an engine's). The Explorer
   alone on the left, Properties the full height on the right with Stats a tab
@@ -482,6 +492,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- Two flat-coloured terrain materials painted over each other meet in a
+  crossfade, not a step at half cover (D329).
 - **Typing reaches a `TextInput` in an exported game**, and on a phone the
   on-screen keyboard opens with it (D204).
 - `TextInput.FocusLost` delivers `submitted`: true when Return left the field

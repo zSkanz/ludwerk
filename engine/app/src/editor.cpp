@@ -5354,13 +5354,8 @@ bool Editor::setTerrainLayers(scene::World& world, core::InstanceId root, std::v
     return true;
 }
 
-bool Editor::addStarterTerrainMaterials(scene::World& world, core::InstanceId root)
+core::usize Editor::writeStarterTerrainMaterials()
 {
-    const core::InstanceId id = terrainIn(world, root);
-    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
-    if (terrain == nullptr)
-        return false;
-    std::vector<std::string> layers = terrain->layers;
     core::usize written = 0;
     for (core::u8 index = 1;; ++index) {
         const std::string engine = asset::engineTerrainUrn(index);
@@ -5370,43 +5365,101 @@ bool Editor::addStarterTerrainMaterials(scene::World& world, core::InstanceId ro
         const std::string relative = "materials/terrain/" + name + std::string(asset::MaterialSuffix);
         const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
         std::error_code ec;
-        if (!std::filesystem::exists(absolute, ec)) {
-            asset::MaterialAsset variant;
-            variant.parent = engine;
-            if (!writeMaterialFile(absolute, variant)) {
-                m_status = EditorStatus{"could not write " + relative, true};
-                return false;
-            }
-            ++written;
+        if (std::filesystem::exists(absolute, ec))
+            continue;
+        asset::MaterialAsset variant;
+        variant.parent = engine;
+        if (!writeMaterialFile(absolute, variant)) {
+            m_status = EditorStatus{"could not write " + relative, true};
+            return written;
         }
-        const std::string urn = contentUrn(relative);
-        if (std::find(layers.begin(), layers.end(), urn) == layers.end() && layers.size() < asset::MaxTerrainLayers)
-            layers.push_back(urn);
+        ++written;
     }
     (void)m_content.refresh();
-    const bool changed = setTerrainLayers(world, root, std::move(layers), "Add Starter Terrain Materials");
-    m_status = EditorStatus{written > 0 ? "wrote " + std::to_string(written) +
-                                              " starter materials to materials/terrain, and gave them to the terrain"
-                                        : "the starter materials were already in the project",
+    m_status = EditorStatus{written > 0
+                                ? "wrote " + std::to_string(written) + " starter terrain materials to materials/terrain"
+                                : "the starter terrain materials are already in materials/terrain",
                             false};
-    return changed || written > 0;
+    return written;
 }
 
-std::string Editor::addNewTerrainMaterial(scene::World& world, core::InstanceId root, std::string_view name)
+namespace {
+
+// A content-relative material path as a terrain layer names it, or empty for
+// anything that is not a material file.
+[[nodiscard]] std::string terrainLayerUrn(std::string_view materialPath)
+{
+    std::string path(materialPath);
+    if (path.starts_with(asset::AssetScheme))
+        path = path.substr(asset::AssetScheme.size());
+    if (path.empty() || !path.ends_with(asset::MaterialSuffix))
+        return {};
+    return std::string(asset::AssetScheme) + path;
+}
+
+} // namespace
+
+bool Editor::addTerrainLayer(scene::World& world, core::InstanceId root, std::string_view materialPath)
 {
     const core::InstanceId id = terrainIn(world, root);
-    scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
-    if (terrain == nullptr || terrain->layers.size() >= asset::MaxTerrainLayers)
-        return {};
-    const std::string made = createMaterial(name);
-    if (made.empty())
-        return {};
+    const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    const std::string urn = terrainLayerUrn(materialPath);
+    if (terrain == nullptr || urn.empty())
+        return false;
+    if (std::find(terrain->layers.begin(), terrain->layers.end(), urn) != terrain->layers.end()) {
+        m_status = EditorStatus{"the terrain already has that material", true};
+        return false;
+    }
+    if (terrain->layers.size() >= asset::MaxTerrainLayers) {
+        m_status =
+            EditorStatus{"a terrain has at most " + std::to_string(asset::MaxTerrainLayers) + " materials", true};
+        return false;
+    }
     std::vector<std::string> layers = terrain->layers;
-    layers.push_back(contentUrn(made));
-    (void)setTerrainLayers(world, root, std::move(layers), "Add Terrain Material");
-    // The new layer is what the brush lays next.
-    setBrushMaterial(static_cast<core::u8>(world.terrains().find(id)->layers.size()));
-    return made;
+    layers.push_back(urn);
+    const auto added = static_cast<core::u8>(layers.size());
+    if (!setTerrainLayers(world, root, std::move(layers), "Add Terrain Material"))
+        return false;
+    setBrushMaterial(added);
+    return true;
+}
+
+bool Editor::replaceTerrainLayer(scene::World& world, core::InstanceId root, core::u8 index,
+                                 std::string_view materialPath)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    const std::string urn = terrainLayerUrn(materialPath);
+    if (terrain == nullptr || urn.empty() || index < 1 || index > terrain->layers.size())
+        return false;
+    if (terrain->layers[index - 1] == urn)
+        return false;
+    if (std::find(terrain->layers.begin(), terrain->layers.end(), urn) != terrain->layers.end()) {
+        m_status = EditorStatus{"the terrain already has that material", true};
+        return false;
+    }
+    std::vector<std::string> layers = terrain->layers;
+    layers[index - 1] = urn;
+    if (!setTerrainLayers(world, root, std::move(layers), "Replace Terrain Material"))
+        return false;
+    setBrushMaterial(index);
+    return true;
+}
+
+bool Editor::removeLastTerrainLayer(scene::World& world, core::InstanceId root)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr || terrain->layers.empty())
+        return false;
+    std::vector<std::string> layers = terrain->layers;
+    layers.pop_back();
+    const auto remaining = static_cast<core::u8>(layers.size());
+    if (!setTerrainLayers(world, root, std::move(layers), "Remove Terrain Material"))
+        return false;
+    if (m_brush.material > remaining)
+        setBrushMaterial(std::max<core::u8>(remaining, 1));
+    return true;
 }
 
 bool Editor::setTerrainRules(scene::World& world, core::InstanceId root, std::vector<asset::TerrainRule> rules,

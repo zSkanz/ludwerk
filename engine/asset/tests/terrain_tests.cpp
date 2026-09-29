@@ -761,8 +761,10 @@ TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 01
     CHECK(first < 80);
     (void)asset::paintBall(field, at, 2.0, 3, blend);
     CHECK(voxel().cover > first);
+    // A share of what is left, not the same again (D328).
+    CHECK(voxel().cover - first < first);
     // Until it is all that shows: then it is simply what the ground is.
-    for (int stamp = 0; stamp < 4; ++stamp)
+    for (int stamp = 0; stamp < 40; ++stamp)
         (void)asset::paintBall(field, at, 2.0, 3, blend);
     CHECK(voxel().material == 3);
     CHECK(voxel().cover == 0);
@@ -789,6 +791,51 @@ TEST_CASE("paint blends on a little at a time, goes under, and comes off (ADR 01
     REQUIRE(painted.cover > 0);
     (void)asset::smoothBall(field, core::DVec3{0.5, 0.0, 0.5}, 3.0, 1.0f);
     CHECK(field.voxel(0, -1, 0).top == painted.top);
+}
+
+TEST_CASE("a half-soft brush paints its whole strength inside half its radius and nothing at its rim (D328)")
+{
+    // Softness is how much of the radius fades: at one half, the inner half is
+    // the whole strength and the outer fades to nothing at the rim. It was a
+    // mix of a hard brush and a soft one, so the rim still took half the
+    // strength -- and a stroke's stamps summed there to a hard edge.
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{40.0f, 16.0f, 40.0f}, 1);
+    (void)asset::paintBall(field, core::DVec3{0.5, -0.5, 0.5}, 10.0, 3, paintWith(asset::PaintMode::Blend, 0.5f, 0.5f));
+    const auto coverAt = [&](core::i32 x) { return static_cast<int>(field.voxel(x, -1, 0).cover); };
+    // Inside the inner half: the whole strength, a half of 255.
+    CHECK(coverAt(0) == 128);
+    CHECK(coverAt(4) == 128);
+    // Fading across the outer half...
+    CHECK(coverAt(7) < 128);
+    CHECK(coverAt(7) > coverAt(9));
+    // ...to next to nothing by the rim.
+    CHECK(coverAt(9) < 20);
+}
+
+TEST_CASE("a soft stroke keeps a soft edge however many stamps pass over it (D328)")
+{
+    // A stroke is many stamps; summed, a soft brush's fading edge reached whole
+    // cover a stamp or two behind its middle, and a stroke came out with a hard
+    // edge whatever its softness.
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{64.0f, 16.0f, 64.0f}, 1);
+    const asset::PaintOptions options = paintWith(asset::PaintMode::Blend, 0.35f, 0.5f);
+    for (int x = -20; x <= 20; ++x)
+        (void)asset::paintBall(field, core::DVec3{static_cast<double>(x) + 0.5, -0.5, 0.5}, 4.0, 3, options);
+    // Across the stroke, from its middle out: whole, then a ramp, then none.
+    const auto shows = [&](core::i32 z) {
+        const asset::Voxel voxel = field.voxel(0, -1, z);
+        return voxel.material == 3 ? 255 : (voxel.top == 3 ? static_cast<int>(voxel.cover) : 0);
+    };
+    CHECK(shows(0) > 200);
+    // Not whole where the brush's fade begins: the stamps took a share of what
+    // was left, not the whole of it twice.
+    CHECK(shows(2) < 240);
+    CHECK(shows(3) > 40);
+    CHECK(shows(3) < 200);
+    CHECK(shows(3) < shows(2));
+    CHECK(shows(4) < shows(3));
 }
 
 TEST_CASE("a painted chunk codes and reads back whole, and an unpainted one codes as version 3 did (ADR 0114)")

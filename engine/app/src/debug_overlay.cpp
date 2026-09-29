@@ -8446,6 +8446,10 @@ void drawContent(Editor& editor, EditorCommands& commands, EditorPanels& panels,
             }
             if (iconMenuItem(icons, icons::ActionNewShader, "New Surface Shader..."))
                 dialogs.newShader = true;
+            // The engine's eight terrain materials as the project's own files,
+            // to give a terrain like any other material (D330).
+            if (iconMenuItem(icons, icons::ActionNewMaterial, "New Terrain Starter Materials"))
+                (void)editor.writeStarterTerrainMaterials();
             if (iconMenuItem(icons, icons::ActionRefresh, "Refresh"))
                 (void)tree.refresh();
             ImGui::EndPopup();
@@ -11026,7 +11030,8 @@ void drawPaintMode(Editor& editor)
     int percent = static_cast<int>(std::lround(brush.falloff * 100.0f));
     if (ImGui::SliderInt("##paint-softness", &percent, 0, 100, "%d%%"))
         editor.setBrushFalloff(static_cast<f32>(percent) / 100.0f);
-    ImGui::SetItemTooltip("how much less the brush paints towards its rim: 0 is a hard edge, 100 fades to nothing");
+    ImGui::SetItemTooltip("how much of the brush fades out towards its rim: 0 is a hard edge, 50 fades across the "
+                          "outer half, 100 fades from the centre");
 }
 
 void drawBrushControls(Editor& editor, bool strength, bool shape, bool flatten)
@@ -11251,6 +11256,13 @@ void drawTerrainRules(Editor& editor, scene::World& world, core::InstanceId root
 
 // The terrain's layers as swatches, the brush's material among them, and the
 // list's own edits.
+//
+// **A terrain's materials come from Content** (D330, the owner: "tem que ser
+// feito como é feito em outras game engines"): a `+` after the swatches picks
+// one of the project's materials, a material dragged from the browser onto the
+// `+` adds it and onto a swatch puts it in that layer's place, and a swatch's
+// right-click replaces, opens or removes it. The panel never makes a material:
+// that is Content's, and starter terrain materials are one of its New items.
 void drawTerrainLayers(Editor& editor, scene::World& world, core::InstanceId root,
                        const scene::TerrainComponent* terrain)
 {
@@ -11260,54 +11272,57 @@ void drawTerrainLayers(Editor& editor, scene::World& world, core::InstanceId roo
     const std::vector<std::string>& layers = terrain->layers;
     const core::u8 selected = editor.brush().material;
 
-    // **A new terrain has no materials** (the owner, 2026-09-29: materials that
-    // come with the ground and cannot be opened in Content should not come at
-    // all). Its ground is plain grey, and the first material it is given is
-    // what that ground becomes.
-    static std::array<char, 64> newName{};
-    const auto newMaterial = [&] {
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-        const bool entered = ImGui::InputTextWithHint("##new-terrain-material", "name, e.g. grass", newName.data(),
-                                                      newName.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::SameLine();
-        const std::string typed(newName.data());
-        ImGui::BeginDisabled(typed.empty() || !ContentTree::isUsableName(typed));
-        const bool create = ImGui::Button("New Material", ImVec2(-FLT_MIN, 0.0f));
-        ImGui::EndDisabled();
-        ImGui::SetItemTooltip("writes a material into materials/ and makes it this terrain's next layer; it opens so "
-                              "its colour and textures can be set");
-        if ((entered || create) && !typed.empty() && ContentTree::isUsableName(typed)) {
-            if (const std::string made = editor.addNewTerrainMaterial(world, root, typed); !made.empty()) {
-                (void)editor.openMaterial(made);
-                newName.fill(0);
-            }
+    // Which layer the picker puts its choice in: zero adds one. Opened after
+    // the swatches, at this level, so a swatch's menu can ask for it without
+    // it being that menu's child.
+    static core::u8 picking = 0;
+    bool openPicker = false;
+    const auto takesMaterial = []() -> std::optional<std::string> {
+        if (!ImGui::BeginDragDropTarget())
+            return std::nullopt;
+        std::optional<std::string> taken;
+        const ImGuiPayload* peek = ImGui::GetDragDropPayload();
+        if (peek != nullptr && peek->IsDataType(kContentDragPayload) &&
+            isMaterialDrag(*static_cast<const ContentDrag*>(peek->Data))) {
+            if (const ImGuiPayload* took = ImGui::AcceptDragDropPayload(kContentDragPayload); took != nullptr)
+                taken = std::string(static_cast<const ContentDrag*>(took->Data)->path);
         }
+        ImGui::EndDragDropTarget();
+        return taken;
     };
+
     if (layers.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextUnformatted("This terrain has no materials yet.");
-        ImGui::TextDisabled("Its ground draws plain grey until it has one, and the first you add is what the ground "
-                            "already there becomes. Materials are files in Content, like any other.");
+        ImGui::TextDisabled("Click + to pick one of the project's materials, or drag one here from Content. Its "
+                            "ground draws plain grey until then, and the first material is what that ground becomes.");
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        newMaterial();
-        if (ImGui::Button("Add Starter Materials", ImVec2(-FLT_MIN, 0.0f)))
-            (void)editor.addStarterTerrainMaterials(world, root);
-        ImGui::SetItemTooltip("grass, sand, rock, snow, dirt, clay and more, written into materials/terrain as files "
-                              "you can open and change");
-        if (!editor.content().filesOfKind(ContentKind::Material).empty() &&
-            ImGui::Button("Use a Material from the Project...", ImVec2(-FLT_MIN, 0.0f)))
-            ImGui::OpenPopup("terrain-layers");
     }
+
     const f32 swatch = ImGui::GetFrameHeight() * 1.6f;
     const int columns =
         std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) /
                                      (swatch + ImGui::GetStyle().ItemSpacing.x)));
-    for (std::size_t index = 0; index < layers.size(); ++index) {
+    for (std::size_t index = 0; index <= layers.size(); ++index) {
         if (index > 0 && index % static_cast<std::size_t>(columns) != 0)
             ImGui::SameLine();
         const auto id = static_cast<core::u8>(index + 1);
         ImGui::PushID(static_cast<int>(id));
+        if (index == layers.size()) {
+            // The `+`: pick a project material, or drop one.
+            ImGui::BeginDisabled(layers.size() >= asset::MaxTerrainLayers);
+            if (ImGui::Button("+", ImVec2(swatch, swatch))) {
+                picking = 0;
+                openPicker = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("add one of the project's materials to the terrain -- or drag one here from Content");
+            if (const std::optional<std::string> dropped = takesMaterial(); dropped.has_value())
+                (void)editor.addTerrainLayer(world, root, *dropped);
+            ImGui::PopID();
+            break;
+        }
         const bool on = selected == id;
         if (on) {
             ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
@@ -11320,7 +11335,35 @@ void drawTerrainLayers(Editor& editor, scene::World& world, core::InstanceId roo
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
         }
-        ImGui::SetItemTooltip("%s\n%s", terrainLayerName(layers[index]).c_str(), layers[index].c_str());
+        const bool builtIn = asset::isEngineMaterial(layers[index]);
+        std::string relative = layers[index];
+        if (relative.starts_with(asset::AssetScheme))
+            relative = relative.substr(asset::AssetScheme.size());
+        // Double-click opens it, as an asset field's does.
+        if (!builtIn && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            (void)editor.openMaterial(relative);
+        ImGui::SetItemTooltip("%s\n%s\ndouble-click to open, right-click for more; drop a material here to put it "
+                              "in this one's place",
+                              terrainLayerName(layers[index]).c_str(), layers[index].c_str());
+        if (const std::optional<std::string> dropped = takesMaterial(); dropped.has_value())
+            (void)editor.replaceTerrainLayer(world, root, id, *dropped);
+        if (ImGui::BeginPopupContextItem("layer-menu")) {
+            ImGui::TextDisabled("layer %d: %s", static_cast<int>(id), terrainLayerName(layers[index]).c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Replace With...")) {
+                picking = id;
+                openPicker = true;
+            }
+            if (ImGui::MenuItem("Open Material", nullptr, false, !builtIn))
+                (void)editor.openMaterial(relative);
+            // Only the last: removing another would renumber the voxels after it.
+            if (ImGui::MenuItem("Remove", nullptr, false, index + 1 == layers.size()))
+                (void)editor.removeLastTerrainLayer(world, root);
+            if (index + 1 != layers.size())
+                ImGui::SetItemTooltip("only the last material can be removed: the ground's voxels are numbered by "
+                                      "their place in this list");
+            ImGui::EndPopup();
+        }
         ImGui::PopID();
     }
     if (selected >= 1 && selected <= layers.size()) {
@@ -11335,71 +11378,60 @@ void drawTerrainLayers(Editor& editor, scene::World& world, core::InstanceId roo
         }
     }
 
-    // **The list itself**: a project material in place of a layer, or added
-    // after the last. Voxels keep their numbers, so replacing a layer repaints
-    // every voxel of it at once -- which is the point -- and only the last can
-    // be removed, since removing another would renumber the ones after it.
-    // The project's materials only: a built-in one is what cannot be opened.
-    static std::vector<std::string> choices;
-    choices.clear();
-    for (const std::string& file : editor.content().filesOfKind(ContentKind::Material))
-        choices.push_back(std::string(asset::AssetScheme) + file);
-    if (!layers.empty()) {
-        if (ImGui::Button("Change Layers...", ImVec2(-FLT_MIN, 0.0f)))
-            ImGui::OpenPopup("terrain-layers");
-        ImGui::SetItemTooltip("put another of the project's materials in the selected layer's place, add one, or "
-                              "remove the last");
-        if (selected >= 1 && selected <= layers.size() && !asset::isEngineMaterial(layers[selected - 1])) {
-            if (ImGui::Button("Open Material", ImVec2(-FLT_MIN, 0.0f))) {
-                std::string path = layers[selected - 1];
-                if (path.starts_with(asset::AssetScheme))
-                    path = path.substr(asset::AssetScheme.size());
-                (void)editor.openMaterial(path);
-            }
-            ImGui::SetItemTooltip("edit this layer's material: its colour, textures and how it repeats");
+    // **The picker**: the project's materials, searchable -- the asset field's
+    // picker, for a terrain.
+    if (openPicker)
+        ImGui::OpenPopup("terrain-material-picker");
+    if (ImGui::BeginPopup("terrain-material-picker")) {
+        static std::vector<std::string> candidates;
+        static std::array<char, 96> search{};
+        if (ImGui::IsWindowAppearing()) {
+            candidates = editor.content().filesOfKind(ContentKind::Material);
+            search.fill(0);
+            ImGui::SetKeyboardFocusHere();
         }
-        ImGui::SeparatorText("Another material");
-        newMaterial();
-    }
-    if (ImGui::BeginPopup("terrain-layers")) {
-        ImGui::TextDisabled("replace layer %d, or add a layer", static_cast<int>(selected));
+        if (picking >= 1 && picking <= layers.size())
+            ImGui::TextDisabled("in place of %s", terrainLayerName(layers[picking - 1]).c_str());
+        else
+            ImGui::TextDisabled("add to the terrain");
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+        ImGui::InputTextWithHint("##terrain-material-search", "search", search.data(), search.size());
+        const std::string_view needle{search.data()};
         ImGui::Separator();
-        if (choices.empty())
-            ImGui::TextDisabled("the project has no materials; make one with New Material");
-        for (const std::string& choice : choices) {
-            ImGui::PushID(choice.c_str());
-            ImGui::TextUnformatted(terrainLayerName(choice).c_str());
-            ImGui::SetItemTooltip("%s", choice.c_str());
-            ImGui::SameLine(ImGui::GetFontSize() * 10.0f);
-            const bool canReplace = selected >= 1 && selected <= layers.size();
-            ImGui::BeginDisabled(!canReplace);
-            if (ImGui::SmallButton("Replace")) {
-                std::vector<std::string> next = layers;
-                next[selected - 1] = choice;
-                (void)editor.setTerrainLayers(world, root, std::move(next), "Replace Terrain Layer");
-                ImGui::CloseCurrentPopup();
+        if (ImGui::BeginChild("terrain-material-list",
+                              ImVec2(ImGui::GetFontSize() * 16.0f, ImGui::GetFontSize() * 12.0f))) {
+            std::size_t listed = 0;
+            for (const std::string& candidate : candidates) {
+                if (!needle.empty() && !containsFold(candidate, needle))
+                    continue;
+                ++listed;
+                const std::string urn = std::string(asset::AssetScheme) + candidate;
+                const bool has = std::find(layers.begin(), layers.end(), urn) != layers.end();
+                ImGui::PushID(candidate.c_str());
+                ImGui::ColorButton("##chip", terrainLayerColor(world, engineLayers, urn),
+                                   ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha,
+                                   ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
+                ImGui::SameLine();
+                ImGui::BeginDisabled(has);
+                if (ImGui::Selectable(candidate.c_str())) {
+                    if (picking >= 1)
+                        (void)editor.replaceTerrainLayer(world, root, picking, candidate);
+                    else
+                        (void)editor.addTerrainLayer(world, root, candidate);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                if (has)
+                    ImGui::SetItemTooltip("the terrain already has it");
+                ImGui::PopID();
             }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(layers.size() >= asset::MaxTerrainLayers);
-            if (ImGui::SmallButton("Add")) {
-                std::vector<std::string> next = layers;
-                next.push_back(choice);
-                if (editor.setTerrainLayers(world, root, std::move(next), "Add Terrain Layer"))
-                    editor.setBrushMaterial(static_cast<core::u8>(layers.size()));
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndDisabled();
-            ImGui::PopID();
+            if (candidates.empty())
+                ImGui::TextDisabled("No materials in the project yet. Right-click in Content: New Material, or "
+                                    "New Terrain Starter Materials.");
+            else if (listed == 0)
+                ImGui::TextDisabled("Nothing matches \"%s\".", search.data());
         }
-        ImGui::Separator();
-        ImGui::BeginDisabled(layers.size() <= 1);
-        if (ImGui::Selectable("Remove the last layer")) {
-            std::vector<std::string> next = layers;
-            next.pop_back();
-            (void)editor.setTerrainLayers(world, root, std::move(next), "Remove Terrain Layer");
-        }
-        ImGui::EndDisabled();
+        ImGui::EndChild();
         ImGui::EndPopup();
     }
 }

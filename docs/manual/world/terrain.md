@@ -181,7 +181,11 @@ terrain:PaintBall(vector.create(0, 0, 0), 6, 2, {
 
 - **`Replace`** (the default) makes the ground the material outright.
 - **`Blend`** shows the material more with every stroke, over what is there,
-  by `Strength` at the middle and less towards the rim as `Falloff` says.
+  by `Strength`, fading out towards the rim over the share of the radius
+  `Falloff` says: 0 is a hard edge, 0.5 fades across the outer half, 1 fades
+  from the centre. Where the two materials are the same height -- flat
+  colours, say -- the edge is a crossfade; where one has relief, the painted one
+  fills the other's cracks first, as hard as its `BlendSharpness` says.
   Blended until it is all that shows, it is simply what the ground is made of.
   A third material over two puts the one that shows more underneath first.
 - **`Under`** changes the ground under what was painted, and leaves the paint.
@@ -270,15 +274,22 @@ Every stroke is one undo step, and a stroke that changed nothing leaves none.
 
 ### Paint
 
-A new terrain has no materials. **New Material** writes one into
-`materials/` and makes it the terrain's next layer (and opens it, to set its
-colour and textures); **Add Starter Materials** writes the eight starters
-under `materials/terrain/`. **Change Layers...** puts one of the project's
-materials in the selected layer's place, adds one, or removes the last.
+A new terrain has no materials, and it is given them from **Content**, as a
+terrain is in any engine: a material is a file in the project, made or
+imported there. Click **+** after the swatches to pick one of the project's
+materials, or drag a material from the Content browser onto the **+** to add it
+or onto a swatch to put it in that one's place. A swatch's right-click
+replaces it, opens its material, or removes it (only the last: the ground's
+voxels are numbered by their place in the list); a double-click opens it.
+Right-click in Content for **New Terrain Starter Materials**: grass, sand,
+rock and five more, written under `materials/terrain/` as the project's own.
+
 **Paint** paints the selected material under the brush without moving the
 ground. **How it goes on** chooses Blend (a little with every stamp, by the
-brush's Strength), Replace, Under or Erase, and **Softness** how much less it
-paints towards the rim; hold Ctrl while blending to take paint off. **Alt and a
+brush's Strength), Replace, Under or Erase, and **Softness** how much of the
+brush fades out towards the rim -- 0 is a hard edge, 50% fades across the outer
+half, 100% from the centre -- with a fainter ring where it paints half; hold
+Ctrl while blending to take paint off. **Alt and a
 click** picks the material under the pointer instead of painting.
 
 **Only where** keeps a stroke to ground within a slope (0 is level, 90 a
