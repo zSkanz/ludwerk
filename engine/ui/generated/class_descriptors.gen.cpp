@@ -674,7 +674,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(textButtonDesc);
 
     // --- TextInput ---
-    static std::array<scene::PropertyDesc, 1> textInputProperties;
+    static std::array<scene::PropertyDesc, 14> textInputProperties;
     textInputProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("PlaceholderText"),
@@ -687,8 +687,175 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getTextInputPlaceholderText,
             .set = native::setTextInputPlaceholderText,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("PlaceholderColor"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The placeholder's colour.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getTextInputPlaceholderColor,
+            .set = native::setTextInputPlaceholderColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MultiLine"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Several lines: Return makes a new one and Ctrl+Return submits, the text wraps at the field's width and scrolls to keep the caret in view, and Up and Down move between lines. A single-line field takes a pasted line break as a space.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputMultiLine,
+            .set = native::setTextInputMultiLine,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Editable"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "False: read-only. It still takes focus, and its text can still be selected and copied -- a code or an address shown to be copied.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputEditable,
+            .set = native::setTextInputEditable,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxLength"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most characters it holds; 0 is no limit. Characters as a reader sees them, so an accented letter or an emoji is one. What does not fit is kept out and `InputRejected` says what it was.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getTextInputMaxLength,
+            .set = native::setTextInputMaxLength,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Masked"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Drawn as `MaskCharacter`s: a password. Copying and cutting give nothing away; pasting still works. A phone raises its password keyboard.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputMasked,
+            .set = native::setTextInputMasked,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaskCharacter"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What each character of a masked field is drawn as: its first character.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getTextInputMaskCharacter,
+            .set = native::setTextInputMaskCharacter,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ClearTextOnFocus"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Focusing it empties it: a field that is typed afresh each time.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputClearTextOnFocus,
+            .set = native::setTextInputClearTextOnFocus,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SelectAllOnFocus"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Focusing it selects all of it, so typing replaces what is there.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputSelectAllOnFocus,
+            .set = native::setTextInputSelectAllOnFocus,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ReleaseFocusOnSubmit"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Return submits and lets go of the keyboard. False keeps it: a chat box, where the next message follows. `Submitted` fires either way.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputReleaseFocusOnSubmit,
+            .set = native::setTextInputReleaseFocusOnSubmit,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("RevertOnEscape"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Escape puts back the text it had when it was focused, as it lets go.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTextInputRevertOnEscape,
+            .set = native::setTextInputRevertOnEscape,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("KeyboardType"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("TextInputKeyboard"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The on-screen keyboard a phone raises when it is focused.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getTextInputKeyboardType,
+            .set = native::setTextInputKeyboardType,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("CursorPosition"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .transient = true,
+            .doc = "Where the caret is: 1-based, in bytes, as a Luau string's positions are -- `#Text + 1` after the last character. -1 while it is not focused. Writing it moves the caret, snapped to a character.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getTextInputCursorPosition,
+            .set = native::setTextInputCursorPosition,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SelectionStart"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .transient = true,
+            .doc = "The other end of the selection, in the same positions as `CursorPosition`; -1 when nothing is selected. Writing it selects from there to the caret.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getTextInputSelectionStart,
+            .set = native::setTextInputSelectionStart,
+        },
     }};
-    static std::array<scene::EventDesc, 2> textInputEvents;
+    static std::array<scene::MethodDesc, 3> textInputMethods;
+    textInputMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("CaptureFocus"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Takes the keyboard, as a press on it would: another field loses it with `Enum.FocusLossReason.Script`. Takes effect at the next frame.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ReleaseFocus"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Lets go of the keyboard; `FocusLost` fires with `submitted` (false when omitted) and `Enum.FocusLossReason.Script`. Takes effect at the next frame.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("IsFocused"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Whether it has the keyboard now.",
+        },
+    }};
+    static std::array<scene::EventDesc, 5> textInputEvents;
     textInputEvents = {{
         scene::EventDesc{
             .name = atoms.intern("Focused"),
@@ -698,7 +865,22 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
         scene::EventDesc{
             .name = atoms.intern("FocusLost"),
             .slot = 11,
-            .doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between \"the player finished\" and \"the player went somewhere else\".",
+            .doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between \"the player finished\" and \"the player went somewhere else\"; `reason` says which of the four ways it was.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("Submitted"),
+            .slot = 12,
+            .doc = "Return was pressed, with the text as it was -- whether or not the field lets go (`ReleaseFocusOnSubmit`).",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TextChanged"),
+            .slot = 13,
+            .doc = "The player changed the text -- typing, a paste, a cut, an undo -- with the text now. A script's own write to `Text` does not fire it; `GetPropertyChangedSignal(\"Text\")` fires for both.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("InputRejected"),
+            .slot = 14,
+            .doc = "What `MaxLength` kept out of an edit.",
         },
     }};
     scene::ClassDescriptor textInputDesc;
@@ -706,8 +888,9 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     textInputDesc.super = textLabelClass;
     textInputDesc.flags = scene::ClassFlags::None;
     textInputDesc.defaultName = atoms.intern("TextInput");
-    textInputDesc.doc = "A single-line editable field (\302\247" "2.2). Typed text, a caret you can move with the arrows, Home and End, and both kinds of delete; no selection, no clipboard, no undo and no IME composition beyond what the platform delivers as text.\012\012**The caret starts at the end and goes back there whenever a script assigns `Text`**, which is the only position that is always in range: a caret left where it was would point into a string that no longer exists. Clicking does not yet place it -- that needs the glyph advances the layout produced, and the layout is a different pass.";
+    textInputDesc.doc = "An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. It edits as every text field does -- selection with Shift and with the mouse, Ctrl+arrows and Ctrl+Backspace by words, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V through the system's clipboard, Ctrl+Z and Ctrl+Y, a double press for a word and a triple for the line -- steps over whole characters as a reader sees them, and shows an input method's composition at the caret. While it has focus it takes the keyboard, so a player typing `w` does not walk.\012\012**A script's write to `Text` puts the caret at the end** and clears the undo history: what it would undo to is not the player's.";
     textInputDesc.properties = textInputProperties;
+    textInputDesc.methods = textInputMethods;
     textInputDesc.events = textInputEvents;
     textInputDesc.attachComponents = native::attachTextInputComponents;
     textInputDesc.detachComponents = native::detachTextInputComponents;
@@ -1310,6 +1493,28 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setUIServiceScreenOrientation,
         },
     }};
+    static std::array<scene::MethodDesc, 1> uIServiceMethods;
+    uIServiceMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("GetFocusedTextInput"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks before it opens the box.",
+        },
+    }};
+    static std::array<scene::EventDesc, 2> uIServiceEvents;
+    uIServiceEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("TextInputFocused"),
+            .slot = 7,
+            .doc = "A `TextInput` took the keyboard.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TextInputFocusReleased"),
+            .slot = 8,
+            .doc = "A `TextInput` let go of it.",
+        },
+    }};
     scene::ClassDescriptor uIServiceDesc;
     uIServiceDesc.name = atoms.intern("UIService");
     uIServiceDesc.super = instanceClass;
@@ -1317,6 +1522,8 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     uIServiceDesc.defaultName = atoms.intern("UIService");
     uIServiceDesc.doc = "The parent of every `ScreenGui` and the source of the two numbers a layout needs about the screen it is on (\302\247" "2.1). It takes the PlayerGui role without taking the Player: there is no `Players` service in v1 and a UI does not need one.";
     uIServiceDesc.properties = uIServiceProperties;
+    uIServiceDesc.methods = uIServiceMethods;
+    uIServiceDesc.events = uIServiceEvents;
     classes.registerClass(uIServiceDesc);
 }
 

@@ -48,6 +48,13 @@ enum class EventType : u8
     // call). A mobile OS may end a backgrounded process without a close, so
     // this is the last moment a game's saves are sure to be written (ADR 0111).
     WillEnterBackground,
+    // An input method's text while it is still being COMPOSED (ADR 0139): a
+    // Chinese, Japanese or Korean phrase before it is committed, or the
+    // system's emoji picker. `text` is the whole provisional string, and
+    // `editStart` / `editLength` its cursor or selection inside it, in
+    // characters. An empty `text` ends the composition. Committed text arrives
+    // as `TextInput`, as typing does.
+    TextEditing,
 };
 
 // Physical keys, named by the US-layout legend the way scancodes are.
@@ -261,7 +268,21 @@ enum class GamepadAxis : u8
 // is handled, so the bytes are COPIED here: an `Event` outlives the SDL event
 // it came from by a whole frame, and a dangling `const char*` in a public
 // struct is a use-after-free waiting for a slow frame.
-inline constexpr u32 kMaxTextInputBytes = 32;
+// An input method commits a whole phrase in one event, so this is a phrase's
+// room and not a keystroke's (ADR 0139); a longer one is cut at a character
+// boundary, never inside one.
+inline constexpr u32 kMaxTextInputBytes = 256;
+
+// The keys held with a key or a press (ADR 0139): what makes Ctrl+C a copy and
+// Shift+Left a selection. Bits, either side of the keyboard alike.
+struct KeyModifier
+{
+    static constexpr u8 Shift = 1;
+    static constexpr u8 Ctrl = 2;
+    static constexpr u8 Alt = 4;
+    // The Windows key, or Command on a Mac.
+    static constexpr u8 System = 8;
+};
 
 // One flat record rather than a tagged union: the union machinery would cost
 // more to read than the unused fields cost to carry, and at sixteen event types
@@ -277,6 +298,15 @@ struct Event
     // KeyDown / KeyUp.
     Key key = Key::Unknown;
     bool repeat = false;
+    // KeyDown / KeyUp / MouseButtonDown / MouseButtonUp: `KeyModifier` bits.
+    u8 modifiers = 0;
+    // MouseButtonDown / MouseButtonUp: 1 for a single press, 2 for a double,
+    // 3 for a triple -- the system's own count, on its own double-click time.
+    u8 clicks = 0;
+
+    // TextEditing: the composition's cursor, in characters of `text`.
+    i32 editStart = 0;
+    i32 editLength = 0;
 
     // WindowResized -- the new drawable size in pixels.
     i32 width = 0;
@@ -319,7 +349,8 @@ struct Event
     // applying one at the device would make it unremovable.
     f32 axisValue = 0.0f;
 
-    // TextInput -- NUL-terminated UTF-8, copied rather than referenced.
+    // TextInput and TextEditing -- NUL-terminated UTF-8, copied rather than
+    // referenced.
     char text[kMaxTextInputBytes] = {};
 };
 
@@ -345,6 +376,36 @@ struct Event
 // (`app::TextInputFocus`, D204).
 void setTextInputEnabled(u32 windowId, bool enabled) noexcept;
 [[nodiscard]] bool textInputEnabled(u32 windowId) noexcept;
+
+// **What the text being typed is** (ADR 0139): the on-screen keyboard a phone
+// raises, and the hints a desktop input method reads.
+enum class TextInputKind : u8
+{
+    Text,
+    Number,
+    Decimal,
+    Phone,
+    Email,
+    Url,
+    // Masked: no suggestions, nothing remembered.
+    Password,
+};
+
+struct TextInputOptions
+{
+    TextInputKind kind = TextInputKind::Text;
+    // Return makes a new line rather than finishing.
+    bool multiLine = false;
+};
+
+// Turns text input on with `options`, or off. Turning it on again with other
+// options restarts it, which is how a phone changes its keyboard.
+void setTextInputEnabled(u32 windowId, bool enabled, const TextInputOptions& options) noexcept;
+
+// **Where the caret is, for the input method** (ADR 0139): the field's
+// rectangle in window pixels and the caret's x inside it, so a composition's
+// candidate list opens beside the text rather than in a corner.
+void setTextInputArea(u32 windowId, i32 x, i32 y, i32 width, i32 height, i32 cursor) noexcept;
 
 // Drains the OS queue and returns this frame's translated events. The span is
 // owned by the module and stays valid until the next call, so a caller that

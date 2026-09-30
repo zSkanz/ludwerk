@@ -82,6 +82,20 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A `TextInput` edits as every text field does** (ADR 0139): selection by
+  keys and by the mouse (drag, Shift, double and triple press), words, the
+  line's and the text's ends, Ctrl+A/C/X/V through the system clipboard, undo
+  and redo, several lines, a caret that blinks and a field that scrolls to keep
+  it in view, an input method's composition drawn at the caret, and Tab to the
+  next field. New properties: `PlaceholderColor`, `MultiLine`, `Editable`,
+  `MaxLength`, `Masked`, `MaskCharacter`, `ClearTextOnFocus`,
+  `SelectAllOnFocus`, `ReleaseFocusOnSubmit`, `RevertOnEscape`, `KeyboardType`,
+  `CursorPosition` and `SelectionStart`. New events: `Submitted`,
+  `TextChanged` and `InputRejected`; `FocusLost` gains its reason, in the new
+  `Enum.FocusLossReason`. New methods: `CaptureFocus`, `ReleaseFocus` and
+  `IsFocused`. `UIService:GetFocusedTextInput()`, with
+  `UIService.TextInputFocused` and `TextInputFocusReleased`. A phone raises
+  the keyboard `Enum.TextInputKeyboard` names.
 - **`Script.RunContext`** (ADR 0138): `Server`, `Client` or `Shared` (new in
   `Enum.RunContext`, and the default), deciding where a script outside the
   script services runs. Inside one, the service decides, and moving a script

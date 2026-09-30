@@ -1309,6 +1309,29 @@ f32 scaledTextSize(f32 fits) noexcept
     return std::fmax(1.0f, std::floor(capped / step) * step);
 }
 
+std::vector<TextLine> textLines(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth)
+{
+    Face& face = faceFor(font);
+    std::vector<Line> lines;
+    breakLines(text, face, pixelSize, scaleFor(face, pixelSize), maxWidth, lines);
+    std::vector<TextLine> out;
+    out.reserve(lines.size());
+    for (const Line& line : lines)
+        out.push_back(TextLine{line.begin, line.end, line.width});
+    return out;
+}
+
+f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize)
+{
+    Face& face = faceFor(font);
+    return widthOf(run, face, pixelSize) * scaleFor(face, pixelSize);
+}
+
+f32 textLineHeight(std::string_view font, f32 pixelSize)
+{
+    return lineHeightOf(faceFor(font), pixelSize);
+}
+
 TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
     // `font` SELECTS the face now rather than only keying the cache, which is

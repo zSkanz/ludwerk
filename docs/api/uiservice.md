@@ -19,3 +19,22 @@ offers is on the base's page, which is what keeps one added member on
 | `DisplayScale` | `number` | — | read-only | The window's pixel density relative to its logical size: 2 on a doubled display. UI coordinates are in PIXELS, so this is what a game multiplies by when it wants a measurement to mean the same physical size on two screens. |
 | `SafeAreaInsets` | `Rect` | — | read-only | How far in from each window edge it is safe to draw, in pixels -- what a notch, a rounded corner or a system gesture bar takes away. Zero on a desktop window, which is why a HUD that ignores it looks fine until it does not. |
 | `ScreenOrientation` | `Enum.ScreenOrientation` | `Enum.ScreenOrientation.LandscapeSensor` | read/write | Which ways up the game may be held on a phone or a tablet. **Takes effect at once**: a script that sets it turns the screen then and there, and the value saved with the scene is where the game starts. A layout reads the new `AbsoluteSize` on the next frame. Nothing on a desktop, whose window does not turn. |
+
+## Methods
+
+### `GetFocusedTextInput(): TextInput?`
+
+The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks before it opens the box.
+
+## Events
+
+Every signal here is **deferred** (ADR 0015): a handler runs at the next
+drain point, never inside the call that fired it.
+
+### `TextInputFocusReleased(input: TextInput)`
+
+A `TextInput` let go of it.
+
+### `TextInputFocused(input: TextInput)`
+
+A `TextInput` took the keyboard.

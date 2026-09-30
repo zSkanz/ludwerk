@@ -30,6 +30,7 @@
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/world.h"
 #include "engine/script/runtime.h"
+#include "engine/ui/scene_types.h"
 
 namespace engine::script::testing {
 
@@ -55,10 +56,11 @@ struct Fixture
         // services.cpp whether or not the class exists, and the boot cross-check
         // counts a binding whose class nothing declared as a mismatch. `render`
         // joined the list at M6, when `AnimationPlayer:LoadAnimation` became its
-        // first class with a method; `ui` is still absent, and can be.
+        // first class with a method, and `ui` with ADR 0139's `TextInput`.
         input::registerSceneTypes(classes, atoms);
         audio::registerSceneTypes(classes, atoms);
         render::registerSceneTypes(classes, atoms);
+        ui::registerSceneTypes(classes, atoms);
         scene::generated::registerEnums(enums, atoms);
         world.emplace(classes, enums, atoms, 1234u);
         runtime.emplace(*world);

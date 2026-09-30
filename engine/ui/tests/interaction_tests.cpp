@@ -1,12 +1,15 @@
 #include <algorithm>
 #include <doctest/doctest.h>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "class_descriptors.gen.h"
 #include "engine/scene/world.h"
 #include "engine/ui/scene_types.h"
+#include "engine/ui/text_edit.h"
 #include "engine/ui/ui.h"
 
 namespace {
@@ -33,6 +36,9 @@ struct Fixture
         ui::registerSceneTypes(classes, atoms);
         scene::generated::registerEnums(enums, atoms);
         world.emplace(classes, enums, atoms, 1u);
+        // Interaction's memory is the process's: a focus left by the case
+        // before names an id this new world may reuse.
+        ui::resetInteraction();
         service = make("UIService");
         screen = child("ScreenGui", service);
     }
@@ -90,10 +96,20 @@ struct Fixture
         for (const scene::Change& change : world->changes().take()) {
             if (change.kind == scene::ChangeKind::InstanceEventNoArgs)
                 names.emplace_back(atoms.text(change.name));
-            // `FocusLost` carries how the field was left (D215).
-            if (change.kind == scene::ChangeKind::InstanceEventBool)
+            // `FocusLost` carries how the field was left (D215), and why
+            // (ADR 0139).
+            if (change.kind == scene::ChangeKind::InstanceEventBool || change.kind == scene::ChangeKind::FocusLost)
                 names.emplace_back(std::string(atoms.text(change.name)) +
                                    (change.other.index != 0 ? "(true)" : "(false)"));
+            if (change.kind == scene::ChangeKind::FocusLost) {
+                constexpr const char* Reasons[] = {"Submitted", "Moved", "Cancelled", "Script"};
+                names.emplace_back(std::string("FocusLost:") + Reasons[std::min(change.other.generation, 3u)]);
+            }
+            if (change.kind == scene::ChangeKind::InstanceEventText)
+                names.emplace_back(std::string(atoms.text(change.name)) + ":" +
+                                   std::string(world->changes().drainedText(change)));
+            if (change.kind == scene::ChangeKind::InstanceEvent)
+                names.emplace_back(atoms.text(change.name));
         }
         return names;
     }
@@ -327,10 +343,11 @@ namespace {
 
 } // namespace
 
-TEST_CASE("the caret starts at the end of what is already there")
+TEST_CASE("a press after the text puts the caret at its end")
 {
-    // Which is what clicking into a field means everywhere: the caret goes after
-    // the text and typing continues it.
+    // Which is what clicking into a field means everywhere: a press past the
+    // text puts the caret after it and typing continues it -- and, since ADR
+    // 0139, a press ON the text puts it under the pointer.
     Fixture fixture;
     const InstanceId field = fixture.child("TextInput", fixture.screen);
     fixture.world->uiObjects().find(field)->size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 30.0f}};
@@ -338,7 +355,7 @@ TEST_CASE("the caret starts at the end of what is already there")
                                        scene::Value{std::string("hello")}) == scene::World::SetResult::Changed);
     fixture.run();
 
-    fixture.interact(Vec2{10.0f, 10.0f}, true, false);
+    fixture.interact(Vec2{199.0f, 10.0f}, true, false);
     CHECK(fixture.world->textInputs().find(field)->caret == 5);
 }
 
@@ -512,4 +529,195 @@ TEST_CASE("a button in the world is pressed like one on the screen, and the scre
     (void)fixture.events();
     (void)fixture.send(release);
     CHECK(fixture.events() == std::vector<std::string>{"Activated"});
+}
+
+// --- Everything a text field does (ADR 0139) -----------------------------------
+
+namespace {
+
+using Kind = ui::TextCommand::Kind;
+
+[[nodiscard]] ui::TextCommand command(Kind kind, ui::TextMove move = ui::TextMove::Left, bool extend = false)
+{
+    ui::TextCommand out;
+    out.kind = kind;
+    out.move = static_cast<core::u8>(move);
+    out.extend = extend;
+    return out;
+}
+
+[[nodiscard]] ui::TextCommand typing(std::string_view text)
+{
+    ui::TextCommand out;
+    out.kind = Kind::Insert;
+    out.text = text;
+    return out;
+}
+
+// A field 400 pixels wide at the top left, focused.
+struct Field
+{
+    Fixture fixture;
+    InstanceId field;
+
+    Field()
+    {
+        field = fixture.child("TextInput", fixture.screen);
+        fixture.world->uiObjects().find(field)->size = core::UDim2{core::UDim{0.0f, 400.0f}, core::UDim{0.0f, 30.0f}};
+        // From the left edge, so a press's x is a width a reader can check.
+        fixture.world->textLabels().find(field)->horizontalAlignment = 0;
+        fixture.run();
+        fixture.interact(Vec2{390.0f, 10.0f}, true, false);
+        fixture.interact(Vec2{390.0f, 10.0f}, false, true);
+        (void)fixture.events();
+    }
+
+    std::vector<std::string> keys(std::vector<ui::TextCommand> commands, ui::InteractionInput input = {})
+    {
+        input.pointer = Vec2{390.0f, 10.0f};
+        input.commands = commands;
+        (void)fixture.send(input);
+        return fixture.events();
+    }
+
+    [[nodiscard]] std::string text() { return fixture.world->textLabels().find(field)->text; }
+    [[nodiscard]] scene::TextInputComponent& input() { return *fixture.world->textInputs().find(field); }
+};
+
+[[nodiscard]] bool has(const std::vector<std::string>& events, std::string_view name)
+{
+    return std::ranges::find(events, name) != events.end();
+}
+
+} // namespace
+
+TEST_CASE("the keys work in the order they were pressed, and the clipboard is the host's")
+{
+    Field f;
+    std::string clipboard;
+    ui::InteractionInput input;
+    input.writeClipboard = [&clipboard](std::string_view text) { clipboard.assign(text); };
+    input.readClipboard = [&clipboard]() -> std::optional<std::string> { return clipboard; };
+
+    (void)f.keys({typing("hello world")}, input);
+    // Ctrl+A then a letter: the letter replaces everything.
+    (void)f.keys({command(Kind::SelectAll), command(Kind::Copy), typing("x")}, input);
+    CHECK(clipboard == "hello world");
+    CHECK(f.text() == "x");
+    // Ctrl+V, twice.
+    (void)f.keys({command(Kind::Paste), command(Kind::Paste)}, input);
+    CHECK(f.text() == "xhello worldhello world");
+    // Shift+Ctrl+Left selects the last word; Ctrl+X takes it.
+    (void)f.keys({command(Kind::Move, ui::TextMove::WordLeft, true), command(Kind::Cut)}, input);
+    CHECK(clipboard == "world");
+    CHECK(f.text() == "xhello worldhello ");
+    // Ctrl+Z takes back the cut, then the pastes.
+    (void)f.keys({command(Kind::Undo)}, input);
+    CHECK(f.text() == "xhello worldhello world");
+}
+
+TEST_CASE("the player's edits fire TextChanged, and MaxLength says what it kept out")
+{
+    Field f;
+    f.input().maxLength = 5;
+    const std::vector<std::string> events = f.keys({typing("abcdefg")});
+    CHECK(f.text() == "abcde");
+    CHECK(has(events, "TextChanged:abcde"));
+    CHECK(has(events, "InputRejected:fg"));
+
+    // A script's write is not the player's.
+    REQUIRE(f.fixture.world->setProperty(f.field, f.fixture.world->atoms().intern("Text"),
+                                         scene::Value{std::string("set")}) == scene::World::SetResult::Changed);
+    const std::vector<std::string> after = f.keys({});
+    CHECK_FALSE(has(after, "TextChanged:set"));
+}
+
+TEST_CASE("Return submits, and a chat box keeps focus for the next line")
+{
+    Field f;
+    f.input().releaseFocusOnSubmit = false;
+    std::vector<std::string> events = f.keys({typing("hi"), command(Kind::Return)});
+    CHECK(has(events, "Submitted:hi"));
+    CHECK(f.input().focused);
+
+    f.input().releaseFocusOnSubmit = true;
+    events = f.keys({command(Kind::Return)});
+    CHECK(has(events, "Submitted:hi"));
+    CHECK(has(events, "FocusLost:Submitted"));
+    CHECK(has(events, "TextInputFocusReleased"));
+    CHECK_FALSE(f.input().focused);
+}
+
+TEST_CASE("Escape lets go, and puts back the text it had when asked to")
+{
+    Field f;
+    f.input().revertOnEscape = true;
+    (void)f.keys({typing("draft"), command(Kind::Return)});
+    // Focused again on "draft", edited, then cancelled.
+    f.fixture.interact(Vec2{390.0f, 10.0f}, true, false);
+    f.fixture.interact(Vec2{390.0f, 10.0f}, false, true);
+    (void)f.fixture.events();
+    const std::vector<std::string> events = f.keys({typing(" more"), command(Kind::Escape)});
+    CHECK(has(events, "FocusLost:Cancelled"));
+    CHECK(f.text() == "draft");
+}
+
+TEST_CASE("Tab goes to the next field on the screen, and Shift+Tab back")
+{
+    Field f;
+    const InstanceId second = f.fixture.child("TextInput", f.fixture.screen);
+    f.fixture.world->uiObjects().find(second)->position = core::UDim2{core::UDim{0.0f, 0.0f}, core::UDim{0.0f, 100.0f}};
+    f.fixture.run();
+    std::vector<std::string> events = f.keys({command(Kind::Tab)});
+    CHECK(has(events, "FocusLost:Moved"));
+    CHECK(f.fixture.world->textInputs().find(second)->focused);
+    ui::TextCommand back = command(Kind::Tab);
+    back.extend = true;
+    (void)f.fixture.send([&] {
+        ui::InteractionInput input;
+        input.commands = std::span<const ui::TextCommand>(&back, 1);
+        return input;
+    }());
+    CHECK(f.input().focused);
+}
+
+TEST_CASE("a press puts the caret under the pointer, and a double press takes the word")
+{
+    Field f;
+    (void)f.keys({typing("hello world")});
+    const float before = ui::textWidth("hello wo", "", f.fixture.world->textLabels().find(f.field)->textSize);
+    const float scale = ui::textWidth("hello world", "", f.fixture.world->textLabels().find(f.field)->textSize);
+    REQUIRE(scale > 0.0f);
+
+    ui::InteractionInput press;
+    press.pointer = Vec2{before + 1.0f, 10.0f};
+    press.pressed = true;
+    (void)f.fixture.send(press);
+    CHECK(f.input().caret == 8);
+
+    press.clicks = 2;
+    (void)f.fixture.send(press);
+    CHECK(f.input().anchor == 6);
+    CHECK(f.input().caret == 11);
+}
+
+TEST_CASE("a script's CaptureFocus and ReleaseFocus are taken at the next frame")
+{
+    Fixture fixture;
+    const InstanceId field = fixture.child("TextInput", fixture.screen);
+    fixture.run();
+    fixture.world->textInputs().find(field)->focusRequest = 1;
+    fixture.interact(Vec2{600.0f, 400.0f});
+    CHECK(fixture.world->textInputs().find(field)->focused);
+    std::vector<std::string> events = fixture.events();
+    CHECK(has(events, "Focused"));
+    CHECK(has(events, "TextInputFocused"));
+
+    fixture.world->textInputs().find(field)->focusRequest = -1;
+    fixture.world->textInputs().find(field)->releaseSubmitted = true;
+    fixture.interact(Vec2{600.0f, 400.0f});
+    CHECK_FALSE(fixture.world->textInputs().find(field)->focused);
+    events = fixture.events();
+    CHECK(has(events, "FocusLost(true)"));
+    CHECK(has(events, "FocusLost:Script"));
 }

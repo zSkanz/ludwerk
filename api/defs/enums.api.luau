@@ -1228,6 +1228,38 @@ local Definition: Schema.Definition = {
                 { Name = "Last", Value = 2000, Doc = "After everything else, before `PreRender` fires." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "FocusLossReason",
+            Doc = "Why a `TextInput` stopped taking the keyboard (ADR 0139): what `FocusLost` says beside "
+                .. "`submitted`.",
+            Items = {
+                { Name = "Submitted", Value = 0, Doc = "Return, in a field that lets go on submit." },
+                { Name = "Moved", Value = 1, Doc = "A press somewhere else, or Tab to the next field." },
+                {
+                    Name = "Cancelled",
+                    Value = 2,
+                    Doc = "Escape; with `RevertOnEscape` the text is what it was when focus came.",
+                },
+                {
+                    Name = "Script",
+                    Value = 3,
+                    Doc = "`ReleaseFocus`, another field's `CaptureFocus`, or the field leaving the screen.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "TextInputKeyboard",
+            Doc = "The on-screen keyboard a phone raises for a `TextInput` (ADR 0139), and the hint a "
+                .. "desktop input method reads. A masked field raises a password keyboard whatever this says.",
+            Items = {
+                { Name = "Default", Value = 0, Doc = "Letters, with the system's suggestions." },
+                { Name = "Number", Value = 1, Doc = "Digits." },
+                { Name = "Decimal", Value = 2, Doc = "Digits and a decimal point." },
+                { Name = "Phone", Value = 3, Doc = "A phone's dial pad." },
+                { Name = "Email", Value = 4, Doc = "An address, with `@` at hand." },
+                { Name = "Url", Value = 5, Doc = "A web address, with `/` and `.` at hand." },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

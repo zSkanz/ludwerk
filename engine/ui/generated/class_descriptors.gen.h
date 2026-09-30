@@ -90,6 +90,8 @@ inline constexpr scene::EnumId DragDetectorResponseStyleEnumId = 47;
 inline constexpr scene::EnumId TerrainPaintModeEnumId = 48;
 inline constexpr scene::EnumId WaterShapeEnumId = 49;
 inline constexpr scene::EnumId RenderPriorityEnumId = 50;
+inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
+inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
 
 } // namespace generated
 
@@ -217,6 +219,32 @@ void detachTextLabelComponents(scene::World& world, core::InstanceId id);
 // TextInput
 scene::Value getTextInputPlaceholderText(const scene::World& world, core::InstanceId id);
 bool setTextInputPlaceholderText(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputPlaceholderColor(const scene::World& world, core::InstanceId id);
+bool setTextInputPlaceholderColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputMultiLine(const scene::World& world, core::InstanceId id);
+bool setTextInputMultiLine(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputEditable(const scene::World& world, core::InstanceId id);
+bool setTextInputEditable(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputMaxLength(const scene::World& world, core::InstanceId id);
+bool setTextInputMaxLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputMasked(const scene::World& world, core::InstanceId id);
+bool setTextInputMasked(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputMaskCharacter(const scene::World& world, core::InstanceId id);
+bool setTextInputMaskCharacter(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputClearTextOnFocus(const scene::World& world, core::InstanceId id);
+bool setTextInputClearTextOnFocus(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputSelectAllOnFocus(const scene::World& world, core::InstanceId id);
+bool setTextInputSelectAllOnFocus(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputReleaseFocusOnSubmit(const scene::World& world, core::InstanceId id);
+bool setTextInputReleaseFocusOnSubmit(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputRevertOnEscape(const scene::World& world, core::InstanceId id);
+bool setTextInputRevertOnEscape(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputKeyboardType(const scene::World& world, core::InstanceId id);
+bool setTextInputKeyboardType(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputCursorPosition(const scene::World& world, core::InstanceId id);
+bool setTextInputCursorPosition(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextInputSelectionStart(const scene::World& world, core::InstanceId id);
+bool setTextInputSelectionStart(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachTextInputComponents(scene::World& world, core::InstanceId id);
 void detachTextInputComponents(scene::World& world, core::InstanceId id);
 

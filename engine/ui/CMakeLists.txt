@@ -16,6 +16,8 @@ engine_add_module(ui
     SOURCES
         src/layout.cpp
         src/text.cpp
+        src/text_edit.cpp
+        src/text_field.cpp
         src/draw.cpp
         src/interaction.cpp
         src/native_accessors.cpp
@@ -42,6 +44,7 @@ engine_add_module_tests(ui
         tests/glyph_tests.cpp
         tests/rich_text_tests.cpp
         tests/interaction_tests.cpp
+        tests/text_edit_tests.cpp
 )
 
 if(ENG_BUILD_TESTS)

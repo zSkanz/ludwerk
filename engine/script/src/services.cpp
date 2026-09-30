@@ -2045,6 +2045,23 @@ int voxelRaycast(lua_State* L)
     return 2;
 }
 
+// The field that has the keyboard, or nil (ADR 0139). At most one: focus is
+// only ever moved by the interface, one field at a time.
+int uiServiceGetFocusedTextInput(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    core::InstanceId focused;
+    world(L).textInputs().forEach([&focused](core::InstanceId id, const scene::TextInputComponent& field) {
+        if (field.focused)
+            focused = id;
+    });
+    if (focused.valid())
+        pushInstance(L, focused);
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
 // `WaitForChild` is here rather than in `instance_binding.cpp` because it parks
 // on a tree state and only the resumption phase this file owns can wake it.
 constexpr InstanceMethodBinding ServiceMethods[] = {
@@ -2057,6 +2074,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"DataModel", "BindToMessage", dataModelBindToMessage},
     {"DataModel", "Shutdown", dataModelShutdown},
 
+    {"UIService", "GetFocusedTextInput", uiServiceGetFocusedTextInput},
     {"RunService", "Pause", runServicePause},
     {"RunService", "BindToRenderStep", runServiceBindToRenderStep},
     {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},

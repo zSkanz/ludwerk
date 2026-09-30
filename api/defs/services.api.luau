@@ -1918,6 +1918,27 @@ local Classes: { Schema.Class } = {
                     .. "frame. Nothing on a desktop, whose window does not turn.",
             },
         } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "GetFocusedTextInput",
+                Parameters = {},
+                Returns = { "TextInput?" },
+                Doc = "The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks "
+                    .. "before it opens the box.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "TextInputFocused",
+                Parameters = { { Name = "input", Type = "TextInput" } },
+                Doc = "A `TextInput` took the keyboard.",
+            },
+            {
+                Name = "TextInputFocusReleased",
+                Parameters = { { Name = "input", Type = "TextInput" } },
+                Doc = "A `TextInput` let go of it.",
+            },
+        } :: { Schema.Event },
     },
     {
         Name = "AudioService",

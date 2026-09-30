@@ -62,11 +62,13 @@ target_include_directories(engine_script SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/
 # test binary is not a module. `script` binds `AnimationPlayer:LoadAnimation`,
 # and the boot-time cross-check counts a binding whose class nothing declared as
 # a mismatch -- so the fixture has to be able to register render's classes. The
-# module itself still sees only `scene::AnimationHost`.
+# module itself still sees only `scene::AnimationHost`. `ui` likewise, since
+# `TextInput` and `UIService` have methods (ADR 0139).
 engine_add_module_tests(script
     MODULES
         script
         render
+        ui
     SOURCES
         tests/sandbox_tests.cpp
         tests/datatype_tests.cpp

@@ -4,6 +4,7 @@
 
 #include "engine/scene/world.h"
 #include "engine/ui/ui.h"
+#include "text_field.h"
 
 namespace engine::ui {
 namespace {
@@ -442,6 +443,101 @@ void collect(const scene::World& world, core::InstanceId id, u32 scissor, Vec2 t
         collect(world, child, childScissor, turn, turnOffset, entries, scissors);
 }
 
+// **A text field** (ADR 0139): its text as the field shows it -- masked,
+// with a composition at the caret -- in lines that scroll inside the field and
+// are clipped to it, the selection behind them, the composition underlined and
+// the caret, all placed by the same view the interaction hit-tests against.
+void emitField(const scene::World& world, const Entry& entry, const scene::TextLabelComponent& label,
+               const scene::TextInputComponent& field, core::Rect box, f32 textAlpha, const TextStroke& stroke,
+               DrawList& out)
+{
+    const Rect outer = out.scissors[entry.scissor];
+    out.scissors.push_back(Rect{Vec2{std::fmax(box.min.x, outer.min.x), std::fmax(box.min.y, outer.min.y)},
+                                Vec2{std::fmin(box.max.x, outer.max.x), std::fmin(box.max.y, outer.max.y)}});
+    const u32 scissor = static_cast<u32>(out.scissors.size() - 1);
+
+    // An empty field that is not being typed into shows its placeholder.
+    if (label.text.empty() && field.composition.empty() && !field.focused) {
+        if (!field.placeholderText.empty())
+            buildTextGeometry(field.placeholderText, label.font, label.textSize,
+                              field.multiLine ? box.max.x - box.min.x : 0.0f, box, label.horizontalAlignment,
+                              label.verticalAlignment, field.placeholderColor, textAlpha, scissor, out.quads);
+        return;
+    }
+
+    const FieldView view = fieldView(world, entry.id);
+    const std::string_view display = view.display;
+    const auto xOf = [&](const TextLine& line, core::usize at) {
+        const core::usize end = std::min<core::usize>(at, line.end);
+        return lineLeft(view, line) + textWidth(display.substr(line.begin, end - line.begin), view.font, view.size);
+    };
+    const auto flat = [&](Vec2 min, Vec2 max, core::Color3 color, f32 alpha) {
+        DrawQuad quad;
+        quad.min = min;
+        quad.max = max;
+        quad.color = color;
+        quad.alpha = alpha;
+        quad.scissor = scissor;
+        out.quads.push_back(quad);
+    };
+
+    // The selection, behind the text.
+    if (field.focused && field.caret != field.anchor) {
+        const core::u32 from = displayOffset(view, std::min(field.caret, field.anchor));
+        const core::u32 to = displayOffset(view, std::max(field.caret, field.anchor));
+        for (core::usize index = 0; index < view.lines.size(); ++index) {
+            const TextLine& line = view.lines[index];
+            if (to <= line.begin || from > line.end)
+                continue;
+            f32 left = xOf(line, std::max<core::usize>(from, line.begin));
+            f32 right = xOf(line, std::min<core::usize>(to, line.end));
+            // A selected line break shows as a sliver past the line's end.
+            if (to > line.end)
+                right += view.size * 0.3f;
+            if (right <= left)
+                continue;
+            const f32 top = view.top + static_cast<f32>(index) * view.lineHeight;
+            flat(Vec2{left, top}, Vec2{right, top + view.lineHeight}, core::Color3{0.22f, 0.46f, 0.92f}, 0.45f);
+        }
+    }
+
+    // The text, a line at a time where the view put each line.
+    for (core::usize index = 0; index < view.lines.size(); ++index) {
+        const TextLine& line = view.lines[index];
+        if (line.end <= line.begin)
+            continue;
+        const f32 left = lineLeft(view, line);
+        const f32 top = view.top + static_cast<f32>(index) * view.lineHeight;
+        buildTextGeometry(display.substr(line.begin, line.end - line.begin), view.font, view.size, 0.0f,
+                          Rect{Vec2{left, top}, Vec2{left + line.width + 1.0f, top + view.lineHeight}}, 0, 0,
+                          label.textColor, textAlpha, scissor, out.quads, stroke);
+    }
+
+    // What an input method is composing, underlined.
+    if (view.compositionEnd > view.compositionBegin) {
+        for (core::usize index = 0; index < view.lines.size(); ++index) {
+            const TextLine& line = view.lines[index];
+            if (view.compositionEnd <= line.begin || view.compositionBegin >= line.end)
+                continue;
+            const f32 left = xOf(line, std::max<core::usize>(view.compositionBegin, line.begin));
+            const f32 right = xOf(line, std::min<core::usize>(view.compositionEnd, line.end));
+            const f32 bottom = view.top + static_cast<f32>(index + 1) * view.lineHeight;
+            flat(Vec2{left, bottom - 1.5f}, Vec2{right, bottom}, label.textColor, 1.0f);
+        }
+    }
+
+    // The caret, where the next character goes, blinking.
+    if (field.focused && field.caretVisible) {
+        const core::u32 at = field.composition.empty() ? displayOffset(view, field.caret)
+                                                       : view.compositionBegin + field.compositionCursor;
+        const Vec2 point = caretPoint(view, at);
+        // A hair over one pixel, so it is visible at every scale without being
+        // a glyph in its own right.
+        constexpr f32 CaretWidth = 1.5f;
+        flat(point, Vec2{point.x + CaretWidth, point.y + view.lineHeight}, label.textColor, 1.0f);
+    }
+}
+
 void emit(const scene::World& world, const Entry& entry, DrawList& out)
 {
     const scene::UIObjectComponent* self = world.uiObjects().find(entry.id);
@@ -596,26 +692,14 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
         // **Markup, when the label asks for it** -- and never in a field being
         // typed into, whose caret counts the characters of what is written, tags
         // and all. A placeholder is plain for the same reason.
-        const bool rich = label->richText && world.textInputs().find(entry.id) == nullptr;
-        if (text.empty()) {
-            // A focused-away, empty `TextInput` shows its placeholder. Dimmed
-            // rather than coloured differently, because a placeholder that
-            // looked like real text is a field people fail to fill in.
-            //
-            // **A focused one shows only its caret** (D216): the placeholder
-            // stayed under it, with the caret drawn in the middle of words
-            // that were not there -- and a field with no placeholder returned
-            // here, so it had no caret at all.
-            const scene::TextInputComponent* input = world.textInputs().find(entry.id);
-            if (input == nullptr)
-                return;
-            if (!input->focused) {
-                if (input->placeholderText.empty())
-                    return;
-                text = input->placeholderText;
-                color = core::Color3{color.r * 0.5f + 0.25f, color.g * 0.5f + 0.25f, color.b * 0.5f + 0.25f};
-            }
+        if (const scene::TextInputComponent* field = world.textInputs().find(entry.id); field != nullptr) {
+            emitField(world, entry, *label, *field, box, textAlpha, textStroke, out);
+            return;
         }
+        const bool rich = label->richText;
+        // Nothing to draw. A `TextInput`'s placeholder is `emitField`'s.
+        if (text.empty())
+            return;
 
         // `TextScaled` re-measures at the size that fills the box rather than
         // stretching a bitmap: there is no distance field in v1, and a stretched
@@ -631,65 +715,14 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             }
         }
 
-        // Empty here only for a focused, empty field, which draws its caret alone.
-        if (!text.empty()) {
-            if (rich)
-                buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
-                                      label->horizontalAlignment, label->verticalAlignment, color, textAlpha,
-                                      entry.scissor, out.quads, textStroke);
-            else
-                buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
+        if (rich)
+            buildRichTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
                                   label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
                                   out.quads, textStroke);
-        }
-
-        // --- The caret (S6.7) -------------------------------------------------
-        //
-        // **A bar where the next character goes**, and only in the field that
-        // has focus. Drawn after the text so it is never behind a glyph, and as
-        // an ordinary quad so it goes through the same scissor and the same
-        // batch -- a caret that needed its own pass would be a second way to
-        // draw a rectangle.
-        //
-        // Measured rather than assumed: the x is the width of the text BEFORE
-        // it, so the caret sits between two glyphs however wide they are, and
-        // the alignment offset is recomputed the same way `buildTextGeometry`
-        // computes it. A single line, because `TextInput` is single-line -- the
-        // class doc says so and a wrapped caret is a different feature.
-        const scene::TextInputComponent* field = world.textInputs().find(entry.id);
-        if (field != nullptr && field->focused) {
-            const std::string_view whole = label->text;
-            const usize at = std::min(static_cast<usize>(field->caret), whole.size());
-            const TextRunMetrics before = measureText(whole.substr(0, at), label->font, size, 0.0f);
-            const TextRunMetrics all = measureText(whole, label->font, size, 0.0f);
-
-            f32 x = box.min.x;
-            if (label->horizontalAlignment == 1)
-                x += (box.max.x - box.min.x - all.size.x) * 0.5f;
-            else if (label->horizontalAlignment == 2)
-                x += box.max.x - box.min.x - all.size.x;
-            x += before.size.x;
-
-            const f32 height = all.size.y > 0.0f ? all.size.y : size;
-            f32 y = box.min.y;
-            if (label->verticalAlignment == 1)
-                y += (box.max.y - box.min.y - height) * 0.5f;
-            else if (label->verticalAlignment == 2)
-                y += box.max.y - box.min.y - height;
-
-            // A hair over one pixel, so it is visible at every scale without
-            // being a glyph in its own right.
-            constexpr f32 kCaretWidth = 1.5f;
-            DrawQuad caret;
-            caret.min = core::Vec2{x, y};
-            caret.max = core::Vec2{x + kCaretWidth, y + height};
-            caret.color = label->textColor;
-            caret.alpha = 1.0f;
-            // No texture, so the shader multiplies by white and this is a flat
-            // bar -- the same path every solid rectangle in the UI takes.
-            caret.scissor = entry.scissor;
-            out.quads.push_back(caret);
-        }
+        else
+            buildTextGeometry(text, label->font, size, label->textWrapped ? self->absoluteSize.x : 0.0f, box,
+                              label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
+                              out.quads, textStroke);
     }
 }
 

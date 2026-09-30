@@ -5,9 +5,9 @@
 - Inherits [`TextLabel`](textlabel.md)
 - Created with `Instance.new("TextInput")`
 
-A single-line editable field (§2.2). Typed text, a caret you can move with the arrows, Home and End, and both kinds of delete; no selection, no clipboard, no undo and no IME composition beyond what the platform delivers as text.
+An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. It edits as every text field does -- selection with Shift and with the mouse, Ctrl+arrows and Ctrl+Backspace by words, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V through the system's clipboard, Ctrl+Z and Ctrl+Y, a double press for a word and a triple for the line -- steps over whole characters as a reader sees them, and shows an input method's composition at the caret. While it has focus it takes the keyboard, so a player typing `w` does not walk.
 
-**The caret starts at the end and goes back there whenever a script assigns `Text`**, which is the only position that is always in range: a caret left where it was would point into a string that no longer exists. Clicking does not yet place it -- that needs the glyph advances the layout produced, and the layout is a different pass.
+**A script's write to `Text` puts the caret at the end** and clears the undo history: what it would undo to is not the player's.
 
 **Members below are the ones this class DECLARES.** Everything its base
 offers is on the base's page, which is what keeps one added member on
@@ -17,17 +17,56 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `ClearTextOnFocus` | `boolean` | `false` | read/write | Focusing it empties it: a field that is typed afresh each time. |
+| `CursorPosition` | `number` | `-1` | read/write | Where the caret is: 1-based, in bytes, as a Luau string's positions are -- `#Text + 1` after the last character. -1 while it is not focused. Writing it moves the caret, snapped to a character. |
+| `Editable` | `boolean` | `true` | read/write | False: read-only. It still takes focus, and its text can still be selected and copied -- a code or an address shown to be copied. |
+| `KeyboardType` | `Enum.TextInputKeyboard` | `Enum.TextInputKeyboard.Default` | read/write | The on-screen keyboard a phone raises when it is focused. |
+| `MaskCharacter` | `string` | `"•"` | read/write | What each character of a masked field is drawn as: its first character. |
+| `Masked` | `boolean` | `false` | read/write | Drawn as `MaskCharacter`s: a password. Copying and cutting give nothing away; pasting still works. A phone raises its password keyboard. |
+| `MaxLength` | `number` | `0` | read/write | The most characters it holds; 0 is no limit. Characters as a reader sees them, so an accented letter or an emoji is one. What does not fit is kept out and `InputRejected` says what it was. |
+| `MultiLine` | `boolean` | `false` | read/write | Several lines: Return makes a new one and Ctrl+Return submits, the text wraps at the field's width and scrolls to keep the caret in view, and Up and Down move between lines. A single-line field takes a pasted line break as a space. |
+| `PlaceholderColor` | `Color3` | `Color3.fromRGB(178, 178, 178)` | read/write | The placeholder's colour. |
 | `PlaceholderText` | `string` | `""` | read/write | Drawn in place of `Text` while it is empty and the field is unfocused. |
+| `ReleaseFocusOnSubmit` | `boolean` | `true` | read/write | Return submits and lets go of the keyboard. False keeps it: a chat box, where the next message follows. `Submitted` fires either way. |
+| `RevertOnEscape` | `boolean` | `false` | read/write | Escape puts back the text it had when it was focused, as it lets go. |
+| `SelectAllOnFocus` | `boolean` | `false` | read/write | Focusing it selects all of it, so typing replaces what is there. |
+| `SelectionStart` | `number` | `-1` | read/write | The other end of the selection, in the same positions as `CursorPosition`; -1 when nothing is selected. Writing it selects from there to the caret. |
+
+## Methods
+
+### `CaptureFocus()`
+
+Takes the keyboard, as a press on it would: another field loses it with `Enum.FocusLossReason.Script`. Takes effect at the next frame.
+
+### `IsFocused(): boolean`
+
+Whether it has the keyboard now.
+
+### `ReleaseFocus(submitted: boolean?)`
+
+Lets go of the keyboard; `FocusLost` fires with `submitted` (false when omitted) and `Enum.FocusLossReason.Script`. Takes effect at the next frame.
 
 ## Events
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
 drain point, never inside the call that fired it.
 
-### `FocusLost(submitted: boolean)`
+### `FocusLost(submitted: boolean, reason: Enum.FocusLossReason)`
 
-Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between "the player finished" and "the player went somewhere else".
+Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between "the player finished" and "the player went somewhere else"; `reason` says which of the four ways it was.
 
 ### `Focused()`
 
 Fired when this field starts receiving keystrokes. Focus is taken by a press and released by a press elsewhere; there is deliberately no settable `Focused` property beside this, because two fields could then both believe they had it.
+
+### `InputRejected(rejected: string)`
+
+What `MaxLength` kept out of an edit.
+
+### `Submitted(text: string)`
+
+Return was pressed, with the text as it was -- whether or not the field lets go (`ReleaseFocusOnSubmit`).
+
+### `TextChanged(text: string)`
+
+The player changed the text -- typing, a paste, a cut, an undo -- with the text now. A script's own write to `Text` does not fire it; `GetPropertyChangedSignal("Text")` fires for both.

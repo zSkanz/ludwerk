@@ -21,6 +21,35 @@ std::vector<Event> g_events;
 // Written as an explicit table rather than arithmetic on the scancode range:
 // the F-keys happen to be contiguous today, and a silent reordering upstream
 // would turn a pin bump into a wrong-key bug that nothing would catch.
+// `KeyModifier` bits from SDL's, either side alike (ADR 0139).
+[[nodiscard]] u8 modifiersOf(SDL_Keymod mod) noexcept
+{
+    u8 out = 0;
+    if ((mod & SDL_KMOD_SHIFT) != 0)
+        out |= KeyModifier::Shift;
+    if ((mod & SDL_KMOD_CTRL) != 0)
+        out |= KeyModifier::Ctrl;
+    if ((mod & SDL_KMOD_ALT) != 0)
+        out |= KeyModifier::Alt;
+    if ((mod & SDL_KMOD_GUI) != 0)
+        out |= KeyModifier::System;
+    return out;
+}
+
+// `text` into the event's buffer, cut if it must be at a character boundary --
+// never inside a UTF-8 sequence, which would hand a field half a character.
+void copyText(Event& event, const char* text) noexcept
+{
+    std::size_t length = std::strlen(text);
+    if (length > kMaxTextInputBytes - 1) {
+        length = kMaxTextInputBytes - 1;
+        while (length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0) == 0x80)
+            --length;
+    }
+    std::memcpy(event.text, text, length);
+    event.text[length] = '\0';
+}
+
 Key translateScancode(SDL_Scancode scancode) noexcept
 {
     switch (scancode) {
@@ -558,6 +587,7 @@ void translate(const SDL_Event& raw, std::vector<Event>& out)
         event.windowId = raw.key.windowID;
         event.key = key;
         event.repeat = raw.key.repeat;
+        event.modifiers = modifiersOf(raw.key.mod);
         out.push_back(event);
         break;
     }
@@ -576,12 +606,17 @@ void translate(const SDL_Event& raw, std::vector<Event>& out)
         Event event;
         event.type = EventType::TextInput;
         event.windowId = raw.text.windowID;
-        // Truncated at a byte boundary rather than at a codepoint one, and that
-        // is safe only because the buffer is larger than any single input event
-        // SDL produces: the cap exists to bound the struct, not to split text.
-        const std::size_t length = std::min(std::strlen(raw.text.text), std::size_t{kMaxTextInputBytes - 1});
-        std::memcpy(event.text, raw.text.text, length);
-        event.text[length] = '\0';
+        copyText(event, raw.text.text);
+        out.push_back(event);
+        break;
+    }
+    case SDL_EVENT_TEXT_EDITING: {
+        Event event;
+        event.type = EventType::TextEditing;
+        event.windowId = raw.edit.windowID;
+        copyText(event, raw.edit.text != nullptr ? raw.edit.text : "");
+        event.editStart = raw.edit.start;
+        event.editLength = raw.edit.length;
         out.push_back(event);
         break;
     }
@@ -609,6 +644,9 @@ void translate(const SDL_Event& raw, std::vector<Event>& out)
         event.pointerX = raw.button.x;
         event.pointerY = raw.button.y;
         event.fromTouch = raw.button.which == SDL_TOUCH_MOUSEID;
+        event.clicks = raw.button.clicks;
+        // Shift+press extends a selection (ADR 0139): the keys held now.
+        event.modifiers = modifiersOf(SDL_GetModState());
         out.push_back(event);
         break;
     }
@@ -774,6 +812,64 @@ GamepadAxis gamepadAxisFromName(std::string_view name) noexcept
             return naming.axis;
     }
     return GamepadAxis::Unknown;
+}
+
+void setTextInputEnabled(u32 windowId, bool enabled, const TextInputOptions& options) noexcept
+{
+    SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(windowId));
+    if (window == nullptr)
+        return;
+    if (!enabled) {
+        (void)SDL_StopTextInput(window);
+        return;
+    }
+    // Android's own input types for what SDL does not name (a phone number, a
+    // decimal, an address): `InputType.TYPE_CLASS_*` and its flags.
+    constexpr Sint64 AndroidPhone = 3;
+    constexpr Sint64 AndroidDecimal = 2 | 8192;
+    constexpr Sint64 AndroidUrl = 1 | 16;
+    const SDL_PropertiesID properties = SDL_CreateProperties();
+    SDL_TextInputType type = SDL_TEXTINPUT_TYPE_TEXT;
+    switch (options.kind) {
+    case TextInputKind::Text:
+        break;
+    case TextInputKind::Number:
+        type = SDL_TEXTINPUT_TYPE_NUMBER;
+        break;
+    case TextInputKind::Decimal:
+        type = SDL_TEXTINPUT_TYPE_NUMBER;
+        (void)SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER, AndroidDecimal);
+        break;
+    case TextInputKind::Phone:
+        type = SDL_TEXTINPUT_TYPE_NUMBER;
+        (void)SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER, AndroidPhone);
+        break;
+    case TextInputKind::Email:
+        type = SDL_TEXTINPUT_TYPE_TEXT_EMAIL;
+        break;
+    case TextInputKind::Url:
+        (void)SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_ANDROID_INPUTTYPE_NUMBER, AndroidUrl);
+        break;
+    case TextInputKind::Password:
+        type = SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN;
+        break;
+    }
+    (void)SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_TYPE_NUMBER, type);
+    (void)SDL_SetBooleanProperty(properties, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, options.multiLine);
+    // A restart is what applies new options to a keyboard already up.
+    if (SDL_TextInputActive(window))
+        (void)SDL_StopTextInput(window);
+    (void)SDL_StartTextInputWithProperties(window, properties);
+    SDL_DestroyProperties(properties);
+}
+
+void setTextInputArea(u32 windowId, i32 x, i32 y, i32 width, i32 height, i32 cursor) noexcept
+{
+    SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(windowId));
+    if (window == nullptr)
+        return;
+    const SDL_Rect area{x, y, width, height};
+    (void)SDL_SetTextInputArea(window, &area, cursor);
 }
 
 void setTextInputEnabled(u32 windowId, bool enabled) noexcept

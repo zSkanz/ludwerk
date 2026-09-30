@@ -180,6 +180,12 @@ end
 declare extern type EnumRenderPriority extends EnumItem with
 end
 
+declare extern type EnumFocusLossReason extends EnumItem with
+end
+
+declare extern type EnumTextInputKeyboard extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2035,14 +2041,64 @@ end
 declare extern type TextInput extends TextLabel with
     --- Drawn in place of `Text` while it is empty and the field is unfocused.
     PlaceholderText: string
+    --- The placeholder's colour.
+    PlaceholderColor: Color3
+    --- Several lines: Return makes a new one and Ctrl+Return submits, the text wraps at the field's
+    --- width and scrolls to keep the caret in view, and Up and Down move between lines. A single-line
+    --- field takes a pasted line break as a space.
+    MultiLine: boolean
+    --- False: read-only. It still takes focus, and its text can still be selected and copied -- a code
+    --- or an address shown to be copied.
+    Editable: boolean
+    --- The most characters it holds; 0 is no limit. Characters as a reader sees them, so an accented
+    --- letter or an emoji is one. What does not fit is kept out and `InputRejected` says what it was.
+    MaxLength: number
+    --- Drawn as `MaskCharacter`s: a password. Copying and cutting give nothing away; pasting still
+    --- works. A phone raises its password keyboard.
+    Masked: boolean
+    --- What each character of a masked field is drawn as: its first character.
+    MaskCharacter: string
+    --- Focusing it empties it: a field that is typed afresh each time.
+    ClearTextOnFocus: boolean
+    --- Focusing it selects all of it, so typing replaces what is there.
+    SelectAllOnFocus: boolean
+    --- Return submits and lets go of the keyboard. False keeps it: a chat box, where the next message
+    --- follows. `Submitted` fires either way.
+    ReleaseFocusOnSubmit: boolean
+    --- Escape puts back the text it had when it was focused, as it lets go.
+    RevertOnEscape: boolean
+    --- The on-screen keyboard a phone raises when it is focused.
+    KeyboardType: EnumTextInputKeyboard
+    --- Where the caret is: 1-based, in bytes, as a Luau string's positions are -- `#Text + 1` after the
+    --- last character. -1 while it is not focused. Writing it moves the caret, snapped to a character.
+    CursorPosition: number
+    --- The other end of the selection, in the same positions as `CursorPosition`; -1 when nothing is
+    --- selected. Writing it selects from there to the caret.
+    SelectionStart: number
     --- Fired when this field starts receiving keystrokes. Focus is taken by a press and released by a
     --- press elsewhere; there is deliberately no settable `Focused` property beside this, because two
     --- fields could then both believe they had it.
     read Focused: Signal<()>
     --- Fired when it stops. `submitted` is true when the field was left by pressing Return rather than
     --- by clicking away -- the difference between "the player finished" and "the player went somewhere
-    --- else".
-    read FocusLost: Signal<boolean>
+    --- else"; `reason` says which of the four ways it was.
+    read FocusLost: Signal<boolean, EnumFocusLossReason>
+    --- Return was pressed, with the text as it was -- whether or not the field lets go
+    --- (`ReleaseFocusOnSubmit`).
+    read Submitted: Signal<string>
+    --- The player changed the text -- typing, a paste, a cut, an undo -- with the text now. A script's
+    --- own write to `Text` does not fire it; `GetPropertyChangedSignal("Text")` fires for both.
+    read TextChanged: Signal<string>
+    --- What `MaxLength` kept out of an edit.
+    read InputRejected: Signal<string>
+    --- Takes the keyboard, as a press on it would: another field loses it with
+    --- `Enum.FocusLossReason.Script`. Takes effect at the next frame.
+    function CaptureFocus(self): ()
+    --- Lets go of the keyboard; `FocusLost` fires with `submitted` (false when omitted) and
+    --- `Enum.FocusLossReason.Script`. Takes effect at the next frame.
+    function ReleaseFocus(self, submitted: boolean?): ()
+    --- Whether it has the keyboard now.
+    function IsFocused(self): boolean
 end
 
 declare extern type ImageLabel extends UIObject with
@@ -3433,6 +3489,13 @@ declare extern type UIService extends Instance with
     --- game starts. A layout reads the new `AbsoluteSize` on the next frame. Nothing on a desktop,
     --- whose window does not turn.
     ScreenOrientation: EnumScreenOrientation
+    --- A `TextInput` took the keyboard.
+    read TextInputFocused: Signal<TextInput>
+    --- A `TextInput` let go of it.
+    read TextInputFocusReleased: Signal<TextInput>
+    --- The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks before it
+    --- opens the box.
+    function GetFocusedTextInput(self): TextInput?
 end
 
 declare extern type AudioService extends Instance with
@@ -4031,6 +4094,22 @@ declare Enum: {
         Character: EnumRenderPriority,
         Last: EnumRenderPriority,
         GetEnumItems: (self: any) -> { EnumRenderPriority },
+    },
+    FocusLossReason: {
+        Submitted: EnumFocusLossReason,
+        Moved: EnumFocusLossReason,
+        Cancelled: EnumFocusLossReason,
+        Script: EnumFocusLossReason,
+        GetEnumItems: (self: any) -> { EnumFocusLossReason },
+    },
+    TextInputKeyboard: {
+        Default: EnumTextInputKeyboard,
+        Number: EnumTextInputKeyboard,
+        Decimal: EnumTextInputKeyboard,
+        Phone: EnumTextInputKeyboard,
+        Email: EnumTextInputKeyboard,
+        Url: EnumTextInputKeyboard,
+        GetEnumItems: (self: any) -> { EnumTextInputKeyboard },
     },
 }
 

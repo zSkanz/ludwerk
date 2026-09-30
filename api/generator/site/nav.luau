@@ -135,6 +135,7 @@ local Sections: { Section } = {
             { Slug = "text-and-images", Title = "Text and images" },
             { Slug = "gradients-and-strokes", Title = "Gradients and strokes" },
             { Slug = "interaction", Title = "Buttons and interaction" },
+            { Slug = "text-input", Title = "Text input" },
             { Slug = "world-space", Title = "UI in the world" },
         },
     },

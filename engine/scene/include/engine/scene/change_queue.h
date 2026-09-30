@@ -14,6 +14,9 @@
 #pragma once
 
 #include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -73,6 +76,16 @@ enum class ChangeKind : u8
     // (D215). The value rides in `other.index` -- 1 or 0 -- with `other`'s
     // generation zero, so it can never resolve as an instance.
     InstanceEventBool,
+
+    // The same, carrying one string: `TextInput.Submitted`, `TextChanged` and
+    // `InputRejected` (ADR 0139). The text is in the queue's own arena, its
+    // index in `other.index` -- never an atom, which would keep every chat
+    // message a player ever typed for the life of the process.
+    InstanceEventText,
+
+    // `TextInput.FocusLost(submitted, reason)` (ADR 0139): `submitted` in
+    // `other.index`, the `Enum.FocusLossReason` value in `other.generation`.
+    FocusLost,
 };
 
 // A boolean in the shape `InstanceEventBool` carries it.
@@ -102,6 +115,21 @@ class ChangeQueue
 public:
     void push(const Change& change) { m_entries.push_back(change); }
 
+    // Pushes `InstanceEventText` for `subject`'s event `name`, carrying `text`.
+    void pushText(core::InstanceId subject, core::NameAtom name, std::string text)
+    {
+        m_texts.push_back(std::move(text));
+        m_entries.push_back(Change{ChangeKind::InstanceEventText, subject,
+                                   core::InstanceId{static_cast<u32>(m_texts.size() - 1), 0}, name});
+    }
+
+    // The text an `InstanceEventText` of the last `take` carries.
+    [[nodiscard]] std::string_view drainedText(const Change& change) const noexcept
+    {
+        return change.other.index < m_drainedTexts.size() ? std::string_view(m_drainedTexts[change.other.index])
+                                                          : std::string_view{};
+    }
+
     // The consumer must finish with the span before the next `push`, which is
     // the natural shape of a drain: `script` copies what it needs into its own
     // structures as it resolves connections.
@@ -109,6 +137,8 @@ public:
     {
         m_drained.swap(m_entries);
         m_entries.clear();
+        m_drainedTexts.swap(m_texts);
+        m_texts.clear();
         return m_drained;
     }
 
@@ -119,6 +149,8 @@ public:
     {
         m_entries.clear();
         m_drained.clear();
+        m_texts.clear();
+        m_drainedTexts.clear();
     }
 
 private:
@@ -126,6 +158,9 @@ private:
     // Swapped rather than copied, so a drain costs no allocation and the
     // storage is reused frame after frame.
     std::vector<Change> m_drained;
+    // `InstanceEventText`'s strings, swapped with the entries.
+    std::vector<std::string> m_texts;
+    std::vector<std::string> m_drainedTexts;
 };
 
 } // namespace engine::scene

@@ -77,6 +77,10 @@ field.FocusLost:Connect(function(submitted: boolean)
 end)
 ```
 
+Everything else a field does -- selection, the clipboard, undo, several lines,
+a password, focus from code -- is on its own page:
+[Text input](manual:ui/text-input).
+
 `submitted` is true when the field was left by pressing Return (or the
 keypad's Enter), and false when a press elsewhere took the focus.
 
@@ -129,4 +133,5 @@ counts as pressed past half deflection.
 
 - [Actions, bindings and contexts](manual:input/actions)
 - [The UI tree](manual:ui/tree)
+- [Text input](manual:ui/text-input)
 - [`UIObject`](api:UIObject)

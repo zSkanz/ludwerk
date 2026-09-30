@@ -1528,8 +1528,44 @@ struct TextInputComponent
     // of a string somebody just shortened is a crash rather than a wrong
     // picture.
     u32 caret = 0;
+    // The selection's other end (ADR 0139), equal to `caret` when nothing is
+    // selected. Bytes, on a character boundary, as `caret` is.
+    u32 anchor = 0;
 
     bool focused = false;
+
+    // --- The properties (ADR 0139 §2) -----------------------------------------
+    core::Color3 placeholderColor{178.0f / 255.0f, 178.0f / 255.0f, 178.0f / 255.0f};
+    bool multiLine = false;
+    bool editable = true;
+    bool masked = false;
+    bool clearTextOnFocus = false;
+    bool selectAllOnFocus = false;
+    bool releaseFocusOnSubmit = true;
+    bool revertOnEscape = false;
+    u32 maxLength = 0;
+    std::string maskCharacter = "\xE2\x80\xA2";
+    // `Enum.TextInputKeyboard`.
+    i32 keyboardType = 0;
+
+    // --- What the interaction and the drawing share ----------------------------
+    //
+    // **A script wrote `Text`** since the interaction last looked: its editing
+    // session -- the undo history above all -- starts again, since what it
+    // would undo to is not the player's.
+    bool textReplaced = false;
+    // An input method's text being composed at the caret, and its cursor in
+    // bytes of it; empty when nothing is being composed.
+    std::string composition;
+    u32 compositionCursor = 0;
+    // How far the text is scrolled to keep the caret in view, in pixels.
+    core::Vec2 scroll;
+    // The caret's blink: drawn or not this frame.
+    bool caretVisible = true;
+    // A script's `CaptureFocus` (1) or `ReleaseFocus` (-1), taken at the next
+    // frame by the interaction, which is what owns focus.
+    core::i8 focusRequest = 0;
+    bool releaseSubmitted = false;
 };
 
 struct ImageLabelComponent

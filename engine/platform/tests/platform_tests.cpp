@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,6 +15,7 @@
 
 #include "engine/core/i18n.h"
 #include "engine/core/text_key.h"
+#include "engine/platform/clipboard.h"
 #include "engine/platform/event.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
@@ -232,6 +234,78 @@ TEST_CASE("the pump translates pointer, wheel and text events")
     const auto scrolled = std::ranges::find_if(events, [](const auto& e) { return e.type == EventType::MouseWheel; });
     REQUIRE(scrolled != events.end());
     CHECK(scrolled->wheelY == doctest::Approx(-2.0));
+}
+
+TEST_CASE("a text field's events: the modifiers, the press count, composition and long text (ADR 0139)")
+{
+    using engine::platform::EventType;
+    using engine::platform::KeyModifier;
+
+    HeadlessPlatform platform;
+    static_cast<void>(engine::platform::pumpEvents());
+
+    // Ctrl+Shift+Left: what selects a word to the left.
+    SDL_Event key{};
+    key.type = SDL_EVENT_KEY_DOWN;
+    key.key.scancode = SDL_SCANCODE_LEFT;
+    key.key.mod = SDL_KMOD_LCTRL | SDL_KMOD_RSHIFT;
+    key.key.down = true;
+    REQUIRE(SDL_PushEvent(&key));
+
+    // A double press.
+    SDL_Event press{};
+    press.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    press.button.button = SDL_BUTTON_LEFT;
+    press.button.down = true;
+    press.button.clicks = 2;
+    REQUIRE(SDL_PushEvent(&press));
+
+    // An input method's composition, with its cursor.
+    SDL_Event editing{};
+    editing.type = SDL_EVENT_TEXT_EDITING;
+    editing.edit.text = SDL_strdup("\xE3\x81\x8B\xE3\x81\xAA"); // two kana
+    editing.edit.start = 1;
+    editing.edit.length = 1;
+    REQUIRE(SDL_PushEvent(&editing));
+
+    // A whole phrase committed at once -- longer than a keystroke's text.
+    const std::string phrase(120, 'x');
+    SDL_Event committed{};
+    committed.type = SDL_EVENT_TEXT_INPUT;
+    committed.text.text = SDL_strdup(phrase.c_str());
+    REQUIRE(SDL_PushEvent(&committed));
+
+    const auto events = engine::platform::pumpEvents();
+
+    const auto down = std::ranges::find_if(events, [](const auto& e) { return e.type == EventType::KeyDown; });
+    REQUIRE(down != events.end());
+    CHECK((down->modifiers & KeyModifier::Ctrl) != 0);
+    CHECK((down->modifiers & KeyModifier::Shift) != 0);
+    CHECK((down->modifiers & KeyModifier::Alt) == 0);
+
+    const auto clicked =
+        std::ranges::find_if(events, [](const auto& e) { return e.type == EventType::MouseButtonDown; });
+    REQUIRE(clicked != events.end());
+    CHECK(clicked->clicks == 2);
+
+    const auto composing = std::ranges::find_if(events, [](const auto& e) { return e.type == EventType::TextEditing; });
+    REQUIRE(composing != events.end());
+    CHECK(std::string_view(composing->text) == "\xE3\x81\x8B\xE3\x81\xAA");
+    CHECK(composing->editStart == 1);
+    CHECK(composing->editLength == 1);
+
+    const auto typed = std::ranges::find_if(events, [](const auto& e) { return e.type == EventType::TextInput; });
+    REQUIRE(typed != events.end());
+    CHECK(std::string_view(typed->text) == phrase);
+}
+
+TEST_CASE("the clipboard carries text in and out (ADR 0139)")
+{
+    HeadlessPlatform platform;
+    REQUIRE(engine::platform::setClipboardText("copied \xC3\xA9"));
+    const std::optional<std::string> read = engine::platform::clipboardText();
+    REQUIRE(read.has_value());
+    CHECK(*read == "copied \xC3\xA9");
 }
 
 TEST_CASE("a gamepad axis is normalized by what the axis IS")

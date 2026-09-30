@@ -16,6 +16,7 @@ engine_add_module(platform
         src/window.cpp
         src/process.cpp
         src/events.cpp
+        src/clipboard.cpp
         src/console.cpp
         src/crash.cpp
         src/stop_signal.cpp

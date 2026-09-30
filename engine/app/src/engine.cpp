@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -74,6 +75,7 @@
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/jobs/jobs.h"
+#include "engine/platform/clipboard.h"
 #include "engine/platform/event.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
@@ -100,6 +102,7 @@
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/scene_file.h"
 #include "engine/script/modules.h"
+#include "engine/ui/text_edit.h"
 #include "engine/ui/ui.h"
 
 #if ENG_RHI_CAPTURE
@@ -119,6 +122,101 @@ namespace {
 // **Every way out of play** (audit A5): the Stop button and the device-lost
 // save did this, and a save-all or an open scene from play did not -- a save
 // wrote the text from before play over what was on the screen.
+// **What a key does to a text field** (ADR 0139), or nothing: the shortcuts
+// every text field has, with Ctrl where the system's own fields use it -- and
+// Cmd, with Option for words, on a Mac. The text a key types arrives on its
+// own as `TextInput`.
+[[nodiscard]] std::optional<ui::TextCommand> textCommandOf(const platform::Event& event)
+{
+    using Kind = ui::TextCommand::Kind;
+    const bool shift = (event.modifiers & platform::KeyModifier::Shift) != 0;
+#if defined(__APPLE__)
+    const bool primary = (event.modifiers & platform::KeyModifier::System) != 0;
+    const bool word = (event.modifiers & platform::KeyModifier::Alt) != 0;
+#else
+    const bool primary = (event.modifiers & platform::KeyModifier::Ctrl) != 0;
+    const bool word = primary;
+#endif
+    ui::TextCommand command;
+    command.extend = shift;
+    command.word = word;
+    command.ctrl = primary;
+    const auto moving = [&](ui::TextMove move) {
+        command.kind = Kind::Move;
+        command.move = static_cast<core::u8>(move);
+        return command;
+    };
+    switch (event.key) {
+    case platform::Key::Left:
+        return moving(word ? ui::TextMove::WordLeft : ui::TextMove::Left);
+    case platform::Key::Right:
+        return moving(word ? ui::TextMove::WordRight : ui::TextMove::Right);
+    case platform::Key::Home:
+        return moving(primary ? ui::TextMove::TextStart : ui::TextMove::LineStart);
+    case platform::Key::End:
+        return moving(primary ? ui::TextMove::TextEnd : ui::TextMove::LineEnd);
+    case platform::Key::Up:
+        command.kind = Kind::LineUp;
+        return command;
+    case platform::Key::Down:
+        command.kind = Kind::LineDown;
+        return command;
+    case platform::Key::Backspace:
+        command.kind = Kind::DeleteBackward;
+        return command;
+    case platform::Key::Delete:
+        // Shift+Delete is the old cut, and still is.
+        command.kind = shift && !primary ? Kind::Cut : Kind::DeleteForward;
+        return command;
+    case platform::Key::Insert:
+        if (primary && !shift) {
+            command.kind = Kind::Copy;
+            return command;
+        }
+        if (shift && !primary) {
+            command.kind = Kind::Paste;
+            return command;
+        }
+        return std::nullopt;
+    case platform::Key::Return:
+    case platform::Key::KeypadEnter:
+        command.kind = Kind::Return;
+        return command;
+    case platform::Key::Escape:
+        command.kind = Kind::Escape;
+        return command;
+    case platform::Key::Tab:
+        command.kind = Kind::Tab;
+        return command;
+    default:
+        break;
+    }
+    if (!primary)
+        return std::nullopt;
+    switch (event.key) {
+    case platform::Key::A:
+        command.kind = Kind::SelectAll;
+        return command;
+    case platform::Key::C:
+        command.kind = Kind::Copy;
+        return command;
+    case platform::Key::X:
+        command.kind = Kind::Cut;
+        return command;
+    case platform::Key::V:
+        command.kind = Kind::Paste;
+        return command;
+    case platform::Key::Z:
+        command.kind = shift ? Kind::Redo : Kind::Undo;
+        return command;
+    case platform::Key::Y:
+        command.kind = Kind::Redo;
+        return command;
+    default:
+        return std::nullopt;
+    }
+}
+
 void writeTypedSources(scene::World& world, const ScriptEditor& scripts, Editor& editor)
 {
     const core::NameAtom sourceKey = world.atoms().intern("Source");
@@ -1216,6 +1314,21 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     bool uiCaretHome = false;
     bool uiCaretEnd = false;
     bool uiSubmit = false;
+    // **A text field's whole keyboard, in order** (ADR 0139): each key with
+    // its modifiers and each piece of typed text, as commands. The texts live
+    // in a deque so the commands' views stay valid while it grows.
+    std::vector<ui::TextCommand> uiCommands;
+    std::deque<std::string> uiCommandTexts;
+    // An input method's composition, as the platform last reported it.
+    std::string uiComposition;
+    i32 uiCompositionCursor = 0;
+    bool uiCompositionChanged = false;
+    core::u8 uiClicks = 1;
+    bool uiShiftPress = false;
+    // What the platform's text input was last started with, so a change of
+    // field or of keyboard restarts it.
+    core::InstanceId uiTextInputFor;
+    i32 uiTextInputKind = -1;
     render::DebugDraw debugDraw;
     ui::DrawList uiDrawList;
     // One tree's canvas at a time, for the world-space UI (F3).
@@ -4303,20 +4416,46 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiCaretHome = false;
             uiCaretEnd = false;
             uiSubmit = false;
+            uiCommands.clear();
+            uiCommandTexts.clear();
+            uiCompositionChanged = false;
             for (const platform::Event& event : events) {
                 switch (event.type) {
                 case platform::EventType::MouseButtonDown:
-                    if (event.button == platform::MouseButton::Left)
+                    if (event.button == platform::MouseButton::Left) {
                         uiPointerDown = true;
+                        uiClicks = event.clicks > 0 ? event.clicks : 1;
+                        uiShiftPress = (event.modifiers & platform::KeyModifier::Shift) != 0;
+                    }
+                    break;
+                case platform::EventType::TextEditing:
+                    uiComposition = event.text;
+                    uiCompositionCursor = event.editStart;
+                    uiCompositionChanged = true;
                     break;
                 case platform::EventType::MouseButtonUp:
                     if (event.button == platform::MouseButton::Left)
                         uiPointerDown = false;
                     break;
-                case platform::EventType::TextInput:
+                case platform::EventType::TextInput: {
                     uiTypedText.append(event.text);
+                    // A control character is a shortcut's, never text: Ctrl+A
+                    // must select, not type.
+                    const std::string_view typed = event.text;
+                    if (std::any_of(typed.begin(), typed.end(),
+                                    [](char c) { return static_cast<unsigned char>(c) >= 0x20 && c != 0x7F; })) {
+                        ui::TextCommand insert;
+                        insert.kind = ui::TextCommand::Kind::Insert;
+                        insert.text = uiCommandTexts.emplace_back(typed);
+                        uiCommands.push_back(insert);
+                    }
+                    // Committed text ends a composition.
+                    uiComposition.clear();
                     break;
+                }
                 case platform::EventType::KeyDown:
+                    if (const std::optional<ui::TextCommand> command = textCommandOf(event); command.has_value())
+                        uiCommands.push_back(*command);
                     if (event.key == platform::Key::Backspace)
                         uiBackspace = true;
                     else if (event.key == platform::Key::Return || event.key == platform::Key::KeypadEnter)
@@ -4727,6 +4866,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             interaction.caretHome = uiCaretHome;
             interaction.caretEnd = uiCaretEnd;
             interaction.submit = uiSubmit;
+            interaction.commands = uiCommands;
+            interaction.composition = uiComposition;
+            interaction.compositionCursor = uiCompositionCursor;
+            interaction.compositionChanged = uiCompositionChanged;
+            interaction.clicks = uiClicks;
+            interaction.shiftPress = uiShiftPress;
+            interaction.pointerHeld = uiPointerDown;
+            interaction.time = static_cast<f64>(platform::nowNs()) / 1.0e9;
+            interaction.readClipboard = []() { return platform::clipboardText(); };
+            interaction.writeClipboard = [](std::string_view text) { (void)platform::setClipboardText(text); };
             // **A button printed on a wall is a button** (F3): the pointer's ray
             // into the world, met with every `SurfaceGui` and `BillboardGui`,
             // and hidden by anything solid in front of the canvas -- asked of
@@ -4771,6 +4920,28 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 const bool editorTyping = overlay.has_value() && overlay->editorTyping();
                 if (const std::optional<bool> typing = textInputFocus.follow(uiResult.textInputFocused, editorTyping))
                     platform::setTextInputEnabled(platform::windowId(*window), *typing);
+                // **The keyboard the focused field asks for** (ADR 0139): a
+                // phone raises it, and a new field or a new kind restarts it.
+                const i32 kind =
+                    uiResult.masked ? static_cast<i32>(platform::TextInputKind::Password) : uiResult.keyboardType;
+                if (uiResult.textInputFocused && (uiResult.focusedInput != uiTextInputFor || kind != uiTextInputKind)) {
+                    platform::TextInputOptions keyboard;
+                    keyboard.kind = static_cast<platform::TextInputKind>(kind);
+                    keyboard.multiLine = uiResult.multiLine;
+                    platform::setTextInputEnabled(platform::windowId(*window), true, keyboard);
+                }
+                uiTextInputFor = uiResult.focusedInput;
+                uiTextInputKind = uiResult.textInputFocused ? kind : -1;
+                // Where the caret is, so an input method's candidates open
+                // beside it. The game's own screen only: the editor draws the
+                // game into a panel whose place the interface does not know.
+                if (uiResult.textInputFocused && !overlay.has_value()) {
+                    const core::Rect caret = uiResult.caret;
+                    platform::setTextInputArea(platform::windowId(*window), static_cast<i32>(caret.min.x),
+                                               static_cast<i32>(caret.min.y),
+                                               static_cast<i32>(caret.max.x - caret.min.x) + 1,
+                                               static_cast<i32>(caret.max.y - caret.min.y), 0);
+                }
             }
 
             ui::buildDrawList(host->world(), host->uiService(), uiDrawList);

@@ -167,6 +167,17 @@ Which way a `UIListLayout` stacks its siblings (§2.2).
 | `Horizontal` | 0 |  |
 | `Vertical` | 1 |  |
 
+## Enum.FocusLossReason
+
+Why a `TextInput` stopped taking the keyboard (ADR 0139): what `FocusLost` says beside `submitted`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Submitted` | 0 | Return, in a field that lets go on submit. |
+| `Moved` | 1 | A press somewhere else, or Tab to the next field. |
+| `Cancelled` | 2 | Escape; with `RevertOnEscape` the text is what it was when focus came. |
+| `Script` | 3 | `ReleaseFocus`, another field's `CaptureFocus`, or the field leaving the screen. |
+
 ## Enum.GradientTileMode
 
 What a `UIGradient` draws past the end of its sequence.
@@ -620,6 +631,19 @@ What a stroke of `Terrain:PaintBall` does with the two materials a voxel holds (
 | `Blend` | 1 | The material shows more over what is there, by the strength. |
 | `Under` | 2 | The material goes under what was painted over it. |
 | `Erase` | 3 | What was painted over shows less, revealing what is under. |
+
+## Enum.TextInputKeyboard
+
+The on-screen keyboard a phone raises for a `TextInput` (ADR 0139), and the hint a desktop input method reads. A masked field raises a password keyboard whatever this says.
+
+| Item | Value | Description |
+|---|---|---|
+| `Default` | 0 | Letters, with the system's suggestions. |
+| `Number` | 1 | Digits. |
+| `Decimal` | 2 | Digits and a decimal point. |
+| `Phone` | 3 | A phone's dial pad. |
+| `Email` | 4 | An address, with `@` at hand. |
+| `Url` | 5 | A web address, with `/` and `.` at hand. |
 
 ## Enum.TextureFilter
 

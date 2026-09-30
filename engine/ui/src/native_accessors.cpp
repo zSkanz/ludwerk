@@ -15,6 +15,7 @@
 // the engine.
 #include "engine/scene/world.h"
 #include "engine/ui/scene_types.h"
+#include "engine/ui/text_edit.h"
 
 // By a path relative to this file rather than through an include directory:
 // every module's generated header has the same name, so two of them on one
@@ -398,8 +399,10 @@ bool setTextLabelText(scene::World& world, core::InstanceId id, const Value& val
     // it is the only answer that is always in range. A caret left where it was
     // points into a string that no longer exists: at best somewhere arbitrary,
     // at worst inside a UTF-8 sequence.
-    if (scene::TextInputComponent* field = world.textInputs().find(id); field != nullptr)
-        field->caret = static_cast<core::u32>(component->text.size());
+    if (scene::TextInputComponent* field = world.textInputs().find(id); field != nullptr) {
+        field->caret = field->anchor = static_cast<core::u32>(component->text.size());
+        field->textReplaced = true;
+    }
     markLayoutDirty(world, id);
     return true;
 }
@@ -596,6 +599,232 @@ bool setTextInputPlaceholderText(scene::World& world, core::InstanceId id, const
         return false;
     component->placeholderText = *text;
     markLayoutDirty(world, id);
+    return true;
+}
+
+namespace {
+
+// The boolean properties of a `TextInput`, one accessor pair each through
+// this, since they differ only in the member.
+template <bool scene::TextInputComponent::*Member>
+Value getInputFlag(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->*Member};
+}
+
+template <bool scene::TextInputComponent::*Member>
+bool setInputFlag(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->*Member = *flag;
+    markLayoutDirty(world, id);
+    return true;
+}
+
+// A 1-based byte position, or -1, from a caret offset: what a script reads.
+[[nodiscard]] Value position(core::u32 offset) noexcept
+{
+    return Value{static_cast<f64>(offset) + 1.0};
+}
+
+// A script's 1-based position as a byte offset, clamped into the text.
+[[nodiscard]] bool offsetFrom(const scene::World& world, core::InstanceId id, const Value& value, core::u32& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    if (number == nullptr || label == nullptr || !isFinite(*number))
+        return false;
+    const f64 clamped = std::fmax(1.0, std::fmin(*number, static_cast<f64>(label->text.size()) + 1.0));
+    out = static_cast<core::u32>(clamped) - 1;
+    return true;
+}
+
+} // namespace
+
+Value getTextInputPlaceholderColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->placeholderColor};
+}
+
+bool setTextInputPlaceholderColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* color = std::get_if<core::Color3>(&value);
+    if (component == nullptr || color == nullptr)
+        return false;
+    component->placeholderColor = *color;
+    return true;
+}
+
+Value getTextInputMultiLine(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::multiLine>(world, id);
+}
+
+bool setTextInputMultiLine(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::multiLine>(world, id, value);
+}
+
+Value getTextInputEditable(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::editable>(world, id);
+}
+
+bool setTextInputEditable(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::editable>(world, id, value);
+}
+
+Value getTextInputMasked(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::masked>(world, id);
+}
+
+bool setTextInputMasked(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::masked>(world, id, value);
+}
+
+Value getTextInputClearTextOnFocus(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::clearTextOnFocus>(world, id);
+}
+
+bool setTextInputClearTextOnFocus(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::clearTextOnFocus>(world, id, value);
+}
+
+Value getTextInputSelectAllOnFocus(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::selectAllOnFocus>(world, id);
+}
+
+bool setTextInputSelectAllOnFocus(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::selectAllOnFocus>(world, id, value);
+}
+
+Value getTextInputReleaseFocusOnSubmit(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::releaseFocusOnSubmit>(world, id);
+}
+
+bool setTextInputReleaseFocusOnSubmit(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::releaseFocusOnSubmit>(world, id, value);
+}
+
+Value getTextInputRevertOnEscape(const scene::World& world, core::InstanceId id)
+{
+    return getInputFlag<&scene::TextInputComponent::revertOnEscape>(world, id);
+}
+
+bool setTextInputRevertOnEscape(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return setInputFlag<&scene::TextInputComponent::revertOnEscape>(world, id, value);
+}
+
+Value getTextInputMaxLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->maxLength)};
+}
+
+bool setTextInputMaxLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !isFinite(*number) || *number < 0.0 || *number > 1.0e9)
+        return false;
+    component->maxLength = static_cast<core::u32>(*number);
+    return true;
+}
+
+Value getTextInputMaskCharacter(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{} : Value{component->maskCharacter};
+}
+
+bool setTextInputMaskCharacter(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const auto* text = std::get_if<std::string>(&value);
+    if (component == nullptr || text == nullptr)
+        return false;
+    // Its first character only: a mask is one glyph a character.
+    component->maskCharacter = text->substr(0, ui::nextCharacter(*text, 0));
+    markLayoutDirty(world, id);
+    return true;
+}
+
+Value getTextInputKeyboardType(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    return component == nullptr ? Value{}
+                                : Value{scene::EnumValue{generated::TextInputKeyboardEnumId, component->keyboardType}};
+}
+
+bool setTextInputKeyboardType(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return false;
+    core::i32 item = 0;
+    if (!takeEnum(world, value, generated::TextInputKeyboardEnumId, item))
+        return false;
+    component->keyboardType = item;
+    return true;
+}
+
+Value getTextInputCursorPosition(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return Value{};
+    return component->focused ? position(component->caret) : Value{-1.0};
+}
+
+bool setTextInputCursorPosition(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    core::u32 at = 0;
+    if (component == nullptr || label == nullptr || !offsetFrom(world, id, value, at))
+        return false;
+    component->caret = component->anchor = ui::characterBoundary(label->text, at);
+    return true;
+}
+
+Value getTextInputSelectionStart(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextInputComponent* component = world.textInputs().find(id);
+    if (component == nullptr)
+        return Value{};
+    return component->focused && component->anchor != component->caret ? position(component->anchor) : Value{-1.0};
+}
+
+bool setTextInputSelectionStart(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextInputComponent* component = world.textInputs().find(id);
+    const scene::TextLabelComponent* label = world.textLabels().find(id);
+    if (component == nullptr || label == nullptr)
+        return false;
+    if (const auto* number = std::get_if<f64>(&value); number != nullptr && *number < 0.0) {
+        component->anchor = component->caret;
+        return true;
+    }
+    core::u32 at = 0;
+    if (!offsetFrom(world, id, value, at))
+        return false;
+    component->anchor = ui::characterBoundary(label->text, at);
     return true;
 }
 

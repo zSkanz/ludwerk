@@ -15,7 +15,9 @@
 #include <vector>
 
 #include "engine/scene/world.h"
+#include "engine/ui/text_edit.h"
 #include "engine/ui/ui.h"
+#include "text_field.h"
 
 namespace engine::ui {
 namespace {
@@ -38,6 +40,17 @@ struct InteractionState
     // rely on to change their minds.
     core::InstanceId pressedOn;
     core::InstanceId focused;
+
+    // **The focused field's editing session** (ADR 0139): its undo history
+    // above all, which is the player's for as long as the field has focus and
+    // nobody else's. One, because one field has focus.
+    TextEditState session;
+    // Its text when it took focus, for `RevertOnEscape`.
+    std::string focusText;
+    // A press in the field is being dragged: the selection follows it.
+    bool dragging = false;
+    // When the player last did something in it, for the caret's blink.
+    core::f64 lastActivity = 0.0;
 };
 
 InteractionState g_state;
@@ -53,15 +66,6 @@ void fire(scene::World& world, core::InstanceId subject, const char* event)
         return;
     world.changes().push(
         scene::Change{scene::ChangeKind::InstanceEventNoArgs, subject, {}, world.atoms().intern(event)});
-}
-
-// `FocusLost`, with whether Return left the field (D215).
-void focusLost(scene::World& world, core::InstanceId subject, bool submitted)
-{
-    if (!subject.valid() || !world.alive(subject))
-        return;
-    world.changes().push(scene::Change{scene::ChangeKind::InstanceEventBool, subject, scene::eventFlag(submitted),
-                                       world.atoms().intern("FocusLost")});
 }
 
 // Depth-first, in draw order, keeping the LAST hit: the element drawn on top is
@@ -93,89 +97,169 @@ void probe(const scene::World& world, core::InstanceId id, Vec2 point, Rect clip
         probe(world, child, point, childClip, best, bestZ);
 }
 
-// Whether a byte is a UTF-8 continuation, which is what makes "one character"
-// a thing this file can step over.
-[[nodiscard]] bool isContinuation(char c) noexcept
+// --- The focused field (ADR 0139) ---------------------------------------------
+
+// `FocusLost(submitted, reason)` for `subject`.
+void focusLost(scene::World& world, core::InstanceId subject, bool submitted, u32 reason)
 {
-    return (static_cast<unsigned char>(c) & 0xC0u) == 0x80u;
+    if (!subject.valid() || !world.alive(subject))
+        return;
+    world.changes().push(scene::Change{scene::ChangeKind::FocusLost, subject,
+                                       core::InstanceId{submitted ? 1u : 0u, reason},
+                                       world.atoms().intern("FocusLost")});
 }
 
-// The offset one whole code point before `at`, or 0. Bytes everywhere except
-// where a step has to be a character: taking one byte off a two-byte sequence
-// leaves a string no renderer can read.
-[[nodiscard]] usize stepBack(std::string_view text, usize at) noexcept
+// `UIService`'s own pair of focus events, carrying the field.
+void serviceEvent(scene::World& world, core::InstanceId uiService, const char* event, core::InstanceId input)
 {
-    if (at == 0)
-        return 0;
-    usize cut = at - 1;
-    while (cut > 0 && isContinuation(text[cut]))
-        --cut;
-    return cut;
+    if (!uiService.valid() || !world.alive(uiService) || !world.alive(input))
+        return;
+    world.changes().push(
+        scene::Change{scene::ChangeKind::InstanceEvent, uiService, input, world.atoms().intern(event)});
 }
 
-// The offset one whole code point after `at`, or the end.
-[[nodiscard]] usize stepForward(std::string_view text, usize at) noexcept
+void textEvent(scene::World& world, core::InstanceId subject, const char* event, std::string text)
 {
-    if (at >= text.size())
-        return text.size();
-    usize next = at + 1;
-    while (next < text.size() && isContinuation(text[next]))
-        ++next;
-    return next;
+    if (!subject.valid() || !world.alive(subject))
+        return;
+    world.changes().pushText(subject, world.atoms().intern(event), std::move(text));
 }
 
-// Applies one frame's typing at `caret`, and moves it (S6.7).
-//
-// **Order is what makes this correct**: delete, then insert, then move -- a
-// frame that saw a backspace AND text is one where the platform delivered both,
-// and inserting first would put the new character where the old one was about to
-// be taken from.
-//
-// `caret` is clamped in rather than trusted, because `Text` is a property a
-// script may assign at any moment and a caret past the end of a string somebody
-// just shortened is a crash rather than a wrong picture.
-void edit(std::string& text, u32& caret, std::string_view added, bool backspace, bool forwardDelete)
+// The layout of the screen `id` is on is stale: its text changed.
+void markScreenDirty(scene::World& world, core::InstanceId id)
 {
-    usize at = std::min(static_cast<usize>(caret), text.size());
-    // And onto a boundary, in case the assignment left it inside a sequence.
-    while (at > 0 && at < text.size() && isContinuation(text[at]))
-        --at;
-
-    if (backspace && at > 0) {
-        const usize from = stepBack(text, at);
-        text.erase(from, at - from);
-        at = from;
+    for (core::InstanceId current = id; current.valid(); current = world.parentOf(current)) {
+        if (scene::ScreenGuiComponent* tree = world.screenGuis().find(current); tree != nullptr) {
+            tree->layoutDirty = true;
+            return;
+        }
     }
-    if (forwardDelete && at < text.size()) {
-        const usize to = stepForward(text, at);
-        text.erase(at, to - at);
-    }
-    if (!added.empty()) {
-        text.insert(at, added);
-        at += added.size();
-    }
-
-    caret = static_cast<u32>(at);
 }
 
-// Moves the caret without touching the text. Separate from `edit` because a
-// frame can do either, both, or neither, and one function that did all of it
-// would decide an order nobody asked about.
-void moveCaret(std::string_view text, u32& caret, const InteractionInput& input)
+// `Enum.FocusLossReason`'s values.
+constexpr u32 LostSubmitted = 0;
+constexpr u32 LostMoved = 1;
+constexpr u32 LostCancelled = 2;
+constexpr u32 LostScript = 3;
+
+[[nodiscard]] TextEditRules rulesOf(const scene::TextInputComponent& field) noexcept
 {
-    usize at = std::min(static_cast<usize>(caret), text.size());
+    TextEditRules rules;
+    rules.maxLength = field.maxLength;
+    rules.multiLine = field.multiLine;
+    rules.masked = field.masked;
+    rules.editable = field.editable;
+    return rules;
+}
+
+void releaseFocus(scene::World& world, core::InstanceId uiService, bool submitted, u32 reason)
+{
+    const core::InstanceId was = g_state.focused;
+    if (!was.valid())
+        return;
+    if (scene::TextInputComponent* field = world.textInputs().find(was); field != nullptr) {
+        field->focused = false;
+        field->composition.clear();
+        field->anchor = field->caret;
+    }
+    g_state.focused = {};
+    g_state.dragging = false;
+    focusLost(world, was, submitted, reason);
+    serviceEvent(world, uiService, "TextInputFocusReleased", was);
+}
+
+// Gives `id` the keyboard; whatever had it loses it for `reason`.
+void takeFocus(scene::World& world, core::InstanceId uiService, core::InstanceId id, u32 reason)
+{
+    if (const scene::TextInputComponent* already = world.textInputs().find(id);
+        g_state.focused == id && already != nullptr && already->focused)
+        return;
+    releaseFocus(world, uiService, false, reason);
+    scene::TextInputComponent* field = world.textInputs().find(id);
+    scene::TextLabelComponent* label = world.textLabels().find(id);
+    if (field == nullptr || label == nullptr)
+        return;
+    field->focused = true;
+    field->textReplaced = false;
+    g_state.focused = id;
+    g_state.focusText = label->text;
+    setText(g_state.session, label->text);
+    if (field->clearTextOnFocus && !label->text.empty()) {
+        label->text.clear();
+        setText(g_state.session, {});
+        world.changes().push(scene::Change{scene::ChangeKind::PropertyChanged, id, {}, world.atoms().intern("Text")});
+        markScreenDirty(world, id);
+    }
+    if (field->selectAllOnFocus)
+        selectAll(g_state.session);
+    field->caret = g_state.session.caret;
+    field->anchor = g_state.session.anchor;
+    fire(world, id, "Focused");
+    serviceEvent(world, uiService, "TextInputFocused", id);
+}
+
+// The field after (or before) `from` on its screen, in document order, round
+// the end: where Tab goes.
+[[nodiscard]] core::InstanceId neighbourField(const scene::World& world, core::InstanceId from, bool backwards)
+{
+    core::InstanceId screen = from;
+    while (screen.valid() && world.screenGuis().find(screen) == nullptr)
+        screen = world.parentOf(screen);
+    if (!screen.valid())
+        return {};
+    std::vector<core::InstanceId> all;
+    world.collectDescendants(screen, all);
+    std::vector<core::InstanceId> fields;
+    for (const core::InstanceId id : all) {
+        const scene::UIObjectComponent* object = world.uiObjects().find(id);
+        if (world.textInputs().find(id) != nullptr && object != nullptr && object->visible)
+            fields.push_back(id);
+    }
+    const auto here = std::find(fields.begin(), fields.end(), from);
+    if (fields.size() < 2 || here == fields.end())
+        return {};
+    const usize index = static_cast<usize>(here - fields.begin());
+    const usize next = backwards ? (index + fields.size() - 1) % fields.size() : (index + 1) % fields.size();
+    return fields[next];
+}
+
+// The text offset under the pointer in the focused field.
+[[nodiscard]] u32 offsetUnder(const scene::World& world, core::InstanceId id, Vec2 pointer)
+{
+    const FieldView view = fieldView(world, id);
+    return textOffsetOf(view, displayOffsetAt(view, pointer));
+}
+
+// The flags a host set before the commands existed, as commands.
+void legacyCommands(const InteractionInput& input, std::vector<TextCommand>& out)
+{
+    const auto add = [&](TextCommand::Kind kind, TextMove move = TextMove::Left) {
+        TextCommand command;
+        command.kind = kind;
+        command.move = static_cast<core::u8>(move);
+        out.push_back(command);
+    };
+    // Delete, then insert, then move: the order the flags always meant.
+    if (input.backspace)
+        add(TextCommand::Kind::DeleteBackward);
+    if (input.forwardDelete)
+        add(TextCommand::Kind::DeleteForward);
+    if (!input.text.empty()) {
+        TextCommand typed;
+        typed.kind = TextCommand::Kind::Insert;
+        typed.text = input.text;
+        out.push_back(typed);
+    }
     if (input.caretHome)
-        at = 0;
+        add(TextCommand::Kind::Move, TextMove::TextStart);
     if (input.caretEnd)
-        at = text.size();
-    // **Left and right in that order, and both applied.** A frame carrying both
-    // is one where the platform delivered both, and honouring one arbitrarily
-    // would drop a keystroke somebody made.
+        add(TextCommand::Kind::Move, TextMove::TextEnd);
     if (input.caretLeft)
-        at = stepBack(text, at);
+        add(TextCommand::Kind::Move, TextMove::Left);
     if (input.caretRight)
-        at = stepForward(text, at);
-    caret = static_cast<u32>(at);
+        add(TextCommand::Kind::Move, TextMove::Right);
+    if (input.submit)
+        add(TextCommand::Kind::Return);
 }
 
 } // namespace
@@ -246,6 +330,27 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         g_state.hovered = over;
     }
 
+    // **A script's `CaptureFocus` and `ReleaseFocus`** (ADR 0139), taken here,
+    // where focus is moved and nowhere else.
+    {
+        std::vector<std::pair<core::InstanceId, core::i8>> requests;
+        world.textInputs().forEach([&requests](core::InstanceId id, scene::TextInputComponent& field) {
+            if (field.focusRequest != 0) {
+                requests.emplace_back(id, field.focusRequest);
+                field.focusRequest = 0;
+            }
+        });
+        for (const auto& [id, request] : requests) {
+            if (request > 0) {
+                takeFocus(world, uiService, id, LostScript);
+            }
+            else if (id == g_state.focused) {
+                const scene::TextInputComponent* field = world.textInputs().find(id);
+                releaseFocus(world, uiService, field != nullptr && field->releaseSubmitted, LostScript);
+            }
+        }
+    }
+
     if (input.pressed) {
         g_state.pressedOn = over;
 
@@ -253,25 +358,54 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         // anywhere else -- including on nothing. A field that kept focus after
         // the player clicked the world would go on eating their keystrokes.
         const core::InstanceId wanted = world.textInputs().find(over) != nullptr ? over : core::InstanceId{};
-        if (wanted != g_state.focused) {
-            if (scene::TextInputComponent* previous = world.textInputs().find(g_state.focused); previous != nullptr) {
-                previous->focused = false;
-                focusLost(world, g_state.focused, false);
-            }
-            g_state.focused = wanted;
-            if (scene::TextInputComponent* next = world.textInputs().find(wanted); next != nullptr) {
-                next->focused = true;
-                // **At the end on focus** (S6.7), which is what clicking into a
-                // field means everywhere: the caret goes after what is already
-                // there and typing continues it. Positioning it under the
-                // pointer needs the glyph advances the layout produced, and the
-                // layout is a different pass -- so this is the honest half, and
-                // it is the half people use.
-                if (const scene::TextLabelComponent* label = world.textLabels().find(wanted); label != nullptr)
-                    next->caret = static_cast<u32>(label->text.size());
-                fire(world, wanted, "Focused");
+        if (!wanted.valid()) {
+            releaseFocus(world, uiService, false, LostMoved);
+        }
+        else {
+            const bool arriving = wanted != g_state.focused;
+            takeFocus(world, uiService, wanted, LostMoved);
+            const scene::TextInputComponent* field = world.textInputs().find(wanted);
+            // **Under the pointer**: a press places the caret, Shift+press
+            // extends, a double press takes the word and a triple the line --
+            // unless focusing selected everything, which is what that asked for.
+            if (field != nullptr && !(arriving && field->selectAllOnFocus)) {
+                TextEditState& session = g_state.session;
+                const u32 at = offsetUnder(world, wanted, input.pointer);
+                if (input.clicks >= 3) {
+                    if (field->multiLine) {
+                        const auto [from, to] = lineAt(session.text, at);
+                        select(session, from, to);
+                    }
+                    else {
+                        selectAll(session);
+                    }
+                }
+                else if (input.clicks == 2) {
+                    const auto [from, to] = wordAt(session.text, at);
+                    select(session, from, to);
+                }
+                else {
+                    setCaret(session, at, input.shiftPress && !arriving);
+                    g_state.dragging = true;
+                }
+                // The field shows the session's caret from here on.
+                if (scene::TextInputComponent* placed = world.textInputs().find(wanted); placed != nullptr) {
+                    placed->caret = session.caret;
+                    placed->anchor = session.anchor;
+                }
+                g_state.lastActivity = input.time;
             }
         }
+    }
+
+    // A drag in the focused field selects from where it started.
+    if (g_state.dragging && g_state.focused.valid() && input.pointerHeld && !input.pressed) {
+        setCaret(g_state.session, offsetUnder(world, g_state.focused, input.pointer), true);
+        if (scene::TextInputComponent* dragged = world.textInputs().find(g_state.focused); dragged != nullptr) {
+            dragged->caret = g_state.session.caret;
+            dragged->anchor = g_state.session.anchor;
+        }
+        g_state.lastActivity = input.time;
     }
 
     if (input.released) {
@@ -280,43 +414,223 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         if (over.valid() && over == g_state.pressedOn)
             fire(world, over, "Activated");
         g_state.pressedOn = {};
+        g_state.dragging = false;
     }
 
     if (g_state.focused.valid()) {
-        if (scene::TextLabelComponent* label = world.textLabels().find(g_state.focused); label != nullptr) {
-            const std::string before = label->text;
-            scene::TextInputComponent* field = world.textInputs().find(g_state.focused);
-            // A focused element is always a `TextInput` -- focus is only taken
-            // by one -- but the pools are separate and a caller could have
-            // removed the component between the press and here.
-            u32 discarded = 0;
-            u32& caret = field != nullptr ? field->caret : discarded;
+        const core::InstanceId id = g_state.focused;
+        scene::TextLabelComponent* label = world.textLabels().find(id);
+        scene::TextInputComponent* field = world.textInputs().find(id);
+        const scene::UIObjectComponent* object = world.uiObjects().find(id);
+        // A field that stopped being one, or stopped being seen, lets go.
+        if (label == nullptr || field == nullptr || object == nullptr || !object->visible) {
+            releaseFocus(world, uiService, false, LostScript);
+        }
+        else {
+            TextEditState& session = g_state.session;
+            // A script wrote `Text`: the session starts again (its history is
+            // not the player's), and a script's caret write is taken as is.
+            if (field->textReplaced || session.text != label->text) {
+                setText(session, label->text);
+                field->textReplaced = false;
+            }
+            session.caret = characterBoundary(session.text, field->caret);
+            session.anchor = characterBoundary(session.text, field->anchor);
 
-            moveCaret(label->text, caret, input);
-            edit(label->text, caret, input.text, input.backspace, input.forwardDelete);
-            if (label->text != before) {
-                // The same fact a script's own write produces, so a handler on
-                // `GetPropertyChangedSignal("Text")` sees typing exactly as it
-                // sees an assignment.
-                world.changes().push(scene::Change{
-                    scene::ChangeKind::PropertyChanged, g_state.focused, {}, world.atoms().intern("Text")});
-                if (scene::ScreenGuiComponent* screen = world.screenGuis().find(g_state.focused); screen == nullptr) {
-                    for (core::InstanceId current = g_state.focused; current.valid();
-                         current = world.parentOf(current)) {
-                        if (scene::ScreenGuiComponent* tree = world.screenGuis().find(current); tree != nullptr) {
-                            tree->layoutDirty = true;
-                            break;
-                        }
+            if (input.compositionChanged) {
+                field->composition.assign(input.composition);
+                // The platform's cursor is in characters; the drawing wants
+                // bytes of the composition.
+                u32 cursor = 0;
+                for (i32 step = 0; step < input.compositionCursor && cursor < field->composition.size(); ++step)
+                    cursor = nextCharacter(field->composition, cursor);
+                field->compositionCursor = cursor;
+                g_state.lastActivity = input.time;
+            }
+
+            std::vector<TextCommand> legacy;
+            std::span<const TextCommand> commands = input.commands;
+            if (commands.empty()) {
+                legacyCommands(input, legacy);
+                commands = legacy;
+            }
+
+            const TextEditRules rules = rulesOf(*field);
+            std::string rejected;
+            // How the field was left this frame, if it was.
+            bool leave = false;
+            bool leaveSubmitted = false;
+            u32 leaveReason = LostScript;
+            core::InstanceId tabTo;
+            bool submitted = false;
+            for (const TextCommand& command : commands) {
+                if (leave || tabTo.valid())
+                    break;
+                // **While composing, the keys are the input method's**: Return
+                // commits, Escape cancels and Backspace edits the composition.
+                const bool composing = !field->composition.empty();
+                g_state.lastActivity = input.time;
+                switch (command.kind) {
+                case TextCommand::Kind::Insert: {
+                    const TextEditResult done = insert(session, command.text, rules, true);
+                    rejected += done.rejected;
+                    field->composition.clear();
+                    break;
+                }
+                case TextCommand::Kind::Move:
+                    if (!composing)
+                        move(session, static_cast<TextMove>(command.move), command.extend);
+                    break;
+                case TextCommand::Kind::LineUp:
+                case TextCommand::Kind::LineDown: {
+                    if (composing)
+                        break;
+                    const bool up = command.kind == TextCommand::Kind::LineUp;
+                    if (!field->multiLine) {
+                        move(session, up ? TextMove::TextStart : TextMove::TextEnd, command.extend);
+                        break;
                     }
+                    field->caret = session.caret;
+                    const FieldView view = fieldView(world, id);
+                    const Vec2 at = caretPoint(view, displayOffset(view, session.caret));
+                    const Vec2 target{at.x + 0.5f, at.y + (up ? -0.5f : 1.5f) * view.lineHeight};
+                    setCaret(session, textOffsetOf(view, displayOffsetAt(view, target)), command.extend);
+                    break;
+                }
+                case TextCommand::Kind::DeleteBackward:
+                    if (!composing)
+                        (void)deleteBackward(session, command.word, rules);
+                    break;
+                case TextCommand::Kind::DeleteForward:
+                    if (!composing)
+                        (void)deleteForward(session, command.word, rules);
+                    break;
+                case TextCommand::Kind::SelectAll:
+                    selectAll(session);
+                    break;
+                case TextCommand::Kind::Copy:
+                    if (const std::string copied = copy(session, rules); !copied.empty() && input.writeClipboard)
+                        input.writeClipboard(copied);
+                    break;
+                case TextCommand::Kind::Cut: {
+                    std::string taken;
+                    if (cut(session, rules, taken).changed && input.writeClipboard)
+                        input.writeClipboard(taken);
+                    break;
+                }
+                case TextCommand::Kind::Paste:
+                    if (input.readClipboard) {
+                        if (const std::optional<std::string> pasted = input.readClipboard(); pasted.has_value())
+                            rejected += insert(session, *pasted, rules, false).rejected;
+                    }
+                    break;
+                case TextCommand::Kind::Undo:
+                    if (rules.editable)
+                        (void)undo(session);
+                    break;
+                case TextCommand::Kind::Redo:
+                    if (rules.editable)
+                        (void)redo(session);
+                    break;
+                case TextCommand::Kind::Return:
+                    if (composing)
+                        break;
+                    // A multi-line field takes a new line; Ctrl+Return submits it.
+                    if (field->multiLine && !command.ctrl) {
+                        rejected += insert(session, "\n", rules, false).rejected;
+                        break;
+                    }
+                    submitted = true;
+                    if (field->releaseFocusOnSubmit) {
+                        leave = true;
+                        leaveSubmitted = true;
+                        leaveReason = LostSubmitted;
+                    }
+                    break;
+                case TextCommand::Kind::Escape:
+                    if (composing)
+                        break;
+                    if (field->revertOnEscape)
+                        setText(session, g_state.focusText);
+                    leave = true;
+                    leaveReason = LostCancelled;
+                    break;
+                case TextCommand::Kind::Tab:
+                    tabTo = neighbourField(world, id, command.extend);
+                    break;
                 }
             }
-        }
 
-        if (input.submit) {
-            if (scene::TextInputComponent* field = world.textInputs().find(g_state.focused); field != nullptr)
-                field->focused = false;
-            focusLost(world, g_state.focused, true);
-            g_state.focused = {};
+            // The text, as the player left it.
+            if (session.text != label->text) {
+                label->text = session.text;
+                // The same fact a script's own write produces, so a handler on
+                // `GetPropertyChangedSignal("Text")` sees typing exactly as it
+                // sees an assignment -- and `TextChanged`, which is the
+                // player's alone.
+                world.changes().push(
+                    scene::Change{scene::ChangeKind::PropertyChanged, id, {}, world.atoms().intern("Text")});
+                textEvent(world, id, "TextChanged", label->text);
+                markScreenDirty(world, id);
+            }
+            if (!rejected.empty())
+                textEvent(world, id, "InputRejected", std::move(rejected));
+            field->caret = session.caret;
+            field->anchor = session.anchor;
+            if (submitted)
+                textEvent(world, id, "Submitted", label->text);
+
+            // **The caret blinks**, and is solid while the player is busy.
+            const core::f64 since = input.time - g_state.lastActivity;
+            field->caretVisible = since < 0.5 || std::fmod(since, 1.06) < 0.53;
+
+            // **The caret stays in view**: a line longer than the field scrolls
+            // along with it, and a multi-line field scrolls by lines.
+            {
+                const FieldView view = fieldView(world, id);
+                const u32 shown = field->composition.empty() ? displayOffset(view, session.caret)
+                                                             : view.compositionBegin + field->compositionCursor;
+                const Vec2 point = caretPoint(view, shown);
+                const f32 width = view.box.max.x - view.box.min.x;
+                const f32 height = view.box.max.y - view.box.min.y;
+                constexpr f32 Margin = 2.0f;
+                if (!field->multiLine) {
+                    const f32 x = point.x - view.box.min.x;
+                    if (x < 0.0f)
+                        field->scroll.x += x;
+                    else if (x > width - Margin)
+                        field->scroll.x += x - (width - Margin);
+                    const f32 widest = view.lines.empty() ? 0.0f : view.lines.front().width;
+                    field->scroll.x = std::clamp(field->scroll.x, 0.0f, std::fmax(0.0f, widest - width + Margin));
+                    field->scroll.y = 0.0f;
+                }
+                else {
+                    const f32 y = point.y - view.box.min.y;
+                    if (y < 0.0f)
+                        field->scroll.y += y;
+                    else if (y + view.lineHeight > height)
+                        field->scroll.y += y + view.lineHeight - height;
+                    const f32 total = static_cast<f32>(view.lines.size()) * view.lineHeight;
+                    field->scroll.y = std::clamp(field->scroll.y, 0.0f, std::fmax(0.0f, total - height));
+                    field->scroll.x = 0.0f;
+                }
+                const FieldView scrolled = fieldView(world, id);
+                const Vec2 caretAt = caretPoint(scrolled, shown);
+                result.caret = core::Rect{caretAt, Vec2{caretAt.x + 1.5f, caretAt.y + scrolled.lineHeight}};
+            }
+
+            if (tabTo.valid()) {
+                takeFocus(world, uiService, tabTo, LostMoved);
+            }
+            else if (leave) {
+                releaseFocus(world, uiService, leaveSubmitted, leaveReason);
+                if (leaveReason == LostCancelled && label->text != session.text) {
+                    label->text = session.text;
+                    world.changes().push(
+                        scene::Change{scene::ChangeKind::PropertyChanged, id, {}, world.atoms().intern("Text")});
+                    markScreenDirty(world, id);
+                }
+            }
         }
     }
 
@@ -330,6 +644,12 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         g_state.focused = {};
 
     result.textInputFocused = g_state.focused.valid();
+    result.focusedInput = g_state.focused;
+    if (const scene::TextInputComponent* field = world.textInputs().find(g_state.focused); field != nullptr) {
+        result.keyboardType = field->keyboardType;
+        result.masked = field->masked;
+        result.multiLine = field->multiLine;
+    }
     return result;
 }
 

@@ -23,6 +23,8 @@
 // world's; the conversion happens once, in the 2D pass's projection.
 #pragma once
 
+#include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -323,6 +325,23 @@ inline constexpr f32 kMaxScaledTextSize = 100.0f;
 // than one that overhangs.
 [[nodiscard]] TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth);
 
+// **One line of a laid-out text** (ADR 0139): the bytes it covers and how wide
+// it is. What a text field needs to put a caret, a selection and a click in
+// the same places the drawing puts the glyphs -- the lines come from the same
+// breaking `buildTextGeometry` does.
+struct TextLine
+{
+    usize begin = 0;
+    usize end = 0;
+    f32 width = 0.0f;
+};
+[[nodiscard]] std::vector<TextLine> textLines(std::string_view text, std::string_view font, f32 pixelSize,
+                                              f32 maxWidth);
+// The width of a run on one line, in pixels.
+[[nodiscard]] f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize);
+// The height of one line, in pixels.
+[[nodiscard]] f32 textLineHeight(std::string_view font, f32 pixelSize);
+
 // The quads one run draws, aligned inside `box`. Appended rather than returned,
 // because a draw list is built by appending and a label is one of many.
 // `stroke`, when it has a thickness, outlines every glyph (ADR 0110): the
@@ -385,6 +404,44 @@ void resetLayoutStats() noexcept;
 // Handed in rather than read, because `ui` is L5 and `platform` is L1: the host
 // already has both, and a module that reached for a device would be a module
 // that behaves differently in a replay.
+// **One thing done to the focused text field** (ADR 0139), in the order the
+// keys were pressed: a frame that saw Ctrl+A then a typed letter replaces the
+// selection with it, and the reverse does not.
+struct TextCommand
+{
+    enum class Kind : core::u8
+    {
+        // `text`, typed or committed by an input method.
+        Insert,
+        // `move`, with `extend` for Shift.
+        Move,
+        // Up and Down: a line in a multi-line field, the ends in a single one.
+        LineUp,
+        LineDown,
+        // Backspace and Delete, `word` for Ctrl.
+        DeleteBackward,
+        DeleteForward,
+        SelectAll,
+        Copy,
+        Cut,
+        Paste,
+        Undo,
+        Redo,
+        // Return; `ctrl` submits a multi-line field, which otherwise takes a
+        // new line.
+        Return,
+        Escape,
+        // `extend` for Shift+Tab, which goes to the previous field.
+        Tab,
+    };
+    Kind kind = Kind::Insert;
+    core::u8 move = 0;
+    bool extend = false;
+    bool word = false;
+    bool ctrl = false;
+    std::string_view text;
+};
+
 struct InteractionInput
 {
     core::Vec2 pointer;
@@ -405,6 +462,29 @@ struct InteractionInput
     bool caretHome = false;
     bool caretEnd = false;
     bool submit = false;
+
+    // --- A text field's full keyboard, mouse and clipboard (ADR 0139) ---------
+    //
+    // The commands, in the order they happened. When there are any, the flags
+    // above are not read.
+    std::span<const TextCommand> commands;
+    // An input method's composition as the platform last reported it, and its
+    // cursor in characters; `compositionChanged` when a report came this frame.
+    std::string_view composition;
+    i32 compositionCursor = 0;
+    bool compositionChanged = false;
+    // The press's count (2 double, 3 triple), whether Shift was held with it,
+    // and whether the button is still held (a drag).
+    core::u8 clicks = 1;
+    bool shiftPress = false;
+    bool pointerHeld = false;
+    // Seconds, for the caret's blink.
+    core::f64 time = 0.0;
+    // The system's clipboard, through the host. Unset: copy and paste do
+    // nothing.
+    std::function<std::optional<std::string>()> readClipboard;
+    std::function<void(std::string_view)> writeClipboard;
+
     // The element of a world canvas -- a `SurfaceGui` or a `BillboardGui` --
     // under the pointer, as the host found it by casting the pointer's ray into
     // the world. A screen element under the pointer wins over it: the screen is
@@ -434,6 +514,15 @@ struct InteractionResult
     // (ADR 0041) -- a flag that was always false for the keyboard would be
     // honest and useless.
     bool textInputFocused = false;
+
+    // The focused field, what its keyboard is, and where its caret is in
+    // window pixels -- for the host to raise the right on-screen keyboard and
+    // to tell an input method where to open its candidates (ADR 0139).
+    core::InstanceId focusedInput;
+    i32 keyboardType = 0;
+    bool masked = false;
+    bool multiLine = false;
+    core::Rect caret;
 };
 
 // Fires `Activated`, `PointerEntered` and `PointerExited`, moves focus between

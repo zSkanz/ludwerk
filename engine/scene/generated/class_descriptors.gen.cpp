@@ -6702,6 +6702,76 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     renderPriorityDesc.docKey = {};
     renderPriorityDesc.items = renderPriorityItems;
     enums.registerEnum(renderPriorityDesc);
+
+    // --- FocusLossReason ---
+    static std::array<EnumItemDesc, 4> focusLossReasonItems;
+    focusLossReasonItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Submitted"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Moved"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Cancelled"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Script"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor focusLossReasonDesc;
+    focusLossReasonDesc.name = atoms.intern("FocusLossReason");
+    focusLossReasonDesc.docKey = {};
+    focusLossReasonDesc.items = focusLossReasonItems;
+    enums.registerEnum(focusLossReasonDesc);
+
+    // --- TextInputKeyboard ---
+    static std::array<EnumItemDesc, 6> textInputKeyboardItems;
+    textInputKeyboardItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Default"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Number"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Decimal"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Phone"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Email"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Url"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor textInputKeyboardDesc;
+    textInputKeyboardDesc.name = atoms.intern("TextInputKeyboard");
+    textInputKeyboardDesc.docKey = {};
+    textInputKeyboardDesc.items = textInputKeyboardItems;
+    enums.registerEnum(textInputKeyboardDesc);
 }
 
 } // namespace engine::scene::generated

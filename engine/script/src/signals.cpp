@@ -10,6 +10,7 @@
 
 #include "engine/core/log.h"
 #include "engine/scene/world.h"
+#include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
 #include "engine/script/services.h"
@@ -1134,6 +1135,29 @@ void enqueueSceneChanges(lua_State* L, std::span<const scene::Change> changes)
             lua_pushboolean(L, change.other.index != 0 ? 1 : 0);
             enqueueFire(L, id, lua_gettop(L), 1);
             lua_pop(L, 1);
+            break;
+        }
+
+        case scene::ChangeKind::InstanceEventText: {
+            const SignalId id = eventSignal(change.name);
+            if (!id.valid())
+                break;
+            const std::string_view text = w.changes().drainedText(change);
+            lua_pushlstring(L, text.data(), text.size());
+            enqueueFire(L, id, lua_gettop(L), 1);
+            lua_pop(L, 1);
+            break;
+        }
+
+        case scene::ChangeKind::FocusLost: {
+            const SignalId id = eventSignal(change.name);
+            if (!id.valid())
+                break;
+            lua_pushboolean(L, change.other.index != 0 ? 1 : 0);
+            pushEnumItem(L, scene::EnumValue{w.enums().findId(w.atoms().lookup("FocusLossReason")),
+                                             static_cast<core::i32>(change.other.generation)});
+            enqueueFire(L, id, lua_gettop(L) - 1, 2);
+            lua_pop(L, 2);
             break;
         }
 

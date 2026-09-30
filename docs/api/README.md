@@ -117,7 +117,7 @@ guided tour.
 | [`Team`](team.md) | [`Instance`](instance.md) | A side (ADR 0099): a name -- its `Name` -- a colour, and the players whose `Player.Team` is it. |
 | [`Terrain`](terrain.md) | [`Instance`](instance.md) | A sculpted, collidable landscape: ground you dig into rather than a floor made of parts. |
 | [`TextButton`](textbutton.md) | [`TextLabel`](textlabel.md) | A `TextLabel` that is meant to be pressed. |
-| [`TextInput`](textinput.md) | [`TextLabel`](textlabel.md) | A single-line editable field (§2.2). |
+| [`TextInput`](textinput.md) | [`TextLabel`](textlabel.md) | An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. |
 | [`TextLabel`](textlabel.md) | [`UIObject`](uiobject.md) | Text in a box (§2.2). |
 | [`Tilemap2D`](tilemap2d.md) | [`Instance`](instance.md) | A grid of tiles from one tileset image, on the 2D plane (the 2D layer, phase 3): a level you paint. |
 | [`UICorner`](uicorner.md) | [`Instance`](instance.md) | Rounds its parent's corners (§2.2). |

@@ -4802,12 +4802,100 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "ClearTextOnFocus",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "CursorPosition",
+          "Type": "number",
+          "Default": "-1",
+          "Transient": true
+        },
+        {
+          "Name": "Editable",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "KeyboardType",
+          "Type": "Enum.TextInputKeyboard",
+          "Default": "Enum.TextInputKeyboard.Default"
+        },
+        {
+          "Name": "MaskCharacter",
+          "Type": "string",
+          "Default": "\"•\""
+        },
+        {
+          "Name": "Masked",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "MaxLength",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MultiLine",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "PlaceholderColor",
+          "Type": "Color3",
+          "Default": "Color3.fromRGB(178, 178, 178)"
+        },
+        {
           "Name": "PlaceholderText",
           "Type": "string",
           "Default": "\"\""
+        },
+        {
+          "Name": "ReleaseFocusOnSubmit",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "RevertOnEscape",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "SelectAllOnFocus",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "SelectionStart",
+          "Type": "number",
+          "Default": "-1",
+          "Transient": true
         }
       ],
-      "Methods": [],
+      "Methods": [
+        {
+          "Name": "CaptureFocus",
+          "Parameters": [],
+          "Returns": []
+        },
+        {
+          "Name": "IsFocused",
+          "Parameters": [],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "ReleaseFocus",
+          "Parameters": [
+            {
+              "Name": "submitted",
+              "Type": "boolean?"
+            }
+          ],
+          "Returns": []
+        }
+      ],
       "Events": [
         {
           "Name": "FocusLost",
@@ -4815,12 +4903,43 @@
             {
               "Name": "submitted",
               "Type": "boolean"
+            },
+            {
+              "Name": "reason",
+              "Type": "Enum.FocusLossReason"
             }
           ]
         },
         {
           "Name": "Focused",
           "Parameters": []
+        },
+        {
+          "Name": "InputRejected",
+          "Parameters": [
+            {
+              "Name": "rejected",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "Submitted",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "TextChanged",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "string"
+            }
+          ]
         }
       ]
     },
@@ -5297,8 +5416,33 @@
           "Default": "Enum.ScreenOrientation.LandscapeSensor"
         }
       ],
-      "Methods": [],
-      "Events": []
+      "Methods": [
+        {
+          "Name": "GetFocusedTextInput",
+          "Parameters": [],
+          "Returns": ["TextInput?"]
+        }
+      ],
+      "Events": [
+        {
+          "Name": "TextInputFocusReleased",
+          "Parameters": [
+            {
+              "Name": "input",
+              "Type": "TextInput"
+            }
+          ]
+        },
+        {
+          "Name": "TextInputFocused",
+          "Parameters": [
+            {
+              "Name": "input",
+              "Type": "TextInput"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "UIStroke",
@@ -9063,6 +9207,27 @@
       ]
     },
     {
+      "Name": "FocusLossReason",
+      "Items": [
+        {
+          "Name": "Cancelled",
+          "Value": 2
+        },
+        {
+          "Name": "Moved",
+          "Value": 1
+        },
+        {
+          "Name": "Script",
+          "Value": 3
+        },
+        {
+          "Name": "Submitted",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "GradientTileMode",
       "Items": [
         {
@@ -10177,6 +10342,35 @@
         {
           "Name": "Under",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "TextInputKeyboard",
+      "Items": [
+        {
+          "Name": "Decimal",
+          "Value": 2
+        },
+        {
+          "Name": "Default",
+          "Value": 0
+        },
+        {
+          "Name": "Email",
+          "Value": 4
+        },
+        {
+          "Name": "Number",
+          "Value": 1
+        },
+        {
+          "Name": "Phone",
+          "Value": 3
+        },
+        {
+          "Name": "Url",
+          "Value": 5
         }
       ]
     },

@@ -1103,6 +1103,35 @@ void raiseUndeclared(lua_State* L, const scene::PartComponent& part, std::string
     raise(L, ENG_TR("script.err.material_parameter_undeclared"), args);
 }
 
+// **Focus is the interface's to move** (ADR 0139): a script asks, and the
+// interaction takes the request at its next frame -- the one place focus
+// changes, so two fields can never both believe they have it.
+int methodTextInputCaptureFocus(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    if (scene::TextInputComponent* field = world(L).textInputs().find(id); field != nullptr)
+        field->focusRequest = 1;
+    return 0;
+}
+
+int methodTextInputReleaseFocus(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    if (scene::TextInputComponent* field = world(L).textInputs().find(id); field != nullptr) {
+        field->focusRequest = -1;
+        field->releaseSubmitted = lua_toboolean(L, 2) != 0;
+    }
+    return 0;
+}
+
+int methodTextInputIsFocused(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::TextInputComponent* field = world(L).textInputs().find(id);
+    lua_pushboolean(L, field != nullptr && field->focused ? 1 : 0);
+    return 1;
+}
+
 int methodSetMaterialParameter(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
@@ -2333,6 +2362,9 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Water", "GetNormalAt", methodWaterGetNormalAt},
     {"BasePart", "GetNetworkOwner", methodGetNetworkOwner},
     {"BasePart", "SetMaterialParameter", methodSetMaterialParameter},
+    {"TextInput", "CaptureFocus", methodTextInputCaptureFocus},
+    {"TextInput", "ReleaseFocus", methodTextInputReleaseFocus},
+    {"TextInput", "IsFocused", methodTextInputIsFocused},
     {"BasePart", "GetMaterialParameter", methodGetMaterialParameter},
     {"BasePart", "ClearMaterialParameter", methodClearMaterialParameter},
     {"Part2D", "ApplyImpulse", methodPart2DApplyImpulse},

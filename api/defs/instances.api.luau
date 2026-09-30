@@ -3325,13 +3325,14 @@ local Classes: { Schema.Class } = {
         Extends = "TextLabel",
         Module = "ui",
         Storage = "TextInput",
-        Doc = "A single-line editable field (§2.2). Typed text, a caret you can move with the arrows, Home "
-            .. "and End, and both kinds of delete; no selection, no clipboard, no undo and no IME "
-            .. "composition beyond what the platform delivers as text.\n\n**The caret starts at the end "
-            .. "and goes back there whenever a script assigns `Text`**, which is the only position that is "
-            .. "always in range: a caret left where it was would point into a string that no longer exists. "
-            .. "Clicking does not yet place it -- that needs the glyph advances the layout produced, and "
-            .. "the layout is a different pass.",
+        Doc = "An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's "
+            .. "address. It edits as every text field does -- selection with Shift and with the mouse, "
+            .. "Ctrl+arrows and Ctrl+Backspace by words, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V through the system's "
+            .. "clipboard, Ctrl+Z and Ctrl+Y, a double press for a word and a triple for the line -- steps over "
+            .. "whole characters as a reader sees them, and shows an input method's composition at the caret. "
+            .. "While it has focus it takes the keyboard, so a player typing `w` does not walk.\n\n**A "
+            .. "script's write to `Text` puts the caret at the end** and clears the undo history: what it "
+            .. "would undo to is not the player's.",
         Properties = {
             {
                 Name = "PlaceholderText",
@@ -3339,7 +3340,121 @@ local Classes: { Schema.Class } = {
                 Default = '""',
                 Doc = "Drawn in place of `Text` while it is empty and the field is unfocused.",
             },
+            {
+                Name = "PlaceholderColor",
+                Type = "Color3",
+                Default = "Color3.fromRGB(178, 178, 178)",
+                Doc = "The placeholder's colour.",
+            },
+            {
+                Name = "MultiLine",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Several lines: Return makes a new one and Ctrl+Return submits, the text wraps at the "
+                    .. "field's width and scrolls to keep the caret in view, and Up and Down move between lines. "
+                    .. "A single-line field takes a pasted line break as a space.",
+            },
+            {
+                Name = "Editable",
+                Type = "boolean",
+                Default = "true",
+                Doc = "False: read-only. It still takes focus, and its text can still be selected and copied -- "
+                    .. "a code or an address shown to be copied.",
+            },
+            {
+                Name = "MaxLength",
+                Type = "number",
+                Default = "0",
+                Doc = "The most characters it holds; 0 is no limit. Characters as a reader sees them, so an "
+                    .. "accented letter or an emoji is one. What does not fit is kept out and `InputRejected` "
+                    .. "says what it was.",
+            },
+            {
+                Name = "Masked",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Drawn as `MaskCharacter`s: a password. Copying and cutting give nothing away; pasting "
+                    .. "still works. A phone raises its password keyboard.",
+            },
+            {
+                Name = "MaskCharacter",
+                Type = "string",
+                Default = '"\u{2022}"',
+                Doc = "What each character of a masked field is drawn as: its first character.",
+            },
+            {
+                Name = "ClearTextOnFocus",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Focusing it empties it: a field that is typed afresh each time.",
+            },
+            {
+                Name = "SelectAllOnFocus",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Focusing it selects all of it, so typing replaces what is there.",
+            },
+            {
+                Name = "ReleaseFocusOnSubmit",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Return submits and lets go of the keyboard. False keeps it: a chat box, where the next "
+                    .. "message follows. `Submitted` fires either way.",
+            },
+            {
+                Name = "RevertOnEscape",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Escape puts back the text it had when it was focused, as it lets go.",
+            },
+            {
+                Name = "KeyboardType",
+                Type = "Enum.TextInputKeyboard",
+                Default = "Enum.TextInputKeyboard.Default",
+                Doc = "The on-screen keyboard a phone raises when it is focused.",
+            },
+            {
+                Name = "CursorPosition",
+                Type = "number",
+                Default = "-1",
+                -- Where a player's caret is, not something a scene says.
+                Transient = true,
+                Doc = "Where the caret is: 1-based, in bytes, as a Luau string's positions are -- `#Text + 1` "
+                    .. "after the last character. -1 while it is not focused. Writing it moves the caret, snapped "
+                    .. "to a character.",
+            },
+            {
+                Name = "SelectionStart",
+                Type = "number",
+                Default = "-1",
+                -- Where a player's caret is, not something a scene says.
+                Transient = true,
+                Doc = "The other end of the selection, in the same positions as `CursorPosition`; -1 when "
+                    .. "nothing is selected. Writing it selects from there to the caret.",
+            },
         } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "CaptureFocus",
+                Parameters = {},
+                Returns = {},
+                Doc = "Takes the keyboard, as a press on it would: another field loses it with "
+                    .. "`Enum.FocusLossReason.Script`. Takes effect at the next frame.",
+            },
+            {
+                Name = "ReleaseFocus",
+                Parameters = { { Name = "submitted", Type = "boolean?" } },
+                Returns = {},
+                Doc = "Lets go of the keyboard; `FocusLost` fires with `submitted` (false when omitted) and "
+                    .. "`Enum.FocusLossReason.Script`. Takes effect at the next frame.",
+            },
+            {
+                Name = "IsFocused",
+                Parameters = {},
+                Returns = { "boolean" },
+                Doc = "Whether it has the keyboard now.",
+            },
+        } :: { Schema.Method },
         Events = {
             {
                 Name = "Focused",
@@ -3350,10 +3465,31 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "FocusLost",
-                Parameters = { { Name = "submitted", Type = "boolean" } },
+                Parameters = {
+                    { Name = "submitted", Type = "boolean" },
+                    { Name = "reason", Type = "Enum.FocusLossReason" },
+                },
                 Doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return "
                     .. 'rather than by clicking away -- the difference between "the player finished" and '
-                    .. '"the player went somewhere else".',
+                    .. '"the player went somewhere else"; `reason` says which of the four ways it was.',
+            },
+            {
+                Name = "Submitted",
+                Parameters = { { Name = "text", Type = "string" } },
+                Doc = "Return was pressed, with the text as it was -- whether or not the field lets go "
+                    .. "(`ReleaseFocusOnSubmit`).",
+            },
+            {
+                Name = "TextChanged",
+                Parameters = { { Name = "text", Type = "string" } },
+                Doc = "The player changed the text -- typing, a paste, a cut, an undo -- with the text now. A "
+                    .. 'script\'s own write to `Text` does not fire it; `GetPropertyChangedSignal("Text")` '
+                    .. "fires for both.",
+            },
+            {
+                Name = "InputRejected",
+                Parameters = { { Name = "rejected", Type = "string" } },
+                Doc = "What `MaxLength` kept out of an edit.",
             },
         } :: { Schema.Event },
     },
