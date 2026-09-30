@@ -603,6 +603,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **No more bright streaks at a low sun, or dark notches under a lamp, on
   flat ground** (D372): the ground's grain drew a crease wherever its noise
   stepped at a cell's edge.
+- **No more ground floating past the edge of the loaded terrain, nor loaded
+  ground left undrawn round it** (D383): a terrain node first built with
+  nothing to draw was never built again when its ground streamed in.
 - **The game is told the ground's painted material** (D381): a raycast and
   `ApplyRules` read the paint as the shader draws it, and the rules as it
   does.

@@ -265,6 +265,15 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
   pixels (`imgshadow` prints it now): half a card casts 0.47 of a whole one.
 - **Found by CI**: `terrain_material_channels` copied a material into a folder
   git had never kept, being empty; the driver makes it.
+- **ludwerk-08's plates on the owner's place** (D383, a P0, found after T3 was
+  pushed): pale squares of ground past the far edge, a different few each
+  run. Not T3's shading -- the level view showed the same ground each time,
+  and the drawn node lists differed between runs of the same field. A node
+  first built with nothing to draw (a streamed cell in before the one with the
+  surface, or ground dug to air, whose chunks stay) was drawn by nothing, and
+  only a node never built was ever asked for: it kept its empty mesh when its
+  ground came, and the ground under it was never drawn. The loader asks for
+  it again now; `terrain_loader_tests.cpp` fails first without it.
 
 ## T4 — tools that do what the person asked
 

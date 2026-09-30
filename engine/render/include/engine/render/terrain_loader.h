@@ -140,6 +140,9 @@ public:
     // The nodes drawn for `world` and the seams each one's mesh was built for
     // -- what a test holds against `terrainStitchSides` of the same set.
     [[nodiscard]] std::vector<std::pair<TerrainNodeKey, TerrainSides>> drawnSeams(const scene::World& world) const;
+    // The nodes drawn for `world` whose mesh was built from other ground than
+    // the field holds now -- what a test settles to none.
+    [[nodiscard]] std::vector<TerrainNodeKey> drawnOutOfDate(const scene::World& world) const;
 
     // Appends one `RenderTerrain` per terrain in `world` under `root`: its
     // palette, which the terrain shader reads.

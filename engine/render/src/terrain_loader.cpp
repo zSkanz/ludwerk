@@ -713,13 +713,34 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 }
                 return m_lod.splitFactor * static_cast<f64>(across(key.level)) * chunkMetres;
             };
-            // A node never built, wanted: a load. One built is rebuilt only when
-            // it is to be drawn with ground or seams it has no mesh for (below).
+            // A node never built, wanted: a load. One built is rebuilt when it
+            // is to be drawn with ground or seams it has no mesh for (below) --
+            // or when all it has is nothing, built from ground that has since
+            // changed.
             const auto request = [&](TerrainNodeKey key, f64 distance) {
                 Node& node = nodeFor(key);
                 node.used = m_frame;
-                if (!node.built && !node.queued)
+                if (node.queued)
+                    return;
+                if (!node.built) {
                     requests.push_back(Request{id, key, distance, {}, false});
+                    return;
+                }
+                // **Built empty, and its ground no longer is** (the plates on
+                // the owner's place, 2026-09-30): a node built before its ground
+                // had a surface -- a streamed cell come in before the one above
+                // it -- has a mesh of nothing, and nothing draws it, so the
+                // rebuild below, asked for what is drawn, never came; its
+                // children are not shown while it stands. The ground under it was
+                // never drawn, and what was drawn beside it floated.
+                bool drawable = false;
+                bool live = false;
+                for (Variant& variant : node.variants) {
+                    drawable = drawable || (variant.built && variant.mesh.valid());
+                    live = live || current(variant, key);
+                }
+                if (!drawable && !live)
+                    requests.push_back(Request{id, key, distance, {}, true});
             };
             const auto resident = [&](TerrainNodeKey key) {
                 const Node* node = find(&world, id, key);
@@ -1162,6 +1183,21 @@ std::vector<std::pair<TerrainNodeKey, TerrainSides>> TerrainLoader::drawnSeams(c
         const Node* node = find(&world, drawn.draw.terrain, drawn.key);
         if (node != nullptr)
             out.emplace_back(drawn.key, node->variants[drawn.slot].sides);
+    }
+    return out;
+}
+
+std::vector<TerrainNodeKey> TerrainLoader::drawnOutOfDate(const scene::World& world) const
+{
+    std::vector<TerrainNodeKey> out;
+    for (const Drawn& drawn : m_drawn) {
+        if (drawn.world != &world)
+            continue;
+        const Node* node = find(&world, drawn.draw.terrain, drawn.key);
+        const scene::TerrainComponent* terrain = world.terrains().find(drawn.draw.terrain);
+        if (node == nullptr || terrain == nullptr ||
+            contentOf(terrain->field, drawn.key) != node->variants[drawn.slot].content)
+            out.push_back(drawn.key);
     }
     return out;
 }

@@ -405,3 +405,91 @@ TEST_CASE("built off the main thread, every node drawn is built for the seams it
         }
     }
 }
+
+TEST_CASE("ground a streamer let go is not drawn from the meshes it had, however the camera moved")
+{
+    // ludwerk-08's plates on the owner's place (2026-09-30): pale squares of
+    // ground past the loaded edge, a different few each run. The streamer
+    // evicts the cells a moving camera leaves behind, and a node drawn before
+    // was drawn again in place of one not built yet -- with the ground it had,
+    // which was gone.
+    for (const bool async : {false, true}) {
+        CAPTURE(async);
+        LoaderFixture fixture(512.0f);
+        fixture.loader.setAsync(async);
+        fixture.loader.setBuildsPerSync(async ? 6 : 1000);
+        // Hills, so every level has something to be built for.
+        for (const double x : {-150.0, -40.0, 90.0, 180.0})
+            (void)asset::fillBall(fixture.component().field, core::DVec3{x, -10.0, x * 0.5}, 30.0, 1);
+        fixture.component().fieldRevision += 1;
+        fixture.loader.setFocus(core::DVec3{-180.0, 60.0, -180.0});
+        for (int frame = 0; frame < 120; ++frame)
+            (void)fixture.sync();
+
+        // The camera jumps across, and the cells it left are let go.
+        asset::TerrainField& field = fixture.component().field;
+        std::vector<asset::ChunkKey> gone;
+        for (const asset::TerrainField::Entry& entry : field.chunks()) {
+            if (entry.first.x < 0 && entry.first.z < 0)
+                gone.push_back(entry.first);
+        }
+        REQUIRE_FALSE(gone.empty());
+        for (const asset::ChunkKey key : gone)
+            field.removeChunk(key);
+        fixture.component().fieldRevision += 1;
+        fixture.loader.setFocus(core::DVec3{200.0, 60.0, 200.0});
+        std::vector<TerrainNodeKey> stale;
+        for (int frame = 0; frame < 120; ++frame) {
+            (void)fixture.sync();
+            stale = fixture.loader.drawnOutOfDate(fixture.world);
+        }
+        for (const TerrainNodeKey& key : stale) {
+            CAPTURE(key.level);
+            CAPTURE(key.x);
+            CAPTURE(key.z);
+            CHECK(false);
+        }
+        CHECK(stale.empty());
+    }
+}
+
+TEST_CASE("a node built empty is built again when ground comes back under it")
+{
+    // ludwerk-08's plates on the owner's place (2026-09-30): pale squares of
+    // ground floating past the loaded edge, a different few each run. A node
+    // whose first mesh was of nothing -- ground dug to air leaves its chunks,
+    // air; a streamed cell comes in before the one with the surface -- was
+    // drawn by nothing, and a load was asked for only of a node never built:
+    // when the ground came, the node went on having nothing, its children were
+    // not shown while it stood, and the ground under it was never drawn. What
+    // was drawn round it floated.
+    for (const bool async : {false, true}) {
+        CAPTURE(async);
+        LoaderFixture fixture;
+        fixture.loader.setAsync(async);
+        fixture.loader.setBuildsPerSync(async ? 6 : 1000);
+        // A corner dug to air from the start: its chunks are there, and there
+        // is nothing in them to draw.
+        asset::TerrainField& field = fixture.component().field;
+        (void)asset::fillBlock(field, core::DVec3{64.0, 16.0, 64.0}, core::Vec3{128.0f, 96.0f, 128.0f}, 0);
+        fixture.component().fieldRevision += 1;
+        fixture.loader.setFocus(core::DVec3{8.0, 400.0, 8.0});
+        for (int frame = 0; frame < 60; ++frame)
+            (void)fixture.sync();
+
+        // And then the ground comes.
+        (void)asset::fillFlat(field, core::DVec3{64.0, 0.0, 64.0}, 128.0f, 2.0f, 1);
+        fixture.component().fieldRevision += 1;
+        for (int frame = 0; frame < 60; ++frame)
+            (void)fixture.sync();
+        const auto after = coverage(fixture.atoms, fixture.loader.draws(fixture.world));
+        // Every chunk column of the corner is drawn: 128 m of 32 m chunks.
+        for (core::i32 z = 0; z < 4; ++z) {
+            for (core::i32 x = 0; x < 4; ++x) {
+                CAPTURE(x);
+                CAPTURE(z);
+                CHECK(after.contains({x, z}));
+            }
+        }
+    }
+}
