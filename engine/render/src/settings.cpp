@@ -132,6 +132,8 @@ std::optional<DebugView> parseDebugView(std::string_view name) noexcept
         return DebugView::Shadow;
     if (name == "occlusion")
         return DebugView::Occlusion;
+    if (name == "bend")
+        return DebugView::Bend;
     return std::nullopt;
 }
 

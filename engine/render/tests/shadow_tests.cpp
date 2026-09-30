@@ -454,3 +454,34 @@ TEST_CASE("a spot projection contains the rim of its own cone")
     // on the cone rather than on the room.
     CHECK_FALSE(insideClip(viewProjection, core::Vec3{60.0f, 0.0f, 0.0f}));
 }
+
+TEST_CASE("the terrain's push in a cascade is a texel, and its slope times the filter's reach up to a tenth's grazing")
+{
+    // A 5 cm texel over a 400 m depth range: the near cascade's order.
+    const render::TerrainShadowPush near = render::terrainCascadePush(0.05f, 400.0f, 0.25f);
+    CHECK(nearly(near.constant, 0.05f / 400.0f));
+    // A quarter-metre penumbra over a 5 cm texel is five texels, and the reach
+    // is that, the bilinear tap's texel and half a texel's margin.
+    CHECK(nearly(near.reach, 6.5f));
+    // Ground on which the light falls at a tenth rises ten texels a texel.
+    CHECK(nearly(near.most, render::kTerrainShadowSteepest * 6.5f * 0.05f / 400.0f));
+
+    // The far cascade's texel is wide, and the same penumbra is under the
+    // filter's floor there: its reach is the floor's, not six texels of it --
+    // the metres the old fixed push detached a shadow by (TA10).
+    const render::TerrainShadowPush far = render::terrainCascadePush(0.4f, 1200.0f, 0.25f);
+    CHECK(nearly(far.reach, render::kShadowFilterMinTexels + 1.5f));
+    CHECK(nearly(far.constant, 0.4f / 1200.0f));
+
+    // A softness past the ceiling holds at six texels.
+    CHECK(nearly(render::terrainCascadePush(0.01f, 400.0f, 0.25f).reach, render::kShadowFilterMaxTexels + 1.5f));
+    // No cascade, no push.
+    CHECK(render::terrainCascadePush(0.0f, 400.0f, 0.25f).reach == 0.0f);
+}
+
+TEST_CASE("the penumbra is the engine's radius at the default softness and a quarter metre at full")
+{
+    CHECK(render::shadowPenumbra(0.2f) == render::kShadowFilterWorldRadius);
+    CHECK(nearly(render::shadowPenumbra(1.0f), 0.25f));
+    CHECK(render::shadowPenumbra(0.0f) == 0.0f);
+}

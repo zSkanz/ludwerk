@@ -94,6 +94,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   made of in place of the picture; `--terrain-detail=full` draws every terrain
   at its finest level. `imgholes` counts sky seen through or instead of the
   ground in such a picture.
+- **Two more terrain debug views** (terrain audit T3): `--debug-view=shadow`
+  draws blue where the ground faces the sun, and `imgshadow` counts faces the
+  shadow map or the contact mask darkens; `--debug-view=bend` draws what the
+  shading does to the mesh's normal, and `imgsteps` counts where it jumps.
 - **A `TextInput` edits as every text field does** (ADR 0139): selection by
   keys and by the mouse (drag, Shift, double and triple press), words, the
   line's and the text's ends, Ctrl+A/C/X/V through the system clipboard, undo
@@ -588,6 +592,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Terrain no longer shadows itself** (D368-D371, ADR 0142): its shadow is
+  pushed from the light by its own slope, so a low sun no longer speckles the
+  ground or facets the edge of a round shape's shadow, the far cascade no
+  longer lifts a shadow two metres off what casts it, and a lamp's shadow
+  pushes the ground too. Contact shadows no longer stipple ground seen at a
+  slant, nor the rim of a sphere.
+- **No more bright streaks at a low sun, or dark notches under a lamp, on
+  flat ground** (D372): the ground's grain drew a crease wherever its noise
+  stepped at a cell's edge.
+- **A headless run that takes a picture draws the terrain** (D373): since
+  terrain was built off the main thread, thirty frames run flat out were over
+  before any was.
 - **A streamed terrain no longer loses ground** (D366, D367): every edit, read
   and raycast loads the cells it reaches first -- all of them, or the edit is
   refused before it changes anything (past 4 096 cells); `VoxelSize` cannot

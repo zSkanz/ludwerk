@@ -190,15 +190,46 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 
 ## T3 — light and shadow on terrain
 
-- [ ] TA8: a slope-scaled bias, correct culling, the geometric normal for the
+- [x] TA8: a slope-scaled bias, correct culling, the geometric normal for the
   receiver's offset, no acne, shadows attached in every cascade (TA10).
-- [ ] TA9: contact shadows with a slope- and distance-aware bias.
-- [ ] Local lights push terrain in their atlas.
+- [x] TA9: contact shadows with a slope- and distance-aware bias.
+- [x] Local lights push terrain in their atlas.
 - [ ] TA12: no-material terrain plain matte grey.
 - [ ] TA13 and render P2: the right channels, the triplanar sign, the grain
   frame, resampled layer arrays, guarded normals, no streaks at a low sun.
 - [ ] CPU and GPU rules agree, by readback, paint included.
 - [ ] Foliage shadows respect alpha and fade.
+
+### T3 as it stands
+
+- **The eyes first, again** (`tests/screenshots/terrainshadow`,
+  `terrain_shadow_acne`): rounded hills never steeper than the lowest sun and
+  balls floating over nothing, so nothing shadows a face turned to the sun --
+  from 8 m to 900 m, the sun at 8, 12, 20 and 35 degrees, at two softnesses.
+  `--debug-view=shadow` draws blue where the ground faces the sun, and
+  `imgshadow` counts faces the map or the contact mask darkens; failing first,
+  the map darkened up to 180 000 of a picture's 500 000 pixels at 8 degrees
+  (355 000 at `ShadowSoftness` 1), the contact mask 5 600.
+- **TA8, TA10 and the local lights** (ADR 0142, D368, D370, D371): back faces
+  culled, each fragment pushed by its own depth slope times the cascade's
+  filter reach and a texel, up to N.L 0.1; the local tiles by their own
+  reach; the receiver's offset along the mesh's normal. Now 66 pixels at most,
+  on the smallest ball's terminator. Shadows photographed attached at 22 and
+  60 m under a 10 and a 20 degree sun, as before.
+- **TA9** (D369): the contact ray ignores the plane it starts on, carried in
+  one over depth to each pixel it reads. A bias grown by the depth buffer's
+  slant was tried first and took the contact from balls standing on ground
+  forty metres off -- the instanced golden showed it. Now 16 pixels at most.
+- **The streaks of photos/08** (D372): not specular aliasing, and not the
+  mesh -- the top of a filled block is flat to the vertex at every level, a
+  test says so now. The grain's noise hashed its lattice in floats, and one
+  point could hash to two values from two cells: the grain's normal, the
+  noise's slope, drew a line along that edge. An integer hash; and
+  `--debug-view=bend` with `imgsteps` in the same gate, 73 to 454 steps a
+  picture before and none after.
+- **Found on the way** (D373): since TA14, a headless `--screenshot` without
+  `--screenshot-every` photographed no terrain. A run that takes a picture
+  builds in the frame now.
 
 ## T4 — tools that do what the person asked
 

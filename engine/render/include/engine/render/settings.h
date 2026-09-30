@@ -42,8 +42,14 @@ enum class QualityLevel : core::u8
 //              `imgholes` counts sky seen through the ground.
 //   Level      each terrain node in the colour of its level of detail.
 //   Sky        the terrain's baked sky term, black to white.
-//   Shadow     the sun's shadow on terrain: the map and the contact mask.
+//   Shadow     the sun's shadow on terrain: the map in red, the contact mask
+//              in green, blue where the ground faces the sun, and the sky
+//              black. `imgshadow` counts faces to the sun either one darkens.
 //   Occlusion  the screen-space occlusion on terrain.
+//   Bend       how far the normal the terrain is shaded with is bent from
+//              its mesh's -- the grain's nudge and the layers' normal maps --
+//              four times over, and the sky black: `imgsteps` counts where it
+//              steps between two pixels, a crease the ground does not have.
 enum class DebugView : core::u8
 {
     None,
@@ -52,7 +58,14 @@ enum class DebugView : core::u8
     Sky,
     Shadow,
     Occlusion,
+    Bend,
 };
+
+// Whether a debug view draws the sky black, for a check to pass it over.
+[[nodiscard]] constexpr bool blackSky(DebugView view) noexcept
+{
+    return view == DebugView::Shadow || view == DebugView::Bend;
+}
 
 struct GraphicsSettings
 {

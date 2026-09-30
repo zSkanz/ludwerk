@@ -198,14 +198,16 @@ engine-host [script.luau | project-dir]
 - `--screenshot-every=N` takes a picture every N frames, not only the last,
   each named after `--screenshot` with its number: `shot.png` becomes
   `shot-000.png`, `shot-001.png` and so on. A scene that moves its camera on a
-  schedule is photographed from every place in one run. Terrain is then built
-  in the frame that draws it, rather than beside it, so each picture is of
-  ground settled for that frame.
+  schedule is photographed from every place in one run. It builds up to 256
+  terrain nodes a frame, so each picture is of ground settled for its case.
 - `--debug-view=VIEW` draws, in place of the picture: `holes` (the sky magenta
   and every terrain white, for counting sky seen through the ground), `level`
   (each terrain node in the colour of its level of detail), `sky` (the
   terrain's sky term), `shadow` (the sun's shadow on terrain: the map in red,
-  the contact mask in green) or `occlusion`.
+  the contact mask in green, blue where the ground faces the sun, the sky
+  black -- `imgshadow` counts faces to the sun either shadow darkens),
+  `occlusion`, or `bend` (what the shading does to the mesh's normal, four
+  times over, the sky black -- `imgsteps` counts where it jumps).
 - `--terrain-detail=full` draws every terrain at its finest level whatever the
   distance: the shape as it was sculpted, which a coarse level is held
   against.
@@ -214,6 +216,11 @@ engine-host [script.luau | project-dir]
 wait left out of `--frame-stats`: without it a headless flight is over in a
 second or two, and ground built beside the frame is measured against a camera
 moving far faster than anyone flies.
+
+**A run that takes a picture builds its terrain in the frame** that draws it,
+rather than beside it as a game does: headless frames run flat out, and the
+picture is of what the frames before it built, not of what a worker had
+finished by then.
 
 Four refusals worth knowing, all of them exit 2:
 

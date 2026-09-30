@@ -873,9 +873,9 @@ private:
     // (ADR 0140), where the static mesh's prepass would write the depth of
     // where it was, and the forward pass then lose to it.
     rhi::PipelineHandle terrainPrepassPipeline_{};
-    // How far the shadow pass being drawn pushes the terrain from the light,
-    // in the light's clip depth. Set per cascade; zero for a local light.
-    f32 terrainShadowPush_ = 0.0f;
+    // How far the shadow pass being drawn pushes the terrain from the light
+    // (`terrain_shadow.hlsl`): set per cascade, and for a local light's tile.
+    TerrainShadowPush terrainShadowPush_{};
     // The block world's forward pipeline, made the first frame a block is
     // drawn, and the palette it reads, filled each frame from the registry.
     rhi::PipelineHandle voxelPipeline_{};
@@ -2816,7 +2816,11 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                 // The push, and the geomorph: a shadow is cast by the ground as
                 // it is drawn, and the prepass writes where it is.
                 std::array<f32, 40> push{};
-                push[0] = terrainShadow ? terrainShadowPush_ : 0.0f;
+                if (terrainShadow) {
+                    push[0] = terrainShadowPush_.constant;
+                    push[1] = terrainShadowPush_.reach;
+                    push[2] = terrainShadowPush_.most;
+                }
                 if (draw.terrainMorph < world.terrainMorphs.size())
                     std::copy_n(world.terrainMorphs[draw.terrainMorph].rows.begin(), 36, push.begin() + 4);
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(push.data(), sizeof(push)));
@@ -4150,7 +4154,10 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
     const rhi::ShaderHandle fragment = load("terrain", rhi::ShaderStage::Fragment);
     const rhi::ShaderHandle depthVertex = load("terrain_depth", rhi::ShaderStage::Vertex);
     const rhi::ShaderHandle depthFragment = load("terrain_depth", rhi::ShaderStage::Fragment);
-    if (!vertex.valid() || !fragment.valid() || !depthVertex.valid() || !depthFragment.valid()) {
+    const rhi::ShaderHandle shadowVertex = load("terrain_shadow", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle shadowFragment = load("terrain_shadow", rhi::ShaderStage::Fragment);
+    if (!vertex.valid() || !fragment.valid() || !depthVertex.valid() || !depthFragment.valid() ||
+        !shadowVertex.valid() || !shadowFragment.valid()) {
         core::logText(core::LogLevel::Warn, error.message);
         return false;
     }
@@ -4179,17 +4186,20 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
         .depthStencilFormat = kDepthFormat,
         .debugName = "terrain",
     });
-    // **No culling in the shadow pass**, unlike every mesh there. The meshes
-    // cull FRONT faces so the depth stored is a solid's far side (D051), and
-    // the ground is a surface with no far side: culling its front faces would
-    // cull all of it, and the sun would shine through the hills.
+    // **Back faces culled in the shadow pass**, where every mesh culls its
+    // FRONT faces so the depth stored is a solid's far side (D051). The ground
+    // is a surface with no far side: culling its front faces would cull all of
+    // it, and the sun would shine through the hills. So it stores the side the
+    // light falls on, pushed past what a receiver's filter reads by the slope
+    // (`terrain_shadow.hlsl`); a face turned from the light is behind that
+    // side, and drawn too it was only more ground to acne (TA8).
     // All four attributes: the geomorph's offset rides in three of them.
     terrainShadowPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = depthVertex,
-        .fragmentShader = depthFragment,
+        .vertexShader = shadowVertex,
+        .fragmentShader = shadowFragment,
         .vertexBuffers = buffers,
         .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = {},
         .depthStencilFormat = kShadowFormat,
@@ -4302,10 +4312,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const bool airDrawn =
         air && world.camera.valid && ensureLookPipeline(device, air_, "look_air", kHdrFormat, LookBlend::Air);
     // And the governed sky's, for the same reason.
-    // The holes view draws the plain sky, magenta: a `Sky`'s pictures would
-    // put other colours where the check reads sky.
-    const bool skyGoverned =
-        skyLook.present && world.camera.valid && settings_.debugView != DebugView::Holes && ensureSkyLook(device);
+    // The holes and shadow views draw a plain sky, one colour: a `Sky`'s
+    // pictures would put other colours where the check reads sky.
+    const bool skyGoverned = skyLook.present && world.camera.valid && settings_.debugView != DebugView::Holes &&
+                             !blackSky(settings_.debugView) && ensureSkyLook(device);
     prepareSurfaces(device, world);
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {
@@ -4633,18 +4643,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // its front faces, so the depth in the map is the back of a solid
             // and a lit surface never shadows itself (D051). The ground is one
             // surface: drawn as it is, the map holds exactly the depth the
-            // ground is then compared against, and the whole terrain acnes into
-            // a dark rectangle the size of the cascade. So it is pushed away
-            // from the light -- in the light's clip depth, which for an
-            // orthographic cascade is linear in metres -- by as many texels as
-            // the filter can reach plus a margin for a low sun: the widest disc
-            // reads depths six texels off, and on ground tilted from the light
-            // those are deeper than the fragment by the slope. Two texels left
-            // concentric rings of self-shadow on open ground at a low sun.
-            const f32 push = cascades.depthRange[index] > 0.0f
-                                 ? 6.0f * cascades.texelWorld[index] / cascades.depthRange[index]
-                                 : 0.0f;
-            terrainShadowPush_ = push;
+            // ground is then compared against. So it is pushed away from the
+            // light by its slope times this cascade's filter reach
+            // (`terrain_shadow.hlsl`). Six texels for every slope, which this
+            // replaced, speckled ground at a low sun and detached shadows by
+            // metres in the far cascade (TA8, TA10).
+            terrainShadowPush_ = terrainCascadePush(cascades.texelWorld[index], cascades.depthRange[index],
+                                                    shadowPenumbra(world.environment.shadowSoftness));
             drawGeometry(cmd, world, meshes, cascades.viewProjection[index], shadowPipeline_, shadowSkinnedPipeline_,
                          Selection::Shadow, &cull);
             // Foliage casts only near the camera: the shader drops what lies
@@ -4688,7 +4693,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                             .width = static_cast<core::i32>(rect.width),
                             .height = static_cast<core::i32>(rect.height)});
             const CullSphere cull{candidate.position, candidate.range};
-            terrainShadowPush_ = 0.0f;
+            // The terrain pushed by its slope here too: a lamp over the ground
+            // meets most of it at a grazing angle.
+            terrainShadowPush_ = terrainLocalPush();
             drawGeometry(cmd, world, meshes, shadow.viewProjection[face], shadowPipeline_, shadowSkinnedPipeline_,
                          Selection::Shadow, &cull);
         }
@@ -4868,8 +4875,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // factor so a sun below the horizon leaves no disc behind.
         skyUniforms.sunColor[3] = kSunDiscIntensity * sky.dayFactor;
         // **Magenta, for the holes view** (terrain audit T0): a colour no
-        // ground is, so every pixel of it in a picture is sky.
-        skyUniforms.horizonColor[3] = settings_.debugView == DebugView::Holes ? 1.0f : 0.0f;
+        // ground is, so every pixel of it in a picture is sky. Black for the
+        // shadow and bend views, where magenta is a colour ground is
+        // (`sky.hlsl`).
+        skyUniforms.horizonColor[3] = settings_.debugView == DebugView::Holes ? 1.0f
+                                      : blackSky(settings_.debugView)         ? 2.0f
+                                                                              : 0.0f;
         if (clearBehind) {
             // No sky behind a view that shows only its instances (ADR 0107):
             // what nothing draws stays clear.
@@ -4981,11 +4992,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             frame.cascadeTexelWorld[index] = cascades.texelWorld[index];
             frame.cascadeDepthRange[index] = cascades.depthRange[index];
         }
-        // `Lighting.ShadowSoftness` (ADR 0096): a quarter of a metre at 1, so
-        // its default of 0.2 is the engine's own radius to the bit -- 0.2f
-        // times a power of two is exact.
-        frame.shadowParams[0] = world.environment.shadowSoftness == 0.2f ? kShadowFilterWorldRadius
-                                                                         : world.environment.shadowSoftness * 0.25f;
+        // `Lighting.ShadowSoftness` (ADR 0096).
+        frame.shadowParams[0] = shadowPenumbra(world.environment.shadowSoftness);
         frame.shadowParams[1] = kShadowNormalOffsetTexels;
         frame.shadowParams[2] = kShadowCascadeBlend;
         frame.shadowParams[3] = kShadowDepthBiasMetres;

@@ -72,9 +72,36 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     // The ray is longer further away, so it covers a similar number of pixels.
     const float rayLength = ContactSun.w * (1.0f + linearDepth * 0.02f);
     const float thickness = ContactParams.x * (1.0f + linearDepth * 0.02f);
-    // A surface must not shadow itself: the first step starts a little off it,
-    // and a hit must be deeper than this to count.
+    // A surface must not shadow itself: a hit must be deeper than this to
+    // count.
     const float bias = 0.01f + linearDepth * 0.0015f;
+
+    // **Nor be the surface the ray starts on** (terrain audit TA9). The buffer
+    // is read at pixel centres, with no filter, and a marched point lands
+    // anywhere in a pixel: on a surface the camera sees at a slant -- ground
+    // forty metres off -- the depth read is up to half a pixel's change of
+    // depth from the depth under the point, tens of centimetres against the
+    // bias's few, and at a low sun the ray runs along that surface. The ground
+    // stippled itself dark in a band before the fade. So the plane the ray
+    // starts on is carried to every pixel it reads -- one over depth is affine
+    // across the screen for a plane -- and a pixel on that plane is not a hit.
+    // A bias grown by the slant instead lost the contact of whatever stood on
+    // such ground, which is what this pass is for. Each slope is the smaller
+    // of its two neighbours', so the edge of something standing beside the
+    // pixel is not taken for the ground's.
+    uint width = 0;
+    uint height = 0;
+    DepthTexture.GetDimensions(width, height);
+    const float2 size = float2(float(max(width, 1u)), float(max(height, 1u)));
+    const float2 texel = 1.0f / size;
+    const float inverse = 1.0f / linearDepth;
+    const float left = 1.0f / linearDepthOf(DepthTexture.SampleLevel(DepthSampler, input.Uv - float2(texel.x, 0.0f), 0.0f));
+    const float right = 1.0f / linearDepthOf(DepthTexture.SampleLevel(DepthSampler, input.Uv + float2(texel.x, 0.0f), 0.0f));
+    const float up = 1.0f / linearDepthOf(DepthTexture.SampleLevel(DepthSampler, input.Uv - float2(0.0f, texel.y), 0.0f));
+    const float down = 1.0f / linearDepthOf(DepthTexture.SampleLevel(DepthSampler, input.Uv + float2(0.0f, texel.y), 0.0f));
+    const float slopeX = abs(right - inverse) < abs(inverse - left) ? right - inverse : inverse - left;
+    const float slopeY = abs(down - inverse) < abs(inverse - up) ? down - inverse : inverse - up;
+    const float2 originPixel = floor(input.Uv * size) + 0.5f;
 
     // Interleaved gradient noise jitters where the steps fall, so sixteen of
     // them read as a smooth edge rather than sixteen bands.
@@ -97,6 +124,12 @@ float4 FragmentMain(Interpolants input) : SV_Target0
             break;
 
         const float sceneDepth = linearDepthOf(DepthTexture.SampleLevel(DepthSampler, uv, 0.0f));
+        // The starting plane at the centre of the pixel read, which is where
+        // the depth read was drawn.
+        const float2 across = floor(uv * size) + 0.5f - originPixel;
+        const float plane = 1.0f / max(inverse + slopeX * across.x + slopeY * across.y, 1e-6f);
+        if (abs(sceneDepth - plane) <= bias)
+            continue;
         const float behind = sampleDepth - sceneDepth;
         // Behind something, but not so far behind that the something is a
         // different object in front of the ray rather than a caster it passes

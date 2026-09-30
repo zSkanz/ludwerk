@@ -197,6 +197,43 @@ inline constexpr f32 kShadowDepthBiasMetres = 0.008f;
 // reason a filter that changes width is.
 inline constexpr f32 kShadowCascadeBlend = 0.12f;
 
+// The world-space penumbra `Lighting.ShadowSoftness` asks for (ADR 0096): a
+// quarter of a metre at 1, and at its default of 0.2 the engine's own radius
+// to the bit -- 0.2f times a power of two is exact.
+[[nodiscard]] f32 shadowPenumbra(f32 softness) noexcept;
+
+// **How far the terrain is pushed from the light** (`terrain_shadow.hlsl`,
+// the terrain audit's TA8 and TA10). The ground has no far side to store, so
+// its lit side is pushed past what a receiver's filter reads: by a constant
+// and by the fragment's own depth slope times the filter's reach, up to the
+// slope at which the light meets the ground at a tenth.
+struct TerrainShadowPush
+{
+    // In the light's clip depth.
+    f32 constant = 0.0f;
+    // In texels: the slope's multiplier.
+    f32 reach = 0.0f;
+    // In the light's clip depth: the most the slope's part may be.
+    f32 most = 0.0f;
+};
+
+// The steepest slope pushed for in full, as depth per unit across: the
+// tangent of the light's angle from the normal where N.L is a tenth. Ground
+// meeting the light more steeply than that is lit by under a tenth, and a
+// push that kept growing would let light under whatever stands on it.
+inline constexpr f32 kTerrainShadowSteepest = 10.0f;
+
+// One cascade: a texel of constant, and a reach of the filter's radius there
+// -- `penumbra` over the texel, held to the filter's band -- plus the bilinear
+// tap's texel and half a texel's margin.
+[[nodiscard]] TerrainShadowPush terrainCascadePush(f32 texelWorld, f32 depthRange, f32 penumbra) noexcept;
+
+// A local light's tile: its filter's reach, and no constant -- the receiver
+// carries `kLocalShadowDepthBias`. No most either: a perspective depth has no
+// one texel size to state it in, and a grazing face lit by a lamp is ground
+// the lamp's light runs along, not ground something stands in front of.
+[[nodiscard]] TerrainShadowPush terrainLocalPush() noexcept;
+
 // One thing that can cast a shadow, as the fit sees it: a bounding sphere in the
 // snapshot's camera-relative space. The same two numbers `DrawItem` already
 // carries, handed over so the fit can size a cascade to what is really there.

@@ -1020,6 +1020,24 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **The terrain's shadow on itself, and the bend of its normal** (terrain
+    # audit T3): ground nothing shadows, photographed at every cascade's
+    # distance at a low sun and a high one, and no face to the sun darkened by
+    # the map or the contact mask -- acne -- and no crease in the shading the
+    # ground does not have -- the streaks of the owner's photo at a low sun.
+    # See the driver.
+    add_test(NAME terrain_shadow_acne
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSHADOW=$<TARGET_FILE:imgshadow>
+            -DSTEPS=$<TARGET_FILE:imgsteps>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainshadow
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-shadow
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_shadow.cmake)
+    set_tests_properties(terrain_shadow_acne PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # E5's screenshot row, which sat PENDING because the overlay it named was an
     # ImGui panel and a panel cannot render headlessly. The grid is drawn through
     # `DebugDraw` now -- in the world, where a question about space belongs --

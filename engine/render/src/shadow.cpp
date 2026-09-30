@@ -511,4 +511,24 @@ LocalShadows fitLocalShadows(std::span<const LocalShadowCandidate> candidates, u
     return out;
 }
 
+f32 shadowPenumbra(f32 softness) noexcept
+{
+    return softness == 0.2f ? kShadowFilterWorldRadius : softness * 0.25f;
+}
+
+TerrainShadowPush terrainCascadePush(f32 texelWorld, f32 depthRange, f32 penumbra) noexcept
+{
+    if (!(texelWorld > 0.0f) || !(depthRange > 0.0f))
+        return {};
+    const f32 radius = std::clamp(penumbra / texelWorld, kShadowFilterMinTexels, kShadowFilterMaxTexels);
+    const f32 reach = radius + 1.5f;
+    const f32 texel = texelWorld / depthRange;
+    return {.constant = texel, .reach = reach, .most = kTerrainShadowSteepest * reach * texel};
+}
+
+TerrainShadowPush terrainLocalPush() noexcept
+{
+    return {.constant = 0.0f, .reach = kLocalShadowFilterTexels + 1.5f, .most = 1.0f};
+}
+
 } // namespace engine::render

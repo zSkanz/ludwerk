@@ -1456,10 +1456,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // and loading has a budget of its own to be judged by.
     if (options.screenshotEvery != 0)
         terrainLoader.setBuildsPerSync(256);
-    // **Built off the main thread** (terrain audit TA14) -- except in that run,
-    // whose pictures are of what the frame they are taken in built, not of what
-    // a worker happened to finish by then.
-    terrainLoader.setAsync(options.screenshotEvery == 0);
+    // **Built off the main thread** (terrain audit TA14) -- except in a run
+    // that takes a picture, which is of what the frames before it built, not
+    // of what a worker happened to finish by then: headless frames run flat
+    // out, and thirty of them are over before a worker has built the ground.
+    terrainLoader.setAsync(options.screenshotPath.empty());
     // The block world's chunks (V1), meshed and uploaded the same way.
     render::VoxelLoader voxelLoader;
     render::WaterLoader waterLoader;

@@ -54,7 +54,7 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 TerrainParams;
     // x: the debug view drawn instead of the ground (`render::DebugView`,
     // terrain audit T0): 0 none, 1 holes, 2 level, 3 sky, 4 shadow, 5
-    // occlusion.
+    // occlusion, 6 bend.
     float4 TerrainDebug;
 };
 
@@ -162,7 +162,16 @@ float4 terrainDebugColor(TerrainInterpolants input, float3 normal)
         const float contact =
             ContactShadowTexture.SampleLevel(ContactShadowSampler, input.Position.xy * ViewportParams.zw, 0.0f);
         // The map in red, the contact mask in green: yellow is lit by both.
-        return float4(shadow, contact, 0.0f, 1.0f);
+        // Blue where the ground faces the sun by more than a grazing angle, so
+        // a check can tell a lit face the map darkens (acne, terrain audit
+        // TA8) from a face turned away: white is right, blue alone is wrong.
+        // Faces by its normal AND by its triangle: along a coarse shape's
+        // terminator a triangle turned from the sun is shaded by normals that
+        // still face it, and the map is right to hold it dark.
+        float3 facet = cross(ddy(input.ShadingPosition), ddx(input.ShadingPosition));
+        facet = dot(facet, normal) < 0.0f ? -facet : facet;
+        const float facetNol = dot(normalize(facet), sunDirection);
+        return float4(shadow, contact, min(sunNol, facetNol) >= 0.1f ? 1.0f : 0.0f, 1.0f);
     }
     if (view == 5u) {
         const float occlusion =
@@ -492,9 +501,15 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     const float3 shadingNormal = normalize(normalize(mix.Normal) + nudge);
 
     Surface surface = makeSurface(input.ShadingPosition, shadingNormal, albedo, mix.Metalness, roughness);
-    float3 color = lightSurface(surface, input.ShadingPosition, shadingNormal, input.ViewDepth, input.Position.xy,
+    // The shadow's lookup is offset along the MESH's normal (TA8): the map
+    // holds the mesh, and a normal a layer bends points the offset off it.
+    float3 color = lightSurface(surface, input.ShadingPosition, normal, input.ViewDepth, input.Position.xy,
                                 input.Sky * lerp(1.0f, mix.Occlusion, 0.6f));
     color += EmissiveTexture.Sample(EmissiveSampler, standIn).rgb;
     color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
+    // The bend view, drawn here rather than with the others: it is what all of
+    // the above did to the mesh's normal, four times over so a crease shows.
+    if (uint(TerrainDebug.x + 0.5f) == 6u)
+        return float4(saturate((shadingNormal - normal) * 4.0f + 0.5f), 1.0f);
     return float4(color, 1.0f);
 }

@@ -24,15 +24,35 @@ float terrainHash(float2 cell)
     return frac((p.x + p.y) * p.z);
 }
 
+// **A lattice point's value, from its integer coordinates** (the terrain
+// audit's bright streaks at a low sun, photos/08). The noise below reads each
+// lattice point from the four cells round it, and `terrainHash` -- a `frac` of
+// products in floats -- is so sensitive to its last bit that a point reached as
+// `cell + 1` in one cell and as `cell` in the next could hash to two different
+// values: the noise stepped along that cell's edge, and the grain's normal,
+// the noise's slope, drew a bright line and a dark one there. An integer hash
+// has no last bit to lose.
+float terrainLattice(int2 cell)
+{
+    uint h = uint(cell.x) * 0x8DA6B343u ^ uint(cell.y) * 0xD8163841u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return float(h & 0xFFFFFFu) / 16777215.0f;
+}
+
 float terrainNoise(float2 position)
 {
-    const float2 cell = floor(position);
-    const float2 f = position - cell;
+    const float2 corner = floor(position);
+    const float2 f = position - corner;
     const float2 u = f * f * (3.0f - 2.0f * f);
-    const float a = terrainHash(cell);
-    const float b = terrainHash(cell + float2(1.0f, 0.0f));
-    const float c = terrainHash(cell + float2(0.0f, 1.0f));
-    const float d = terrainHash(cell + float2(1.0f, 1.0f));
+    const int2 cell = int2(corner);
+    const float a = terrainLattice(cell);
+    const float b = terrainLattice(cell + int2(1, 0));
+    const float c = terrainLattice(cell + int2(0, 1));
+    const float d = terrainLattice(cell + int2(1, 1));
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 

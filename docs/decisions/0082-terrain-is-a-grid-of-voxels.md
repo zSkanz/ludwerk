@@ -194,7 +194,10 @@ The GPU height atlas, the CDLOD grid, `luaug_terrain.hlsli` and the cave flag
 are gone. The ground is meshes, exactly as caves were.
 - The cave shader is now `terrain.hlsl`.
 - `terrain_depth.hlsl` draws a mesh into the shadow maps with no culling,
-  pushed away from the light.
+  pushed away from the light. (**Amended by
+  [0142](0142-terrain-shadows-are-pushed-by-their-slope.md)**: back faces
+  culled, and pushed by the slope in `terrain_shadow.hlsl`;
+  `terrain_depth.hlsl` is the prepass's.)
 
 - **The ground is split into a quadtree of columns of chunks.**
   - A leaf is one column of chunks, meshed at level 0.

@@ -133,6 +133,33 @@ TEST_CASE("flat ground at a quarter-metre height is within 2 cm at every level")
     }
 }
 
+TEST_CASE("the top of a filled block is flat: every vertex on it, every normal up")
+{
+    // The audit's photos/08 showed streaks on flat ground at a low sun, and a
+    // lamp dark notches, at full detail too. Not the mesh: the top is flat to
+    // the vertex and the normal, borders of the region included (D372 was the
+    // grain's noise). Kept, so a mesher change that dents flat ground says so.
+    TerrainField field(settingsOf());
+    (void)fillBlock(field, {0.0, 2.0, 0.0}, {160.0f, 4.0f, 160.0f}, 1);
+    for (core::u32 level = 0; level <= 1; ++level) {
+        CAPTURE(level);
+        const TerrainMesh meshed = meshAt(field, level, 64, -8, 12);
+        float worstHeight = 0.0f;
+        float lowestUp = 1.0f;
+        int seen = 0;
+        for (const Vertex& vertex : meshed.mesh.vertices) {
+            if (vertex.position.y < 3.0f || std::abs(vertex.position.x) > 70.0f || std::abs(vertex.position.z) > 70.0f)
+                continue;
+            worstHeight = std::max(worstHeight, std::abs(vertex.position.y - 4.0f));
+            lowestUp = std::min(lowestUp, vertex.normal.y);
+            ++seen;
+        }
+        REQUIRE(seen > 0);
+        CHECK(worstHeight < 0.01f);
+        CHECK(lowestUp > 0.99f);
+    }
+}
+
 TEST_CASE("a coarse cell of a thick block takes the block's material")
 {
     // What already holds: a coarse cell wholly inside one material is that

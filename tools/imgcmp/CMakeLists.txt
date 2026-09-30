@@ -41,6 +41,8 @@ add_library(engine_imgcmp_lib STATIC
     src/compare.cpp
     src/holes.cpp
     src/image.cpp
+    src/shadow.cpp
+    src/steps.cpp
 )
 target_include_directories(engine_imgcmp_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 # PRIVATE: stb appears in no header of ours, so consumers never see it.
@@ -69,12 +71,24 @@ target_link_libraries(imgprobe PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgholes src/holes_main.cpp)
 target_link_libraries(imgholes PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgshadow` counts where a picture of the sun's shadow on terrain darkens
+# ground that faces the sun -- the terrain shadow check (terrain audit T3).
+add_executable(imgshadow src/shadow_main.cpp)
+target_link_libraries(imgshadow PRIVATE engine::warnings engine_imgcmp_lib)
+
+# `imgsteps` counts where a picture of the terrain's normal jumps between two
+# pixels -- a crease the ground does not have (terrain audit T3).
+add_executable(imgsteps src/steps_main.cpp)
+target_link_libraries(imgsteps PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp
         tests/compare_tests.cpp
         tests/holes_tests.cpp
         tests/image_tests.cpp
+        tests/shadow_tests.cpp
+        tests/steps_tests.cpp
     )
     target_link_libraries(engine_imgcmp_tests PRIVATE
         engine::warnings
