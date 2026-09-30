@@ -71,6 +71,11 @@ struct TerrainLayer
     // Roughness factor, metalness factor, normal scale, and flags: 1
     // triplanar, 2 a height map.
     float4 Surface;
+    // **How the repeat is broken up** (ADR 0113's amendment): x how much a
+    // pattern tens of metres across varies the colour; y the second sample's
+    // scale against the first (1 none); z 1 when the maps are laid on a
+    // hexagonal grid of random cells.
+    float4 Tiling;
 };
 StructuredBuffer<TerrainLayer> TerrainLayers : register(t16, space2);
 
@@ -291,7 +296,8 @@ Plane planeOf(float2 uv, float2 dx, float2 dy, float scale)
 
 // The layer's three maps at one plane; the normal is the map's tangent-space
 // xy, scaled.
-void readPlane(Plane plane, float slice, float normalScale, out float3 albedo, out float2 bend, out float3 surface)
+void readPlainPlane(Plane plane, float slice, float normalScale, out float3 albedo, out float2 bend,
+                    out float3 surface)
 {
     const float3 at = float3(plane.Uv, slice);
     albedo = LayerColorTexture.SampleGrad(LayerColorSampler, at, plane.Dx, plane.Dy).rgb;
@@ -299,10 +305,127 @@ void readPlane(Plane plane, float slice, float normalScale, out float3 albedo, o
     surface = LayerSurfaceTexture.SampleGrad(LayerSurfaceSampler, at, plane.Dx, plane.Dy).rgb;
 }
 
+// **Hex tiling** (ADR 0113's amendment; after Mikkelsen, "Practical Real-Time
+// Hex-Tiling", 2022): the plane is covered by a triangle grid whose vertices
+// are the centres of hexagonal cells; each cell reads the maps offset and
+// turned by its own random amount, and a pixel blends the three cells round it
+// by its barycentric weights, sharpened so the blend is a thin band. The hash
+// is the rules' integer one, so the cells are the same on every machine.
+void readHexPlane(Plane plane, float slice, float normalScale, out float3 albedo, out float2 bend,
+                  out float3 surface)
+{
+    // Skewed into a triangle grid, one cell about one repeat across.
+    const float2 st = plane.Uv * 3.4641016f;
+    const float2 skewed = float2(st.x - 0.57735027f * st.y, 1.15470054f * st.y);
+    const float2 base = floor(skewed);
+    float3 temp = float3(skewed - base, 0.0f);
+    temp.z = 1.0f - temp.x - temp.y;
+    const float s = temp.z < 0.0f ? 1.0f : 0.0f;
+    const float s2 = 2.0f * s - 1.0f;
+    float3 weights = float3(-temp.z * s2, s - temp.y * s2, s - temp.x * s2);
+    const float2 vertices[3] = {base + float2(s, s), base + float2(s, 1.0f - s), base + float2(1.0f - s, s)};
+    // Sharpened: a pixel is one cell's except near the borders.
+    weights = pow(max(weights, 0.0f), 7.0f);
+    weights /= max(weights.x + weights.y + weights.z, 1e-6f);
+
+    albedo = 0.0f;
+    bend = 0.0f;
+    surface = 0.0f;
+    [unroll] for (uint corner = 0; corner < 3u; ++corner)
+    {
+        const uint h = terrainRuleHash(int(vertices[corner].x), int(vertices[corner].y));
+        const float angle = terrainRuleUnit(h) * 6.2831853f;
+        const float2 offset = float2(terrainRuleUnit(h * 0x9E3779B9u), terrainRuleUnit(h * 0x85EBCA6Bu));
+        const float c = cos(angle);
+        const float sn = sin(angle);
+        // Turned about the cell's own centre, then moved.
+        const float2x2 turn = float2x2(c, -sn, sn, c);
+        Plane cell;
+        cell.Uv = mul(turn, plane.Uv) + offset;
+        cell.Dx = mul(turn, plane.Dx);
+        cell.Dy = mul(turn, plane.Dy);
+        float3 a;
+        float2 b;
+        float3 m;
+        readPlainPlane(cell, slice, normalScale, a, b, m);
+        // The normal's bend turned back into the plane's axes.
+        const float2x2 back = float2x2(c, sn, -sn, c);
+        albedo += a * weights[corner];
+        bend += mul(back, b) * weights[corner];
+        surface += m * weights[corner];
+    }
+}
+
+// **How far the pixel is**, set once per pixel: the second sample's blend is
+// by distance.
+static float s_viewDepth = 0.0f;
+
+// The maps at one plane, with the repeat broken up: hex tiling where the
+// material asks for it, and the same maps again at `tiling.y` of the scale,
+// blended in with distance -- a quarter near, three quarters far.
+void readPlane(Plane plane, float slice, float normalScale, float4 tiling, out float3 albedo, out float2 bend,
+               out float3 surface)
+{
+    [branch] if (tiling.z > 0.5f)
+        readHexPlane(plane, slice, normalScale, albedo, bend, surface);
+    else
+        readPlainPlane(plane, slice, normalScale, albedo, bend, surface);
+    [branch] if (tiling.y < 0.999f)
+    {
+        // Turned by 0.6 radians as well as scaled, so the two lattices never
+        // line up: scaled alone, a sixth of the scale repeats every six fine
+        // repeats and the sum is a grid six times larger.
+        const float2x2 turn = float2x2(0.82533561f, -0.56464247f, 0.56464247f, 0.82533561f);
+        Plane wide;
+        wide.Uv = mul(turn, plane.Uv) * tiling.y + 0.37f;
+        // And bent by a slow noise, a third of its repeat either way over
+        // about one and a half: turned, its own lattice still repeats, only
+        // along other axes. Too slow a bend to count in the gradients.
+        const float2 bendAt = wide.Uv * (4.3f / 1.5f);
+        wide.Uv += (float2(terrainRuleNoise(bendAt.x, bendAt.y), terrainRuleNoise(bendAt.x + 53.0f, bendAt.y - 17.0f)) -
+                    0.5f) *
+                   0.66f;
+        wide.Dx = mul(turn, plane.Dx) * tiling.y;
+        wide.Dy = mul(turn, plane.Dy) * tiling.y;
+        float3 a;
+        float2 b;
+        float3 m;
+        readPlainPlane(wide, slice, normalScale, a, b, m);
+        b = mul(transpose(turn), b);
+        // The distance in repeats of the fine sample (`tiling.w` is one over
+        // its metres), so a small tile and a large one give way alike: a
+        // quarter near, three quarters far. And more or less of it from patch
+        // to patch, a noise some two and a half repeats across: a share that
+        // is the same everywhere dims the fine repeat without breaking it.
+        const float far = smoothstep(2.0f, 24.0f, s_viewDepth * tiling.w);
+        const float patch = terrainRuleNoise(plane.Uv.x * 1.72f, plane.Uv.y * 1.72f);
+        const float share = saturate(lerp(0.25f, 0.75f, far) + (patch - 0.5f) * 1.5f);
+        albedo = lerp(albedo, a, share);
+        bend = lerp(bend, b, share);
+        surface = lerp(surface, m, share);
+    }
+}
+
+// **The colour's large-scale drift** on a textured layer (ADR 0113's
+// amendment): two octaves of the rules' noise, 37 and 13 m, centred on one.
+// Not on plain ground, which stays plain (TA12).
+float3 tilingVariation(float3 albedo, float3 ground, float strength)
+{
+    const float broad = terrainRuleNoise(ground.x * (4.3f / 37.0f), ground.z * (4.3f / 37.0f));
+    const float fine = terrainRuleNoise(ground.x * (4.3f / 13.0f) + 71.0f, ground.z * (4.3f / 13.0f) - 29.0f);
+    const float n = broad * 0.7f + fine * 0.3f - 0.5f;
+    // Brighter and a little warmer one way, darker and cooler the other.
+    const float3 shift = float3(1.0f + 0.55f * n, 1.0f + 0.45f * n, 1.0f + 0.3f * n);
+    return albedo * lerp(float3(1.0f, 1.0f, 1.0f), shift, strength);
+}
+
 LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 normal, float3 planes)
 {
     const float4 tint = TerrainLayers[id].Tint;
     const float4 settings = TerrainLayers[id].Surface;
+    // The repeat's breaking-up, with the fine repeat's metres in w for the
+    // distance blend.
+    const float4 tiling = float4(TerrainLayers[id].Tiling.xyz, tint.a);
     const float slice = float(id) - 1.0f;
     const float scale = tint.a;
     // Flags (`TerrainLoader::appendRenderTerrains`): 1 triplanar, 2 a height map.
@@ -325,7 +448,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             float3 a;
             float2 b;
             float3 s;
-            readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, a, b, s);
+            readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, tiling, a, b, s);
             albedo += a * planes.y;
             surface += s * planes.y;
             bent += float3(b.x, 0.0f, -b.y) * planes.y;
@@ -336,7 +459,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             float3 a;
             float2 b;
             float3 s;
-            readPlane(planeOf(ground.zy, dx.zy, dy.zy, scale), slice, settings.z, a, b, s);
+            readPlane(planeOf(ground.zy, dx.zy, dy.zy, scale), slice, settings.z, tiling, a, b, s);
             albedo += a * planes.x;
             surface += s * planes.x;
             bent += float3(0.0f, -b.y, b.x) * planes.x;
@@ -347,7 +470,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             float3 a;
             float2 b;
             float3 s;
-            readPlane(planeOf(ground.xy, dx.xy, dy.xy, scale), slice, settings.z, a, b, s);
+            readPlane(planeOf(ground.xy, dx.xy, dy.xy, scale), slice, settings.z, tiling, a, b, s);
             albedo += a * planes.z;
             surface += s * planes.z;
             bent += float3(b.x, -b.y, 0.0f) * planes.z;
@@ -359,7 +482,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
     }
     else {
         float2 b;
-        readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, albedo, b, surface);
+        readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, tiling, albedo, b, surface);
         bent += float3(b.x, 0.0f, -b.y);
     }
 
@@ -367,7 +490,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
     // (`terrain_pack.hlsl`): the material's height in R, from its height map,
     // then its metallic-roughness map's G and B.
     LayerSample result;
-    result.Albedo = albedo * tint.rgb;
+    result.Albedo = tilingVariation(albedo * tint.rgb, ground, tiling.x);
     result.Normal = terrainUnit(bent, normal);
     result.Height = layerHeight(surface.r);
     result.Occlusion = (flags & 2u) != 0u ? result.Height : 1.0f;
@@ -403,6 +526,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     const float4 debugColor = terrainDebugColor(input, normal);
     if (debugColor.a >= 0.0f)
         return debugColor;
+    s_viewDepth = input.ViewDepth;
     const float3 dx = ddx(input.Ground);
     const float3 dy = ddy(input.Ground);
     float3 planes = abs(normal);

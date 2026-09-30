@@ -18,9 +18,10 @@ namespace engine::asset {
 namespace {
 
 constexpr std::array<std::string_view, MaterialFieldCount> FieldNames{
-    "Color",     "Transparency", "ColorMap",       "NormalMap", "MetallicRoughnessMap", "Emissive",    "EmissiveMap",
-    "Metalness", "Roughness",    "NormalScale",    "AlphaMode", "AlphaCutoff",          "DoubleSided", "TileSize",
-    "HeightMap", "Triplanar",    "BlendSharpness",
+    "Color",     "Transparency",   "ColorMap",        "NormalMap",      "MetallicRoughnessMap",
+    "Emissive",  "EmissiveMap",    "Metalness",       "Roughness",      "NormalScale",
+    "AlphaMode", "AlphaCutoff",    "DoubleSided",     "TileSize",       "HeightMap",
+    "Triplanar", "BlendSharpness", "TilingVariation", "TilingFarScale", "HexTiling",
 };
 
 constexpr std::array<std::string_view, 3> AlphaModeNames{"Opaque", "Mask", "Blend"};
@@ -50,6 +51,7 @@ enum class FieldShape : core::u8
         return FieldShape::AlphaMode;
     case MaterialField::DoubleSided:
     case MaterialField::Triplanar:
+    case MaterialField::HexTiling:
         return FieldShape::Flag;
     default:
         return FieldShape::Number;
@@ -82,6 +84,10 @@ template <class Properties>
         return &p.tileSize;
     case MaterialField::BlendSharpness:
         return &p.blendSharpness;
+    case MaterialField::TilingVariation:
+        return &p.tilingVariation;
+    case MaterialField::TilingFarScale:
+        return &p.tilingFarScale;
     default:
         return static_cast<decltype(&p.transparency)>(nullptr);
     }
@@ -90,7 +96,9 @@ template <class Properties>
 template <class Properties>
 [[nodiscard]] auto* flagField(MaterialField field, Properties& p) noexcept
 {
-    return field == MaterialField::Triplanar ? &p.triplanar : &p.doubleSided;
+    return field == MaterialField::Triplanar   ? &p.triplanar
+           : field == MaterialField::HexTiling ? &p.hexTiling
+                                               : &p.doubleSided;
 }
 
 template <class Properties>
@@ -740,8 +748,9 @@ constexpr std::array<char, 4> CompiledMagic{'L', 'M', 'A', 'T'};
 // 2: the surface shader and its parameters (ADR 0091).
 // 3: the shader parameters a part may override, by name. 2 is still read.
 // 4 carries `tileSize`, at the end so a 3 reads as it did; 5 the height map,
-// `triplanar` and `blendSharpness` a terrain reads (ADR 0113).
-constexpr core::u32 CompiledVersion = 5;
+// `triplanar` and `blendSharpness` a terrain reads (ADR 0113); 6 how a layer's
+// repeat is broken up (ADR 0113's amendment).
+constexpr core::u32 CompiledVersion = 6;
 
 class ByteWriter
 {
@@ -886,6 +895,9 @@ std::vector<std::byte> encodeMaterial(const CompiledMaterial& material)
     out.raw(heightHash.data(), heightHash.size());
     out.word(p.triplanar ? 1u : 0u);
     out.real(p.blendSharpness);
+    out.real(p.tilingVariation);
+    out.real(p.tilingFarScale);
+    out.word(p.hexTiling ? 1u : 0u);
     return out.take();
 }
 
@@ -966,6 +978,12 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
             return std::nullopt;
         out.mapHashes[4] = core::fromBytes(std::span<const std::byte, 16>(hash));
         p.triplanar = triplanar != 0;
+    }
+    if (version >= 6) {
+        core::u32 hex = 0;
+        if (!in.real(p.tilingVariation) || !in.real(p.tilingFarScale) || !in.word(hex))
+            return std::nullopt;
+        p.hexTiling = hex != 0;
     }
     if (!in.done())
         return std::nullopt;

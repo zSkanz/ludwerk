@@ -14,7 +14,9 @@
 # (`--debug-view=bend`, four times over about a mid grey). Up the image is
 # down the ground plane's second axis, so the normal leans to -Z: no blue. The
 # terrain bent it along +Z, lighting every bump from the wrong side along one
-# axis.
+# axis. That variant turns off the layer's far sample (`TilingFarScale` 1, ADR
+# 0113's amendment): the far sample is turned, and a tilt turned with its
+# texture leans another way -- rightly, but it is not the convention asked.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DIMGCMP=<imgcmp> -DPROBE=<imgprobe>

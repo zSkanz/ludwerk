@@ -1342,3 +1342,36 @@ At 16,384 chunks a mutable compound's ray is 25 us and a static compound's
 rebuild 9.5 ms; a body per chunk stays at 2 us. `tests/bench/terrain_dig` in
 one run, band against none: 4.6 against 3.9 ms a tick. The moving bodies'
 `mEnhancedInternalEdgeRemoval`, A/B in one run: within 2% on every bench.
+
+### A layer's repeat broken up (ADR 0113's amendment)
+
+What the far sample and hex tiling cost. `win-msvc-dev` (D3D12, the GPU debug
+layer on), an RTX 4070 Ti SUPER, 2026-09-30; the gallery's layers as they
+repeated (`TilingVariation` 0, `TilingFarScale` 1), as they are by default,
+and with `HexTiling` on.
+
+**The flight** (`tests/perf/terrainflight`, `--pace=60`, 1920 by 1080, three
+runs each):
+
+| Layers | Median | p95 | p99 | Waiting on the GPU |
+|---|---|---|---|---|
+| Repeating | 1.75, 1.64, 1.71 ms | 2.94, 2.92, 2.87 ms | 5.48, 5.14, 5.58 ms | 0.26, 0.25, 0.26 ms |
+| Broken up (default) | 1.62, 1.56, 1.94 ms | 2.90, 2.97, 2.85 ms | 5.55, 5.30, 5.82 ms | 0.26, 0.25, 0.35 ms |
+| Hex tiling | 1.64, 1.66, 2.01 ms | 2.89, 2.90, 2.97 ms | 5.29, 5.34, 6.10 ms | 0.26, 0.25, 0.36 ms |
+
+**Within the runs' own spread**: the flight is drawn on the CPU and waits on
+the GPU a quarter of a millisecond, so what a pixel costs does not show in it.
+
+**Ground filling the screen** -- the tiling gallery's view across each field
+from a person's height, the lower half of the picture ground, unpaced, 3840
+by 2160, 900 frames, two runs each:
+
+| Layers | Median | Waiting on the GPU |
+|---|---|---|
+| Repeating | 1.93, 1.90 ms | 0.69, 0.44 ms |
+| Broken up (default) | 1.98, 2.02 ms | 0.77, 0.78 ms |
+| Hex tiling | 2.06, 2.17 ms | 0.85, 0.92 ms |
+
+The default costs about 0.1 ms a frame at 4K on this card, hex tiling about
+0.2: each map read twice, and four times. A weaker GPU pays more of it, a
+phone most; the owner decides whether hex becomes a default.

@@ -1,0 +1,10 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "engine://terrain/grass",
+  "instanceParameters": [],
+  "properties": {
+    "TilingVariation": 0,
+    "TilingFarScale": 1
+  }
+}

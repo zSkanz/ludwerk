@@ -1038,6 +1038,22 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 600)
 
+    # **A terrain layer's repeat is broken up** (ADR 0113's amendment): the
+    # built-in grass photographed from above as it repeated, as it is by
+    # default and on hexagonal cells, and its autocorrelation at the tile's
+    # period measured -- the first must fail the limits the others pass. See
+    # the driver.
+    add_test(NAME terrain_tiling
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DTILE=$<TARGET_FILE:imgtile>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terraintiling
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-tiling
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_tiling.cmake)
+    set_tests_properties(terrain_tiling PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **A terrain layer reads only the channels its maps promise** (terrain
     # audit TA13): the same ground with a metallic-roughness map whose R is
     # empty, and with none, drawn the same; and a normal map's up bending the

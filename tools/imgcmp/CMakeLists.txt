@@ -43,6 +43,7 @@ add_library(engine_imgcmp_lib STATIC
     src/image.cpp
     src/shadow.cpp
     src/steps.cpp
+    src/tile.cpp
 )
 target_include_directories(engine_imgcmp_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 # PRIVATE: stb appears in no header of ours, so consumers never see it.
@@ -81,6 +82,12 @@ target_link_libraries(imgshadow PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgsteps src/steps_main.cpp)
 target_link_libraries(imgsteps PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgtile` measures how strongly a picture of ground repeats at a terrain
+# layer's tile period, and how its colour varies tile to tile (ADR 0113's
+# amendment).
+add_executable(imgtile src/tile_main.cpp)
+target_link_libraries(imgtile PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp
@@ -89,6 +96,7 @@ if(ENG_BUILD_TESTS)
         tests/image_tests.cpp
         tests/shadow_tests.cpp
         tests/steps_tests.cpp
+        tests/tile_tests.cpp
     )
     target_link_libraries(engine_imgcmp_tests PRIVATE
         engine::warnings

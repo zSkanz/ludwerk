@@ -742,6 +742,16 @@ declare extern type Material with
     --- How hard the edge is where this terrain layer meets another, from 0 (a wide fade) to 1 (a sharp
     --- line along the height map). Read only by a terrain.
     BlendSharpness: number
+    --- How much a pattern tens of metres across varies a terrain layer's colour, from 0 (none) to 1, so
+    --- its repeat does not read as a grid. 0.5 by default; read only by a terrain.
+    TilingVariation: number
+    --- How many times larger the second sample of a terrain layer's textures is, blended in with
+    --- distance, from 1 (none) to 32. 6 by default; read only by a terrain.
+    TilingFarScale: number
+    --- Whether a terrain layer's textures are laid on a hexagonal grid of cells, each offset and turned
+    --- at random with their borders blended -- for a photograph, whose repeat shows most. Three reads
+    --- of each texture instead of one; off by default; read only by a terrain.
+    HexTiling: boolean
     --- A writable runtime copy: the same properties, the same `Source`, owned by nobody and never
     --- saved. Put it on a part with `part.Material = copy`, then change it -- every part wearing this
     --- copy changes with it, and nothing else does.

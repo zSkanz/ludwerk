@@ -6983,6 +6983,11 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "HexTiling",
+          "Type": "boolean",
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "MetallicRoughnessMap",
           "Type": "Content",
           "ThreadSafety": "Safe"
@@ -7015,6 +7020,16 @@
         },
         {
           "Name": "TileSize",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "TilingFarScale",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "TilingVariation",
           "Type": "number",
           "ThreadSafety": "Safe"
         },

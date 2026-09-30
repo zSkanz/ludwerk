@@ -128,10 +128,12 @@ int materialSet(lua_State* L)
     clone->set |= asset::fieldBit(Field);
     // A map is a name, and the wire sends a name as this world's atom for it.
     if constexpr (Field == MaterialField::ColorMap || Field == MaterialField::NormalMap ||
-                  Field == MaterialField::MetallicRoughnessMap || Field == MaterialField::EmissiveMap) {
+                  Field == MaterialField::MetallicRoughnessMap || Field == MaterialField::EmissiveMap ||
+                  Field == MaterialField::HeightMap) {
         const std::string* written = Field == MaterialField::ColorMap      ? &values.colorMap
                                      : Field == MaterialField::NormalMap   ? &values.normalMap
                                      : Field == MaterialField::EmissiveMap ? &values.emissiveMap
+                                     : Field == MaterialField::HeightMap   ? &values.heightMap
                                                                            : &values.metallicRoughnessMap;
         if (!written->empty())
             (void)world(L).atoms().intern(*written);
@@ -334,6 +336,16 @@ void registerMaterialTypes(lua_State* L)
     addField<MaterialField::AlphaMode>(getters, setters, atoms);
     addField<MaterialField::AlphaCutoff>(getters, setters, atoms);
     addField<MaterialField::DoubleSided>(getters, setters, atoms);
+    // The terrain's (ADR 0113 and its amendments): named by the API from the
+    // first, and bound only now (D395).
+    addField<MaterialField::TileSize>(getters, setters, atoms);
+    addField<MaterialField::HeightMap>(getters, setters, atoms);
+    addField<MaterialField::Triplanar>(getters, setters, atoms);
+    addField<MaterialField::BlendSharpness>(getters, setters, atoms);
+    addField<MaterialField::TilingVariation>(getters, setters, atoms);
+    addField<MaterialField::TilingFarScale>(getters, setters, atoms);
+    addField<MaterialField::HexTiling>(getters, setters, atoms);
+    static_assert(asset::MaterialFieldCount == 20, "a new material field is bound here too");
 
     MemberTable& methods = ctx.methods[static_cast<usize>(UserdataTag::Material)];
     addMember(methods, atoms, "Clone", materialClone);
@@ -415,6 +427,15 @@ void pushMaterialField(lua_State* L, MaterialField field, const asset::MaterialP
         return;
     case MaterialField::BlendSharpness:
         lua_pushnumber(L, static_cast<double>(values.blendSharpness));
+        return;
+    case MaterialField::TilingVariation:
+        lua_pushnumber(L, static_cast<double>(values.tilingVariation));
+        return;
+    case MaterialField::TilingFarScale:
+        lua_pushnumber(L, static_cast<double>(values.tilingFarScale));
+        return;
+    case MaterialField::HexTiling:
+        lua_pushboolean(L, values.hexTiling);
         return;
     case MaterialField::Count:
         break;
@@ -502,6 +523,15 @@ bool readMaterialParameter(lua_State* L, int index, MaterialField field, asset::
         return true;
     case MaterialField::BlendSharpness:
         return number(into.blendSharpness) && into.blendSharpness >= 0.0f && into.blendSharpness <= 1.0f;
+    case MaterialField::TilingVariation:
+        return number(into.tilingVariation) && into.tilingVariation >= 0.0f && into.tilingVariation <= 1.0f;
+    case MaterialField::TilingFarScale:
+        return number(into.tilingFarScale) && into.tilingFarScale >= 1.0f && into.tilingFarScale <= 32.0f;
+    case MaterialField::HexTiling:
+        if (!lua_isboolean(L, index))
+            return false;
+        into.hexTiling = lua_toboolean(L, index) != 0;
+        return true;
     case MaterialField::Count:
         break;
     }

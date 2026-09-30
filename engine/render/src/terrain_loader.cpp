@@ -1258,6 +1258,11 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
             // Flags: 1 triplanar, 2 a height map -- which the ground's
             // occlusion is read from, and without which it has none (TA13).
             layer.surface[3] = (p.triplanar ? 1.0f : 0.0f) + (p.heightMap.empty() ? 0.0f : 2.0f);
+            // **How its repeat is broken up** (ADR 0113's amendment): read by
+            // a textured layer only -- plain ground never samples a layer.
+            layer.tiling[0] = std::clamp(p.tilingVariation, 0.0f, 1.0f);
+            layer.tiling[1] = 1.0f / std::clamp(p.tilingFarScale, 1.0f, 32.0f);
+            layer.tiling[2] = p.hexTiling ? 1.0f : 0.0f;
             const std::array<const std::string*, 4> maps{&p.colorMap, &p.normalMap, &p.metallicRoughnessMap,
                                                          &p.heightMap};
             for (usize slot = 0; slot < maps.size(); ++slot) {

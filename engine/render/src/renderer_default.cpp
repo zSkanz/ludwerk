@@ -4145,6 +4145,7 @@ void DefaultRenderer::updateTerrainArrays(rhi::IDevice& device, rhi::ICmdList& c
                 row.flat[channel] = layer.flat[channel];
                 row.tint[channel] = layer.tint[channel];
                 row.surface[channel] = layer.surface[channel];
+                row.tiling[channel] = layer.tiling[channel];
             }
             waiting = waiting || layer.waiting;
             for (const rhi::TextureHandle map : layer.maps)

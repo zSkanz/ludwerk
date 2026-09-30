@@ -16,6 +16,7 @@
     "NormalScale": 1,
     "AlphaMode": "Opaque",
     "AlphaCutoff": 0.5,
-    "DoubleSided": false
+    "DoubleSided": false,
+    "TilingFarScale": 1
   }
 }

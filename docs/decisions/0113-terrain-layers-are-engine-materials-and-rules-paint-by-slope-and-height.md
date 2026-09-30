@@ -159,3 +159,56 @@ The terrain audit's TA12 and TA13 (`docs/briefs/terrain-audit-2026-09-29-full.md
 `terrain_shadow_acne`'s albedo run holds plain ground to one grey;
 `terrain_material_channels` draws a ground with an empty-R map and with none,
 the same, and a normal map tilted up the image leaning the ground to -Z.
+
+## Amendment, 2026-09-30: a layer's repeat is broken up
+
+The owner, through ludwerk-08, after the grid of the grass in examples 13 and
+31: a layer is one small patch of texture laid every `TileSize` metres, a
+carpet near and, far, either a flat blur or a grid. Closing the terrain audit
+takes it on, with three tools: a large-scale variation and a second, larger
+sample, **on by default** for every textured layer; hex tiling **opt-in** per
+material, its cost measured, and a default only if the owner says so.
+
+- **Three material fields**, read only by a terrain, in the file, a script and
+  the material editor alike: `TilingVariation` (0 to 1, 0.5 by default),
+  `TilingFarScale` (1 to 32, 6 by default; 1 turns the far sample off) and
+  `HexTiling` (off by default). Plain ground has no material and is untouched
+  (TA12). A compiled material is version 6.
+- **The variation** multiplies the layer's colour by two octaves of the rules'
+  integer noise, 37 m and 13 m, brighter and a little warmer one way, darker
+  and cooler the other, `TilingVariation` of the way.
+- **The far sample** reads the layer's maps again at `1 / TilingFarScale` of
+  the scale, and blends them in by distance -- a quarter within two repeats,
+  three quarters beyond twenty-four -- and by a noise two and a half repeats
+  across, so the share is not one everywhere: a share the same everywhere dims
+  the fine repeat without breaking it. **The far sample is turned by 0.6
+  radians and bent by a slow noise**, a third of its repeat either way: scaled
+  alone, a sixth of the scale repeats every six fine repeats and the sum was a
+  grid six times larger (measured 0.96 at 18 m); turned alone, its lattice
+  still repeated along its own axes (0.75). It costs a second read of each map.
+- **Hex tiling** (after Mikkelsen, *Practical Real-Time Hex-Tiling*, 2022)
+  lays the maps on a triangle grid whose vertices are the centres of hexagonal
+  cells, each cell's maps moved and turned by its own amount from the rules'
+  hash, a pixel blending the three cells round it by sharpened barycentric
+  weights. The normal map's bend is turned back into the plane's axes. Three
+  reads of each map instead of one.
+
+**Measured** (`terrain_tiling`, the built-in grass from above, the
+autocorrelation of the picture's detail at the tile's period; 1 repeats
+exactly):
+
+| | From 12 m | From 60 m, at 3 m | From 60 m, at 18 m, any way | Colour varies, tile to tile |
+|---|---|---|---|---|
+| Repeating, as before | 0.99 | 0.98 | 0.85 | 0.8% |
+| Broken up (default) | 0.87 | 0.50 | 0.23 | 5.4% |
+| Hex tiling | 0.05 | 0.01 | 0.34 | 5.3% |
+
+**Near, the default does not hide a bold motif.** Four repeats across, the
+grass's dry patches still read as the same patch: the far sample is too wide
+and the variation too slow to change one repeat from the next. That is hex
+tiling's work, and it is the owner's to make a default.
+
+**The cost** (`docs/perf-baselines.md`): nothing the terrain flight can tell
+from its runs' spread -- it waits on the GPU a quarter of a millisecond --
+and, with ground filling half a 4K picture on an RTX 4070 Ti SUPER, about
+0.1 ms a frame for the default and 0.2 for hex tiling.

@@ -2556,6 +2556,29 @@ local Datatypes: { Schema.Datatype } = {
                 Doc = "How hard the edge is where this terrain layer meets another, from 0 (a wide fade) to 1 "
                     .. "(a sharp line along the height map). Read only by a terrain.",
             },
+            {
+                Name = "TilingVariation",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How much a pattern tens of metres across varies a terrain layer's colour, from 0 (none) "
+                    .. "to 1, so its repeat does not read as a grid. 0.5 by default; read only by a terrain.",
+            },
+            {
+                Name = "TilingFarScale",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How many times larger the second sample of a terrain layer's textures is, blended in "
+                    .. "with distance, from 1 (none) to 32. 6 by default; read only by a terrain.",
+            },
+            {
+                Name = "HexTiling",
+                Type = "boolean",
+                ThreadSafety = "Safe",
+                Doc = "Whether a terrain layer's textures are laid on a hexagonal grid of cells, each offset "
+                    .. "and turned at random with their borders blended -- for a photograph, whose repeat "
+                    .. "shows most. Three reads of each texture instead of one; off by default; read only by "
+                    .. "a terrain.",
+            },
         } :: { Schema.Property },
         Methods = {
             {

@@ -45,7 +45,10 @@ plain part has always looked like.
     "TileSize": 4,
     "HeightMap": "",
     "Triplanar": true,
-    "BlendSharpness": 0.5
+    "BlendSharpness": 0.5,
+    "TilingVariation": 0.5,
+    "TilingFarScale": 6,
+    "HexTiling": false
   }
 }
 ```
@@ -65,6 +68,9 @@ plain part has always looked like.
 | `HeightMap` | A height image for a terrain layer, white high; where two layers meet, the higher shows through. Read only by a terrain ([Terrain](manual:world/terrain)). |
 | `Triplanar` | Whether a terrain layer is projected from three axes, so a cliff is textured rather than smeared. On by default; read only by a terrain. |
 | `BlendSharpness` | How hard the edge is where a terrain layer meets another, 0 (a wide fade) to 1 (a sharp line along the height map). Read only by a terrain. |
+| `TilingVariation` | How much a pattern tens of metres across varies a terrain layer's colour, 0 (none) to 1, so its repeat does not read as a grid. 0.5 by default; read only by a terrain. |
+| `TilingFarScale` | How many times larger the second sample of a terrain layer's textures is, blended in with distance and from patch to patch, 1 (none) to 32. 6 by default; read only by a terrain. |
+| `HexTiling` | Lays a terrain layer's textures on a hexagonal grid of cells, each moved and turned at random, so not even a close view repeats -- for a photograph, or a texture with a bold motif. Three reads of each texture instead of one; off by default; read only by a terrain. |
 
 The editor writes the file for you: right-click in the content browser and
 choose **New Material**, then edit it in the **Material** panel.

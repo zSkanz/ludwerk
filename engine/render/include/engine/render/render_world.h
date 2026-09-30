@@ -345,6 +345,8 @@ struct RenderTerrainLayer
     f32 flat[4]{};
     f32 tint[4]{};
     f32 surface[4]{};
+    // `GpuTerrainLayer::tiling`.
+    f32 tiling[4]{0.0f, 1.0f, 0.0f, 0.0f};
     // Colour, normal, metallic-roughness and height maps; invalid for a map
     // the material does not name, which the renderer fills with a neutral one
     // (a missing height is level ground, and no occlusion).

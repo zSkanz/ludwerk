@@ -404,6 +404,19 @@ Done (D384-D391). The editor P2 list, item by item:
 - **Found by ludwerk-08 checking T4**: `FillBall` wholly above `MaxHeight`
   answers 0, as the API says: an explosion over the ceiling is not a mistake,
   and T4 made only the unusable arguments errors.
+- **A layer's repeat is broken up** (the owner's ruling of 2026-09-30,
+  through ludwerk-08, closing the ledger before T6's look; ADR 0113's
+  amendment). On by default for a textured layer: a colour drift over tens of
+  metres and a second sample of the maps six times larger, turned and bent,
+  shown more with distance and from patch to patch; hex tiling opt-in per
+  material. `terrain_tiling` photographs the built-in grass from above and
+  measures its autocorrelation at the tile's period: as it repeated, 0.98 from
+  60 m; broken up, 0.50 (and 0.23 at the second sample's period, any way);
+  hex, 0.01. **From 12 m the default still repeats** (0.87): the grass's dry
+  patches are too bold for a wider sample and a slow drift to hide in four
+  repeats; hex takes it to 0.05, at 0.2 ms a frame at 4K against the
+  default's 0.1. Whether hex becomes a default is the owner's. The fields are
+  in the material editor, named through the catalog.
 - **Still to do in T5**: the flight's worst frame (18 to 25 ms: scheduling the
   workers and putting meshes up), and the streaming radius and its sawtooth.
 

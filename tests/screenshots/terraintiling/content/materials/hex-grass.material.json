@@ -1,0 +1,9 @@
+{
+  "format": "material",
+  "version": 1,
+  "parent": "engine://terrain/grass",
+  "instanceParameters": [],
+  "properties": {
+    "HexTiling": true
+  }
+}

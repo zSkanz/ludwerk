@@ -82,6 +82,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A terrain layer's repeat is broken up** (ADR 0113's amendment): three
+  material fields, read by a terrain -- `TilingVariation` (a colour drift
+  over tens of metres, 0.5 by default), `TilingFarScale` (a second, larger
+  sample of the textures blended in with distance, 6 by default) and
+  `HexTiling` (the textures on random hexagonal cells, off by default). A
+  field of grass no longer reads as a grid from a distance; set them to 0, 1
+  and off for the plain repeat.
 - **The terrain editor asks before Clear All Ground, Replace with Flat Ground
   and Replace with Hills**; gives a terrain the eight starter materials in one
   action (**Use the Starter Materials**); and speaks through the engine

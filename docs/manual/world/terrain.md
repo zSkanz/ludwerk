@@ -159,6 +159,13 @@ terrain:SetLayers(layers)
   from three axes, on by default, so a cliff is not a smear). `HeightMap` and
   `BlendSharpness` are for where two layers meet. A surface shader is not read
   on terrain.
+- **A layer's repeat is broken up** by default: the same small patch every
+  `TileSize` metres is a carpet near and a grid far, so a textured layer's
+  colour drifts over tens of metres (`TilingVariation`), and a second, larger
+  sample of its textures, turned and bent, shows through more with distance
+  (`TilingFarScale`). Up close a texture with a bold motif still repeats;
+  `HexTiling` lays it on random cells instead, at three times the texture
+  reads. Set any of them to 0, 1 and off for the plain repeat.
 - **Where layers meet**, a pixel blends the layers of its triangle's corners,
   so a painted edge is soft rather than stepped.
 

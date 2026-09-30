@@ -195,6 +195,15 @@ void hashMaterialFields(Hasher& hasher, asset::MaterialFieldMask set, const asse
         case asset::MaterialField::BlendSharpness:
             hasher.number(values.blendSharpness);
             break;
+        case asset::MaterialField::TilingVariation:
+            hasher.number(values.tilingVariation);
+            break;
+        case asset::MaterialField::TilingFarScale:
+            hasher.number(values.tilingFarScale);
+            break;
+        case asset::MaterialField::HexTiling:
+            hasher.flag(values.hexTiling);
+            break;
         case asset::MaterialField::Count:
             break;
         }

@@ -99,6 +99,47 @@ describe("Material", function()
             (copy :: any).Roughness = "shiny"
         end):ToThrow("script.err.material_value_type")
     end)
+
+    it("reads and writes the terrain's properties the API names (D395)", function()
+        -- Named by the API since ADR 0113 and never bound: a script read
+        -- "no member named TileSize".
+        local copy = Material.load(Brick):Clone()
+        expect(copy.TileSize):ToBe(4)
+        expect(copy.HeightMap):ToBe("")
+        expect(copy.Triplanar):ToBe(true)
+        expect(copy.BlendSharpness):ToBeCloseTo(0.5, 1e-5)
+        copy.TileSize = 2
+        copy.HeightMap = "asset://textures/height.png"
+        copy.Triplanar = false
+        copy.BlendSharpness = 0.9
+        expect(copy.TileSize):ToBe(2)
+        expect(copy.HeightMap):ToBe("asset://textures/height.png")
+        expect(copy.Triplanar):ToBe(false)
+        expect(copy.BlendSharpness):ToBeCloseTo(0.9, 1e-5)
+    end)
+
+    it("breaks a terrain layer's repeat by default, and takes only values in range for it", function()
+        -- ADR 0113's amendment: read only by a terrain, on every material.
+        local copy = Material.load(Brick):Clone()
+        expect(copy.TilingVariation):ToBeCloseTo(0.5, 1e-5)
+        expect(copy.TilingFarScale):ToBeCloseTo(6, 1e-5)
+        expect(copy.HexTiling):ToBe(false)
+        copy.TilingVariation = 0
+        copy.TilingFarScale = 12
+        copy.HexTiling = true
+        expect(copy.TilingVariation):ToBe(0)
+        expect(copy.TilingFarScale):ToBeCloseTo(12, 1e-5)
+        expect(copy.HexTiling):ToBe(true)
+        expect(function()
+            copy.TilingVariation = 1.5
+        end):ToThrow("script.err.material_value_type")
+        expect(function()
+            copy.TilingFarScale = 0.5
+        end):ToThrow("script.err.material_value_type")
+        expect(function()
+            (copy :: any).HexTiling = 1
+        end):ToThrow("script.err.material_value_type")
+    end)
 end)
 
 describe("BasePart.Material", function()

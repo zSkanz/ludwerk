@@ -24,6 +24,9 @@ MaterialAsset brick()
     out.properties.normalMap = "asset://textures/brick_n.png";
     out.properties.alphaMode = 1;
     out.properties.alphaCutoff = 0.25f;
+    out.properties.tilingVariation = 0.25f;
+    out.properties.tilingFarScale = 8.0f;
+    out.properties.hexTiling = true;
     out.written = asset::AllMaterialFields;
     return out;
 }
@@ -55,7 +58,10 @@ TEST_CASE("a base material writes every field, in a fixed order, and reads back 
     "TileSize": 4,
     "HeightMap": "",
     "Triplanar": true,
-    "BlendSharpness": 0.5
+    "BlendSharpness": 0.5,
+    "TilingVariation": 0.25,
+    "TilingFarScale": 8,
+    "HexTiling": true
   }
 }
 )");
@@ -67,6 +73,14 @@ TEST_CASE("a base material writes every field, in a fixed order, and reads back 
     CHECK(notes.malformedFields.empty());
     CHECK(*read == brick());
     CHECK(asset::writeMaterialAsset(*read) == text);
+
+    // And through the compiled form a pack carries: the repeat's fields
+    // (ADR 0113's amendment) are version 6's.
+    asset::CompiledMaterial compiled;
+    compiled.asset = brick();
+    const std::optional<asset::CompiledMaterial> decoded = asset::decodeMaterial(asset::encodeMaterial(compiled));
+    REQUIRE(decoded.has_value());
+    CHECK(decoded->asset == brick());
 }
 
 TEST_CASE("a variant writes only what it overrides, and inherits the rest from its parent")

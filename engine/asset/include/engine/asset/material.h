@@ -60,6 +60,9 @@ enum class MaterialField : core::u8
     HeightMap,
     Triplanar,
     BlendSharpness,
+    TilingVariation,
+    TilingFarScale,
+    HexTiling,
     Count,
 };
 
@@ -164,6 +167,18 @@ struct MaterialProperties
     // How hard the edge is where this layer meets another: zero a wide fade,
     // one a sharp line along the height map.
     core::f32 blendSharpness = 0.5f;
+    // **What keeps a layer's repeat from reading as a grid** (ADR 0113's
+    // amendment): the same small patch every `tileSize` metres is a carpet
+    // near and a flat blur far. `tilingVariation`, 0 to 1, is how much a
+    // world-space pattern tens of metres across varies the layer's colour;
+    // `tilingFarScale` how many times larger the second sample of the same
+    // layer is, blended in with distance (1 turns it off). `hexTiling` lays
+    // the textures on a hexagonal grid of cells, each offset and turned at
+    // random with their borders blended -- for a photograph, whose features a
+    // repeat shows most -- at three reads of each map instead of one.
+    core::f32 tilingVariation = 0.5f;
+    core::f32 tilingFarScale = 6.0f;
+    bool hexTiling = false;
 
     // **The surface shader** (ADR 0091): a URN, or empty for the built-in
     // surface. `readsSceneColor` asks the renderer for what is behind.

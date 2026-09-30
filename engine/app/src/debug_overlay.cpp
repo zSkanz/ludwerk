@@ -3222,6 +3222,36 @@ void moveToCellEnd()
 // One field of the open material. A variant shows its parent's value for what it
 // does not write, and editing one makes it the variant's own; `inherit` takes it
 // back. A base writes every field and has nothing to inherit.
+// **A material field's name as the editor shows it** (R3): through the
+// catalog, in `MaterialField` order. In English it is the name the file and a
+// script spell it by.
+[[nodiscard]] const char* materialFieldLabel(asset::MaterialField field) noexcept
+{
+    static constexpr std::array<core::TextKey, asset::MaterialFieldCount> Labels{
+        ENG_TR("engine.editor.material.field.color"),
+        ENG_TR("engine.editor.material.field.transparency"),
+        ENG_TR("engine.editor.material.field.color_map"),
+        ENG_TR("engine.editor.material.field.normal_map"),
+        ENG_TR("engine.editor.material.field.metallic_roughness_map"),
+        ENG_TR("engine.editor.material.field.emissive"),
+        ENG_TR("engine.editor.material.field.emissive_map"),
+        ENG_TR("engine.editor.material.field.metalness"),
+        ENG_TR("engine.editor.material.field.roughness"),
+        ENG_TR("engine.editor.material.field.normal_scale"),
+        ENG_TR("engine.editor.material.field.alpha_mode"),
+        ENG_TR("engine.editor.material.field.alpha_cutoff"),
+        ENG_TR("engine.editor.material.field.double_sided"),
+        ENG_TR("engine.editor.material.field.tile_size"),
+        ENG_TR("engine.editor.material.field.height_map"),
+        ENG_TR("engine.editor.material.field.triplanar"),
+        ENG_TR("engine.editor.material.field.blend_sharpness"),
+        ENG_TR("engine.editor.material.field.tiling_variation"),
+        ENG_TR("engine.editor.material.field.tiling_far_scale"),
+        ENG_TR("engine.editor.material.field.hex_tiling"),
+    };
+    return core::tr(Labels[static_cast<std::size_t>(field)]);
+}
+
 struct MaterialFieldRow
 {
     asset::MaterialAsset& next;
@@ -3240,10 +3270,9 @@ struct MaterialFieldRow
         const bool own = !variant || (next.written & asset::fieldBit(field)) != 0;
         if (!own)
             asset::copyMaterialField(field, inherited, next.properties);
-        const std::string name(asset::materialFieldName(field));
-        sectionName(name, variant && !own);
+        sectionName(materialFieldLabel(field), variant && !own);
         if (variant && !own)
-            ImGui::SetItemTooltip("inherited from the parent material -- change it to make it this one's own");
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.inherited_tip")));
         if (variant && own) {
             ImGui::TableSetColumnIndex(0);
             moveToCellEnd();
@@ -3908,6 +3937,27 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
                                           "the height map");
                     row.end(F::BlendSharpness, edited);
                 }
+                // **How the layer's repeat is broken up** (ADR 0113's
+                // amendment).
+                {
+                    asset::MaterialProperties& p = row.begin(F::TilingVariation);
+                    const bool edited = ImGui::SliderFloat("##value", &p.tilingVariation, 0.0f, 1.0f, "%.2f");
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.tiling_variation_tip")));
+                    row.end(F::TilingVariation, edited);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::TilingFarScale);
+                    const bool edited = ImGui::SliderFloat("##value", &p.tilingFarScale, 1.0f, 32.0f, "%.1f x",
+                                                           ImGuiSliderFlags_Logarithmic);
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.tiling_far_scale_tip")));
+                    row.end(F::TilingFarScale, edited);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::HexTiling);
+                    const bool edited = ImGui::Checkbox("##value", &p.hexTiling);
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.hex_tiling_tip")));
+                    row.end(F::HexTiling, edited);
+                }
                 endSectionGrid();
             }
             if (section("Surface Shader", "surface-shader")) {
@@ -3924,7 +3974,7 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
                     ImGui::PushID(100 + static_cast<int>(field));
                     const bool fromParent = (parentDeclares & asset::fieldBit(field)) != 0;
                     bool declared = fromParent || (next.instanceParameters & asset::fieldBit(field)) != 0;
-                    sectionName(asset::materialFieldName(field));
+                    sectionName(materialFieldLabel(field));
                     ImGui::BeginDisabled(fromParent);
                     if (ImGui::Checkbox("##declared", &declared)) {
                         if (declared)

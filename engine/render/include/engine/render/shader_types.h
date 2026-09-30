@@ -500,9 +500,13 @@ struct GpuTerrainLayer
     // Roughness factor, metalness factor, normal scale, and flags: 1
     // triplanar, 2 a height map.
     f32 surface[4]{};
+    // How the repeat is broken up (ADR 0113's amendment): the colour's
+    // large-scale variation, the second sample's scale against the first (1
+    // none), 1 for hex tiling, and a spare.
+    f32 tiling[4]{0.0f, 1.0f, 0.0f, 0.0f};
 };
 
-static_assert(sizeof(GpuTerrainLayer) == 48, "GpuTerrainLayer is a structured buffer's stride");
+static_assert(sizeof(GpuTerrainLayer) == 64, "GpuTerrainLayer is a structured buffer's stride");
 
 // Fragment stage, `b1 space3`, for `terrain`.
 struct GpuTerrainSurfaceUniforms
