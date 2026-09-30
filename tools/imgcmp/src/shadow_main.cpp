@@ -57,8 +57,9 @@ int main(int argc, char** argv)
         return 2;
     }
     const engine::imgcmp::ShadowReport report = engine::imgcmp::findSelfShadow(shot.image);
-    std::printf("%s: %zu facing the sun, %zu darkened by the map, %zu by the contact mask\n", shotPath.c_str(),
-                report.facing, report.mapDark, report.contactDark);
+    std::printf("%s: %zu facing the sun, %zu darkened by the map, %zu by the contact mask, map mass %lld\n",
+                shotPath.c_str(), report.facing, report.mapDark, report.contactDark,
+                static_cast<long long>(report.mapMass + 0.5));
     const bool within =
         static_cast<long long>(report.mapDark) <= maxMap && static_cast<long long>(report.contactDark) <= maxContact;
     return within ? 0 : 1;

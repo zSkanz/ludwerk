@@ -394,6 +394,9 @@ struct FieldSample
 {
     float distance = 0.0f;
     core::u8 material = 0;
+    // What is painted over it, and how much (ADR 0114).
+    core::u8 top = 0;
+    core::u8 cover = 0;
 };
 
 // --- The surface under a chunk, gathered by level (ADR 0140) -----------------
@@ -834,6 +837,10 @@ struct TerrainHit
     core::Vec3 normal{0.0f, 1.0f, 0.0f};
     double distance = 0.0;
     core::u8 material = 0;
+    // What is painted over the voxel hit, and how much (ADR 0114): what the
+    // ground is drawn as, with the rules (`drawnMaterial`).
+    core::u8 top = 0;
+    core::u8 cover = 0;
 };
 
 // **Casts a ray at the field itself, with no physics involved.** Marched a half

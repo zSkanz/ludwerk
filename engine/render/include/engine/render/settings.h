@@ -53,6 +53,10 @@ enum class QualityLevel : core::u8
 //   Albedo     the colour the terrain is lit as, before any light, and the
 //              sky black: plain ground is one grey, and `imgsteps` measures
 //              how far its colours spread.
+//   Material   the layer each pixel is drawn as, a colour a layer, and the
+//              sky black: the corner that weighs most, then the paint, then
+//              the rules, each from half -- what the CPU says is there
+//              (`asset::drawnMaterial`).
 enum class DebugView : core::u8
 {
     None,
@@ -63,12 +67,14 @@ enum class DebugView : core::u8
     Occlusion,
     Bend,
     Albedo,
+    Material,
 };
 
 // Whether a debug view draws the sky black, for a check to pass it over.
 [[nodiscard]] constexpr bool blackSky(DebugView view) noexcept
 {
-    return view == DebugView::Shadow || view == DebugView::Bend || view == DebugView::Albedo;
+    return view == DebugView::Shadow || view == DebugView::Bend || view == DebugView::Albedo ||
+           view == DebugView::Material;
 }
 
 struct GraphicsSettings

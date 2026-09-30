@@ -372,7 +372,7 @@ Voxel TerrainField::voxel(i32 x, i32 y, i32 z) const noexcept
 FieldSample TerrainField::sample(i32 x, i32 y, i32 z) const noexcept
 {
     const Voxel got = voxel(x, y, z);
-    return FieldSample{(0.5f - occupancyOf(got)) * RampVoxels * m_settings.voxelSize, got.material};
+    return FieldSample{(0.5f - occupancyOf(got)) * RampVoxels * m_settings.voxelSize, got.material, got.top, got.cover};
 }
 
 std::shared_ptr<const SurfaceLevel> TerrainField::cachedSurface(ChunkKey key, u32 level, core::u64 content) const

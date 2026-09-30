@@ -1,0 +1,14 @@
+# The CPU's rules are the shader's (terrain audit T3, ADR 0113 section 2): hills
+# painted by slope and height and a painted patch, drawn by the rules and drawn
+# from what `ApplyRules` wrote. A project so the driver can run it both ways.
+
+[project]
+name = "Ludwerk Terrain Rules"
+id = "dev.ludwerk.terrainrules"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Rules"
+width = 960
+height = 540

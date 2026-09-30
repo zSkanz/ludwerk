@@ -812,8 +812,8 @@ struct TerrainRayHit
         best.distance = hit->distance;
         const core::Vec3 ground{static_cast<core::f32>(hit->position.x), static_cast<core::f32>(hit->position.y),
                                 static_cast<core::f32>(hit->position.z)};
-        best.material = asset::drawnMaterial(terrain.rules, hit->material, hit->normal, ground,
-                                             static_cast<core::f32>(best.position.y));
+        best.material = asset::drawnMaterial(terrain.rules, asset::Voxel{255, hit->material, hit->top, hit->cover},
+                                             hit->normal, ground, static_cast<core::f32>(best.position.y));
     });
     return best;
 }

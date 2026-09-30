@@ -35,4 +35,7 @@ TEST_CASE("a face to the sun either shadow darkens is counted; a face turned awa
     CHECK(report.facing == 5);
     CHECK(report.mapDark == 2);
     CHECK(report.contactDark == 2);
+    // The mass counts what each facing pixel's red lost of its blue: 132 of
+    // 172 where the map darkens it, 22 and 6 where it darkens it a little.
+    CHECK(report.mapMass == doctest::Approx((132.0 + 22.0 + 6.0) / 172.0));
 }

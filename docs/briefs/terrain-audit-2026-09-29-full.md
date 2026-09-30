@@ -197,8 +197,8 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 - [x] TA12: no-material terrain plain matte grey.
 - [x] TA13 and render P2: the right channels, the triplanar sign, the grain
   frame, resampled layer arrays, guarded normals, no streaks at a low sun.
-- [ ] CPU and GPU rules agree, by readback, paint included.
-- [ ] Foliage shadows respect alpha and fade.
+- [x] CPU and GPU rules agree, by readback, paint included.
+- [x] Foliage shadows respect alpha and fade.
 
 ### T3 as it stands
 
@@ -251,6 +251,20 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
   4 KiB at compile time. The block world's palette (16 400 bytes) was the same
   defect (D380): on Vulkan every block's sides drew black. A storage buffer
   too, and `block_faces_colours` probes a top and two sides.
+- **The rules agree** (D381): the CPU's `drawnMaterial` takes paint as the
+  shader does, from half its cover, and a rule by the voxel's own layer; a
+  raycast carries the paint. The readback ADR 0113 promised is a picture:
+  `--debug-view=material` draws the layer each pixel is drawn as, and
+  `terrain_rules_agree` compares hills drawn by their rules with the same hills
+  after `ApplyRules` wrote the CPU's answer and the rules were turned off --
+  2 per cent differs, all of it along edges, where a voxel's slope and a
+  pixel's are a voxel apart; a CPU slope a fifth too shallow reached 3.
+- **Foliage shadows** (D382): the card's alpha against its cutoff, and the
+  fade dithered as the forward pass does. `foliage_card_shadows` weighs the
+  shadow -- its mass, since the cascade blurs a card past any count of dark
+  pixels (`imgshadow` prints it now): half a card casts 0.47 of a whole one.
+- **Found by CI**: `terrain_material_channels` copied a material into a folder
+  git had never kept, being empty; the driver makes it.
 
 ## T4 — tools that do what the person asked
 

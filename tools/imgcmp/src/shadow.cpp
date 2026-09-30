@@ -1,5 +1,7 @@
 #include "engine/imgcmp/shadow.h"
 
+#include <algorithm>
+
 namespace engine::imgcmp {
 
 ShadowReport findSelfShadow(const Image& shot)
@@ -21,6 +23,7 @@ ShadowReport findSelfShadow(const Image& shot)
         ++report.facing;
         if (darkened(pixel[0], pixel[2]))
             ++report.mapDark;
+        report.mapMass += 1.0 - std::min(1.0, static_cast<double>(pixel[0]) / static_cast<double>(pixel[2]));
         if (darkened(pixel[1], pixel[2]))
             ++report.contactDark;
     }

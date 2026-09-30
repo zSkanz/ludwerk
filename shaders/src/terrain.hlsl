@@ -47,7 +47,7 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 TerrainParams;
     // x: the debug view drawn instead of the ground (`render::DebugView`,
     // terrain audit T0): 0 none, 1 holes, 2 level, 3 sky, 4 shadow, 5
-    // occlusion, 6 bend, 7 albedo.
+    // occlusion, 6 bend, 7 albedo, 8 material.
     float4 TerrainDebug;
 };
 
@@ -436,6 +436,11 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     float plain = (ids.x > layerCount ? corners.x : 0.0f) + (ids.y > layerCount ? corners.y : 0.0f) +
                   (ids.z > layerCount ? corners.z : 0.0f);
 
+    // **The layer the pixel is drawn as**, for the material view: the corner
+    // that weighs most, then the paint and the rules from half, as the CPU
+    // decides it (`asset::drawnMaterial`).
+    uint dominant = corners.x >= corners.y && corners.x >= corners.z ? ids.x : (corners.y >= corners.z ? ids.y : ids.z);
+
     LayerSample mix = (LayerSample)0;
     mix = weighted(mix, layerAt(ids.x, input.Ground, dx, dy, normal, planes), corners.x);
     [branch] if (corners.y > 0.001f)
@@ -498,6 +503,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
                                      (tops.z > layerCount ? shares.z : 0.0f)) *
                                     inverse;
             plain = lerp(plain, overPlain, shows);
+            dominant = shows > 0.5f ? lead : dominant;
             mix.Normal = lerp(mix.Normal, over.Normal, shows);
             mix.Roughness = lerp(mix.Roughness, over.Roughness, shows);
             mix.Metalness = lerp(mix.Metalness, over.Metalness, shows);
@@ -534,6 +540,7 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             const LayerSample painted = layerAt(uint(misc.x + 0.5f), input.Ground, dx, dy, normal, planes);
             mix.Albedo = lerp(mix.Albedo, painted.Albedo, cover);
             plain = lerp(plain, uint(misc.x + 0.5f) > layerCount ? 1.0f : 0.0f, cover);
+            dominant = cover > 0.5f ? uint(misc.x + 0.5f) : dominant;
             mix.Normal = lerp(mix.Normal, painted.Normal, cover);
             mix.Roughness = lerp(mix.Roughness, painted.Roughness, cover);
             mix.Metalness = lerp(mix.Metalness, painted.Metalness, cover);
@@ -569,5 +576,10 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // And the albedo view, the colour before any light.
     if (uint(TerrainDebug.x + 0.5f) == 7u)
         return float4(albedo, 1.0f);
+    // And the material view: a colour a layer, none of them black.
+    if (uint(TerrainDebug.x + 0.5f) == 8u) {
+        const float id = float(dominant);
+        return float4(frac(float3(0.618f, 0.382f, 0.791f) * id + float3(0.1f, 0.3f, 0.6f)) * 0.8f + 0.2f, 1.0f);
+    }
     return float4(color, 1.0f);
 }

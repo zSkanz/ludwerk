@@ -27,6 +27,7 @@ namespace engine::asset {
 
 class TerrainField;
 struct EditReport;
+struct Voxel;
 
 struct TerrainRule
 {
@@ -88,8 +89,14 @@ struct TerrainRuleShape
 
 [[nodiscard]] bool ruleCovers(const TerrainRuleShape& shape, core::u8 material) noexcept;
 
-// **The layer a point is drawn as**: the voxel's own, unless a rule covers it
-// by more than half, the last such rule winning -- the order they paint in.
+// **The layer a point is drawn as**, as the shader draws it (ADR 0113 §2, ADR
+// 0114): the voxel's own, or what is painted over it where the paint covers
+// half or more; then any rule that covers it by more than half, the last such
+// rule winning -- the order they paint in. A rule covers by the voxel's own
+// layer, as the shader weighs the triangle's corners, not by its paint.
+[[nodiscard]] core::u8 drawnMaterial(std::span<const TerrainRule> rules, Voxel voxel, core::Vec3 normal,
+                                     core::Vec3 ground, core::f32 worldY) noexcept;
+// The same for a voxel with no paint.
 [[nodiscard]] core::u8 drawnMaterial(std::span<const TerrainRule> rules, core::u8 material, core::Vec3 normal,
                                      core::Vec3 ground, core::f32 worldY) noexcept;
 

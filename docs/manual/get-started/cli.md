@@ -207,8 +207,9 @@ engine-host [script.luau | project-dir]
   the contact mask in green, blue where the ground faces the sun, the sky
   black -- `imgshadow` counts faces to the sun either shadow darkens),
   `occlusion`, `bend` (what the shading does to the mesh's normal, four
-  times over, the sky black -- `imgsteps` counts where it jumps) or `albedo`
-  (the colour the ground is lit as).
+  times over, the sky black -- `imgsteps` counts where it jumps), `albedo`
+  (the colour the ground is lit as) or `material` (the layer each pixel is
+  drawn as, a colour a layer).
 - `--terrain-detail=full` draws every terrain at its finest level whatever the
   distance: the shape as it was sculpted, which a coarse level is held
   against.

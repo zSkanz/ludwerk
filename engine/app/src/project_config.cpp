@@ -103,8 +103,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.debugView = *overrides.debugView;
         // The sky and the ground must stay two colours to the last pixel: a
         // crack a pixel wide blended half into the ground is a crack missed.
-        // And a shadow's, a bend's or a colour's value must be the shader's,
-        // not an exposure's.
+        // And a shadow's, a bend's, a colour's or a layer's value must be the
+        // shader's, not an exposure's.
         if (settings.debugView == render::DebugView::Holes || render::blackSky(settings.debugView)) {
             settings.antiAliasing = false;
             settings.bloom = false;

@@ -98,7 +98,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   draws blue where the ground faces the sun, and `imgshadow` counts faces the
   shadow map or the contact mask darkens; `--debug-view=bend` draws what the
   shading does to the mesh's normal, and `imgsteps` counts where it jumps;
-  `--debug-view=albedo` draws the colour the ground is lit as.
+  `--debug-view=albedo` draws the colour the ground is lit as, and
+  `--debug-view=material` the layer each pixel is drawn as.
 - **A `TextInput` edits as every text field does** (ADR 0139): selection by
   keys and by the mouse (drag, Shift, double and triple press), words, the
   line's and the text's ends, Ctrl+A/C/X/V through the system clipboard, undo
@@ -602,6 +603,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **No more bright streaks at a low sun, or dark notches under a lamp, on
   flat ground** (D372): the ground's grain drew a crease wherever its noise
   stepped at a cell's edge.
+- **The game is told the ground's painted material** (D381): a raycast and
+  `ApplyRules` read the paint as the shader draws it, and the rules as it
+  does.
+- **Foliage casts the shadow of what is drawn** (D382): a card's holes and an
+  instance fading out, not a solid rectangle.
 - **A block's sides and underside draw on Vulkan -- Linux and Android**
   (D380): they drew black, the block palette past the 4 KiB a uniform block
   is bound with there.

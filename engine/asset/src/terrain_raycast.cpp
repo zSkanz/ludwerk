@@ -65,11 +65,10 @@ FieldSample sampleField(const TerrainField& field, DVec3 at)
     const auto blend = [](float a, float b, float t) { return a + (b - a) * t; };
 
     float corner[8];
-    core::u8 materials[8];
+    FieldSample samples[8];
     for (int at8 = 0; at8 < 8; ++at8) {
-        const FieldSample got = field.sample(lowX + (at8 & 1), lowY + ((at8 >> 1) & 1), lowZ + ((at8 >> 2) & 1));
-        corner[at8] = got.distance;
-        materials[at8] = got.material;
+        samples[at8] = field.sample(lowX + (at8 & 1), lowY + ((at8 >> 1) & 1), lowZ + ((at8 >> 2) & 1));
+        corner[at8] = samples[at8].distance;
     }
 
     const float x00 = blend(corner[0], corner[1], tx);
@@ -82,7 +81,7 @@ FieldSample sampleField(const TerrainField& field, DVec3 at)
     // The material of the NEAREST corner rather than a blend: a material is
     // an identity, and the average of "rock" and "sand" is neither.
     const int nearest = (tx >= 0.5f ? 1 : 0) | (ty >= 0.5f ? 2 : 0) | (tz >= 0.5f ? 4 : 0);
-    return FieldSample{blend(y0, y1, tz), materials[nearest]};
+    return FieldSample{blend(y0, y1, tz), samples[nearest].material, samples[nearest].top, samples[nearest].cover};
 }
 
 std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, Vec3 direction, double maxDistance)
@@ -124,7 +123,7 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
     // than nothing.
     if (previous.distance <= 0.0f) {
         const Vec3 normal{0.0f, 1.0f, 0.0f};
-        return TerrainHit{origin, normal, 0.0, previous.material};
+        return TerrainHit{origin, normal, 0.0, previous.material, previous.top, previous.cover};
     }
 
     // **Chunks of air are crossed in one step.** A point is in air for certain
@@ -253,7 +252,7 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
                 normal = Vec3{normal.x / normalLength, normal.y / normalLength, normal.z / normalLength};
             }
 
-            return TerrainHit{position, normal, hitAlong, current.material};
+            return TerrainHit{position, normal, hitAlong, current.material, current.top, current.cover};
         }
 
         previous = current;

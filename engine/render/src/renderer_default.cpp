@@ -3615,8 +3615,11 @@ bool DefaultRenderer::ensureFoliage(rhi::IDevice& device)
         rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
         rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
     };
-    const std::array<rhi::VertexAttribute, 1> shadowAttributes{
+    // The position and the UV, the UV at location 1 (`foliage_shadow.hlsl`):
+    // a card's image cuts its shadow as it cuts it.
+    const std::array<rhi::VertexAttribute, 2> shadowAttributes{
         rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
     };
     const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{.format = kHdrFormat}};
     foliagePipeline_ = device.createGraphicsPipeline({
@@ -3840,6 +3843,23 @@ void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, 
             const u32 sections = resolved->lods[lod].sectionCount;
             const u32 firstCommand = foliageLodCommand_[index * kFoliageMaxLods + lod];
             for (u32 section = 0; section < sections; ++section) {
+                // **The shadow takes the card's holes** (T3): the material's
+                // alpha, its cutoff, and its image.
+                if (shadow) {
+                    const RenderMaterial* material = section < bucket.sectionMaterials.size() &&
+                                                             bucket.sectionMaterials[section] < world.materials.size()
+                                                         ? &world.materials[bucket.sectionMaterials[section]]
+                                                         : nullptr;
+                    const std::array<f32, 4> cut{
+                        material != nullptr ? material->uniforms.baseColor[3] : 1.0f,
+                        material != nullptr ? material->uniforms.metallicRoughnessNormalCutoff[3] : 0.0f,
+                        material != nullptr ? material->uniforms.textureFlags[0] : 0.0f, 0.0f};
+                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(cut.data(), sizeof(cut)));
+                    const std::array<rhi::TextureBinding, 1> image{rhi::TextureBinding{
+                        material != nullptr && material->baseColor.valid() ? material->baseColor : whitePixel_,
+                        linearSampler_}};
+                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, image);
+                }
                 if (!shadow && section < bucket.sectionMaterials.size() &&
                     bucket.sectionMaterials[section] < world.materials.size()) {
                     const RenderMaterial& material = world.materials[bucket.sectionMaterials[section]];
@@ -5017,8 +5037,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         skyUniforms.sunColor[3] = kSunDiscIntensity * sky.dayFactor;
         // **Magenta, for the holes view** (terrain audit T0): a colour no
         // ground is, so every pixel of it in a picture is sky. Black for the
-        // shadow, bend and albedo views, where magenta is a colour ground is
-        // (`sky.hlsl`).
+        // shadow, bend, albedo and material views, where magenta is a colour
+        // ground is (`sky.hlsl`).
         skyUniforms.horizonColor[3] = settings_.debugView == DebugView::Holes ? 1.0f
                                       : blackSky(settings_.debugView)         ? 2.0f
                                                                               : 0.0f;

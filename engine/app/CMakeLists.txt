@@ -1054,6 +1054,33 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A card's shadow has the card's holes** (terrain audit T3): foliage
+    # cast solid rectangles, whatever its image's alpha. See the driver.
+    add_test(NAME foliage_card_shadows
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSHADOW=$<TARGET_FILE:imgshadow>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/foliagecards
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/foliage-cards
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_foliage_cards.cmake)
+    set_tests_properties(foliage_card_shadows PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 180)
+
+    # **The CPU's rules are the shader's** (terrain audit T3): the ground as
+    # the rules draw it, and as the CPU writes it with `ApplyRules`, agree but
+    # for their edges. See the driver.
+    add_test(NAME terrain_rules_agree
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainrules
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-rules
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_rules.cmake)
+    set_tests_properties(terrain_rules_agree PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **Every face of a block in its block's colour** (D380): on Vulkan a
     # block's sides drew black, its palette past the 4 KiB SDL_GPU binds a
     # uniform block with. See the driver.

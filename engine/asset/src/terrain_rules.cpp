@@ -154,18 +154,28 @@ bool ruleCovers(const TerrainRuleShape& shape, core::u8 material) noexcept
     return (shape.appliesTo[material / 32u] & (1u << (material % 32u))) != 0;
 }
 
-core::u8 drawnMaterial(std::span<const TerrainRule> rules, core::u8 material, core::Vec3 normal, core::Vec3 ground,
+core::u8 drawnMaterial(std::span<const TerrainRule> rules, Voxel voxel, core::Vec3 normal, core::Vec3 ground,
                        f32 worldY) noexcept
 {
-    core::u8 drawn = material;
+    // **The paint first** (the terrain audit's CPU and GPU agreement): drawn
+    // over the voxel's own layer, and showing from half its cover up -- where
+    // the shader's height blend crosses over when the two are level.
+    core::u8 drawn = voxel.top != 0 && voxel.cover >= 128 ? voxel.top : voxel.material;
     for (const TerrainRule& rule : rules) {
         const TerrainRuleShape shape = shapeOf(rule);
         // What the rule covers is the voxel's own layer, as the shader weighs
-        // the triangle's corners -- not what an earlier rule drew over it.
-        if (ruleCovers(shape, material) && ruleCoverage(shape, normal, ground, worldY) > 0.5f)
+        // the triangle's corners -- not its paint, nor what an earlier rule
+        // drew over it.
+        if (ruleCovers(shape, voxel.material) && ruleCoverage(shape, normal, ground, worldY) > 0.5f)
             drawn = rule.material;
     }
     return drawn;
+}
+
+core::u8 drawnMaterial(std::span<const TerrainRule> rules, core::u8 material, core::Vec3 normal, core::Vec3 ground,
+                       f32 worldY) noexcept
+{
+    return drawnMaterial(rules, Voxel{255, material, 0, 0}, normal, ground, worldY);
 }
 
 EditReport applyRules(TerrainField& field, std::span<const TerrainRule> rules, core::DVec3 minCorner,
@@ -216,8 +226,10 @@ EditReport applyRules(TerrainField& field, std::span<const TerrainRule> rules, c
                 const core::Vec3 ground{static_cast<f32>(field.voxelCenter(x)), static_cast<f32>(field.voxelCenter(y)),
                                         static_cast<f32>(field.voxelCenter(z))};
                 const auto worldY = static_cast<f32>(field.voxelCenter(y) + originY);
-                const core::u8 drawn = drawnMaterial(rules, voxel.material, normal, ground, worldY);
-                if (drawn != voxel.material)
+                // Only where a rule draws it: the paint stays paint.
+                const core::u8 drawn = drawnMaterial(rules, voxel, normal, ground, worldY);
+                const core::u8 painted = drawnMaterial({}, voxel, normal, ground, worldY);
+                if (drawn != painted)
                     writer.set(x, y, z, Voxel{voxel.occupancy, drawn});
             }
         }

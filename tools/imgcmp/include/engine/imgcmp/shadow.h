@@ -23,6 +23,11 @@ struct ShadowReport
     std::size_t mapDark = 0;
     // And the ones the contact mask does.
     std::size_t contactDark = 0;
+    // **How much shadow the map casts on them, in all**: each facing pixel's
+    // darkening, from none to wholly dark, summed. A shadow's area, counting a
+    // penumbra's pixel as the part of one it is -- what a blurred shadow of a
+    // shape half cut away has half of.
+    double mapMass = 0.0;
 };
 
 [[nodiscard]] ShadowReport findSelfShadow(const Image& shot);

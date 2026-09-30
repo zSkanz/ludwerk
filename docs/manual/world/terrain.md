@@ -228,7 +228,8 @@ terrain:SetRules({
   changing on screen.
 - **What the game sees is what is drawn**: the engine evaluates the rules on
   the CPU the same way the shader does, so the ground under a steep slope drawn
-  as rock is rock to the game too.
+  as rock is rock to the game too -- and ground painted over reads as its paint
+  where the paint covers half or more.
 - The rules are saved with the scene.
 
 ## In the editor

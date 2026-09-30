@@ -1,0 +1,18 @@
+# A card's shadow has the card's holes (terrain audit T3): a field of cards on
+# plain ground under a high sun, seen from above as the sun's shadow on the
+# ground. A project so the driver can swap the card's image between runs.
+
+[project]
+name = "Ludwerk Foliage Cards"
+id = "dev.ludwerk.foliagecards"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Foliage Cards"
+width = 960
+height = 540
+
+# The camera is forty metres up: every card within the shadow's reach.
+[render]
+foliage_shadow_distance = 100
