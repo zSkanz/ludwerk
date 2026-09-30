@@ -172,6 +172,16 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 - **Performance** (`docs/perf-baselines.md`): the owner's place's flight went
   from a p95 of 7.4 ms to 22 ms and a worst of 25 ms to 60 ms. Stated as a
   regression; T5 moves meshing off the main thread.
+- **ludwerk-08's check on the owner's place** (after the first T2 commit):
+  - **Dark streaks down the flanks at 500 m and blocks at 1 000 m were the sky
+    term**, three ways: a run no surface closed went up to the sky (a pillar
+    every ray past it met); a coarse column's run round the point counted as a
+    roof; and a sideways ray met the column it started in. Fixed, with a test
+    each that failed first. The pictures are clean at 250, 500 and 1 000 m.
+  - **The sawtooth far edge at 1 000 m is the streamed ground's edge**, not a
+    level of detail: full detail draws the same notches, and with the terrain
+    load radius at 3 km the edge is straight. The owner's place keeps cells only
+    so far from the camera; what is drawn beyond them is nothing. T5's.
 - **The gallery after T2**, beside the pictures from before any fix:
   `terrain-audit-2026-09-29/gallery-after-t2-5-15-30m.png`,
   `gallery-after-t2-60-120-250m.png` (no dark imprint under the floating ball)

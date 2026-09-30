@@ -103,6 +103,15 @@ struct TerrainMesh
     std::vector<core::u32> colliderIndices;
 };
 
+// **A column's solid runs, as the sky term sees them** (ADR 0140): from the
+// gathered surfaces over it -- each `(height, facing)`, facing the mean normal's
+// y -- and the highest and lowest of the level's own vertices over it (NaN for
+// none), the runs of ground as `(bottom, top)`, lowest first. A surface facing
+// down opens a run and one facing up closes it; one steeper than either says
+// nothing. Here so a test can hold its rules.
+[[nodiscard]] std::vector<std::pair<float, float>> terrainColumnRuns(std::vector<std::pair<float, float>> surfaces,
+                                                                     float top, float bottom);
+
 // Extracts the surface of `field` over `region`. Writes nothing, so any number
 // run at once over one field -- once the surfaces they read are prepared
 // (`prepareRegion`, or `missingSurfaces` and the rest), whose keys fill the

@@ -170,6 +170,19 @@ keep every solid run they have, so air under an overhang is air; and the rays
 go out on sixteen bearings, not eight, which is what drew lobes along the axes
 and the diagonals.
 
+**A column is a whole cell**, 2 m at level 1 and 8 m at level 3, so three
+rules keep its coarseness out of the answer (the owner's place, checked by
+ludwerk-08 at 500 and 1 000 m):
+
+- **a run nothing closes ends at the column's own top**: under the bulge of a
+  mound a column holds the underside, facing down, while the wall above it is
+  too steep to count -- and the run went to the sky, a pillar every ray past
+  it met, in a row of dark streaks down the flank;
+- **a run round the point itself is not a roof or a floor**: a vertex on a
+  ball fell inside the ball's own run, or not, by where in the cell it was;
+- **a sideways ray does not meet the column it starts in**, for the same
+  reason; that column's sky is the straight up and down.
+
 ## Consequences
 
 - **A coarse node costs more to build**: it is meshed from the level-0 surface

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <doctest/doctest.h>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -284,5 +285,64 @@ TEST_CASE("a node slid all the way is its parent's surface: the geomorph's targe
         }
         REQUIRE(checked > 0);
         CHECK(missed == 0);
+    }
+}
+
+TEST_CASE("a run of ground nothing closes ends at its column's own top, not the sky")
+{
+    // **The owner's place at 500 m**: under the bulge of a mound a column held
+    // the underside, facing down, while the wall above it was too steep to
+    // count and the cap lay in the next column -- and the run went up to the
+    // sky, a pillar every ray past it met: a row of dark streaks down the flank.
+    const float nothing = std::numeric_limits<float>::quiet_NaN();
+    // An underside at 5 m, the wall above it steep, the column's own top at 9.
+    const auto pillar = terrainColumnRuns({{5.0f, -0.7f}, {7.0f, 0.1f}}, 9.0f, 5.0f);
+    REQUIRE(pillar.size() == 1);
+    CHECK(pillar.front().first == 5.0f);
+    CHECK(pillar.front().second == 9.0f);
+    // With nothing of the column above it, it is the ground to the top of the
+    // world, as it was.
+    const auto open = terrainColumnRuns({{5.0f, -0.7f}}, 5.0f, 5.0f);
+    REQUIRE(open.size() == 1);
+    CHECK(open.front().second > 1.0e29f);
+    // The ordinary cases stand: ground below a surface facing up, and air under
+    // an overhang between two runs.
+    const auto ground = terrainColumnRuns({{3.0f, 0.9f}}, 3.0f, 3.0f);
+    REQUIRE(ground.size() == 1);
+    CHECK(ground.front().first < -1.0e29f);
+    CHECK(ground.front().second == 3.0f);
+    const auto overhang = terrainColumnRuns({{0.0f, 0.9f}, {10.0f, -0.9f}, {11.0f, 0.9f}}, 11.0f, nothing);
+    REQUIRE(overhang.size() == 2);
+    CHECK(overhang[1].first == 10.0f);
+    CHECK(overhang[1].second == 11.0f);
+}
+
+TEST_CASE("the upper flank of a ball sees the sky at a coarse level, wherever in its column a vertex falls")
+{
+    // **The owner's place at 1 000 m**: a coarse column is a whole cell -- 8 m
+    // at level 3 -- and its run is the whole ball as that column sees it. A
+    // vertex on the ball fell inside that run, or not, by where in the cell it
+    // was: counted as under a roof, and its sideways rays blocked by the
+    // column they started in, it went dark in blocks.
+    TerrainField field(settingsOf());
+    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 256.0f, 0.0f, 1);
+    (void)fillBall(field, core::DVec3{0.0, 2.0, 0.0}, 14.0, 1);
+    for (const core::u32 level : {2u, 3u}) {
+        CAPTURE(level);
+        const TerrainMesh meshed = meshAt(field, level, 96, -40, 32);
+        float darkest = 1.0f;
+        int seen = 0;
+        for (const Vertex& vertex : meshed.mesh.vertices) {
+            // The upper flank, facing out and up.
+            if (vertex.normal.y < 0.0f || vertex.normal.y > 0.6f || vertex.position.y < 3.0f)
+                continue;
+            darkest = std::min(darkest, vertex.tangent[1]);
+            ++seen;
+        }
+        REQUIRE(seen > 0);
+        // Measured: 0.58 and 0.62 before, 0.70 and 0.77 after -- a flank that
+        // faces out sees the ground in front of it with the lower half of what
+        // it faces.
+        CHECK(darkest > 0.66f);
     }
 }

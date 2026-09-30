@@ -505,7 +505,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   medium, high and ultra -- measured from its own box, height included, with
   hysteresis. Flat ground stays coarse; a bump, an edge or paint is drawn finer.
 - **The sky term is the drawn level's own**: air under an overhang is air, and
-  a feature a level does not draw no longer shades the ground under it.
+  a feature a level does not draw no longer shades the ground under it. Nor
+  does a coarse column's width draw dark streaks down a steep flank or dark
+  blocks on a far ball.
 - **Building distant terrain costs more** (ADR 0140's consequences): the
   terrain flight over the owner's place went from a p95 of 7.4 ms to 22 ms;
   the audit's T5 moves meshing off the main thread.

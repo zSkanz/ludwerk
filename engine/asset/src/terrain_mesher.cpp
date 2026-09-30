@@ -996,6 +996,39 @@ void missingSurfaces(const TerrainField& field, const MeshRegion& region, std::v
     }
 }
 
+std::vector<std::pair<float, float>> terrainColumnRuns(std::vector<std::pair<float, float>> surfaces, float top,
+                                                       float bottom)
+{
+    constexpr float Unbounded = 1.0e30f;
+    std::sort(surfaces.begin(), surfaces.end());
+    std::vector<std::pair<float, float>> found;
+    float start = std::numeric_limits<float>::quiet_NaN();
+    bool below = true;
+    for (const auto& [y, facing] : surfaces) {
+        if (facing < -0.3f) {
+            start = y;
+            below = false;
+        }
+        else if (facing > 0.3f) {
+            found.emplace_back(std::isnan(start) ? (below ? -Unbounded : y) : start, y);
+            start = std::numeric_limits<float>::quiet_NaN();
+            below = false;
+        }
+    }
+    // **A run nothing closes ends at the column's own top** (the owner's
+    // place, 500 m): under the bulge of a mound a column holds the underside,
+    // facing down, while the wall above it is too steep to count and the cap
+    // is in the next column -- and the run went to the sky, a pillar every ray
+    // past it met, in a row of dark spots down the flank. Only with nothing of
+    // the column above it is it the ground to the top of the world.
+    if (!std::isnan(start))
+        found.emplace_back(start, !std::isnan(top) && top > start ? top : Unbounded);
+    // Where the gathered surface said nothing, the column's own extent.
+    if (found.empty() && !std::isnan(top))
+        found.emplace_back(std::isnan(bottom) ? -Unbounded : bottom, top);
+    return found;
+}
+
 TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
 {
     TerrainMesh out;
@@ -1194,29 +1227,9 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                 }
             }
         }
-        constexpr float Unbounded = 1.0e30f;
         for (usize at = 0; at < runs.size(); ++at) {
-            std::vector<std::pair<float, float>>& column = surfaces[at];
-            std::sort(column.begin(), column.end());
-            std::vector<std::pair<float, float>> found;
-            float start = std::numeric_limits<float>::quiet_NaN();
-            bool below = true;
-            for (const auto& [y, facing] : column) {
-                if (facing < -0.3f) {
-                    start = y;
-                    below = false;
-                }
-                else if (facing > 0.3f) {
-                    found.emplace_back(std::isnan(start) ? (below ? -Unbounded : y) : start, y);
-                    start = std::numeric_limits<float>::quiet_NaN();
-                    below = false;
-                }
-            }
-            if (!std::isnan(start))
-                found.emplace_back(start, Unbounded);
-            // Where the gathered surface said nothing, the column's own extent.
-            if (found.empty() && !std::isnan(tops[at]))
-                found.emplace_back(std::isnan(bottoms[at]) ? -Unbounded : bottoms[at], tops[at]);
+            const std::vector<std::pair<float, float>> found =
+                terrainColumnRuns(std::move(surfaces[at]), tops[at], bottoms[at]);
             // The highest four: what a sky ray from above meets first.
             const usize first = found.size() > MaxRuns ? found.size() - MaxRuns : 0;
             for (usize run = first; run < found.size(); ++run) {
@@ -1383,11 +1396,17 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         float total = 0.0f;
         // Straight up and straight down: open when nothing in this column is
         // on that side of the point.
+        // **A run round the point itself is not a roof** (the owner's place,
+        // 1 000 m): a column is a whole cell -- eight metres at level 3 -- and a
+        // vertex on a ball fell inside the ball's own run, the whole ball as
+        // that column sees it, or not, by where in the cell it was. Only ground
+        // wholly above the point shades it from above, and wholly below it
+        // from below.
         if (const float up = std::max(normal.y, 0.0f); up > 0.0f) {
             total += up;
             bool open = true;
             for (u8 run = 0; run < own.count; ++run)
-                open = open && own.spans[run * 2u + 1u] <= from.y;
+                open = open && own.spans[run * 2u] <= from.y;
             if (open)
                 seen += up;
         }
@@ -1395,7 +1414,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             total += down;
             bool open = true;
             for (u8 run = 0; run < own.count; ++run)
-                open = open && own.spans[run * 2u] >= from.y;
+                open = open && own.spans[run * 2u + 1u] >= from.y;
             if (open)
                 seen += down;
         }
@@ -1408,6 +1427,13 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         const float cellX = from.x / step - static_cast<float>(mapX0);
         const float cellZ = from.z / step - static_cast<float>(mapZ0);
         const float perCell = 1.0f / step;
+        // **Nor does a ray meet the column it starts in** (the same place): on
+        // a wall that column's run is the feature the wall bounds, and a ray
+        // leaving the wall began inside it or not by where in the cell the
+        // vertex was. What is above and below the point there is the straight
+        // up and down, above.
+        const i32 ownX = std::clamp(static_cast<i32>(cellX), 0, mapW - 1);
+        const i32 ownZ = std::clamp(static_cast<i32>(cellZ), 0, mapD - 1);
         for (const Bearing& bearing : Bearings) {
             std::array<float, Rings.size()> weight{};
             std::array<bool, Rings.size()> settled{};
@@ -1422,6 +1448,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                 const float d = SkyStops[at];
                 const i32 kx = std::clamp(static_cast<i32>(cellX + bearing.x * d * perCell), 0, mapW - 1);
                 const i32 kz = std::clamp(static_cast<i32>(cellZ + bearing.z * d * perCell), 0, mapD - 1);
+                if (kx == ownX && kz == ownZ)
+                    continue;
                 const Runs& column = runs[static_cast<usize>(kz) * static_cast<usize>(mapW) + static_cast<usize>(kx)];
                 const float before = at == 0 ? 0.0f : SkyStops[at - 1];
                 for (usize r = 0; r < Rings.size(); ++r) {
