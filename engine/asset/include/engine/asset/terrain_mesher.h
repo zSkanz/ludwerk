@@ -152,7 +152,7 @@ void cacheSurfaces(const TerrainField& field, ChunkKey key, core::u64 content, c
 
 // One chunk's gathered surface at `level`, as prepared, or null where it is
 // not -- or where nothing is.
-[[nodiscard]] const SurfaceLevel* surfaceOf(const TerrainField& field, ChunkKey key, core::u32 level) noexcept;
+[[nodiscard]] std::shared_ptr<const SurfaceLevel> surfaceOf(const TerrainField& field, ChunkKey key, core::u32 level);
 
 // **The runs of level-0 voxel rows a column of chunks can have a surface in**,
 // lowest first and each inclusive, over the chunk columns from (`chunkX`,

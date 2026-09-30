@@ -348,3 +348,60 @@ TEST_CASE("a node is stitched to the level drawn beside it where that is coarser
     // its low x and on the corner the coarse one also covers.
     CHECK(terrainStitchSides(finer, TerrainNodeKey{0, 2, 0}) == TerrainSides{1, 0, 0, 0, 0, 0, 1, 0});
 }
+
+TEST_CASE("built off the main thread, the ground is drawn once it is built, whole")
+{
+    // **TA14**: `sync` hands its builds to workers and draws what it has.
+    // Once they are back, the ground is drawn, every column of it covered.
+    LoaderFixture fixture;
+    fixture.loader.setAsync(true);
+    fixture.loader.setBuildsPerSync(4);
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    std::vector<TerrainNodeDraw> drawn;
+    for (int frame = 0; frame < 400 && (drawn.empty() || fixture.loader.pending()); ++frame) {
+        (void)fixture.sync();
+        drawn = fixture.loader.draws(fixture.world);
+    }
+    CHECK_FALSE(fixture.loader.pending());
+    REQUIRE_FALSE(drawn.empty());
+    const auto covered = coverage(fixture.atoms, drawn);
+    for (core::i32 z = -4; z < 4; ++z) {
+        for (core::i32 x = -4; x < 4; ++x) {
+            CAPTURE(x);
+            CAPTURE(z);
+            CHECK(covered.contains({x, z}));
+        }
+    }
+}
+
+TEST_CASE("built off the main thread, every node drawn is built for the seams it is drawn with, every frame")
+{
+    // **TA14**: a change of level moves the levels drawn beside a node, and a
+    // node drawn with seams built for other levels opens a crack. Built off
+    // the main thread, the change is drawn only once every node it touches is
+    // built for it -- here, flying in from far away and out again, every frame.
+    LoaderFixture fixture;
+    fixture.loader.setAsync(true);
+    fixture.loader.setBuildsPerSync(3);
+    // Hills, so the levels differ between neighbours.
+    for (const double x : {-60.0, 0.0, 70.0})
+        (void)asset::fillBall(fixture.component().field, core::DVec3{x, -6.0, 20.0}, 22.0, 1);
+    fixture.component().fieldRevision += 1;
+    for (int frame = 0; frame < 240; ++frame) {
+        const double t = static_cast<double>(frame < 120 ? 120 - frame : frame - 120) / 120.0;
+        fixture.loader.setFocus(core::DVec3{8.0, 4.0 + 900.0 * t, 8.0});
+        (void)fixture.sync();
+        const auto seams = fixture.loader.drawnSeams(fixture.world);
+        std::vector<TerrainNodeKey> keys;
+        for (const auto& [key, sides] : seams)
+            keys.push_back(key);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& [key, sides] : seams) {
+            CAPTURE(frame);
+            CAPTURE(key.level);
+            CAPTURE(key.x);
+            CAPTURE(key.z);
+            CHECK(sides == terrainStitchSides(keys, key));
+        }
+    }
+}

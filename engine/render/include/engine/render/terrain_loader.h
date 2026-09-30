@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <tuple>
@@ -136,6 +137,9 @@ public:
     // The nodes to draw for `world`, as the last `sync` of it chose them --
     // what `extract` turns into draws.
     [[nodiscard]] std::vector<TerrainNodeDraw> draws(const scene::World& world) const;
+    // The nodes drawn for `world` and the seams each one's mesh was built for
+    // -- what a test holds against `terrainStitchSides` of the same set.
+    [[nodiscard]] std::vector<std::pair<TerrainNodeKey, TerrainSides>> drawnSeams(const scene::World& world) const;
 
     // Appends one `RenderTerrain` per terrain in `world` under `root`: its
     // palette, which the terrain shader reads.
@@ -160,6 +164,24 @@ public:
     // How many meshes one `sync` may build. A count, never a clock.
     void setBuildsPerSync(core::u32 count) noexcept { m_buildsPerSync = count == 0 ? 1 : count; }
 
+    // **Built off the main thread** (terrain audit TA14): every mesh `sync`
+    // wants -- a node loading, ground that changed, a node drawn beside new
+    // levels -- is handed to a few workers, and a later `sync` puts up what
+    // they made, all of one batch in the same frame. **What is drawn changes
+    // only where it is built**: a node wanted but not built for the ground and
+    // the seams it would be drawn with is drawn as the frame before drew that
+    // ground, and so are the nodes beside it its seams depend on -- so no seam
+    // is ever drawn open, and no edit half done. Off, `sync` builds everything
+    // it wants before it returns, as a test or a picture needs.
+    void setAsync(bool async) noexcept { m_async = async; }
+    [[nodiscard]] bool async() const noexcept { return m_async; }
+
+    TerrainLoader();
+    TerrainLoader(const TerrainLoader&) = delete;
+    TerrainLoader& operator=(const TerrainLoader&) = delete;
+    // Waits for a batch still being built: its workers read what it holds.
+    ~TerrainLoader();
+
     // Releases everything this uploaded. Called once, by whoever owns it.
     void destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library);
 
@@ -173,27 +195,38 @@ public:
     [[nodiscard]] bool pending() const noexcept { return m_pending; }
 
 private:
+    // **One mesh of a node** (TA14): built for the ground it was built from
+    // and the coarser levels beside it it is stitched to (ADR 0140). A node
+    // keeps two, so the one a drawn set shows is never the one a finished
+    // build replaces.
+    struct Variant
+    {
+        core::NameAtom urn;
+        MeshHandle mesh;
+        // What it was built from, and at which revision that was last checked
+        // -- against the ground now, and against the ground put up.
+        core::u64 content = 0;
+        core::u64 revision = ~0ull;
+        core::u64 shownRevision = ~0ull;
+        TerrainSides sides{};
+        // Built: a node of empty ground is built and has no mesh.
+        bool built = false;
+    };
     struct Node
     {
         const scene::World* world = nullptr;
         core::InstanceId terrain;
         TerrainNodeKey key;
-        core::NameAtom urn;
-        MeshHandle mesh;
-        // What it was built from, and at which revision that was last checked.
-        core::u64 content = 0;
-        core::u64 revision = ~0ull;
-        // Built at least once: a node of empty ground is built and has no mesh.
+        std::array<Variant, 2> variants;
+        // Either built at least once: what the selection can draw.
         bool built = false;
-        // The coarser levels beside it it was built stitched to, and those it
-        // is drawn beside now (ADR 0140): a node whose neighbours changed is
-        // rebuilt, as one whose ground did.
-        TerrainSides builtSides{};
-        TerrainSides wantedSides{};
+        // In the batch being built, and for which seams.
+        bool queued = false;
+        TerrainSides queuedSides{};
         // Whether its children were shown last frame: a node splits under the
         // error budget and joins again only past 1.25 times it (hysteresis).
         bool split = false;
-        // How far its mesh is from the level-0 surface, in metres, once built
+        // How far its newest mesh is from the level-0 surface, in metres
         // (`asset::TerrainMesh::error`).
         double error = 0.0;
         // The last frame this node was drawn or wanted.
@@ -205,8 +238,18 @@ private:
                                    TerrainNodeKey key) const noexcept;
     void release(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library, Node& node);
 
+    struct Batch;
+    [[nodiscard]] bool batchFinished() const noexcept;
+    void waitBatch() noexcept;
+    // Puts up at most `budget` of what the finished batch built, and lets the
+    // batch go once all of it is up. Answers how many it put up.
+    core::u32 integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary& library,
+                        core::usize budget);
+
     core::DVec3 m_focus;
     bool m_hasFocus = false;
+    bool m_async = false;
+    std::unique_ptr<Batch> m_batch;
     TerrainLodSettings m_lod;
     core::u32 m_buildsPerSync = 4;
     core::u32 m_lastBuilds = 0;
@@ -233,8 +276,23 @@ private:
         // Where in the quadtree, so `draws` can tell which neighbours are
         // coarser.
         TerrainNodeKey key;
+        // Which of the node's meshes it is.
+        core::u8 slot = 0;
     };
     std::vector<Drawn> m_drawn;
+    // **The ground as last put up** (TA14), per terrain: the snapshot the last
+    // batch was built from. What is drawn is judged against it, not against
+    // the ground now -- a batch holds every node its snapshot changed, so all
+    // that is drawn is of one revision, and ground a streamed cell brings in
+    // appears everywhere in the frame it does, never on one side of a seam.
+    struct Shown
+    {
+        const scene::World* world = nullptr;
+        core::InstanceId terrain;
+        std::shared_ptr<const asset::TerrainField> field;
+        core::u64 revision = 0;
+    };
+    std::vector<Shown> m_shown;
 };
 
 } // namespace engine::render

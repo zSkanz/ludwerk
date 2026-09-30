@@ -229,6 +229,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.frameStats = true;
             continue;
         }
+        if (arg.starts_with("--pace=")) {
+            engine::core::u64 hz = 0;
+            if (!numericValue(arg.substr(7), hz) || hz == 0 || hz > 1000) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.paceHz = static_cast<engine::core::u32>(hz);
+            continue;
+        }
         if (arg == "--gpu-debug") {
             options.gpuDebug = true;
             continue;

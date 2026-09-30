@@ -82,6 +82,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`engine-host --pace=HZ`**: a headless run waits out each frame's share of a
+  second, the wait left out of `--frame-stats`, so work done beside the frame
+  is measured against a camera moving as fast as a player's.
+
 - **`[graphics] contact_shadows`** and `--[no-]contact-shadows`, so the sun's
   contact shadows can be turned off alone (terrain audit T0).
 - **Test instruments on `engine-host`** (terrain audit T0):
@@ -508,9 +512,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   a feature a level does not draw no longer shades the ground under it. Nor
   does a coarse column's width draw dark streaks down a steep flank or dark
   blocks on a far ball.
-- **Building distant terrain costs more** (ADR 0140's consequences): the
-  terrain flight over the owner's place went from a p95 of 7.4 ms to 22 ms;
-  the audit's T5 moves meshing off the main thread.
+- **Terrain is built off the main thread** (ADR 0141, terrain audit TA14): a
+  few workers build every mesh the ground wants, and a node is drawn only with
+  a mesh built for the levels drawn beside it -- the ground as the frame before
+  drew it meanwhile -- so a change of level, an edit or a streamed cell is drawn
+  a frame or two late and whole, never with a seam open. The terrain flight
+  over the owner's place, at 60 frames a second: a p95 of 5 to 6 ms and a p99
+  of 8 to 9, where building in the frame had been 22 and 33.
 
 - **A terrain's materials come from Content** (D330), as in other engines: the
   Paint panel's `+` picks one of the project's materials, a material dragged

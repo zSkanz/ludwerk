@@ -1199,6 +1199,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // put the whole materialisation burst in the measured window.
     SoakRecorder soak(60);
     core::u64 lastFrameNs = 0;
+    core::u64 paceMarkNs = 0;
 
     // Where everything was one tick ago (D047). Owned by the frame loop rather
     // than by the world, because it is not world state: a reload replaces the
@@ -1455,6 +1456,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // and loading has a budget of its own to be judged by.
     if (options.screenshotEvery != 0)
         terrainLoader.setBuildsPerSync(256);
+    // **Built off the main thread** (terrain audit TA14) -- except in that run,
+    // whose pictures are of what the frame they are taken in built, not of what
+    // a worker happened to finish by then.
+    terrainLoader.setAsync(options.screenshotEvery == 0);
     // The block world's chunks (V1), meshed and uploaded the same way.
     render::VoxelLoader voxelLoader;
     render::WaterLoader waterLoader;
@@ -2124,6 +2129,17 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             phaseSimMs = 0.0;
             phaseWaitMs = 0.0;
             phaseRenderScriptsMs = 0.0;
+        }
+        // **`--pace`**: the rest of the frame's share of a second, waited out
+        // and left out of what the frame is measured to have cost.
+        if (options.paceHz != 0) {
+            const core::u64 period = 1'000'000'000ull / options.paceHz;
+            const core::u64 now = platform::nowNs();
+            if (paceMarkNs != 0 && now - paceMarkNs < period)
+                platform::sleepNs(period - (now - paceMarkNs));
+            paceMarkNs = platform::nowNs();
+            if (lastFrameNs != 0)
+                lastFrameNs = paceMarkNs;
         }
 
         // The FrameStart safe point. Overlay edits are applied HERE and not

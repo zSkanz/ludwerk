@@ -25,10 +25,12 @@
 // copies pointers, and an edit clones only the chunks it writes.
 
 #include <array>
+#include <atomic>
 #include <compare>
 #include <map>
 #include <memory>
 #include <optional>
+#include <shared_mutex>
 #include <span>
 #include <utility>
 #include <vector>
@@ -220,8 +222,8 @@ inline constexpr core::i32 MaxChunkKey = 1 << 20;
 // single value is just that value, with no rows at all.
 //
 // **Mutable only through a `TerrainField`**, which clones a chunk another
-// snapshot still holds before it writes. The lazy digest and mips are dropped
-// by every write.
+// snapshot still holds before it writes. The lazy digests are dropped by every
+// write.
 class TerrainChunk
 {
 public:
@@ -304,10 +306,44 @@ private:
     Layer m_main;
     Layer m_paint;
 
-    mutable core::u64 m_digest = 0;
-    mutable bool m_digestValid = false;
-    mutable std::array<core::u64, 27> m_borders{};
-    mutable core::u32 m_bordersValid = 0;
+    // **The lazy digests, safe from any thread** (terrain audit TA14): a chunk
+    // two snapshots of a field share is read by the one meshed off the main
+    // thread while the other is read on it. Two threads that both work one out
+    // store the same value, and every store is atomic; a digest is published
+    // before the bit that says it is there.
+    struct Digests
+    {
+        std::atomic<core::u64> whole{0};
+        std::atomic<bool> wholeValid{false};
+        std::array<std::atomic<core::u64>, 27> borders{};
+        std::atomic<core::u32> bordersValid{0};
+
+        Digests() = default;
+        Digests(const Digests& other) noexcept { copyFrom(other); }
+        Digests& operator=(const Digests& other) noexcept
+        {
+            if (this != &other)
+                copyFrom(other);
+            return *this;
+        }
+        ~Digests() = default;
+        void clear() noexcept
+        {
+            wholeValid.store(false, std::memory_order_relaxed);
+            bordersValid.store(0, std::memory_order_relaxed);
+        }
+
+    private:
+        void copyFrom(const Digests& other) noexcept
+        {
+            whole.store(other.whole.load(std::memory_order_acquire), std::memory_order_relaxed);
+            wholeValid.store(other.wholeValid.load(std::memory_order_acquire), std::memory_order_release);
+            for (core::usize at = 0; at < borders.size(); ++at)
+                borders[at].store(other.borders[at].load(std::memory_order_acquire), std::memory_order_relaxed);
+            bordersValid.store(other.bordersValid.load(std::memory_order_acquire), std::memory_order_release);
+        }
+    };
+    mutable Digests m_digests;
 };
 
 // --- The field ---------------------------------------------------------------
@@ -539,7 +575,11 @@ public:
     // share the cache and a copy that differs simply misses. Written on one
     // thread (`prepareSurface`, `cacheSurfaces`), before anything meshes from
     // it.
-    [[nodiscard]] const SurfaceLevel* cachedSurface(ChunkKey key, core::u32 level, core::u64 content) const noexcept;
+    // **Safe from any thread** (terrain audit TA14): a field meshed off the
+    // main thread shares this cache with the one edited on it. What it hands
+    // back is held, so an entry replaced meanwhile stays whole for its reader.
+    [[nodiscard]] std::shared_ptr<const SurfaceLevel> cachedSurface(ChunkKey key, core::u32 level,
+                                                                    core::u64 content) const;
     void cacheSurface(ChunkKey key, core::u32 level, core::u64 content,
                       std::shared_ptr<const SurfaceLevel> surface) const;
 
@@ -549,7 +589,11 @@ private:
         core::u64 content = 0;
         std::shared_ptr<const SurfaceLevel> surface;
     };
-    using SurfaceCache = std::map<std::pair<ChunkKey, core::u32>, SurfaceEntry>;
+    struct SurfaceCache
+    {
+        mutable std::shared_mutex lock;
+        std::map<std::pair<ChunkKey, core::u32>, SurfaceEntry> entries;
+    };
 
     FieldSettings m_settings;
     // Sorted by key. Never a hash map (R10): the mesher, the save file and the

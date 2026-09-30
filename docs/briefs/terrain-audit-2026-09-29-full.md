@@ -215,12 +215,41 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 
 - [ ] TA14: meshing and colliders off the main thread or on a budget; p99
   under 16.6 ms and no terrain spike in the worst frame, before and after.
+  Meshing: done (ADR 0141), the p99 met, the worst frame not yet; colliders:
+  not yet.
 - [ ] The collider does not pay for the sky term.
 - [ ] Continuous digging rebuilds only what changed (P4), with a baseline.
 - [ ] TA18: an edit invalidates only the navmesh tiles it touches.
 - [ ] The raycast caches the field's bounds per revision.
 - [ ] Moving a terrain moves its colliders.
 - [ ] Internal-edge removal on chunk meshes, with a sphere rolled across a seam.
+
+### T5 as it stands
+
+**TA14's meshing is pulled forward, ahead of T3** (ludwerk-08's check of T2 on
+the owner's place: the building had to leave the frame before the owner flies
+again). ADR 0141:
+
+- **Every mesh is built off the main thread**, by a quarter of the workers (one
+  to four), from a snapshot of the field whose chunks are shared until written;
+  a chunk's digests are atomic and the gathered-surface cache is locked.
+- **A node keeps two meshes and is drawn only with one built for the seams it
+  is drawn with**; where there is none, the frame before's ground is drawn
+  there and beside it, until every node drawn is. What is drawn is judged
+  against the ground last put up, so it is of one revision. Tested in motion:
+  every node drawn, every frame of a flight built off the thread, is built for
+  the levels drawn beside it (`terrain_loader_tests.cpp`; it fails without the
+  deferral).
+- **`--pace=60`** for the flight, since a headless run flat out is a camera
+  thirty times too fast. The owner's place, paced: a p95 of 5.0 to 6.0 ms and a
+  p99 of 7.9 to 9.3 ms (22 and 33 built in the frame). **The p99 is met; the
+  worst frame, 18 to 25 ms, is not yet free of terrain** -- scheduling the
+  workers and putting meshes up are what is left.
+- **Tried and left** (ADR 0141's context): drawing only once the whole
+  selection is built drew nothing while the camera moved; building only the
+  seams in the frame still cost 3 to 18 ms a frame; stitching on the GPU needs
+  levels held one apart and a buffer per node.
+- **Still on the main thread**: the collider (TA14's other half).
 
 ## T6 — the close
 

@@ -1277,3 +1277,24 @@ consequences. The median is the frames with no building: a view drawn to its
 error budget draws more nodes than one drawn by distance did, and a lower
 quality draws fewer. T5 (TA14) moves meshing off the main
 thread and holds the p99 under 16.6 ms.
+
+### Built off the main thread (TA14, ADR 0141)
+
+**Paced.** Headless frames run flat out finish the flight in a second, and
+ground built beside the frame is then measured against a camera thirty times
+too fast -- so from here the flight is flown at 60 frames a second
+(`--pace=60`), the wait left out of the figures. The streamer runs on the wall
+clock, so a paced flight also streams in more of the ground than an unpaced
+one, and a paced frame starts on a processor that has slept: the gallery's
+median, with nothing to build, is 0.98 ms paced against 0.57 unpaced. Compare
+paced with paced.
+
+| Flight, `--pace=60` | Median | p95 | p99 | Worst |
+|---|---|---|---|---|
+| The owner's place | 1.72, 1.72, 1.69 ms | 5.91, 4.96, 5.96 ms | 8.38, 7.88, 9.33 ms | 22.9, 25.0, 18.5 ms |
+| The gallery | 0.98, 0.98, 0.97 ms | 1.85, 1.89, 1.86 ms | 5.13, 5.13, 4.97 ms | 16.1, 12.4, 13.3 ms |
+
+The p99 is under T5's 16.6 ms, on the flight that was 31 to 35 ms with the
+building in the frame. **The worst frame is not yet free of terrain**:
+scheduling the workers was once caught at 2.6 to 6.7 ms on its own, and the
+rest of the tail is putting meshes up; both are left to T5.

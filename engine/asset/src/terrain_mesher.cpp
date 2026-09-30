@@ -834,7 +834,7 @@ void prepareSurface(const TerrainField& field, ChunkKey key, u32 level)
     cacheSurfaces(field, key, wanted, buildSurfaces(field, key, 1u << level));
 }
 
-const SurfaceLevel* surfaceOf(const TerrainField& field, ChunkKey key, u32 level) noexcept
+std::shared_ptr<const SurfaceLevel> surfaceOf(const TerrainField& field, ChunkKey key, u32 level)
 {
     return field.cachedSurface(key, level, surfaceKey(field, key));
 }
@@ -1061,26 +1061,23 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     // kept for this call only. Meshing never writes to the field, so any
     // number of meshes are made at once; one per vertex, the lookup was most
     // of what a coarse node cost.
-    std::map<std::pair<ChunkKey, u32>, const SurfaceLevel*> surfaceMemo;
-    std::vector<SurfaceLevels> gatheredHere;
+    // Held here, so an entry the cache replaces meanwhile stays whole.
+    std::map<std::pair<ChunkKey, u32>, std::shared_ptr<const SurfaceLevel>> surfaceMemo;
     const auto surfaceIn = [&](const TerrainField& from, ChunkKey key, u32 at) -> const SurfaceLevel* {
         if (at == 0 || at >= ChunkLevels)
             return nullptr;
         if (const auto found = surfaceMemo.find({key, at}); found != surfaceMemo.end())
-            return found->second;
+            return found->second.get();
         // Air or rock all round first: nothing to find, and nothing of the
         // chunks' lazily kept digests touched for it.
         if (plainAround(from, key)) {
             surfaceMemo.emplace(std::pair{key, at}, nullptr);
             return nullptr;
         }
-        const SurfaceLevel* surface = asset::surfaceOf(from, key, at);
-        if (surface == nullptr) {
-            gatheredHere.push_back(buildSurfaces(from, key, 1u << at));
-            surface = gatheredHere.back()[at].get();
-        }
-        surfaceMemo.emplace(std::pair{key, at}, surface);
-        return surface;
+        std::shared_ptr<const SurfaceLevel> surface = asset::surfaceOf(from, key, at);
+        if (surface == nullptr)
+            surface = buildSurfaces(from, key, 1u << at)[at];
+        return surfaceMemo.emplace(std::pair{key, at}, std::move(surface)).first->second.get();
     };
     const auto sampleIndex = [&](i32 sx, i32 sy, i32 sz) {
         return (static_cast<usize>(sz) * static_cast<usize>(sizeY) + static_cast<usize>(sy)) *

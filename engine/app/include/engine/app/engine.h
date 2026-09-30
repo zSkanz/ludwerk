@@ -222,6 +222,13 @@ struct EngineOptions
     bool partitionOnly = false;
 
     bool frameStats = false;
+    // **`--pace=HZ`: a headless frame waits for its share of a second** before
+    // the next begins, the wait left out of `--frame-stats`. Headless runs a
+    // frame as soon as the last is done, so a flight of 1 500 frames is over in
+    // a second or two -- and whatever works beside the frame (the terrain
+    // built off the main thread, TA14) is measured against a camera moving
+    // thirty times too fast. Zero runs flat out.
+    core::u32 paceHz = 0;
 
     // **`--gpu-debug`: the GPU debug layer, asked for by name** (D183). Off
     // means whatever the profile decides -- see `gpuValidationWanted`.

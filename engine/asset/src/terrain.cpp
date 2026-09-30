@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <mutex>
 
 #define XXH_INLINE_ALL
 #include "xxhash.h"
@@ -181,8 +182,7 @@ void TerrainChunk::readPaintRow(u32 y, u32 z, std::span<u16, ChunkEdge> out) con
 
 void TerrainChunk::invalidate() noexcept
 {
-    m_digestValid = false;
-    m_bordersValid = 0;
+    m_digests.clear();
 }
 
 bool TerrainChunk::set(u32 x, u32 y, u32 z, Voxel voxel)
@@ -237,8 +237,7 @@ void TerrainChunk::normalize()
     m_main.normalize();
     m_paint.normalize();
     // The bytes are the same voxels either way; only the digest's input moved.
-    m_digestValid = false;
-    m_bordersValid = 0;
+    m_digests.clear();
 }
 
 usize TerrainChunk::bytes() const noexcept
@@ -251,7 +250,7 @@ usize TerrainChunk::bytes() const noexcept
 
 u64 TerrainChunk::digest() const noexcept
 {
-    if (!m_digestValid) {
+    if (!m_digests.wholeValid.load(std::memory_order_acquire)) {
         // Over the canonical form: a uniform chunk is its value, and a rowed one
         // is its row table and its dense rows. Two chunks with the same voxels
         // only share a digest once both are normalised, which every write path
@@ -280,10 +279,10 @@ u64 TerrainChunk::digest() const noexcept
                 XXH3_64bits_update(&state, m_paint.dense.data(), m_paint.dense.size() * sizeof(u16));
             }
         }
-        m_digest = XXH3_64bits_digest(&state);
-        m_digestValid = true;
+        m_digests.whole.store(XXH3_64bits_digest(&state), std::memory_order_relaxed);
+        m_digests.wholeValid.store(true, std::memory_order_release);
     }
-    return m_digest;
+    return m_digests.whole.load(std::memory_order_relaxed);
 }
 
 u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
@@ -293,7 +292,7 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
     if (dx == 0 && dy == 0 && dz == 0)
         return digest();
     const auto slot = static_cast<u32>((dx + 1) + 3 * (dy + 1) + 9 * (dz + 1));
-    if ((m_bordersValid & (1u << slot)) == 0) {
+    if ((m_digests.bordersValid.load(std::memory_order_acquire) & (1u << slot)) == 0) {
         XXH3_state_t state;
         XXH3_64bits_reset(&state);
         XXH3_64bits_update(&state, &slot, sizeof(slot));
@@ -333,10 +332,10 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
             }
             XXH3_64bits_update(&state, part.data(), part.size() * sizeof(u16));
         }
-        m_borders[slot] = XXH3_64bits_digest(&state);
-        m_bordersValid |= 1u << slot;
+        m_digests.borders[slot].store(XXH3_64bits_digest(&state), std::memory_order_relaxed);
+        m_digests.bordersValid.fetch_or(1u << slot, std::memory_order_release);
     }
-    return m_borders[slot];
+    return m_digests.borders[slot].load(std::memory_order_relaxed);
 }
 
 // --- TerrainField --------------------------------------------------------------
@@ -376,18 +375,20 @@ FieldSample TerrainField::sample(i32 x, i32 y, i32 z) const noexcept
     return FieldSample{(0.5f - occupancyOf(got)) * RampVoxels * m_settings.voxelSize, got.material};
 }
 
-const SurfaceLevel* TerrainField::cachedSurface(ChunkKey key, u32 level, core::u64 content) const noexcept
+std::shared_ptr<const SurfaceLevel> TerrainField::cachedSurface(ChunkKey key, u32 level, core::u64 content) const
 {
-    const auto found = m_surfaces->find(std::pair{key, level});
-    if (found == m_surfaces->end() || found->second.content != content)
+    const std::shared_lock reading(m_surfaces->lock);
+    const auto found = m_surfaces->entries.find(std::pair{key, level});
+    if (found == m_surfaces->entries.end() || found->second.content != content)
         return nullptr;
-    return found->second.surface.get();
+    return found->second.surface;
 }
 
 void TerrainField::cacheSurface(ChunkKey key, u32 level, core::u64 content,
                                 std::shared_ptr<const SurfaceLevel> surface) const
 {
-    (*m_surfaces)[std::pair{key, level}] = SurfaceEntry{content, std::move(surface)};
+    const std::unique_lock writing(m_surfaces->lock);
+    m_surfaces->entries[std::pair{key, level}] = SurfaceEntry{content, std::move(surface)};
 }
 
 std::vector<ChunkKey> TerrainField::chunkKeys() const
