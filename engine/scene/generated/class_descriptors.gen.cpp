@@ -1195,7 +1195,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("SmoothBall"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Softens the ground in a ball: every voxel moves towards the average of its neighbours by `strength` (0 to 1, default 0.5), less towards the rim. Returns how many voxels it changed.",
+            .doc = "Softens the ground in a ball: each surface moves towards the average of the same surface round it -- over a gaussian half the brush wide, at most four voxels -- by `strength` (0 to 1, default 0.5), less towards the rim. Flat ground stays where it is, a slab is never cut through, nothing sinks below the ground it smooths towards, and what comes off a bump goes round it: the ground's volume is kept to within a tenth over twenty stamps. Returns how many voxels it changed.",
         },
         MethodDesc{
             .name = atoms.intern("FlattenBall"),

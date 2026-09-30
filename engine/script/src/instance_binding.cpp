@@ -2154,9 +2154,15 @@ struct VoxelRegion
     core::i32 sizeY = 0;
     core::i32 sizeZ = 0;
 
+    // **Saturating** (terrain audit TA5): each side can be 2^27 voxels, and
+    // three of them multiplied as integers passed 2^64 and wrapped to a count
+    // the limit let through -- after which the loops ran the true sizes. In
+    // doubles the product is only inexact where it is far past any limit.
     [[nodiscard]] core::usize count() const noexcept
     {
-        return static_cast<core::usize>(sizeX) * static_cast<core::usize>(sizeY) * static_cast<core::usize>(sizeZ);
+        const double product = static_cast<double>(sizeX) * static_cast<double>(sizeY) * static_cast<double>(sizeZ);
+        constexpr auto Most = std::numeric_limits<core::usize>::max();
+        return product >= static_cast<double>(Most) ? Most : static_cast<core::usize>(product);
     }
 };
 
@@ -2206,7 +2212,8 @@ int methodTerrainReadVoxels(lua_State* L)
     }
     const VoxelRegion region = regionOf(*terrain, low, high);
     if (region.count() > MaxVoxelRegion) {
-        const core::I18nArg args[] = {{"count", static_cast<core::i64>(region.count())},
+        const core::I18nArg args[] = {{"count", static_cast<core::i64>(std::min<core::usize>(
+                                                    region.count(), std::numeric_limits<core::i64>::max()))},
                                       {"limit", static_cast<core::i64>(MaxVoxelRegion)}};
         raise(L, ENG_TR("scene.err.terrain_region_too_large"), args);
     }
@@ -2248,6 +2255,17 @@ int methodTerrainWriteVoxels(lua_State* L)
         lua_pushinteger(L, 0);
         return 1;
     }
+    // **Each side a count before it is an integer** (terrain audit TA5): a
+    // NaN, an infinity or a side past the largest region was cast to an `i32`
+    // as it was -- undefined behaviour -- and is refused instead.
+    for (const float side : {size.x, size.y, size.z}) {
+        if (!std::isfinite(side) || side < 0.0f || side > static_cast<float>(MaxVoxelRegion)) {
+            const core::I18nArg args[] = {{"x", static_cast<core::f64>(size.x)},
+                                          {"y", static_cast<core::f64>(size.y)},
+                                          {"z", static_cast<core::f64>(size.z)}};
+            raise(L, ENG_TR("scene.err.terrain_voxels_size"), args);
+        }
+    }
     {
         const float voxel = terrain->field.settings().voxelSize;
         groundFirst(L, *terrain, corner, core::Vec3{corner.x + size.x * voxel, corner.y, corner.z + size.z * voxel});
@@ -2257,16 +2275,29 @@ int methodTerrainWriteVoxels(lua_State* L)
     region.x = terrain->field.voxelIndex(local.x);
     region.y = terrain->field.voxelIndex(local.y);
     region.z = terrain->field.voxelIndex(local.z);
-    region.sizeX = static_cast<core::i32>(std::max(std::floor(size.x), 0.0f));
-    region.sizeY = static_cast<core::i32>(std::max(std::floor(size.y), 0.0f));
-    region.sizeZ = static_cast<core::i32>(std::max(std::floor(size.z), 0.0f));
+    region.sizeX = static_cast<core::i32>(std::floor(size.x));
+    region.sizeY = static_cast<core::i32>(std::floor(size.y));
+    region.sizeZ = static_cast<core::i32>(std::floor(size.z));
     const auto materialCount = static_cast<core::usize>(lua_objlen(L, 4));
     const auto occupancyCount = static_cast<core::usize>(lua_objlen(L, 5));
     if (region.count() > MaxVoxelRegion || materialCount != region.count() || occupancyCount != region.count()) {
-        const core::I18nArg args[] = {{"count", static_cast<core::i64>(region.count())},
+        const core::I18nArg args[] = {{"count", static_cast<core::i64>(std::min<core::usize>(
+                                                    region.count(), std::numeric_limits<core::i64>::max()))},
                                       {"materials", static_cast<core::i64>(materialCount)},
                                       {"occupancies", static_cast<core::i64>(occupancyCount)}};
         raise(L, ENG_TR("scene.err.terrain_voxels_shape"), args);
+    }
+    // Every occupancy a number before any voxel is written: a refusal half
+    // way through would leave half an edit.
+    for (int index = 1; index <= static_cast<int>(region.count()); ++index) {
+        lua_rawgeti(L, 5, index);
+        const bool number = lua_isnumber(L, -1) != 0;
+        const double occupancy = number ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 1);
+        if (number && !std::isfinite(occupancy)) {
+            const core::I18nArg args[] = {{"index", static_cast<core::i64>(index)}, {"value", occupancy}};
+            raise(L, ENG_TR("scene.err.terrain_voxels_value"), args);
+        }
     }
     asset::FieldWriter writer(terrain->field);
     int at = 1;

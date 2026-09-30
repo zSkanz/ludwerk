@@ -63,18 +63,36 @@ away is the same shape drawn close, at lower resolution.
 
 ## T1 — P0s, security and data first
 
-- [ ] TA5, TA15: each axis bounded before it is multiplied; NaN and oversized
+- [x] TA5, TA15: each axis bounded before it is multiplied; NaN and oversized
   values refused in `WriteVoxels`; `WriteHeights` and `GrowBall` on a voxel and
   chunk budget, refused with the keyed error the other edits use.
-- [ ] TA16, TA17c: every edit and whole-terrain action loads every cell it
+- [~] TA16, TA17c: every edit and whole-terrain action loads every cell it
   touches, or refuses before touching anything; the read verbs and the raycast
   load ground first; `VoxelSize` fixed while cells are on disk and a cell of
   other settings refused; `Clear()` drops the index; a moved terrain re-derives
   its index bounds; `MaxCellChunks` enforced at encode; the script and the
   editor say the same thing.
-- [ ] TA4: Smooth never changes a flat plane, never opens a hole, never digs
+- [x] TA4: Smooth never changes a flat plane, never opens a hole, never digs
   below the plane it smooths towards, keeps volume within a stated tolerance,
   and converges; its blur capped where the code says, or stated.
+
+### T1 as it stands
+
+- **TA5 and TA15 (D363, D364)**: a region's count saturates instead of
+  wrapping; `WriteVoxels` refuses a size or an occupancy that is not a finite
+  number before it writes; `WriteHeights` estimates what it would lay and
+  refuses past `MaxHeightVoxels` (four edits' worth -- four kilometres of
+  rolling ground at a metre voxel); `GrowBall` is held to smoothing's bound.
+- **TA4 (D365)**: Smooth is rebuilt. Each surface is smoothed on its own
+  along the axis it faces, in flux form, never past the next surface in its
+  row. Measured: a 4 m and a 2 m slab under `SmoothBall(c, 8, 1)` change not a
+  voxel; twenty passes at 0.3 over a ball on flat ground never take anything
+  below the ground and keep the ball's volume to 92 per cent; each pass moves
+  less than the one before. The blur is a gaussian half the brush wide, **at
+  most four voxels**, as the code, the API reference and the manual now all
+  say. The gentle hill a held brush wears down loses half a metre in thirty
+  stamps rather than 0.6: the volume the old blur threw away now goes round
+  the brush's rim.
 
 ## T2 — the shape at a distance
 

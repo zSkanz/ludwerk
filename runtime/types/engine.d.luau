@@ -1282,8 +1282,11 @@ declare extern type Terrain extends Instance with
     --- overhang grows down, and ground worn away goes back the way it came. Where it grows new ground,
     --- it is `material`, or the neighbouring ground's when that is not given.
     function GrowBall(self, center: vector, radius: number, amount: number, material: number?): number
-    --- Softens the ground in a ball: every voxel moves towards the average of its neighbours by
-    --- `strength` (0 to 1, default 0.5), less towards the rim. Returns how many voxels it changed.
+    --- Softens the ground in a ball: each surface moves towards the average of the same surface round
+    --- it -- over a gaussian half the brush wide, at most four voxels -- by `strength` (0 to 1, default
+    --- 0.5), less towards the rim. Flat ground stays where it is, a slab is never cut through, nothing
+    --- sinks below the ground it smooths towards, and what comes off a bump goes round it: the ground's
+    --- volume is kept to within a tenth over twenty stamps. Returns how many voxels it changed.
     function SmoothBall(self, center: vector, radius: number, strength: number?): number
     --- Pulls the ground in a ball towards a level plane at `height` -- taking away what is above it and
     --- filling what is below it -- by `strength` (0 to 1, default 1), less towards the rim. Returns how

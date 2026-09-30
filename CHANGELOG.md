@@ -559,6 +559,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **Smooth never cuts through ground, and keeps its volume** (D365): on a thin
+  slab it made a hole, and repeated passes dug a ball down below the ground it
+  stood on. What comes off a bump now goes into the ground round it.
+- **`WriteVoxels`, `ReadVoxels`, `WriteHeights` and `GrowBall` refuse what no
+  memory holds** (D363, D364): a region whose count wrapped past 2^64, a NaN or
+  huge size, a NaN occupancy, a height table steep enough to ask for gigabytes,
+  and a Raise or Lower stamp larger than a Smooth's.
 - **A tap and a quick double click are no longer lost** (D362): a click whose
   press and release landed between two frames never activated anything, and a
   quick double click activated once.

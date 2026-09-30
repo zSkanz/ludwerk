@@ -550,6 +550,43 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
         const double slope = std::sqrt(1.0 + gx * gx + gz * gz);
         return std::isfinite(slope) ? slope : 1.0;
     };
+    // **What it would lay, estimated before a voxel is** (terrain audit
+    // TA15): per block of a chunk column, its columns times the rows between
+    // its lowest and highest top, the ramp either side at the block's
+    // steepest, and a chunk for the rows a base leaves partial. A table that
+    // asks for more than `MaxHeightVoxels` is refused whole.
+    {
+        double estimate = 0.0;
+        for (i32 chunkZ = floorDiv(firstZ, edge); chunkZ <= floorDiv(lastZ, edge); ++chunkZ) {
+            for (i32 chunkX = floorDiv(firstX, edge); chunkX <= floorDiv(lastX, edge); ++chunkX) {
+                double low = std::numeric_limits<double>::max();
+                double high = std::numeric_limits<double>::lowest();
+                double steepest = 1.0;
+                double count = 0.0;
+                for (i32 z = std::max(firstZ, chunkZ * edge); z <= std::min(lastZ, chunkZ * edge + edge - 1); ++z) {
+                    for (i32 x = std::max(firstX, chunkX * edge); x <= std::min(lastX, chunkX * edge + edge - 1); ++x) {
+                        const double height = heightOf(x, z);
+                        if (std::isnan(height))
+                            continue;
+                        low = std::min(low, height);
+                        high = std::max(high, height);
+                        steepest = std::max(steepest, slopeAt(x, z));
+                        count += 1.0;
+                    }
+                }
+                if (count == 0.0)
+                    continue;
+                const double depth = (high - low) / voxel + 2.0 * static_cast<double>(RampReach) * steepest +
+                                     static_cast<double>(ChunkEdge);
+                estimate += count * depth;
+                if (estimate > static_cast<double>(MaxHeightVoxels)) {
+                    report.refused = true;
+                    report.limit = MaxHeightVoxels;
+                    return report;
+                }
+            }
+        }
+    }
     for (i32 chunkZ = floorDiv(firstZ, edge); chunkZ <= floorDiv(lastZ, edge); ++chunkZ) {
         for (i32 chunkX = floorDiv(firstX, edge); chunkX <= floorDiv(lastX, edge); ++chunkX) {
             // The block's heights, NaN where the table does not reach.
@@ -640,269 +677,276 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
         return report;
     }
 
-    // **The surface is smoothed, not the occupancy** (the owner, 2026-09-29:
-    // "I cannot smooth the mesh"). Occupancy ramps linearly across four voxels
-    // and saturates either side, so a blur of it moved the surface only where
-    // the ramp bent, by less than one quantisation step for anything gentler
-    // than a spike -- and each stamp re-read its own rounded result, so a
-    // stroke stalled a few stamps in. Here the field is turned back into a
-    // distance to the surface, that distance is blurred, and the surface is
-    // rebuilt from it: a hill loses its top, a pit fills, a cliff becomes a
-    // slope, and flat ground stays exactly where it is, because the blur of a
-    // plane's distance is the plane's distance.
+    // **Each surface smoothed on its own, along the axis it faces** (terrain
+    // audit TA4). Where the occupancy crosses one half along a row of voxels
+    // is where a surface is; each such crossing moves towards the average of
+    // the same surface's crossings in the rows round it, and the ramp round it
+    // moves with it, unchanged in shape. A crossing is moved along the axis
+    // its surface faces most -- up and down on ground, sideways on a wall.
+    //
+    // **Why not a blur of the distance, as before**: a blur mixes every surface
+    // in reach, and inside a slab thinner than the blur the distance to its
+    // top and to its bottom meet in a V, whose blur is air -- a smooth on
+    // ground 4 m thick made a hole through it, and each pass on a ball sank
+    // the ground round it. Here the top and the bottom of a slab are two
+    // surfaces that never mix, a flat one has nothing to move towards, and
+    // an average is never lower than the lowest crossing it averages: nothing
+    // is dug below the ground a brush smooths towards.
     const double voxel = static_cast<double>(field.settings().voxelSize);
-    // A gaussian half the brush wide, from three box blurs of one width --
-    // within a few percent of the real thing, at a cost that does not grow
-    // with the width. Capped at six voxels, so a huge brush reads a bounded
-    // margin rather than a sphere five times its size.
+    // A gaussian half the brush wide across the surface, in voxels, **at most
+    // four voxels**: past that a stamp reaches a margin as large as the brush,
+    // for a softening a few stamps give anyway.
     const double sigma = std::clamp(radius / 2.0, voxel, 4.0 * voxel) / voxel;
-    const i32 half = std::max(1, static_cast<i32>(std::lround((std::sqrt(4.0 * sigma * sigma + 1.0) - 1.0) / 2.0)));
-    const i32 reach = 3 * half + 2;
-    const i32 x0 = box.minX - reach;
-    const i32 y0 = box.minY - reach;
-    const i32 z0 = box.minZ - reach;
-    const i32 sizeX = box.maxX - box.minX + 1 + 2 * reach;
-    const i32 sizeY = box.maxY - box.minY + 1 + 2 * reach;
-    const i32 sizeZ = box.maxZ - box.minZ + 1 + 2 * reach;
-    const auto strideY = static_cast<usize>(sizeX);
-    const auto strideZ = static_cast<usize>(sizeX) * static_cast<usize>(sizeY);
-    const auto index = [&](i32 x, i32 y, i32 z) {
-        return static_cast<usize>(z - z0) * strideZ + static_cast<usize>(y - y0) * strideY + static_cast<usize>(x - x0);
-    };
+    const i32 kernel = static_cast<i32>(std::ceil(2.5 * sigma));
+    // How far along its axis a neighbour's crossing may be and still count as
+    // the same surface: across the kernel at a slope of one, and the ramp.
+    const i32 window = 2 * kernel + RampReach;
+    const i32 pad = kernel + window + RampReach + 2;
+    const i32 x0 = box.minX - pad;
+    const i32 y0 = box.minY - pad;
+    const i32 z0 = box.minZ - pad;
+    const std::array<i32, 3> size{box.maxX - box.minX + 1 + 2 * pad, box.maxY - box.minY + 1 + 2 * pad,
+                                  box.maxZ - box.minZ + 1 + 2 * pad};
+    const std::array<i32, 3> origin{x0, y0, z0};
+    const std::array<i32, 3> low{box.minX, box.minY, box.minZ};
+    const std::array<i32, 3> high{box.maxX, box.maxY, box.maxZ};
+    const std::array<usize, 3> stride{1, static_cast<usize>(size[0]),
+                                      static_cast<usize>(size[0]) * static_cast<usize>(size[1])};
     std::vector<Voxel> copy;
-    readBox(field, x0, y0, z0, sizeX, sizeY, sizeZ, copy);
+    readBox(field, x0, y0, z0, size[0], size[1], size[2], copy);
+    const std::vector<Voxel> original = copy;
+    const auto at = [&](std::array<i32, 3> p) {
+        return static_cast<usize>(p[0]) * stride[0] + static_cast<usize>(p[1]) * stride[1] +
+               static_cast<usize>(p[2]) * stride[2];
+    };
+    const auto occupancyAt = [&](std::array<i32, 3> p) {
+        for (int axis = 0; axis < 3; ++axis)
+            p[static_cast<usize>(axis)] =
+                std::clamp(p[static_cast<usize>(axis)], 0, size[static_cast<usize>(axis)] - 1);
+        return static_cast<float>(copy[at(p)].occupancy) / static_cast<float>(FullOccupancy);
+    };
+    // The axis the surface faces most at a local point, from occupancy's
+    // gradient; y on a tie, then x.
+    const auto facing = [&](std::array<i32, 3> p) {
+        std::array<float, 3> g{};
+        for (int axis = 0; axis < 3; ++axis) {
+            std::array<i32, 3> ahead = p;
+            std::array<i32, 3> behind = p;
+            ahead[static_cast<usize>(axis)] += 1;
+            behind[static_cast<usize>(axis)] -= 1;
+            g[static_cast<usize>(axis)] = std::abs(occupancyAt(ahead) - occupancyAt(behind));
+        }
+        if (g[1] >= g[0] && g[1] >= g[2])
+            return 1;
+        return g[0] >= g[2] ? 0 : 2;
+    };
 
-    // **The distance, signed, negative inside.** Exact across the ramp, where
-    // occupancy is a distance by construction; carried outwards from there by
-    // a two-pass chamfer walk, each voxel taking its neighbour's distance plus
-    // the step between them. **Only as far as the blur can carry it back**:
-    // past `cap` a distance cannot move a surface, so it is held at `cap`,
-    // and the walk visits only the voxels within that reach of the ground in
-    // their own column or a neighbour's -- terrain is a skin, and the box
-    // around a brush is mostly rock and sky.
-    const float rampMetres = RampVoxels * static_cast<float>(voxel);
-    const i32 capVoxels = 3 * half + RampReach + 1;
-    const float cap = static_cast<float>(capVoxels) * static_cast<float>(voxel);
-    std::vector<float> distance(copy.size());
-    const auto columns = static_cast<usize>(sizeX) * static_cast<usize>(sizeZ);
-    std::vector<i32> bandLow(columns, std::numeric_limits<i32>::max());
-    std::vector<i32> bandHigh(columns, std::numeric_limits<i32>::min());
-    const auto column = [&](i32 xi, i32 zi) {
-        return static_cast<usize>(zi) * static_cast<usize>(sizeX) + static_cast<usize>(xi);
+    // One occupancy step, as a distance along a row, in voxels: the smallest
+    // move a write makes.
+    const double step = static_cast<double>(RampVoxels) / static_cast<double>(FullOccupancy);
+    // The gaussian across the surface, and its sum without the middle -- what a
+    // crossing's exchanges are divided by, so at full strength and full weight
+    // it goes to its neighbours' average and never past it.
+    const auto kernelWeight = [sigma](i32 du, i32 dv) {
+        const double w = std::exp(-static_cast<double>(du * du + dv * dv) / (2.0 * sigma * sigma));
+        return w < 1e-4 ? 0.0 : w;
     };
-    bool anySurface = false;
-    for (i32 zi = 0; zi < sizeZ; ++zi) {
-        for (i32 yi = 0; yi < sizeY; ++yi) {
-            for (i32 xi = 0; xi < sizeX; ++xi) {
-                const usize at =
-                    static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY + static_cast<usize>(xi);
-                const u8 occupancy = copy[at].occupancy;
-                const bool band = occupancy != 0 && occupancy != FullOccupancy;
-                // A step straight from air to rock is a surface too.
-                const bool edge = yi + 1 < sizeY && (occupancy == 0) != (copy[at + strideY].occupancy == 0);
-                distance[at] = band ? (0.5f - occupancyOf(copy[at])) * rampMetres : (occupancy == 0 ? cap : -cap);
-                if (band || edge) {
-                    anySurface = true;
-                    bandLow[column(xi, zi)] = std::min(bandLow[column(xi, zi)], yi);
-                    bandHigh[column(xi, zi)] = std::max(bandHigh[column(xi, zi)], yi);
-                }
-            }
-        }
+    double kernelTotal = 0.0;
+    for (i32 dv = -kernel; dv <= kernel; ++dv) {
+        for (i32 du = -kernel; du <= kernel; ++du)
+            kernelTotal += du == 0 && dv == 0 ? 0.0 : kernelWeight(du, dv);
     }
-    // Nothing but rock and sky in reach: nothing to smooth.
-    if (!anySurface)
-        return report;
-    // Each column's range widened by `capVoxels` up and down, and to the
-    // columns within `capVoxels` of it -- one axis at a time.
-    const auto widen = [&](std::vector<i32>& values, bool low) {
-        std::vector<i32> next = values;
-        const auto better = [low](i32 a, i32 b) { return low ? std::min(a, b) : std::max(a, b); };
-        for (const bool alongX : {true, false}) {
-            for (i32 zi = 0; zi < sizeZ; ++zi) {
-                for (i32 xi = 0; xi < sizeX; ++xi) {
-                    i32 best = values[column(xi, zi)];
-                    for (i32 k = -capVoxels; k <= capVoxels; ++k) {
-                        const i32 nx = alongX ? xi + k : xi;
-                        const i32 nz = alongX ? zi : zi + k;
-                        if (nx >= 0 && nz >= 0 && nx < sizeX && nz < sizeZ)
-                            best = better(best, values[column(nx, nz)]);
-                    }
-                    next[column(xi, zi)] = best;
-                }
-            }
-            values = next;
-        }
+    struct Crossing
+    {
+        double at = 0.0;    // along the row, in voxels from the row's start
+        core::i8 sense = 0; // +1 ground below, air above; -1 the other way
+        bool owned = false; // its surface faces this row's axis most
     };
-    widen(bandLow, true);
-    widen(bandHigh, false);
-    const auto pass = [&](bool forward) {
-        const float one = static_cast<float>(voxel);
-        const float two = one * std::numbers::sqrt2_v<float>;
-        const float three = one * std::numbers::sqrt3_v<float>;
-        // The thirteen neighbours already visited in this direction, as index
-        // offsets: the walk stays a voxel inside the box, so none leaves it.
-        std::array<std::ptrdiff_t, 13> offsets{};
-        std::array<float, 13> lengths{};
-        usize count = 0;
-        for (i32 dz = -1; dz <= 1; ++dz) {
-            for (i32 dy = -1; dy <= 1; ++dy) {
-                for (i32 dx = -1; dx <= 1; ++dx) {
-                    const i32 order = dz * 9 + dy * 3 + dx;
-                    if (order == 0 || (order < 0) != forward)
-                        continue;
-                    const int axes = (dx != 0) + (dy != 0) + (dz != 0);
-                    offsets[count] = static_cast<std::ptrdiff_t>(dz) * static_cast<std::ptrdiff_t>(strideZ) +
-                                     static_cast<std::ptrdiff_t>(dy) * static_cast<std::ptrdiff_t>(strideY) + dx;
-                    lengths[count] = axes == 1 ? one : (axes == 2 ? two : three);
-                    ++count;
-                }
-            }
-        }
-        for (i32 zs = 1; zs < sizeZ - 1; ++zs) {
-            const i32 zi = forward ? zs : sizeZ - 1 - zs;
-            for (i32 ys = 1; ys < sizeY - 1; ++ys) {
-                const i32 yi = forward ? ys : sizeY - 1 - ys;
-                for (i32 xs = 1; xs < sizeX - 1; ++xs) {
-                    const i32 xi = forward ? xs : sizeX - 1 - xs;
-                    const usize slot = column(xi, zi);
-                    if (yi < bandLow[slot] - capVoxels || yi > bandHigh[slot] + capVoxels)
-                        continue;
-                    const usize here =
-                        static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY + static_cast<usize>(xi);
-                    const u8 occupancy = copy[here].occupancy;
-                    if (occupancy != 0 && occupancy != FullOccupancy)
-                        continue;
-                    float best = distance[here];
-                    const float* base = distance.data() + here;
-                    if (occupancy == 0) {
-                        for (usize s = 0; s < count; ++s)
-                            best = std::min(best, std::max(base[offsets[s]], 0.0f) + lengths[s]);
-                    }
-                    else {
-                        for (usize s = 0; s < count; ++s)
-                            best = std::max(best, std::min(base[offsets[s]], 0.0f) - lengths[s]);
-                    }
-                    distance[here] = best;
-                }
-            }
-        }
-    };
-    pass(true);
-    pass(false);
+    std::vector<Crossing> crossings;
+    std::vector<usize> firstOf;
+    std::vector<float> row;
+    std::vector<Voxel> rowVoxels;
 
-    // **Three box blurs along each axis**, the read's own edge held. Only the
-    // slab of heights where the ground is changes -- above it is all sky at
-    // the cap and below all rock -- so only that slab is blurred, and each
-    // pass walks whole rows of x, which is how the box lies in memory.
-    i32 slabLow = sizeY;
-    i32 slabHigh = -1;
-    for (usize at = 0; at < columns; ++at) {
-        if (bandLow[at] <= bandHigh[at]) {
-            slabLow = std::min(slabLow, bandLow[at]);
-            slabHigh = std::max(slabHigh, bandHigh[at]);
-        }
-    }
-    slabLow = std::max(0, slabLow - capVoxels - 3 * half - 1);
-    slabHigh = std::min(sizeY - 1, slabHigh + capVoxels + 3 * half + 1);
-    std::vector<float> blurred = distance;
-    std::vector<float> prefix;
-    const float width = static_cast<float>(2 * half + 1);
-    // Along x: each row its own running sum.
-    const auto blurX = [&] {
-        prefix.resize(static_cast<usize>(sizeX + 2 * half) + 1);
-        for (i32 zi = 0; zi < sizeZ; ++zi) {
-            for (i32 yi = slabLow; yi <= slabHigh; ++yi) {
-                float* row = &blurred[static_cast<usize>(zi) * strideZ + static_cast<usize>(yi) * strideY];
-                prefix[0] = 0.0f;
-                for (i32 k = 0; k < sizeX + 2 * half; ++k)
-                    prefix[static_cast<usize>(k) + 1] =
-                        prefix[static_cast<usize>(k)] + row[std::clamp(k - half, 0, sizeX - 1)];
-                for (i32 at = 0; at < sizeX; ++at)
-                    row[at] = (prefix[static_cast<usize>(at + 2 * half) + 1] - prefix[static_cast<usize>(at)]) / width;
+    for (const int axis : {1, 0, 2}) {
+        const auto a = static_cast<usize>(axis);
+        const auto u = static_cast<usize>(axis == 0 ? 1 : 0);
+        const auto v = static_cast<usize>(axis == 2 ? 1 : 2);
+        const i32 span = size[a];
+        // Every row along `axis` over the padded box: its crossings.
+        const auto rowIndex = [&](i32 cu, i32 cv) {
+            return static_cast<usize>(cv) * static_cast<usize>(size[u]) + static_cast<usize>(cu);
+        };
+        const usize rows = static_cast<usize>(size[u]) * static_cast<usize>(size[v]);
+        // How far a crossing is from the brush's centre, in metres.
+        const auto distanceOf = [&](double along, i32 cu, i32 cv) {
+            std::array<double, 3> metres{};
+            metres[a] = (along + static_cast<double>(origin[a]) + 0.5) * voxel;
+            metres[u] = (static_cast<double>(cu + origin[u]) + 0.5) * voxel;
+            metres[v] = (static_cast<double>(cv + origin[v]) + 0.5) * voxel;
+            return length(metres[0] - center.x, metres[1] - center.y, metres[2] - center.z);
+        };
+        crossings.clear();
+        firstOf.assign(rows + 1, 0);
+        for (i32 cv = 0; cv < size[v]; ++cv) {
+            for (i32 cu = 0; cu < size[u]; ++cu) {
+                firstOf[rowIndex(cu, cv)] = crossings.size();
+                std::array<i32, 3> p{};
+                p[u] = cu;
+                p[v] = cv;
+                for (i32 k = 0; k + 1 < span; ++k) {
+                    p[a] = k;
+                    const float here = occupancyAt(p);
+                    p[a] = k + 1;
+                    const float next = occupancyAt(p);
+                    if ((here >= 0.5f) == (next >= 0.5f))
+                        continue;
+                    const double t = static_cast<double>((0.5f - here) / (next - here));
+                    Crossing crossing;
+                    crossing.at = static_cast<double>(k) + t;
+                    crossing.sense = here >= 0.5f ? core::i8{1} : core::i8{-1};
+                    p[a] = t < 0.5 ? k : k + 1;
+                    crossing.owned = facing(p) == axis;
+                    crossings.push_back(crossing);
+                }
             }
         }
-    };
-    // Along y or z: a plane at a time, every x of a row summed together.
-    const auto blurAcross = [&](i32 first, i32 last, usize stride, i32 planeFirst, i32 planeLast, usize planeStride) {
-        const i32 length = last - first + 1;
-        const auto rows = static_cast<usize>(length + 2 * half) + 1;
-        prefix.assign(rows * static_cast<usize>(sizeX), 0.0f);
-        for (i32 plane = planeFirst; plane <= planeLast; ++plane) {
-            float* base = &blurred[static_cast<usize>(plane) * planeStride];
-            for (i32 k = 0; k < length + 2 * half; ++k) {
-                const float* source = base + static_cast<usize>(std::clamp(k - half + first, first, last)) * stride;
-                const float* before = &prefix[static_cast<usize>(k) * static_cast<usize>(sizeX)];
-                float* after = &prefix[static_cast<usize>(k + 1) * static_cast<usize>(sizeX)];
-                for (i32 x = 0; x < sizeX; ++x)
-                    after[x] = before[x] + source[x];
-            }
-            for (i32 at = 0; at < length; ++at) {
-                const float* high = &prefix[static_cast<usize>(at + 2 * half + 1) * static_cast<usize>(sizeX)];
-                const float* low = &prefix[static_cast<usize>(at) * static_cast<usize>(sizeX)];
-                float* target = base + static_cast<usize>(at + first) * stride;
-                for (i32 x = 0; x < sizeX; ++x)
-                    target[x] = (high[x] - low[x]) / width;
-            }
-        }
-    };
-    for (int round = 0; round < 3; ++round) {
-        blurX();
-        // y, within the slab, a plane of z at a time: the slab's ends are the
-        // cap on either side, and the clamp repeats them as the whole column
-        // would have.
-        blurAcross(slabLow, slabHigh, strideY, 0, sizeZ - 1, strideZ);
-        // z, a height of the slab at a time.
-        blurAcross(0, sizeZ - 1, strideZ, slabLow, slabHigh, strideY);
-    }
+        firstOf[rows] = crossings.size();
 
-    // One occupancy step, as a distance: the smallest move a write can make.
-    const float step = rampMetres / static_cast<float>(FullOccupancy);
-    FieldWriter writer(field);
-    // Rock that stays rock and sky that stays sky, whatever the weight: both
-    // ends past the ramp on one side.
-    const float saturated = 0.5f * rampMetres + step;
-    walk(box, [&](i32 x, i32 y, i32 z) {
-        const usize here = index(x, y, z);
-        const float was = distance[here];
-        const float target = blurred[here];
-        if ((was >= saturated && target >= saturated) || (was <= -saturated && target <= -saturated))
-            return;
-        const double from =
-            length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z);
-        const float weight = falloff(from, radius) * amount;
-        if (weight <= 0.0f)
-            return;
-        const float next = was + (target - was) * weight;
-        const Voxel old = copy[here];
-        u8 occupancy = quantiseOccupancy(ramp(static_cast<double>(next), voxel));
-        // **Never stuck a step short** (why a stroke used to stall): where the
-        // surface still has somewhere to go but one stamp's share of it rounds
-        // to nothing, it moves one step. Flat ground has nowhere to go -- its
-        // blurred distance is its distance -- and is left alone.
-        if (occupancy == old.occupancy && old.occupancy != 0 && old.occupancy != FullOccupancy &&
-            std::abs(target - was) > 2.0f * step && std::abs(target - was) * weight > 0.1f * step) {
-            occupancy = static_cast<u8>(target < was ? old.occupancy + 1 : old.occupancy - 1);
-        }
-        if (occupancy == old.occupancy)
-            return;
-        // Ground that appears where there was air takes its fullest
-        // neighbour's material: smoothing a grass edge grows grass.
-        u8 material = old.material;
-        if (material == 0) {
-            u8 fullest = 0;
-            for (i32 dz = -1; dz <= 1; ++dz) {
-                for (i32 dy = -1; dy <= 1; ++dy) {
-                    for (i32 dx = -1; dx <= 1; ++dx) {
-                        const Voxel near = copy[index(x + dx, y + dy, z + dz)];
-                        if (near.occupancy > fullest) {
-                            fullest = near.occupancy;
-                            material = near.material;
+        // Each owned crossing inside the box: where the same surface is in the
+        // rows round it, averaged, and how far towards that this stamp moves it.
+        for (i32 cv = low[v] - origin[v]; cv <= high[v] - origin[v]; ++cv) {
+            for (i32 cu = low[u] - origin[u]; cu <= high[u] - origin[u]; ++cu) {
+                const usize line = rowIndex(cu, cv);
+                const usize begin = firstOf[line];
+                const usize end = firstOf[line + 1];
+                bool rowMoved = false;
+                std::vector<double> moves(end - begin, 0.0);
+                for (usize c = begin; c < end; ++c) {
+                    const Crossing& own = crossings[c];
+                    const i32 cell = static_cast<i32>(std::floor(own.at + 0.5));
+                    if (!own.owned || cell + origin[a] < low[a] || cell + origin[a] > high[a])
+                        continue;
+                    const double weightHere = static_cast<double>(falloff(distanceOf(own.at, cu, cv), radius));
+                    if (weightHere <= 0.0)
+                        continue;
+                    // **In flux form** (terrain audit TA4): each neighbour gives
+                    // or takes by the two brush weights' geometric mean, the same
+                    // either way, so what one crossing loses a neighbour gains and
+                    // the ground's volume is kept -- where a plain average ate a
+                    // ball down to a third in twenty passes.
+                    double flux = 0.0;
+                    double sum = 0.0;
+                    double weights = 0.0;
+                    for (i32 dv = -kernel; dv <= kernel; ++dv) {
+                        for (i32 du = -kernel; du <= kernel; ++du) {
+                            const i32 nu = cu + du;
+                            const i32 nv = cv + dv;
+                            if ((du == 0 && dv == 0) || nu < 0 || nv < 0 || nu >= size[u] || nv >= size[v])
+                                continue;
+                            const double k = kernelWeight(du, dv);
+                            if (k <= 0.0)
+                                continue;
+                            // The same surface there: the nearest owned crossing
+                            // of the same sense within the window.
+                            const usize other = rowIndex(nu, nv);
+                            double nearest = std::numeric_limits<double>::max();
+                            for (usize n = firstOf[other]; n < firstOf[other + 1]; ++n) {
+                                if (crossings[n].sense != own.sense || !crossings[n].owned)
+                                    continue;
+                                if (std::abs(crossings[n].at - own.at) < std::abs(nearest - own.at))
+                                    nearest = crossings[n].at;
+                            }
+                            if (nearest == std::numeric_limits<double>::max() ||
+                                std::abs(nearest - own.at) > static_cast<double>(window))
+                                continue;
+                            const double weightThere =
+                                static_cast<double>(falloff(distanceOf(nearest, nu, nv), radius));
+                            flux += k * std::sqrt(weightHere * weightThere) * (nearest - own.at);
+                            sum += k * nearest;
+                            weights += k;
                         }
                     }
+                    if (weights <= 0.0)
+                        continue;
+                    const double target = sum / weights;
+                    double move = static_cast<double>(amount) * flux / kernelTotal;
+                    const double weight = weightHere * static_cast<double>(amount);
+                    // **Never stuck a step short** (why a stroke used to stall):
+                    // a surface with somewhere to go moves at least one step.
+                    if (std::abs(target - own.at) > 2.0 * step && std::abs(move) < step &&
+                        std::abs(target - own.at) * weight > 0.1 * step)
+                        move = target < own.at ? -step : step;
+                    // **Never past the next surface in its row**: a slab thins
+                    // to a voxel, and is never cut through.
+                    const double floorAt = c > begin ? crossings[c - 1].at + 1.0 : -std::numeric_limits<double>::max();
+                    const double ceilingAt =
+                        c + 1 < end ? crossings[c + 1].at - 1.0 : std::numeric_limits<double>::max();
+                    const double moved =
+                        std::clamp(own.at + move, std::min(floorAt, own.at), std::max(ceilingAt, own.at));
+                    moves[c - begin] = moved - own.at;
+                    rowMoved = rowMoved || std::abs(moves[c - begin]) > 1e-9;
+                }
+                if (!rowMoved)
+                    continue;
+
+                // The row as it was, then each moved crossing's stretch of it --
+                // half-way to its neighbours -- shifted by its move.
+                std::array<i32, 3> p{};
+                p[u] = cu;
+                p[v] = cv;
+                row.resize(static_cast<usize>(span));
+                rowVoxels.resize(static_cast<usize>(span));
+                for (i32 k = 0; k < span; ++k) {
+                    p[a] = k;
+                    rowVoxels[static_cast<usize>(k)] = copy[at(p)];
+                    row[static_cast<usize>(k)] = occupancyOf(copy[at(p)]);
+                }
+                const auto sample = [&](double s, i32 first, i32 last) {
+                    const double clamped = std::clamp(s, static_cast<double>(first), static_cast<double>(last));
+                    const auto k = static_cast<i32>(std::floor(clamped));
+                    const i32 next = std::min(k + 1, last);
+                    const double f = clamped - static_cast<double>(k);
+                    return static_cast<float>(static_cast<double>(row[static_cast<usize>(k)]) * (1.0 - f) +
+                                              static_cast<double>(row[static_cast<usize>(next)]) * f);
+                };
+                for (usize c = begin; c < end; ++c) {
+                    const double move = moves[c - begin];
+                    if (std::abs(move) <= 1e-9)
+                        continue;
+                    const Crossing& own = crossings[c];
+                    const i32 first = c > begin ? static_cast<i32>(std::ceil((crossings[c - 1].at + own.at) / 2.0)) : 0;
+                    const i32 last =
+                        c + 1 < end ? static_cast<i32>(std::floor((own.at + crossings[c + 1].at) / 2.0)) : span - 1;
+                    // The solid side's material, for ground that appears.
+                    const i32 solidSide = std::clamp(
+                        static_cast<i32>(own.sense > 0 ? std::floor(own.at) : std::ceil(own.at)), 0, span - 1);
+                    for (i32 k = first; k <= last; ++k) {
+                        const float value = sample(static_cast<double>(k) - move, first, last);
+                        const u8 occupancy = quantiseOccupancy(value);
+                        p[a] = k;
+                        Voxel& target = copy[at(p)];
+                        if (occupancy == target.occupancy)
+                            continue;
+                        const i32 source =
+                            std::clamp(static_cast<i32>(std::lround(static_cast<double>(k) - move)), first, last);
+                        Voxel next = rowVoxels[static_cast<usize>(source)];
+                        if (next.material == 0)
+                            next = rowVoxels[static_cast<usize>(solidSide)];
+                        next.occupancy = occupancy;
+                        target = canonical(next);
+                    }
                 }
             }
         }
-        writer.set(x, y, z, Voxel{occupancy, material});
+    }
+
+    // What changed in the box, written.
+    FieldWriter writer(field);
+    walk(box, [&](i32 x, i32 y, i32 z) {
+        const usize here = at({x - x0, y - y0, z - z0});
+        if (copy[here] == original[here])
+            return;
+        writer.set(x, y, z, copy[here]);
     });
     writer.finish();
     report.touched = writer.changed();
@@ -1074,10 +1118,18 @@ EditReport growBall(TerrainField& field, DVec3 center, double radius, float amou
     EditReport report;
     if (!(radius > 0.0) || amount == 0.0f || !std::isfinite(amount))
         return report;
-    const Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
-                          DVec3{center.x + radius, center.y + radius, center.z + radius});
+    // **Held to smoothing's bound** (terrain audit TA15): it copies its box
+    // before it writes, as a smooth does, and the edit limit let one stamp
+    // copy half a gigabyte.
+    Box box = boxOf(field, DVec3{center.x - radius, center.y - radius, center.z - radius},
+                    DVec3{center.x + radius, center.y + radius, center.z + radius});
+    if (!box.refused) {
+        box.limit = MaxSmoothVoxels;
+        box.bound();
+    }
     if (box.empty()) {
         report.refused = box.refused;
+        report.limit = box.refused && box.limit == MaxSmoothVoxels ? MaxSmoothVoxels : MaxEditVoxels;
         return report;
     }
     const double voxel = static_cast<double>(field.settings().voxelSize);

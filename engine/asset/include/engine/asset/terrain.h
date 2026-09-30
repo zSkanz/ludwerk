@@ -539,6 +539,14 @@ inline constexpr core::u64 MaxEditVoxels = 512ull * 512ull * 512ull;
 // what a smooth stamp does in a frame anyway.
 inline constexpr core::u64 MaxSmoothVoxels = 160ull * 160ull * 160ull;
 
+// **What one `writeHeights` may lay** (terrain audit TA15), in voxels, as it
+// estimates them from its table before it writes: four edits' worth, since a
+// heightmap is a world rather than a brush -- four kilometres of rolling
+// ground at a metre voxel fit. A table steep everywhere, every chunk of every
+// column dense, does not: a 4096-square checkerboard asked for a quarter of a
+// million dense chunks.
+inline constexpr core::u64 MaxHeightVoxels = 4ull * MaxEditVoxels;
+
 // Adds a ball of ground, or removes one when `material` is zero.
 EditReport fillBall(TerrainField& field, core::DVec3 center, double radius, core::u8 material);
 

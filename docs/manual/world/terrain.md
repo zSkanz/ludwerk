@@ -49,7 +49,7 @@ the terrain is empty.
 | `FillCylinder(center, height, radius, material)` | The same, as an upright cylinder: a pillar, a well. |
 | `RaiseBall(center, radius, amount, material?)` | Pushes the surface up under a disc, falling smoothly to nothing at the rim, or down for a negative amount. It never makes an overhang, which makes it the verb for a hill. Given a material, it lays new ground of it where there was none. |
 | `GrowBall(center, radius, amount, material?)` | Moves the surface out along its own slope, or in for a negative amount: the editor's Raise and Lower. A field rises, a cliff comes forward. |
-| `SmoothBall(center, radius, strength?)` | Softens the ground in a ball: bumps go, pits fill, flat ground stays. |
+| `SmoothBall(center, radius, strength?)` | Softens the ground in a ball: bumps go, pits fill, flat ground stays. What comes off a bump goes round it, so the ground keeps its volume. |
 | `FlattenBall(center, radius, height, strength?)` | Pulls the ground in a ball towards a level plane. |
 | `PaintBall(center, radius, material, options?)` | Changes what the ground is made of and leaves it where it is: outright, or blended over it a little at a time (see *Painting over*). |
 | `ReplaceMaterial(minCorner, maxCorner, from, to)` | Every voxel of one material in a box becomes another. |
@@ -255,7 +255,7 @@ Every stroke is one undo step, and a stroke that changed nothing leaves none.
 |---|---|---|
 | Raise | 1 | Lifts the ground under the brush, most at its centre: a field rises, a cliff comes forward. |
 | Lower | 2 | Sinks the ground under the brush. |
-| Smooth | 3 | Softens bumps, fills pits and rounds off edges. Flat ground stays exactly where it is. |
+| Smooth | 3 | Softens bumps, fills pits and rounds off edges. Flat ground stays exactly where it is, a thin slab is never cut through, and nothing sinks below the ground round it: what comes off a bump goes into the ground beside it. |
 | Flatten | 4 | Levels the ground to one height: where the stroke starts, or a fixed height set under Brush. |
 | Add | 5 | A ball (or box) of ground where you aim; held still, it grows towards you. |
 | Dig | 6 | A ball (or box) taken away; held still, it tunnels in. |

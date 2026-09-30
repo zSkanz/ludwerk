@@ -160,6 +160,27 @@ describe("terrain", function()
         end):ToThrow()
     end)
 
+    it("refuses a region too large to count, and a size or an occupancy that is not a number (TA5)", function()
+        -- Each side as long as a terrain can name: the three multiplied pass
+        -- 2^64 and wrapped to a count the limit let through, and the loop then
+        -- ran the true sizes.
+        expect(function()
+            terrain:ReadVoxels(vector.create(-1e9, -1e9, -1e9), vector.create(1e9, 1e9, 1e9))
+        end):ToThrow()
+        local nan = 0 / 0
+        for _, size in { vector.create(nan, 1, 1), vector.create(math.huge, 1, 1), vector.create(1e12, 1e12, 1e12) } do
+            expect(function()
+                terrain:WriteVoxels(vector.create(0, 0, 0), size, {}, {})
+            end):ToThrow()
+        end
+        -- And nothing is written when one occupancy of many is not a number.
+        terrain:Clear()
+        expect(function()
+            terrain:WriteVoxels(vector.create(0, 0, 0), vector.create(2, 1, 1), { 1, 1 }, { 1, nan })
+        end):ToThrow()
+        expect(terrain.CellCount):ToBe(0)
+    end)
+
     it("names a voxel by its index and finds its centre", function()
         local cell = terrain:WorldToCell(vector.create(2.7, -0.2, -3.1))
         expect(cell.x):ToBe(2)

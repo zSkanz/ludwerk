@@ -577,7 +577,10 @@ TEST_CASE("a held smooth brush keeps wearing a gentle hill down, and never stall
     }
     const double afterThirty = peak - top(field, 0.5, 0.5);
     CHECK(idle == 0);
-    CHECK(afterThirty > 0.6);
+    // Half a metre, not the 0.6 the blur of a distance took: a smooth keeps
+    // the ground's volume now (TA4), so what it takes off the top goes round
+    // the brush's own rim rather than out of the world.
+    CHECK(afterThirty > 0.5);
     CHECK(afterThirty > afterTen + 0.1);
 }
 
@@ -611,6 +614,71 @@ TEST_CASE("smoothing fills a pit and flattens bumps smaller than the brush")
     for (int stamp = 0; stamp < 30; ++stamp)
         (void)smoothBall(bumps, core::DVec3{2.0, 1.0, 2.0}, 4.0, 0.35f);
     CHECK(top(bumps, 2.0, 2.0) < crest - 0.3);
+}
+
+namespace {
+
+// The ground in a box, in voxels of full occupancy.
+[[nodiscard]] double volumeIn(const TerrainField& field, int minX, int minY, int minZ, int maxX, int maxY, int maxZ)
+{
+    double sum = 0.0;
+    for (const Voxel& voxel : voxelsIn(field, minX, minY, minZ, maxX, maxY, maxZ))
+        sum += static_cast<double>(occupancyOf(voxel));
+    return sum;
+}
+
+} // namespace
+
+TEST_CASE("smoothing a thin slab opens no hole in it and moves none of its flat ground (TA4)")
+{
+    // The audit's first case: `SmoothBall(center, 8, 1)` on ground 4 m thick
+    // made a hole through it. The blur of a distance mixed the slab's top and
+    // its bottom, and in the middle of a thin slab that mix is air.
+    for (const float thickness : {4.0f, 2.0f}) {
+        CAPTURE(thickness);
+        TerrainField field(settingsOf());
+        (void)fillBlock(field, core::DVec3{0.0, -static_cast<double>(thickness) / 2.0, 0.0},
+                        core::Vec3{64.0f, thickness, 64.0f}, 1);
+        const std::vector<Voxel> before = voxelsIn(field, -12, -8, -12, 12, 4, 12);
+        (void)smoothBall(field, core::DVec3{0.5, 0.0, 0.5}, 8.0, 1.0f);
+        CHECK(voxelsIn(field, -12, -8, -12, 12, 4, 12) == before);
+        CHECK(solidAt(field, 0.5, -static_cast<double>(thickness) / 2.0, 0.5));
+    }
+}
+
+TEST_CASE("smoothing a ball on flat ground again and again never digs below the ground, and settles (TA4)")
+{
+    // The audit's second case: five passes at 0.3 took a ball's top from
+    // 7.94 m to -0.76 m, under the ground it stood on, and sank the ring round
+    // it a little more each pass.
+    TerrainField field = flatField(0.0f);
+    (void)fillBall(field, core::DVec3{0.5, 4.0, 0.5}, 4.0, 1);
+    // The ball's volume over the ground, what smoothing moves about.
+    const double ground = volumeIn(flatField(0.0f), -20, -12, -20, 20, 12, 20);
+    const double ball = volumeIn(field, -20, -12, -20, 20, 12, 20) - ground;
+    double previous = top(field, 0.5, 0.5);
+    double firstMove = 0.0;
+    double lastMove = 0.0;
+    for (int pass = 0; pass < 20; ++pass) {
+        (void)smoothBall(field, core::DVec3{0.5, 4.0, 0.5}, 8.0, 0.3f);
+        const double centre = top(field, 0.5, 0.5);
+        CAPTURE(pass);
+        CHECK(centre > -0.02);
+        CHECK(top(field, 5.5, 0.5) > -0.02);
+        CHECK(top(field, 0.5, -5.5) > -0.02);
+        const double moved = std::abs(previous - centre);
+        if (pass == 0)
+            firstMove = moved;
+        lastMove = moved;
+        previous = centre;
+    }
+    CHECK(firstMove > 0.05);
+    CHECK(lastMove < firstMove);
+    // What it smooths away goes round it: the ball's volume is kept, within
+    // the tolerance the manual states.
+    const double after = volumeIn(field, -20, -12, -20, 20, 12, 20) - ground;
+    MESSAGE("ball volume ", ball, " after twenty passes ", after);
+    CHECK(after == doctest::Approx(ball).epsilon(0.1));
 }
 
 TEST_CASE("flattening pulls the ground in reach to the plane")
@@ -728,6 +796,37 @@ TEST_CASE("a brush no world has is refused whole, and fast (audit S10)")
     const EditReport small = fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
     CHECK_FALSE(small.refused);
     CHECK(small.touched > 0);
+}
+
+TEST_CASE("Raise and Lower on a ball too large to hold, and heights too steep to lay, are refused whole (TA15)")
+{
+    // `growBall` copies its box before it writes: a radius of 200 at a metre
+    // voxel passed the edit limit and copied 68 million voxels -- a quarter of
+    // a gigabyte for one stamp. It is held to smoothing's bound, as smoothing
+    // is for the same reason.
+    TerrainField field(settingsOf());
+    (void)fillBall(field, core::DVec3{0.0, 0.0, 0.0}, 8.0, 1);
+    const EditReport grown = growBall(field, core::DVec3{0.0, 0.0, 0.0}, 200.0, 1.0f);
+    CHECK(grown.refused);
+    CHECK(grown.limit == MaxSmoothVoxels);
+    CHECK_FALSE(growBall(field, core::DVec3{0.0, 8.0, 0.0}, 6.0, 1.0f).refused);
+
+    // A checkerboard of heights: every column steep against its neighbours,
+    // so every chunk of every column dense -- 262 000 of them for 4096 by
+    // 4096. Estimated from the table before a voxel is written, and refused.
+    TerrainField laid(settingsOf());
+    constexpr core::u32 Columns = 3072;
+    std::vector<float> heights(static_cast<std::size_t>(Columns) * Columns);
+    for (std::size_t at = 0; at < heights.size(); ++at)
+        heights[at] = ((at + at / Columns) % 2 == 0) ? 0.0f : 60.0f;
+    const EditReport steep = writeHeights(laid, 0, 0, Columns, heights, 1);
+    CHECK(steep.refused);
+    CHECK(steep.limit == MaxHeightVoxels);
+    CHECK(laid.chunks().empty());
+    // And a gentle table of the same size is laid.
+    std::vector<float> gentle(static_cast<std::size_t>(512) * 512, 3.0f);
+    CHECK_FALSE(writeHeights(laid, 0, 0, 512, gentle, 1).refused);
+    CHECK_FALSE(laid.chunks().empty());
 }
 
 namespace {
