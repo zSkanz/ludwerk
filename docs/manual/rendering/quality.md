@@ -21,6 +21,7 @@ shadow_distance = 120.0   # metres
 light_budget = 256        # lights one frame may carry
 bloom = true
 ambient_occlusion = true
+contact_shadows = true
 anti_aliasing = true
 auto_exposure = true
 ```
@@ -41,6 +42,7 @@ nothing gets it.
 | `light_budget` | 32 | 96 | **256** | 256 |
 | `bloom` | false | true | **true** | true |
 | `ambient_occlusion` | false | false | **true** | true |
+| `contact_shadows` | false | true | **true** | true |
 | `anti_aliasing` | true | true | **true** | true |
 | `auto_exposure` | true | true | **true** | true |
 | `depth_of_field` | false | false | **true** | true |

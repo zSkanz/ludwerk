@@ -596,6 +596,7 @@ std::vector<TerrainNodeDraw> TerrainLoader::draws(const scene::World& world) con
             continue;
         TerrainNodeDraw draw = drawn.draw;
         draw.skirts = terrainSkirtSides(keysOf(drawn.draw.terrain), drawn.key);
+        draw.level = static_cast<core::u8>(drawn.key.level);
         out.push_back(draw);
     }
     return out;

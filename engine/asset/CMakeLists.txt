@@ -74,6 +74,7 @@ engine_add_module_tests(asset
         tests/chunk_tests.cpp
         tests/content_tests.cpp
         tests/terrain_tests.cpp
+        tests/terrain_levels_tests.cpp
         tests/terrain_mesher_tests.cpp
         tests/terrain_layers_tests.cpp
         tests/terrain_rules_tests.cpp

@@ -37,6 +37,12 @@ Interpolants VertexMain(uint vertexId : SV_VertexID)
 
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
+    // **Magenta, for the terrain's holes view** (`render::DebugView::Holes`,
+    // terrain audit T0): a colour no ground is, so each pixel of it in the
+    // picture is sky -- seen round the ground, or through it.
+    if (HorizonColor.w > 0.5f)
+        return float4(1.0f, 0.0f, 1.0f, 1.0f);
+
     // Unprojected at both ends of the depth range and differenced, rather than
     // unprojecting the far plane alone and normalising it. The difference of two
     // points is a direction whatever the shading space's origin is, which keeps

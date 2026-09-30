@@ -86,6 +86,7 @@ engine_add_module_tests(render
         tests/animation_tests.cpp
         tests/mesh_loader_tests.cpp
         tests/terrain_loader_tests.cpp
+        tests/terrain_seam_tests.cpp
         tests/foliage_tests.cpp
         tests/particles_tests.cpp
         tests/voxel_loader_tests.cpp

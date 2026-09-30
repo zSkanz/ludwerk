@@ -498,9 +498,12 @@ struct GpuTerrainSurfaceUniforms
     // 1 when the arrays hold every layer; the rule count; the layer count; the
     // terrain's height in the world.
     f32 params[4]{};
+    // x: the debug view drawn instead of the ground (`DebugView`, terrain
+    // audit T0), zero for none.
+    f32 debug[4]{};
 };
 
-static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 3 * 16 * 16 + 16 * 32 + 16,
+static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 3 * 16 * 16 + 16 * 32 + 16 + 16,
               "GpuTerrainSurfaceUniforms is a cbuffer layout");
 
 // Vertex stage, `b0 space1`, for `decal` (F2).

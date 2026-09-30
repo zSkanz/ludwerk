@@ -1194,6 +1194,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     .voxelBlock = false,
                     .cutout = false,
                     .terrainId = node.terrain,
+                    .terrainLevel = node.level,
                 });
             }
         }

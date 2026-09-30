@@ -114,6 +114,23 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     return settings;
 }
 
+std::optional<DebugView> parseDebugView(std::string_view name) noexcept
+{
+    if (name == "none")
+        return DebugView::None;
+    if (name == "holes")
+        return DebugView::Holes;
+    if (name == "level")
+        return DebugView::Level;
+    if (name == "sky")
+        return DebugView::Sky;
+    if (name == "shadow")
+        return DebugView::Shadow;
+    if (name == "occlusion")
+        return DebugView::Occlusion;
+    return std::nullopt;
+}
+
 std::optional<QualityLevel> parseQuality(std::string_view name) noexcept
 {
     if (name == "low")

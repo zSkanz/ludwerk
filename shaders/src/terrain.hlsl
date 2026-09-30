@@ -41,6 +41,10 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     // x: 1 when the arrays hold every layer; y: the rule count; z: the layer
     // count; w: the terrain's height in the world.
     float4 TerrainParams;
+    // x: the debug view drawn instead of the ground (`render::DebugView`,
+    // terrain audit T0): 0 none, 1 holes, 2 level, 3 sky, 4 shadow, 5
+    // occlusion.
+    float4 TerrainDebug;
 };
 
 Texture2DArray LayerColorTexture : register(t13, space2);
@@ -74,6 +78,8 @@ struct TerrainInterpolants
     // (ADR 0114).
     nointerpolation uint3 Tops : TEXCOORD7;
     nointerpolation uint3 Covers : TEXCOORD8;
+    // The node's level of detail, for the debug view of levels.
+    nointerpolation float Level : TEXCOORD9;
     float4 Position : SV_Position;
 };
 
@@ -98,7 +104,46 @@ TerrainInterpolants VertexMain(VertexInput input)
     output.Tops = uint3(tops & 255u, (tops >> 8) & 255u, (tops >> 16) & 255u);
     const uint covers = uint(input.Tangent.w + 0.5f);
     output.Covers = uint3(covers & 255u, (covers >> 8) & 255u, (covers >> 16) & 255u);
+    output.Level = InstanceAlphaUnused.y;
     return output;
+}
+
+// **What a debug view draws in place of the ground** (terrain audit T0), or a
+// negative alpha for none. Each answers one of the audit's questions alone:
+// where the ground is at all, which level drew it, and what the sky term, the
+// sun's shadow and the occlusion say about it.
+float4 terrainDebugColor(TerrainInterpolants input, float3 normal)
+{
+    const uint view = uint(TerrainDebug.x + 0.5f);
+    if (view == 1u)
+        return float4(1.0f, 1.0f, 1.0f, 1.0f);
+    if (view == 2u) {
+        static const float3 Levels[6] = {
+            float3(0.95f, 0.95f, 0.95f), float3(0.25f, 0.55f, 1.0f), float3(0.2f, 0.8f, 0.35f),
+            float3(1.0f, 0.85f, 0.2f),   float3(1.0f, 0.5f, 0.15f),  float3(0.85f, 0.2f, 0.2f),
+        };
+        const float3 lit = Levels[min(uint(input.Level + 0.5f), 5u)];
+        // A little shape, so a level's surface still reads as one.
+        return float4(lit * (0.55f + 0.45f * saturate(normal.y * 0.5f + 0.5f)), 1.0f);
+    }
+    if (view == 3u)
+        return float4(input.Sky.xxx, 1.0f);
+    if (view == 4u) {
+        const float3 sunDirection = normalize(SunDirectionBrightness.xyz);
+        const float sunNol = saturate(dot(normal, sunDirection));
+        const float shadow = sampleSunShadow(ShadowMap, ShadowSampler, input.ShadingPosition, normal, sunNol,
+                                             input.ViewDepth, input.Position.xy);
+        const float contact =
+            ContactShadowTexture.SampleLevel(ContactShadowSampler, input.Position.xy * ViewportParams.zw, 0.0f);
+        // The map in red, the contact mask in green: yellow is lit by both.
+        return float4(shadow, contact, 0.0f, 1.0f);
+    }
+    if (view == 5u) {
+        const float occlusion =
+            OcclusionTexture.SampleLevel(OcclusionSampler, input.Position.xy * ViewportParams.zw, 0.0f);
+        return float4(occlusion.xxx, 1.0f);
+    }
+    return float4(0.0f, 0.0f, 0.0f, -1.0f);
 }
 
 // **The rules' noise, line for line `asset::terrainRuleNoise`**: an integer
@@ -285,6 +330,9 @@ LayerSample layerAt(uint id, float3 ground, float3 dx, float3 dy, float3 normal,
 float4 FragmentMain(TerrainInterpolants input) : SV_Target0
 {
     const float3 normal = normalize(input.Normal);
+    const float4 debugColor = terrainDebugColor(input, normal);
+    if (debugColor.a >= 0.0f)
+        return debugColor;
     const float3 dx = ddx(input.Ground);
     const float3 dy = ddy(input.Ground);
     float3 planes = abs(normal);

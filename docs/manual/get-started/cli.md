@@ -187,9 +187,25 @@ engine-host [script.luau | project-dir]
   [--quality=low|medium|high|ultra --render-scale=F
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
-   --[no-]anti-aliasing --[no-]auto-exposure]
+   --[no-]contact-shadows --[no-]anti-aliasing --[no-]auto-exposure]
+  [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --version | --help
 ```
+
+**Three test instruments**, for a picture that proves something:
+
+- `--screenshot-every=N` takes a picture every N frames, not only the last,
+  each named after `--screenshot` with its number: `shot.png` becomes
+  `shot-000.png`, `shot-001.png` and so on. A scene that moves its camera on a
+  schedule is photographed from every place in one run.
+- `--debug-view=VIEW` draws, in place of the picture: `holes` (the sky magenta
+  and every terrain white, for counting sky seen through the ground), `level`
+  (each terrain node in the colour of its level of detail), `sky` (the
+  terrain's sky term), `shadow` (the sun's shadow on terrain: the map in red,
+  the contact mask in green) or `occlusion`.
+- `--terrain-detail=full` draws every terrain at its finest level whatever the
+  distance: the shape as it was sculpted, which a coarse level is held
+  against.
 
 Four refusals worth knowing, all of them exit 2:
 

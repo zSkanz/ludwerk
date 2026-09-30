@@ -327,6 +327,9 @@ struct DrawItem
     // Which terrain a terrain draw belongs to, so its layers are the ones
     // bound (ADR 0113): the `RenderTerrain` with this id.
     core::InstanceId terrainId{};
+    // The level of detail of a terrain draw's node, for the debug view of
+    // levels (terrain audit T0). Zero for everything else.
+    core::u8 terrainLevel = 0;
 };
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its
@@ -407,6 +410,8 @@ struct TerrainNodeDraw
     // the only kind that leaves a crack. All four is what a caller that does
     // not know gets.
     core::u8 skirts = 0x0F;
+    // The node's level of detail, 0 the finest.
+    core::u8 level = 0;
 };
 
 // One decal as drawn (F2): its box, in camera-relative space, and what it paints.

@@ -2823,6 +2823,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             GpuObjectUniforms uniforms{viewProjection, batch != nullptr ? Mat4{} : draw.transform,
                                        batch != nullptr ? Mat4{} : normalMatrixOf(draw.transform)};
             uniforms.instanceAlphaUnused[0] = batch != nullptr ? 1.0f : draw.alpha;
+            // A terrain node's level, for the debug view of levels.
+            uniforms.instanceAlphaUnused[1] = static_cast<f32>(draw.terrainLevel);
             cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
 
             if (voxelDraw) {
@@ -2861,7 +2863,16 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                     const TerrainArrays* layers = terrainArraysOf(draw.terrainId);
                     static const GpuTerrainSurfaceUniforms flat{};
                     const GpuTerrainSurfaceUniforms& block = layers != nullptr ? layers->uniforms : flat;
-                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
+                    if (settings_.debugView == DebugView::None) {
+                        cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&block, sizeof(block)));
+                    }
+                    else {
+                        // A debug view (terrain audit T0) rides in the block's
+                        // last row, on a copy: the terrain's own stays as built.
+                        GpuTerrainSurfaceUniforms viewed = block;
+                        viewed.debug[0] = static_cast<f32>(settings_.debugView);
+                        cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&viewed, sizeof(viewed)));
+                    }
                     const auto layerArray = [&](usize slot, rhi::TextureHandle fallback) {
                         return layers != nullptr && layers->ready
                                    ? rhi::TextureBinding{layers->arrays[slot], linearSampler_}
@@ -4260,7 +4271,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const bool airDrawn =
         air && world.camera.valid && ensureLookPipeline(device, air_, "look_air", kHdrFormat, LookBlend::Air);
     // And the governed sky's, for the same reason.
-    const bool skyGoverned = skyLook.present && world.camera.valid && ensureSkyLook(device);
+    // The holes view draws the plain sky, magenta: a `Sky`'s pictures would
+    // put other colours where the check reads sky.
+    const bool skyGoverned =
+        skyLook.present && world.camera.valid && settings_.debugView != DebugView::Holes && ensureSkyLook(device);
     prepareSurfaces(device, world);
     buildInstanceBatches(world, meshes);
     if (!instanceStaging_.empty()) {
@@ -4822,6 +4836,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // The disc's brightness relative to the sky around it, scaled by the day
         // factor so a sun below the horizon leaves no disc behind.
         skyUniforms.sunColor[3] = kSunDiscIntensity * sky.dayFactor;
+        // **Magenta, for the holes view** (terrain audit T0): a colour no
+        // ground is, so every pixel of it in a picture is sky.
+        skyUniforms.horizonColor[3] = settings_.debugView == DebugView::Holes ? 1.0f : 0.0f;
         if (clearBehind) {
             // No sky behind a view that shows only its instances (ADR 0107):
             // what nothing draws stays clear.

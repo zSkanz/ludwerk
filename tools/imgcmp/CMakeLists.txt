@@ -39,6 +39,7 @@ endif()
 add_library(engine_imgcmp_lib STATIC
     src/command_line.cpp
     src/compare.cpp
+    src/holes.cpp
     src/image.cpp
 )
 target_include_directories(engine_imgcmp_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -62,10 +63,17 @@ target_link_libraries(imgstrip PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgprobe src/probe_main.cpp)
 target_link_libraries(imgprobe PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgholes` counts where a picture of the ground shows the sky through it, or
+# instead of it -- the terrain gallery's check (terrain audit T0). Same library,
+# same independence.
+add_executable(imgholes src/holes_main.cpp)
+target_link_libraries(imgholes PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp
         tests/compare_tests.cpp
+        tests/holes_tests.cpp
         tests/image_tests.cpp
     )
     target_link_libraries(engine_imgcmp_tests PRIVATE

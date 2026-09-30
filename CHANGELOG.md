@@ -82,6 +82,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`[graphics] contact_shadows`** and `--[no-]contact-shadows`, so the sun's
+  contact shadows can be turned off alone (terrain audit T0).
+- **Test instruments on `engine-host`** (terrain audit T0):
+  `--screenshot-every=N` photographs a run every N frames;
+  `--debug-view=holes|level|sky|shadow|occlusion` draws what the terrain is
+  made of in place of the picture; `--terrain-detail=full` draws every terrain
+  at its finest level. `imgholes` counts sky seen through or instead of the
+  ground in such a picture.
 - **A `TextInput` edits as every text field does** (ADR 0139): selection by
   keys and by the mouse (drag, Shift, double and triple press), words, the
   line's and the text's ends, Ctrl+A/C/X/V through the system clipboard, undo

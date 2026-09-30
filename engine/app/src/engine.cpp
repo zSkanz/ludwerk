@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -1442,6 +1443,18 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // computed from a field that is already in memory, so none of `MeshLoader`'s
     // mounts, budgets or failure memory means anything here.
     render::TerrainLoader terrainLoader;
+    // The reference every coarse level is held against (terrain audit T0):
+    // a node split whatever its distance is the finest level everywhere.
+    if (options.terrainFullDetail) {
+        render::TerrainLodSettings full = terrainLoader.lodSettings();
+        full.splitFactor = 1.0e12;
+        terrainLoader.setLodSettings(full);
+    }
+    // A run that photographs a changing camera on a schedule photographs the
+    // ground settled, not half loaded: what a case is judged on is the shape,
+    // and loading has a budget of its own to be judged by.
+    if (options.screenshotEvery != 0)
+        terrainLoader.setBuildsPerSync(256);
     // The block world's chunks (V1), meshed and uploaded the same way.
     render::VoxelLoader voxelLoader;
     render::WaterLoader waterLoader;
@@ -5524,6 +5537,27 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         const core::u64 presentNs = platform::nowNs();
         device->submitAndPresent();
         phaseWaitMs += msSince(presentNs);
+
+        // **A picture every N frames** (`--screenshot-every`): this frame's,
+        // read back once it has finished, as `<name>-<number><ext>`.
+        if (options.screenshotEvery != 0 && !options.screenshotPath.empty() && offscreen.valid() &&
+            (frame.index + 1) % options.screenshotEvery == 0) {
+            device->waitIdle();
+            std::vector<std::byte> pixels(static_cast<core::usize>(options.width) *
+                                          static_cast<core::usize>(options.height) * 4u);
+            if (!device->readTexture(offscreen, pixels))
+                return core::makeError(ENG_TR("engine.screenshot.err.readback_failed"));
+            const core::u64 number = (frame.index + 1) / options.screenshotEvery - 1;
+            char suffix[16]{};
+            (void)std::snprintf(suffix, sizeof(suffix), "-%03llu", static_cast<unsigned long long>(number));
+            std::filesystem::path shot = options.screenshotPath;
+            shot.replace_filename(options.screenshotPath.stem().string() + suffix +
+                                  options.screenshotPath.extension().string());
+            if (auto writeError = writePng(shot, pixels, static_cast<core::u32>(options.width),
+                                           static_cast<core::u32>(options.height));
+                writeError.has_value())
+                return writeError;
+        }
 
         // **A process with no window and a real clock sleeps until its next
         // tick** -- a dedicated server, above all. A window's present waits for

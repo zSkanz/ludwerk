@@ -67,6 +67,16 @@ struct EngineOptions
     // renders into the swapchain, which has been presented and is gone by the
     // time anyone could read it.
     std::filesystem::path screenshotPath;
+    // `--screenshot-every=N`: a picture at the end of every N-th frame, not
+    // only the last, each named after `screenshotPath` with its number --
+    // `shot.png` becomes `shot-000.png`, `shot-001.png`, ... -- so one run
+    // photographs a scene that changes its camera on a schedule (the terrain
+    // gallery). Zero takes the one picture at the end.
+    u64 screenshotEvery = 0;
+    // `--terrain-detail=full`: every terrain drawn at its finest level
+    // whatever the distance -- the reference a coarse level is held against
+    // (terrain audit T0). A test instrument.
+    bool terrainFullDetail = false;
     // `--editor-drive=FILE`: input for the editor from a script
     // (`editor_drive.h`). Development builds only; empty drives nothing.
     std::filesystem::path editorDrive;

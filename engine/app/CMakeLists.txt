@@ -999,6 +999,30 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # **The terrain gallery** (terrain audit T0): the ground photographed from
+    # 5 m to 2 km with the sky magenta and the ground white, and every picture
+    # checked for sky seen through the ground or where the full-detail picture
+    # had ground -- see the driver. The test every earlier terrain audit
+    # lacked.
+    #
+    # **Expected to fail until the audit's T2** closes TA1 and TA2: today the
+    # 2 m slab vanishes from 500 m on, and the gate says so. The test passes
+    # on exactly that verdict and nothing else -- a crash, a missing picture
+    # or a gallery that finds no fault all fail it -- so `main` stays green
+    # meanwhile and the fix that makes the ground stay has to take the
+    # expectation off.
+    add_test(NAME terrain_gallery_holes
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DHOLES=$<TARGET_FILE:imgholes>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terraingallery
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-gallery
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_gallery.cmake)
+    set_tests_properties(terrain_gallery_holes PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        PASS_REGULAR_EXPRESSION "ENG_TERRAIN_GALLERY_FAULT"
+        TIMEOUT 300)
+
     # E5's screenshot row, which sat PENDING because the overlay it named was an
     # ImGui panel and a panel cannot render headlessly. The grid is drawn through
     # `DebugDraw` now -- in the world, where a question about space belongs --

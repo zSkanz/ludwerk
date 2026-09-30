@@ -63,6 +63,10 @@ void applyFile(const core::TomlDocument& document, GraphicsSettings& settings)
         settings.ambientOcclusion = *value;
     if (const std::optional<bool> value = document.boolean("graphics.anti_aliasing"))
         settings.antiAliasing = *value;
+    // So each of the audit's suspects for the dots on distant terrain can be
+    // turned off alone (terrain audit T0).
+    if (const std::optional<bool> value = document.boolean("graphics.contact_shadows"))
+        settings.contactShadows = *value;
     if (const std::optional<bool> value = document.boolean("graphics.auto_exposure"))
         settings.autoExposure = *value;
     if (const std::optional<bool> value = document.boolean("graphics.depth_of_field"))
@@ -91,8 +95,23 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.antiAliasing = *overrides.antiAliasing;
     if (overrides.autoExposure)
         settings.autoExposure = *overrides.autoExposure;
+    if (overrides.contactShadows)
+        settings.contactShadows = *overrides.contactShadows;
     if (overrides.forcedSurface)
         settings.forcedSurface = *overrides.forcedSurface;
+    if (overrides.debugView) {
+        settings.debugView = *overrides.debugView;
+        // The sky and the ground must stay two colours to the last pixel: a
+        // crack a pixel wide blended half into the ground is a crack missed.
+        if (settings.debugView == render::DebugView::Holes) {
+            settings.antiAliasing = false;
+            settings.bloom = false;
+            settings.ambientOcclusion = false;
+            settings.autoExposure = false;
+            settings.depthOfField = false;
+            settings.sunRays = false;
+        }
+    }
 }
 
 } // namespace

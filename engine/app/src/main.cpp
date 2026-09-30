@@ -359,6 +359,35 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.screenshotPath = std::filesystem::path(arg.substr(13));
             continue;
         }
+        if (arg.starts_with("--screenshot-every=")) {
+            if (!numericValue(arg.substr(19), options.screenshotEvery) || options.screenshotEvery == 0) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            continue;
+        }
+        if (arg.starts_with("--terrain-detail=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            if (value != "full" && value != "distance") {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.terrainFullDetail = value == "full";
+            continue;
+        }
+        if (arg.starts_with("--debug-view=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            const std::optional<engine::render::DebugView> view = engine::render::parseDebugView(value);
+            if (!view.has_value()) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.debugView = *view;
+            continue;
+        }
         if (arg.starts_with("--save-scene=")) {
             options.saveScenePath = std::filesystem::path(arg.substr(13));
             continue;
@@ -497,6 +526,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         // may want the frame held still with `--no-auto-exposure`.
         if (arg == "--bloom" || arg == "--no-bloom") {
             graphics.bloom = arg == "--bloom";
+            continue;
+        }
+        if (arg == "--contact-shadows" || arg == "--no-contact-shadows") {
+            graphics.contactShadows = arg == "--contact-shadows";
             continue;
         }
         if (arg == "--ambient-occlusion" || arg == "--no-ambient-occlusion") {

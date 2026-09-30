@@ -36,6 +36,24 @@ enum class QualityLevel : core::u8
     Ultra,
 };
 
+// **What the renderer draws in place of the picture** (terrain audit T0): a
+// test instrument, like `forcedSurface`, and never a setting a player has.
+//   Holes      the sky magenta and every terrain flat white, nothing else lit:
+//              `imgholes` counts sky seen through the ground.
+//   Level      each terrain node in the colour of its level of detail.
+//   Sky        the terrain's baked sky term, black to white.
+//   Shadow     the sun's shadow on terrain: the map and the contact mask.
+//   Occlusion  the screen-space occlusion on terrain.
+enum class DebugView : core::u8
+{
+    None,
+    Holes,
+    Level,
+    Sky,
+    Shadow,
+    Occlusion,
+};
+
 struct GraphicsSettings
 {
     // Which preset these started from. Carried so the overlay and the log can
@@ -101,6 +119,11 @@ struct GraphicsSettings
     // the screenshot scenes is the proof that the contract can say everything
     // the built-in surface says. Empty for everybody else.
     std::string forcedSurface;
+
+    // **A test instrument** (terrain audit T0): `--debug-view=NAME`. The
+    // holes view also turns off what would blend the sky into the ground --
+    // anti-aliasing, bloom, occlusion, automatic exposure.
+    DebugView debugView = DebugView::None;
 };
 
 // The named set every preset is. `High` is exactly what the engine shipped
@@ -116,6 +139,7 @@ struct GraphicsSettings
 [[nodiscard]] GraphicsSettings clampSettings(GraphicsSettings settings) noexcept;
 
 [[nodiscard]] std::optional<QualityLevel> parseQuality(std::string_view name) noexcept;
+[[nodiscard]] std::optional<DebugView> parseDebugView(std::string_view name) noexcept;
 [[nodiscard]] std::string_view qualityName(QualityLevel quality) noexcept;
 
 } // namespace engine::render

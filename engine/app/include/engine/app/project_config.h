@@ -38,8 +38,11 @@ struct GraphicsOverrides
     std::optional<bool> ambientOcclusion;
     std::optional<bool> antiAliasing;
     std::optional<bool> autoExposure;
+    std::optional<bool> contactShadows;
     // `--force-surface=NAME`: a test instrument (ADR 0091), never a project setting.
     std::optional<std::string> forcedSurface;
+    // `--debug-view=NAME`: a test instrument (terrain audit T0).
+    std::optional<render::DebugView> debugView;
 };
 
 struct ProjectConfig
