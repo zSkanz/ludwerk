@@ -97,7 +97,8 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **Two more terrain debug views** (terrain audit T3): `--debug-view=shadow`
   draws blue where the ground faces the sun, and `imgshadow` counts faces the
   shadow map or the contact mask darkens; `--debug-view=bend` draws what the
-  shading does to the mesh's normal, and `imgsteps` counts where it jumps.
+  shading does to the mesh's normal, and `imgsteps` counts where it jumps;
+  `--debug-view=albedo` draws the colour the ground is lit as.
 - **A `TextInput` edits as every text field does** (ADR 0139): selection by
   keys and by the mouse (drag, Shift, double and triple press), words, the
   line's and the text's ends, Ctrl+A/C/X/V through the system clipboard, undo
@@ -601,6 +602,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **No more bright streaks at a low sun, or dark notches under a lamp, on
   flat ground** (D372): the ground's grain drew a crease wherever its noise
   stepped at a cell's edge.
+- **Terrain layers draw their textures on Vulkan -- Linux and Android** (D379):
+  the terrain's per-layer data overflowed the 4 KiB a uniform block is bound
+  with there, and every layer drew flat.
+- **A terrain with no materials is plain matte grey** (D374): it was tinted
+  warm and cool in blotches the size of what it covered.
+- **A terrain layer reads the channels its maps promise** (D375, D376): a
+  metallic-roughness map's R is not occlusion unless the material says so --
+  an ordinary one darkened its ground's ambient to four tenths -- the height
+  comes from the material's height map, and a normal map's bumps are lit from
+  the right side on every axis. Large maps no longer shimmer on the ground
+  (D378).
 - **A headless run that takes a picture draws the terrain** (D373): since
   terrain was built off the main thread, thirty frames run flat out were over
   before any was.

@@ -552,6 +552,8 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
             map(material.properties.colorMap, true);
             map(material.properties.normalMap, false);
             map(material.properties.metallicRoughnessMap, false);
+            // The height, packed into the surface array's R (TA13).
+            map(material.properties.heightMap, false);
         }
     });
     // A foliage mesh's material (ADR 0116), when it wears one of its own.

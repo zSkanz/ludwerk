@@ -11,7 +11,7 @@
 -- is the ground shadowing itself -- acne. And the normal it is shaded with
 -- should bend smoothly (`--debug-view=bend`, counted by `imgsteps`): the ground
 -- has no material, so the only bend is the grain's, which is noise with no
--- crease in it.
+-- crease in it. And with no material it is one grey (`--debug-view=albedo`).
 --
 -- **One case per `FramesPerCase` frames**, as the terrain gallery does it: the
 -- host takes a picture at the last frame of each (`--screenshot-every`).
@@ -19,7 +19,7 @@
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
-local FramesPerCase = 24
+local FramesPerCase = 12
 -- The lowest is where the light meets the plain at N.L 0.14; the hills'
 -- flanks are under nine degrees, so none of them is ever turned from it.
 local Elevations = { 8, 12, 20, 35 }

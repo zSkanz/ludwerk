@@ -22,6 +22,9 @@ struct StepReport
     // Of those, the ones whose right or lower neighbour, ground too, differs
     // from it by more than the step in some channel.
     std::size_t steps = 0;
+    // The widest any channel ranges over the ground: plain ground drawn in the
+    // albedo view is one grey, and this is how far from one it is.
+    int spread = 0;
 };
 
 [[nodiscard]] StepReport findSteps(const Image& shot, int step);

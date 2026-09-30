@@ -1219,8 +1219,11 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
             layer.surface[0] = p.roughness;
             layer.surface[1] = p.metalness;
             layer.surface[2] = p.normalScale;
-            layer.surface[3] = p.triplanar ? 1.0f : 0.0f;
-            const std::array<const std::string*, 3> maps{&p.colorMap, &p.normalMap, &p.metallicRoughnessMap};
+            // Flags: 1 triplanar, 2 a height map -- which the ground's
+            // occlusion is read from, and without which it has none (TA13).
+            layer.surface[3] = (p.triplanar ? 1.0f : 0.0f) + (p.heightMap.empty() ? 0.0f : 2.0f);
+            const std::array<const std::string*, 4> maps{&p.colorMap, &p.normalMap, &p.metallicRoughnessMap,
+                                                         &p.heightMap};
             for (usize slot = 0; slot < maps.size(); ++slot) {
                 if (maps[slot]->empty())
                     continue;

@@ -179,6 +179,10 @@ struct ColorAttachment
     LoadOp loadOp = LoadOp::Clear;
     StoreOp storeOp = StoreOp::Store;
     ColorRgba clearColor{};
+    // **Which layer of an array is drawn into** (terrain audit T3): a
+    // terrain's layer arrays are drawn one layer at a time from their
+    // materials' maps, each read at the mip that fits. Mip 0 always.
+    u32 layer = 0;
 };
 
 struct DepthStencilAttachment

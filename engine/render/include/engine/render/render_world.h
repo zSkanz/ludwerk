@@ -345,9 +345,10 @@ struct RenderTerrainLayer
     f32 flat[4]{};
     f32 tint[4]{};
     f32 surface[4]{};
-    // Colour, normal and surface maps; invalid for a map the material does
-    // not name, which the renderer fills with a neutral one.
-    std::array<rhi::TextureHandle, 3> maps{};
+    // Colour, normal, metallic-roughness and height maps; invalid for a map
+    // the material does not name, which the renderer fills with a neutral one
+    // (a missing height is level ground, and no occlusion).
+    std::array<rhi::TextureHandle, 4> maps{};
     // A map named but not loaded yet: the arrays wait for it.
     bool waiting = false;
 };

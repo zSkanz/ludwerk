@@ -117,3 +117,45 @@ is one a project can see and change, or none.
   rock, so it looks as it did; a terrain with none writes its empty lists. A
   script's `Instance.new("Terrain")` is empty, and the examples that build
   terrain in a script carry their materials as files and set them.
+
+## Amendment, 2026-09-30: what a layer reads, and plain ground is plain
+
+The terrain audit's TA12 and TA13 (`docs/briefs/terrain-audit-2026-09-29-full.md`).
+
+- **Plain ground has no variation.** Ground of a material no layer names drew
+  the default grey tinted warm and cool by the ground's large-scale drift --
+  brown blotches, ball-sized on a ball. The drift is a textured field's
+  break-up, and plain ground is one grey; the shader takes it off in
+  proportion to how much of a pixel is plain, through the paint and the rules
+  laid over it.
+- **The arrays are drawn, not copied** (`terrain_pack.hlsl`): each layer of
+  each array a pass of its own, the source read at the mip that fits the
+  layer's 512 texels, so a map over twice that no longer shimmers. A map not
+  square is still stretched to the square.
+- **The surface array is packed**: the material's height, from its height map,
+  in R; its metallic-roughness map's roughness and metalness in G and B. glTF
+  leaves that map's R undefined unless the image is also the occlusion map,
+  and the mesh path never read it; the terrain read it as occlusion and as
+  height, so an ordinary map drew its ambient at four tenths and lost every
+  height blend. A material with no height map is level ground (the middle)
+  with no occlusion; with one, its occlusion is its height, on the scale the
+  engine's own layers were drawn with, so theirs look as they did.
+- **A layer's flags** ride in its surface row's last slot: 1 triplanar, 2 a
+  height map.
+- **The layers' rows are a storage buffer**, one per terrain, not the uniform
+  block they were in (D379): SDL_GPU binds a uniform block to Vulkan 4 KiB at a
+  time, and the rows were 12 KiB -- on Linux and Android no layer ever drew its
+  textures. The block keeps the rules and the params.
+- **A normal map's up is up the image**: each plane bends by the map's x along
+  its first axis and against its second, which the image's V runs down. Along
+  both lit every bump from the wrong side along one axis.
+- **The grain's bend is in world space**, each plane's slope along that
+  plane's own axes. It was one tangent-space nudge through a frame whose
+  tangent was always +X: not at right angles to the ground, and nothing on a
+  wall facing X.
+- **The stand-in arrays are cleared** to white and to a flat normal when made,
+  and **a normal with no length** falls back rather than becoming a NaN.
+
+`terrain_shadow_acne`'s albedo run holds plain ground to one grey;
+`terrain_material_channels` draws a ground with an empty-R map and with none,
+the same, and a normal map tilted up the image leaning the ground to -Z.

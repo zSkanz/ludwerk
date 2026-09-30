@@ -194,8 +194,8 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
   receiver's offset, no acne, shadows attached in every cascade (TA10).
 - [x] TA9: contact shadows with a slope- and distance-aware bias.
 - [x] Local lights push terrain in their atlas.
-- [ ] TA12: no-material terrain plain matte grey.
-- [ ] TA13 and render P2: the right channels, the triplanar sign, the grain
+- [x] TA12: no-material terrain plain matte grey.
+- [x] TA13 and render P2: the right channels, the triplanar sign, the grain
   frame, resampled layer arrays, guarded normals, no streaks at a low sun.
 - [ ] CPU and GPU rules agree, by readback, paint included.
 - [ ] Foliage shadows respect alpha and fade.
@@ -230,6 +230,26 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 - **Found on the way** (D373): since TA14, a headless `--screenshot` without
   `--screenshot-every` photographed no terrain. A run that takes a picture
   builds in the frame now.
+- **TA12** (D374): plain ground loses the ground's warm and cool drift, in
+  proportion to how much of a pixel is plain. `--debug-view=albedo` in the same
+  gate: colours spread 2 to 10 levels across plain ground before, none after.
+- **TA13** (ADR 0113's amendment of 2026-09-30, D375 to D378): the layer
+  arrays drawn from each map's fitting mip (`terrain_pack.hlsl`, and a
+  `layer` on the RHI's colour attachment to draw into one), the surface array
+  packed with the height map's height in R -- the fourth array the height
+  needed would have been a seventeenth texture, one past what SDL_GPU binds --
+  occlusion from height or none, a normal map's up bent up the image, the
+  grain's bend in world space, the stand-ins cleared, the normals guarded.
+  `terrain_material_channels` proves the channels and the sign, failing first
+  on each. The engine's own layers look as they did: their occlusion was their
+  height, on the same scale.
+- **Found by that test on the Linux gate** (D379, a P0): it passed on Windows
+  and read an unbent normal on Linux. SDL_GPU binds a uniform block to Vulkan
+  with a 4 KiB range and the terrain's was 13 600 bytes, its layers first: on
+  Vulkan -- Linux, Android -- no layer ever drew its textures. The layers are a
+  storage buffer now, and every uniform block the renderer sizes is held to
+  4 KiB at compile time. The block world's palette (16 400 bytes) is the same
+  defect, and the next fix.
 
 ## T4 — tools that do what the person asked
 

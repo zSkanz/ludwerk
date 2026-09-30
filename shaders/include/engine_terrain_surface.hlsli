@@ -159,14 +159,28 @@ TerrainDetail terrainDetail(float3 albedo, float3 ground, float3 normal, bool ro
 
 // **The same variation, apart from any colour** (ADR 0113): what a textured
 // layer is multiplied by, how steep-and-rocky the point is, and the grain's
-// nudge -- so layers with real textures keep the large-scale break-up the flat
+// bend -- so layers with real textures keep the large-scale break-up the flat
 // palette had, at a third of its strength, since a texture brings its own.
 struct TerrainVariation
 {
     float3 Shade;
     float Rockiness;
-    float2 NormalNudge;
+    // **The grain's bend, in world space**, added to the normal (TA13): each
+    // plane's slope along that plane's own two axes. It was one tangent-space
+    // nudge through a frame whose tangent was always +X -- not at right angles
+    // to the ground, and nothing at all on a wall facing X -- with each plane's
+    // slope laid along the same two directions whatever the plane.
+    float3 Bend;
 };
+
+// A unit vector, or `fallback` where there is no direction to keep: a
+// degenerate triangle's normal is zero, and one NaN normalised from it spread
+// through bloom to the whole frame.
+float3 terrainUnit(float3 v, float3 fallback)
+{
+    const float lengthSquared = dot(v, v);
+    return lengthSquared > 1e-12f ? v * rsqrt(lengthSquared) : fallback;
+}
 
 TerrainVariation terrainVariation(float3 ground, float3 normal)
 {
@@ -180,12 +194,25 @@ TerrainVariation terrainVariation(float3 ground, float3 normal)
     weights /= max(weights.x + weights.y + weights.z, 1e-5f);
 
     TerrainOctaves blended = (TerrainOctaves)0;
+    float3 slopes = 0.0f;
     [branch] if (weights.y > 0.01f)
-        blended = terrainWeighted(blended, terrainOctaves(ground.xz), weights.y);
+    {
+        const TerrainOctaves octaves = terrainOctaves(ground.xz);
+        blended = terrainWeighted(blended, octaves, weights.y);
+        slopes += float3(octaves.GrainSlope.x, 0.0f, octaves.GrainSlope.y) * weights.y;
+    }
     [branch] if (weights.x > 0.01f)
-        blended = terrainWeighted(blended, terrainOctaves(ground.zy), weights.x);
+    {
+        const TerrainOctaves octaves = terrainOctaves(ground.zy);
+        blended = terrainWeighted(blended, octaves, weights.x);
+        slopes += float3(0.0f, octaves.GrainSlope.y, octaves.GrainSlope.x) * weights.x;
+    }
     [branch] if (weights.z > 0.01f)
-        blended = terrainWeighted(blended, terrainOctaves(ground.xy), weights.z);
+    {
+        const TerrainOctaves octaves = terrainOctaves(ground.xy);
+        blended = terrainWeighted(blended, octaves, weights.z);
+        slopes += float3(octaves.GrainSlope.x, octaves.GrainSlope.y, 0.0f) * weights.z;
+    }
     const float kept = (weights.y > 0.01f ? weights.y : 0.0f) + (weights.x > 0.01f ? weights.x : 0.0f) +
                        (weights.z > 0.01f ? weights.z : 0.0f);
     const float scale = 1.0f / max(kept, 1e-5f);
@@ -197,7 +224,8 @@ TerrainVariation terrainVariation(float3 ground, float3 normal)
     variation.Rockiness = smoothstep(0.24f, 0.36f, slope + (clump - 0.5f) * 0.12f);
     variation.Shade = (1.0f + (macro - 0.5f) * 0.12f) *
                       lerp(float3(1.02f, 0.99f, 0.98f), float3(0.98f, 1.01f, 1.01f), macro);
-    variation.NormalNudge = blended.GrainSlope * scale * (0.3f * grainFade);
+    // Down the grain's slope, as a normal leans off a bump.
+    variation.Bend = -slopes * scale * (0.3f * grainFade);
     return variation;
 }
 

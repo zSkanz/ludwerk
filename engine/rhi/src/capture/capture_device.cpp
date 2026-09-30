@@ -517,15 +517,19 @@ public:
                        .finish();
 
         for (const ColorAttachment& color : desc.colorAttachments) {
-            stream_ += Line("colorAttachment")
-                           .num("texture", static_cast<u64>(color.texture.id))
-                           .str("load", name(color.loadOp))
-                           .str("store", name(color.storeOp))
-                           .real("r", color.clearColor.r)
-                           .real("g", color.clearColor.g)
-                           .real("b", color.clearColor.b)
-                           .real("a", color.clearColor.a)
-                           .finish();
+            Line line("colorAttachment");
+            line.num("texture", static_cast<u64>(color.texture.id))
+                .str("load", name(color.loadOp))
+                .str("store", name(color.storeOp))
+                .real("r", color.clearColor.r)
+                .real("g", color.clearColor.g)
+                .real("b", color.clearColor.b)
+                .real("a", color.clearColor.a);
+            // Only past the first: an attachment of a plain texture, as every
+            // one was before a layer could be named, records what it always did.
+            if (color.layer != 0)
+                line.num("layer", static_cast<u64>(color.layer));
+            stream_ += line.finish();
         }
 
         if (desc.depthStencil.texture.valid()) {

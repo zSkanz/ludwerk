@@ -1,8 +1,9 @@
-# The terrain's shadow on itself, and the bend of its normal (terrain audit
-# T3): does ground the sun faces stay lit, and does its shading draw a crease
-# the ground does not have?
+# The terrain's shadow on itself, the bend of its normal and the colour of
+# plain ground (terrain audit T3): does ground the sun faces stay lit, does
+# its shading draw a crease the ground does not have, and is ground with no
+# material one grey?
 #
-# Two runs of the scene, each photographing its cases in order
+# Three runs of the scene, each photographing its cases in order
 # (`--screenshot-every`):
 #
 #   1. `--debug-view=shadow`: the map in red, the contact mask in green, blue
@@ -12,6 +13,10 @@
 #   2. `--debug-view=bend`: how far the shading bends the mesh's normal. The
 #      ground has no material, so the bend is the grain's alone, noise with no
 #      crease; `imgsteps` counts where it jumps between two pixels.
+#   3. `--debug-view=albedo`: the colour it is lit as. Ground with no material
+#      is plain matte grey (ADR 0113's amendment), so `imgsteps` asks that no
+#      channel range over more than a level of it; the warm and cool drift a
+#      material's ground has ranged over ten (TA12).
 #
 # **The map may darken a few pixels a picture**: along the terminator of the
 # smallest ball, a triangle's edge crosses a pixel whose centre is on a face
@@ -21,13 +26,17 @@
 # ray leaves a ball's rim; with a bias that ignored the depth buffer's slant it
 # darkened 5 600 of the plain. Nothing steps.
 #
+# **At 640 by 360, twelve frames a case**: three runs of 88 cases are over three
+# thousand frames, and a runner with no GPU draws them in software -- at
+# full size and twice the frames it ran past five minutes.
+#
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DSHADOW=<imgshadow> -DSTEPS=<imgsteps>
 #         -DSCRIPT=<project> -DOUTPUT=<dir> -P run_terrain_shadow.cmake
 
 set(ENG_NO_DEVICE_EXIT_CODE 4)
 # The scene's own `FramesPerCase`, and its case count.
-set(FRAMES_PER_CASE 24)
+set(FRAMES_PER_CASE 12)
 set(CASES 88)
 set(MAX_MAP 150)
 set(MAX_CONTACT 48)
@@ -47,7 +56,7 @@ function(render name view)
     execute_process(
         COMMAND "${HOST}" "${SCRIPT}" --headless "--frames=${frames}" --exit
                 "--screenshot=${OUTPUT}/${name}.png" "--screenshot-every=${FRAMES_PER_CASE}"
-                "--debug-view=${view}"
+                "--debug-view=${view}" --width=640 --height=360
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)
@@ -67,6 +76,7 @@ if(skipped)
     return()
 endif()
 render(bend bend)
+render(albedo albedo)
 
 set(failed 0)
 math(EXPR last "${CASES} - 1")
@@ -77,7 +87,8 @@ foreach(index RANGE 0 ${last})
         set(padded "0${padded}")
         math(EXPR digits "${digits} + 1")
     endwhile()
-    foreach(pair "shadow;${SHADOW};--max-map=${MAX_MAP};--max-contact=${MAX_CONTACT}" "bend;${STEPS};--max=0")
+    foreach(pair "shadow;${SHADOW};--max-map=${MAX_MAP};--max-contact=${MAX_CONTACT}" "bend;${STEPS};--max=0"
+                 "albedo;${STEPS};--step=255;--max-spread=1")
         list(GET pair 0 name)
         list(GET pair 1 tool)
         list(SUBLIST pair 2 -1 limits)
@@ -100,5 +111,5 @@ endforeach()
 if(failed GREATER 0)
     # One line a test's expectation can match: FATAL_ERROR's text is wrapped.
     message("ENG_TERRAIN_SHADOW_FAULT: ${failed}")
-    message(FATAL_ERROR "terrain shadow: ${failed} picture(s) show ground shadowing itself or a crease in its shading")
+    message(FATAL_ERROR "terrain shadow: ${failed} picture(s) show ground shadowing itself, a crease in its shading or plain ground not one grey")
 endif()

@@ -31,16 +31,9 @@ cbuffer GpuTerrainMorph : register(b1, space1)
 
 #include "engine_terrain_morph.hlsli"
 
-// Per terrain, indexed by material id (0 is air and unused).
+// Per terrain.
 cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
 {
-    // What a layer looks like with no texture yet: its colour, flat; and in a,
-    // how hard its paint meets what is under it (`BlendSharpness`, ADR 0114).
-    float4 LayerFlat[256];
-    // The material's colour factor in rgb, and one over its repeat in metres.
-    float4 LayerTint[256];
-    // Roughness factor, metalness factor, normal scale, and 1 for triplanar.
-    float4 LayerSurface[256];
     // The rules (ADR 0113 §2), as `asset::TerrainRuleShape` builds them: the
     // slope band's four edges in `1 - normal.y`, the height band's in metres,
     // then the layer, the noise, the height jitter and whether it is on, then
@@ -54,7 +47,7 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 TerrainParams;
     // x: the debug view drawn instead of the ground (`render::DebugView`,
     // terrain audit T0): 0 none, 1 holes, 2 level, 3 sky, 4 shadow, 5
-    // occlusion, 6 bend.
+    // occlusion, 6 bend, 7 albedo.
     float4 TerrainDebug;
 };
 
@@ -64,6 +57,22 @@ Texture2DArray LayerNormalTexture : register(t14, space2);
 SamplerState LayerNormalSampler : register(s14, space2);
 Texture2DArray LayerSurfaceTexture : register(t15, space2);
 SamplerState LayerSurfaceSampler : register(s15, space2);
+
+// **Each layer, by material id** (0 is air and unused): `render::GpuTerrainLayer`.
+// A storage buffer rather than the block above, which SDL_GPU binds to Vulkan
+// 4 KiB at a time (D379).
+struct TerrainLayer
+{
+    // What the layer looks like with no texture yet: its colour, flat; and in
+    // a, how hard its paint meets what is under it (`BlendSharpness`).
+    float4 Flat;
+    // The material's colour factor in rgb, and one over its repeat in metres.
+    float4 Tint;
+    // Roughness factor, metalness factor, normal scale, and flags: 1
+    // triplanar, 2 a height map.
+    float4 Surface;
+};
+StructuredBuffer<TerrainLayer> TerrainLayers : register(t16, space2);
 
 struct VertexInput
 {
@@ -235,7 +244,12 @@ struct LayerSample
     float3 Normal;
     float Roughness;
     float Metalness;
+    // What the sky's light is darkened by: the height's cracks, where the
+    // material has a height map, and nothing where it has none.
     float Occlusion;
+    // For the height blend where a painted layer meets what is under it
+    // (ADR 0114).
+    float Height;
 };
 
 LayerSample weighted(LayerSample sum, LayerSample value, float weight)
@@ -245,7 +259,16 @@ LayerSample weighted(LayerSample sum, LayerSample value, float weight)
     sum.Roughness += value.Roughness * weight;
     sum.Metalness += value.Metalness * weight;
     sum.Occlusion += value.Occlusion * weight;
+    sum.Height += value.Height * weight;
     return sum;
+}
+
+// A height from its map, on the scale the engine's own layers were drawn with:
+// a crack at 0.55, a top at 1 -- so their occlusion and their height blends are
+// what they were when the surface map's R held this.
+float layerHeight(float map)
+{
+    return 0.55f + 0.45f * map;
 }
 
 // One projection of one layer: the plane's coordinates and their derivatives,
@@ -278,15 +301,22 @@ void readPlane(Plane plane, float slice, float normalScale, out float3 albedo, o
 
 LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 normal, float3 planes)
 {
-    const float4 tint = LayerTint[id];
-    const float4 settings = LayerSurface[id];
+    const float4 tint = TerrainLayers[id].Tint;
+    const float4 settings = TerrainLayers[id].Surface;
     const float slice = float(id) - 1.0f;
     const float scale = tint.a;
+    // Flags (`TerrainLoader::appendRenderTerrains`): 1 triplanar, 2 a height map.
+    const uint flags = uint(settings.w + 0.5f);
 
+    // **A normal map's +Y is up the image** (glTF), and up the image is DOWN
+    // the plane's second coordinate, which the image's V runs along -- so each
+    // plane bends by its map's x along its first axis and against its second.
+    // Along both, which is what this did, lit every bump from the wrong side
+    // along one axis (TA13).
     float3 albedo = 0.0f;
     float3 surface = 0.0f;
     float3 bent = normal;
-    if (settings.w > 0.5f) {
+    if ((flags & 1u) != 0u) {
         // **Triplanar**, each plane only where the surface faces it enough to
         // matter, and the normal bent along each plane's own axes.
         float kept = 0.0f;
@@ -298,7 +328,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, a, b, s);
             albedo += a * planes.y;
             surface += s * planes.y;
-            bent += float3(b.x, 0.0f, b.y) * planes.y;
+            bent += float3(b.x, 0.0f, -b.y) * planes.y;
             kept += planes.y;
         }
         [branch] if (planes.x > 0.01f)
@@ -309,7 +339,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             readPlane(planeOf(ground.zy, dx.zy, dy.zy, scale), slice, settings.z, a, b, s);
             albedo += a * planes.x;
             surface += s * planes.x;
-            bent += float3(0.0f, b.y, b.x) * planes.x;
+            bent += float3(0.0f, -b.y, b.x) * planes.x;
             kept += planes.x;
         }
         [branch] if (planes.z > 0.01f)
@@ -320,7 +350,7 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
             readPlane(planeOf(ground.xy, dx.xy, dy.xy, scale), slice, settings.z, a, b, s);
             albedo += a * planes.z;
             surface += s * planes.z;
-            bent += float3(b.x, b.y, 0.0f) * planes.z;
+            bent += float3(b.x, -b.y, 0.0f) * planes.z;
             kept += planes.z;
         }
         const float share = 1.0f / max(kept, 1e-5f);
@@ -330,13 +360,17 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
     else {
         float2 b;
         readPlane(planeOf(ground.xz, dx.xz, dy.xz, scale), slice, settings.z, albedo, b, surface);
-        bent += float3(b.x, 0.0f, b.y);
+        bent += float3(b.x, 0.0f, -b.y);
     }
 
+    // The surface layer is packed when the arrays are drawn
+    // (`terrain_pack.hlsl`): the material's height in R, from its height map,
+    // then its metallic-roughness map's G and B.
     LayerSample result;
     result.Albedo = albedo * tint.rgb;
-    result.Normal = normalize(bent);
-    result.Occlusion = surface.r;
+    result.Normal = terrainUnit(bent, normal);
+    result.Height = layerHeight(surface.r);
+    result.Occlusion = (flags & 2u) != 0u ? result.Height : 1.0f;
     result.Roughness = saturate(surface.g * settings.x);
     result.Metalness = saturate(surface.b * settings.y);
     return result;
@@ -347,11 +381,12 @@ LayerSample sampleLayer(uint id, float3 ground, float3 dx, float3 dy, float3 nor
 LayerSample flatLayer(uint id, float3 normal)
 {
     LayerSample result;
-    result.Albedo = LayerFlat[id].rgb;
+    result.Albedo = TerrainLayers[id].Flat.rgb;
     result.Normal = normal;
-    result.Roughness = saturate(LayerSurface[id].x);
-    result.Metalness = saturate(LayerSurface[id].y);
+    result.Roughness = saturate(TerrainLayers[id].Surface.x);
+    result.Metalness = saturate(TerrainLayers[id].Surface.y);
     result.Occlusion = 1.0f;
+    result.Height = layerHeight(0.5f);
     return result;
 }
 
@@ -364,7 +399,7 @@ LayerSample layerAt(uint id, float3 ground, float3 dx, float3 dy, float3 normal,
 
 float4 FragmentMain(TerrainInterpolants input) : SV_Target0
 {
-    const float3 normal = normalize(input.Normal);
+    const float3 normal = terrainUnit(input.Normal, float3(0.0f, 1.0f, 0.0f));
     const float4 debugColor = terrainDebugColor(input, normal);
     if (debugColor.a >= 0.0f)
         return debugColor;
@@ -390,6 +425,16 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         corners.y += corners.z;
         corners.z = 0.0f;
     }
+
+    // **How much of the pixel is plain ground**, a material no layer names
+    // (TA12): a new terrain's ground is plain matte grey (ADR 0113's
+    // amendment), and the ground's variation -- the warm and cool drift that
+    // breaks up a field of one material -- is no part of that. It read as brown
+    // blotches, ball-sized on a ball. Carried through the paint and the rules
+    // below, which can lay a layer over it.
+    const uint layerCount = uint(TerrainParams.z + 0.5f);
+    float plain = (ids.x > layerCount ? corners.x : 0.0f) + (ids.y > layerCount ? corners.y : 0.0f) +
+                  (ids.z > layerCount ? corners.z : 0.0f);
 
     LayerSample mix = (LayerSample)0;
     mix = weighted(mix, layerAt(ids.x, input.Ground, dx, dy, normal, planes), corners.x);
@@ -437,21 +482,27 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
             over.Roughness *= inverse;
             over.Metalness *= inverse;
             over.Occlusion *= inverse;
-            const float lift = (over.Occlusion - mix.Occlusion) * cover * (1.0f - cover) * 4.0f;
+            over.Height *= inverse;
+            const float lift = (over.Height - mix.Height) * cover * (1.0f - cover) * 4.0f;
             const uint lead = shares.x >= shares.y && shares.x >= shares.z ? tops.x : (shares.y >= shares.z ? tops.y : tops.z);
             // **The sharpness is of the edge the heights draw** (D329): where
             // the two are the same height there is no edge to draw, and a hard
             // one made a threshold at half cover -- a flat-coloured material
             // painted over another came out stepped, voxel by voxel, however
             // soft the brush. There it is a crossfade by the cover instead.
-            const float relief = saturate(abs(over.Occlusion - mix.Occlusion) * 4.0f);
-            const float width = lerp(0.5f, lerp(0.5f, 0.02f, saturate(LayerFlat[lead].a)), relief);
+            const float relief = saturate(abs(over.Height - mix.Height) * 4.0f);
+            const float width = lerp(0.5f, lerp(0.5f, 0.02f, saturate(TerrainLayers[lead].Flat.a)), relief);
             const float shows = smoothstep(0.5f - width, 0.5f + width, cover + lift);
             mix.Albedo = lerp(mix.Albedo, over.Albedo, shows);
+            const float overPlain = ((tops.x > layerCount ? shares.x : 0.0f) + (tops.y > layerCount ? shares.y : 0.0f) +
+                                     (tops.z > layerCount ? shares.z : 0.0f)) *
+                                    inverse;
+            plain = lerp(plain, overPlain, shows);
             mix.Normal = lerp(mix.Normal, over.Normal, shows);
             mix.Roughness = lerp(mix.Roughness, over.Roughness, shows);
             mix.Metalness = lerp(mix.Metalness, over.Metalness, shows);
             mix.Occlusion = lerp(mix.Occlusion, over.Occlusion, shows);
+            mix.Height = lerp(mix.Height, over.Height, shows);
         }
     }
 
@@ -482,10 +533,12 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         {
             const LayerSample painted = layerAt(uint(misc.x + 0.5f), input.Ground, dx, dy, normal, planes);
             mix.Albedo = lerp(mix.Albedo, painted.Albedo, cover);
+            plain = lerp(plain, uint(misc.x + 0.5f) > layerCount ? 1.0f : 0.0f, cover);
             mix.Normal = lerp(mix.Normal, painted.Normal, cover);
             mix.Roughness = lerp(mix.Roughness, painted.Roughness, cover);
             mix.Metalness = lerp(mix.Metalness, painted.Metalness, cover);
             mix.Occlusion = lerp(mix.Occlusion, painted.Occlusion, cover);
+            mix.Height = lerp(mix.Height, painted.Height, cover);
         }
     }
 
@@ -493,12 +546,14 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // neutral stand-ins the renderer binds there -- white, flat, white, black --
     // so the texture slots stay the contiguous run SDL_GPU binds from zero.
     const float2 standIn = input.Ground.xz;
-    const float3 albedo = mix.Albedo * variation.Shade * BaseColorTexture.Sample(BaseColorSampler, standIn).rgb;
+    const float3 shade = lerp(variation.Shade, float3(1.0f, 1.0f, 1.0f), saturate(plain));
+    const float3 albedo = mix.Albedo * shade * BaseColorTexture.Sample(BaseColorSampler, standIn).rgb;
     const float roughness = mix.Roughness * MetallicRoughnessTexture.Sample(MetallicRoughnessSampler, standIn).g;
+    // The normal stand-in is flat, and read so its slot stays bound; laid on
+    // the ground plane, as a stand-in it bends nothing.
     const float2 flat = NormalTexture.Sample(NormalSampler, standIn).xy * 2.0f - 1.0f;
-    const float3x3 frame = tangentFrame(normal, float4(1.0f, 0.0f, 0.0f, 1.0f));
-    const float3 nudge = mul(normalize(float3(variation.NormalNudge + flat, 1.0f)), frame) - normal;
-    const float3 shadingNormal = normalize(normalize(mix.Normal) + nudge);
+    const float3 bend = variation.Bend + float3(flat.x, 0.0f, -flat.y);
+    const float3 shadingNormal = terrainUnit(terrainUnit(mix.Normal, normal) + bend, normal);
 
     Surface surface = makeSurface(input.ShadingPosition, shadingNormal, albedo, mix.Metalness, roughness);
     // The shadow's lookup is offset along the MESH's normal (TA8): the map
@@ -511,5 +566,8 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     // the above did to the mesh's normal, four times over so a crease shows.
     if (uint(TerrainDebug.x + 0.5f) == 6u)
         return float4(saturate((shadingNormal - normal) * 4.0f + 0.5f), 1.0f);
+    // And the albedo view, the colour before any light.
+    if (uint(TerrainDebug.x + 0.5f) == 7u)
+        return float4(albedo, 1.0f);
     return float4(color, 1.0f);
 }

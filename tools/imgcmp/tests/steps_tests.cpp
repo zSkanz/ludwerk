@@ -40,4 +40,6 @@ TEST_CASE("a normal that jumps between two pixels of ground is a step; a gentle 
     CHECK(report.ground == 5);
     // Only the pixel before the jump: its right neighbour is 38 away in red.
     CHECK(report.steps == 1);
+    // Red runs from 128 to 172 over the ground; the sky's black is not ground.
+    CHECK(report.spread == 44);
 }

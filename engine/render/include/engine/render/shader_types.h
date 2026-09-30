@@ -480,14 +480,33 @@ inline constexpr u32 kTerrainRuleSlots = 16;
 
 // `b1` of the fragment stage, for `terrain` (ADR 0113): each layer's look,
 // by material id, for one terrain.
+// **One terrain layer, as the fragment stage reads it**: a storage buffer of
+// `kTerrainLayerSlots` of these at `t16 space2`, after the terrain's sixteen
+// textures, indexed by material id (0 is air and unused).
+//
+// **A storage buffer and not the uniform block they were in** (D379): SDL_GPU
+// binds a uniform block to Vulkan with a range of 4 KiB
+// (`MAX_UBO_SECTION_SIZE`), and three of these rows by 256 layers are 12 KiB.
+// On Vulkan -- Linux, Android -- everything past the first 4 KiB of the block
+// was read as nothing: no layer drew its textures, and the terrain's params,
+// past the cut, said it had none.
+struct GpuTerrainLayer
+{
+    // What the layer is before its textures arrive: its colour, flat; in a,
+    // how hard its paint meets what is under it (`BlendSharpness`, ADR 0114).
+    f32 flat[4]{};
+    // The material's colour factor, and one over its repeat in metres.
+    f32 tint[4]{};
+    // Roughness factor, metalness factor, normal scale, and flags: 1
+    // triplanar, 2 a height map.
+    f32 surface[4]{};
+};
+
+static_assert(sizeof(GpuTerrainLayer) == 48, "GpuTerrainLayer is a structured buffer's stride");
+
+// Fragment stage, `b1 space3`, for `terrain`.
 struct GpuTerrainSurfaceUniforms
 {
-    // What a layer is before its textures arrive: its colour, flat.
-    f32 layerFlat[kTerrainLayerSlots][4]{};
-    // The material's colour factor, and one over its repeat in metres.
-    f32 layerTint[kTerrainLayerSlots][4]{};
-    // Roughness factor, metalness factor, normal scale, 1 for triplanar.
-    f32 layerSurface[kTerrainLayerSlots][4]{};
     // Each rule's slope band and height band (`asset::TerrainRuleShape`), its
     // layer, noise, height jitter and whether it is on, and the layers it
     // covers as 256 bits.
@@ -503,8 +522,15 @@ struct GpuTerrainSurfaceUniforms
     f32 debug[4]{};
 };
 
-static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 256 * 16 + 3 * 16 * 16 + 16 * 32 + 16 + 16,
+static_assert(sizeof(GpuTerrainSurfaceUniforms) == 3 * 16 * 16 + 16 * 32 + 16 + 16,
               "GpuTerrainSurfaceUniforms is a cbuffer layout");
+
+// **The most a uniform block may be** (D379): SDL_GPU binds one to Vulkan with
+// a range of 4 KiB, and a shader reads past it as nothing.
+inline constexpr core::usize kMaxUniformBlockBytes = 4096;
+static_assert(sizeof(GpuFrameUniforms) <= kMaxUniformBlockBytes);
+static_assert(sizeof(GpuSkinUniforms) <= kMaxUniformBlockBytes);
+static_assert(sizeof(GpuTerrainSurfaceUniforms) <= kMaxUniformBlockBytes);
 
 // Vertex stage, `b0 space1`, for `decal` (F2).
 struct GpuDecalUniforms

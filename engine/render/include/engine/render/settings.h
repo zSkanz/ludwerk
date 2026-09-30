@@ -50,6 +50,9 @@ enum class QualityLevel : core::u8
 //              its mesh's -- the grain's nudge and the layers' normal maps --
 //              four times over, and the sky black: `imgsteps` counts where it
 //              steps between two pixels, a crease the ground does not have.
+//   Albedo     the colour the terrain is lit as, before any light, and the
+//              sky black: plain ground is one grey, and `imgsteps` measures
+//              how far its colours spread.
 enum class DebugView : core::u8
 {
     None,
@@ -59,12 +62,13 @@ enum class DebugView : core::u8
     Shadow,
     Occlusion,
     Bend,
+    Albedo,
 };
 
 // Whether a debug view draws the sky black, for a check to pass it over.
 [[nodiscard]] constexpr bool blackSky(DebugView view) noexcept
 {
-    return view == DebugView::Shadow || view == DebugView::Bend;
+    return view == DebugView::Shadow || view == DebugView::Bend || view == DebugView::Albedo;
 }
 
 struct GraphicsSettings

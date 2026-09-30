@@ -206,8 +206,9 @@ engine-host [script.luau | project-dir]
   terrain's sky term), `shadow` (the sun's shadow on terrain: the map in red,
   the contact mask in green, blue where the ground faces the sun, the sky
   black -- `imgshadow` counts faces to the sun either shadow darkens),
-  `occlusion`, or `bend` (what the shading does to the mesh's normal, four
-  times over, the sky black -- `imgsteps` counts where it jumps).
+  `occlusion`, `bend` (what the shading does to the mesh's normal, four
+  times over, the sky black -- `imgsteps` counts where it jumps) or `albedo`
+  (the colour the ground is lit as).
 - `--terrain-detail=full` draws every terrain at its finest level whatever the
   distance: the shape as it was sculpted, which a coarse level is held
   against.

@@ -40,8 +40,9 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     // **Magenta, for the terrain's holes view** (`render::DebugView::Holes`,
     // terrain audit T0): a colour no ground is, so each pixel of it in the
     // picture is sky -- seen round the ground, or through it. **Black for the
-    // shadow and bend views** (T3), where magenta is a colour ground is:
-    // black is no face to the sun and no bend, which their checks pass over.
+    // shadow, bend and albedo views** (T3), where magenta is a colour ground
+    // is: black is no face to the sun, no bend and no ground, which their
+    // checks pass over.
     if (HorizonColor.w > 1.5f)
         return float4(0.0f, 0.0f, 0.0f, 1.0f);
     if (HorizonColor.w > 0.5f)

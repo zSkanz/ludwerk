@@ -1036,7 +1036,23 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_shadow.cmake)
     set_tests_properties(terrain_shadow_acne PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 300)
+        TIMEOUT 600)
+
+    # **A terrain layer reads only the channels its maps promise** (terrain
+    # audit TA13): the same ground with a metallic-roughness map whose R is
+    # empty, and with none, drawn the same; and a normal map's up bending the
+    # ground up the image. See the driver.
+    add_test(NAME terrain_material_channels
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainchannels
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-channels
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_channels.cmake)
+    set_tests_properties(terrain_material_channels PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
 
     # E5's screenshot row, which sat PENDING because the overlay it named was an
     # ImGui panel and a panel cannot render headlessly. The grid is drawn through

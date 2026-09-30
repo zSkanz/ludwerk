@@ -1,0 +1,15 @@
+# A terrain layer reads only the channels its maps promise (terrain audit
+# TA13): the same ground with a metallic-roughness map whose R is empty, and
+# with none. A project rather than a bare scene so the driver can swap its
+# material between the two runs.
+
+[project]
+name = "Ludwerk Terrain Channels"
+id = "dev.ludwerk.terrainchannels"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Channels"
+width = 960
+height = 540

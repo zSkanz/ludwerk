@@ -1135,6 +1135,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
                             attachment.clearColor.a};
         info.load_op = toSdl(attachment.loadOp);
         info.store_op = toSdl(attachment.storeOp);
+        info.layer_or_depth_plane = attachment.layer;
         colors[colorCount++] = info;
     }
     colors.shrink(colorCount);
