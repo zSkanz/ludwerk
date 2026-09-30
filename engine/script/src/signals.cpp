@@ -99,6 +99,20 @@ void disconnectRecord(lua_State* L, ConnectionId id)
     connection->connected = false;
     if (connection->ref > 0)
         connection->ref = lua_unref(L, connection->ref);
+    // Out of its run's list, newest first for the reason the signal's is.
+    if (connection->run != nullptr) {
+        if (const auto found = sys.byRun.find(connection->run); found != sys.byRun.end()) {
+            std::vector<ConnectionId>& mine = found->second;
+            for (usize index = mine.size(); index-- > 0;) {
+                if (mine[index] == id) {
+                    mine.erase(mine.begin() + static_cast<std::ptrdiff_t>(index));
+                    break;
+                }
+            }
+            if (mine.empty())
+                sys.byRun.erase(found);
+        }
+    }
 
     const SignalId signal = connection->signal;
     if (SignalRecord* record = sys.signals.find(signal)) {
@@ -294,8 +308,18 @@ void enqueueFire(lua_State* L, SignalId id, int first, int count)
     connection.once = once;
     connection.waiter = waiter;
 
+    // Whose run made it: the handler's globals, or the parked thread's.
+    lua_getref(L, ref);
+    if (lua_isfunction(L, -1))
+        connection.run = runEnvOfFunction(L, -1);
+    else if (lua_State* thread = lua_tothread(L, -1); thread != nullptr)
+        connection.run = runEnvOfThread(thread);
+    lua_pop(L, 1);
+
     const ConnectionId handle = sys.connections.insert(connection);
     record.connections.push_back(handle);
+    if (connection.run != nullptr)
+        sys.byRun[connection.run].push_back(handle);
     syncPropertySubscription(L, record);
     return handle;
 }
@@ -718,6 +742,24 @@ std::vector<core::InstanceId> takeEnabledScripts(lua_State* L)
     std::vector<core::InstanceId> taken;
     taken.swap(sys.enabledScripts);
     return taken;
+}
+
+core::usize liveConnectionCount(lua_State* L)
+{
+    return system(L).connections.size();
+}
+
+void disconnectRun(lua_State* L, const void* run)
+{
+    SignalSystem& sys = system(L);
+    const auto found = sys.byRun.find(run);
+    if (found == sys.byRun.end())
+        return;
+    // Taken out whole first, so each disconnect finds nothing to search.
+    const std::vector<ConnectionId> mine = std::move(found->second);
+    sys.byRun.erase(found);
+    for (const ConnectionId id : mine)
+        disconnectRecord(L, id);
 }
 
 bool resumeScheduled(lua_State* L, lua_State* co, int argCount)

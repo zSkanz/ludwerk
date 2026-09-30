@@ -101,6 +101,10 @@ struct ConnectionRecord
     // by registration order (api-design.md §3.1).
     bool waiter = false;
     bool connected = true;
+    // **The run that made it**: its globals table, or null for one no run
+    // made (an engine function, a module's). What a stopped script's
+    // connections are found by (the script-sides close, S4).
+    const void* run = nullptr;
 };
 
 struct SignalRecord
@@ -197,6 +201,10 @@ public:
     // occupant's signals. Never iterated in observable order (R10): the value is
     // a short vector scanned linearly, and the map is only ever probed by key.
     std::unordered_map<u64, std::vector<OwnedSignal>> byOwner;
+
+    // Each run's connections, by its globals table, so a stop disconnects
+    // them without walking every signal. Probed by key, never iterated (R10).
+    std::unordered_map<const void*, std::vector<ConnectionId>> byRun;
 
     // Interned once at boot; `enqueueSceneChanges` compares against these rather
     // than looking a name up per change.
@@ -360,6 +368,15 @@ bool enqueueTaskCallback(lua_State* L, int threadRef, u32 argBase, u32 argCount)
 // Resumes a scheduler-owned coroutine, reporting an error the way a handler's
 // is reported. Returns true when the thread is finished with.
 bool resumeScheduled(lua_State* L, lua_State* co, int argCount);
+
+// How many connections the VM holds live, every signal's together: what a
+// test watches to prove a stopped script's are gone.
+[[nodiscard]] core::usize liveConnectionCount(lua_State* L);
+
+// **Disconnects every connection a run made** (the script-sides close, S4):
+// its handlers leave their signals' lists, `Connected` reads false, and a
+// `:Wait()` it was parked in lets its thread go.
+void disconnectRun(lua_State* L, const void* run);
 
 // The same, raising the error on top of `co`'s stack where the coroutine is
 // parked, so a caller waiting on something that failed sees it fail at its

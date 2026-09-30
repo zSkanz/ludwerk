@@ -292,4 +292,27 @@ void resumeDueTimers(lua_State* L, u64 tick)
     }
 }
 
+core::usize pendingTimerCount(lua_State* L)
+{
+    return scheduler(L).timers.size();
+}
+
+void dropTimersOf(lua_State* L, const std::vector<const void*>& runs)
+{
+    if (runs.empty())
+        return;
+    std::vector<TimerEntry>& timers = scheduler(L).timers;
+    // One pass, the order of what stays untouched: the list is sorted.
+    std::erase_if(timers, [&](const TimerEntry& entry) {
+        lua_getref(L, entry.threadRef);
+        lua_State* thread = lua_tothread(L, -1);
+        const void* run = thread != nullptr ? runEnvOfThread(thread) : nullptr;
+        lua_pop(L, 1);
+        if (run == nullptr || std::find(runs.begin(), runs.end(), run) == runs.end())
+            return false;
+        (void)lua_unref(L, entry.threadRef);
+        return true;
+    });
+}
+
 } // namespace engine::script

@@ -29,6 +29,8 @@
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/players.h"
 #include "engine/scene/scene_file.h"
+#include "engine/script/signals.h"
+#include "engine/script/tasks.h"
 #include "engine_test_nearly.h"
 #include "lua.h"
 #include "project_fixture.h"
@@ -2375,6 +2377,53 @@ TEST_CASE("an authored instance's origin names its scene, and Play numbers what 
     CHECK(w.originOf(inserted).index == 0);
     CHECK(w.originOf(door).index == 1);
     CHECK(w.originOf(inserted).asset == w.originOf(door).asset);
+}
+
+TEST_CASE("a script that stops takes its connections and its waits with it (script sides S4)")
+{
+    // Found by running (ludwerk-08, 2026-09-29): a stopped run's handlers were
+    // suppressed and never disconnected, so every clone of a projectile with a
+    // script that connected to Heartbeat left its handler on the signal for
+    // ever, and every tick walked them all -- 19 ms a tick after 137 500.
+    Captured log;
+    Project project;
+    project.write(
+        "content/scenes/main.scene.json",
+        R"json({"format":"scene","version":2,"root":{},"storage":{"ReplicatedStorage":{)json"
+        R"json("class":"ReplicatedStorage","name":"ReplicatedStorage","children":[)json"
+        R"json({"class":"Model","name":"Bullet","children":[{"class":"Script","name":"Fly",)json"
+        R"json("properties":{"Source":"local n = 0 game:GetService('RunService').Heartbeat:Connect(function() n += 1 end) task.wait(1e6)"}}]}]}}})json");
+    project.write("src/client/churn.luau", R"(
+        local template = game:GetService("ReplicatedStorage"):WaitForChild("Bullet")
+        local live: { Instance } = {}
+        game:GetService("RunService").Heartbeat:Connect(function()
+            for _, bullet in live do
+                bullet:Destroy()
+            end
+            table.clear(live)
+            for _ = 1, 20 do
+                local bullet = template:Clone()
+                bullet.Parent = workspace
+                table.insert(live, bullet)
+            end
+        end)
+    )");
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+    options.bootScenePath = "scenes/main.scene.json";
+    REQUIRE_FALSE(host.boot(options).has_value());
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    lua_State* L = host.runtime().state();
+    const core::usize settled = script::liveConnectionCount(L);
+    const core::usize waiting = script::pendingTimerCount(L);
+    for (int tick = 0; tick < 100; ++tick)
+        host.tick();
+    // Two thousand clones have lived; twenty are alive.
+    CHECK(script::liveConnectionCount(L) <= settled + 5);
+    CHECK(script::pendingTimerCount(L) <= waiting + 5);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
 TEST_CASE("a shared module is one module, whether required by path or by instance")

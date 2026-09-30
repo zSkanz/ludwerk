@@ -1217,3 +1217,19 @@ inside one process (six loads, five placements).
 The scene change did not move. The stamps' 2.5 ms is the 400 starts that did
 not happen before -- about six microseconds a script, compiling and running a
 one-line file -- plus numbering each placed instance's origin (ADR 0138 §6).
+
+## A stopped script's connections (D360)
+
+Fifty clones of a model whose script connects to `Heartbeat` are destroyed and
+fifty more made every tick, so fifty are alive at a time; the time from tick to
+tick, averaged over 250 ticks. Measured 2026-09-29 on `win-msvc-editor`,
+headless, the null RHI, ludwerk-08's repro project. Before is S3 (`e81e4b27`),
+where a stop only suppressed its run's handlers.
+
+| Scripts that have lived | 12 500 | 50 000 | 100 000 | 137 500 |
+|---|---|---|---|---|
+| Before | 1.23 ms | 5.46 ms | 12.13 ms | 18.86 ms |
+| After | 0.59 ms | 0.57 ms | 0.63 ms | 0.58 ms |
+
+Flat after: a stop disconnects its run's connections once the drain is over,
+so the signal's list holds the fifty that are alive.

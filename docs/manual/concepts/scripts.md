@@ -212,9 +212,10 @@ Moving a running script from one place in the world to another is not a stop:
 it keeps its run. Coming back after a stop is a fresh start, and the old run's
 handlers never come back beside the new one.
 
-A stop takes everything the run started with it: its threads, its connections'
-handlers, its render steps and its close handlers stop being called. What it
-built stays where it is.
+A stop takes everything the run started with it: its threads, its render steps
+and its close handlers stop being called, and its connections are
+disconnected -- `Connected` reads false -- once the frame's handlers have run.
+What it built stays where it is. (`Enabled = false` is not a stop: see below.)
 
 Each script starts on **its own coroutine**, deferred, in the tree's document
 order. `DataModel.Loaded` fires once every script has had its first resumption,

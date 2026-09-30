@@ -13,6 +13,7 @@
 #include "engine/script/sandbox.h"
 #include "engine/script/services.h"
 #include "engine/script/signals.h"
+#include "engine/script/tasks.h"
 
 namespace engine::script {
 namespace {
@@ -787,12 +788,12 @@ bool startScript(lua_State* L, core::InstanceId instance)
         if (modules.runs.size() <= instance.index)
             modules.runs.resize(static_cast<usize>(instance.index) + 1);
         ModuleRegistry::Run& run = modules.runs[instance.index];
-        // **The slot's previous run lets its table go** (the script-sides
-        // audit): a slot reused by another script -- a scene change reuses
-        // the old scene's -- overwrote the reference and kept every table it
-        // had ever held.
+        // **The slot's previous run is ended, not overwritten** (the
+        // script-sides audit): a slot reused by another script -- a scene
+        // change reuses the old scene's -- overwrote the reference and kept
+        // every table it had ever held.
         if (run.envRef != -1)
-            (void)lua_unref(co, run.envRef);
+            modules.ended.push_back(ModuleRegistry::Ended{run.env, run.envRef});
         lua_pushvalue(co, LUA_GLOBALSINDEX);
         run.env = lua_topointer(co, -1);
         run.envRef = lua_ref(co, -1);
@@ -1162,9 +1163,28 @@ void endRun(lua_State* L, core::InstanceId script)
     ModuleRegistry::Run& run = modules.runs[script.index];
     if (run.generation != script.generation)
         return;
+    // Stopped now -- nothing of it is resumed from here on -- and cleaned up
+    // after the drain, the table held until then (`finishEndedRuns`).
     if (run.envRef != -1)
-        (void)lua_unref(L, run.envRef);
+        modules.ended.push_back(ModuleRegistry::Ended{run.env, run.envRef});
     run = ModuleRegistry::Run{};
+}
+
+void finishEndedRuns(lua_State* L)
+{
+    ModuleRegistry& modules = registry(L);
+    if (modules.ended.empty())
+        return;
+    const std::vector<ModuleRegistry::Ended> ended = std::exchange(modules.ended, {});
+    std::vector<const void*> runs;
+    runs.reserve(ended.size());
+    for (const ModuleRegistry::Ended& run : ended) {
+        disconnectRun(L, run.env);
+        runs.push_back(run.env);
+    }
+    dropTimersOf(L, runs);
+    for (const ModuleRegistry::Ended& run : ended)
+        (void)lua_unref(L, run.envRef);
 }
 
 std::vector<ModuleRegistry::Entry> mountedEntries(lua_State* L)

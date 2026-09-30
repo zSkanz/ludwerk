@@ -70,4 +70,13 @@ void registerTasks(lua_State* L);
 // resumptions defer drains at `Heartbeat`.
 void resumeDueTimers(lua_State* L, u64 tick);
 
+// How many timers are waiting: what a test watches to prove a stopped
+// script's waits are gone.
+[[nodiscard]] core::usize pendingTimerCount(lua_State* L);
+
+// **Drops every timer whose thread runs in one of `runs`** -- a stopped
+// script's `task.wait` and `task.delay` (the script-sides close, S4). Each is
+// a globals table's address, still referenced while this runs.
+void dropTimersOf(lua_State* L, const std::vector<const void*>& runs);
+
 } // namespace engine::script

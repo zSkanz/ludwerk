@@ -617,6 +617,9 @@ void ScriptRuntime::drain(core::Phase)
     reconcileScripts(m_impl->state, m_world.takeMovedScripts(), takeEnabledScripts(m_impl->state));
 
     (void)drainDeferred(m_impl->state);
+    // What the runs that stopped this drain take with them: their
+    // connections, their waits, their tables (the script-sides close, S4).
+    finishEndedRuns(m_impl->state);
 
     // After the drain, which is what gives a `Destroying` handler a live handle
     // to work with and what makes every handle to the corpse stop resolving

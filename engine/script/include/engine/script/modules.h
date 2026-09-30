@@ -201,6 +201,16 @@ public:
         const void* env = nullptr;
     };
     std::vector<Run> runs;
+    // **Runs that ended this drain**, their globals tables still referenced:
+    // their connections, parked threads and timers go when the drain is over
+    // (`finishEndedRuns`) -- not before, because a destroyed script's own
+    // `Destroying` handler is in this drain's queue (D132).
+    struct Ended
+    {
+        const void* env = nullptr;
+        int envRef = -1;
+    };
+    std::vector<Ended> ended;
     // The world's scripts have been started -- boot, or the editor's Play --
     // so a script that becomes live starts. False while a project is open in
     // the editor and nothing plays (ADR 0058): moving a script then is editing.
@@ -391,6 +401,11 @@ enum class SuppressReason : core::u8
 // Ends `script`'s run, if it has one: its threads and handlers stop being
 // resumed. What a disable-and-enable does before the new run starts.
 void endRun(lua_State* L, core::InstanceId script);
+
+// **What the runs that ended take with them** (the script-sides close, S4):
+// every connection they made is disconnected, every timer they left is
+// dropped, and their globals tables are let go. After a drain.
+void finishEndedRuns(lua_State* L);
 
 // **Whether `script` is live** (ADR 0137 §1): a `Script`, enabled, with code,
 // under the `DataModel`, under no inert storage (`ServerStorage`,

@@ -225,10 +225,10 @@ D344 to D359, sixteen defects fixed (seven P1, nine P2, no P0).
   projectile a frame would have paid a walk of the world a frame. Moved
   scripts now start in the order of the moves, which is as deterministic;
   only an `Enabled` write walks, as before S1.
-- **A stop suppresses; it does not disconnect.** The run record made the
-  eager version unnecessary, and ADR 0059 already worked this way for
-  `Enabled`. What a reader can see is `Connected` still true on a stopped
-  run's connection. For S3 to weigh: whether that is worth a disconnect pass.
+- **A stop suppresses; it does not disconnect** -- which was wrong, and S4
+  corrected it (D360): the suppressed handlers stayed on their signals, and a
+  game spawning scripted projectiles slowed without bound. A stop disconnects
+  now, after the drain.
 - **An `@engine/*` module's functions belong to no run.** S0.6's first
   version suppressed them with the script that called them, and stopped the
   camera rig; a run's globals now need a raw `script` field.

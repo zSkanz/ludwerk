@@ -537,6 +537,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A script that stops disconnects its connections** (D360): a stopped
+  script's handlers stayed on their signals, and a game spawning scripted
+  projectiles slowed without bound. `Connected` reads false after a stop.
 - The script-sides audit (D344 to D359): a stopped script no longer comes back
   from a wait; a script moved in the tick a scene changes is started or
   stopped; scene changes no longer keep every closed scene's scripts in memory;

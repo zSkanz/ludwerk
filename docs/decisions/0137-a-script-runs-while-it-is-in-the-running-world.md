@@ -159,10 +159,11 @@ clone, a stamp, `Instance.new`, a `Parent` write on it or on any ancestor,
   on anything of a `Script` whose globals are not its script's current run's
   is suppressed when it comes up -- a thread is not resumed, a handler, a
   render step and a close handler are not called. That is ADR 0059's
-  mechanism for `Enabled = false`, applied to every stop, **not an eager kill
-  or disconnect**: what a reader can tell apart is that a stopped run's
-  connection still reads `Connected` true until it is disconnected or its
-  signal's owner goes. A `ModuleScript`'s functions are not
+  mechanism for `Enabled = false`, applied to every stop -- and then, **after
+  the drain the stop happened in, the run's connections are disconnected, its
+  timers dropped and its table let go** (`finishEndedRuns`; the S4 correction
+  below). Not at once, because a destroyed script's own `Destroying` handler is
+  in that drain's queue (D132). A `ModuleScript`'s functions are not
   a run's, and are never suppressed by one: a module required by a stopped
   script still serves the scripts that are running. The `@engine/*` modules'
   own functions run under a globals table with no raw `script` field, and so
@@ -222,3 +223,13 @@ clone, a stamp, `Instance.new`, a `Parent` write on it or on any ancestor,
   scene's runs; a record lets its old table go; a re-enable starts nothing
   before Play; and a world queues moved scripts only once a script runtime
   drains it.
+- **Corrected at S4 (D360): a stop disconnects.** The first build only
+  suppressed a stopped run's handlers, and they stayed on their signals for
+  ever: a projectile with a script that connected to `Heartbeat`, cloned and
+  destroyed fifty a tick, made each tick walk every handler that had ever
+  lived -- 19 ms a tick after 137 500 of them, found by running. Each
+  connection now knows its run (`SignalSystem::byRun`), and the run's end
+  disconnects every one -- `Connected` reads false -- drops its timers and
+  releases its globals table, once the drain is over. `Enabled = false` still
+  only suppresses, as ADR 0059 says: a disabled script is not stopped, and
+  enabling it again is what ends its run.
