@@ -116,10 +116,10 @@ void drawTerrainDebug(const scene::World& world, core::DVec3 eye, core::Vec3 for
             entry->level != level) {
             constexpr auto Cells = static_cast<core::u32>(2 * HalfExtent);
             constexpr auto Rows = static_cast<core::u32>(2 * HalfHeight);
-            entry->mesh = asset::meshField(
-                terrain.field,
-                asset::MeshRegion{
-                    .minX = x, .minY = y, .minZ = z, .cellsX = Cells, .cellsY = Rows, .cellsZ = Cells, .level = level});
+            const asset::MeshRegion region{
+                .minX = x, .minY = y, .minZ = z, .cellsX = Cells, .cellsY = Rows, .cellsZ = Cells, .level = level};
+            asset::prepareRegion(terrain.field, region);
+            entry->mesh = asset::meshField(terrain.field, region);
             entry->revision = terrain.fieldRevision;
             entry->x = x;
             entry->y = y;

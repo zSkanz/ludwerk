@@ -1,7 +1,8 @@
-#include "engine/render/terrain_loader.h"
+﻿#include "engine/render/terrain_loader.h"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <string>
 
@@ -30,6 +31,13 @@ constexpr u64 EvictAfterFrames = 180;
 // that keeps a brush the size of the world from stalling one frame for all of
 // it; the rest follow in the next.
 constexpr u32 MaxEditBuildsPerSync = 64;
+// The eight nodes round a node, in `MeshRegion::sideLevels`' order: the sides,
+// low x, high x, low z, high z, then the corners.
+constexpr std::array<std::array<i32, 2>, 8> TerrainNeighbours{
+    {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}}};
+// How much further than its split distance a split node goes before it joins
+// again (ADR 0140).
+constexpr f64 SplitHysteresis = 1.25;
 
 // Order-sensitive, which is what a key built from an ordered walk wants.
 [[nodiscard]] u64 combine(u64 seed, u64 value) noexcept
@@ -121,13 +129,56 @@ struct ChunkSpan
 
 // Registers a meshed node under its URN, one material per section tinted
 // from the palette. Answers the handle, invalid when there was nothing.
+// **A normal in two floats**, octahedral: the unit sphere folded onto a square.
+[[nodiscard]] std::array<f32, 2> octahedral(core::Vec3 n) noexcept
+{
+    const f32 sum = std::abs(n.x) + std::abs(n.y) + std::abs(n.z);
+    if (!(sum > 0.0f))
+        return {0.0f, 0.0f};
+    f32 x = n.x / sum;
+    f32 y = n.y / sum;
+    if (n.z < 0.0f) {
+        const f32 foldedX = (1.0f - std::abs(y)) * (x >= 0.0f ? 1.0f : -1.0f);
+        const f32 foldedY = (1.0f - std::abs(x)) * (y >= 0.0f ? 1.0f : -1.0f);
+        x = foldedX;
+        y = foldedY;
+    }
+    return {x, y};
+}
+
+// **The terrain's own reading of the 48-byte vertex** (ADR 0140), made here
+// on the way to the GPU: every static mesh has the same layout, asserted, and
+// the terrain needs three more floats for the geomorph's offset. The normal
+// goes octahedral into x and y, freeing z; the tangent's x -- the vertex's own
+// material, which no shader read -- goes; and the triangle corner's index,
+// which was the UV's y, rides in the sky's float with the vertex's seams
+// (`TerrainMesh::morphTags`) as `sky + 2 * corner + 8 * tag`, every part a
+// whole number of steps a float holds exactly. So the offset is `(normal.z,
+// tangent.x, uv.y)`. `engine_terrain_morph.hlsli` reads it so.
+[[nodiscard]] asset::Mesh packedForGpu(const asset::TerrainMesh& meshed)
+{
+    asset::Mesh packed = meshed.mesh;
+    for (usize at = 0; at < packed.vertices.size(); ++at) {
+        asset::Vertex& vertex = packed.vertices[at];
+        const core::Vec3 morph = at < meshed.morphs.size() ? meshed.morphs[at] : core::Vec3{0.0f, 0.0f, 0.0f};
+        const std::array<f32, 2> normal = octahedral(vertex.normal);
+        const f32 corner = vertex.uv[1];
+        const auto tag = static_cast<f32>(at < meshed.morphTags.size() ? meshed.morphTags[at] : 0);
+        vertex.normal = core::Vec3{normal[0], normal[1], morph.x};
+        vertex.tangent[0] = morph.y;
+        vertex.tangent[1] = std::clamp(vertex.tangent[1], 0.0f, 1.0f) + 2.0f * corner + 8.0f * tag;
+        vertex.uv[1] = morph.z;
+    }
+    return packed;
+}
+
 [[nodiscard]] MeshHandle upload(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary& library,
                                 core::NameAtom urn, const asset::TerrainMesh& meshed)
 {
     if (meshed.mesh.indices.empty())
         return {};
     core::EngineError uploadError;
-    const MeshHandle handle = cache.create(device, cmd, meshed.mesh, MeshUsage::Static, &uploadError);
+    const MeshHandle handle = cache.create(device, cmd, packedForGpu(meshed), MeshUsage::Static, &uploadError);
     if (!handle.valid()) {
         core::logText(core::LogLevel::Warn, uploadError.message);
         return {};
@@ -137,7 +188,6 @@ struct ChunkSpan
     entry.bounds = meshed.mesh.bounds;
     entry.sectionCount = static_cast<u32>(meshed.mesh.submeshes.size());
     entry.sectionMaterial.resize(entry.sectionCount);
-    entry.sectionSide = meshed.sectionSides;
     entry.materials.reserve(entry.sectionCount);
     for (u32 section = 0; section < entry.sectionCount; ++section) {
         const core::u8 materialId = section < meshed.sectionMaterials.size() ? meshed.sectionMaterials[section] : 0;
@@ -177,10 +227,15 @@ std::string terrainNodeUrn(core::InstanceId terrain, TerrainNodeKey node)
            std::to_string(node.level) + "/" + std::to_string(node.x) + "," + std::to_string(node.z);
 }
 
-asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNodeKey node)
+namespace {
+
+// The regions a node is meshed as: one per run of rows that can hold a surface.
+[[nodiscard]] std::vector<asset::MeshRegion> nodeRegions(const asset::TerrainField& field, TerrainNodeKey node,
+                                                         TerrainSides sides)
 {
+    std::vector<asset::MeshRegion> regions;
     if (node.level > TerrainTopLevel)
-        return {};
+        return regions;
     const i32 n = across(node.level);
     const i32 step = across(node.level);
     // **One region per run of rows that can hold a surface** (`activeRuns`):
@@ -196,7 +251,6 @@ asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNode
         else
             runs.emplace_back(first, last);
     }
-    asset::TerrainMesh out;
     for (const auto& [first, last] : runs) {
         asset::MeshRegion region;
         region.level = node.level;
@@ -210,10 +264,130 @@ asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNode
         region.cellsY = static_cast<u32>(last - first + 1);
         // **Two of this level's cells**: enough to reach under the widest
         // crack a coarser neighbour can leave, and hidden in the ground.
-        region.skirt = 2.0f * static_cast<f32>(step) * field.settings().voxelSize;
-        asset::appendMesh(out, asset::meshField(field, region));
+        // **Stitched** (ADR 0140): along a side a coarser node is drawn
+        // beside, the node takes that node's own vertices.
+        region.sideLevels = sides;
+        regions.push_back(region);
     }
+    return regions;
+}
+
+} // namespace
+
+asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNodeKey node, TerrainSides sides)
+{
+    asset::TerrainMesh out;
+    for (const asset::MeshRegion& region : nodeRegions(field, node, sides))
+        asset::appendMesh(out, asset::meshField(field, region));
     return out;
+}
+
+void missingTerrainSurfaces(const asset::TerrainField& field, TerrainNodeKey node, TerrainSides sides,
+                            std::vector<asset::SurfaceWant>& out)
+{
+    for (const asset::MeshRegion& region : nodeRegions(field, node, sides))
+        asset::missingSurfaces(field, region, out);
+}
+
+void gatherTerrainSurfaces(std::vector<MissingSurface> missing)
+{
+    std::sort(missing.begin(), missing.end(), [](const MissingSurface& a, const MissingSurface& b) {
+        return a.field != b.field ? std::less<>{}(a.field, b.field) : a.want.key < b.want.key;
+    });
+    struct Gather
+    {
+        MissingSurface at;
+        u64 content = 0;
+        asset::SurfaceLevels surfaces{};
+    };
+    // One per chunk, with every level any node asked of it.
+    std::vector<Gather> gathers;
+    for (const MissingSurface& next : missing) {
+        if (!gathers.empty() && gathers.back().at.field == next.field && gathers.back().at.want.key == next.want.key)
+            gathers.back().at.want.levels |= next.want.levels;
+        else
+            gathers.push_back(Gather{next, asset::surfaceContent(*next.field, next.want.key), {}});
+    }
+    jobs::parallelFor("terrain.surfaces", jobs::Domain::Render, 0, gathers.size(), 1,
+                      [&gathers](usize begin, usize end, u32) noexcept {
+                          for (usize at = begin; at < end; ++at)
+                              gathers[at].surfaces = asset::buildSurfaces(
+                                  *gathers[at].at.field, gathers[at].at.want.key, gathers[at].at.want.levels);
+                      });
+    for (const Gather& gather : gathers)
+        asset::cacheSurfaces(*gather.at.field, gather.at.want.key, gather.content, gather.surfaces);
+}
+
+TerrainSides terrainStitchSides(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key) noexcept
+{
+    const auto coarserAt = [drawn](TerrainNodeKey cell) -> core::u8 {
+        for (u32 level = cell.level + 1; level <= TerrainTopLevel; ++level) {
+            const i32 span = 1 << (level - cell.level);
+            const TerrainNodeKey ancestor{level, asset::floorDiv(cell.x, span), asset::floorDiv(cell.z, span)};
+            if (std::binary_search(drawn.begin(), drawn.end(), ancestor))
+                return static_cast<core::u8>(level);
+        }
+        return 0;
+    };
+    TerrainSides sides{};
+    for (usize at = 0; at < TerrainNeighbours.size(); ++at)
+        sides[at] =
+            coarserAt(TerrainNodeKey{key.level, key.x + TerrainNeighbours[at][0], key.z + TerrainNeighbours[at][1]});
+    return sides;
+}
+
+TerrainMorph terrainMorphOf(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key,
+                            const std::function<std::array<f32, 2>(TerrainNodeKey)>& rangeOf)
+{
+    TerrainMorph morph;
+    const std::array<f32, 2> own = rangeOf(key);
+    morph.set(0, own[0], own[1], static_cast<f32>(key.level));
+    for (usize at = 0; at < TerrainNeighbours.size(); ++at) {
+        const TerrainNodeKey beside{key.level, key.x + TerrainNeighbours[at][0], key.z + TerrainNeighbours[at][1]};
+        morph.set(at + 1, 0.0f, 0.0f, -1.0f);
+        for (u32 level = key.level; level <= TerrainTopLevel; ++level) {
+            const i32 span = 1 << (level - key.level);
+            const TerrainNodeKey over{level, asset::floorDiv(beside.x, span), asset::floorDiv(beside.z, span)};
+            if (std::binary_search(drawn.begin(), drawn.end(), over)) {
+                const std::array<f32, 2> range = rangeOf(over);
+                morph.set(at + 1, range[0], range[1], static_cast<f32>(level));
+                break;
+            }
+        }
+    }
+    return morph;
+}
+
+core::Vec3 terrainSlid(core::Vec3 position, core::Vec3 offset, core::u16 tag, const TerrainMorph& morph,
+                       f32 distance) noexcept
+{
+    const auto level = static_cast<f32>(tag >> 4);
+    const u32 seams = tag & 15u;
+    f32 start = 3.0e38f;
+    f32 end = 3.0e38f;
+    bool drawn = false;
+    for (u32 row = 0; row < 9; ++row) {
+        bool shares = row == 0;
+        if (row >= 1 && row <= 4)
+            shares = (seams & (1u << (row - 1u))) != 0u;
+        else if (row == 5)
+            shares = (seams & 5u) == 5u;
+        else if (row == 6)
+            shares = (seams & 6u) == 6u;
+        else if (row == 7)
+            shares = (seams & 9u) == 9u;
+        else if (row == 8)
+            shares = (seams & 10u) == 10u;
+        if (shares && std::abs(morph.rows[row * 4 + 2] - level) < 0.5f) {
+            start = std::min(start, morph.rows[row * 4]);
+            end = std::min(end, morph.rows[row * 4 + 1]);
+            drawn = true;
+        }
+    }
+    if (!drawn || end <= start)
+        return position;
+    const f32 slide = std::clamp((distance - start) / (end - start), 0.0f, 1.0f);
+    return core::Vec3{position.x + offset.x * slide, position.y + offset.y * slide, position.z + offset.z * slide};
 }
 
 TerrainLoader::Node* TerrainLoader::find(const scene::World* world, core::InstanceId terrain,
@@ -226,11 +400,8 @@ TerrainLoader::Node* TerrainLoader::find(const scene::World* world, core::Instan
 const TerrainLoader::Node* TerrainLoader::find(const scene::World* world, core::InstanceId terrain,
                                                TerrainNodeKey key) const noexcept
 {
-    for (const Node& node : m_nodes) {
-        if (node.world == world && node.terrain == terrain && node.key == key)
-            return &node;
-    }
-    return nullptr;
+    const auto found = m_nodes.find(indexOf(world, terrain, key));
+    return found == m_nodes.end() ? nullptr : &found->second;
 }
 
 void TerrainLoader::release(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library, Node& node)
@@ -293,8 +464,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             fresh.terrain = id;
             fresh.key = key;
             fresh.urn = atoms.intern(terrainNodeUrn(id, key));
-            m_nodes.push_back(fresh);
-            return m_nodes.back();
+            return m_nodes.emplace(indexOf(&world, id, key), fresh).first->second;
         };
         const auto current = [&](Node& node) {
             if (!node.built)
@@ -307,14 +477,50 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             node.revision = terrain.fieldRevision;
             return true;
         };
+        // **A node's own height** (ADR 0140, TA6): the rows its chunk columns
+        // hold, not the whole field's -- a node of low ground under a camera
+        // above a mountain range was measured from the range's top.
+        std::map<TerrainNodeKey, std::pair<f64, f64>> heights;
+        const auto heightOf = [&](TerrainNodeKey key) {
+            if (const auto found = heights.find(key); found != heights.end())
+                return found->second;
+            const i32 n = across(key.level);
+            i32 low = std::numeric_limits<i32>::max();
+            i32 high = std::numeric_limits<i32>::min();
+            forChunksIn(field, key.x * n, key.x * n + n - 1, key.z * n, key.z * n + n - 1,
+                        [&](const asset::TerrainField::Entry& entry) {
+                            low = std::min(low, entry.first.y);
+                            high = std::max(high, entry.first.y);
+                        });
+            const std::pair<f64, f64> range =
+                low > high ? std::pair{lowMetres, highMetres}
+                           : std::pair{static_cast<f64>(low) * chunkMetres, static_cast<f64>(high + 1) * chunkMetres};
+            heights.emplace(key, range);
+            return range;
+        };
         const auto distanceTo = [&](TerrainNodeKey key) {
             const f64 width = static_cast<f64>(across(key.level)) * chunkMetres;
             const f64 x0 = static_cast<f64>(key.x) * width;
             const f64 z0 = static_cast<f64>(key.z) * width;
+            const auto [bottom, top] = heightOf(key);
             const f64 dx = std::max({x0 - focus.x, 0.0, focus.x - (x0 + width)});
-            const f64 dy = std::max({lowMetres - focus.y, 0.0, focus.y - highMetres});
+            const f64 dy = std::max({bottom - focus.y, 0.0, focus.y - top});
             const f64 dz = std::max({z0 - focus.z, 0.0, focus.z - (z0 + width)});
             return std::sqrt(dx * dx + dy * dy + dz * dz);
+        };
+        // **The distance under which a node shows its children** (ADR 0140):
+        // where its error, projected, passes the budget. Flat ground's error
+        // is nothing and it stays coarse; a bump, an edge, a feature a coarse
+        // cell gathered to a point, paint -- each is its own size. A node not
+        // built yet counts its whole cell.
+        const auto splitDistance = [&](TerrainNodeKey key) {
+            const f64 cell = voxel * static_cast<f64>(1u << key.level);
+            if (m_lod.pixelScale > 0.0) {
+                const Node* node = find(&world, id, key);
+                const f64 error = node != nullptr && node->built ? std::max(node->error, 0.01 * cell) : cell;
+                return error * m_lod.pixelScale / std::max(m_lod.pixelError, 1.0e-3);
+            }
+            return m_lod.splitFactor * static_cast<f64>(across(key.level)) * chunkMetres;
         };
         const auto request = [&](TerrainNodeKey key, f64 distance) {
             Node& node = nodeFor(key);
@@ -326,11 +532,31 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             const Node* node = find(&world, id, key);
             return node != nullptr && node->built;
         };
+        // **Sliding onto its parent** as it nears the distance its parent is
+        // drawn at in its place (ADR 0140): the parent takes over past its
+        // own split distance, so a node has slid all the way there, starting
+        // at 85 per cent of it -- a narrow band, since what a node shows while
+        // sliding is up to its parent's error, over the budget by as much as
+        // the band is wide -- and never before its own children would have
+        // taken over, so it is itself when they swap. The top level has no
+        // parent, and slides nowhere.
+        const auto morphRange = [&](TerrainNodeKey key) -> std::array<f32, 2> {
+            if (key.level >= TerrainTopLevel || m_lod.fullDetail)
+                return {0.0f, 0.0f};
+            const TerrainNodeKey parent{key.level + 1, asset::floorDiv(key.x, 2), asset::floorDiv(key.z, 2)};
+            const f64 end = splitDistance(parent);
+            const f64 start = std::max(key.level > 0 ? splitDistance(key) : 0.0, 0.85 * end);
+            if (end <= start)
+                return {0.0f, 0.0f};
+            return {static_cast<f32>(start), static_cast<f32>(end)};
+        };
         const auto draw = [&](TerrainNodeKey key) {
             Node& node = nodeFor(key);
             node.used = m_frame;
-            if (node.mesh.valid())
-                m_drawn.push_back(Drawn{&world, TerrainNodeDraw{id, node.urn}, key});
+            if (!node.mesh.valid())
+                return;
+            // Its geomorph once the selection is whole, below.
+            m_drawn.push_back(Drawn{&world, TerrainNodeDraw{id, node.urn}, key});
         };
 
         const auto childrenOf = [&](TerrainNodeKey key, std::array<TerrainNodeKey, 4>& out) {
@@ -391,7 +617,6 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             // ancestor let go is one the next step back has to rebuild first.
             if (Node* visited = find(&world, id, key))
                 visited->used = m_frame;
-            const f64 width = static_cast<f64>(across(key.level)) * chunkMetres;
             std::array<TerrainNodeKey, 4> children{};
             const usize childCount = childrenOf(key, children);
             const auto childrenCoverable = [&] {
@@ -402,7 +627,16 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 return true;
             };
 
-            if (key.level > 0 && distance < m_lod.splitFactor * width) {
+            // **Split where the node's cell covers more than the error budget**
+            // (ADR 0140), and join again only past 1.25 times the distance
+            // that is -- so a camera on the line does not flip it every frame.
+            Node& here = nodeFor(key);
+            here.used = m_frame;
+            const bool splitting =
+                key.level > 0 &&
+                (m_lod.fullDetail || distance < splitDistance(key) * (here.split ? SplitHysteresis : 1.0));
+            here.split = splitting;
+            if (splitting) {
                 for (usize at = 0; at < childCount; ++at) {
                     if (!resident(children[at]))
                         request(children[at], distanceTo(children[at]));
@@ -445,6 +679,32 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             for (i32 rootX = firstX; rootX <= lastX; ++rootX)
                 select(select, TerrainNodeKey{TerrainTopLevel, rootX, rootZ});
         }
+
+        // **Stitched to what is drawn beside it** (ADR 0140): each node drawn
+        // is meshed against the coarser nodes drawn beside it, and one drawn
+        // beside others than it was built against is built again -- in this
+        // frame, as a changed one is, so no seam is drawn open.
+        std::vector<TerrainNodeKey> keys;
+        for (const Drawn& drawn : m_drawn) {
+            if (drawn.world == &world && drawn.draw.terrain == id)
+                keys.push_back(drawn.key);
+        }
+        std::sort(keys.begin(), keys.end());
+        for (const TerrainNodeKey key : keys) {
+            Node* node = find(&world, id, key);
+            if (node == nullptr)
+                continue;
+            node->wantedSides = terrainStitchSides(keys, key);
+            if (node->built && node->builtSides != node->wantedSides)
+                requests.push_back(Request{id, key, distanceTo(key)});
+        }
+        // **And each node's neighbours' geomorph** (ADR 0140): the node drawn
+        // beside each side and corner, if it is this level or coarser -- the
+        // ones that share a seam's vertices with it at their level.
+        for (Drawn& drawn : m_drawn) {
+            if (drawn.world == &world && drawn.draw.terrain == id)
+                drawn.draw.morph = terrainMorphOf(keys, drawn.key, morphRange);
+        }
     });
 
     // **Nearest first, a fixed count** -- ties by level, terrain and key, so the
@@ -468,14 +728,16 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     // neighbouring nodes showed two versions of one edit for several frames --
     // a ridge half raised, an old shade beside a new one -- and a held brush
     // changes the ground every frame, so that never settled: the flicker the
-    // owner saw while editing. A node that was never built is loading, and
-    // loading keeps the per-frame budget, nearest first.
+    // owner saw while editing. One rebuilt only for what is drawn beside it is
+    // rebuilt in the frame too, or the seam opens. A node that was never built
+    // is loading, and loading keeps the per-frame budget, nearest first.
     struct Build
     {
         const asset::TerrainField* field = nullptr;
         u64 revision = 0;
         Node* node = nullptr;
         TerrainNodeKey key;
+        TerrainSides sides{};
         asset::TerrainMesh mesh;
     };
     std::vector<Build> builds;
@@ -491,25 +753,29 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             continue;
         }
         (node->built ? edits : loads) += 1;
-        builds.push_back(Build{&terrain->field, terrain->fieldRevision, node, next.key, {}});
+        builds.push_back(Build{&terrain->field, terrain->fieldRevision, node, next.key, node->wantedSides, {}});
     }
 
     // **Meshed in parallel**, which is what makes rebuilding a whole edit in
     // one frame affordable. The mesher is a pure function of the field and the
-    // key; the one thing in it that writes is a chunk's lazy mip, and that is
-    // done here first, on this thread (`TerrainChunk::prepareMip`).
-    for (const Build& build : builds) {
-        if (build.key.level == 0)
-            continue;
-        const ChunkSpan xs = readSpan(*build.field, build.key, build.key.x);
-        const ChunkSpan zs = readSpan(*build.field, build.key, build.key.z);
-        forChunksIn(*build.field, xs.low, xs.high, zs.low, zs.high,
-                    [&](const asset::TerrainField::Entry& entry) { entry.second->prepareMip(build.key.level); });
+    // key, and only reads the field's cache of gathered surfaces (ADR 0140),
+    // which is filled here first.
+    // The gathered surfaces they read and nobody has gathered, first.
+    std::vector<MissingSurface> missing;
+    {
+        std::vector<asset::SurfaceWant> wants;
+        for (const Build& build : builds) {
+            wants.clear();
+            missingTerrainSurfaces(*build.field, build.key, build.sides, wants);
+            for (const asset::SurfaceWant& want : wants)
+                missing.push_back(MissingSurface{build.field, want});
+        }
     }
+    gatherTerrainSurfaces(std::move(missing));
     jobs::parallelFor("terrain.mesh", jobs::Domain::Render, 0, builds.size(), 1,
                       [&builds](usize begin, usize end, u32) noexcept {
                           for (usize at = begin; at < end; ++at)
-                              builds[at].mesh = meshTerrainNode(*builds[at].field, builds[at].key);
+                              builds[at].mesh = meshTerrainNode(*builds[at].field, builds[at].key, builds[at].sides);
                       });
 
     // Uploaded in request order, on this thread: nearest first, as ever.
@@ -523,79 +789,34 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
         node.content = contentOf(*build.field, build.key);
         node.revision = build.revision;
         node.built = true;
+        node.builtSides = build.sides;
+        node.error = static_cast<f64>(build.mesh.error);
         m_lastBuilds += 1;
     }
 
     // Nodes of this world nobody has drawn or wanted for a while, or whose
     // terrain is gone, let their meshes go.
-    for (usize at = m_nodes.size(); at > 0; --at) {
-        Node& node = m_nodes[at - 1];
-        if (node.world != &world)
-            continue;
+    for (auto at = m_nodes.begin(); at != m_nodes.end();) {
+        Node& node = at->second;
         const bool gone = world.terrains().find(node.terrain) == nullptr;
-        if (!gone && node.used + EvictAfterFrames >= m_frame)
+        if (node.world != &world || (!gone && node.used + EvictAfterFrames >= m_frame)) {
+            ++at;
             continue;
+        }
         release(device, cache, library, node);
-        m_nodes.erase(m_nodes.begin() + static_cast<std::ptrdiff_t>(at - 1));
+        at = m_nodes.erase(at);
     }
     return m_lastBuilds;
 }
 
-core::u8 terrainSkirtSides(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key) noexcept
-{
-    const auto coarserAt = [drawn](TerrainNodeKey cell) {
-        for (u32 level = cell.level + 1; level <= TerrainTopLevel; ++level) {
-            const i32 span = 1 << (level - cell.level);
-            const TerrainNodeKey ancestor{level, asset::floorDiv(cell.x, span), asset::floorDiv(cell.z, span)};
-            if (std::binary_search(drawn.begin(), drawn.end(), ancestor))
-                return true;
-        }
-        return false;
-    };
-    core::u8 sides = 0;
-    if (coarserAt(TerrainNodeKey{key.level, key.x - 1, key.z}))
-        sides |= 1u;
-    if (coarserAt(TerrainNodeKey{key.level, key.x + 1, key.z}))
-        sides |= 2u;
-    if (coarserAt(TerrainNodeKey{key.level, key.x, key.z - 1}))
-        sides |= 4u;
-    if (coarserAt(TerrainNodeKey{key.level, key.x, key.z + 1}))
-        sides |= 8u;
-    return sides;
-}
-
 std::vector<TerrainNodeDraw> TerrainLoader::draws(const scene::World& world) const
 {
-    // **Which sides meet a coarser node** (the one-sided skirt). A side's
-    // neighbour, one cell over at this node's level, is coarser when an
-    // ancestor of it is what is drawn there. The same level needs no skirt --
-    // the two meshes share their edge -- and a finer neighbour hangs its own.
-    // Each terrain's drawn nodes, sorted, for `terrainSkirtSides`.
-    //
-    // **Gathered and sorted once per terrain, not once per node** (audit R5):
-    // per node it was every node gathered and sorted again, N^2 log N a frame.
-    // Terrains are few, so which one a node belongs to is a short walk.
-    std::vector<std::pair<core::InstanceId, std::vector<TerrainNodeKey>>> byTerrain;
-    const auto keysOf = [&byTerrain](core::InstanceId terrain) -> std::vector<TerrainNodeKey>& {
-        for (auto& [id, keys] : byTerrain) {
-            if (id == terrain)
-                return keys;
-        }
-        return byTerrain.emplace_back(terrain, std::vector<TerrainNodeKey>{}).second;
-    };
-    for (const Drawn& drawn : m_drawn) {
-        if (drawn.world == &world)
-            keysOf(drawn.draw.terrain).push_back(drawn.key);
-    }
-    for (auto& [id, keys] : byTerrain)
-        std::sort(keys.begin(), keys.end());
     std::vector<TerrainNodeDraw> out;
     out.reserve(m_drawn.size());
     for (const Drawn& drawn : m_drawn) {
         if (drawn.world != &world)
             continue;
         TerrainNodeDraw draw = drawn.draw;
-        draw.skirts = terrainSkirtSides(keysOf(drawn.draw.terrain), drawn.key);
         draw.level = static_cast<core::u8>(drawn.key.level);
         out.push_back(draw);
     }
@@ -661,7 +882,7 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
 
 void TerrainLoader::destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library)
 {
-    for (Node& node : m_nodes)
+    for (auto& [index, node] : m_nodes)
         release(device, cache, library, node);
     m_nodes.clear();
     m_drawn.clear();
@@ -670,7 +891,7 @@ void TerrainLoader::destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary&
 usize TerrainLoader::residentCount() const noexcept
 {
     usize count = 0;
-    for (const Node& node : m_nodes) {
+    for (const auto& [index, node] : m_nodes) {
         if (node.mesh.valid())
             ++count;
     }
@@ -679,7 +900,7 @@ usize TerrainLoader::residentCount() const noexcept
 
 bool TerrainLoader::nodeResident(core::InstanceId terrain, TerrainNodeKey key) const noexcept
 {
-    for (const Node& node : m_nodes) {
+    for (const auto& [index, node] : m_nodes) {
         if (node.terrain == terrain && node.key == key && node.built)
             return true;
     }

@@ -97,6 +97,11 @@ struct GraphicsSettings
     // centimetres at the base of a caster that the shadow map's biases give
     // away, recovered from the depth buffer.
     bool contactShadows = true;
+    // **How many pixels a terrain cell may cover** before its node shows its
+    // children (ADR 0140): 4 at low, 3 at medium, 2 at high, 1.5 at ultra, at
+    // the viewport's own height. Smaller is finer ground further out, and
+    // more of it to build and draw.
+    f32 terrainPixelError = 2.0f;
     bool antiAliasing = true;
     // Whether a world's `DepthOfFieldEffect` is drawn (ADR 0096). **The machine
     // wins over the world**, as it does for bloom: a scene that asks for focus

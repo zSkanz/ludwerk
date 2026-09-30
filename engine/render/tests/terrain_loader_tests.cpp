@@ -234,13 +234,13 @@ TEST_CASE("the ground under the viewer stays at full detail for as long as the v
     }
 }
 
-TEST_CASE("the mesh a node is drawn with is its ground, with skirts under its sides")
+TEST_CASE("the mesh a node is drawn with is its ground, stitched rather than skirted")
 {
     LoaderFixture fixture;
     const asset::TerrainMesh leaf = meshTerrainNode(fixture.component().field, TerrainNodeKey{0, 0, 0});
     REQUIRE_FALSE(leaf.mesh.indices.empty());
-    // Skirts are in the drawn mesh, not the collider's surface.
-    CHECK(leaf.mesh.indices.size() > leaf.colliderIndices.size());
+    // No skirts (ADR 0140): what is drawn is the collider's surface.
+    CHECK(leaf.mesh.indices.size() == leaf.colliderIndices.size());
     const asset::TerrainMesh nothing = meshTerrainNode(fixture.component().field, TerrainNodeKey{0, 40, 40});
     CHECK(nothing.mesh.indices.empty());
 }
@@ -321,14 +321,15 @@ TEST_CASE("what meshing a terrain node costs" * doctest::skip())
     }
 }
 
-TEST_CASE("a node hangs a skirt only on the sides that meet a coarser node")
+TEST_CASE("a node is stitched to the level drawn beside it where that is coarser, and to nothing else")
 {
-    // **The one-sided skirt** (the 2026-09-24 mandate, M2): only a coarser
-    // neighbour leaves a crack; the same level shares its edge and a finer
-    // neighbour hangs its own skirt.
+    // **Stitching** (ADR 0140): only a coarser neighbour's vertices differ
+    // from a node's own; the same level shares its edge, and a finer
+    // neighbour stitches itself.
     //
     // A level-0 node at x 1, z 2: the same level on its low x and its high
-    // z, a level-1 node over its high x, and nothing on its low z.
+    // z, a level-1 node over its high x -- and so over its high-x, high-z
+    // corner too, which that node's cells straddle -- and nothing on its low z.
     std::vector<TerrainNodeKey> drawn;
     drawn = {
         TerrainNodeKey{0, 1, 2}, // the subject
@@ -337,12 +338,13 @@ TEST_CASE("a node hangs a skirt only on the sides that meet a coarser node")
         TerrainNodeKey{0, 1, 3}, // same level, high z
     };
     std::sort(drawn.begin(), drawn.end());
-    CHECK(terrainSkirtSides(drawn, TerrainNodeKey{0, 1, 2}) == 2u);
+    CHECK(terrainStitchSides(drawn, TerrainNodeKey{0, 1, 2}) == TerrainSides{0, 1, 0, 0, 0, 0, 0, 1});
 
-    // A node with only finer neighbours hangs nothing.
+    // A node with only finer neighbours is stitched to nothing.
     std::vector<TerrainNodeKey> finer{TerrainNodeKey{1, 0, 0}, TerrainNodeKey{0, 2, 0}, TerrainNodeKey{0, 2, 1}};
     std::sort(finer.begin(), finer.end());
-    CHECK(terrainSkirtSides(finer, TerrainNodeKey{1, 0, 0}) == 0u);
-    // And the finer one beside it hangs its skirt toward the coarse one.
-    CHECK(terrainSkirtSides(finer, TerrainNodeKey{0, 2, 0}) == 1u);
+    CHECK(terrainStitchSides(finer, TerrainNodeKey{1, 0, 0}) == TerrainSides{});
+    // And the finer one beside it is stitched to the coarse one's level, on
+    // its low x and on the corner the coarse one also covers.
+    CHECK(terrainStitchSides(finer, TerrainNodeKey{0, 2, 0}) == TerrainSides{1, 0, 0, 0, 0, 0, 1, 0});
 }

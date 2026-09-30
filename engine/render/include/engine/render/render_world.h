@@ -257,6 +257,9 @@ struct RenderMaterial
     }
 };
 
+// `DrawItem::terrainMorph` for a draw with no geomorph.
+inline constexpr core::u32 NoTerrainMorph = 0xFFFFFFFFu;
+
 // One draw: a mesh section with a transform and a material.
 //
 // `sortKey` is computed here and never in a backend. That is the roadmap's third
@@ -330,6 +333,9 @@ struct DrawItem
     // The level of detail of a terrain draw's node, for the debug view of
     // levels (terrain audit T0). Zero for everything else.
     core::u8 terrainLevel = 0;
+    // A terrain draw's geomorph: its row in `RenderWorld::terrainMorphs`, or
+    // `NoTerrainMorph`.
+    u32 terrainMorph = NoTerrainMorph;
 };
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its
@@ -401,17 +407,35 @@ struct RenderFoliageRun
 // terrain it belongs to and the URN its mesh is filed under in `MeshLibrary`.
 // Chosen by `TerrainLoader`, which knows where the camera is and which meshes
 // are ready; turned into draws by `extract`.
+// **A terrain node's geomorph** (ADR 0140), as the terrain shaders read it:
+// nine rows of `(start, end, level, 0)` -- the node's own, then the node drawn
+// beside each of its sides and corners (low x, high x, low z, high z; then low
+// x and low z, high x and low z, low x and high z, high x and high z), with a
+// level of -1 where what is drawn there is finer, or nothing. From `start`
+// metres from the camera a vertex slides towards its parent's, and at `end` it
+// is there; both zero, it never slides. A vertex on a seam is drawn by every
+// node there, and takes the smallest range of those of its level, so each
+// draws it in the same place.
+struct TerrainMorph
+{
+    std::array<core::f32, 36> rows{};
+
+    void set(usize row, core::f32 start, core::f32 end, core::f32 level) noexcept
+    {
+        rows[row * 4] = start;
+        rows[row * 4 + 1] = end;
+        rows[row * 4 + 2] = level;
+        rows[row * 4 + 3] = 0.0f;
+    }
+};
+
 struct TerrainNodeDraw
 {
     core::InstanceId terrain;
     core::NameAtom urn;
-    // **The sides whose skirt is drawn** (the one-sided skirt): 1 low x,
-    // 2 high x, 4 low z, 8 high z -- the sides that meet a COARSER neighbour,
-    // the only kind that leaves a crack. All four is what a caller that does
-    // not know gets.
-    core::u8 skirts = 0x0F;
     // The node's level of detail, 0 the finest.
     core::u8 level = 0;
+    TerrainMorph morph{};
 };
 
 // One decal as drawn (F2): its box, in camera-relative space, and what it paints.
@@ -546,6 +570,9 @@ struct RenderWorld
     // draw because it is uploaded per draw anyway and a vector of vectors would
     // be a heap allocation per character per frame.
     std::vector<Mat4> bones;
+    // Every terrain draw's geomorph (`DrawItem::terrainMorph`), for the same
+    // reason.
+    std::vector<TerrainMorph> terrainMorphs;
     // The GPU terrains, drawn by node rather than by `DrawItem`.
     std::vector<RenderTerrain> terrains;
     // **This frame's foliage** (ADR 0116), appended by `FoliageSystem::append`:
@@ -624,6 +651,7 @@ struct RenderWorld
         materialFamilies.clear();
         draws.clear();
         bones.clear();
+        terrainMorphs.clear();
         terrains.clear();
         foliageRuns.clear();
         foliageBuckets.clear();
@@ -764,10 +792,6 @@ public:
         // material per section, because a file whose four primitives share one
         // material should upload one material.
         std::vector<u32> sectionMaterial;
-        // A terrain node's: which side's skirt each section is, zero for the
-        // surface (see `asset::TerrainMesh::sectionSides`). Empty for any other
-        // mesh, which has no skirts.
-        std::vector<core::u8> sectionSide;
         std::vector<RenderMaterial> materials;
 
         // The mesh's vertex POSITIONS, for whoever needs a collision hull

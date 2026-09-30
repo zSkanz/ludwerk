@@ -1447,7 +1447,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // a node split whatever its distance is the finest level everywhere.
     if (options.terrainFullDetail) {
         render::TerrainLodSettings full = terrainLoader.lodSettings();
-        full.splitFactor = 1.0e12;
+        full.fullDetail = true;
         terrainLoader.setLodSettings(full);
     }
     // A run that photographs a changing camera on a schedule photographs the
@@ -4858,6 +4858,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // level-of-detail choice is invisible.
             if (snapshot.camera.valid) {
                 terrainLoader.setFocus(snapshot.camera.origin);
+                // **The level of detail by what it looks like** (ADR 0140):
+                // the loader is told how many pixels a metre at a metre's
+                // distance covers -- from the projection and the picture's
+                // height -- and how many a terrain cell may. An orthographic
+                // view keeps the distance rule.
+                render::TerrainLodSettings lod = terrainLoader.lodSettings();
+                const core::Mat4& projection = snapshot.camera.projection;
+                lod.pixelScale = projection.m[3][3] == 0.0f && targetHeight > 0
+                                     ? static_cast<f64>(projection.m[1][1]) * 0.5 * static_cast<f64>(targetHeight)
+                                     : 0.0;
+                lod.pixelError = static_cast<f64>(renderer != nullptr ? renderer->settings().terrainPixelError
+                                                                      : options.graphics.terrainPixelError);
+                terrainLoader.setLodSettings(lod);
                 voxelLoader.setFocus(snapshot.camera.origin);
                 foliage.setFocus(snapshot.camera.origin);
             }

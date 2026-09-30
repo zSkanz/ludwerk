@@ -181,42 +181,15 @@ TEST_CASE("a cave is a surface, which is the whole reason terrain is a volume")
     CHECK(open > 0.99f);
 }
 
-TEST_CASE("the collider is the render surface, without the skirts")
+TEST_CASE("the collider is the render surface")
 {
+    // Seams are stitched, not skirted (ADR 0140): what is drawn is what a
+    // body stands on.
     TerrainField field = flatGround(2.0f);
     (void)raiseBall(field, core::DVec3{16.0, 2.0, 16.0}, 8.0, 5.0f);
-    MeshRegion region = regionAt(0, -8, 0);
-    const TerrainMesh plain = meshField(field, region);
-    region.skirt = 2.0f;
-    const TerrainMesh skirted = meshField(field, region);
-    CHECK(skirted.mesh.indices.size() > plain.mesh.indices.size());
-    CHECK(skirted.colliderIndices.size() == plain.colliderIndices.size());
+    const TerrainMesh plain = meshField(field, regionAt(0, -8, 0));
+    REQUIRE_FALSE(plain.mesh.indices.empty());
     CHECK(plain.colliderIndices.size() == plain.mesh.indices.size());
-}
-
-TEST_CASE("a skirt stays inside the ground behind it, even where the ground is thinner than the skirt is long")
-{
-    // **The owner's dark lines across a 5 km plain.** At the top level a skirt
-    // is two 32 m cells long, and ground laid on an empty world is a slab 32 m
-    // deep, so the skirt hung from the slab's bottom -- which hangs UP, along
-    // the bottom's negative normal -- stood 32 m out of the plain along every
-    // side of every coarse node.
-    TerrainField field(FieldSettings{});
-    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 2048.0f, 0.0f, 1);
-    MeshRegion region = regionAt(-32, -8, -32, 32, 5);
-    region.cellsY = 16;
-    region.skirt = 64.0f;
-    const TerrainMesh meshed = meshField(field, region);
-    REQUIRE(meshed.mesh.indices.size() > meshed.colliderIndices.size());
-    float highest = -1e9f;
-    float lowest = 1e9f;
-    for (const core::u32 index : meshed.mesh.indices) {
-        highest = std::max(highest, meshed.mesh.vertices[index].position.y);
-        lowest = std::min(lowest, meshed.mesh.vertices[index].position.y);
-    }
-    // Nothing above the plain, and nothing under the slab's bottom.
-    CHECK(highest <= 0.01f);
-    CHECK(lowest >= -32.01f);
 }
 
 TEST_CASE("a coarser level is the same surface with fewer triangles")
@@ -249,35 +222,6 @@ TEST_CASE("one section per material, in id order")
     REQUIRE(meshed.sectionMaterials.size() == 3);
     CHECK(std::is_sorted(meshed.sectionMaterials.begin(), meshed.sectionMaterials.end()));
     CHECK(meshed.mesh.submeshes.size() == meshed.sectionMaterials.size());
-}
-
-TEST_CASE("each side's skirt is a section of its own, after the surface")
-{
-    // **The one-sided skirt**: a draw leaves out the skirts on the sides whose
-    // neighbour is not coarser, so they cannot share a section with the
-    // surface or with each other.
-    TerrainField field = flatGround(0.0f);
-    MeshRegion region = regionAt(0, -8, 0);
-    region.skirt = 2.0f;
-    const TerrainMesh meshed = meshField(field, region);
-    REQUIRE(meshed.sectionSides.size() == meshed.sectionMaterials.size());
-    REQUIRE_FALSE(meshed.sectionSides.empty());
-    CHECK(meshed.sectionSides.front() == 0);
-    bool skirtSeen = false;
-    unsigned sidesSeen = 0;
-    for (const core::u8 side : meshed.sectionSides) {
-        if (side == 0) {
-            // The surface first: no surface section after a skirt.
-            CHECK_FALSE(skirtSeen);
-            continue;
-        }
-        skirtSeen = true;
-        // One side each.
-        CHECK((side == 1 || side == 2 || side == 4 || side == 8));
-        sidesSeen |= side;
-    }
-    // A flat ground cut on all four sides has a skirt on all four.
-    CHECK(sidesSeen == 15u);
 }
 
 TEST_CASE("meshing the same field twice produces the same bytes")

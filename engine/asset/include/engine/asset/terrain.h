@@ -26,6 +26,7 @@
 
 #include <array>
 #include <compare>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -276,18 +277,6 @@ public:
     // in the middle of the chunk next door. (0, 0, 0) is `digest`. Lazy.
     [[nodiscard]] core::u64 borderDigest(core::i32 dx, core::i32 dy, core::i32 dz) const noexcept;
 
-    // **The level-`level` voxel at a level-`level` coordinate**, each axis in
-    // `[0, 32 >> level)`. Level 0 is `get`. Above it, the occupancy is the mean
-    // of the `2^level` cube underneath and the material is its fullest voxel's
-    // -- so a distant wall a voxel thick thins rather than vanishing, which a
-    // point sample at a stride would do.
-    //
-    // Computed the first time a level is asked for and kept until a write.
-    // **Not thread-safe**: a caller meshing on workers calls `prepareMip`
-    // first, on one thread.
-    [[nodiscard]] Voxel mip(core::u32 level, core::u32 x, core::u32 y, core::u32 z) const noexcept;
-    void prepareMip(core::u32 level) const;
-
 private:
     [[nodiscard]] static core::u32 rowIndex(core::u32 y, core::u32 z) noexcept { return y * ChunkEdge + z; }
     void invalidate() noexcept;
@@ -319,8 +308,6 @@ private:
     mutable bool m_digestValid = false;
     mutable std::array<core::u64, 27> m_borders{};
     mutable core::u32 m_bordersValid = 0;
-    // Each level's voxels, the voxel under its paint low and the paint high.
-    mutable std::array<std::vector<core::u32>, ChunkLevels> m_mips;
 };
 
 // --- The field ---------------------------------------------------------------
@@ -373,6 +360,89 @@ struct FieldSample
     core::u8 material = 0;
 };
 
+// --- The surface under a chunk, gathered by level (ADR 0140) -----------------
+//
+// **What a coarse level draws is the level-0 surface, clustered.** Each level-0
+// cell the surface passes through has a surface-net vertex; a cell at level L
+// holds the `2^L` cube of them and draws their mean, their commonest material
+// and their paint. A coarse lattice edge carries how many of the level-0 edges
+// along it the surface crosses each way, which is where clustering keeps a
+// quad. So flat ground is where it is at every level, a thin feature thins to a
+// sheet and never vanishes, and a coarse cell is made of its surface.
+
+// One coarse cell the surface passes through. Positions are summed as offsets
+// from the cell's low lattice corner, in level-0 voxels, so a sum of 32 768
+// stays exact enough in a float.
+struct SurfaceCell
+{
+    // `(z * edge + y) * edge + x` inside the chunk, at the level's `edge`.
+    core::u16 index = 0;
+    core::u32 count = 0;
+    float offset[3]{};
+    float normal[3]{};
+    // **The tangent planes of its level-0 vertices, summed** (ADR 0140): each
+    // vertex's normal `n` and point `p` add `n n^T` (xx, xy, xz, yy, yz, zz)
+    // and `n (n . p)`. Where the vertex goes, below.
+    float quadric[6]{};
+    float plane[3]{};
+    // And `(n . p)^2`, so the planes' distance from a point is known.
+    float constant = 0.0f;
+    // The commonest materials under the paint, and their votes.
+    std::array<core::u8, 4> materials{};
+    std::array<core::u16, 4> votes{};
+    // What is painted over it: the commonest paint, and the cover summed.
+    core::u8 top = 0;
+    core::u32 topVotes = 0;
+    float cover = 0.0f;
+    // `point(span)` and `error(span)` at its level, worked out once when it is
+    // gathered: every node that draws it, and every child sliding onto it,
+    // reads them.
+    std::array<float, 3> placed{};
+    float deviation = 0.0f;
+
+    // The material most of its level-0 vertices carry, lowest id on a tie.
+    [[nodiscard]] core::u8 material() const noexcept;
+
+    // **Where its vertex goes**, as an offset from its low corner in level-0
+    // voxels, inside `[0, span]`: the point nearest every one of its
+    // vertices' tangent planes -- so an edge or a corner the cell holds is
+    // where it is, and a gathered slab's rim does not shrink in by half a
+    // cell -- and the mean of them along any direction the planes say
+    // nothing about. Flat ground's is the mean exactly.
+    [[nodiscard]] std::array<float, 3> point(core::u32 span) const noexcept;
+
+    // **How far its level-0 surface is from its vertex**, in level-0 voxels:
+    // the root mean square of their tangent planes' distances from `point`,
+    // and half the cell where it holds more than one material or any paint,
+    // which a coarse cell blends across its whole width. What a level of
+    // detail is chosen by (ADR 0140): flat ground is nothing, a feature the
+    // cell gathered to a point is its size.
+    [[nodiscard]] float error(core::u32 span) const noexcept;
+    // The same, with `point(span)` already in hand.
+    [[nodiscard]] float error(core::u32 span, std::array<float, 3> at) const noexcept;
+};
+
+// One coarse lattice edge the surface crosses: from lattice point `index` one
+// level cell along `axis`. `up` counts the level-0 crossings with ground on the
+// low side, `down` those with it on the high side.
+struct SurfaceEdge
+{
+    core::u16 index = 0;
+    core::u8 axis = 0;
+    core::u16 up = 0;
+    core::u16 down = 0;
+};
+
+struct SurfaceLevel
+{
+    // Sorted by index, then axis; only what the surface touches.
+    std::vector<SurfaceCell> cells;
+    std::vector<SurfaceEdge> edges;
+
+    [[nodiscard]] const SurfaceCell* cell(core::u16 index) const noexcept;
+    [[nodiscard]] const SurfaceEdge* edge(core::u16 index, core::u8 axis) const noexcept;
+};
+
 class TerrainField
 {
 public:
@@ -395,10 +465,6 @@ public:
 
     [[nodiscard]] Voxel voxel(core::i32 x, core::i32 y, core::i32 z) const noexcept;
     [[nodiscard]] FieldSample sample(core::i32 x, core::i32 y, core::i32 z) const noexcept;
-
-    // A voxel of level `level`, at a level-`level` coordinate (the level-0
-    // index divided by `2^level`). What the level-of-detail mesher reads.
-    [[nodiscard]] Voxel voxelAt(core::u32 level, core::i32 x, core::i32 y, core::i32 z) const noexcept;
 
     [[nodiscard]] const TerrainChunk* findChunk(ChunkKey key) const noexcept;
     [[nodiscard]] core::usize chunkCount() const noexcept { return m_chunks.size(); }
@@ -467,11 +533,31 @@ public:
     // Widens or narrows the world's floor and ceiling. Resamples nothing.
     void setHeightRange(float minHeight, float maxHeight) noexcept;
 
+    // **One chunk's gathered surface at one level** (ADR 0140), if gathered
+    // for `content` -- the digest of what it was gathered from, its own voxels
+    // and its neighbours' borders. Content-addressed, so copies of a field
+    // share the cache and a copy that differs simply misses. Written on one
+    // thread (`prepareSurface`, `cacheSurfaces`), before anything meshes from
+    // it.
+    [[nodiscard]] const SurfaceLevel* cachedSurface(ChunkKey key, core::u32 level, core::u64 content) const noexcept;
+    void cacheSurface(ChunkKey key, core::u32 level, core::u64 content,
+                      std::shared_ptr<const SurfaceLevel> surface) const;
+
 private:
+    struct SurfaceEntry
+    {
+        core::u64 content = 0;
+        std::shared_ptr<const SurfaceLevel> surface;
+    };
+    using SurfaceCache = std::map<std::pair<ChunkKey, core::u32>, SurfaceEntry>;
+
     FieldSettings m_settings;
     // Sorted by key. Never a hash map (R10): the mesher, the save file and the
     // world hash all walk this, and the walk must be a fact about the world.
     std::vector<Entry> m_chunks;
+    // Shared by copies, looked up by key and never walked: nothing about the
+    // world reaches it but what it was asked.
+    std::shared_ptr<SurfaceCache> m_surfaces = std::make_shared<SurfaceCache>();
 };
 
 // A batch of voxel writes: caches the chunk it is in, and normalises every

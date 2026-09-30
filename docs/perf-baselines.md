@@ -1256,3 +1256,24 @@ hundred metres across -- and its tail is its handful of nodes being rebuilt.
 
 The draws column `--frame-stats` prints counts parts, not terrain nodes, so it
 is left out here.
+
+### After T2 (ADR 0140)
+
+The same flights, the same way, once a coarse node is meshed from the level-0
+surface gathered under it, the level chosen by projected error, and the seams
+stitched and sliding together.
+
+| Flight | Median | p95 | p99 | Worst |
+|---|---|---|---|---|
+| The owner's place | 2.71, 2.79, 2.74 ms | 23.0, 22.2, 22.4 ms | 34.5, 31.4, 33.9 ms | 62.0, 60.1, 58.8 ms |
+| The gallery | 0.55, 0.58, 0.57 ms | 1.07, 1.01, 1.10 ms | 8.9, 9.6, 9.5 ms | 17.3, 17.3, 16.3 ms |
+
+**A regression, stated as one.** A coarse node is now built from the fine
+surface under it and round it, where it was built from a mip, and the owner's
+place streams cells in under the camera for the whole flight, each rebuilding
+the coarse nodes it lands in. The first measurement of T2 was a p95 of 109 ms
+and a worst frame of 1.3 s; what brought it to this is in ADR 0140's
+consequences. The median is the frames with no building: a view drawn to its
+error budget draws more nodes than one drawn by distance did, and a lower
+quality draws fewer. T5 (TA14) moves meshing off the main
+thread and holds the p99 under 16.6 ms.

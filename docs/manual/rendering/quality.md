@@ -52,6 +52,11 @@ nothing gets it.
 `SunRaysEffect` are drawn on this machine; a world that has neither pays nothing
 for either way (ADR 0096).
 
+**The preset also sets how coarse distant terrain may be**: how many pixels
+what a coarser level gets wrong may cover before a nearer, finer one is drawn
+-- 4 at low, 3 at medium, 2 at high and 1.5 at ultra (ADR 0140). It has no key
+of its own. See [Terrain](manual:world/terrain).
+
 Two of those are worth a sentence each.
 
 **Low turns down render scale first**, because it is the only dial that reduces

@@ -9,19 +9,25 @@
 //
 // **A quadtree of columns of chunks carries the level of detail.** A leaf is one
 // column of 32-voxel chunks, meshed at full detail; a node at level L covers
-// `2^L` by `2^L` leaves and is meshed from their level-L mips -- an eighth of
-// the triangles per level, and a thin wall thins rather than vanishing. Each
-// node spans the whole height its chunks occupy, so two levels only ever meet
-// on a vertical side, where the mesher hangs a skirt.
+// `2^L` by `2^L` leaves and is meshed from their level-0 surface gathered at
+// level L (ADR 0140) -- a quarter of the triangles per level, flat ground where
+// it is, and a thin wall thinned to a sheet rather than gone. Each node spans
+// the whole height its chunks occupy, so two levels only ever meet on a
+// vertical side, where the finer one is stitched to the coarser.
 //
 // **A change of level never shows a hole**: a node is drawn until all of its
 // children are ready, and children until their parent is. Meshes are built
 // nearest first, a fixed number a frame -- a count, never a clock -- and an edit
 // rebuilds only the nodes whose chunks it changed.
 
+#include <array>
 #include <compare>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "engine/asset/terrain.h"
@@ -49,27 +55,71 @@ struct TerrainNodeKey
 // the default voxel, meshed from each chunk's single level-5 value.
 inline constexpr core::u32 TerrainTopLevel = asset::ChunkLevels - 1;
 
-// **The sides of `key` that meet a coarser node** among the nodes of one
-// terrain that are drawn (`drawn`, sorted): 1 low x, 2 high x, 4 low z, 8 high
-// z. A side's neighbour, one cell over at this node's level, is coarser when an
-// ancestor of it is what is drawn there. The same level needs no skirt -- the
-// two meshes share their edge -- and a finer neighbour hangs its own.
-[[nodiscard]] core::u8 terrainSkirtSides(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key) noexcept;
-
 // The URN a node's mesh is filed under: `terrain://<slot>.<generation>/<level>/<x>,<z>`.
 [[nodiscard]] std::string terrainNodeUrn(core::InstanceId terrain, TerrainNodeKey node);
 
 // **The mesh one node is drawn with**, exactly as `sync` builds it -- the
-// region, the level and the skirt. Here so a test can hold what is DRAWN against
+// region, the level and the stitching. Here so a test can hold what is DRAWN against
 // the field and the collider. Empty when the node has nothing to draw.
-[[nodiscard]] asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNodeKey node);
+// **`sides`**: the level drawn beside each side and corner where it is coarser
+// -- low x, high x, low z, high z, then the corners (`MeshRegion::sideLevels`);
+// zero where not -- which the node stitches to (ADR 0140).
+using TerrainSides = std::array<core::u8, 8>;
+[[nodiscard]] asset::TerrainMesh meshTerrainNode(const asset::TerrainField& field, TerrainNodeKey node,
+                                                 TerrainSides sides = {});
+// **What meshing a node reads, prepared** (ADR 0140): its gathered surfaces,
+// on one thread, before nodes are meshed on several.
+void missingTerrainSurfaces(const asset::TerrainField& field, TerrainNodeKey node, TerrainSides sides,
+                            std::vector<asset::SurfaceWant>& out);
+
+// **Gathers the surfaces meshes are about to read** (ADR 0140), before they
+// are meshed on many threads: each chunk named -- by field, repeats and all --
+// is keyed on this thread, gathered on every thread, and cached on this one
+// again. Called where `meshField` then runs in parallel, which only reads.
+struct MissingSurface
+{
+    const asset::TerrainField* field = nullptr;
+    asset::SurfaceWant want;
+};
+void gatherTerrainSurfaces(std::vector<MissingSurface> missing);
+
+// **The level drawn beside each side of `key` where it is coarser** (ADR
+// 0140), from the nodes drawn -- sorted. What the node is stitched to.
+[[nodiscard]] TerrainSides terrainStitchSides(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key) noexcept;
+
+// **A node's geomorph, as the shaders get it** (ADR 0140): its own range, then
+// the node drawn beside each side and corner if it is this level or coarser,
+// each from `rangeOf` -- `(start, end)` metres, both zero for none. `drawn`
+// sorted.
+[[nodiscard]] TerrainMorph terrainMorphOf(std::span<const TerrainNodeKey> drawn, TerrainNodeKey key,
+                                          const std::function<std::array<core::f32, 2>(TerrainNodeKey)>& rangeOf);
+// **Where the shaders draw a vertex** of a node drawn with `morph`: its
+// position, its offset to its parent's and its seams (`TerrainMesh::morphs`,
+// `morphTags`), `distance` metres from the camera. What
+// `engine_terrain_morph.hlsli` works out, in the same steps, so a test can
+// hold two nodes' meshes against each other while they slide.
+[[nodiscard]] core::Vec3 terrainSlid(core::Vec3 position, core::Vec3 offset, core::u16 tag, const TerrainMorph& morph,
+                                     core::f32 distance) noexcept;
 
 struct TerrainLodSettings
 {
-    // A node is split into its children when the viewer is nearer to it than
-    // this many times its own width. Two puts full detail out to about 64 m at
-    // the default metre voxel, and each level doubles it.
+    // **Without a view** (`pixelScale` zero, as in a test): a node is split
+    // into its children when the viewer is nearer to it than this many times
+    // its own width. Two puts full detail out to 128 m at the default metre
+    // voxel -- a node there is 32 m wide and its box is measured from its
+    // nearest point -- and each level doubles it.
     double splitFactor = 2.0;
+    // **With one** (ADR 0140): the node's error -- how far its mesh is from
+    // the level-0 surface, or its cell's width until it is built -- projected,
+    // may cover at most `pixelError` pixels, or the node shows its children.
+    // `pixelScale` is pixels per metre at a metre's distance -- the viewport's
+    // height over twice the tangent of half its vertical field of view -- so
+    // `e` metres at distance `d` cover `e * pixelScale / d` pixels.
+    double pixelScale = 0.0;
+    double pixelError = 1.5;
+    // Every node at its finest, whatever the distance: the reference a coarse
+    // level is held against (`--terrain-detail=full`).
+    bool fullDetail = false;
     // Nothing further than this is drawn.
     double viewDistance = 4096.0;
 };
@@ -135,6 +185,17 @@ private:
         core::u64 revision = ~0ull;
         // Built at least once: a node of empty ground is built and has no mesh.
         bool built = false;
+        // The coarser levels beside it it was built stitched to, and those it
+        // is drawn beside now (ADR 0140): a node whose neighbours changed is
+        // rebuilt, as one whose ground did.
+        TerrainSides builtSides{};
+        TerrainSides wantedSides{};
+        // Whether its children were shown last frame: a node splits under the
+        // error budget and joins again only past 1.25 times it (hysteresis).
+        bool split = false;
+        // How far its mesh is from the level-0 surface, in metres, once built
+        // (`asset::TerrainMesh::error`).
+        double error = 0.0;
         // The last frame this node was drawn or wanted.
         core::u64 used = 0;
     };
@@ -153,7 +214,18 @@ private:
     core::u64 m_frame = 0;
 
     // Sorted by (world, terrain index, key): never a hash map (R10).
-    std::vector<Node> m_nodes;
+    // **Looked up, not walked** (ADR 0140): a view drawn to its error budget
+    // holds thousands of nodes, and a walk per lookup made the selection
+    // quadratic. Keyed by world, terrain and node; the order of a map is never
+    // what is drawn in (the selection's own order is).
+    using NodeIndex = std::tuple<std::uintptr_t, core::u64, TerrainNodeKey>;
+    [[nodiscard]] static NodeIndex indexOf(const scene::World* world, core::InstanceId terrain,
+                                           TerrainNodeKey key) noexcept
+    {
+        return NodeIndex{reinterpret_cast<std::uintptr_t>(world),
+                         (static_cast<core::u64>(terrain.index) << 32) | terrain.generation, key};
+    }
+    std::map<NodeIndex, Node> m_nodes;
     struct Drawn
     {
         const scene::World* world = nullptr;

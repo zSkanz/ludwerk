@@ -16,8 +16,11 @@
 #
 # Then `imgholes` on each picture of the first run: no sky enclosed by ground
 # (a hole, an open seam), and no sky where the second run's same picture had
-# ground more than a couple of pixels inside its silhouette (ground a coarse
-# level lost). Every picture is checked and every count reported before the
+# ground further inside its silhouette than the quality's error budget allows
+# (ground a coarse level lost). A level is chosen so its shape is within the
+# budget's pixels of the full one (ADR 0140), and while a node slides onto its
+# parent it shows up to 1/0.85 of that -- so the slack is that, rounded up,
+# with the floor below. Sky enclosed by ground has no slack at all. Every picture is checked and every count reported before the
 # verdict, so one run shows the whole state of the ground.
 #
 # Invoked as:
@@ -38,6 +41,17 @@ if(NOT DEFINED CASES)
 endif()
 if(NOT DEFINED QUALITY)
     set(QUALITY high)
+endif()
+# The error budget in pixels (`GraphicsSettings::terrainPixelError`: ultra
+# 1.5, high 2, medium 3, low 4), over 0.85 and rounded up -- and never under
+# 3: a level's error is measured over its cells, and a curved silhouette, a
+# ball's top close up, moves a pixel further than that says.
+if(QUALITY STREQUAL "medium")
+    set(SLACK 4)
+elseif(QUALITY STREQUAL "low")
+    set(SLACK 5)
+else()
+    set(SLACK 3)
 endif()
 
 file(REMOVE_RECURSE "${OUTPUT}")
@@ -85,7 +99,7 @@ foreach(index RANGE 0 ${last})
         message(FATAL_ERROR "terrain gallery: case ${index} was not photographed (${shot})")
     endif()
     execute_process(
-        COMMAND "${HOLES}" "${shot}" "--reference=${reference}" --slack=2
+        COMMAND "${HOLES}" "${shot}" "--reference=${reference}" --slack=${SLACK}
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)

@@ -1005,12 +1005,10 @@ if(ENG_BUILD_TESTS)
     # had ground -- see the driver. The test every earlier terrain audit
     # lacked.
     #
-    # **Expected to fail until the audit's T2** closes TA1 and TA2: today the
-    # 2 m slab vanishes from 500 m on, and the gate says so. The test passes
-    # on exactly that verdict and nothing else -- a crash, a missing picture
-    # or a gallery that finds no fault all fail it -- so `main` stays green
-    # meanwhile and the fix that makes the ground stay has to take the
-    # expectation off.
+    # Until the audit's T2 it was expected to fail -- the 2 m slab vanished
+    # from 500 m on, and the seams were open -- and passed only on that
+    # verdict. Gathered, stitched and morphed (ADR 0140), nothing shows sky
+    # through it or in its place, and it is an ordinary test.
     add_test(NAME terrain_gallery_holes
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>
@@ -1020,7 +1018,6 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_gallery.cmake)
     set_tests_properties(terrain_gallery_holes PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        PASS_REGULAR_EXPRESSION "ENG_TERRAIN_GALLERY_FAULT"
         TIMEOUT 300)
 
     # E5's screenshot row, which sat PENDING because the overlay it named was an

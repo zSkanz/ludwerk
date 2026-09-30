@@ -14,15 +14,24 @@ cbuffer GpuShadowUniforms : register(b0, space1)
     column_major float4x4 Model;
 };
 
-// x: how far to push, in the light's clip depth.
+// x: how far to push, in the light's clip depth; then the geomorph (ADR 0140),
+// so a shadow is cast by the ground as it is drawn.
 cbuffer GpuTerrainShadowPush : register(b1, space1)
 {
     float4 Push;
+    float4 Morph[9];
 };
 
+#include "engine_terrain_morph.hlsli"
+
+// The terrain's reading of the vertex (`terrain.hlsl`): the geomorph's offset
+// is `(normal.z, tangent.x, uv.y)`.
 struct VertexInput
 {
     float3 Position : TEXCOORD0;
+    float3 Normal : TEXCOORD1;
+    float4 Tangent : TEXCOORD2;
+    float2 Uv : TEXCOORD3;
 };
 
 struct Interpolants
@@ -33,7 +42,10 @@ struct Interpolants
 Interpolants VertexMain(VertexInput input)
 {
     Interpolants output;
-    output.Position = mul(ViewProjection, mul(Model, float4(input.Position, 1.0f)));
+    const float3 position =
+        terrainMorphed(input.Position, float3(input.Normal.z, input.Tangent.x, input.Uv.y),
+                       terrainSeams(input.Tangent.y).tag, mul(Model, float4(input.Position, 1.0f)).xyz);
+    output.Position = mul(ViewProjection, mul(Model, float4(position, 1.0f)));
     // Scaled by w so it is the same depth offset for a perspective projection
     // as for an orthographic one.
     output.Position.z += Push.x * output.Position.w;

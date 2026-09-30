@@ -50,6 +50,14 @@ TEST_CASE("sky inside the ground is a hole; sky round it is not")
     report = findHoles(shot, nullptr, 2);
     CHECK(report.enclosed == 2);
 
+    // A wedge of sky whose last pixel touches the rest only at a corner is the
+    // same sky, as a rasteriser draws its tip.
+    Image wedge = skyWithGround(5, 5, 35, 25);
+    for (int y = 5; y < 10; ++y)
+        paintSky(wedge, 12, y);
+    paintSky(wedge, 13, 10);
+    CHECK(findHoles(wedge, nullptr, 2).enclosed == 0);
+
     // A notch open to the sky outside is the silhouette, not a hole.
     Image notched = skyWithGround(5, 5, 35, 25);
     for (int y = 5; y < 12; ++y)

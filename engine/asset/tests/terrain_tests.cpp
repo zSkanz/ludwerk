@@ -225,23 +225,6 @@ TEST_CASE("a snapshot taken before an edit does not see it")
     CHECK_FALSE(solidAt(field, 0.5, -2.0, 0.5));
 }
 
-TEST_CASE("a mip is the mean occupancy of what is under it, and the fullest material")
-{
-    TerrainChunk chunk;
-    // Half of one 2x2x2 block full of material 4, the rest empty.
-    for (core::u32 y = 0; y < 2; ++y) {
-        for (core::u32 x = 0; x < 2; ++x)
-            (void)chunk.set(x, y, 0, Voxel{FullOccupancy, 4});
-    }
-    chunk.normalize();
-    const Voxel half = chunk.mip(1, 0, 0, 0);
-    CHECK(half.material == 4);
-    CHECK(std::abs(static_cast<int>(half.occupancy) - 128) <= 1);
-    CHECK(chunk.mip(1, 1, 0, 0) == Voxel{});
-    // The whole chunk is one value at the top: a sixty-fourth of a sixty-fourth.
-    CHECK(chunk.mip(5, 0, 0, 0).occupancy == 0);
-}
-
 TEST_CASE("fields share what they load, and drop what they are told to")
 {
     const TerrainField a = flatField(0.0f);

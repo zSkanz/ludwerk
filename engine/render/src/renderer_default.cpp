@@ -869,6 +869,10 @@ private:
     bool terrainValid_ = false;
     rhi::PipelineHandle terrainPipeline_{};
     rhi::PipelineHandle terrainShadowPipeline_{};
+    // The terrain into the depth prepass as it is drawn: slid by its geomorph
+    // (ADR 0140), where the static mesh's prepass would write the depth of
+    // where it was, and the forward pass then lose to it.
+    rhi::PipelineHandle terrainPrepassPipeline_{};
     // How far the shadow pass being drawn pushes the terrain from the light,
     // in the light's clip depth. Set per cascade; zero for a local light.
     f32 terrainShadowPush_ = 0.0f;
@@ -1933,9 +1937,9 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     instanceBuffer_ = {};
 
     for (rhi::PipelineHandle* pipeline :
-         {&terrainPipeline_, &terrainShadowPipeline_, &voxelPipeline_, &particlePipeline_, &voxelTilePipeline_,
-          &voxelBlendPipeline_, &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_, &worldUiOnTopPipeline_,
-          &spritePipeline_}) {
+         {&terrainPipeline_, &terrainShadowPipeline_, &terrainPrepassPipeline_, &voxelPipeline_, &particlePipeline_,
+          &voxelTilePipeline_, &voxelBlendPipeline_, &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_,
+          &worldUiOnTopPipeline_, &spritePipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
@@ -2756,6 +2760,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             selection == Selection::Opaque && batch == nullptr && draw.terrain && terrainPipeline_.valid();
         const bool terrainShadow =
             selection == Selection::Shadow && batch == nullptr && draw.terrain && terrainShadowPipeline_.valid();
+        const bool terrainPrepass =
+            selection == Selection::Prepass && batch == nullptr && draw.terrain && terrainPrepassPipeline_.valid();
         const bool voxelDraw = (selection == Selection::Opaque || selection == Selection::Transparent) &&
                                batch == nullptr && draw.voxelBlock && voxelPipeline_.valid() &&
                                voxelBlendPipeline_.valid();
@@ -2788,6 +2794,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             : skinnedDraw           ? skinnedPipeline
             : terrainDraw           ? terrainPipeline_
             : terrainShadow         ? terrainShadowPipeline_
+            : terrainPrepass        ? terrainPrepassPipeline_
             : voxelDraw             ? (selection == Selection::Transparent ? voxelBlendPipeline_ : voxelPipeline_)
             : leafShadow            ? voxelShadowPipeline_
                                     : staticPipeline;
@@ -2805,9 +2812,14 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
             if (surfacePipeline.valid())
                 bindSurface(cmd, draw.material, false, false);
-            if (terrainShadow) {
-                const f32 push[4] = {terrainShadowPush_, 0.0f, 0.0f, 0.0f};
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(push, sizeof(push)));
+            if (terrainShadow || terrainPrepass) {
+                // The push, and the geomorph: a shadow is cast by the ground as
+                // it is drawn, and the prepass writes where it is.
+                std::array<f32, 40> push{};
+                push[0] = terrainShadow ? terrainShadowPush_ : 0.0f;
+                if (draw.terrainMorph < world.terrainMorphs.size())
+                    std::copy_n(world.terrainMorphs[draw.terrainMorph].rows.begin(), 36, push.begin() + 4);
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(push.data(), sizeof(push)));
             }
             if (leafShadow && boundMaterial != kVoxelBinding) {
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&voxelPalette_, sizeof(voxelPalette_)));
@@ -2826,6 +2838,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             // A terrain node's level, for the debug view of levels.
             uniforms.instanceAlphaUnused[1] = static_cast<f32>(draw.terrainLevel);
             cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
+            // And its geomorph (ADR 0140), beside the block every mesh has.
+            if (draw.terrain) {
+                const TerrainMorph morph = draw.terrainMorph < world.terrainMorphs.size()
+                                               ? world.terrainMorphs[draw.terrainMorph]
+                                               : TerrainMorph{};
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(morph.rows.data(), sizeof(morph.rows)));
+            }
 
             if (voxelDraw) {
                 // The registry's colours at the vertex stage's second slot, and
@@ -4164,12 +4183,12 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
     // cull FRONT faces so the depth stored is a solid's far side (D051), and
     // the ground is a surface with no far side: culling its front faces would
     // cull all of it, and the sun would shine through the hills.
-    const std::span<const rhi::VertexAttribute> positionOnly{attributes.data(), 1};
+    // All four attributes: the geomorph's offset rides in three of them.
     terrainShadowPipeline_ = device.createGraphicsPipeline({
         .vertexShader = depthVertex,
         .fragmentShader = depthFragment,
         .vertexBuffers = buffers,
-        .vertexAttributes = positionOnly,
+        .vertexAttributes = attributes,
         .rasterizer = {.cullMode = rhi::CullMode::None},
         .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
         .colorTargets = {},
@@ -4177,7 +4196,19 @@ bool DefaultRenderer::ensureTerrain(rhi::IDevice& device)
         .debugName = "terrain_shadow",
     });
 
-    terrainValid_ = terrainPipeline_.valid() && terrainShadowPipeline_.valid();
+    terrainPrepassPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = depthVertex,
+        .fragmentShader = depthFragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = {},
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "terrain_prepass",
+    });
+
+    terrainValid_ = terrainPipeline_.valid() && terrainShadowPipeline_.valid() && terrainPrepassPipeline_.valid();
     return terrainValid_;
 }
 

@@ -74,8 +74,8 @@ plain.Name = "Plain"
 plain.MinHeight = -64
 plain.MaxHeight = 64
 plain.Parent = workspace
-plain:FillBlock(vector.create(0, -2, -112), vector.create(64, 4, 48), 1)
-plain:FillBall(vector.create(0, 2, -112), 6, 1)
+plain:FillBlock(vector.create(0, -2, -144), vector.create(64, 4, 48), 1)
+plain:FillBall(vector.create(0, 2, -144), 6, 1)
 
 -- --- The flight ------------------------------------------------------------------
 

@@ -491,6 +491,25 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **A terrain far away is the same shape, at lower resolution** (ADR 0140,
+  terrain audit T2). A coarse level is the level-0 surface gathered: a coarse
+  cell's vertex is the point nearest the level-0 surface inside it, its material
+  and paint the surface's, and a slab thinner than a cell thins to a sheet
+  rather than vanishing. Flat ground no longer moves between levels.
+- **No crack or skirt where two levels meet** (ADR 0140): a node takes the
+  vertices of the coarser nodes beside its sides and corners, and the skirts are
+  gone. A seam's vertices slide onto their parent's together in every node that
+  draws them, so a change of level shows neither a pop nor an open seam.
+- **The level is chosen by projected error**: a node shows its children where
+  what it gets wrong would cover more than 4, 3, 2 or 1.5 pixels at quality low,
+  medium, high and ultra -- measured from its own box, height included, with
+  hysteresis. Flat ground stays coarse; a bump, an edge or paint is drawn finer.
+- **The sky term is the drawn level's own**: air under an overhang is air, and
+  a feature a level does not draw no longer shades the ground under it.
+- **Building distant terrain costs more** (ADR 0140's consequences): the
+  terrain flight over the owner's place went from a p95 of 7.4 ms to 22 ms;
+  the audit's T5 moves meshing off the main thread.
+
 - **A terrain's materials come from Content** (D330), as in other engines: the
   Paint panel's `+` picks one of the project's materials, a material dragged
   from Content onto it adds it and onto a swatch replaces that layer, and a

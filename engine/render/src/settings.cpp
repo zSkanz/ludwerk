@@ -26,6 +26,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = false;
         settings.ambientOcclusion = false;
         settings.contactShadows = false;
+        settings.terrainPixelError = 4.0f;
         settings.antiAliasing = true;
         settings.autoExposure = true;
         settings.depthOfField = false;
@@ -41,6 +42,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = false;
         settings.contactShadows = true;
+        settings.terrainPixelError = 3.0f;
         settings.antiAliasing = true;
         settings.autoExposure = true;
         settings.depthOfField = false;
@@ -57,6 +59,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
+        settings.terrainPixelError = 2.0f;
         settings.antiAliasing = true;
         settings.autoExposure = true;
         break;
@@ -84,6 +87,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.bloom = true;
         settings.ambientOcclusion = true;
         settings.contactShadows = true;
+        settings.terrainPixelError = 1.5f;
         settings.antiAliasing = true;
         settings.autoExposure = true;
         break;

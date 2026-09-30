@@ -1080,6 +1080,7 @@ void PhysicsSync::applyTerrain()
             region.cellsX = asset::ChunkEdge;
             region.cellsY = asset::ChunkEdge;
             region.cellsZ = asset::ChunkEdge;
+            asset::prepareRegion(field, region);
             const asset::TerrainMesh meshed = asset::meshField(field, region);
 
             physics::BodyHandle handle{};

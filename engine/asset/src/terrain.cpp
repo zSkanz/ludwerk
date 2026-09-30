@@ -183,8 +183,6 @@ void TerrainChunk::invalidate() noexcept
 {
     m_digestValid = false;
     m_bordersValid = 0;
-    for (std::vector<u32>& level : m_mips)
-        level.clear();
 }
 
 bool TerrainChunk::set(u32 x, u32 y, u32 z, Voxel voxel)
@@ -248,8 +246,6 @@ usize TerrainChunk::bytes() const noexcept
     usize total = sizeof(TerrainChunk);
     for (const Layer* layer : {&m_main, &m_paint})
         total += layer->rows.capacity() * sizeof(u32) + layer->dense.capacity() * sizeof(u16);
-    for (const std::vector<u32>& level : m_mips)
-        total += level.capacity() * sizeof(u32);
     return total;
 }
 
@@ -343,62 +339,6 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
     return m_borders[slot];
 }
 
-void TerrainChunk::prepareMip(u32 level) const
-{
-    if (level == 0 || level >= ChunkLevels || uniform() || !m_mips[level].empty())
-        return;
-    const u32 edge = ChunkEdge >> level;
-    const u32 span = 1u << level;
-    std::vector<u32>& out = m_mips[level];
-    out.assign(static_cast<usize>(edge) * edge * edge, 0);
-    // Sums per level cell, read row by row so the rows' own storage is walked
-    // once in order.
-    std::vector<u32> sums(out.size(), 0);
-    std::vector<u8> best(out.size(), 0);
-    std::vector<Voxel> fullest(out.size());
-    std::array<u16, ChunkEdge> row{};
-    std::array<u16, ChunkEdge> paint{};
-    const bool painted = this->painted();
-    for (u32 y = 0; y < ChunkEdge; ++y) {
-        for (u32 z = 0; z < ChunkEdge; ++z) {
-            readRow(y, z, row);
-            if (painted)
-                readPaintRow(y, z, paint);
-            const usize base = (static_cast<usize>(y / span) * edge + z / span) * edge;
-            for (u32 x = 0; x < ChunkEdge; ++x) {
-                const Voxel voxel = painted ? withPaint(unpackVoxel(row[x]), paint[x]) : unpackVoxel(row[x]);
-                const usize cell = base + x / span;
-                sums[cell] += voxel.occupancy;
-                // The fullest voxel's materials, the first one met on a tie:
-                // the walk order is fixed, so so is the answer.
-                if (voxel.occupancy > best[cell]) {
-                    best[cell] = voxel.occupancy;
-                    fullest[cell] = voxel;
-                }
-            }
-        }
-    }
-    const u32 count = span * span * span;
-    for (usize at = 0; at < out.size(); ++at) {
-        const auto occupancy = static_cast<u8>((sums[at] + count / 2) / count);
-        const Voxel voxel = canonical(Voxel{occupancy, fullest[at].material, fullest[at].top, fullest[at].cover});
-        out[at] = static_cast<u32>(packVoxel(voxel)) | (static_cast<u32>(packPaint(voxel)) << 16);
-    }
-}
-
-Voxel TerrainChunk::mip(u32 level, u32 x, u32 y, u32 z) const noexcept
-{
-    if (level == 0)
-        return get(x, y, z);
-    if (uniform())
-        return value();
-    if (m_mips[level].empty())
-        prepareMip(level);
-    const u32 edge = ChunkEdge >> level;
-    const u32 packed = m_mips[level][(static_cast<usize>(y) * edge + z) * edge + x];
-    return withPaint(unpackVoxel(static_cast<u16>(packed & 0xFFFF)), static_cast<u16>(packed >> 16));
-}
-
 // --- TerrainField --------------------------------------------------------------
 
 i32 TerrainField::voxelIndex(double metres) const noexcept
@@ -436,16 +376,18 @@ FieldSample TerrainField::sample(i32 x, i32 y, i32 z) const noexcept
     return FieldSample{(0.5f - occupancyOf(got)) * RampVoxels * m_settings.voxelSize, got.material};
 }
 
-Voxel TerrainField::voxelAt(u32 level, i32 x, i32 y, i32 z) const noexcept
+const SurfaceLevel* TerrainField::cachedSurface(ChunkKey key, u32 level, core::u64 content) const noexcept
 {
-    if (level == 0)
-        return voxel(x, y, z);
-    const i32 edge = Edge >> level;
-    const TerrainChunk* chunk = findChunk(ChunkKey{floorDiv(x, edge), floorDiv(y, edge), floorDiv(z, edge)});
-    if (chunk == nullptr)
-        return Voxel{};
-    return chunk->mip(level, static_cast<u32>(floorMod(x, edge)), static_cast<u32>(floorMod(y, edge)),
-                      static_cast<u32>(floorMod(z, edge)));
+    const auto found = m_surfaces->find(std::pair{key, level});
+    if (found == m_surfaces->end() || found->second.content != content)
+        return nullptr;
+    return found->second.surface.get();
+}
+
+void TerrainField::cacheSurface(ChunkKey key, u32 level, core::u64 content,
+                                std::shared_ptr<const SurfaceLevel> surface) const
+{
+    (*m_surfaces)[std::pair{key, level}] = SurfaceEntry{content, std::move(surface)};
 }
 
 std::vector<ChunkKey> TerrainField::chunkKeys() const

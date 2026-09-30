@@ -108,18 +108,75 @@ away is the same shape drawn close, at lower resolution.
 
 ## T2 — the shape at a distance
 
-- [ ] TA1: coarse levels keep what is there -- a thin slab or ball thins to a
+- [x] TA1: coarse levels keep what is there -- a thin slab or ball thins to a
   cell, never vanishes while it covers a pixel (ADR amending 0082).
-- [ ] TA2: flat is flat at every level, under 2 cm at L0 to L5; seams closed
+- [x] TA2: flat is flat at every level, under 2 cm at L0 to L5; seams closed
   from both sides.
-- [ ] TA6: the level chosen by projected screen error, with hysteresis and a
+- [x] TA6: the level chosen by projected screen error, with hysteresis and a
   geomorph; the vertical distance from the node's own box; the 64/128 m comment.
-- [ ] TA7: a coarse cell's material and paint are the surface's.
-- [ ] TA3, TA11: the sky term matches the geometry it lights; no fixed bearings;
+- [x] TA7: a coarse cell's material and paint are the surface's.
+- [x] TA3, TA11: the sky term matches the geometry it lights; no fixed bearings;
   air under an overhang is air; a vanished feature leaves no imprint.
-- [ ] Mesh P2: winding from the edge sign, crease diagonals chosen
+- [x] Mesh P2: winding from the edge sign, crease diagonals chosen
   consistently, normals that do not fall back to +Y, and a stated choice on
   feature-preserving placement.
+
+### T2 as it stands
+
+**ADR 0140**: a coarse level is the level-0 surface gathered. Its should-fail
+marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
+(`terrain_gallery_holes`) is an ordinary test.
+
+- **TA1, TA2, TA7**: a coarse cell's vertex is the point nearest the level-0
+  tangent planes inside it (QEM, the mean along what they leave free), its
+  material the one most level-0 vertices carry, its paint theirs; a coarse
+  edge is a quad each way the level-0 surface crosses it, so a slab thinner
+  than a cell is a sheet with two faces. Flat ground is under 2 cm at L0 to
+  L5; the tests hold slabs, balls, paint and a plate at every level.
+- **Seams (TA2, ludwerk-08's ask)**: stitched, never skirted -- the skirts are
+  gone from the mesher, the loader and foliage. A node gathers the cells it
+  shares with a coarser node at that node's level, on its four sides **and
+  its four corners**. No skirt can show: a test holds what a node draws to
+  the collider's surface, index for index, and the gallery finds no sky
+  through a seam.
+- **TA6**: a node's error is its cells' largest (plane distance, half a cell
+  where materials mix or paint lies); a node splits where that error covers
+  more than 4, 3, 2 or 1.5 px (quality low to ultra), measured from its own
+  box, with 1.25 hysteresis. **The geomorph (ludwerk-08's ask)**: each vertex
+  slides onto its parent's cell between 85 and 100 per cent of the distance
+  its node gives way at, and **a seam's vertex slides over the smallest range
+  of the nodes of its level that draw it**, which each works out alike -- the
+  tag rides in the vertex, the neighbours' ranges in the draw. The depth
+  prepass slides with it, through a terrain pipeline of its own.
+- **TA3, TA11**: the sky term is the drawn level's own columns (level 1's for
+  level 0), every solid run of them, sixteen bearings.
+- **Mesh P2**: winding from the edge's sign at every level; a quad split along
+  the shorter diagonal only when it is clearly shorter (under 0.8 of the
+  other), otherwise always the same one; a vertex with no gradient takes its
+  faces' normal.
+- **Proof in motion, without TAA** (the engine has none; FXAA is per frame):
+  the gallery's flight (`tests/perf/terrainflight`), photographed every fifth
+  frame with the sky magenta and the ground white -- 300 pictures, **not one
+  pixel of sky enclosed by ground**. A seam's vertex is shown to be in one
+  place in every node that draws it while it slides, whatever each node's
+  range (`terrain_seam_tests.cpp`). A frame-to-frame count of changed pixels
+  was tried as a pop detector, on the flight and on a slow dolly; slow motion
+  moves silhouettes a pixel on some frames and not others, and the count
+  flagged as much with the geomorph off as on, so it proves nothing and is
+  not claimed.
+- **The gallery at every quality**: no enclosed sky at low, medium, high or
+  ultra; its slack for ground a coarse level drew thinner is the quality's
+  budget over 0.85, rounded up -- what a level is chosen to be within -- and
+  never under 3 px: at ultra's 1.5 a ball's top close up moved 2 to 3 px, a
+  pixel past what an error measured over a cell says.
+- **Performance** (`docs/perf-baselines.md`): the owner's place's flight went
+  from a p95 of 7.4 ms to 22 ms and a worst of 25 ms to 60 ms. Stated as a
+  regression; T5 moves meshing off the main thread.
+- **The gallery after T2**, beside the pictures from before any fix:
+  `terrain-audit-2026-09-29/gallery-after-t2-5-15-30m.png`,
+  `gallery-after-t2-60-120-250m.png` (no dark imprint under the floating ball)
+  and `gallery-after-t2-500-1000-2000m.png` (the 2 m slab and the plain
+  terrain still there at 1 000 and 2 000 m).
 
 ## T3 — light and shadow on terrain
 
@@ -200,6 +257,35 @@ away is the same shape drawn close, at lower resolution.
   terrain**: a ball carved to make an overhang reached through the 4 m slab,
   and the hole it left was, correctly, sky. A scene that proves defects is
   looked at by eye first, at full detail, for holes of its own making.
+- **A level budget by cell size cost ten times the nodes.** T2 first chose a
+  level by the cell's projected size; on the owner's place it split every flat
+  field to the finest level near the camera. By the error the level makes,
+  flat ground stays coarse. A node not yet built counts its whole cell.
+- **Per-node geomorph ranges open every seam while they slide.** Nodes chosen
+  by their own error give way at different distances, and a seam's vertex is
+  drawn by every node there. The gallery showed a crack along each seam; the
+  shared rule closed them.
+- **Stitching to the sides alone leaves a slit at a corner** whose diagonal
+  neighbour is coarser than either side. A ray test from above does not see
+  it -- the diagonal node's ring covers it -- and the gallery did.
+- **QEM that drops a plane under 10 per cent of the largest recedes a rim.** A
+  rim cell has many vertices on top and few on the side; the side's direction
+  was dropped and the rim drawn half a cell in, which the error measure (plane
+  distance at the vertex) did not see either. 2 per cent keeps it.
+- **The first T2 flight was a p95 of 109 ms and a worst of 1.3 s.** The costs,
+  in order of size: gathering chunks with no surface (air and buried rock,
+  most of a view); one voxel read per level instead of per chunk; the surface
+  gather on one thread; a 400 KB grid allocated and cleared per chunk; a
+  point solved three times per vertex; the quads walked over the region's
+  volume with a tree lookup per corner. Instrumentation that counted with
+  shared atomics per vertex inflated what it measured -- measured again
+  without it.
+- **`meshField` wrote the field's cache**, and foliage meshes on workers: a
+  race, found before it shipped. Meshing now only reads; what it reads is
+  gathered first.
+- **The streamer lets the ground go above about a kilometre**: the owner's
+  place draws nothing from high in the flight, because its cells are evicted.
+  Not T2's; noted for T5.
 
 ---
 

@@ -1504,9 +1504,9 @@ TEST_CASE("a terrain node draws once the loader has chosen it and its mesh is in
     CHECK(after.parts.empty());
 
     // **A selected terrain outlines nothing** (D161). The outline pass draws
-    // through everything in front of it, and a node's skirts are buried in the
-    // ground: outlined, they showed through a dug crater as a tinted lid and a
-    // row of boxes -- which is what selecting a terrain looked like, and
+    // through everything in front of it, and a node's skirts, when it had them,
+    // were buried in the ground: outlined, they showed through a dug crater as
+    // a tinted lid and a row of boxes -- which is what selecting a terrain looked like, and
     // `Create Terrain` selects the terrain it makes.
     const std::array<core::InstanceId, 1> selection{terrain};
     render::RenderWorld selected;

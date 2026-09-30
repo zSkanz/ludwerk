@@ -34,7 +34,9 @@ HoleReport findHoles(const Image& shot, const Image* reference, int slack)
     const int height = shot.height;
     const std::vector<std::uint8_t> sky = skyMask(shot);
 
-    // The sky that reaches the edge, by a flood from every edge pixel of sky.
+    // The sky that reaches the edge, by a flood from every edge pixel of sky --
+    // eight ways, so the last pixel of a wedge of sky between two shapes,
+    // touching the rest only at a corner, is the same sky.
     std::vector<std::uint8_t> open(sky.size(), 0);
     std::vector<int> stack;
     const auto seed = [&](int x, int y) {
@@ -57,14 +59,12 @@ HoleReport findHoles(const Image& shot, const Image* reference, int slack)
         stack.pop_back();
         const int x = at % width;
         const int y = at / width;
-        if (x > 0)
-            seed(x - 1, y);
-        if (x + 1 < width)
-            seed(x + 1, y);
-        if (y > 0)
-            seed(x, y - 1);
-        if (y + 1 < height)
-            seed(x, y + 1);
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if ((dx != 0 || dy != 0) && x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height)
+                    seed(x + dx, y + dy);
+            }
+        }
     }
     for (std::size_t at = 0; at < sky.size(); ++at) {
         if (sky[at] == 0)

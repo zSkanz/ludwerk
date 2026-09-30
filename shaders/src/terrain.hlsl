@@ -11,14 +11,25 @@
 // shading, and the terrain's rules paint by slope and height over it.
 //
 // The vertex layout is `asset::Vertex`, the same 48 bytes every static mesh
-// uses, so a node travels through `MeshCache` like any other mesh: the
-// material id's old seat (the tangent's x) and the sky (its y) are where they
-// were, and the UVs carry the triangle's three ids and the corner.
+// uses, so a node travels through `MeshCache` like any other mesh, read the
+// terrain's own way (ADR 0140; the loader packs it): the normal octahedral in
+// x and y, the sky, the triangle corner and the vertex's seams in the tangent's
+// y as `sky + 2 * corner + 8 * tag`, the triangle's three layers in the UV's x,
+// and the geomorph's offset in `(normal.z, tangent.x, uv.y)`
+// (`engine_terrain_morph.hlsli`).
 
 #define ENG_UNIFORMS_OBJECT
 #define ENG_UNIFORMS_FRAME
 #include "engine_forward.hlsli"
 #include "engine_terrain_surface.hlsli"
+
+// The geomorph (ADR 0140): this node's range and its neighbours'.
+cbuffer GpuTerrainMorph : register(b1, space1)
+{
+    float4 Morph[9];
+};
+
+#include "engine_terrain_morph.hlsli"
 
 // Per terrain, indexed by material id (0 is air and unused).
 cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
@@ -83,22 +94,37 @@ struct TerrainInterpolants
     float4 Position : SV_Position;
 };
 
+// **A normal folded octahedrally into two floats** (ADR 0140; the loader packs
+// it so, to free the normal's z for the geomorph).
+float3 terrainNormal(float2 folded)
+{
+    float3 n = float3(folded.x, folded.y, 1.0f - abs(folded.x) - abs(folded.y));
+    const float t = saturate(-n.z);
+    n.x += n.x >= 0.0f ? -t : t;
+    n.y += n.y >= 0.0f ? -t : t;
+    return normalize(n);
+}
+
 TerrainInterpolants VertexMain(VertexInput input)
 {
     TerrainInterpolants output;
-    const float4 shadingPosition = mul(Model, float4(input.Position, 1.0f));
+    const TerrainSeams seams = terrainSeams(input.Tangent.y);
+    const float3 position = terrainMorphed(input.Position, float3(input.Normal.z, input.Tangent.x, input.Uv.y),
+                                           seams.tag, mul(Model, float4(input.Position, 1.0f)).xyz);
+    const float4 shadingPosition = mul(Model, float4(position, 1.0f));
     output.ShadingPosition = shadingPosition.xyz;
     output.Position = mul(ViewProjection, shadingPosition);
     output.ViewDepth = output.Position.w;
-    output.Normal = mul((float3x3)NormalMatrix, input.Normal);
+    output.Normal = mul((float3x3)NormalMatrix, terrainNormal(input.Normal.xy));
     // The mesher works in the field's own space, so the untransformed
     // position IS the field coordinate.
-    output.Ground = input.Position.xyz;
-    output.Sky = saturate(input.Tangent.y);
+    output.Ground = position;
+    const float corner = seams.corner;
+    output.Sky = seams.sky;
     const uint packed = uint(input.Uv.x + 0.5f);
     output.Materials = uint3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u);
-    const uint corner = uint(input.Uv.y + 0.5f);
-    output.Corners = float3(corner == 0u ? 1.0f : 0.0f, corner == 1u ? 1.0f : 0.0f, corner == 2u ? 1.0f : 0.0f);
+    output.Corners = float3(corner < 0.5f ? 1.0f : 0.0f, corner > 0.5f && corner < 1.5f ? 1.0f : 0.0f,
+                            corner > 1.5f ? 1.0f : 0.0f);
     // The paint's two slots of the tangent, packed as the materials are.
     const uint tops = uint(input.Tangent.z + 0.5f);
     output.Tops = uint3(tops & 255u, (tops >> 8) & 255u, (tops >> 16) & 255u);

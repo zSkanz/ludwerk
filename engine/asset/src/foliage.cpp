@@ -123,9 +123,6 @@ FoliageTile growFoliage(const TerrainMesh& surface, f32 worldY, std::span<const 
     u32 triangle = 0;
 
     for (usize section = 0; section < mesh.submeshes.size(); ++section) {
-        // The surface only: a skirt is a wall under a seam, not ground.
-        if (section < surface.sectionSides.size() && surface.sectionSides[section] != 0)
-            continue;
         const u8 voxelMaterial = section < surface.sectionMaterials.size() ? surface.sectionMaterials[section] : 0;
         const Submesh& submesh = mesh.submeshes[section];
         for (u32 at = submesh.firstIndex; at + 2 < submesh.firstIndex + submesh.indexCount; at += 3, ++triangle) {

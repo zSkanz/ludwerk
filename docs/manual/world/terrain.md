@@ -343,9 +343,16 @@ The three numbers a terrain is decided at:
 ## How it is drawn and collided
 
 - **Drawn.** The ground is drawn as meshes, one per column of 32-voxel chunks
-  near the camera, and coarser further away. A far mesh is built from each
-  chunk's averages, so distant hills keep their shape with a fraction of the
-  triangles. An edit rebuilds only the meshes of the chunks it changed.
+  near the camera, and coarser further away. A coarse mesh is the fine surface
+  gathered, a point per coarse cell where the surface inside it is, so a far
+  hill keeps its shape and a thin slab thins rather than vanishing, with a
+  fraction of the triangles. **How coarse** is chosen by what a level would
+  get wrong on screen: under 4, 3, 2 or 1.5 pixels at graphics quality low,
+  medium, high and ultra. Flat ground stays coarse close up; a bump, an edge
+  or paint is drawn finer. Two levels meet with no crack -- the finer mesh
+  takes the coarser one's vertices along the seam -- and a mesh slides onto
+  the next level's shape before it is replaced, so nothing pops. An edit
+  rebuilds only the meshes of the chunks it changed.
 - **Collided.** Collision is built near things that move: bodies that are not
   anchored, and characters. Each such chunk gets a mesh of its surface, which
   a body lands on the moment it arrives.

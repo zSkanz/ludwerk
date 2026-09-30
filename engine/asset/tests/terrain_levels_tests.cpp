@@ -9,6 +9,7 @@
 // **A case that proves a defect not yet fixed is marked `should_fail`**, so the
 // suite stays green while it waits and the fix that makes it pass has to take
 // the mark off (the ledger, `docs/briefs/terrain-audit-2026-09-29-full.md`).
+// ADR 0140's gathered levels took it off the shapes, flat ground and the plate.
 #include <algorithm>
 #include <cmath>
 #include <doctest/doctest.h>
@@ -90,7 +91,7 @@ void eachTopVertex(const TerrainMesh& meshed, float inner, Visit visit)
 
 } // namespace
 
-TEST_CASE("every shape of the gallery still has triangles at every level" * doctest::should_fail())
+TEST_CASE("every shape of the gallery still has triangles at every level")
 {
     // TA1: a coarse cell's occupancy is the mean of the cube under it, so a
     // shape thinner than about half a cell falls under the threshold and is
@@ -107,7 +108,7 @@ TEST_CASE("every shape of the gallery still has triangles at every level" * doct
     }
 }
 
-TEST_CASE("flat ground at a quarter-metre height is within 2 cm at every level" * doctest::should_fail())
+TEST_CASE("flat ground at a quarter-metre height is within 2 cm at every level")
 {
     // TA2: a linear crossing between two coarse samples is biased, by up to
     // 2.7 m at L5 -- steps at every seam and a node that jumps in height when
@@ -169,7 +170,7 @@ TEST_CASE("open flat ground sees the whole sky at every level")
     }
 }
 
-TEST_CASE("ground under a plate a coarse level does not draw is not darkened by it" * doctest::should_fail())
+TEST_CASE("ground under a plate a coarse level does not draw is not darkened by it")
 {
     // TA3: the sky term was computed from the level-0 columns and applied to
     // coarse vertices, so a feature the coarse level lost still shaded the
@@ -193,7 +194,7 @@ TEST_CASE("ground under a plate a coarse level does not draw is not darkened by 
         CHECK(darkest > 0.99f);
 }
 
-TEST_CASE("paint on the ground survives every level" * doctest::should_fail())
+TEST_CASE("paint on the ground survives every level")
 {
     // TA7: a coarse cell took its materials from its fullest voxel, the first
     // met walking up from the bottom -- a deep one nobody painted, so paint
@@ -205,19 +206,83 @@ TEST_CASE("paint on the ground survives every level" * doctest::should_fail())
     PaintOptions over;
     over.mode = PaintMode::Blend;
     over.strength = 0.5f;
-    (void)paintBall(field, core::DVec3{0.0, 0.0, 0.0}, 24.0, 2, over);
+    (void)paintBall(field, core::DVec3{0.0, 0.0, 0.0}, 40.0, 2, over);
     for (core::u32 level = 0; level <= TopLevel; ++level) {
         CAPTURE(level);
         const TerrainMesh meshed = meshAt(field, level, 96, -40, 16);
         int painted = 0;
         int seen = 0;
-        eachTopVertex(meshed, 12.0f, [&](const Vertex& vertex) {
+        // Seventeen metres: a level-5 cell is 32 across, its vertex at the
+        // middle of the ground it gathers.
+        eachTopVertex(meshed, 17.0f, [&](const Vertex& vertex) {
             ++seen;
+            // The three corners' paint packed, and which corner this is.
             const auto tops = static_cast<core::u32>(vertex.tangent[2] + 0.5f);
-            if ((tops & 0xFFu) == 2u)
+            const auto corner = static_cast<core::u32>(vertex.uv[1] + 0.5f);
+            if (((tops >> (8u * corner)) & 0xFFu) == 2u)
                 ++painted;
         });
         REQUIRE(seen > 0);
         CHECK(painted == seen);
+    }
+}
+
+TEST_CASE("the ground under a plate sees the sky round its edges: air under an overhang is air (TA11)")
+{
+    // The sky term's column map was one span from a column's bottom to its
+    // top, so the air under a plate counted as rock and the ground there was
+    // black whatever lay beside it.
+    TerrainField field(settingsOf());
+    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 256.0f, 0.0f, 1);
+    (void)fillBlock(field, core::DVec3{0.0, 10.5, 0.0}, core::Vec3{24.0f, 1.0f, 24.0f}, 1);
+    for (const core::u32 level : {0u, 1u}) {
+        CAPTURE(level);
+        const TerrainMesh meshed = meshAt(field, level, 96, -40, 32);
+        float lightest = 0.0f;
+        int seen = 0;
+        eachTopVertex(meshed, 4.0f, [&](const Vertex& vertex) {
+            if (vertex.position.y > 2.0f)
+                return;
+            lightest = std::max(lightest, vertex.tangent[1]);
+            ++seen;
+        });
+        REQUIRE(seen > 0);
+        CHECK(lightest > 0.15f);
+        CHECK(lightest < 0.9f);
+    }
+}
+
+TEST_CASE("a node slid all the way is its parent's surface: the geomorph's targets are the level above's vertices")
+{
+    // ADR 0140: a node about to give way to its parent has slid onto it, so
+    // the swap changes no pixel. Every vertex's target is a vertex the parent
+    // draws.
+    TerrainField field(settingsOf());
+    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 256.0f, 0.0f, 1);
+    (void)fillBall(field, core::DVec3{0.5, 0.0, 0.5}, 14.0, 1);
+    for (const core::u32 level : {0u, 1u, 2u}) {
+        CAPTURE(level);
+        const TerrainMesh child = meshAt(field, level, 32, -40, 24);
+        const TerrainMesh parent = meshAt(field, level + 1, 64, -40, 24);
+        REQUIRE(child.morphs.size() == child.mesh.vertices.size());
+        std::vector<core::Vec3> targets;
+        for (const Vertex& vertex : parent.mesh.vertices)
+            targets.push_back(vertex.position);
+        int missed = 0;
+        int checked = 0;
+        for (std::size_t at = 0; at < child.mesh.vertices.size(); ++at) {
+            const core::Vec3 p = child.mesh.vertices[at].position;
+            if (std::abs(p.x) > 24.0f || std::abs(p.z) > 24.0f)
+                continue;
+            const core::Vec3 slid{p.x + child.morphs[at].x, p.y + child.morphs[at].y, p.z + child.morphs[at].z};
+            ++checked;
+            const bool found = std::any_of(targets.begin(), targets.end(), [&](const core::Vec3& t) {
+                return std::abs(t.x - slid.x) < 1e-3f && std::abs(t.y - slid.y) < 1e-3f &&
+                       std::abs(t.z - slid.z) < 1e-3f;
+            });
+            missed += found ? 0 : 1;
+        }
+        REQUIRE(checked > 0);
+        CHECK(missed == 0);
     }
 }

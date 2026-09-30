@@ -92,14 +92,17 @@ terrain:PaintBall(vector.create(40, 0, -40), 8, Sand)
 terrain:PaintBall(vector.create(52, 0, -40), 6, Rock)
 
 -- **Ground with no material**: a second terrain with no layers, behind the
--- first as the cameras look -- plain matte grey (ADR 0113).
+-- first as the cameras look -- plain matte grey (ADR 0113). Forty metres
+-- clear of it: a gap narrower than a pixel at the furthest case is drawn shut
+-- at full detail and a pixel open a level coarser, which is a coarser picture
+-- of the same shape and not what the hole check is for.
 local plain = Instance.new("Terrain")
 plain.Name = "Plain"
 plain.MinHeight = -64
 plain.MaxHeight = 64
 plain.Parent = workspace
-plain:FillBlock(vector.create(0, -2, -112), vector.create(64, 4, 48), 1)
-plain:FillBall(vector.create(0, 2, -112), 6, 1)
+plain:FillBlock(vector.create(0, -2, -144), vector.create(64, 4, 48), 1)
+plain:FillBall(vector.create(0, 2, -144), 6, 1)
 
 -- --- The camera and the sun ------------------------------------------------------
 

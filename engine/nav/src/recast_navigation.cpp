@@ -758,6 +758,7 @@ private:
                     region.cellsX = asset::ChunkEdge;
                     region.cellsZ = asset::ChunkEdge;
                     region.cellsY = static_cast<core::u32>(high - low + 1);
+                    asset::prepareRegion(field, region);
                     const asset::TerrainMesh meshed = asset::meshField(field, region);
                     const int first = static_cast<int>(soup.vertices.size() / 3);
                     for (const Vec3& point : meshed.colliderPoints)

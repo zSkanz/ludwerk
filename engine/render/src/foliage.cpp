@@ -10,6 +10,7 @@
 #include "engine/asset/terrain_mesher.h"
 #include "engine/jobs/jobs.h"
 #include "engine/render/render_world.h"
+#include "engine/render/terrain_loader.h"
 #include "engine/scene/components.h"
 #include "engine/scene/world.h"
 
@@ -173,12 +174,13 @@ struct Growth
     asset::FoliageTile grown;
 };
 
-void grow(Growth& growth)
+// The ground a tile grows on, or none where its column holds nothing.
+[[nodiscard]] std::optional<asset::MeshRegion> regionOf(const Growth& growth)
 {
     const std::optional<std::pair<i32, i32>> rows = asset::activeRows(*growth.field, growth.x, growth.z, 1);
     if (!rows.has_value())
-        return;
-    const asset::MeshRegion region{
+        return std::nullopt;
+    return asset::MeshRegion{
         .minX = growth.x * Edge,
         .minY = rows->first,
         .minZ = growth.z * Edge,
@@ -186,9 +188,15 @@ void grow(Growth& growth)
         .cellsY = static_cast<u32>(rows->second - rows->first + 1),
         .cellsZ = static_cast<u32>(Edge),
         .level = 0,
-        .skirt = 0.0f,
     };
-    const asset::TerrainMesh surface = asset::meshField(*growth.field, region);
+}
+
+void grow(Growth& growth)
+{
+    const std::optional<asset::MeshRegion> region = regionOf(growth);
+    if (!region.has_value())
+        return;
+    const asset::TerrainMesh surface = asset::meshField(*growth.field, *region);
     growth.grown = asset::growFoliage(surface, growth.worldY, *growth.terrainRules, growth.rules, growth.x, growth.z);
 }
 
@@ -310,6 +318,19 @@ void FoliageSystem::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::
         growths.push_back(std::move(growth));
     }
 
+    // The surfaces their ground reads, gathered first (ADR 0140): the tiles
+    // then only read them.
+    std::vector<MissingSurface> missing;
+    std::vector<asset::SurfaceWant> surfaceWants;
+    for (const Growth& growth : growths) {
+        if (const std::optional<asset::MeshRegion> region = regionOf(growth); region.has_value()) {
+            surfaceWants.clear();
+            asset::missingSurfaces(*growth.field, *region, surfaceWants);
+            for (const asset::SurfaceWant& want : surfaceWants)
+                missing.push_back(MissingSurface{growth.field, want});
+        }
+    }
+    gatherTerrainSurfaces(std::move(missing));
     jobs::parallelFor("foliage.grow", jobs::Domain::Render, 0, growths.size(), 1,
                       [&growths](usize begin, usize end, u32) noexcept {
                           for (usize at = begin; at < end; ++at)

@@ -19,6 +19,8 @@
 // neighbour builds as its last, from the same samples, into the same vertices.
 // So meshing the world a region at a time is watertight with no stitching.
 
+#include <array>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -49,18 +51,16 @@ struct MeshRegion
     // than vanishing.
     core::u32 level = 0;
 
-    // **How far to hang a skirt from the region's four sides, in metres.** Zero
-    // hangs none.
-    //
-    // Two neighbouring nodes meshed at different levels disagree along their
-    // shared side by up to a fraction of the coarse node's cell, and daylight
-    // shows through. A strip hung from every boundary edge along the negative
-    // normal fills it from behind -- under flat ground and into the rock behind
-    // a cliff -- and is invisible from anywhere that can see the surface.
-    //
-    // **The collider never gets a skirt.** A wall under every edge of collision
-    // is something a character could stand on inside a cave.
-    float skirt = 0.0f;
+    // **The level drawn beside each side and corner, where it is coarser**
+    // (ADR 0140): low x, high x, low z, high z, then the corners low x and low
+    // z, high x and low z, low x and high z, high x and high z; zero where the
+    // neighbour is this level or finer. The region gathers the cells it shares
+    // with such a neighbour -- those inside the neighbour's own cell that
+    // straddles the seam -- at the neighbour's level, so the vertices on the
+    // seam are the neighbour's own and the meshes share them: stitched, with
+    // no gap and no skirt. A corner's cell is shared by four nodes, and takes
+    // the coarsest of them.
+    std::array<core::u8, 8> sideLevels{};
 };
 
 // **How many of a level's cells past a region's sides `meshField` reads**, on
@@ -81,22 +81,69 @@ struct TerrainMesh
     // What each submesh is made of, parallel to `mesh.submeshes`: one section
     // per material, in id order.
     std::vector<core::u8> sectionMaterials;
-    // **Which side's skirt a section is**, parallel too: zero for the surface,
-    // else one bit -- 1 low x, 2 high x, 4 low z, 8 high z. The surface's
-    // sections come first. Kept apart so a draw can leave out the skirts on
-    // the sides whose neighbour is not coarser (the one-sided skirt): only a
-    // coarser neighbour leaves a crack, and a skirt with nothing to cover is a
-    // wall a camera inside the ground can see.
-    std::vector<core::u8> sectionSides;
+    // **Where each vertex slides to as its node gives way to its parent**
+    // (ADR 0140): the offset to the parent's vertex, parallel to
+    // `mesh.vertices`. Zero at the top level and on a stitched seam.
+    std::vector<core::Vec3> morphs;
+    // **Who else draws each vertex**, parallel to `vertices`: bits 0 to 3 for
+    // the sides it sits on (low x, high x, low z, high z; two for a corner),
+    // and bits 4 to 6 for the level it was gathered at. A vertex on a seam is
+    // drawn by every node there, and slides with the range they all agree on
+    // (ADR 0140), or the seam opens while it slides.
+    std::vector<core::u16> morphTags;
 
-    // The same surface as a plain position list and index triples, skirts left
-    // out, which is what `ShapeType::TriangleMesh` takes.
+    // **How far this mesh is from the level-0 surface it stands for**, in
+    // metres: its cells' largest error (`SurfaceCell::error`), zero at level
+    // 0. What decides when a node shows its children (ADR 0140).
+    float error = 0.0f;
+
+    // The same surface as a plain position list and index triples, which is
+    // what `ShapeType::TriangleMesh` takes.
     std::vector<core::Vec3> colliderPoints;
     std::vector<core::u32> colliderIndices;
 };
 
-// Extracts the surface of `field` over `region`.
+// Extracts the surface of `field` over `region`. Writes nothing, so any number
+// run at once over one field -- once the surfaces they read are prepared
+// (`prepareRegion`, or `missingSurfaces` and the rest), whose keys fill the
+// chunks' lazy digests.
 [[nodiscard]] TerrainMesh meshField(const TerrainField& field, const MeshRegion& region);
+
+// **Gathers one chunk's level-0 surface at `level`** (ADR 0140) into the
+// field's cache, unless it is there for what the chunk and its neighbours hold
+// now. `key` need not be a chunk the field stores: a surface can sit in the
+// air beside one. **Not thread-safe**: done on one thread before meshing on
+// several, which then only read.
+void prepareSurface(const TerrainField& field, ChunkKey key, core::u32 level);
+
+// Everything `meshField(field, region)` reads of the gathered surfaces,
+// prepared, on one thread. `meshField` itself only reads the cache, and
+// gathers what is missing for that call alone -- so a caller that meshes the
+// same ground again prepares it first, and keeps what it gathered.
+void prepareRegion(const TerrainField& field, const MeshRegion& region);
+
+// **The same work, split so the costly part runs on many threads.**
+// `missingSurfaces` appends the chunks `region` reads that the cache lacks,
+// with the levels it lacks (bit `L` for level `L`; a chunk can repeat across
+// calls); `surfaceContent` is what a chunk's surfaces are cached under;
+// `buildSurfaces` gathers one chunk at the levels asked from one read of its
+// voxels, and only reads the field, so any number run at once once
+// `surfaceContent` has been asked for their keys on one thread (it fills the
+// chunks' lazy digests); `cacheSurfaces` stores them, on one thread.
+struct SurfaceWant
+{
+    ChunkKey key;
+    core::u32 levels = 0;
+};
+using SurfaceLevels = std::array<std::shared_ptr<const SurfaceLevel>, ChunkLevels>;
+void missingSurfaces(const TerrainField& field, const MeshRegion& region, std::vector<SurfaceWant>& out);
+[[nodiscard]] core::u64 surfaceContent(const TerrainField& field, ChunkKey key) noexcept;
+[[nodiscard]] SurfaceLevels buildSurfaces(const TerrainField& field, ChunkKey key, core::u32 levels);
+void cacheSurfaces(const TerrainField& field, ChunkKey key, core::u64 content, const SurfaceLevels& surfaces);
+
+// One chunk's gathered surface at `level`, as prepared, or null where it is
+// not -- or where nothing is.
+[[nodiscard]] const SurfaceLevel* surfaceOf(const TerrainField& field, ChunkKey key, core::u32 level) noexcept;
 
 // **The runs of level-0 voxel rows a column of chunks can have a surface in**,
 // lowest first and each inclusive, over the chunk columns from (`chunkX`,

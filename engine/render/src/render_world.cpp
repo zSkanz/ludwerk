@@ -1130,13 +1130,11 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             const Mat4 transform = core::toRenderMatrix(placement, origin);
             const AABB worldBounds = core::transformed(transform, entry->bounds);
             const bool visible = core::intersects(out.camera.frustum, worldBounds);
+            // One geomorph row for all of the node's sections.
+            const auto morphRow = static_cast<u32>(out.terrainMorphs.size());
+            out.terrainMorphs.push_back(node.morph);
 
             for (u32 section = 0; section < entry->sectionCount; ++section) {
-                // A skirt on a side whose neighbour is not coarser covers no
-                // crack, and is left out (the one-sided skirt).
-                if (section < entry->sectionSide.size() && entry->sectionSide[section] != 0 &&
-                    (entry->sectionSide[section] & node.skirts) == 0)
-                    continue;
                 u32 localMaterial = 0;
                 if (section < entry->sectionMaterial.size())
                     localMaterial = entry->sectionMaterial[section];
@@ -1185,16 +1183,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                     .firstBone = 0,
                     .boneCount = 0,
                     // **Never outlined, selected or not.** The outline draws
-                    // through what is in front of it, and a node's skirts are
-                    // buried in the ground: outlined, they showed through a dug
-                    // crater as a tinted lid and a row of boxes (D161). A line
-                    // round the whole world would say nothing anyway.
+                    // through what is in front of it, and a node's skirts, when
+                    // it had them, were buried in the ground: outlined, they
+                    // showed through a dug crater as a tinted lid and a row of
+                    // boxes (D161). A line round the whole world would say
+                    // nothing anyway.
                     .outlined = false,
                     .terrain = true,
                     .voxelBlock = false,
                     .cutout = false,
                     .terrainId = node.terrain,
                     .terrainLevel = node.level,
+                    .terrainMorph = morphRow,
                 });
             }
         }
