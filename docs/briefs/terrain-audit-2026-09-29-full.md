@@ -248,8 +248,9 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
   with a 4 KiB range and the terrain's was 13 600 bytes, its layers first: on
   Vulkan -- Linux, Android -- no layer ever drew its textures. The layers are a
   storage buffer now, and every uniform block the renderer sizes is held to
-  4 KiB at compile time. The block world's palette (16 400 bytes) is the same
-  defect, and the next fix.
+  4 KiB at compile time. The block world's palette (16 400 bytes) was the same
+  defect (D380): on Vulkan every block's sides drew black. A storage buffer
+  too, and `block_faces_colours` probes a top and two sides.
 
 ## T4 — tools that do what the person asked
 

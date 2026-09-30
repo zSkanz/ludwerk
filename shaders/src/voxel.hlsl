@@ -16,17 +16,26 @@
 #include "engine_terrain_surface.hlsli"
 
 // The registry's colours, by id minus one, and the block size. Vertex stage
-// only: a block's colour is decided per vertex. Mirrors `GpuVoxelPalette`.
-cbuffer GpuVoxelPalette : register(b1, space1)
+// only: a block's colour is decided per vertex.
+// **Each block type, by id minus one**: `render::GpuVoxelBlock`. A storage
+// buffer rather than the block it was, which SDL_GPU binds to Vulkan 4 KiB at
+// a time -- the sides and undersides were past it (D380).
+struct VoxelBlock
 {
-    float4 VoxelTop[256];
-    float4 VoxelSide[256];
-    float4 VoxelBottom[256];
+    float4 Top;
+    float4 Side;
+    float4 Bottom;
     // The atlas tile each face's image is in: x top, y sides, z bottom, and -1
     // for a face with no image. w: the alpha a translucent type draws at.
-    float4 VoxelTiles[256];
-    // x: block size in metres; y: tiles per atlas row; z: one tile's size in
-    // atlas UV; w: half a texel of a tile, in the tile's own UV, for the inset.
+    float4 Tiles;
+};
+StructuredBuffer<VoxelBlock> VoxelBlocks : register(t0, space0);
+
+// Mirrors `GpuVoxelParams`: x the block size in metres; y tiles per atlas row;
+// z one tile's size in atlas UV; w half a texel of a tile, in the tile's own
+// UV, for the inset.
+cbuffer GpuVoxelParams : register(b1, space1)
+{
     float4 VoxelParams;
 };
 
@@ -77,13 +86,13 @@ VoxelInterpolants VertexMain(VertexInput input)
     // Which of the block's three colours this face wears, from its normal: a
     // face is axis-aligned, so its normal is exactly one of six.
     const uint slot = min(max(id, 1u) - 1u, 255u);
-    output.Albedo = input.Normal.y > 0.5f ? VoxelTop[slot].rgb
-                    : input.Normal.y < -0.5f ? VoxelBottom[slot].rgb
-                                             : VoxelSide[slot].rgb;
-    const float tile = input.Normal.y > 0.5f ? VoxelTiles[slot].x
-                       : input.Normal.y < -0.5f ? VoxelTiles[slot].z
-                                                : VoxelTiles[slot].y;
-    output.See = float2(input.Tangent.z, VoxelTiles[slot].w);
+    output.Albedo = input.Normal.y > 0.5f ? VoxelBlocks[slot].Top.rgb
+                    : input.Normal.y < -0.5f ? VoxelBlocks[slot].Bottom.rgb
+                                             : VoxelBlocks[slot].Side.rgb;
+    const float tile = input.Normal.y > 0.5f ? VoxelBlocks[slot].Tiles.x
+                       : input.Normal.y < -0.5f ? VoxelBlocks[slot].Tiles.z
+                                                : VoxelBlocks[slot].Tiles.y;
+    output.See = float2(input.Tangent.z, VoxelBlocks[slot].Tiles.w);
     if (tile >= 0.0f) {
         const float row = floor(tile / VoxelParams.y);
         output.TileRect = float4(float2(tile - row * VoxelParams.y, row) * VoxelParams.z, VoxelParams.z, VoxelParams.w);

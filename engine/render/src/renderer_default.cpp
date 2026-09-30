@@ -905,7 +905,13 @@ private:
     // so a leaf block casts the leaves rather than a square.
     rhi::PipelineHandle voxelShadowPipeline_{};
     bool voxelTried_ = false;
-    GpuVoxelPalette voxelPalette_{};
+    // The block registry, by id minus one, and the buffer the vertex stage
+    // reads it from, put up when it changes (D380); and the block size.
+    std::array<GpuVoxelBlock, kVoxelPaletteSize> voxelBlocks_{};
+    std::array<GpuVoxelBlock, kVoxelPaletteSize> voxelBlocksUp_{};
+    bool voxelBlocksSent_ = false;
+    rhi::BufferHandle voxelBlockBuffer_{};
+    GpuVoxelParams voxelParams_{};
     // The block atlas (V1): one tile per distinct block image, filled by
     // drawing each image into its square the first frame it is loaded -- which
     // is what lets it hold compiled images the CPU has no pixels for.
@@ -1963,6 +1969,10 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (instanceBuffer_.valid())
         device.destroy(instanceBuffer_);
     instanceBuffer_ = {};
+    if (voxelBlockBuffer_.valid())
+        device.destroy(voxelBlockBuffer_);
+    voxelBlockBuffer_ = {};
+    voxelBlocksSent_ = false;
 
     for (rhi::PipelineHandle* pipeline :
          {&terrainPipeline_, &terrainShadowPipeline_, &terrainPrepassPipeline_, &terrainPackColorPipeline_,
@@ -2862,7 +2872,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(push.data(), sizeof(push)));
             }
             if (leafShadow && boundMaterial != kVoxelBinding) {
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&voxelPalette_, sizeof(voxelPalette_)));
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&voxelParams_, sizeof(voxelParams_)));
+                const std::array<rhi::BufferHandle, 1> blocks{voxelBlockBuffer_};
+                cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, blocks);
                 const std::array<rhi::TextureBinding, 1> atlas{
                     voxelAtlas_.valid() ? rhi::TextureBinding{voxelAtlas_, pointSampler_}
                                         : rhi::TextureBinding{whitePixel_, pointSampler_},
@@ -2891,7 +2903,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                 // the standard textures bound to their neutral stand-ins -- once
                 // per run of chunks.
                 if (boundMaterial != kVoxelBinding) {
-                    cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&voxelPalette_, sizeof(voxelPalette_)));
+                    cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&voxelParams_, sizeof(voxelParams_)));
+                    const std::array<rhi::BufferHandle, 1> blocks{voxelBlockBuffer_};
+                    cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, blocks);
                     const std::array<rhi::TextureBinding, 13> textures{
                         // The block atlas in the base-colour slot, sampled
                         // without smoothing; white until the first image.
@@ -4507,14 +4521,14 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 slot[2] = color.b;
                 slot[3] = 1.0f;
             };
-            put(voxelPalette_.top[id], colors.top);
-            put(voxelPalette_.side[id], colors.side);
-            put(voxelPalette_.bottom[id], colors.bottom);
+            put(voxelBlocks_[id].top, colors.top);
+            put(voxelBlocks_[id].side, colors.side);
+            put(voxelBlocks_[id].bottom, colors.bottom);
         }
-        voxelPalette_.params[0] = world.voxelBlockSize;
-        voxelPalette_.params[1] = static_cast<f32>(kVoxelTilesPerRow);
-        voxelPalette_.params[2] = 1.0f / static_cast<f32>(kVoxelTilesPerRow);
-        voxelPalette_.params[3] = 0.5f / static_cast<f32>(kVoxelTileSize);
+        voxelParams_.params[0] = world.voxelBlockSize;
+        voxelParams_.params[1] = static_cast<f32>(kVoxelTilesPerRow);
+        voxelParams_.params[2] = 1.0f / static_cast<f32>(kVoxelTilesPerRow);
+        voxelParams_.params[3] = 0.5f / static_cast<f32>(kVoxelTileSize);
         (void)ensureVoxel(device);
 
         // **Each image into its tile, the first frame it is loaded**, and not
@@ -4591,13 +4605,27 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         for (u32 id = 0; id < kVoxelPaletteSize; ++id) {
             const RenderWorld::VoxelTextures images =
                 id < world.voxelTextures.size() ? world.voxelTextures[id] : RenderWorld::VoxelTextures{};
-            voxelPalette_.tiles[id][0] = tileOf(images.top);
-            voxelPalette_.tiles[id][1] = tileOf(images.side);
-            voxelPalette_.tiles[id][2] = tileOf(images.bottom);
-            voxelPalette_.tiles[id][3] = id < world.voxelColors.size() ? world.voxelColors[id].alpha : 1.0f;
+            voxelBlocks_[id].tiles[0] = tileOf(images.top);
+            voxelBlocks_[id].tiles[1] = tileOf(images.side);
+            voxelBlocks_[id].tiles[2] = tileOf(images.bottom);
+            voxelBlocks_[id].tiles[3] = id < world.voxelColors.size() ? world.voxelColors[id].alpha : 1.0f;
         }
-        voxelPalette_.params[0] = world.voxelBlockSize;
+        voxelParams_.params[0] = world.voxelBlockSize;
         (void)ensureVoxel(device);
+        // The registry, put up only when it changed: a copy pass, before any
+        // other.
+        if (!voxelBlockBuffer_.valid()) {
+            voxelBlockBuffer_ = device.createBuffer({.usage = rhi::BufferUsage::GraphicsStorageRead,
+                                                     .sizeBytes = static_cast<u32>(sizeof(voxelBlocks_)),
+                                                     .debugName = "voxel-blocks"});
+            voxelBlocksSent_ = false;
+        }
+        if (voxelBlockBuffer_.valid() &&
+            (!voxelBlocksSent_ || std::memcmp(voxelBlocksUp_.data(), voxelBlocks_.data(), sizeof(voxelBlocks_)) != 0)) {
+            cmd.upload(voxelBlockBuffer_, asBytes(voxelBlocks_.data(), sizeof(voxelBlocks_)), 0);
+            voxelBlocksUp_ = voxelBlocks_;
+            voxelBlocksSent_ = true;
+        }
     }
 
     // The pipelines the first frame a terrain is drawn, and each terrain's

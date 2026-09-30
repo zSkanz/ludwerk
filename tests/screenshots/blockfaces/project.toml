@@ -1,0 +1,14 @@
+# Every face of a block drawn in its block's colour (D380): a pile of red
+# blocks seen from above and from two sides. A project rather than a bare scene
+# so the driver and a person run it the same way.
+
+[project]
+name = "Ludwerk Block Faces"
+id = "dev.ludwerk.blockfaces"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Block Faces"
+width = 960
+height = 540

@@ -602,6 +602,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **No more bright streaks at a low sun, or dark notches under a lamp, on
   flat ground** (D372): the ground's grain drew a crease wherever its noise
   stepped at a cell's edge.
+- **A block's sides and underside draw on Vulkan -- Linux and Android**
+  (D380): they drew black, the block palette past the 4 KiB a uniform block
+  is bound with there.
 - **Terrain layers draw their textures on Vulkan -- Linux and Android** (D379):
   the terrain's per-layer data overflowed the 4 KiB a uniform block is bound
   with there, and every layer drew flat.

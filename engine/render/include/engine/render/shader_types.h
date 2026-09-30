@@ -625,21 +625,35 @@ static_assert(sizeof(GpuParticleLighting) == 80, "GpuParticleLighting is a cbuff
 // How many block types the block shader has colours for; ids past it wrap.
 inline constexpr u32 kVoxelPaletteSize = 256;
 
-// Vertex stage, `b1 space1`, for `voxel`: the block registry's colours by id
-// minus one -- top, sides and bottom -- and the block size.
-struct GpuVoxelPalette
+// **One block type, as the vertex stage reads it**, by id minus one: a storage
+// buffer of `kVoxelPaletteSize` of these at `t0 space0`, for `voxel` and
+// `voxel_shadow`.
+//
+// **A storage buffer and not the uniform block it was** (D380): SDL_GPU binds a
+// uniform block to Vulkan 4 KiB at a time, and the palette was 16 KiB -- on
+// Linux and Android every block's sides and underside drew black, with none of
+// its images, because only the tops were in the first 4 KiB.
+struct GpuVoxelBlock
 {
-    f32 top[kVoxelPaletteSize][4]{};
-    f32 side[kVoxelPaletteSize][4]{};
-    f32 bottom[kVoxelPaletteSize][4]{};
-    // The atlas tile of each face's image -- top, sides, bottom -- or -1; and in
-    // the fourth, the alpha a translucent type draws at.
-    f32 tiles[kVoxelPaletteSize][4]{};
+    f32 top[4]{};
+    f32 side[4]{};
+    f32 bottom[4]{};
+    // The atlas tile of each face's image -- top, sides, bottom -- or -1; and
+    // in the fourth, the alpha a translucent type draws at.
+    f32 tiles[4]{};
+};
+
+static_assert(sizeof(GpuVoxelBlock) == 64, "GpuVoxelBlock is a structured buffer's stride");
+
+// Vertex stage, `b1 space1`, for `voxel` and `voxel_shadow`.
+struct GpuVoxelParams
+{
     // x: block size in metres; y: tiles per atlas row; z: a tile in atlas UV;
     // w: half a texel in a tile's own UV.
     f32 params[4]{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
-static_assert(sizeof(GpuVoxelPalette) == 4 * 256 * 16 + 16, "GpuVoxelPalette is a cbuffer layout");
+static_assert(sizeof(GpuVoxelParams) == 16, "GpuVoxelParams is a cbuffer layout");
+static_assert(sizeof(GpuVoxelParams) <= kMaxUniformBlockBytes);
 
 } // namespace engine::render

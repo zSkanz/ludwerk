@@ -11,21 +11,33 @@
 // on `shadow_depth`, which reads no texture, because every one of their
 // fragments is there.
 //
-// The palette is a vertex-stage block (a fragment stage that reads it is a
+// The palette is read at the vertex stage (a fragment stage that reads it is a
 // pipeline D3D12 refuses), so the tile's rectangle is worked out per vertex
 // and passed down, exactly as `voxel.hlsl` does.
 
 #define ENG_UNIFORMS_SHADOW
 #include "engine_pbr.hlsli"
 
-// Mirrors `GpuVoxelPalette`; only the tiles and the params are read here, but
-// the layout must be the whole block for the offsets to agree.
-cbuffer GpuVoxelPalette : register(b1, space1)
+// Only the tiles and the params are read here.
+// **Each block type, by id minus one**: `render::GpuVoxelBlock`. A storage
+// buffer rather than the block it was, which SDL_GPU binds to Vulkan 4 KiB at
+// a time -- the sides and undersides were past it (D380).
+struct VoxelBlock
 {
-    float4 VoxelTop[256];
-    float4 VoxelSide[256];
-    float4 VoxelBottom[256];
-    float4 VoxelTiles[256];
+    float4 Top;
+    float4 Side;
+    float4 Bottom;
+    // The atlas tile each face's image is in: x top, y sides, z bottom, and -1
+    // for a face with no image. w: the alpha a translucent type draws at.
+    float4 Tiles;
+};
+StructuredBuffer<VoxelBlock> VoxelBlocks : register(t0, space0);
+
+// Mirrors `GpuVoxelParams`: x the block size in metres; y tiles per atlas row;
+// z one tile's size in atlas UV; w half a texel of a tile, in the tile's own
+// UV, for the inset.
+cbuffer GpuVoxelParams : register(b1, space1)
+{
     float4 VoxelParams;
 };
 
@@ -60,9 +72,9 @@ Interpolants VertexMain(VertexInput input)
 
     const uint id = uint(input.Tangent.x + 0.5f);
     const uint slot = min(max(id, 1u) - 1u, 255u);
-    const float tile = input.Normal.y > 0.5f ? VoxelTiles[slot].x
-                       : input.Normal.y < -0.5f ? VoxelTiles[slot].z
-                                                : VoxelTiles[slot].y;
+    const float tile = input.Normal.y > 0.5f ? VoxelBlocks[slot].Tiles.x
+                       : input.Normal.y < -0.5f ? VoxelBlocks[slot].Tiles.z
+                                                : VoxelBlocks[slot].Tiles.y;
     if (tile >= 0.0f) {
         const float row = floor(tile / VoxelParams.y);
         output.TileRect = float4(float2(tile - row * VoxelParams.y, row) * VoxelParams.z, VoxelParams.z, VoxelParams.w);
