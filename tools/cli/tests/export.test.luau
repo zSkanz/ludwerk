@@ -120,6 +120,49 @@ test.suite("export", function(suite)
         assert.that(string.find(game.stripGlobal(global, "server") :: string, "SOUND", 1, true) == nil)
     end)
 
+    suite:case("inside a script service the service decides, not RunContext (the script-sides audit)", function()
+        local scene = '{"format": "scene", "root": {"class": "Workspace"}, "storage": {'
+            .. '"ClientScriptService": {"class": "ClientScriptService", "name": "ClientScriptService", "children": ['
+            .. '{"class": "Script", "name": "Hud", "properties": {"Source": "KEEP-CLIENT-SERVICE", "RunContext": "Server"}}]}}}'
+        local client = game.stripScene(scene, "client")
+        assert.that(client == nil or string.find(client, "KEEP-CLIENT-SERVICE", 1, true) ~= nil, client)
+        local global = '{"format": "global", "root": {"class": "GlobalScriptService", "children": ['
+            .. '{"class": "Folder", "name": "Server", "children": ['
+            .. '{"class": "Script", "name": "Rules", "properties": {"Source": "KEEP-GLOBAL-SERVER", "RunContext": "Client"}}]}]}}'
+        local server = game.stripGlobal(global, "server")
+        assert.that(server == nil or string.find(server, "KEEP-GLOBAL-SERVER", 1, true) ~= nil, server)
+    end)
+
+    suite:case("a linked stamp's overrides follow the side the instance runs on (the script-sides audit)", function()
+        local stamps: { [string]: string } = {
+            ["stamps/door.stamp.json"] = '{"format": "scene", "root": {"class": "Model", "name": "Door", "children": ['
+                .. '{"class": "Script", "name": "Latch", "properties": {"Source": "LATCH-SHARED"}}, '
+                .. '{"class": "Script", "name": "Guard", "properties": {"Source": "GUARD-SERVER", "RunContext": "Server"}}]}}',
+        }
+        local function read(name: string): string?
+            return stamps[name]
+        end
+        -- The latch made server code in this instance, with its text edited;
+        -- the guard made client code, with none of its own.
+        local scene = '{"format": "scene", "root": {"class": "Workspace", "children": ['
+            .. '{"name": "Front", "stamp": "stamps/door.stamp.json", "overrides": {'
+            .. '"Latch": {"RunContext": "Server", "Source": "LATCH-EDITED"}, '
+            .. '"Guard": {"RunContext": "Client"}}}]}}'
+        local client = game.stripScene(scene, "client", read) :: string
+        assert.that(client ~= nil, "nothing was stripped")
+        assert.that(string.find(client, "LATCH-EDITED", 1, true) == nil, client)
+        -- The client runs the guard, whose code its package's stamp file lost.
+        assert.that(string.find(client, "GUARD-SERVER", 1, true) ~= nil, client)
+        local server = game.stripScene(scene, "server", read) :: string
+        assert.that(string.find(server, "LATCH-EDITED", 1, true) ~= nil, server)
+        assert.that(string.find(server, "GUARD-SERVER", 1, true) == nil, server)
+    end)
+
+    suite:case("the editor's conflicts and save slots are not the game's (the script-sides audit)", function()
+        assert.eq(game.editorOnly("conflicts"), true)
+        assert.eq(game.editorOnly("saves"), true)
+    end)
+
     suite:case("global.json loses the other side's folder", function()
         local global = '{"format": "global", "root": {"class": "GlobalScriptService", "children": ['
             .. '{"class": "Folder", "name": "Server"}, {"class": "Folder", "name": "Client"}, '
@@ -129,6 +172,8 @@ test.suite("export", function(suite)
         assert.that(string.find(client, '"Shared"', 1, true) ~= nil, client)
         local server = game.stripGlobal(global, "server") :: string
         assert.that(string.find(server, '"Client"', 1, true) == nil, server)
+        -- A game that is not dedicated keeps both (the script-sides audit).
+        assert.eq(game.stripGlobal(global, "all"), nil)
     end)
 
     suite:case("a server package's project.toml says it is one", function()

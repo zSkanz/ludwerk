@@ -18,6 +18,7 @@
 #include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/replication.h"
+#include "engine/replication/script_templates.h"
 #include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
 #include "engine/scene/physics_sync.h"
@@ -280,6 +281,147 @@ TEST_CASE("a joined client runs its own copy of a door's client and shared scrip
     const core::InstanceId door = world.findFirstChild(client.host->workspace(), world.atoms().lookup("Door"));
     REQUIRE(door.valid());
     CHECK(world.findFirstChild(door, world.atoms().lookup("Creak")).valid());
+}
+
+TEST_CASE("the audit's network run: two clients join, one leaves and comes back, and the server changes scene "
+          "(script sides S3)")
+{
+    // Every script prints its tag and whether its machine is the authority.
+    // Each machine is its own project with the same content, as packages are.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const auto sided = [](std::string_view name, std::string_view side, std::string_view tag) {
+        std::string node = R"json({"class":"Script","name":")json" + std::string(name) +
+                           R"json(","properties":{"Source":"print(`)json" + std::string(tag) +
+                           R"json(:{game:GetService('NetworkService').Authority}`)")json";
+        if (!side.empty())
+            node += R"json(,"RunContext":")json" + std::string(side) + "\"";
+        return node + "}}";
+    };
+    const auto door = [&](std::string_view scene) {
+        const std::string tag = std::string(scene) + "-door";
+        return R"json({"format":"scene","version":2,"root":{"children":[)json"
+               R"json({"class":"Part","name":"Door","properties":{"Anchored":true},"children":[)json" +
+               sided("Creak", "Client", tag + "-client") + "," + sided("Rules", "Server", tag + "-server") + "," +
+               sided("Both", "", tag + "-both") + "]}]}}";
+    };
+    const std::string lamp =
+        R"json({"format":"scene","version":2,"root":{"class":"Model","name":"Lamp","children":[)json"
+        R"json({"class":"Part","name":"Bulb","properties":{"Anchored":true},"children":[)json" +
+        sided("Glow", "Client", "lamp-client") + "]}]}}";
+    const auto content = [&](Machine& machine) {
+        machine.project.write("content/scenes/a.scene.json", door("a"));
+        machine.project.write("content/scenes/b.scene.json", door("b"));
+        machine.project.write("content/stamps/lamp.stamp.json", lamp);
+    };
+
+    Machine server;
+    content(server);
+    server.project.write("src/server/host.luau", R"(
+        game:GetService("NetworkService"):Host(47104)
+        local placed = Instance.stamp("lamp")
+        placed.Parent = workspace
+        placed:Clone().Parent = workspace
+    )");
+    server.boot(wire, scene::NetworkTopology::Solo, "scenes/a.scene.json");
+
+    Machine first;
+    Machine second;
+    for (Machine* client : {&first, &second}) {
+        content(*client);
+        client->project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47104"))");
+        client->boot(wire, scene::NetworkTopology::Solo, "scenes/a.scene.json");
+    }
+    const auto frames = [&](int count) {
+        for (int at = 0; at < count; ++at) {
+            server.frame();
+            first.frame();
+            second.frame();
+        }
+    };
+
+    frames(90);
+    REQUIRE(first.topology() == scene::NetworkTopology::Replica);
+    REQUIRE(second.topology() == scene::NetworkTopology::Replica);
+    // Each client ran its own copy of the door's client and shared scripts and
+    // the lamps' client script -- the server's rules nowhere but the server
+    // and the solo boots before the join.
+    CHECK(occurrences(log, "a-door-client:false") == 2);
+    CHECK(occurrences(log, "a-door-both:false") == 2);
+    CHECK(occurrences(log, "a-door-server:false") == 0);
+    CHECK(occurrences(log, "lamp-client:false") == 4);
+    CHECK(occurrences(log, "a-door-server:true") == 3);
+
+    // The second leaves: solo again, its own scene read again.
+    second.host->world().engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0};
+    frames(60);
+    REQUIRE(second.topology() == scene::NetworkTopology::Solo);
+    REQUIRE(first.topology() == scene::NetworkTopology::Replica);
+    CHECK(occurrences(log, "a-door-server:true") == 4);
+
+    // And comes back: its own copy again, under the server's door.
+    second.host->world().engineState().pendingNetwork =
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Join, "memory:47104", 0};
+    frames(90);
+    REQUIRE(second.topology() == scene::NetworkTopology::Replica);
+    CHECK(occurrences(log, "a-door-client:false") == 3);
+    CHECK(occurrences(log, "a-door-server:false") == 0);
+    CHECK(occurrences(log, "lamp-client:false") == 6);
+
+    // The server changes scene; both clients follow and run scene b's door.
+    server.host->world().engineState().pendingNetwork = std::nullopt;
+    REQUIRE_FALSE(server.host->loadScene("scenes/b.scene.json", {}).has_value());
+    frames(90);
+    CHECK(occurrences(log, "b-door-server:true") == 1);
+    CHECK(occurrences(log, "b-door-client:false") == 2);
+    CHECK(occurrences(log, "b-door-both:false") == 2);
+    CHECK(occurrences(log, "b-door-server:false") == 0);
+}
+
+TEST_CASE("a server naming stamps a client does not have grows nothing on the client (script sides S3)")
+{
+    // A spawn's origin names a stamp, and a name a client interned is kept for
+    // ever. One the client's package does not hold must be refused, or a
+    // hostile server grows every client's name table with each spawn.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/host.luau", R"(game:GetService("NetworkService"):Host(47105))");
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/join.luau", R"(game:GetService("NetworkService"):Join("memory:47105"))");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/none.scene.json");
+    run(server, client, 60);
+    REQUIRE(client.topology() == scene::NetworkTopology::Replica);
+
+    scene::World& world = server.host->world();
+    const core::usize before = client.host->atoms().size();
+    for (int index = 0; index < 200; ++index) {
+        const core::InstanceId part = world.create(world.classes().findId(world.atoms().lookup("Part")));
+        world.setOrigin(part, scene::World::Origin{world.atoms().intern("stamp:made-up-" + std::to_string(index)), 0});
+        REQUIRE_FALSE(world.setParent(part, server.host->workspace()).has_value());
+    }
+    run(server, client, 30);
+    const core::InstanceId workspace = client.host->workspace();
+    REQUIRE(client.host->world().childCount(workspace) >= 200);
+    CHECK(client.host->atoms().size() - before < 10);
+}
+
+TEST_CASE("a server naming stamps a client does not have costs the client a bounded number of reads (script sides S3)")
+{
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    int reads = 0;
+    replication::ScriptTemplates templates;
+    templates.setStampSource([&reads](std::string_view) -> std::optional<std::string> {
+        ++reads;
+        return std::nullopt;
+    });
+    for (int index = 0; index < 200; ++index)
+        CHECK_FALSE(templates.stampAsset(host.world(), "stamp:made-up-" + std::to_string(index % 150)).valid());
+    CHECK(reads <= 64);
 }
 
 TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")

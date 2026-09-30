@@ -464,10 +464,13 @@ start their scripts; one that leaves the world stops; storage is inert; back
 in solo a machine runs what a solo boot of its scene runs), and **S2, a
 script carries its side, built 2026-09-29** (`Script.RunContext`; each
 package keeps only its side's code per script; a joined client runs its own
-package's scripts under what the server sends, protocol 29). Next: the S3
-audit and the S4 close; then the terrain audit's ledger, then every editor
-text through i18n (R3, the owner's word of 2026-09-29), then F2, movers and
-constraints.
+package's scripts under what the server sends, protocol 29), and **S3, the
+audit, done 2026-09-29**
+([`script-sides-audit-2026-09-29.md`](docs/briefs/script-sides-audit-2026-09-29.md):
+the matrix of containers, sides and topologies, every package mode searched,
+sixteen defects fixed, D344 to D359). Next: the S4 close; then the terrain
+audit's ledger, then every editor text through i18n (R3, the owner's word of
+2026-09-29), then F2, movers and constraints.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).

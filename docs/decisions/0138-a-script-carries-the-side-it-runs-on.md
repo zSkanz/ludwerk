@@ -193,7 +193,8 @@ package**, and attaches them to the instances the authority sends:
 - **The marks** (§4) are `overlay.SideServer` (a rack's two slots),
   `overlay.SideClient` (a screen on a stand) and `overlay.SideShared` (the disc
   split in two), cut into the stamp mark's disc in `tools/repo/draw_icons.py`
-  and tinted `system`, `ui` and `script`. `drawIconBadge` takes the face to
+  and tinted `system`, `ui` and `neutral` -- not `script`, the first choice for
+  the third: a green mark on a green script icon did not show (S3). `drawIconBadge` takes the face to
   draw; a script outside the services shows its side rather than a stamp mark.
   **The three *Insert* entries are on the Explorer's row menu**, beside Insert
   Object, not in the class picker or the command palette: the picker returns a
@@ -244,3 +245,12 @@ package**, and attaches them to the instances the authority sends:
   the examples warned `examples/28-arcade`, a solo game, for setting its camera
   from a scene's server script. `ludwerk check` still types only `.luau`
   files; the scene and stamp pass is the side pass.
+- **After the audit (S3, D344 to D359)**: an origin is
+  `scene:<path>#<tree>`, and a load names its scene before it reads; the
+  editor's Play renumbers what was edited as the saved file would be read
+  (`scene::renumberOrigins`); a replica interns a stamp origin only for a stamp
+  its package holds, and remembers up to 64 it does not; the strip leaves a
+  deciding service's scripts to the service and resolves a linked stamp's
+  overrides against the stamp's own file; `.engine/conflicts` and
+  `.engine/saves` are editor-only; only code is written or compiled as
+  bytecode.

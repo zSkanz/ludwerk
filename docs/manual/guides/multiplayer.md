@@ -115,7 +115,7 @@ see [Where my code runs](manual:concepts/scripts) for the whole rule and its
 price.
 
 `NetworkService.Authority` still answers "does this machine decide the world?"
-for code that runs everywhere, such as a script inside a part:
+for code that runs everywhere, such as a script inside a part left `Shared`:
 
 ```luau
 --!strict

@@ -1199,3 +1199,21 @@ thousand parts cost the 200 ms, and a thousand scripts starting costs less than
 that spread. A move with no script in it walks nothing that it did not already
 walk; a move that brings scripts in starts them in the order of the moves,
 without a walk of the world.
+
+## The script-sides audit (S3)
+
+Two cases the audit asked for beside ADR 0137's clone: a scene change whose
+scene carries 1 000 scripts, and 200 stamps, each with two scripts and five
+parts, placed in one tick. Measured 2026-09-29 on `win-msvc-editor`, headless,
+the null RHI, three runs of each binary, alternating: before is the package
+built from `09501c84` (before S1), after is S2. Each is the median of its runs
+inside one process (six loads, five placements).
+
+| Case | Before | After |
+|---|---|---|
+| `SceneService:LoadScene` to `SceneLoaded`, 1 000 scripts | 19.6, 20.5, 19.7 ms | 19.4, 19.7, 19.2 ms |
+| 200 stamps placed and a frame run | 9.3, 8.9, 9.5 ms -- their scripts never started | 11.8, 11.9, 11.9 ms -- all 400 started |
+
+The scene change did not move. The stamps' 2.5 ms is the 400 starts that did
+not happen before -- about six microseconds a script, compiling and running a
+one-line file -- plus numbering each placed instance's origin (ADR 0138 §6).

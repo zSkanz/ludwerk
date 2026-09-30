@@ -1031,6 +1031,15 @@ public:
     // runtime checks against "live" at its next drain, starting or stopping
     // each. Found in the walk of the subtree `setParent` already makes, so a
     // subtree with no script in it costs a class compare per instance.
+    // Kept only while a script runtime drains it (the script-sides audit):
+    // the editor's stages, the preview renderer and the partitioner build
+    // scripts into worlds nothing drains, where the queue grew for ever.
+    void setTracksScripts(bool tracks) noexcept
+    {
+        m_tracksScripts = tracks;
+        if (!tracks)
+            m_movedScripts.clear();
+    }
     [[nodiscard]] std::vector<core::InstanceId> takeMovedScripts()
     {
         std::vector<core::InstanceId> taken;
@@ -1388,6 +1397,7 @@ private:
     GroundLoader m_groundLoader;
     core::u64 m_mutations = 0;
     std::vector<core::InstanceId> m_movedScripts;
+    bool m_tracksScripts = false;
     // `Script`'s class, once the registry has it: `setParent` asks per move.
     ClassId m_scriptClass = InvalidClass;
 

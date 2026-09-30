@@ -695,6 +695,47 @@ bool scriptSideRunsHere(const scene::World& w, ScriptSide side)
     return true;
 }
 
+namespace {
+
+// **Whose run a globals table is** (the script-sides audit, S3): a table in
+// the registry, weak in its keys, from each run's globals table to its
+// script. Read from here rather than from the `script` global, which a script
+// can clear -- and one that did made its own threads unstoppable. Weak, so a
+// run's table goes when nothing holds it any more, and its entry with it.
+constexpr const char* RunOwnersKey = "engine.runOwners";
+
+void pushRunOwners(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, RunOwnersKey);
+    if (lua_istable(L, -1))
+        return;
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_newtable(L);
+    lua_pushstring(L, "k");
+    lua_setfield(L, -2, "__mode");
+    lua_setmetatable(L, -2);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, RunOwnersKey);
+}
+
+// The script whose run the table at `index` is, or an invalid id.
+[[nodiscard]] core::InstanceId runOwnerOf(lua_State* L, int index)
+{
+    if (!lua_istable(L, index))
+        return {};
+    const int table = lua_absindex(L, index);
+    pushRunOwners(L);
+    lua_pushvalue(L, table);
+    lua_rawget(L, -2);
+    const core::InstanceId* id = toInstance(L, -1);
+    const core::InstanceId out = id != nullptr ? *id : core::InstanceId{};
+    lua_pop(L, 2);
+    return out;
+}
+
+} // namespace
+
 bool startScript(lua_State* L, core::InstanceId instance)
 {
     ModuleRegistry& modules = registry(L);
@@ -746,10 +787,21 @@ bool startScript(lua_State* L, core::InstanceId instance)
         if (modules.runs.size() <= instance.index)
             modules.runs.resize(static_cast<usize>(instance.index) + 1);
         ModuleRegistry::Run& run = modules.runs[instance.index];
+        // **The slot's previous run lets its table go** (the script-sides
+        // audit): a slot reused by another script -- a scene change reuses
+        // the old scene's -- overwrote the reference and kept every table it
+        // had ever held.
+        if (run.envRef != -1)
+            (void)lua_unref(co, run.envRef);
         lua_pushvalue(co, LUA_GLOBALSINDEX);
         run.env = lua_topointer(co, -1);
         run.envRef = lua_ref(co, -1);
-        lua_pop(co, 1);
+        // Whose run this table is, kept where the script cannot reach it.
+        pushRunOwners(co);
+        lua_pushvalue(co, -2);
+        pushInstance(co, instance);
+        lua_rawset(co, -3);
+        lua_pop(co, 2);
         run.generation = instance.generation;
     };
 
@@ -784,6 +836,28 @@ bool startScript(lua_State* L, core::InstanceId instance)
     return true;
 }
 
+namespace {
+
+// What the start walks leave to the moved-scripts queue: every moved script
+// running and no longer live stops, and one under `excluded` -- which the walk
+// skipped -- starts if it became live.
+void answerMoves(lua_State* L, const std::vector<core::InstanceId>& moved, core::InstanceId excluded)
+{
+    scene::World& w = world(L);
+    for (const core::InstanceId script : moved) {
+        if (scriptRunning(L, script) && !scriptLive(L, script))
+            endRun(L, script);
+    }
+    if (!excluded.valid())
+        return;
+    for (const core::InstanceId script : moved) {
+        if (w.alive(script) && w.isAncestorOf(excluded, script) && !scriptRunning(L, script))
+            (void)startScript(L, script);
+    }
+}
+
+} // namespace
+
 void startScripts(lua_State* L)
 {
     scene::World& w = world(L);
@@ -800,11 +874,12 @@ void startScripts(lua_State* L)
     std::vector<core::InstanceId> everything;
     w.collectDescendants(context(L).services->dataModel, everything);
 
+    const std::vector<core::InstanceId> moved = w.takeMovedScripts();
     for (const core::InstanceId instance : everything)
         (void)startScript(L, instance);
-    // Every script in the world was just weighed: the moves that built it
-    // are answered, and a script that failed to load is not tried again.
-    (void)w.takeMovedScripts();
+    // Every script in the world was just weighed, so a move is answered only
+    // by a stop: a script that failed to load is not tried again.
+    answerMoves(L, moved, core::InstanceId{});
 
     lua_State* loaded = lua_newthread(L);
     const int rooted = lua_gettop(L);
@@ -818,6 +893,7 @@ void startScripts(lua_State* L)
 void startScriptsExcept(lua_State* L, core::InstanceId excluded)
 {
     scene::World& w = world(L);
+    const std::vector<core::InstanceId> moved = w.takeMovedScripts();
     std::vector<core::InstanceId> everything;
     w.collectDescendants(context(L).services->dataModel, everything);
     for (const core::InstanceId instance : everything) {
@@ -825,14 +901,21 @@ void startScriptsExcept(lua_State* L, core::InstanceId excluded)
             continue;
         (void)startScript(L, instance);
     }
-    // The scene's moves are answered by the walk above.
-    (void)w.takeMovedScripts();
+    // **And the moves the walk did not weigh** (the script-sides audit): the
+    // old scene's scripts, destroyed, whose runs end here; one taken out of
+    // the world in the tick the scene changed; one put under `excluded`.
+    answerMoves(L, moved, excluded);
 }
 
 core::InstanceId scriptOfThread(lua_State* thread)
 {
     if (thread == nullptr)
         return {};
+    lua_pushvalue(thread, LUA_GLOBALSINDEX);
+    const core::InstanceId owner = runOwnerOf(thread, -1);
+    lua_pop(thread, 1);
+    if (owner.valid())
+        return owner;
     lua_getglobal(thread, "script");
     const core::InstanceId* id = toInstance(thread, -1);
     const core::InstanceId out = id != nullptr ? *id : core::InstanceId{};
@@ -851,6 +934,10 @@ core::InstanceId scriptOfFunction(lua_State* L, int index)
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return {};
+    }
+    if (const core::InstanceId owner = runOwnerOf(L, -1); owner.valid()) {
+        lua_pop(L, 1);
+        return owner;
     }
     lua_getfield(L, -1, "script");
     const core::InstanceId* id = toInstance(L, -1);
@@ -924,19 +1011,13 @@ SuppressReason suppressionFor(lua_State* L, core::InstanceId script, const void*
 namespace {
 
 // The globals table on top of `L`'s stack as a run's identity, or null when it
-// is not a script's own: a run's table holds `script` itself, and a module's
-// only reaches the requirer's through its chain -- a function an `@engine`
-// module made for a script (a camera rig's render step) is no run's, and
-// comparing it with one would stop it. Pops the table.
+// is no run's: a module's table, or the one a function an `@engine` module made
+// for a script runs in (a camera rig's render step) -- comparing that with a
+// run would stop it. A run's table is the one `runOwnerOf` knows. Pops the
+// table.
 [[nodiscard]] const void* ownRunEnv(lua_State* L)
 {
-    const void* env = nullptr;
-    if (lua_istable(L, -1)) {
-        lua_rawgetfield(L, -1, "script");
-        if (!lua_isnil(L, -1))
-            env = lua_topointer(L, -2);
-        lua_pop(L, 1);
-    }
+    const void* env = runOwnerOf(L, -1).valid() ? lua_topointer(L, -1) : nullptr;
     lua_pop(L, 1);
     return env;
 }
@@ -1022,7 +1103,10 @@ void reconcileScripts(lua_State* L, const std::vector<core::InstanceId>& moved,
     // as boot starts scripts. The walk is the whole world, and only an
     // `Enabled` write pays it; sorted so that a thousand writes are not a
     // thousand-by-world scan.
-    if (!enabled.empty()) {
+    // Not before the world's scripts have started: in the editor, with the
+    // game stopped, `Enabled` is a scene edit (ADR 0058; the audit found an
+    // edit started the script).
+    if (started && !enabled.empty()) {
         const auto before = [](core::InstanceId a, core::InstanceId b) {
             return a.index != b.index ? a.index < b.index : a.generation < b.generation;
         };

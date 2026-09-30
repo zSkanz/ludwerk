@@ -458,7 +458,7 @@ std::optional<core::TextKey> World::setParent(core::InstanceId id, core::Instanc
     // The scripts it moved, for the runtime to start or stop (ADR 0137 §1).
     if (m_scriptClass == InvalidClass)
         m_scriptClass = m_classes.findId(m_atoms.lookup("Script"));
-    if (m_scriptClass != InvalidClass) {
+    if (m_tracksScripts && m_scriptClass != InvalidClass) {
         for (const core::InstanceId member : subtree) {
             if (classOf(member) == m_scriptClass)
                 m_movedScripts.push_back(member);

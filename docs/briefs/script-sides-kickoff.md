@@ -155,27 +155,30 @@ Run once S1 and S2 are in, by the method of the audit of 2026-09-28
 (`docs/briefs/audit-2026-09-28.md`): findings ranked P0, P1 and P2; a failing
 test for each before its fix; defects that share a root fixed together.
 
-- [ ] **The matrix.** Every way a script enters or leaves the world (boot, scene
+- [x] **The matrix.** Every way a script enters or leaves the world (boot, scene
   load, clone, stamp, `Instance.new`, reparent in, reparent out, `Enabled`,
   `Destroy`, scene change, hot reload) × every topology (solo, host, dedicated,
   replica, sub-world) × every container (each service, each storage, the world,
   a stamp, a screen) × each `RunContext`. Each cell is either a test or a line
   saying why it cannot happen.
-- [ ] **Leaks.** Unpack every target's package (windows, linux, android and
+- [x] **Leaks.** Unpack every target's package (windows, linux, android and
   both servers; `none`, `host` and `dedicated`). Search it for every sentinel,
   as source and as bytecode string constants.
-- [ ] **Network.** Join, leave, rejoin, a scene change on a replica, and a stamp
+- [x] **Network.** Join, leave, rejoin, a scene change on a replica, and a stamp
   placed and cloned at run time. Each with scripts of each side, checked on the
   authority and on two replicas.
-- [ ] **Security.** Nothing a peer sends can start, stop or change a script on
+- [x] **Security.** Nothing a peer sends can start, stop or change a script on
   another machine. Nothing a script does can run text it did not load.
-- [ ] **Determinism.** The traces, across worker counts.
-- [ ] **Performance.** The S1 baselines. Plus a scene change with 1 000 scripts,
+- [x] **Determinism.** The traces, across worker counts.
+- [x] **Performance.** The S1 baselines. Plus a scene change with 1 000 scripts,
   and 200 stamps with scripts placed in one tick.
-- [ ] **Editor.** Greying, the marks, *Insert*, undo of a move into a service,
+- [x] **Editor.** Greying, the marks, *Insert*, undo of a move into a service,
   and a stamp edited and saved with scripts of each side.
-- [ ] **Docs.** The manual, the API reference and the ADRs agree with what was
+- [x] **Docs.** The manual, the API reference and the ADRs agree with what was
   built.
+
+S3 done 2026-09-29: [`script-sides-audit-2026-09-29.md`](script-sides-audit-2026-09-29.md),
+D344 to D359, sixteen defects fixed (seven P1, nine P2, no P0).
 
 ## Stage S4 — the close
 
@@ -248,3 +251,13 @@ test for each before its fix; defects that share a root fixed together.
 - **The replica now keeps modules too.** A `ModuleScript` in a replicated
   folder of `ReplicatedStorage` died with the join's clear; the templates keep
   it and put it back.
+- **The audit's leak item found what S0.3 broke**: a game that is not
+  dedicated lost `global.json`'s `Client` folder, because staging it as the
+  side `all` stripped `global.json` as the server's (D345). Only building the
+  other modes showed it.
+- **A run cannot be known by a global the script owns.** The `script` global
+  was the run's name, and a script could clear it (D356); a weak registry
+  table keyed by the run's globals table is the name now.
+- **The waits were the stop's blind spot**: every yield that resumes through
+  `resumeScheduled` -- `WaitForChild`, answers, requests, saves, preloads --
+  came back into a stopped run (D348).

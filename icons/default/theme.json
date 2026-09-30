@@ -194,7 +194,7 @@
     "content.Texture": "spatial",
     "overlay.SideClient": "ui",
     "overlay.SideServer": "system",
-    "overlay.SideShared": "script",
+    "overlay.SideShared": "neutral",
     "overlay.Stamp": "neutral",
     "overlay.StampBase": "neutral"
   },

@@ -1536,6 +1536,10 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
     }
 
     scene::SceneIoReport report;
+    // **Named before it is read** (ADR 0138 §6): the read gives what it makes
+    // an origin that says which scene, and on failure the name goes back.
+    const std::string previousScene = w.engineState().currentScene;
+    w.engineState().currentScene = path;
     const std::optional<core::EngineError> error = prepared != nullptr
                                                        ? scene::readScene(w, *prepared, &report, m_stamps)
                                                        : scene::readScene(w, text, &report, m_stamps);
@@ -1546,8 +1550,10 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
         if (w.alive(screen) && ui.valid())
             (void)w.setParent(screen, ui);
     }
-    if (error.has_value())
+    if (error.has_value()) {
+        w.engineState().currentScene = previousScene;
         return error;
+    }
     m_bootSceneReport = report;
     m_bootSceneApplied = true;
 

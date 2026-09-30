@@ -150,6 +150,39 @@ describe("a live script", function()
         holder:Destroy()
     end)
 
+    it("does not go on past a wait once it has stopped (the script-sides audit)", function()
+        -- A script parked in `WaitForChild` and moved into storage: its old run
+        -- must not come back when the child appears, beside nothing.
+        local script = template("Waiter") :: Script
+        script.Parent = folder()
+        task.wait()
+        script.Parent = game:GetService("ServerStorage")
+        task.wait()
+        local beacon = Instance.new("Folder")
+        beacon.Name = "ScriptLiveBeacon"
+        beacon.Parent = workspace
+        task.wait()
+        task.wait()
+        expect(made()):ToBe("")
+        beacon:Destroy()
+        script:Destroy()
+    end)
+
+    it("stops even when it cleared its own script global (the script-sides audit)", function()
+        local script = template("Escaper") :: Script
+        script.Parent = folder()
+        task.wait()
+        task.wait()
+        local whileIn = #tickFolder():GetChildren()
+        expect(whileIn > 0):ToBe(true)
+        script.Enabled = false
+        task.wait()
+        task.wait()
+        task.wait()
+        expect(#tickFolder():GetChildren()):ToBe(whileIn)
+        script:Destroy()
+    end)
+
     it("does not run in ReplicatedStorage or ServerStorage, and stops when moved there", function()
         -- Storage holds templates, and a template must not run itself (§3).
         local storage = game:GetService("ReplicatedStorage")

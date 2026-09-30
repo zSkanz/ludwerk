@@ -53,6 +53,15 @@ public:
     // any script that comes into the world, once `instance` is in it.
     core::usize attach(scene::World& world, core::InstanceId instance, scene::World::Origin origin);
 
+    // **The atom a spawn's `stamp:` origin names, or none** -- interned only
+    // when this machine's package holds that stamp. A name interned is kept
+    // for ever, so one a hostile server made up must not be: every spawn would
+    // grow the table (the script-sides audit, S3).
+    // A name the package does not hold is remembered, up to a bound, and past
+    // it none is read: a server that names a thousand is answered from
+    // memory, not from the disk a thousand times.
+    [[nodiscard]] core::NameAtom stampAsset(scene::World& world, std::string_view origin);
+
     [[nodiscard]] core::usize size() const noexcept;
 
 private:
@@ -65,6 +74,8 @@ private:
     std::map<Key, std::vector<core::InstanceId>> m_templates;
     // Stamps read already, whether or not they carried a script.
     std::vector<core::u32> m_stampsRead;
+    // Names asked for that this package does not hold, up to `MaxMissing`.
+    std::vector<std::string> m_missing;
 };
 
 } // namespace engine::replication

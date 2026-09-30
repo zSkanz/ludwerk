@@ -34,9 +34,11 @@ export type Side = "all" | "client" | "server"
 --- **What `.engine/` holds that is the editor's, not the game's**: its layout,
 --- its settings, the import and check caches, and the trash -- script files the
 --- editor moved aside when their instance went, server code as often as not
---- (S0.1). A game carries the pack, its manifest and the partition cache, and
---- none of these.
-local EditorOnly = { "editor.json", "import", "check", "types", "match", "export", "trash" }
+--- (S0.1) -- and the conflicts, the editor's copy of a script file that changed
+--- on disk under it, server code as often as not, and the developer's own save
+--- slots (the script-sides audit). A game carries the pack, its manifest and the
+--- partition cache, and none of these.
+local EditorOnly = { "editor.json", "import", "check", "types", "match", "export", "trash", "conflicts", "saves" }
 local EditorOnlyPrefixes = { "editor-layout" }
 
 local function editorOnly(name: string): boolean
@@ -129,12 +131,103 @@ local function removeTree(target: string)
     end
 end
 
+--- Where a stamp's original text comes from, by its content-relative name: the
+--- project's own file, never the staged one, which may already have lost a
+--- side's code.
+export type StampReader = (string) -> string?
+
+--- The scripts of a stamp's tree, by the path an override names each with:
+--- names joined by `.`, `#n` after a name its siblings share (`overridePath`
+--- in `engine/scene/src/scene_file.cpp`).
+local function stampScripts(node: jsondoc.Node, at: string, out: { [string]: jsondoc.Node })
+    if jsondoc.stringOf(jsondoc.get(node, "class")) == "Script" then
+        out[at] = node
+    end
+    local children = jsondoc.get(node, "children")
+    if children == nil or children.kind ~= "array" then
+        return
+    end
+    local shared: { [string]: number } = {}
+    for _, child in children.items do
+        local name = jsondoc.stringOf(jsondoc.get(child, "name")) or ""
+        shared[name] = (shared[name] or 0) + 1
+    end
+    local seen: { [string]: number } = {}
+    for _, child in children.items do
+        local name = jsondoc.stringOf(jsondoc.get(child, "name")) or ""
+        seen[name] = (seen[name] or 0) + 1
+        local segment = if (shared[name] or 0) > 1 then `{name}#{seen[name]}` else name
+        stampScripts(child, if at == "" then segment else `{at}.{segment}`, out)
+    end
+end
+
+--- **A linked stamp's instance runs its scripts on the side ITS overrides say**
+--- (the script-sides audit). The stamp file is stripped by its own sides; this
+--- instance's code follows its own: an override that made a script the other
+--- side's is given an empty `Source`, and one that made it this side's, when
+--- the stamp file loses its code here, is given the stamp's own.
+local function stripLinked(node: jsondoc.Node, side: Side, readStamp: StampReader): boolean
+    local name = jsondoc.stringOf(jsondoc.get(node, "stamp"))
+    local text = if name ~= nil then readStamp(name) else nil
+    if text == nil then
+        return false
+    end
+    local stamp = jsondoc.parse(text)
+    local root = jsondoc.get(stamp, "root")
+    if root == nil or root.kind ~= "object" then
+        return false
+    end
+    local scripts: { [string]: jsondoc.Node } = {}
+    stampScripts(root, "", scripts)
+    local paths: { string } = {}
+    for at in scripts do
+        table.insert(paths, at)
+    end
+    table.sort(paths)
+
+    local foreign = if side == "client" then "Server" else "Client"
+    local changed = false
+    local overrides: jsondoc.Node? = jsondoc.get(node, "overrides")
+    local function overrideAt(at: string): jsondoc.Node
+        local holder: jsondoc.Node = if overrides ~= nil then overrides else jsondoc.object()
+        if overrides == nil then
+            jsondoc.set(node, "overrides", holder)
+            overrides = holder
+        end
+        local entry: jsondoc.Node = jsondoc.get(holder, at) or jsondoc.object()
+        -- Set again when it was there: `set` replaces a key in its place.
+        jsondoc.set(holder, at, entry)
+        return entry
+    end
+    for _, at in paths do
+        local properties = jsondoc.get(scripts[at], "properties")
+        local stampSide = (if properties ~= nil then jsondoc.stringOf(jsondoc.get(properties, "RunContext")) else nil)
+            or "Shared"
+        local entry = if overrides ~= nil then jsondoc.get(overrides, at) else nil
+        local own = (if entry ~= nil then jsondoc.stringOf(jsondoc.get(entry, "RunContext")) else nil) or stampSide
+        if own == foreign then
+            if entry == nil or jsondoc.stringOf(jsondoc.get(entry, "Source")) ~= "" then
+                jsondoc.set(overrideAt(at), "Source", jsondoc.string(""))
+                changed = true
+            end
+        elseif stampSide == foreign then
+            local source = if properties ~= nil then jsondoc.get(properties, "Source") else nil
+            if source ~= nil and (entry == nil or jsondoc.get(entry, "Source") == nil) then
+                jsondoc.set(overrideAt(at), "Source", source)
+                changed = true
+            end
+        end
+    end
+    return changed
+end
+
 --- **The other side's code, taken out of every `Script` in a node's tree that
 --- carries the other side's `RunContext`** (ADR 0138 §5). The instance stays,
 --- with no `Source`: the tree is the same on every machine, for replication and
---- the hash, and a script with no code is never live. Says whether anything
---- changed.
-local function stripScripts(node: jsondoc.Node?, side: Side): boolean
+--- the hash, and a script with no code is never live. A linked stamp's
+--- instance is resolved against the stamp's own file when `readStamp` can read
+--- it. Says whether anything changed.
+local function stripScripts(node: jsondoc.Node?, side: Side, readStamp: StampReader?): boolean
     if node == nil or node.kind ~= "object" or side == "all" then
         return false
     end
@@ -151,19 +244,28 @@ local function stripScripts(node: jsondoc.Node?, side: Side): boolean
             changed = true
         end
     end
+    if readStamp ~= nil and jsondoc.get(node, "stamp") ~= nil then
+        changed = stripLinked(node, side, readStamp) or changed
+    end
     local children = jsondoc.get(node, "children")
     if children ~= nil and children.kind == "array" then
         for _, child in children.items do
-            changed = stripScripts(child, side) or changed
+            changed = stripScripts(child, side, readStamp) or changed
         end
     end
     return changed
 end
 
+--- The storages whose service decides its scripts' side (ADR 0138 §2): a
+--- script in one is that side's whatever its `RunContext` says, and the other
+--- side's is left out whole.
+local DecidingServices: { [string]: boolean } =
+    { ServerScriptService = true, ClientScriptService = true, ScriptService = true }
+
 --- A scene's JSON without the other side's services, and without the other
 --- side's code in the scripts left. Nil when nothing in it belonged to the
 --- other side, so the staged file stays a link.
-local function stripScene(text: string, side: Side): string?
+local function stripScene(text: string, side: Side, readStamp: StampReader?): string?
     local document, layout = jsondoc.parse(text)
     local changed = false
     local storage = jsondoc.get(document, "storage")
@@ -175,22 +277,29 @@ local function stripScene(text: string, side: Side): string?
             end
         end
         for _, key in storage.keys do
-            changed = stripScripts(storage.values[key], side) or changed
+            if not DecidingServices[key] then
+                changed = stripScripts(storage.values[key], side, readStamp) or changed
+            end
         end
     end
-    changed = stripScripts(jsondoc.get(document, "root"), side) or changed
+    changed = stripScripts(jsondoc.get(document, "root"), side, readStamp) or changed
     return if changed then jsondoc.print(document, layout) else nil
 end
 
 --- A stamp's JSON without the other side's code (ADR 0138 §5). Nil when it
 --- carried none.
-local function stripStamp(text: string, side: Side): string?
+local function stripStamp(text: string, side: Side, readStamp: StampReader?): string?
     local document, layout = jsondoc.parse(text)
-    return if stripScripts(jsondoc.get(document, "root"), side) then jsondoc.print(document, layout) else nil
+    return if stripScripts(jsondoc.get(document, "root"), side, readStamp) then jsondoc.print(document, layout) else nil
 end
 
 --- `global.json` without the other side's folder of `GlobalScriptService`.
 local function stripGlobal(text: string, side: Side): string?
+    -- A game that is not dedicated carries both folders: its one package is
+    -- the server and the player at once (the script-sides audit, D345).
+    if side == "all" then
+        return nil
+    end
     local document, layout = jsondoc.parse(text)
     local root = jsondoc.get(document, "root")
     local children = if root ~= nil then jsondoc.get(root, "children") else nil
@@ -206,26 +315,32 @@ local function stripGlobal(text: string, side: Side): string?
     end
     local changed = #kept ~= #children.items
     children.items = kept
-    -- The `Shared` folder decides nothing: a script in it runs where its own
-    -- `RunContext` says (ADR 0138 §2).
-    changed = stripScripts(root, side) or changed
+    -- The `Server` and `Client` folders decide their scripts' side; anywhere
+    -- else -- the `Shared` folder -- a script's own `RunContext` does (ADR 0138
+    -- §2).
+    for _, child in kept do
+        local name = jsondoc.stringOf(jsondoc.get(child, "name"))
+        if name ~= "Server" and name ~= "Client" then
+            changed = stripScripts(child, side) or changed
+        end
+    end
     return if changed then jsondoc.print(document, layout) else nil
 end
 
 --- Every `*.scene.json` under `root`, and `global.json` at it, rewritten in
 --- place for `side`. The staged file is unlinked before it is written, so the
 --- project's own is never touched through the link.
-local function stripStaged(root: string, side: Side, relative: string?)
+local function stripStaged(root: string, side: Side, readStamp: StampReader, relative: string?)
     for _, entry in fs.listDirectory(root) do
         local file = projectlib.joined(root, entry.name)
         if entry.type == "dir" then
-            stripStaged(file, side, entry.name)
+            stripStaged(file, side, readStamp, entry.name)
         elseif entry.type == "file" then
             local stripped: string? = nil
             if string.sub(entry.name, -11) == ".scene.json" then
-                stripped = stripScene(fs.readFileToString(file), side)
+                stripped = stripScene(fs.readFileToString(file), side, readStamp)
             elseif string.sub(entry.name, -11) == ".stamp.json" then
-                stripped = stripStamp(fs.readFileToString(file), side)
+                stripped = stripStamp(fs.readFileToString(file), side, readStamp)
             elseif relative == nil and entry.name == "global.json" then
                 stripped = stripGlobal(fs.readFileToString(file), side)
             end
@@ -242,7 +357,12 @@ local function stageContent(content: string, stage: string, side: Side): string
     removeTree(stage)
     local staged = projectlib.joined(stage, path.basename(content) or "content")
     linkTree(content, staged)
-    stripStaged(staged, side)
+    -- A linked stamp's original, from the project: the staged copy may have
+    -- lost a side's code already.
+    stripStaged(staged, side, function(name: string): string?
+        local file = projectlib.joined(content, name)
+        return if fs.exists(file) then fs.readFileToString(file) else nil
+    end)
     return staged
 end
 

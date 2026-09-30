@@ -2167,6 +2167,216 @@ TEST_CASE("a script moved into a script service takes its side, keeps it when ta
     CHECK(sideOf(inspector.selection()) == 1);
 }
 
+TEST_CASE("a stamp saved with a script of each side reads back with each side (script sides S3)")
+{
+    // The editor saves a stamp through `writeStamp`, and a door's two halves
+    // must come back as they went -- a `Shared` written as nothing.
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId door = w.create(w.classes().findId(w.atoms().lookup("Model")));
+    const core::NameAtom runContext = w.atoms().intern("RunContext");
+    for (const core::i32 side : {0, 1, 2}) {
+        const core::InstanceId half = w.create(w.classes().findId(w.atoms().lookup("Script")));
+        w.setName(half, w.atoms().intern("Half" + std::to_string(side)));
+        REQUIRE(
+            w.setProperty(half, runContext, scene::Value{scene::EnumValue{scene::generated::RunContextEnumId, side}}) !=
+            scene::World::SetResult::UnknownProperty);
+        REQUIRE_FALSE(w.setParent(half, door).has_value());
+    }
+    const std::string saved = scene::writeStamp(w, door);
+    const core::InstanceId read = scene::readStamp(w, saved, core::InstanceId{}, "door");
+    REQUIRE(read.valid());
+    for (const core::i32 side : {0, 1, 2}) {
+        const core::InstanceId half = w.findFirstChild(read, w.atoms().lookup("Half" + std::to_string(side)));
+        REQUIRE(half.valid());
+        CHECK(std::get<scene::EnumValue>(w.getProperty(half, runContext).value()).value == side);
+    }
+}
+
+TEST_CASE("a script moved in the tick a scene changes is stopped or started all the same (script sides S3)")
+{
+    // The scene load's start walk used to throw the moved-scripts queue away:
+    // a running script taken out of the world in that tick went on running,
+    // and one put into `GlobalScriptService` never started.
+    Captured log;
+    Project project;
+    const std::string templates =
+        R"json("storage":{"ReplicatedStorage":{"class":"ReplicatedStorage","name":"ReplicatedStorage","children":[)json"
+        R"json({"class":"Script","name":"Ticker","properties":{"Source":"game:GetService('RunService').Heartbeat:Connect(function() print('audit-tick') end)"}},)json"
+        R"json({"class":"Script","name":"Starter","properties":{"Source":"print('audit-late-start')"}}]}})json";
+    project.write("content/scenes/a.scene.json",
+                  R"json({"format":"scene","version":2,"root":{},)json" + templates + "}");
+    project.write("content/scenes/b.scene.json", R"json({"format":"scene","version":2,"root":{}})json");
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+    REQUIRE_FALSE(host.boot(options).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId storage =
+        w.findFirstChildOfClass(host.runtime().dataModel(), w.classes().findId(w.atoms().lookup("ReplicatedStorage")));
+    const core::InstanceId global = w.findFirstChildOfClass(
+        host.runtime().dataModel(), w.classes().findId(w.atoms().lookup("GlobalScriptService")));
+    const core::InstanceId shared = w.findFirstChild(global, w.atoms().lookup("Shared"));
+    const core::InstanceId ticker = w.clone(w.findFirstChild(storage, w.atoms().lookup("Ticker")));
+    const core::InstanceId starter = w.clone(w.findFirstChild(storage, w.atoms().lookup("Starter")));
+    REQUIRE_FALSE(w.setParent(ticker, shared).has_value());
+    for (int tick = 0; tick < 5; ++tick)
+        host.tick();
+    const auto ticks = [&]() {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [](const std::string& line) { return line.find("audit-tick") != std::string::npos; });
+    };
+    REQUIRE(ticks() > 0);
+
+    // Between one drain and the next, then the scene change: what a handler
+    // of a late phase, or the host, does.
+    REQUIRE_FALSE(w.setParent(ticker, core::InstanceId{}).has_value());
+    REQUIRE_FALSE(w.setParent(starter, shared).has_value());
+    REQUIRE_FALSE(host.loadScene("scenes/b.scene.json").has_value());
+    host.tick();
+    const auto settled = ticks();
+    for (int tick = 0; tick < 10; ++tick)
+        host.tick();
+    CHECK(ticks() == settled);
+    CHECK(log.contains("audit-late-start"));
+}
+
+TEST_CASE("changing scenes again and again does not keep the old scenes' scripts alive (script sides S3)")
+{
+    // A run's globals table was held by its record until the slot was reused
+    // by a script with a different generation, which overwrote the reference
+    // without letting it go: every scene change kept every script it closed.
+    Project project;
+    std::string scripts;
+    for (int index = 0; index < 40; ++index) {
+        scripts += std::string(index == 0 ? "" : ",") + R"json({"class":"Script","name":"Heavy)json" +
+                   std::to_string(index) + R"json(","properties":{"Source":"Big = table.create(20000, 0)"}})json";
+    }
+    for (const char* name : {"a", "b"}) {
+        project.write(std::string("content/scenes/") + name + ".scene.json",
+                      R"json({"format":"scene","version":2,"root":{"children":[)json" + scripts + "]}}");
+    }
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    lua_State* L = host.runtime().state();
+    const auto heapKb = [&]() {
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        return lua_gc(L, LUA_GCCOUNT, 0);
+    };
+    const int before = heapKb();
+    for (int change = 0; change < 8; ++change) {
+        REQUIRE_FALSE(host.loadScene(change % 2 == 0 ? "scenes/b.scene.json" : "scenes/a.scene.json").has_value());
+        host.tick();
+        host.tick();
+    }
+    // One scene's scripts hold about 6 MB; eight changes that kept them all
+    // would hold forty-odd.
+    CHECK(heapKb() - before < 16 * 1024);
+}
+
+TEST_CASE("an Enabled write in the editor, with nothing playing, starts nothing (script sides S3)")
+{
+    Captured log;
+    Project project;
+    project.write(
+        "content/scenes/main.scene.json",
+        R"json({"format":"scene","version":2,"root":{"children":[)json"
+        R"json({"class":"Script","name":"Sleeper","properties":{"Source":"print('sleeper-ran')","Enabled":false}}]}})json");
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+    options.bootScenePath = "scenes/main.scene.json";
+    options.startScripts = false;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId sleeper = w.findFirstChild(host.workspace(), w.atoms().lookup("Sleeper"));
+    REQUIRE(sleeper.valid());
+    (void)w.setProperty(sleeper, w.atoms().intern("Enabled"), scene::Value{true});
+    for (int tick = 0; tick < 3; ++tick)
+        host.tick();
+    CHECK_FALSE(log.contains("sleeper-ran"));
+}
+
+TEST_CASE("a world with no script runtime keeps no queue of moved scripts (script sides S3)")
+{
+    // The editor's stages, the preview renderer and the partitioner build
+    // scripts into worlds nothing drains; the queue grew in each for ever.
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World scratch(host.classes(), host.enums(), host.atoms(), 7u);
+    const core::InstanceId folder = scratch.create(scratch.classes().findId(scratch.atoms().lookup("Folder")));
+    for (int index = 0; index < 3; ++index) {
+        const core::InstanceId script = scratch.create(scratch.classes().findId(scratch.atoms().lookup("Script")));
+        REQUIRE_FALSE(scratch.setParent(script, folder).has_value());
+    }
+    CHECK(scratch.takeMovedScripts().empty());
+}
+
+TEST_CASE("only code is written as bytecode, and only code is compiled for a package (script sides S3)")
+{
+    // Text that happens to begin like bytecode, in an attribute, was written
+    // as `luauc:` and read back as that literal; an attribute called `Source`
+    // was compiled as if it were a script.
+    Project project;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId part = w.create(w.classes().findId(w.atoms().lookup("Part")));
+    REQUIRE_FALSE(w.setParent(part, host.workspace()).has_value());
+    REQUIRE(w.setAttribute(part, w.atoms().intern("Blob"), scene::Value{std::string("\x01\x02packed")}));
+    CHECK(scene::writeScene(w).find(scene::CompiledSourcePrefix) == std::string::npos);
+
+    project.write("content/scenes/main.scene.json",
+                  R"json({"format":"scene","version":2,"root":{"children":[)json"
+                  R"json({"class":"Part","name":"Sign","attributes":{"Source":"not luau at all +++"}},)json"
+                  R"json({"class":"Script","name":"Real","properties":{"Source":"print(1)"}}]}})json");
+    app::ScriptPackageReport report;
+    CHECK(app::compileContentScripts(project.root / "content", report));
+    std::string written;
+    REQUIRE(platform::readTextFile(project.root / "content" / "scenes" / "main.scene.json", written));
+    CHECK(written.find("not luau at all +++") != std::string::npos);
+    CHECK(report.compiled == 1);
+}
+
+TEST_CASE("an authored instance's origin names its scene, and Play numbers what was edited as the file would be read "
+          "(script sides S3)")
+{
+    // The origin said only the tree, so an instance of one scene that lived on
+    // into another took the other's scripts on a replica; and an edit in the
+    // editor -- an instance inserted -- left every number after it one off
+    // from what a client reading the saved file counts.
+    Project project;
+    project.write("content/scenes/a.scene.json",
+                  R"json({"format":"scene","version":2,"root":{"children":[{"class":"Part","name":"Door"}]}})json");
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "scenes/a.scene.json";
+    options.startScripts = false;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    scene::World& w = host.world();
+    const core::InstanceId door = w.findFirstChild(host.workspace(), w.atoms().lookup("Door"));
+    REQUIRE(door.valid());
+    CHECK(w.atoms().text(w.originOf(door).asset) == "scene:scenes/a.scene.json#Workspace");
+    CHECK(w.originOf(door).index == 0);
+
+    const core::InstanceId inserted = w.create(w.classes().findId(w.atoms().lookup("Part")));
+    REQUIRE_FALSE(w.setParent(inserted, host.workspace()).has_value());
+    (void)w.moveChild(host.workspace(), inserted, 0);
+    scene::renumberOrigins(w);
+    CHECK(w.originOf(inserted).index == 0);
+    CHECK(w.originOf(door).index == 1);
+    CHECK(w.originOf(inserted).asset == w.originOf(door).asset);
+}
+
 TEST_CASE("a shared module is one module, whether required by path or by instance")
 {
     Captured log;

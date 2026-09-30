@@ -214,3 +214,11 @@ clone, a stamp, `Instance.new`, a `Parent` write on it or on any ancestor,
   them started). Both inside the run-to-run spread. `docs/perf-baselines.md`
   has the table.
 - **No determinism trace moved.**
+- **After the audit (S3, D346 to D357)**: a stop reaches every wait, not only
+  timers and signals -- `resumeScheduled` drops a thread whose run is over;
+  a run is known by its globals table in a weak registry table, not by the
+  `script` global a script can clear; the scene change's start walk answers
+  the moved-scripts queue instead of dropping it, which also ends the closed
+  scene's runs; a record lets its old table go; a re-enable starts nothing
+  before Play; and a world queues moved scripts only once a script runtime
+  drains it.

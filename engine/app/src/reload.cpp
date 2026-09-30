@@ -2,6 +2,8 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
+#include <optional>
 
 #include "engine/app/preserved.h"
 
@@ -25,19 +27,30 @@ WorldHostOptions currentOptions(WorldHost& host, WorldHostOptions options)
     const std::string& scene = now.currentScene;
     if (scene.empty() || scene == options.bootScenePath)
         return options;
-    // The content root is what the boot scene's path ends in its relative
-    // path under; the current scene is under the same one.
-    const std::string boot = options.bootScene.generic_string();
-    if (!options.bootScenePath.empty() && boot.ends_with(options.bootScenePath)) {
-        const std::filesystem::path root(boot.substr(0, boot.size() - options.bootScenePath.size()));
-        options.bootScene = root / std::filesystem::path(scene);
+    // **All of it or none of it** (the script-sides audit): the file, the text
+    // and the path name one scene, or the reload loads one and says another.
+    // Where the current scene cannot be found, the boot's stay together.
+    //
+    // The content root is what the boot scene's path ends in; the current
+    // scene is under the same one.
+    std::optional<std::filesystem::path> file;
+    if (const std::string boot = options.bootScene.generic_string();
+        !options.bootScenePath.empty() && boot.ends_with(options.bootScenePath)) {
+        file = std::filesystem::path(boot.substr(0, boot.size() - options.bootScenePath.size())) /
+               std::filesystem::path(scene);
     }
     // A scene read from a pack is handed over as text; one on disk is read.
     if (!options.bootSceneText.empty()) {
         std::string text;
-        if (!host.readSceneText(scene, text, false).has_value())
-            options.bootSceneText = std::move(text);
+        if (host.readSceneText(scene, text, false).has_value())
+            return options;
+        options.bootSceneText = std::move(text);
     }
+    else if (!file.has_value()) {
+        return options;
+    }
+    if (file.has_value())
+        options.bootScene = *file;
     options.bootScenePath = scene;
     return options;
 }

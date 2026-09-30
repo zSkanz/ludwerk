@@ -129,6 +129,23 @@ core::usize ScriptTemplates::attach(scene::World& world, core::InstanceId instan
     return put;
 }
 
+core::NameAtom ScriptTemplates::stampAsset(scene::World& world, std::string_view origin)
+{
+    if (const core::NameAtom known = world.atoms().lookup(origin); known.valid())
+        return known;
+    constexpr std::string_view Prefix = "stamp:";
+    constexpr core::usize MaxMissing = 64;
+    if (!origin.starts_with(Prefix) || !m_stamps)
+        return {};
+    if (m_missing.size() >= MaxMissing || std::find(m_missing.begin(), m_missing.end(), origin) != m_missing.end())
+        return {};
+    if (!m_stamps(std::string(origin.substr(Prefix.size()))).has_value()) {
+        m_missing.emplace_back(origin);
+        return {};
+    }
+    return world.atoms().intern(origin);
+}
+
 core::usize ScriptTemplates::size() const noexcept
 {
     core::usize count = 0;

@@ -3381,14 +3381,15 @@ void ReplicaSession::onSpawn(scene::World& world, std::span<const u8> bytes)
         // **This machine's own scripts for where it was authored** (ADR 0138
         // §6). Looked up, never interned, for the reason the class is: an
         // origin this replica never read is not one it holds scripts for --
-        // except a stamp, which it reads from its own package the first time.
-        if (!originText.empty()) {
-            const bool stamp = originText.starts_with("stamp:");
-            const core::NameAtom asset = stamp ? world.atoms().intern(originText) : world.atoms().lookup(originText);
+        // except a stamp its own package holds, read the first time
+        // (`ScriptTemplates::stampAsset` says why no other name is interned).
+        ScriptTemplates* templates = m_templates ? m_templates() : nullptr;
+        if (!originText.empty() && templates != nullptr) {
+            const core::NameAtom asset = originText.starts_with("stamp:") ? templates->stampAsset(world, originText)
+                                                                          : world.atoms().lookup(originText);
             if (asset.valid()) {
                 world.setOrigin(local, scene::World::Origin{asset, originIndex});
-                if (ScriptTemplates* templates = m_templates ? m_templates() : nullptr; templates != nullptr)
-                    (void)templates->attach(world, local, scene::World::Origin{asset, originIndex});
+                (void)templates->attach(world, local, scene::World::Origin{asset, originIndex});
             }
         }
     }

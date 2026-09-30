@@ -278,3 +278,22 @@ TEST_CASE("a reload boots again with the scene and the topology the world is in 
     CHECK(world.findFirstChild(host->workspace(), world.atoms().lookup("InB")).valid());
     CHECK_FALSE(world.findFirstChild(host->workspace(), world.atoms().lookup("InA")).valid());
 }
+
+TEST_CASE("a reload that cannot find the current scene keeps the boot scene and says the boot scene (script sides S3)")
+{
+    // When the boot scene's path was not a suffix of its file, the reload
+    // named the current scene and loaded the boot one.
+    Project project;
+    project.write("content/scenes/a.scene.json", R"json({"format":"scene","version":2,"root":{}})json");
+    project.write("content/scenes/b.scene.json", R"json({"format":"scene","version":2,"root":{}})json");
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "a.scene.json";
+    options.bootScenePath = "levels/a.scene.json";
+    auto host = std::make_unique<app::WorldHost>();
+    REQUIRE_FALSE(host->boot(options).has_value());
+    host->world().engineState().currentScene = "scenes/b.scene.json";
+
+    const app::WorldHostOptions next = app::currentOptions(*host, options);
+    CHECK(next.bootScene == options.bootScene);
+    CHECK(next.bootScenePath == options.bootScenePath);
+}

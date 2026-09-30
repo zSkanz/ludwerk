@@ -537,6 +537,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- The script-sides audit (D344 to D359): a stopped script no longer comes back
+  from a wait; a script moved in the tick a scene changes is started or
+  stopped; scene changes no longer keep every closed scene's scripts in memory;
+  a script cannot escape its stop by clearing `script`; `Enabled` in the editor
+  starts nothing before Play; a game that is not dedicated keeps
+  `global.json`'s `Client` folder; a linked stamp's overrides, the editor's
+  conflict copies and its save slots no longer leak into a package; an
+  attribute is never mistaken for code; a hostile server cannot grow a
+  client's name table.
 - The script lifecycle's defects (the script-sides ledger's S0): `.engine/trash`
   no longer ships (D331); a replica starts no script its join will destroy
   (D334); a script that survives a scene change is not started again, and a

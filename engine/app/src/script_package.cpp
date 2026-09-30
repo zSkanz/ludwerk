@@ -70,6 +70,63 @@ namespace {
     return std::string_view::npos;
 }
 
+// **Where a script's code is in a scene, stamp or global file**: the string
+// of every `Source` key in an object held under `properties`, or in an entry
+// of `overrides` -- never an attribute that happens to be called `Source`,
+// which is text (the script-sides audit). A scan of the JSON's structure,
+// so the file is rewritten in place, every other byte as it was.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> codeStrings(std::string_view text)
+{
+    struct Frame
+    {
+        bool object = false;
+        std::string_view key;
+    };
+    std::vector<Frame> stack;
+    std::vector<std::pair<std::size_t, std::size_t>> found;
+    std::string_view lastKey;
+    bool expectKey = false;
+    const auto inCode = [&stack]() {
+        if (stack.empty() || !stack.back().object)
+            return false;
+        if (stack.back().key == "properties")
+            return true;
+        return stack.size() >= 2 && stack[stack.size() - 2].object && stack[stack.size() - 2].key == "overrides";
+    };
+    for (std::size_t at = 0; at < text.size(); ++at) {
+        const char c = text[at];
+        if (c == '"') {
+            const std::size_t close = endOfString(text, at);
+            if (close == std::string_view::npos)
+                break;
+            if (!stack.empty() && stack.back().object && expectKey) {
+                lastKey = text.substr(at + 1, close - at - 2);
+                expectKey = false;
+            }
+            else if (lastKey == "Source" && inCode()) {
+                found.emplace_back(at, close);
+            }
+            at = close - 1;
+        }
+        else if (c == '{' || c == '[') {
+            stack.push_back(Frame{c == '{', stack.empty() || !stack.back().object ? std::string_view{} : lastKey});
+            expectKey = c == '{';
+            lastKey = {};
+        }
+        else if (c == '}' || c == ']') {
+            if (!stack.empty())
+                stack.pop_back();
+            lastKey = {};
+        }
+        else if (c == ',') {
+            expectKey = !stack.empty() && stack.back().object;
+            if (!expectKey)
+                lastKey = {};
+        }
+    }
+    return found;
+}
+
 // Whether `name` is a file whose scripts a package compiles.
 [[nodiscard]] bool carriesScripts(const std::string& name) noexcept
 {
@@ -92,7 +149,6 @@ bool compileContentScripts(const std::filesystem::path& content, ScriptPackageRe
     }
     std::sort(files.begin(), files.end());
 
-    constexpr std::string_view Key = "\"Source\"";
     for (const std::filesystem::path& path : files) {
         const std::string relative = std::filesystem::relative(path, content, ec).generic_string();
         std::string text;
@@ -104,22 +160,7 @@ bool compileContentScripts(const std::filesystem::path& content, ScriptPackageRe
         out.reserve(text.size());
         std::size_t copied = 0;
         bool changed = false;
-        for (std::size_t key = text.find(Key); key != std::string::npos; key = text.find(Key, key + Key.size())) {
-            // The key, a colon, and a string: anything else is not a property
-            // called `Source` and is left as it is.
-            std::size_t at = key + Key.size();
-            while (at < text.size() && (text[at] == ' ' || text[at] == '\n' || text[at] == '\r' || text[at] == '\t'))
-                ++at;
-            if (at >= text.size() || text[at] != ':')
-                continue;
-            ++at;
-            while (at < text.size() && (text[at] == ' ' || text[at] == '\n' || text[at] == '\r' || text[at] == '\t'))
-                ++at;
-            if (at >= text.size() || text[at] != '"')
-                continue;
-            const std::size_t close = endOfString(text, at);
-            if (close == std::string::npos)
-                break;
+        for (const auto& [at, close] : codeStrings(text)) {
             core::JsonDocument literal;
             if (!literal.parse(std::string_view(text).substr(at, close - at), relative))
                 continue;

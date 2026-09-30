@@ -80,6 +80,10 @@ end
 --- was server code as often as not.
 local NowhereStrings = {
     "SENTINEL-TRASH",
+    -- The editor's copy of a script file that changed under it, and the
+    -- developer's own save slots (the script-sides audit).
+    "SENTINEL-CONFLICT",
+    "SENTINEL-SAVE-SLOT",
 }
 
 --- `foreign` and `NowhereStrings`, one list.
@@ -167,6 +171,11 @@ local function scaffold(parent: string): string
         projectlib.joined(project, ".engine", "trash", "20260929-120000", "src", "server", "Old.luau"),
         script("SENTINEL-TRASH")
     )
+    write(
+        projectlib.joined(project, ".engine", "conflicts", "src", "server", "Secret.luau"),
+        script("SENTINEL-CONFLICT")
+    )
+    write(projectlib.joined(project, ".engine", "saves", "slot.json"), '{"note": "SENTINEL-SAVE-SLOT"}')
 
     local content = projectlib.joined(project, "content")
     write(
@@ -344,6 +353,21 @@ test.suite("dedicated sides", function(suite)
             build.run({ path = project, output = nil, target = `{desktop}-server`, force = false, devHost = true }),
             1
         )
+
+        -- **A game that is not dedicated carries both sides** -- players host,
+        -- or one plays alone -- with every script's code compiled and none of
+        -- the editor's trash (the script-sides audit, S3).
+        local everything = withBoth(ServerStrings)
+        for _, sentinel in ClientStrings do
+            table.insert(everything, sentinel)
+        end
+        for _, mode in { "host", "none" } do
+            local text = fs.readFileToString(config)
+            text = string.gsub(text, 'multiplayer = "[a-z]+"', `multiplayer = "{mode}"`)
+            fs.writeStringToFile(config, text)
+            assert.eq(build.run({ path = project, output = nil, target = desktop, force = true, devHost = true }), 0)
+            checkSide(projectlib.joined(project, "dist", desktop), everything, NowhereStrings)
+        end
 
         removeTree(parent)
     end)

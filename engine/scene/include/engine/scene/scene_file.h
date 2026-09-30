@@ -174,6 +174,13 @@ private:
 [[nodiscard]] std::optional<core::EngineError>
 readGlobal(World& world, std::string_view json, SceneIoReport* report = nullptr, const StampSource* source = nullptr);
 
+// **Every authored instance numbered as a read of the saved scene would
+// number it** (ADR 0138 §6, the script-sides audit): what the editor's Play
+// calls, since an edit -- an instance inserted, removed or moved -- leaves the
+// numbers a read made out of step with the file a client reads. Each carried
+// tree in preorder, generated instances left out, as the writer leaves them.
+void renumberOrigins(World& world);
+
 // Removes everything a scene describes, leaving the world otherwise intact.
 //
 // It is `readScene`'s first half, exposed because an editor asking for a NEW

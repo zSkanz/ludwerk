@@ -7,6 +7,7 @@
 #include "engine/render/transform_history.h"
 #include "engine/replication/extract.h"
 #include "engine/replication/replication.h"
+#include "engine/replication/script_templates.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/modules.h"
@@ -148,6 +149,9 @@ void NetworkSession::wire()
             core::logText(core::LogLevel::Error, error->message);
             return;
         }
+        // The scene before's templates are no scene's now.
+        if (replication::ScriptTemplates* templates = host->scriptTemplates(); templates != nullptr)
+            templates->dropSceneTemplates(host->world());
         (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
     });
 #endif

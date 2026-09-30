@@ -221,6 +221,16 @@ thread_local bool t_mountedInFull = false;
 }
 
 // Whether a service's contents are a scene's to carry (see `FirstServices`).
+// **The origin a scene's tree gives what it holds** (ADR 0138 §6): the scene's
+// path and the tree -- `scene:scenes/arena.scene.json#Workspace` -- so an
+// instance of one scene that outlives it is never taken for another's (the
+// script-sides audit). The path is the world's current scene, which a load
+// sets before it reads.
+[[nodiscard]] core::NameAtom sceneOrigin(World& world, std::string_view tree)
+{
+    return world.atoms().intern("scene:" + world.engineState().currentScene + "#" + std::string(tree));
+}
+
 [[nodiscard]] bool carriedService(const World& world, core::InstanceId id) noexcept
 {
     const ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
@@ -428,8 +438,10 @@ void writeSequence(JsonWriter& out, const core::NumberSequence& sequence)
     return std::nullopt;
 }
 
+// `code`: the value is a code property's (`Source`), the one kind of string
+// that may be bytecode and is written as it (S0.3).
 void writeValue(JsonWriter& out, const World& world, const Value& value,
-                const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report)
+                const std::unordered_map<core::u32, std::string>& paths, SceneIoReport& report, bool code = false)
 {
     switch (valueType(value)) {
     case ValueType::Nil:
@@ -445,9 +457,12 @@ void writeValue(JsonWriter& out, const World& world, const Value& value,
         // **Bytecode is not text** (S0.3): a compiled script -- a package's,
         // saved back at run time -- is written as a JSON string can carry it.
         // The test is bytecode's own first two bytes, a version below a space
-        // and a types version below four, which no text begins with.
+        // and a types version below four, which no source begins with -- and
+        // asked of code alone: an attribute's text may begin with anything,
+        // and the reader decodes only code (the script-sides audit).
         const std::string& text = std::get<std::string>(value);
-        if (text.size() >= 2 && static_cast<unsigned char>(text[0]) < 0x20 && static_cast<unsigned char>(text[1]) < 4) {
+        if (code && text.size() >= 2 && static_cast<unsigned char>(text[0]) < 0x20 &&
+            static_cast<unsigned char>(text[1]) < 4) {
             const std::span<const core::u8> bytes(reinterpret_cast<const core::u8*>(text.data()), text.size());
             out.value(std::string(CompiledSourcePrefix) + core::base64Encode(bytes));
             break;
@@ -951,7 +966,7 @@ void collectOverrides(JsonWriter& out, bool& anyOverride, const World& live, cor
                 continue;
             open();
             out.key(name);
-            writeValue(out, live, *mine, paths, report);
+            writeValue(out, live, *mine, paths, report, property.code);
             ++report.overrides;
         }
     }
@@ -1086,7 +1101,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
                 anyProperty = true;
             }
             out.key(name);
-            writeValue(out, world, *value, paths, report);
+            writeValue(out, world, *value, paths, report, property.code);
             ++report.properties;
         }
     }
@@ -2739,7 +2754,7 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
             // **Numbered as read** (ADR 0138 §6): what this read made, and
             // nothing else the world already held, so an authority and a
             // replica that read the same file number the same instances alike.
-            const core::NameAtom origin = world.atoms().intern("scene:Workspace");
+            const core::NameAtom origin = sceneOrigin(world, "Workspace");
             u32 next = 0;
             for (core::usize index = 0; index < children.size(); ++index) {
                 const core::InstanceId made =
@@ -2771,8 +2786,7 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
             if (const JsonValue children = node["children"]; children.type() == core::JsonType::Array) {
                 // Each storage its own count: a package that leaves one out
                 // numbers the others as the one that keeps it does.
-                const core::NameAtom origin =
-                    world.atoms().intern("scene:" + std::string(world.atoms().text(world.name(service))));
+                const core::NameAtom origin = sceneOrigin(world, world.atoms().text(world.name(service)));
                 u32 next = 0;
                 for (core::usize index = 0; index < children.size(); ++index) {
                     const core::InstanceId made =
@@ -3306,6 +3320,34 @@ std::vector<core::NameAtom> stampOverrides(const World& world, core::InstanceId 
         }
     }
     return overridden;
+}
+
+void renumberOrigins(World& world)
+{
+    const core::InstanceId workspace = workspaceOf(world);
+    if (!workspace.valid())
+        return;
+    // Preorder, what the writer would write and nothing else, so the numbers
+    // are the ones a read of the saved file makes.
+    const auto number = [&world](auto& self, core::InstanceId id, core::NameAtom asset, u32& next) -> void {
+        if (engineMade(world, id))
+            return;
+        world.setOrigin(id, World::Origin{asset, next++});
+        for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
+            self(self, child, asset, next);
+    };
+    const auto tree = [&](core::InstanceId container, core::NameAtom asset) {
+        u32 next = 0;
+        for (core::InstanceId child = world.firstChild(container); child.valid(); child = world.nextSibling(child))
+            number(number, child, asset, next);
+    };
+    tree(workspace, sceneOrigin(world, "Workspace"));
+    const core::InstanceId dataModel = world.parentOf(workspace);
+    for (core::InstanceId service = dataModel.valid() ? world.firstChild(dataModel) : core::InstanceId{};
+         service.valid(); service = world.nextSibling(service)) {
+        if (carriedService(world, service))
+            tree(service, sceneOrigin(world, world.atoms().text(world.name(service))));
+    }
 }
 
 } // namespace engine::scene

@@ -258,6 +258,8 @@ ScriptRuntime::ScriptRuntime(scene::World& world) : m_world(world), m_impl(std::
     m_impl->context.services = &m_impl->services;
     m_impl->context.modules = &m_impl->modules;
     m_impl->services.reload = &m_impl->ownReload;
+    // This runtime drains the world's moved scripts (ADR 0137 §1).
+    world.setTracksScripts(true);
 }
 
 void ScriptRuntime::setStampSource(std::function<std::optional<std::string>(std::string_view)> source)

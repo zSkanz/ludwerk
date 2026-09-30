@@ -2128,6 +2128,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             // the first line of the console.
                             if (overlay.has_value())
                                 overlay->clearConsole();
+                            // **What was edited, numbered as the saved file
+                            // reads** (ADR 0138 §6): a client that joins a
+                            // match hosted from here reads the file.
+                            scene::renumberOrigins(host->world());
                             script::startScripts(host->runtime().state());
                             // **Armed against the chunks play just loaded.**
                             // `startScripts` binds each chunk as it loads, so a

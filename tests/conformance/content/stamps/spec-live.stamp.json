@@ -71,6 +71,20 @@
     "attributes": {
      "Make": "FromShared"
     }
+   },
+   {
+    "class": "Script",
+    "name": "Waiter",
+    "properties": {
+     "Source": "--!strict\nlocal into = workspace:FindFirstChild(\"ScriptLiveSpec\")\nworkspace:WaitForChild(\"ScriptLiveBeacon\")\nlocal p = Instance.new(\"Part\")\np.Name = \"AfterWait\"\np.Parent = into\n"
+    }
+   },
+   {
+    "class": "Script",
+    "name": "Escaper",
+    "properties": {
+     "Source": "--!strict\nlocal RunService = game:GetService(\"RunService\")\nlocal ticks = workspace:FindFirstChild(\"ScriptLiveTicks\")\n-- Its own `script` global, cleared: the run is still its own.\nscript = nil\nRunService.Heartbeat:Connect(function()\n    local p = Instance.new(\"Part\")\n    p.Name = \"Tick\"\n    p.Parent = ticks\nend)\n"
+    }
    }
   ]
  }
