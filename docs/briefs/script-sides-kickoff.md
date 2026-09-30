@@ -182,15 +182,34 @@ D344 to D359, sixteen defects fixed (seven P1, nine P2, no P0).
 
 ## Stage S4 — the close
 
-- [ ] Rebuild the package (`scripts/package.ps1`).
-- [ ] Put a stamp door in `C:\Users\juanr\Downloads\Ludwerk-TesteMultiplayer` (the
+- [x] Rebuild the package (`scripts/package.ps1`).
+- [x] Put a stamp door in `C:\Users\juanr\Downloads\Ludwerk-TesteMultiplayer` (the
   owner's test game, outside the repository). The door has a `Server` script
   (it opens for a player at it) and a `Client` script (a sound and a text).
   Export it `dedicated`, and prove the client package has no `Server` source
   and the server package no `Client` source. Run a server on **port 7778,
   never 7777**, which is the owner's own live server. Join it with a client
   under real input, and see the door open with its sound.
-- [ ] `PROGRESS.md` records the ledger closed. The queue returns to F2.
+- [x] `PROGRESS.md` records the ledger closed. The queue returns to F2.
+
+S4 done 2026-09-29, the package rebuilt after D360. The door is
+`content/stamps/porta.stamp.json` in the test game: a frame, a leaf, a `Server`
+script that lifts the leaf for a player within seven metres and sets `Aberta`,
+and a `Client` script with a creak (`content/audio/porta.wav`) and a
+billboard's text; the server's own script places it with `Instance.stamp` at
+run time. Exported `dedicated` to `dist/windows-porta` and
+`dist/windows-server-porta`, beside the owner's own: the client's pack holds
+the server half's instance with no `Source` and its own half compiled, the
+server's the reverse, and neither holds either half's text. A server ran on
+**7778** (7777 untouched); a client joined it, ran its own package's client
+half under the door the server sent, and showed "Porta aberta!" with the creak
+when the door opened for it (the server's log: `[porta] abriu`; the client's:
+`[porta] cliente: aberta -- texto e som`; a picture from the client's window).
+**The client joined by `--join`, not by typing**: the desktop refused the
+window focus while the owner was using it, and the join does not need a key --
+the first player's spawn is inside the door's seven metres. Walking to it by
+keyboard is the owner's to do.
+
 
 ## Findings
 
@@ -261,3 +280,10 @@ D344 to D359, sixteen defects fixed (seven P1, nine P2, no P0).
 - **The waits were the stop's blind spot**: every yield that resumes through
   `resumeScheduled` -- `WaitForChild`, answers, requests, saves, preloads --
   came back into a stopped run (D348).
+- **The first door's client half only answered changes**: it arrived on a
+  client with the door already open and showed nothing. A script under an
+  instance the server sends arrives with the instance as it is NOW; the
+  manual's multiplayer guide says so, and the door reads its state at start.
+- **D360 was found by running, after S3**: the stop's suppress-not-disconnect
+  rule, which S1 recorded as a choice and S3 left for later, was a leak
+  without bound once S1 made clones run their scripts.

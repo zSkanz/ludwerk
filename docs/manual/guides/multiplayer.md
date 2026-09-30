@@ -112,7 +112,9 @@ dedicated export leaves it out of the player's package -- per script, so a
 stamp's `Server` half is not in a player's package either. A client runs the
 `Client` and `Shared` scripts of its own package under what the server sends:
 see [Where my code runs](manual:concepts/scripts) for the whole rule and its
-price.
+price. **Such a script arrives with its instance as it is now**: a door that
+opened before the player joined arrives open, so read the state when the
+script starts as well as on each change.
 
 `NetworkService.Authority` still answers "does this machine decide the world?"
 for code that runs everywhere, such as a script inside a part left `Shared`:

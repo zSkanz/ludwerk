@@ -468,9 +468,13 @@ package's scripts under what the server sends, protocol 29), and **S3, the
 audit, done 2026-09-29**
 ([`script-sides-audit-2026-09-29.md`](docs/briefs/script-sides-audit-2026-09-29.md):
 the matrix of containers, sides and topologies, every package mode searched,
-sixteen defects fixed, D344 to D359). Next: the S4 close; then the terrain
-audit's ledger, then every editor text through i18n (R3, the owner's word of
-2026-09-29), then F2, movers and constraints.
+sixteen defects fixed, D344 to D359) and **S4, closed 2026-09-29** (D360,
+a stop disconnects; a stamp door with a server half and a client half in the
+owner's test game, exported dedicated and joined over port 7778). **The
+ledger is closed.** Next, by the owner's word of 2026-09-29: the runtime
+`TextInput` made complete (the clipboard, selection, word moves, undo, the
+events other engines give), then the terrain audit's ledger, then every editor
+text through i18n (R3), then F2, movers and constraints.
 
 - [x] **P0** (crashes, escapes, runaway scripts, hostile peers): 13 items
       and a second review of the network code, D218 to D232 (`c5cc5cf5`).
