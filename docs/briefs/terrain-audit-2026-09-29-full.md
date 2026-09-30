@@ -58,7 +58,7 @@ away is the same shape drawn close, at lower resolution.
   own geometry; winding agrees with the surface-net sign.
 - [ ] Streamed-project tests for every case of TA16 -- written at the start
   of T1, as each fix's failing test.
-- [ ] A flight benchmark over the gallery and the owner's place, in
+- [x] A flight benchmark over the gallery and the owner's place, in
   `docs/perf-baselines.md`: p95, p99 and the worst frame.
 
 ## T1 — P0s, security and data first
@@ -153,9 +153,16 @@ away is the same shape drawn close, at lower resolution.
   What already holds is asserted plainly: a thick block's coarse cells keep
   its material, and open flat ground sees the whole sky at every level. The
   ray grid is proved on a seam between two nodes of one level, which is closed.
+- **The gallery before any fix**, as a player sees it at quality high, the
+  sun at 30 degrees: `terrain-audit-2026-09-29/gallery-before-5-15-30m.png`,
+  `gallery-before-60-120-250m.png` (the step in the slab's edge at 250 m) and
+  `gallery-before-500-1000-2000m.png` (the 2 m slab and the plain terrain
+  gone).
 - **Still owed in T0**: the visual goldens (after the owner approves
   references), winding against the surface-net sign (with T2's mesh work),
-  the TA16 tests (T1), and the flight benchmark.
+  and the TA16 tests (T1). The flight benchmark is measured: the owner's place
+  at a p99 of 10.6 to 11.4 ms and a worst frame of 20 to 25 ms, the nodes being
+  meshed on the main thread (`docs/perf-baselines.md`).
 
 ## Findings
 

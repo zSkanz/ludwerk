@@ -1233,3 +1233,26 @@ where a stop only suppressed its run's handlers.
 
 Flat after: a stop disconnects its run's connections once the drain is over,
 so the signal's list holds the fifty that are alive.
+
+## The terrain flight (terrain audit T0)
+
+What a camera flying over terrain costs while every level of detail is rebuilt
+under it: from 1 200 m down to 60 m over the middle of the ground and back, once
+over 1 500 frames -- the flight the audit measured. Measured 2026-09-30 on
+`win-msvc-dev` (D3D12, the GPU debug layer on), `engine-host <project> --headless
+--frames=1500 --exit --frame-stats --width=1920 --height=1080`; three runs each,
+before any of the audit's fixes.
+
+| Flight | Median | p95 | p99 | Worst |
+|---|---|---|---|---|
+| The owner's place (a copy of it, 1 024 m square, a metre voxel) | 0.83, 0.91, 0.89 ms | 7.77, 7.07, 7.39 ms | 11.41, 11.01, 10.57 ms | 24.5, 20.5, 20.0 ms |
+| The gallery (`tests/perf/terrainflight`) | 0.43, 0.44, 0.43 ms | 0.90, 0.91, 0.92 ms | 4.82, 4.87, 4.78 ms | 9.4, 9.4, 9.1 ms |
+
+**On the owner's place the p95 is the drawing on the CPU** (7.4, 6.7 and
+7.0 ms of it): the frames in which nodes are meshed. The audit's T5 holds this
+to a p99 under 16.6 ms and a worst frame with no terrain spike; the worst
+frame, 20 to 25 ms, is that spike. The gallery is a small world -- a few
+hundred metres across -- and its tail is its handful of nodes being rebuilt.
+
+The draws column `--frame-stats` prints counts parts, not terrain nodes, so it
+is left out here.

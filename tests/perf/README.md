@@ -43,3 +43,4 @@ build ran in the background and 2.02 ms three runs in a row once it finished —
 | Scene | What it is for |
 |---|---|
 | `horde` | Two thousand enemies sharing one mesh and one material, chasing a circling player, written from Luau every tick, under a shadow-casting sun. It prices **instanced draws**, which is M7.5's one scope item that is not about looking. Asked for on 2026-08-20 as "could I build a survivors-like on this engine"; answered at M2 by building one outside the repository, and committed here because M7.5 is where the answer became a number something defends. |
+| `terrainflight` | The terrain gallery's shapes flown over from 1 200 m down to 60 m and back once in 1 500 frames, the flight the terrain audit of 2026-09-29 measured the owner's place with: it prices **rebuilding the levels of detail** under a moving camera. Its numbers, and the owner's place's, are in `docs/perf-baselines.md` under the terrain flight. |

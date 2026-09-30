@@ -1,0 +1,13 @@
+# The terrain flight (terrain audit T0): the gallery's shapes flown over from
+# 1200 m to 60 m and back, measured by hand (`tests/perf/README.md`).
+
+[project]
+name = "Ludwerk Terrain Flight"
+id = "dev.ludwerk.terrainflight"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Flight"
+width = 1920
+height = 1080
