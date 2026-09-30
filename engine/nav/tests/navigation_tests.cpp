@@ -240,6 +240,36 @@ TEST_CASE("terrain is ground: a path across a flat field")
     CHECK(std::abs(path->points.back().y) < 1.0);
 }
 
+TEST_CASE("a dig rebuilds the navmesh tiles over it and no others (terrain audit TA18)")
+{
+    // Every terrain edit changed every tile's fingerprint -- the terrain's
+    // revision was in it -- and one crater rebuilt the navmesh of the world.
+    Level level;
+    const core::InstanceId terrain = level.world.create(level.classes.findId(level.atoms.intern("Terrain")));
+    REQUIRE(terrain.valid());
+    REQUIRE_FALSE(level.world.setParent(terrain, level.workspace).has_value());
+    scene::TerrainComponent* ground = level.world.terrains().find(terrain);
+    REQUIRE(ground != nullptr);
+    ground->field.setHeightRange(-32.0f, 32.0f);
+    (void)asset::fillFlat(ground->field, core::DVec3{0.0, 0.0, 0.0}, 192.0f, 0.0f, 1);
+    ground->fieldRevision += 1;
+
+    const core::DVec3 low{-96.0, -8.0, -96.0};
+    const core::DVec3 high{96.0, 8.0, 96.0};
+    const core::usize built = level.navigation->buildRegion(low, high);
+    REQUIRE(built > 8);
+    // Nothing changed: nothing built.
+    CHECK(level.navigation->buildRegion(low, high) == 0);
+
+    // A crater in one corner.
+    (void)asset::fillBall(ground->field, core::DVec3{-80.0, 0.0, -80.0}, 3.0, 0);
+    ground->fieldRevision += 1;
+    const core::usize again = level.navigation->buildRegion(low, high);
+    CHECK(again >= 1);
+    CHECK(again <= 4);
+    CAPTURE(built);
+}
+
 // --- ADR 0098 -------------------------------------------------------------------
 
 TEST_CASE("a door the default agent walks through is shut to a giant")

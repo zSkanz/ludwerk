@@ -497,3 +497,68 @@ TEST_CASE("an odd sample count with holes builds, edits in place, and a hole let
     CHECK(fixture.physics->bodyState(fixture.world, solid).transform.position.y == doctest::Approx(2.5).epsilon(0.05));
     CHECK(fixture.physics->bodyState(fixture.world, overHole).transform.position.y < -5.0);
 }
+
+TEST_CASE("a character walks across the seam between two chunks' colliders without catching on it")
+{
+    // Terrain audit T5. Two chunks are two bodies, and the edge where they
+    // meet is an edge of each: Jolt keeps a flat edge inside one mesh out of
+    // the contacts, but not one between two bodies, and
+    // `mEnhancedInternalEdgeRemoval` works per pair of bodies, so it does not
+    // either (measured: it changed nothing here, nor for a sliding ball). What
+    // a character feels of it is held here: under 1% of its speed for a tick,
+    // and under a centimetre up. A ball sliding with no friction feels more --
+    // 1.5 cm and 5% -- which is the ledger's: one body per terrain would end it.
+    Fixture fixture;
+    constexpr int N = 32;
+    std::vector<core::Vec3> points[2];
+    std::vector<u32> indices;
+    for (int side = 0; side < 2; ++side) {
+        const float x0 = side == 0 ? -32.0f : 0.0f;
+        for (int z = 0; z <= 8; ++z)
+            for (int x = 0; x <= N; ++x)
+                points[side].push_back(core::Vec3{x0 + static_cast<float>(x), 0.0f, static_cast<float>(z) - 4.0f});
+    }
+    for (int z = 0; z < 8; ++z)
+        for (int x = 0; x < N; ++x) {
+            const auto a = static_cast<u32>(z * (N + 1) + x);
+            const u32 b = a + 1;
+            const auto c = static_cast<u32>(a + N + 1);
+            const u32 d = c + 1;
+            indices.insert(indices.end(), {a, c, b, b, c, d});
+        }
+    for (int side = 0; side < 2; ++side) {
+        BodyDesc mesh;
+        mesh.shape.type = ShapeType::TriangleMesh;
+        mesh.shape.points = points[side];
+        mesh.shape.indices = indices;
+        mesh.shape.pointsRevision = mesh.shape.geometryRevision = static_cast<core::u64>(side + 1);
+        mesh.motion = MotionType::Static;
+        REQUIRE(fixture.physics->createBody(fixture.world, mesh).valid());
+    }
+    CharacterDesc desc;
+    desc.transform.position = core::DVec3{-8.0, 2.5, 0.0};
+    const CharacterHandle character = fixture.physics->createCharacter(fixture.world, desc);
+    REQUIRE(character.valid());
+    double lowest = 9.0;
+    double highest = 0.0;
+    double slowest = 99.0;
+    double lastX = -8.0;
+    for (int i = 0; i < 120; ++i) {
+        const CharacterState state = fixture.physics->characterState(fixture.world, character);
+        const f32 vertical =
+            state.ground == CharacterGround::Grounded ? 0.0f : state.linearVelocity.y - 9.81f * kFixedDt;
+        fixture.physics->moveCharacter(fixture.world, character, core::Vec3{8.0f, vertical, 0.0f}, kFixedDt);
+        fixture.physics->step(fixture.world, kFixedDt);
+        const CharacterState after = fixture.physics->characterState(fixture.world, character);
+        const double moved = (after.transform.position.x - lastX) / static_cast<double>(kFixedDt);
+        lastX = after.transform.position.x;
+        if (i > 5) {
+            slowest = std::min(slowest, moved);
+            highest = std::max(highest, after.transform.position.y);
+            lowest = std::min(lowest, after.transform.position.y);
+        }
+    }
+    CHECK(lastX > 7.0);
+    CHECK(slowest > 8.0 * 0.99);
+    CHECK(highest - lowest < 0.01);
+}

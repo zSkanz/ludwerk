@@ -1,0 +1,7 @@
+{
+  "name": "terrain_dig",
+  "script": "init.luau",
+  "seed": 20260930,
+  "ticks": 300,
+  "budgetMs": 16.0
+}

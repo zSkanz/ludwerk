@@ -3,8 +3,8 @@
 # `core` and `physics_api`. The physics mirror lives here -- architecture.md's
 # own words are "physics sync via an injected `IPhysics3D*`" -- and what it
 # links is the seam headers only: no backend, no Jolt, and nothing that could
-# reach one. `jobs` is still allowed and still has no consumer, and a
-# dependency with no consumer is speculative.
+# reach one. `jobs` is the terrain colliders' (terrain audit TA14): a tick's
+# rebuilds are meshed side by side, and committed in the world's order.
 #
 # What it must NOT have is Luau. Signal arguments are arbitrary script values
 # and connections hold script functions, so the queue this module produces
@@ -41,6 +41,7 @@ engine_add_module(scene
         generated/class_descriptors.gen.cpp
     DEPS
         core
+        jobs
         physics_api
         # M7: the streaming glue turns an `asset::Chunk` into instances, which
         # architecture.md §2 assigns to this module ("streaming glue") and §10

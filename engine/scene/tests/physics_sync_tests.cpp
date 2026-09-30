@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/jobs/jobs.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/world.h"
 #include "scene_fixture.h"
@@ -1969,6 +1970,50 @@ TEST_CASE("a dig rebuilds the collider under it and not the ones beside it")
     CHECK(mirror.backend.destroyed.size() - destroyed == 1);
 }
 
+TEST_CASE("the colliders a tick rebuilds are the same built on the pool as one after another")
+{
+    // Terrain audit T5: a tick's rebuilds are meshed side by side now, and
+    // what that makes -- which bodies, in which order, of which triangles --
+    // must not depend on it (R10).
+    const auto run = [] {
+        Mirror mirror;
+        const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+        TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+        REQUIRE(component != nullptr);
+        (void)asset::fillBall(component->field, core::DVec3{20.0, 10.0, 12.0}, 7.0, 1);
+        component->fieldRevision += 1;
+        (void)mirror.part("Crate", {16.0, 14.0, 16.0});
+        (void)mirror.part("Barrel", {-20.0, 14.0, 30.0});
+        settle(mirror);
+        (void)asset::fillBall(component->field, core::DVec3{16.0, 10.0, 16.0}, 5.0, 0);
+        component->fieldRevision += 1;
+        settle(mirror);
+        std::vector<std::pair<std::vector<core::Vec3>, core::usize>> made;
+        for (const auto& body : mirror.backend.created)
+            made.emplace_back(body.points, body.indexCount);
+        return made;
+    };
+    jobs::shutdown();
+    const auto serial = run();
+    jobs::init(4);
+    const auto pooled = run();
+    jobs::shutdown();
+    REQUIRE(serial.size() > 4);
+    REQUIRE(serial.size() == pooled.size());
+    for (core::usize at = 0; at < serial.size(); ++at) {
+        CAPTURE(at);
+        CHECK(serial[at].second == pooled[at].second);
+        REQUIRE(serial[at].first.size() == pooled[at].first.size());
+        bool same = true;
+        for (core::usize point = 0; point < serial[at].first.size(); ++point) {
+            const core::Vec3 a = serial[at].first[point];
+            const core::Vec3 b = pooled[at].first[point];
+            same = same && a.x == b.x && a.y == b.y && a.z == b.z;
+        }
+        CHECK(same);
+    }
+}
+
 TEST_CASE("a cave is collided with from inside")
 {
     Mirror mirror;
@@ -2005,13 +2050,15 @@ TEST_CASE("a terrain that is cleared, or moved, takes its colliders with it")
 
     TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
     REQUIRE(component != nullptr);
-    // Moved: rebuilt where it now is.
+    // Moved: moved where it now is, not remeshed (terrain audit T5).
     const core::usize before = mirror.backend.created.size();
+    const core::usize movedBefore = mirror.backend.transforms.size();
     component->origin = core::DVec3{0.0, 1.0, 0.0};
     component->fieldRevision += 1;
     settle(mirror);
-    CHECK(mirror.backend.created.size() > before);
-    CHECK(mirror.backend.created.back().desc.transform.position.y == doctest::Approx(1.0));
+    CHECK(mirror.backend.created.size() == before);
+    REQUIRE(mirror.backend.transforms.size() > movedBefore);
+    CHECK(mirror.backend.transforms.back().second.position.y == doctest::Approx(1.0));
 
     // Cleared: gone, because a collider for ground that is not there is a wall
     // somebody walks into.

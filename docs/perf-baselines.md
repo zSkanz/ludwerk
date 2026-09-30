@@ -1298,3 +1298,29 @@ The p99 is under T5's 16.6 ms, on the flight that was 31 to 35 ms with the
 building in the frame. **The worst frame is not yet free of terrain**:
 scheduling the workers was once caught at 2.6 to 6.7 ms on its own, and the
 rest of the tail is putting meshes up; both are left to T5.
+
+### Digging where somebody stands (terrain audit T5, P4)
+
+`tests/bench/terrain_dig`: a character walking a circle of 24 m on a 160 m
+field and digging a 1.5 m ball ahead of itself every tick -- a player with a
+shovel. `terrain_sculpt` has nothing that moves, so it never built a collider:
+the ground collides only near what moves, and that is where digging costs.
+`win-msvc-dev`, 300 ticks, 2026-09-30.
+
+| | Mean tick | Worst tick |
+|---|---|---|
+| Before | 10.3 ms | 38.7 ms |
+| The bench on the engine's job pool, as the engine runs | 5.1 ms | 13.2 ms |
+| And a collider meshed without the sky term and the geomorph | **2.0 ms** | **3.8 ms** |
+
+**Where it went.** 10.15 of the 10.3 ms was the terrain colliders' pass, 7.6 of
+it meshing 2.7 chunks a tick at 2.8 ms each, one after another: the bench ran
+with no pool (the engine starts one; the bench did not), and a collider's
+mesh paid for what only drawing reads -- the openness rays, the column map
+they march and each vertex's slide towards its parent, which gathered the
+level above. A tick's rebuilds are meshed side by side now and committed in the
+world's order, and a collider's mesh is its triangles alone.
+
+**The navmesh (TA18).** A crater in one corner of a 192 m field rebuilt 49 of
+49 navmesh tiles; it rebuilds 4 or fewer, and a tile's terrain is meshed as a
+collider.

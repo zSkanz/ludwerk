@@ -1060,3 +1060,39 @@ TEST_CASE("what a smooth stamp costs" * doctest::skip())
         MESSAGE("voxel " << voxel << " radius " << radius << ": " << ms / stamps << " ms a stamp");
     }
 }
+
+TEST_CASE("a field's chunk box follows the chunks it holds")
+{
+    // Terrain audit T5: the raycast walked every chunk for it, every cast.
+    TerrainField field(FieldSettings{.voxelSize = 1.0f, .minHeight = -64.0f, .maxHeight = 64.0f});
+    (void)fillBall(field, core::DVec3{8.0, 8.0, 8.0}, 3.0, 1);
+    (void)fillBall(field, core::DVec3{-40.0, 8.0, 100.0}, 3.0, 1);
+    const auto whole = [&] {
+        ChunkKey low = field.chunks().front().first;
+        ChunkKey high = low;
+        for (const TerrainField::Entry& entry : field.chunks()) {
+            low = ChunkKey{std::min(low.x, entry.first.x), std::min(low.y, entry.first.y),
+                           std::min(low.z, entry.first.z)};
+            high = ChunkKey{std::max(high.x, entry.first.x), std::max(high.y, entry.first.y),
+                            std::max(high.z, entry.first.z)};
+        }
+        return std::pair{low, high};
+    };
+    CHECK(field.chunkBox() == whole());
+    CHECK(field.chunkBox().first.x == -2);
+    // The far ball's chunks let go of, and the box with them.
+    std::vector<ChunkKey> far;
+    for (const TerrainField::Entry& entry : field.chunks()) {
+        if (entry.first.x < 0)
+            far.push_back(entry.first);
+    }
+    REQUIRE_FALSE(far.empty());
+    field.removeAll(far);
+    CHECK(field.chunkBox() == whole());
+    CHECK(field.chunkBox().first.x == 0);
+    // And a cast from the far side still finds the near ball.
+    const std::optional<TerrainHit> hit =
+        raycastField(field, core::DVec3{8.0, 60.0, 8.0}, core::Vec3{0.0f, -1.0f, 0.0f}, 200.0);
+    REQUIRE(hit.has_value());
+    CHECK(hit->position.y == doctest::Approx(11.0).epsilon(0.05));
+}

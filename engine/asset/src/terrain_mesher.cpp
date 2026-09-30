@@ -910,8 +910,8 @@ void forEachSurface(const TerrainField& field, const MeshRegion& region, Visit&&
             visit(key, up.level);
     }
     // Level 0's sky reads its columns' runs from level 1, and its vertices'
-    // parents are there too.
-    if (region.level == 0) {
+    // parents are there too. A collider reads neither.
+    if (region.level == 0 && !region.collider) {
         MeshRegion one = region;
         one.level = 1;
         one.minX = floorDiv(region.minX, 2);
@@ -1035,6 +1035,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     if (region.cellsX == 0 || region.cellsY == 0 || region.cellsZ == 0 || region.level >= ChunkLevels)
         return out;
     const u32 level = region.level;
+    // Whether anything reads the sky and the geomorph: not a collider.
+    const bool drawn = !region.collider;
     const float step = field.settings().voxelSize * static_cast<float>(1u << level);
     const auto nx = static_cast<i32>(region.cellsX);
     const auto ny = static_cast<i32>(region.cellsY);
@@ -1119,7 +1121,10 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     const i32 mapD = nz + 2 * margin;
     std::vector<float> tops(static_cast<usize>(mapW) * static_cast<usize>(mapD));
     std::vector<float> bottoms(tops.size());
-    if (level == 0) {
+    if (!drawn) {
+        // Nothing reads the sky.
+    }
+    else if (level == 0) {
         for (i32 z = 0; z < mapD; ++z) {
             for (i32 x = 0; x < mapW; ++x) {
                 const usize slot = static_cast<usize>(z) * static_cast<usize>(mapW) + static_cast<usize>(x);
@@ -1181,7 +1186,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         u8 count = 0;
     };
     std::vector<Runs> runs(tops.size());
-    {
+    if (drawn) {
         const u32 gathered = std::max<u32>(level, 1);
         const i32 levelEdge = static_cast<i32>(ChunkEdge) >> gathered;
         const double voxel = static_cast<double>(field.settings().voxelSize);
@@ -1242,7 +1247,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     // sky without marching a ray, and that is almost every point of open
     // ground: the rays are paid for on walls and in caves, where they matter.
     std::vector<float> nearTops(tops.size(), -std::numeric_limits<float>::infinity());
-    {
+    if (drawn) {
         const i32 reach = static_cast<i32>(std::ceil(SkyReach / step)) + 1;
         std::vector<float> across(tops.size(), -std::numeric_limits<float>::infinity());
         std::vector<float> line;
@@ -1273,7 +1278,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     // And the lowest bottom within reach, for the rays that go down: one below
     // it has passed under every column's ground it could meet.
     std::vector<float> nearBottoms(bottoms.size(), std::numeric_limits<float>::infinity());
-    {
+    if (drawn) {
         const i32 reach = static_cast<i32>(std::ceil(SkyReach / step)) + 1;
         std::vector<float> across(bottoms.size(), std::numeric_limits<float>::infinity());
         for (i32 z = 0; z < mapD; ++z) {
@@ -1628,14 +1633,14 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         vertex.normal = length > 1e-6f ? Vec3{sx / length, sy / length, sz / length} : Vec3{0.0f, 1.0f, 0.0f};
         const u8 material = cell->material();
         vertex.tangent[0] = static_cast<float>(material);
-        vertex.tangent[1] = skyVisibility(vertex.position, vertex.normal);
+        vertex.tangent[1] = drawn ? skyVisibility(vertex.position, vertex.normal) : 1.0f;
         vertex.tangent[2] = 0.0f;
         vertex.tangent[3] = 0.0f;
         const auto made = static_cast<u32>(out.mesh.vertices.size());
         out.mesh.vertices.push_back(vertex);
         // Towards its parent a level above the band, as the node it belongs to
         // slides it.
-        morphs.push_back(morphAt(band, at[0], at[1], at[2], vertex.position));
+        morphs.push_back(drawn ? morphAt(band, at[0], at[1], at[2], vertex.position) : vertex.position);
         morphTags.push_back(tagOf(band, at[0], at[2]));
         out.colliderPoints.push_back(vertex.position);
         vertexMaterial.push_back(material);
@@ -1792,7 +1797,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     // builds one -- and `Vertex` is a GPU layout whose size is
                     // asserted, so this is where they fit without a second stream.
                     vertex.tangent[0] = static_cast<float>(material);
-                    vertex.tangent[1] = skyVisibility(position, normal);
+                    vertex.tangent[1] = drawn ? skyVisibility(position, normal) : 1.0f;
                     // The paint's two slots, filled with the triangle's three below.
                     vertex.tangent[2] = 0.0f;
                     vertex.tangent[3] = 0.0f;
@@ -1800,7 +1805,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     cellVertex[cellIndex(cx, cy, cz)] = static_cast<u32>(out.mesh.vertices.size());
                     out.mesh.vertices.push_back(vertex);
                     morphs.push_back(
-                        morphFrom(region.minX - 1 + cx, region.minY - 1 + cy, region.minZ - 1 + cz, position));
+                        drawn ? morphFrom(region.minX - 1 + cx, region.minY - 1 + cy, region.minZ - 1 + cz, position)
+                              : position);
                     morphTags.push_back(tagOf(level, region.minX - 1 + cx, region.minZ - 1 + cz));
                     out.colliderPoints.push_back(position);
                     vertexMaterial.push_back(material);
@@ -2016,7 +2022,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             vertex.tangent[3] = 0.0f;
             const auto index32 = static_cast<u32>(out.mesh.vertices.size());
             out.mesh.vertices.push_back(vertex);
-            morphs.push_back(morphFrom(x, y, z, vertex.position));
+            morphs.push_back(drawn ? morphFrom(x, y, z, vertex.position) : vertex.position);
             morphTags.push_back(tagOf(level, x, z));
             out.colliderPoints.push_back(vertex.position);
             vertexMaterial.push_back(material);
@@ -2152,7 +2158,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         }
         // The sky each vertex sees, against this level's own columns.
         for (Vertex& vertex : out.mesh.vertices)
-            vertex.tangent[1] = skyVisibility(vertex.position, vertex.normal);
+            vertex.tangent[1] = drawn ? skyVisibility(vertex.position, vertex.normal) : 1.0f;
         out.error = worst * field.settings().voxelSize;
     }
 

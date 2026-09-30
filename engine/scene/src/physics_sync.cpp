@@ -14,6 +14,7 @@
 
 #include "engine/asset/terrain_mesher.h"
 #include "engine/asset/voxel_mesher.h"
+#include "engine/jobs/jobs.h"
 #include "engine/scene/players.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
@@ -1038,7 +1039,18 @@ void PhysicsSync::applyTerrain()
                 // Kept, and seen, until its rebuild comes round: retiring a
                 // stale collider would drop somebody standing on it.
                 at->seen = true;
-                if (at->placement == placement && at->content == content) {
+                if (at->content == content) {
+                    // **Moved, not remade** (terrain audit T5): the same ground
+                    // somewhere else is the same triangles, and a terrain moved
+                    // by its `Position` remeshed every collider it had.
+                    if (at->placement != placement) {
+                        if (at->body.valid()) {
+                            core::CFrameD moved;
+                            moved.position = terrain.origin;
+                            m_backend.setBodyTransform(m_world, at->body, moved);
+                        }
+                        at->placement = placement;
+                    }
                     at->revision = terrain.fieldRevision;
                     continue;
                 }
@@ -1070,18 +1082,61 @@ void PhysicsSync::applyTerrain()
         want->revision = terrain.fieldRevision;
         want->placement = placement;
         want->settled = rebuilt + pending.size() <= TerrainRebuildsPerTick;
-        for (const Pending& next : pending) {
-            if (rebuilt >= TerrainRebuildsPerTick)
-                break;
-            asset::MeshRegion region;
-            region.minX = next.key.x * static_cast<i32>(asset::ChunkEdge);
-            region.minY = next.key.y * static_cast<i32>(asset::ChunkEdge);
-            region.minZ = next.key.z * static_cast<i32>(asset::ChunkEdge);
+        // **This tick's rebuilds, meshed at once on the pool** (terrain audit
+        // TA14's other half): each was meshed in turn on the main thread, a
+        // dig's four a tick one after another. What is chosen, and the order
+        // the bodies are made in below, are the same as before -- a function
+        // of the world; only the meshing runs side by side, and a mesh is a
+        // function of the field alone, so which worker made it is not
+        // observable (R10). The surfaces they read are gathered first, the
+        // costly part on the pool too, and cached on this thread. **Collider
+        // meshes**: without the sky term and the geomorph, which only drawing
+        // reads (`MeshRegion::collider`).
+        const usize chosen =
+            std::min<usize>(pending.size(), TerrainRebuildsPerTick - std::min(rebuilt, TerrainRebuildsPerTick));
+        std::vector<asset::MeshRegion> regions(chosen);
+        std::vector<asset::SurfaceWant> wants;
+        for (usize at = 0; at < chosen; ++at) {
+            asset::MeshRegion& region = regions[at];
+            region.minX = pending[at].key.x * static_cast<i32>(asset::ChunkEdge);
+            region.minY = pending[at].key.y * static_cast<i32>(asset::ChunkEdge);
+            region.minZ = pending[at].key.z * static_cast<i32>(asset::ChunkEdge);
             region.cellsX = asset::ChunkEdge;
             region.cellsY = asset::ChunkEdge;
             region.cellsZ = asset::ChunkEdge;
-            asset::prepareRegion(field, region);
-            const asset::TerrainMesh meshed = asset::meshField(field, region);
+            region.collider = true;
+            asset::missingSurfaces(field, region, wants);
+        }
+        std::sort(wants.begin(), wants.end(),
+                  [](const asset::SurfaceWant& a, const asset::SurfaceWant& b) { return a.key < b.key; });
+        std::vector<asset::SurfaceWant> gathers;
+        for (const asset::SurfaceWant& asked : wants) {
+            if (!gathers.empty() && gathers.back().key == asked.key)
+                gathers.back().levels |= asked.levels;
+            else
+                gathers.push_back(asked);
+        }
+        std::vector<u64> contents(gathers.size());
+        for (usize at = 0; at < gathers.size(); ++at)
+            contents[at] = asset::surfaceContent(field, gathers[at].key);
+        std::vector<asset::SurfaceLevels> surfaces(gathers.size());
+        jobs::parallelFor("terrain.collider.surfaces", jobs::Domain::SimVisible, 0, gathers.size(), 1,
+                          [&](usize begin, usize end, u32) noexcept {
+                              for (usize at = begin; at < end; ++at)
+                                  surfaces[at] = asset::buildSurfaces(field, gathers[at].key, gathers[at].levels);
+                          });
+        for (usize at = 0; at < gathers.size(); ++at)
+            asset::cacheSurfaces(field, gathers[at].key, contents[at], surfaces[at]);
+        std::vector<asset::TerrainMesh> meshes(chosen);
+        jobs::parallelFor("terrain.collider.meshes", jobs::Domain::SimVisible, 0, chosen, 1,
+                          [&](usize begin, usize end, u32) noexcept {
+                              for (usize at = begin; at < end; ++at)
+                                  meshes[at] = asset::meshField(field, regions[at]);
+                          });
+
+        for (usize index = 0; index < chosen; ++index) {
+            const Pending& next = pending[index];
+            const asset::TerrainMesh& meshed = meshes[index];
 
             physics::BodyHandle handle{};
             if (meshed.colliderIndices.size() >= 3) {

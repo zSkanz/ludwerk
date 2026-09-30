@@ -61,6 +61,14 @@ struct MeshRegion
     // no gap and no skirt. A corner's cell is shared by four nodes, and takes
     // the coarsest of them.
     std::array<core::u8, 8> sideLevels{};
+
+    // **Only the collider** (terrain audit T5): its points and triangles, the
+    // same as a drawn mesh's, without what only drawing reads -- the sky term,
+    // whose column map and rays were a third of a chunk's cost, and each
+    // vertex's slide towards its parent, which gathered the level above. A
+    // physics mirror rebuilds the chunks round a digger every tick, and paid
+    // for both.
+    bool collider = false;
 };
 
 // **How many of a level's cells past a region's sides `meshField` reads**, on

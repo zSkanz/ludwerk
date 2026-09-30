@@ -349,14 +349,55 @@ Done (D384-D391). The editor P2 list, item by item:
   under 16.6 ms and no terrain spike in the worst frame, before and after.
   Meshing: done (ADR 0141), the p99 met, the worst frame not yet; colliders:
   not yet.
-- [ ] The collider does not pay for the sky term.
-- [ ] Continuous digging rebuilds only what changed (P4), with a baseline.
-- [ ] TA18: an edit invalidates only the navmesh tiles it touches.
-- [ ] The raycast caches the field's bounds per revision.
-- [ ] Moving a terrain moves its colliders.
-- [ ] Internal-edge removal on chunk meshes, with a sphere rolled across a seam.
+- [x] The collider does not pay for the sky term.
+- [x] Continuous digging rebuilds only what changed (P4), with a baseline.
+- [x] TA18: an edit invalidates only the navmesh tiles it touches.
+- [x] The raycast caches the field's bounds per revision.
+- [x] Moving a terrain moves its colliders.
+- [ ] The seam between chunks' colliders is one continuous surface for
+  vehicles, rolling bodies, characters and resting bodies (the owner's ruling
+  of 2026-09-30; chosen by measurement, in an ADR).
 
 ### T5 as it stands
+
+**The colliders and the navmesh (D392, D393), 2026-09-30:**
+
+- **Colliders off the main thread, deterministically.** A tick's rebuilds (at
+  most four, chosen as before) are meshed side by side on the job pool and the
+  bodies made in the same order: a mesh is a function of the field alone, so
+  nothing about which worker made it is observable (R10). Tested: the bodies a
+  tick makes are the same, point for point, serial and pooled.
+- **The collider does not pay for the sky**: `MeshRegion::collider` skips the
+  openness rays, their column map and the geomorph, and asks nothing of the
+  level above; the points and triangles are the drawn mesh's exactly (tested).
+  The navmesh's terrain soup uses it too.
+- **The digging baseline**: `tests/bench/terrain_dig`, a character digging
+  ahead of itself every tick, 10.3 ms (worst 38.7) -> **2.0 ms (worst 3.8)**.
+  Half of that was the bench itself: it ran with no job pool, where the engine
+  runs with one. `perf-baselines.md` has the steps.
+- **TA18**: a tile's fingerprint carries the chunks it reads, not the
+  terrain's revision; a crater rebuilds 4 tiles or fewer, not 49.
+- **The raycast's box** is kept by the field as chunks come and go
+  (`TerrainField::chunkBox`), not walked over every chunk each cast.
+- **A moved terrain moves its colliders** (`setBodyTransform`) instead of
+  remeshing them.
+- **The seam between two chunks' colliders: measured, and left for a
+  decision.** Two chunks are two bodies, and Jolt keeps a flat edge out of the
+  contacts inside one mesh but not between two; `mEnhancedInternalEdgeRemoval`
+  works per pair of bodies, so it changed nothing -- tried on the sliding body
+  and on the character, and reverted. Inside one chunk nothing catches. At the
+  seam a character loses 0.8% of its speed for a tick and rises 8 mm (now held
+  under 1% and 1 cm by a test); a ball sliding with no friction hops 1.5 cm
+  and loses 5%. **The owner's ruling (2026-09-30, through ludwerk-08): fix
+  it, for vehicles with suspension, rolling bodies, characters and resting
+  bodies alike, and choose how by measurement** -- one compound, a ring of the
+  neighbour's triangles, or a contact listener at the seams -- recorded in an
+  ADR. Under way.
+- **Found by ludwerk-08 checking T4**: `FillBall` wholly above `MaxHeight`
+  answers 0, as the API says: an explosion over the ceiling is not a mistake,
+  and T4 made only the unusable arguments errors.
+- **Still to do in T5**: the flight's worst frame (18 to 25 ms: scheduling the
+  workers and putting meshes up), and the streaming radius and its sawtooth.
 
 **TA14's meshing is pulled forward, ahead of T3** (ludwerk-08's check of T2 on
 the owner's place: the building had to leave the frame before the owner flies

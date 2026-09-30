@@ -509,6 +509,10 @@ public:
     [[nodiscard]] core::usize chunkCount() const noexcept { return m_chunks.size(); }
     [[nodiscard]] bool empty() const noexcept { return m_chunks.empty(); }
     [[nodiscard]] std::span<const Entry> chunks() const noexcept { return m_chunks; }
+    // **The lowest and highest chunk keys on each axis**, kept as chunks come
+    // and go (terrain audit T5): a raycast walked every chunk for the field's
+    // box, every cast. Only for a field that is not `empty()`.
+    [[nodiscard]] std::pair<ChunkKey, ChunkKey> chunkBox() const noexcept { return {m_boxLow, m_boxHigh}; }
     // Every key, sorted.
     [[nodiscard]] std::vector<ChunkKey> chunkKeys() const;
     // The chunks of one column, lowest first.
@@ -602,6 +606,12 @@ private:
     // Sorted by key. Never a hash map (R10): the mesher, the save file and the
     // world hash all walk this, and the walk must be a fact about the world.
     std::vector<Entry> m_chunks;
+    ChunkKey m_boxLow{};
+    ChunkKey m_boxHigh{};
+    // Widens the box to `key`, for a chunk added; and works it out again from
+    // every chunk, for one taken away.
+    void growBox(ChunkKey key) noexcept;
+    void rebox() noexcept;
     // Shared by copies, looked up by key and never walked: nothing about the
     // world reaches it but what it was asked.
     std::shared_ptr<SurfaceCache> m_surfaces = std::make_shared<SurfaceCache>();

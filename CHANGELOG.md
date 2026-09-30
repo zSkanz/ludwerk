@@ -617,6 +617,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   refusal is said; an exported heightmap imports as the same ground and a
   second export never overwrites the first; a rule's bounds stay in order;
   the brush ring and chip go when they should; Foliage's Grow is Restore.
+- **Digging beside a character is five times cheaper** (D393): 10.3 ms a tick,
+  worst 38.7, is 2.0, worst 3.8 (`tests/bench/terrain_dig`). A terrain moved
+  by its `Position` moves its colliders rather than remeshing them.
+- **A terrain edit rebuilds the navmesh tiles over it, not all of them** (D392,
+  TA18).
 - **A Terrain place or radius that is not a finite number is an error** (D390),
   not a silent zero, and `HeightAt` is typed `number?`.
 - **No more ground floating past the edge of the loaded terrain, nor loaded

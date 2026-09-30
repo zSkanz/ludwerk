@@ -139,18 +139,13 @@ std::optional<TerrainHit> raycastField(const TerrainField& field, DVec3 origin, 
     // box is its chunks', and a ray that misses it misses the terrain.
     if (field.chunks().empty())
         return std::nullopt;
-    DVec3 boxLow{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-                 std::numeric_limits<double>::max()};
-    DVec3 boxHigh{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(),
-                  std::numeric_limits<double>::lowest()};
-    for (const TerrainField::Entry& entry : field.chunks()) {
-        const DVec3 corner{static_cast<double>(entry.first.x) * chunkMetres,
-                           static_cast<double>(entry.first.y) * chunkMetres,
-                           static_cast<double>(entry.first.z) * chunkMetres};
-        boxLow = DVec3{std::min(boxLow.x, corner.x), std::min(boxLow.y, corner.y), std::min(boxLow.z, corner.z)};
-        boxHigh = DVec3{std::max(boxHigh.x, corner.x + chunkMetres), std::max(boxHigh.y, corner.y + chunkMetres),
-                        std::max(boxHigh.z, corner.z + chunkMetres)};
-    }
+    // Kept by the field as its chunks come and go (terrain audit T5).
+    const auto [lowKey, highKey] = field.chunkBox();
+    const DVec3 boxLow{static_cast<double>(lowKey.x) * chunkMetres, static_cast<double>(lowKey.y) * chunkMetres,
+                       static_cast<double>(lowKey.z) * chunkMetres};
+    const DVec3 boxHigh{static_cast<double>(highKey.x + 1) * chunkMetres,
+                        static_cast<double>(highKey.y + 1) * chunkMetres,
+                        static_cast<double>(highKey.z + 1) * chunkMetres};
     double enter = 0.0;
     double leave = maxDistance;
     const double starts[3] = {origin.x, origin.y, origin.z};

@@ -12,6 +12,7 @@
 #include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
+#include "engine/jobs/jobs.h"
 #include "engine/platform/platform.h"
 
 namespace engine::app {
@@ -175,6 +176,21 @@ std::optional<core::EngineError> runBenchmarks(const std::filesystem::path& root
 {
     out.clear();
     repeats = std::max<u64>(1, repeats);
+    // **The pool the engine runs with** (terrain audit TA14): a bench measures
+    // the engine as it runs, and it runs with one -- the terrain colliders a
+    // tick rebuilds are meshed side by side there, and a bench without it
+    // measured them one after another. What the pool computes is partitioned
+    // by data, so the ticks are the same either way (R10). Shut down on the
+    // way out, as the engine's run does: a pool left to the static
+    // destructors ends the process in `terminate`, its workers still joinable.
+    jobs::init();
+    struct PoolScope
+    {
+        PoolScope() = default;
+        PoolScope(const PoolScope&) = delete;
+        PoolScope& operator=(const PoolScope&) = delete;
+        ~PoolScope() { jobs::shutdown(); }
+    } const pool;
 
     std::error_code ec;
     if (!std::filesystem::is_directory(root, ec)) {

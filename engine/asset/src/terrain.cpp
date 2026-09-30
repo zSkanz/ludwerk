@@ -502,7 +502,36 @@ TerrainChunk* TerrainField::chunkFor(ChunkKey key)
             at->second = std::make_shared<TerrainChunk>(*at->second);
         return at->second.get();
     }
-    return m_chunks.insert(at, {key, std::make_shared<TerrainChunk>()})->second.get();
+    TerrainChunk* made = m_chunks.insert(at, {key, std::make_shared<TerrainChunk>()})->second.get();
+    growBox(key);
+    return made;
+}
+
+void TerrainField::growBox(ChunkKey key) noexcept
+{
+    if (m_chunks.size() == 1) {
+        m_boxLow = key;
+        m_boxHigh = key;
+        return;
+    }
+    m_boxLow = ChunkKey{std::min(m_boxLow.x, key.x), std::min(m_boxLow.y, key.y), std::min(m_boxLow.z, key.z)};
+    m_boxHigh = ChunkKey{std::max(m_boxHigh.x, key.x), std::max(m_boxHigh.y, key.y), std::max(m_boxHigh.z, key.z)};
+}
+
+void TerrainField::rebox() noexcept
+{
+    m_boxLow = ChunkKey{};
+    m_boxHigh = ChunkKey{};
+    for (usize at = 0; at < m_chunks.size(); ++at) {
+        const ChunkKey key = m_chunks[at].first;
+        if (at == 0) {
+            m_boxLow = key;
+            m_boxHigh = key;
+            continue;
+        }
+        m_boxLow = ChunkKey{std::min(m_boxLow.x, key.x), std::min(m_boxLow.y, key.y), std::min(m_boxLow.z, key.z)};
+        m_boxHigh = ChunkKey{std::max(m_boxHigh.x, key.x), std::max(m_boxHigh.y, key.y), std::max(m_boxHigh.z, key.z)};
+    }
 }
 
 void TerrainField::finishChunk(ChunkKey key)
@@ -511,8 +540,10 @@ void TerrainField::finishChunk(ChunkKey key)
     if (at == m_chunks.end() || at->first != key)
         return;
     at->second->normalize();
-    if (at->second->empty())
+    if (at->second->empty()) {
         m_chunks.erase(at);
+        rebox();
+    }
 }
 
 bool TerrainField::setVoxel(i32 x, i32 y, i32 z, Voxel voxel)
@@ -534,21 +565,28 @@ void TerrainField::setChunk(ChunkKey key, std::shared_ptr<TerrainChunk> chunk)
     const auto at = lowerBound(m_chunks, key);
     const bool exists = at != m_chunks.end() && at->first == key;
     if (chunk == nullptr || chunk->empty()) {
-        if (exists)
+        if (exists) {
             m_chunks.erase(at);
+            rebox();
+        }
         return;
     }
-    if (exists)
+    if (exists) {
         at->second = std::move(chunk);
-    else
+    }
+    else {
         m_chunks.insert(at, {key, std::move(chunk)});
+        growBox(key);
+    }
 }
 
 void TerrainField::removeChunk(ChunkKey key)
 {
     const auto at = lowerBound(m_chunks, key);
-    if (at != m_chunks.end() && at->first == key)
+    if (at != m_chunks.end() && at->first == key) {
         m_chunks.erase(at);
+        rebox();
+    }
 }
 
 void TerrainField::shareFrom(const TerrainField& from)
@@ -581,6 +619,7 @@ void TerrainField::shareFrom(const TerrainField& from, const TerrainField& known
     while (held != m_chunks.end())
         merged.push_back(std::move(*held++));
     m_chunks = std::move(merged);
+    rebox();
 }
 
 void TerrainField::refreshFrom(const TerrainField& newer)
@@ -610,6 +649,7 @@ void TerrainField::removeAll(std::span<const ChunkKey> keys)
         ++kept;
     }
     m_chunks.erase(kept, m_chunks.end());
+    rebox();
 }
 
 void TerrainField::setHeightRange(float minHeight, float maxHeight) noexcept

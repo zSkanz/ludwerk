@@ -331,3 +331,36 @@ TEST_CASE("a ball on the side of the terrain shades the wall near it, not all th
     CHECK(static_cast<double>(deepUnder) == doctest::Approx(static_cast<double>(deepAside)).epsilon(0.05));
     CHECK(underBall < deepUnder);
 }
+
+TEST_CASE("a collider's mesh is the drawn mesh's points and triangles, without the sky")
+{
+    // Terrain audit T5: a physics mirror rebuilding the chunks round a digger
+    // paid for the sky term and the geomorph, which only drawing reads.
+    TerrainField field = flatGround(0.0f);
+    (void)fillBall(field, core::DVec3{10.0, 0.0, 12.0}, 6.0, 1);
+    (void)fillBall(field, core::DVec3{20.0, -3.0, 8.0}, 4.0, 0);
+    (void)fillBlock(field, core::DVec3{4.0, 3.0, 24.0}, core::Vec3{6.0f, 6.0f, 6.0f}, 2);
+    PaintOptions paint;
+    paint.mode = PaintMode::Replace;
+    (void)paintBall(field, core::DVec3{12.0, 0.0, 12.0}, 5.0, 3, paint);
+    for (const core::i32 y : {-32, 0}) {
+        CAPTURE(y);
+        MeshRegion drawn = regionAt(0, y, 0);
+        MeshRegion collider = drawn;
+        collider.collider = true;
+        const TerrainMesh full = meshField(field, drawn);
+        const TerrainMesh only = meshField(field, collider);
+        REQUIRE(full.colliderIndices.size() == only.colliderIndices.size());
+        CHECK(full.colliderIndices == only.colliderIndices);
+        REQUIRE(full.colliderPoints.size() == only.colliderPoints.size());
+        bool same = true;
+        for (core::usize at = 0; at < full.colliderPoints.size(); ++at) {
+            const core::Vec3 a = full.colliderPoints[at];
+            const core::Vec3 b = only.colliderPoints[at];
+            same = same && a.x == b.x && a.y == b.y && a.z == b.z;
+        }
+        CHECK(same);
+        if (y == 0)
+            CHECK_FALSE(only.colliderIndices.empty());
+    }
+}

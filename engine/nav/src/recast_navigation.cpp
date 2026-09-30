@@ -588,9 +588,12 @@ private:
             entry.minZ = std::numeric_limits<f64>::lowest();
             entry.maxX = std::numeric_limits<f64>::max();
             entry.maxZ = std::numeric_limits<f64>::max();
+            // **Not the terrain's revision** (terrain audit TA18): that moves
+            // with any edit anywhere, and was in every tile's fingerprint, so
+            // one crater rebuilt the navmesh of the world. What a tile reads of
+            // the ground is in `terrainFingerprint`, chunk by chunk.
             Fingerprint hash;
             hash.add(id.index);
-            hash.add(terrain.fieldRevision);
             hash.add(terrain.origin);
             entry.hash = hash.value;
             m_statics.push_back(entry);
@@ -637,6 +640,8 @@ private:
             if (entry.maxX < minX || entry.minX > maxX || entry.maxZ < minZ || entry.minZ > maxZ)
                 continue;
             hash.add(entry.hash);
+            if (entry.kind == Static::Kind::Terrain)
+                hash.add(terrainFingerprint(entry.id, minX, minZ, maxX, maxZ));
         }
         for (const AreaBox& area : m_areas) {
             if (area.maxX < minX || area.minX > maxX || area.maxZ < minZ || area.minZ > maxZ)
@@ -733,6 +738,40 @@ private:
         }
     }
 
+    // **What a tile reads of a terrain**: every chunk of the columns its soup
+    // meshes, whole, and of the columns round them the face or edge the
+    // mesher reads -- each with its key. An edit changes the fingerprints of
+    // the tiles over it and of no others.
+    [[nodiscard]] u64 terrainFingerprint(core::InstanceId id, f64 minX, f64 minZ, f64 maxX, f64 maxZ) const noexcept
+    {
+        const scene::TerrainComponent* terrain = m_world.terrains().find(id);
+        Fingerprint hash;
+        if (terrain == nullptr)
+            return hash.value;
+        const asset::TerrainField& field = terrain->field;
+        const f64 span = static_cast<f64>(field.settings().voxelSize) * static_cast<f64>(asset::ChunkEdge);
+        const auto chunk = [&](f64 value, f64 origin) { return static_cast<i32>(std::floor((value - origin) / span)); };
+        const i32 cx0 = chunk(minX, terrain->origin.x);
+        const i32 cx1 = chunk(maxX, terrain->origin.x);
+        const i32 cz0 = chunk(minZ, terrain->origin.z);
+        const i32 cz1 = chunk(maxZ, terrain->origin.z);
+        hash.add(field.settings().voxelSize);
+        for (i32 cz = cz0 - 1; cz <= cz1 + 1; ++cz) {
+            for (i32 cx = cx0 - 1; cx <= cx1 + 1; ++cx) {
+                // Which side of the tile's columns this one is on: zero inside.
+                const i32 dx = cx < cx0 ? -1 : (cx > cx1 ? 1 : 0);
+                const i32 dz = cz < cz0 ? -1 : (cz > cz1 ? 1 : 0);
+                for (const asset::TerrainField::Entry& entry : field.column(cx, cz)) {
+                    hash.add(entry.first.x);
+                    hash.add(entry.first.y);
+                    hash.add(entry.first.z);
+                    hash.add(entry.second->borderDigest(-dx, 0, -dz));
+                }
+            }
+        }
+        return hash.value;
+    }
+
     // The terrain's surface over the tile, from the mesher the renderer and
     // the collider use -- so an agent walks the ground that is drawn.
     void terrainSoup(core::InstanceId id, f64 minX, f64 minZ, f64 maxX, f64 maxZ, Soup& soup) const
@@ -758,6 +797,8 @@ private:
                     region.cellsX = asset::ChunkEdge;
                     region.cellsZ = asset::ChunkEdge;
                     region.cellsY = static_cast<core::u32>(high - low + 1);
+                    // The collider's triangles, without the sky (T5).
+                    region.collider = true;
                     asset::prepareRegion(field, region);
                     const asset::TerrainMesh meshed = asset::meshField(field, region);
                     const int first = static_cast<int>(soup.vertices.size() / 3);
