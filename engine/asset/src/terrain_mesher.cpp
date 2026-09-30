@@ -6,7 +6,6 @@
 #include <limits>
 #include <map>
 #include <span>
-#include <unordered_map>
 #include <vector>
 
 namespace engine::asset {
@@ -1912,25 +1911,62 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         };
         // Owned point `p` (local `o` in [0, n)) is sample `o + 2`, and the cell
         // whose low corner is point `p - 1 + k` has local index `o + k`.
-        for (i32 oz = 0; oz < nz; ++oz) {
-            for (i32 oy = 0; oy < ny; ++oy) {
-                for (i32 ox = 0; ox < nx; ++ox) {
-                    const bool here = occupancy(ox + 2, oy + 2, oz + 2) >= 0.5f;
-                    // Each order below faces its edge's positive direction -- the
-                    // way the air is when the ground is at the edge's start, `here`.
-                    // Along x: cells (x) by (y-1, y) by (z-1, z).
-                    if (here != (occupancy(ox + 3, oy + 2, oz + 2) >= 0.5f))
-                        quad({ox + 1, oy, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox + 1, oy, oz + 1},
-                             !here);
-                    // Along y: (x-1, x) by (y) by (z-1, z); this order faces down.
-                    if (here != (occupancy(ox + 2, oy + 3, oz + 2) >= 0.5f))
-                        quad({ox, oy + 1, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
-                             here);
-                    // Along z: (x-1, x) by (y-1, y) by (z).
-                    if (here != (occupancy(ox + 2, oy + 2, oz + 3) >= 0.5f))
-                        quad({ox, oy, oz + 1}, {ox + 1, oy, oz + 1}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
-                             !here);
+        //
+        // **A band's points go second** (`MeshRegion::band`): the own ones,
+        // then the ring's, keeping only its triangles that touch a point an
+        // own one uses.
+        const auto band = static_cast<i32>(region.band);
+        const auto inRing = [&](i32 ox, i32 oy, i32 oz) {
+            return ox < band || oy < band || oz < band || ox >= nx - band || oy >= ny - band || oz >= nz - band;
+        };
+        std::vector<bool> ownUse;
+        for (int pass = 0; pass < (band > 0 ? 2 : 1); ++pass) {
+            if (pass == 1) {
+                out.colliderBandFirst = static_cast<u32>(out.colliderIndices.size() / 3);
+                ownUse.assign(out.mesh.vertices.size(), false);
+                for (const u32 v : out.colliderIndices)
+                    ownUse[v] = true;
+            }
+            const usize passStart = out.colliderIndices.size();
+            for (i32 oz = 0; oz < nz; ++oz) {
+                for (i32 oy = 0; oy < ny; ++oy) {
+                    for (i32 ox = 0; ox < nx; ++ox) {
+                        if (band > 0 && inRing(ox, oy, oz) != (pass == 1))
+                            continue;
+                        const bool here = occupancy(ox + 2, oy + 2, oz + 2) >= 0.5f;
+                        // Each order below faces its edge's positive direction -- the
+                        // way the air is when the ground is at the edge's start, `here`.
+                        // Along x: cells (x) by (y-1, y) by (z-1, z).
+                        if (here != (occupancy(ox + 3, oy + 2, oz + 2) >= 0.5f))
+                            quad({ox + 1, oy, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox + 1, oy, oz + 1},
+                                 !here);
+                        // Along y: (x-1, x) by (y) by (z-1, z); this order faces down.
+                        if (here != (occupancy(ox + 2, oy + 3, oz + 2) >= 0.5f))
+                            quad({ox, oy + 1, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
+                                 here);
+                        // Along z: (x-1, x) by (y-1, y) by (z).
+                        if (here != (occupancy(ox + 2, oy + 2, oz + 3) >= 0.5f))
+                            quad({ox, oy, oz + 1}, {ox + 1, oy, oz + 1}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
+                                 !here);
+                    }
                 }
+            }
+            if (pass == 1) {
+                // The band's triangles that touch no own point lend no edge.
+                usize kept = passStart;
+                for (usize at = passStart; at + 2 < out.colliderIndices.size(); at += 3) {
+                    const u32 a = out.colliderIndices[at];
+                    const u32 b = out.colliderIndices[at + 1];
+                    const u32 c = out.colliderIndices[at + 2];
+                    const auto own = [&](u32 v) { return v < ownUse.size() && ownUse[v]; };
+                    if (!own(a) && !own(b) && !own(c))
+                        continue;
+                    out.colliderIndices[kept] = a;
+                    out.colliderIndices[kept + 1] = b;
+                    out.colliderIndices[kept + 2] = c;
+                    kept += 3;
+                }
+                out.colliderIndices.resize(kept);
             }
         }
         // **A vertex with no gradient takes its faces' normal** (the mesh P2): on
@@ -2246,6 +2282,30 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     }
     out.morphs = std::move(morphs);
     out.morphTags = std::move(morphTags);
+    return out;
+}
+
+TerrainCollider meshCollider(const TerrainField& field, ChunkKey key)
+{
+    // One mesh of the chunk grown by a point on every side, its own quads
+    // first and the band's after: the points are the mesh's, so an own and a
+    // band triangle meeting at the border share them by index already.
+    MeshRegion region;
+    region.minX = key.x * static_cast<i32>(ChunkEdge) - 1;
+    region.minY = key.y * static_cast<i32>(ChunkEdge) - 1;
+    region.minZ = key.z * static_cast<i32>(ChunkEdge) - 1;
+    region.cellsX = ChunkEdge + 2;
+    region.cellsY = ChunkEdge + 2;
+    region.cellsZ = ChunkEdge + 2;
+    region.collider = true;
+    region.band = 1;
+    TerrainMesh meshed = meshField(field, region);
+    TerrainCollider out;
+    if (meshed.colliderBandFirst == 0 || meshed.colliderIndices.size() < 3)
+        return out;
+    out.points = std::move(meshed.colliderPoints);
+    out.indices = std::move(meshed.colliderIndices);
+    out.bandFirst = meshed.colliderBandFirst;
     return out;
 }
 

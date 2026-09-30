@@ -95,3 +95,19 @@ if(ENG_BUILD_TESTS)
     target_compile_definitions(engine_scene_tests PRIVATE
         ENG_TEST_CATALOG="${CMAKE_SOURCE_DIR}/i18n/en.json")
 endif()
+
+# **The seam between two terrain chunks' colliders, measured** (ADR 0143):
+# Jolt driven directly -- balls, a character, Jolt's own wheeled vehicle -- on
+# the engine's terrain collider meshes, so it links Jolt and the mesher; here,
+# above both. Kept as the regression test for vehicles on terrain until F2
+# gives the engine one.
+if(ENG_BUILD_TESTS AND ENG_PHYSICS_JOLT)
+    engine_add_module_tests(scene_seam
+        SOURCES
+            tests/terrain_seam_tests.cpp
+        DEPS
+            Jolt
+        MODULES
+            asset
+    )
+endif()

@@ -1324,3 +1324,21 @@ world's order, and a collider's mesh is its triangles alone.
 **The navmesh (TA18).** A crater in one corner of a 192 m field rebuilt 49 of
 49 navmesh tiles; it rebuilds 4 or fewer, and a tile's terrain is meshed as a
 collider.
+
+### The seam between chunks' colliders (ADR 0143)
+
+`engine_scene_seam_tests --test-case="what each join costs*" --no-skip`:
+4,096 chunks of rolling ground over a 4 km square, `win-msvc-dev`, 2026-09-30,
+the machine loaded to about 35% by other work -- compare rows with rows.
+
+| Join | Build | Memory | Ray | Overlap | One chunk changed |
+|---|---|---|---|---|---|
+| One body per chunk (before) | 7.4 s | 118 MiB | 2.0 us | 10.2 us | 1.9 ms |
+| One mutable compound | 7.6 s | 118 MiB | 8.3 us | 10.9 us | 1.8 ms |
+| One static compound, rebuilt | 7.4 s | 118 MiB | 2.0 us | 8.1 us | 3.1 ms |
+| **A body per chunk with its band (chosen)** | 25.3 s, meshing included | **171 MiB** | **2.0 us** | **7.7 us** | 6.3 ms, meshing included |
+
+At 16,384 chunks a mutable compound's ray is 25 us and a static compound's
+rebuild 9.5 ms; a body per chunk stays at 2 us. `tests/bench/terrain_dig` in
+one run, band against none: 4.6 against 3.9 ms a tick. The moving bodies'
+`mEnhancedInternalEdgeRemoval`, A/B in one run: within 2% on every bench.

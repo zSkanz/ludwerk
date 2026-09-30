@@ -159,6 +159,14 @@ struct ShapeDesc
     // needs.
     std::span<const core::u32> indices;
 
+    // `TriangleMesh` only: **the triangles from this one on only lend their
+    // edges** (ADR 0143). A terrain chunk's collider carries a band of its
+    // neighbours' triangles so the edge along its border is inside the mesh to
+    // the active-edge pass, and a body crossing into the next chunk meets no
+    // edge there; the band itself is never collided with. Past the last
+    // triangle -- the default -- is no band.
+    core::u32 bandFirst = ~core::u32{0};
+
     // `HeightField` only: `heightSampleCount * heightSampleCount` samples in row
     // order, each the height in the part's local space.
     //

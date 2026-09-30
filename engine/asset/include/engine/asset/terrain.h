@@ -277,7 +277,10 @@ public:
     // of it on the others: a face, an edge or a corner. A mesh keyed on these
     // rather than on its neighbours' whole digests is not rebuilt for an edit
     // in the middle of the chunk next door. (0, 0, 0) is `digest`. Lazy.
-    [[nodiscard]] core::u64 borderDigest(core::i32 dx, core::i32 dy, core::i32 dz) const noexcept;
+    //
+    // `layers` is 2, what a mesh reads, or 4: what a collider with its band
+    // reads (`meshCollider`), which is a cell wider.
+    [[nodiscard]] core::u64 borderDigest(core::i32 dx, core::i32 dy, core::i32 dz, core::u32 layers = 2) const noexcept;
 
 private:
     [[nodiscard]] static core::u32 rowIndex(core::u32 y, core::u32 z) noexcept { return y * ChunkEdge + z; }
@@ -317,6 +320,16 @@ private:
         std::atomic<bool> wholeValid{false};
         std::array<std::atomic<core::u64>, 27> borders{};
         std::atomic<core::u32> bordersValid{0};
+        // **The four layers a collider's band reads** (ADR 0143), made the
+        // first time one is asked for: most chunks never are, and a chunk is
+        // held small. Two threads that both make it keep the first; a copy
+        // starts without, as a cache may.
+        struct Wide
+        {
+            std::array<std::atomic<core::u64>, 27> borders{};
+            std::atomic<core::u32> valid{0};
+        };
+        std::atomic<Wide*> wide{nullptr};
 
         Digests() = default;
         Digests(const Digests& other) noexcept { copyFrom(other); }
@@ -326,12 +339,15 @@ private:
                 copyFrom(other);
             return *this;
         }
-        ~Digests() = default;
+        ~Digests() { delete wide.load(std::memory_order_acquire); }
         void clear() noexcept
         {
             wholeValid.store(false, std::memory_order_relaxed);
             bordersValid.store(0, std::memory_order_relaxed);
+            if (Wide* made = wide.load(std::memory_order_acquire); made != nullptr)
+                made->valid.store(0, std::memory_order_relaxed);
         }
+        [[nodiscard]] Wide& wideOnce() const noexcept;
 
     private:
         void copyFrom(const Digests& other) noexcept
@@ -341,6 +357,8 @@ private:
             for (core::usize at = 0; at < borders.size(); ++at)
                 borders[at].store(other.borders[at].load(std::memory_order_acquire), std::memory_order_relaxed);
             bordersValid.store(other.bordersValid.load(std::memory_order_acquire), std::memory_order_release);
+            if (Wide* made = wide.load(std::memory_order_acquire); made != nullptr)
+                made->valid.store(0, std::memory_order_relaxed);
         }
     };
     mutable Digests m_digests;

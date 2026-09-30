@@ -886,9 +886,10 @@ namespace {
                     content = combine(content, 0x6E6F6E65ull);
                     continue;
                 }
-                // What of the neighbour this chunk's mesh reads: its layers
-                // that face back this way (a face, an edge or a corner).
-                content = combine(content, near->borderDigest(-dx, -dy, -dz));
+                // What of the neighbour this chunk's collider reads: its four
+                // layers that face back this way (a face, an edge or a corner)
+                // -- the mesh's two and the band's cell (ADR 0143).
+                content = combine(content, near->borderDigest(-dx, -dy, -dz, 4));
             }
         }
     }
@@ -1088,62 +1089,31 @@ void PhysicsSync::applyTerrain()
         // the bodies are made in below, are the same as before -- a function
         // of the world; only the meshing runs side by side, and a mesh is a
         // function of the field alone, so which worker made it is not
-        // observable (R10). The surfaces they read are gathered first, the
-        // costly part on the pool too, and cached on this thread. **Collider
-        // meshes**: without the sky term and the geomorph, which only drawing
-        // reads (`MeshRegion::collider`).
+        // observable (R10). **Collider meshes** (`asset::meshCollider`):
+        // without the sky term and the geomorph, which only drawing reads, so
+        // they gather no surfaces; and with their bands (ADR 0143).
         const usize chosen =
             std::min<usize>(pending.size(), TerrainRebuildsPerTick - std::min(rebuilt, TerrainRebuildsPerTick));
-        std::vector<asset::MeshRegion> regions(chosen);
-        std::vector<asset::SurfaceWant> wants;
-        for (usize at = 0; at < chosen; ++at) {
-            asset::MeshRegion& region = regions[at];
-            region.minX = pending[at].key.x * static_cast<i32>(asset::ChunkEdge);
-            region.minY = pending[at].key.y * static_cast<i32>(asset::ChunkEdge);
-            region.minZ = pending[at].key.z * static_cast<i32>(asset::ChunkEdge);
-            region.cellsX = asset::ChunkEdge;
-            region.cellsY = asset::ChunkEdge;
-            region.cellsZ = asset::ChunkEdge;
-            region.collider = true;
-            asset::missingSurfaces(field, region, wants);
-        }
-        std::sort(wants.begin(), wants.end(),
-                  [](const asset::SurfaceWant& a, const asset::SurfaceWant& b) { return a.key < b.key; });
-        std::vector<asset::SurfaceWant> gathers;
-        for (const asset::SurfaceWant& asked : wants) {
-            if (!gathers.empty() && gathers.back().key == asked.key)
-                gathers.back().levels |= asked.levels;
-            else
-                gathers.push_back(asked);
-        }
-        std::vector<u64> contents(gathers.size());
-        for (usize at = 0; at < gathers.size(); ++at)
-            contents[at] = asset::surfaceContent(field, gathers[at].key);
-        std::vector<asset::SurfaceLevels> surfaces(gathers.size());
-        jobs::parallelFor("terrain.collider.surfaces", jobs::Domain::SimVisible, 0, gathers.size(), 1,
-                          [&](usize begin, usize end, u32) noexcept {
-                              for (usize at = begin; at < end; ++at)
-                                  surfaces[at] = asset::buildSurfaces(field, gathers[at].key, gathers[at].levels);
-                          });
-        for (usize at = 0; at < gathers.size(); ++at)
-            asset::cacheSurfaces(field, gathers[at].key, contents[at], surfaces[at]);
-        std::vector<asset::TerrainMesh> meshes(chosen);
+        std::vector<asset::TerrainCollider> meshes(chosen);
         jobs::parallelFor("terrain.collider.meshes", jobs::Domain::SimVisible, 0, chosen, 1,
                           [&](usize begin, usize end, u32) noexcept {
                               for (usize at = begin; at < end; ++at)
-                                  meshes[at] = asset::meshField(field, regions[at]);
+                                  meshes[at] = asset::meshCollider(field, pending[at].key);
                           });
 
         for (usize index = 0; index < chosen; ++index) {
             const Pending& next = pending[index];
-            const asset::TerrainMesh& meshed = meshes[index];
+            const asset::TerrainCollider& meshed = meshes[index];
 
             physics::BodyHandle handle{};
-            if (meshed.colliderIndices.size() >= 3) {
+            if (meshed.indices.size() >= 3) {
                 physics::BodyDesc desc;
                 desc.shape.type = physics::ShapeType::TriangleMesh;
-                desc.shape.points = meshed.colliderPoints;
-                desc.shape.indices = meshed.colliderIndices;
+                desc.shape.points = meshed.points;
+                desc.shape.indices = meshed.indices;
+                // The band of its neighbours' triangles, which only lends its
+                // edges: the seam is inside the mesh (ADR 0143).
+                desc.shape.bandFirst = meshed.bandFirst;
                 desc.shape.pointsRevision = next.content;
                 desc.shape.geometryRevision = next.content;
                 desc.motion = physics::MotionType::Static;

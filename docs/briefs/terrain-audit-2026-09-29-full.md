@@ -354,9 +354,9 @@ Done (D384-D391). The editor P2 list, item by item:
 - [x] TA18: an edit invalidates only the navmesh tiles it touches.
 - [x] The raycast caches the field's bounds per revision.
 - [x] Moving a terrain moves its colliders.
-- [ ] The seam between chunks' colliders is one continuous surface for
+- [x] The seam between chunks' colliders is one continuous surface for
   vehicles, rolling bodies, characters and resting bodies (the owner's ruling
-  of 2026-09-30; chosen by measurement, in an ADR).
+  of 2026-09-30; chosen by measurement, ADR 0143, D394).
 
 ### T5 as it stands
 
@@ -390,9 +390,17 @@ Done (D384-D391). The editor P2 list, item by item:
   under 1% and 1 cm by a test); a ball sliding with no friction hops 1.5 cm
   and loses 5%. **The owner's ruling (2026-09-30, through ludwerk-08): fix
   it, for vehicles with suspension, rolling bodies, characters and resting
-  bodies alike, and choose how by measurement** -- one compound, a ring of the
-  neighbour's triangles, or a contact listener at the seams -- recorded in an
-  ADR. Under way.
+  bodies alike, and choose how by measurement.** Done (ADR 0143, D394): a
+  harness (`engine/scene/tests/terrain_seam_tests.cpp`) drove balls, a
+  character, a resting box and Jolt's `VehicleConstraint` across seams on the
+  engine's own collider meshes, joined nine ways, against one mesh with no
+  seam. A compound fixed balls and characters but not cast wheels, and its
+  queries (mutable) or rebuilds (static) grow with a large world; a ring fixed
+  wheels only; a contact listener, sliding balls only. **Each chunk now
+  carries a band of its neighbours' triangles that only lends its edges**, and
+  moving bodies remove internal edges -- which also ended a 4.5 cm hop a
+  rolling ball had on any triangulated ground, seam or none. Every row is the
+  reference's; 45% more collider memory and 0.7 ms a digging tick.
 - **Found by ludwerk-08 checking T4**: `FillBall` wholly above `MaxHeight`
   answers 0, as the API says: an explosion over the ceiling is not a mistake,
   and T4 made only the unusable arguments errors.

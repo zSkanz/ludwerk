@@ -76,6 +76,10 @@
 namespace engine::physics {
 namespace {
 
+// **What a terrain chunk's band triangles are marked with** (ADR 0143): 1 in
+// the triangle's user data. The band only lends its edges.
+constexpr JPH::uint32 kBandTriangle = 1;
+
 using core::f32;
 using core::f64;
 using core::u16;
@@ -567,13 +571,17 @@ struct CharacterPair
             if (a >= vertexCount || b >= vertexCount || c >= vertexCount) {
                 return {};
             }
-            triangles.push_back(JPH::IndexedTriangle(a, b, c));
+            // **The band is marked** (ADR 0143): 1 in the triangle's user
+            // data, which the contact listeners refuse.
+            const bool band = at / 3 >= desc.bandFirst;
+            triangles.push_back(JPH::IndexedTriangle(a, b, c, 0, band ? kBandTriangle : 0u));
         }
 
         // `Sanitize` runs inside this constructor -- duplicate and degenerate
         // triangles are removed for us, which a mesher's output at a cell
         // boundary produces routinely.
         JPH::MeshShapeSettings settings(std::move(vertices), std::move(triangles));
+        settings.mPerTriangleUserData = desc.bandFirst < desc.indices.size() / 3;
         settings.SetEmbedded();
         const JPH::ShapeSettings::ShapeResult result = settings.Create();
         if (result.HasError()) {
@@ -640,6 +648,18 @@ public:
 
 class JoltWorld;
 
+// Whether a contact is with a band triangle (ADR 0143): a static mesh's
+// triangle whose user data says so. A mesh with no user data answers 0 for
+// every triangle.
+[[nodiscard]] bool onBand(const JPH::Body& body, const JPH::SubShapeID& subShape)
+{
+    if (!body.IsStatic())
+        return false;
+    const JPH::Shape* shape = body.GetShape();
+    return shape->GetSubType() == JPH::EShapeSubType::Mesh &&
+           static_cast<const JPH::MeshShape*>(shape)->GetTriangleUserData(subShape) == kBandTriangle;
+}
+
 // Appends to the world's per-step pair buffer and does nothing else. Runs
 // inside `PhysicsSystem::Update`, and from M7 on a worker thread -- so it may
 // not touch the scene, allocate a script value, or decide an order.
@@ -671,7 +691,7 @@ public:
     // does -- and returns early on the common case, which is a world with no
     // constraints at all.
     JPH::ValidateResult OnContactValidate(const JPH::Body& first, const JPH::Body& second, JPH::RVec3Arg,
-                                          const JPH::CollideShapeResult&) override
+                                          const JPH::CollideShapeResult& hit) override
     {
         {
             const std::lock_guard<std::mutex> guard(m_mutex);
@@ -684,6 +704,16 @@ public:
                     return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
                 }
             }
+        }
+        // **A terrain chunk's band only lends its edges** (ADR 0143): a contact
+        // with one of its triangles is refused, and the pair is asked about
+        // each contact -- the neighbour's own triangle holds the body there.
+        const bool firstMesh = first.IsStatic() && first.GetShape()->GetSubType() == JPH::EShapeSubType::Mesh;
+        const bool secondMesh = second.IsStatic() && second.GetShape()->GetSubType() == JPH::EShapeSubType::Mesh;
+        if (firstMesh || secondMesh) {
+            if ((firstMesh && onBand(first, hit.mSubShapeID1)) || (secondMesh && onBand(second, hit.mSubShapeID2)))
+                return JPH::ValidateResult::RejectContact;
+            return JPH::ValidateResult::AcceptContact;
         }
         return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
     }
@@ -1643,6 +1673,8 @@ public:
         settings.mShape = JPH::ShapeRefC(new JPH::CapsuleShape(halfCylinder, radius));
         settings.mMaxSlopeAngle = JPH::DegreesToRadians(desc.maxSlopeAngle);
         settings.mMass = desc.mass;
+        // As a moving body does (ADR 0143).
+        settings.mEnhancedInternalEdgeRemoval = true;
         // A character with no inner body is invisible to the simulation: other
         // bodies pass through it, which is not what "a capsule standing on a
         // seesaw" means. The inner body is what makes the character push and be
@@ -2307,6 +2339,11 @@ private:
         settings.mFriction = desc.friction;
         settings.mRestitution = desc.restitution;
         settings.mIsSensor = !desc.collidable;
+        // **A moving body removes the ghost edges it meets** (ADR 0143): a ball
+        // rolled over any triangulated ground -- one mesh, no seam -- struck the
+        // edges between its triangles and hopped. Jolt does it per pair of
+        // bodies, which is why the chunks' seams need their bands as well.
+        settings.mEnhancedInternalEdgeRemoval = motion == MotionType::Dynamic;
         settings.mUserData = packHandle(handle);
         // Mass is volume times `BasePart.Density`, and there is no `Mass`
         // property precisely so that the two cannot disagree. `CalculateInertia`
@@ -2633,6 +2670,12 @@ private:
         [[nodiscard]] bool OnContactValidate(const JPH::CharacterVirtual*,
                                              const JPH::CharacterContact& contact) override
         {
+            // A terrain chunk's band only lends its edges (ADR 0143).
+            if (!contact.mBodyB.IsInvalid()) {
+                const JPH::Body* touched = m_world.m_system.GetBodyLockInterfaceNoLock().TryGetBody(contact.mBodyB);
+                if (touched != nullptr && onBand(*touched, contact.mSubShapeIDB))
+                    return false;
+            }
             const BodyRecord* body = m_world.resolve(unpackHandle(contact.mUserData));
             if (body == nullptr || !body->passableForCharacters)
                 return true;

@@ -69,6 +69,12 @@ struct MeshRegion
     // physics mirror rebuilds the chunks round a digger every tick, and paid
     // for both.
     bool collider = false;
+
+    // **The outer points on every side that are a band** (ADR 0143; 0 or 1,
+    // level 0): the region is a chunk grown by this many points, its own
+    // quads made first, then the band's -- only those touching a point an own
+    // quad uses -- from `TerrainMesh::colliderBandFirst` on.
+    core::u32 band = 0;
 };
 
 // **How many of a level's cells past a region's sides `meshField` reads**, on
@@ -109,6 +115,8 @@ struct TerrainMesh
     // what `ShapeType::TriangleMesh` takes.
     std::vector<core::Vec3> colliderPoints;
     std::vector<core::u32> colliderIndices;
+    // The first band triangle when the region has one (`MeshRegion::band`).
+    core::u32 colliderBandFirst = ~core::u32{0};
 };
 
 // **A column's solid runs, as the sky term sees them** (ADR 0140): from the
@@ -178,6 +186,24 @@ void cacheSurfaces(const TerrainField& field, ChunkKey key, core::u64 content, c
 // The lowest and highest rows of `activeRuns`, or nothing when there are none.
 [[nodiscard]] std::optional<std::pair<core::i32, core::i32>> activeRows(const TerrainField& field, core::i32 chunkX,
                                                                         core::i32 chunkZ, core::i32 across);
+
+// **A chunk's collider, with its band** (ADR 0143): the chunk's own triangles
+// at full detail, as `meshField` over the chunk with `collider` set makes
+// them, then the triangles one cell past its sides that are not its own and
+// touch it -- `bandFirst` on. Points are welded by position, so an own
+// triangle and a band one meeting at the chunk's border share that edge by
+// index: to the physics engine's active-edge pass the border is inside the
+// mesh, and a body crossing into the next chunk meets no edge there. The band
+// only lends its edges; it is never collided with. Reads four layers of each
+// neighbour (`TerrainChunk::borderDigest(..., 4)`).
+struct TerrainCollider
+{
+    std::vector<core::Vec3> points;
+    std::vector<core::u32> indices;
+    // The first band triangle (a triangle's index, not an index's).
+    core::u32 bandFirst = 0;
+};
+[[nodiscard]] TerrainCollider meshCollider(const TerrainField& field, ChunkKey key);
 
 // Appends one mesh to another, keeping one section per material in id order.
 void appendMesh(TerrainMesh& into, const TerrainMesh& from);

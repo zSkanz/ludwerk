@@ -285,14 +285,16 @@ u64 TerrainChunk::digest() const noexcept
     return m_digests.whole.load(std::memory_order_relaxed);
 }
 
-u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
+u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz, u32 layers) const noexcept
 {
-    if (dx < -1 || dx > 1 || dy < -1 || dy > 1 || dz < -1 || dz > 1)
+    if (dx < -1 || dx > 1 || dy < -1 || dy > 1 || dz < -1 || dz > 1 || (layers != 2 && layers != 4))
         return 0;
     if (dx == 0 && dy == 0 && dz == 0)
         return digest();
     const auto slot = static_cast<u32>((dx + 1) + 3 * (dy + 1) + 9 * (dz + 1));
-    if ((m_digests.bordersValid.load(std::memory_order_acquire) & (1u << slot)) == 0) {
+    std::array<std::atomic<u64>, 27>& digests = layers == 4 ? m_digests.wideOnce().borders : m_digests.borders;
+    std::atomic<u32>& valid = layers == 4 ? m_digests.wideOnce().valid : m_digests.bordersValid;
+    if ((valid.load(std::memory_order_acquire) & (1u << slot)) == 0) {
         XXH3_state_t state;
         XXH3_64bits_reset(&state);
         XXH3_64bits_update(&state, &slot, sizeof(slot));
@@ -308,11 +310,11 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
             // the low side -- and every layer on the others. Read voxel by
             // voxel in a fixed order, never the row table, so the answer does
             // not depend on how they happen to be stored.
-            const auto range = [](i32 offset) {
+            const auto range = [layers](i32 offset) {
                 if (offset < 0)
-                    return std::pair<u32, u32>{0, 2};
+                    return std::pair<u32, u32>{0, layers};
                 if (offset > 0)
-                    return std::pair<u32, u32>{ChunkEdge - 2, ChunkEdge};
+                    return std::pair<u32, u32>{ChunkEdge - layers, ChunkEdge};
                 return std::pair<u32, u32>{0, ChunkEdge};
             };
             const auto [x0, x1] = range(dx);
@@ -332,10 +334,23 @@ u64 TerrainChunk::borderDigest(i32 dx, i32 dy, i32 dz) const noexcept
             }
             XXH3_64bits_update(&state, part.data(), part.size() * sizeof(u16));
         }
-        m_digests.borders[slot].store(XXH3_64bits_digest(&state), std::memory_order_relaxed);
-        m_digests.bordersValid.fetch_or(1u << slot, std::memory_order_release);
+        digests[slot].store(XXH3_64bits_digest(&state), std::memory_order_relaxed);
+        valid.fetch_or(1u << slot, std::memory_order_release);
     }
-    return m_digests.borders[slot].load(std::memory_order_relaxed);
+    return digests[slot].load(std::memory_order_relaxed);
+}
+
+TerrainChunk::Digests::Wide& TerrainChunk::Digests::wideOnce() const noexcept
+{
+    auto& self = const_cast<Digests&>(*this);
+    Wide* made = self.wide.load(std::memory_order_acquire);
+    if (made != nullptr)
+        return *made;
+    Wide* fresh = new Wide;
+    if (self.wide.compare_exchange_strong(made, fresh, std::memory_order_acq_rel, std::memory_order_acquire))
+        return *fresh;
+    delete fresh;
+    return *made;
 }
 
 // --- TerrainField --------------------------------------------------------------

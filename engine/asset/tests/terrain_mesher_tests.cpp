@@ -364,3 +364,36 @@ TEST_CASE("a collider's mesh is the drawn mesh's points and triangles, without t
             CHECK_FALSE(only.colliderIndices.empty());
     }
 }
+
+TEST_CASE("a chunk's collider is its own mesh and a band of its neighbours' that touches it (ADR 0143)")
+{
+    TerrainField field = flatGround(0.0f);
+    (void)fillBall(field, core::DVec3{32.0, 0.0, 12.0}, 5.0, 1);
+    const ChunkKey key{0, -1, 0};
+    MeshRegion own = regionAt(0, -32, 0);
+    own.collider = true;
+    const TerrainMesh plain = meshField(field, own);
+    const TerrainCollider made = meshCollider(field, key);
+    REQUIRE_FALSE(plain.colliderIndices.empty());
+
+    // Its own triangles first, exactly the chunk's mesh.
+    REQUIRE(made.bandFirst * 3 == plain.colliderIndices.size());
+    for (core::usize at = 0; at < plain.colliderIndices.size(); ++at) {
+        const core::Vec3 a = plain.colliderPoints[plain.colliderIndices[at]];
+        const core::Vec3 b = made.points[made.indices[at]];
+        CHECK((a.x == b.x && a.y == b.y && a.z == b.z));
+    }
+    // Then a band, past its sides, every triangle of it touching an own point
+    // by index -- which is what makes the border an edge inside the mesh.
+    const core::usize bandTriangles = made.indices.size() / 3 - made.bandFirst;
+    CHECK(bandTriangles > 0);
+    std::set<core::u32> ownPoints(made.indices.begin(), made.indices.begin() + made.bandFirst * 3);
+    for (core::usize t = made.bandFirst; t < made.indices.size() / 3; ++t) {
+        bool touches = false;
+        for (int k = 0; k < 3; ++k)
+            touches = touches || ownPoints.contains(made.indices[t * 3 + static_cast<core::usize>(k)]);
+        CHECK(touches);
+    }
+    // And a chunk with nothing to collide with has nothing.
+    CHECK(meshCollider(field, ChunkKey{0, 3, 0}).indices.empty());
+}
