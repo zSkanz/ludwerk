@@ -351,6 +351,20 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         }
     }
 
+    // A release ends the click it belongs to. Both ends on the same element,
+    // which is what makes a press cancellable by sliding off it.
+    const auto release = [&] {
+        if (over.valid() && over == g_state.pressedOn)
+            fire(world, over, "Activated");
+        g_state.pressedOn = {};
+        g_state.dragging = false;
+    };
+    // **The end of one click and the start of the next in one frame** (D362):
+    // the release is the earlier of the two, so it ends the first click.
+    const bool releaseBeforePress = input.pressed && input.released && input.releasedFirst;
+    if (releaseBeforePress)
+        release();
+
     if (input.pressed) {
         g_state.pressedOn = over;
 
@@ -408,14 +422,8 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
         g_state.lastActivity = input.time;
     }
 
-    if (input.released) {
-        // Both ends on the same element, which is what makes a press
-        // cancellable by sliding off it.
-        if (over.valid() && over == g_state.pressedOn)
-            fire(world, over, "Activated");
-        g_state.pressedOn = {};
-        g_state.dragging = false;
-    }
+    if (input.released && !releaseBeforePress)
+        release();
 
     if (g_state.focused.valid()) {
         const core::InstanceId id = g_state.focused;

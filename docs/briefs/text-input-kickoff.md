@@ -58,9 +58,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 ## T6 — the close
 
 - [x] The manual's page on text input; the API reference.
-- [ ] A packaged game driven by real input: every shortcut, the mouse, a paste
-  from another application, a masked field, a multi-line one.
-- [ ] Android: the on-screen keyboard of each type.
+- [x] A game driven by real input: every shortcut, the mouse, a paste
+  from another application, a masked field, a multi-line one. Two defects
+  found and fixed on the way (D361, D362).
+- [ ] Android: the on-screen keyboard of each type. **Waiting on the owner's
+  phone**: none was connected on 2026-09-30.
 
 ## Findings
 
@@ -79,3 +81,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - **`Focused`, `FocusLost` and the service's pair are four events, not two.**
   A chat hotkey wants to know whether *any* field has the keyboard, which only
   a query on `UIService` and its two events answer without walking the tree.
+- **A paste right after a copy pasted nothing (D361).** Two programs on the
+  owner's machine -- a clipboard history and a launcher -- open the clipboard
+  about 200 ms after every change. SDL tries for 30 ms and then answers "" as if
+  the clipboard were empty. Only a real application and a real clipboard show
+  it; the unit test had passed from the start.
+- **A click between two frames was lost (D362).** The host read a click from
+  the button's state at each frame, so a press and a release inside one frame
+  never happened -- a quick tap on a touchpad, a touch, and the second click of
+  a quick double click.
+- **Automation must send scan codes.** `SendInput` with a virtual key and no
+  scan code reaches SDL's raw keyboard as scan code 0: Home and End never
+  arrived, and what looked like a lost Ctrl+V after End was the driver. A real
+  keyboard always sends one.

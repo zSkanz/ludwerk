@@ -198,6 +198,35 @@ TEST_CASE("Activated needs both ends of the press on one element")
     (void)button;
 }
 
+TEST_CASE("a click inside one frame, and a double click whose middle is one frame, activate every time (D362)")
+{
+    Fixture fixture;
+    (void)fixture.box(fixture.screen, 0.0f, 0.0f, 100.0f, 100.0f);
+    fixture.run();
+    const auto activations = [&fixture] {
+        const std::vector<std::string> fired = fixture.events();
+        return std::ranges::count(fired, std::string("Activated"));
+    };
+
+    // A tap: down and up between two frames.
+    fixture.interact(Vec2{10.0f, 10.0f}, true, true);
+    CHECK(activations() == 1);
+
+    // A quick double click: the first press, then the first release and the
+    // second press in one frame, then the second release. Two activations --
+    // the release is the first of that frame's two, not the second.
+    fixture.interact(Vec2{10.0f, 10.0f}, true, false);
+    ui::InteractionInput middle;
+    middle.pointer = Vec2{10.0f, 10.0f};
+    middle.pressed = true;
+    middle.released = true;
+    middle.releasedFirst = true;
+    middle.clicks = 2;
+    (void)fixture.send(middle);
+    fixture.interact(Vec2{10.0f, 10.0f}, false, true);
+    CHECK(activations() == 2);
+}
+
 TEST_CASE("a button is its whole box: an image button with or without an image, a text button with no text")
 {
     // **The owner**: a friend's buttons did not answer. The box is what takes

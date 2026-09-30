@@ -551,6 +551,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A tap and a quick double click are no longer lost** (D362): a click whose
+  press and release landed between two frames never activated anything, and a
+  quick double click activated once.
+- **A paste right after a copy pastes** (D361): on a machine with a clipboard
+  history, the paste read the clipboard while that program had it open, and
+  got nothing.
 - **A script that stops disconnects its connections** (D360): a stopped
   script's handlers stayed on their signals, and a game spawning scripted
   projectiles slowed without bound. `Connected` reads false after a stop.

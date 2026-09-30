@@ -308,6 +308,45 @@ TEST_CASE("the clipboard carries text in and out (ADR 0139)")
     CHECK(*read == "copied \xC3\xA9");
 }
 
+TEST_CASE("text on the clipboard that another program holds open for a moment is still read (D361)")
+{
+    // A clipboard history opens the clipboard about 200 ms after every change,
+    // and a read in that moment answered "" -- a paste right after a copy
+    // pasted nothing. Two reads come back empty while text is there; the third
+    // gets it.
+    int reads = 0;
+    int waits = 0;
+    engine::platform::ClipboardSource source;
+    source.hasText = [] { return true; };
+    source.read = [&reads]() -> std::optional<std::string> {
+        ++reads;
+        return reads < 3 ? std::string() : std::string("pasted");
+    };
+    source.wait = [&waits] { ++waits; };
+    const std::optional<std::string> read = engine::platform::clipboardTextFrom(source);
+    REQUIRE(read.has_value());
+    CHECK(*read == "pasted");
+    CHECK(reads == 3);
+    CHECK(waits == 2);
+
+    // Nothing on it is nothing, asked once.
+    reads = 0;
+    source.hasText = [] { return false; };
+    CHECK_FALSE(engine::platform::clipboardTextFrom(source).has_value());
+    CHECK(reads == 0);
+
+    // And text that really is empty is given up on, not waited for for ever.
+    source.hasText = [] { return true; };
+    source.read = [&reads]() -> std::optional<std::string> {
+        ++reads;
+        return std::string();
+    };
+    const std::optional<std::string> empty = engine::platform::clipboardTextFrom(source);
+    REQUIRE(empty.has_value());
+    CHECK(empty->empty());
+    CHECK(reads == engine::platform::ClipboardAttempts);
+}
+
 TEST_CASE("a gamepad axis is normalized by what the axis IS")
 {
     using engine::platform::EventType;

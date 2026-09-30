@@ -447,6 +447,10 @@ struct InteractionInput
     core::Vec2 pointer;
     bool pressed = false;
     bool released = false;
+    // **Both in one frame, and the release came first** (D362): the end of one
+    // click and the start of the next -- a quick double click. Without it a
+    // frame that holds both is a press then a release.
+    bool releasedFirst = false;
     // UTF-8, as the platform delivered it this frame. Empty for most frames.
     std::string_view text;
     bool backspace = false;

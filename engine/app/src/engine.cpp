@@ -1304,6 +1304,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // went down, and the UI needs the edge to tell a click from a hold.
     bool uiPointerDown = false;
     bool lastUiPointerDown = false;
+    // **The pointer's presses and releases this frame, as events** (D362): a
+    // tap whose down and up land between two frames leaves the button's state
+    // where it was, and a click read from the state alone was lost.
+    bool uiPressEvent = false;
+    bool uiReleaseEvent = false;
+    bool uiReleaseFirst = false;
     std::string uiTypedText;
     bool uiBackspace = false;
     // The caret's own keys (S6.7). One flag per key rather than a state, because
@@ -4419,11 +4425,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiCommands.clear();
             uiCommandTexts.clear();
             uiCompositionChanged = false;
+            uiPressEvent = false;
+            uiReleaseEvent = false;
+            uiReleaseFirst = false;
             for (const platform::Event& event : events) {
                 switch (event.type) {
                 case platform::EventType::MouseButtonDown:
                     if (event.button == platform::MouseButton::Left) {
                         uiPointerDown = true;
+                        uiPressEvent = true;
                         uiClicks = event.clicks > 0 ? event.clicks : 1;
                         uiShiftPress = (event.modifiers & platform::KeyModifier::Shift) != 0;
                     }
@@ -4434,8 +4444,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     uiCompositionChanged = true;
                     break;
                 case platform::EventType::MouseButtonUp:
-                    if (event.button == platform::MouseButton::Left)
+                    if (event.button == platform::MouseButton::Left) {
                         uiPointerDown = false;
+                        uiReleaseFirst = uiReleaseFirst || !uiPressEvent;
+                        uiReleaseEvent = true;
+                    }
                     break;
                 case platform::EventType::TextInput: {
                     uiTypedText.append(event.text);
@@ -4856,8 +4869,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const input::DeviceState& devices = host->input().snapshot();
             ui::InteractionInput interaction;
             interaction.pointer = devices.pointer;
-            interaction.pressed = uiPointerDown && !lastUiPointerDown;
-            interaction.released = !uiPointerDown && lastUiPointerDown;
+            interaction.pressed = uiPressEvent || (uiPointerDown && !lastUiPointerDown);
+            interaction.released = uiReleaseEvent || (!uiPointerDown && lastUiPointerDown);
+            interaction.releasedFirst = uiReleaseFirst;
             interaction.text = uiTypedText;
             interaction.backspace = uiBackspace;
             interaction.forwardDelete = uiForwardDelete;
