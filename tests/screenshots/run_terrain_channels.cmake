@@ -34,6 +34,8 @@ file(MAKE_DIRECTORY "${OUTPUT}")
 foreach(variant mapped plain tilted)
     set(project "${OUTPUT}/${variant}")
     file(COPY "${SCRIPT}/" DESTINATION "${project}" PATTERN "variants" EXCLUDE)
+    # Made here: git keeps no empty folder, so a checkout has none.
+    file(MAKE_DIRECTORY "${project}/content/materials")
     file(COPY_FILE "${SCRIPT}/variants/${variant}.material.json" "${project}/content/materials/ground.material.json")
     set(view "")
     if(variant STREQUAL "tilted")
