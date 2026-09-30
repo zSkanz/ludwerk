@@ -42,8 +42,8 @@ struct StreamedWorld
 
     // A kilometre square of two-metre ground -- one 64 m chunk column a cell -- and a
     // strip of blocks along the x axis, both written as cells the way a
-    // partition writes them.
-    StreamedWorld()
+    // partition writes them. `metres` makes it wider.
+    explicit StreamedWorld(float metres = 1024.0f)
     {
         workspace = world.create(fixture.workspaceClass);
         world.workspaces().add(workspace, scene::WorkspaceComponent{});
@@ -55,7 +55,7 @@ struct StreamedWorld
 
         const asset::FieldSettings settings{.voxelSize = 2.0f, .minHeight = -32.0f, .maxHeight = 32.0f};
         asset::TerrainField source(settings);
-        (void)asset::fillBlock(source, core::DVec3{0.0, -20.0, 0.0}, core::Vec3{1024.0f, 40.0f, 1024.0f}, 1);
+        (void)asset::fillBlock(source, core::DVec3{0.0, -20.0, 0.0}, core::Vec3{metres, 40.0f, metres}, 1);
         asset::VoxelGrid blocks;
         (void)blocks.fill(-300, 0, 0, 300, 2, 3, 1);
 
@@ -290,13 +290,14 @@ TEST_CASE("an edit where the ground is not loaded yet reads it first (terrain au
     IoScope io;
     StreamedWorld streamed;
     streamed.world.setGroundLoader([&streamed](core::DVec3 low, core::DVec3 high, core::u32 cells) {
-        streamed.streamer.loadNow(low, high, cells);
+        return streamed.streamer.loadNow(low, high, cells);
     });
     REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
     REQUIRE_FALSE(streamed.holds(6, 6));
 
     const core::DVec3 at{420.0, 0.0, 420.0};
-    streamed.world.loadGround(core::DVec3{at.x - 12.0, 0.0, at.z - 12.0}, core::DVec3{at.x + 12.0, 0.0, at.z + 12.0});
+    REQUIRE(streamed.world.loadGround(core::DVec3{at.x - 12.0, 0.0, at.z - 12.0},
+                                      core::DVec3{at.x + 12.0, 0.0, at.z + 12.0}));
     scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
     (void)asset::fillBall(terrain.field, at, 4.0, 2);
     terrain.fieldRevision += 1;
@@ -324,4 +325,57 @@ TEST_CASE("a world with no camera and no focus does not hold the simulation for 
     CHECK(streamed.streamer.primed());
     // And nothing was loaded for a focus that is not there.
     CHECK_FALSE(streamed.holds(0, 0));
+}
+
+// --- Ground on disk, whole or not at all (terrain audit TA16) ------------------
+
+TEST_CASE("an edit's ground is loaded whole however many cells it reaches, or none of it is (TA16a)")
+{
+    // Twenty-one cells a side, 441 of them: an edit over all of it read the
+    // first 256 and wrote only itself over the rest -- which a save kept.
+    IoScope io;
+    StreamedWorld streamed(1344.0f);
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    REQUIRE_FALSE(streamed.holds(10, 10));
+
+    // More than a load may read: nothing is, and it says so.
+    CHECK_FALSE(streamed.streamer.loadNow(core::DVec3{-700.0, 0.0, -700.0}, core::DVec3{700.0, 0.0, 700.0}, 100));
+    CHECK_FALSE(streamed.holds(10, 10));
+    CHECK_FALSE(streamed.holds(-10, -10));
+
+    CHECK(streamed.streamer.loadNow(core::DVec3{-700.0, 0.0, -700.0}, core::DVec3{700.0, 0.0, 700.0}, 4096));
+    for (int x = -10; x <= 10; x += 5) {
+        for (int z = -10; z <= 10; z += 5) {
+            CAPTURE(x);
+            CAPTURE(z);
+            CHECK(streamed.holds(x, z));
+        }
+    }
+}
+
+TEST_CASE("a cell saved at another voxel size is refused, never merged at the wrong scale (TA16b)")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    // The terrain's voxels a metre, its cells' two.
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    terrain.field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    for (int frame = 0; frame < 2000 && !streamed.streamer.primed(); ++frame) {
+        streamed.streamer.pump(50.0);
+        std::this_thread::yield();
+    }
+    CHECK(streamed.field().empty());
+}
+
+TEST_CASE("a streamed terrain moved goes on streaming round the camera where it is now (TA16d)")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    REQUIRE_FALSE(streamed.holds(6, 6));
+    // A kilometre east, and the camera over what was 420 m in, 420 m across.
+    streamed.world.terrains().find(streamed.ground)->origin = core::DVec3{1000.0, 0.0, 0.0};
+    streamed.lookFrom(core::DVec3{1420.0, 0.0, 420.0});
+    CHECK(streamed.pumpUntil([&] { return streamed.holds(6, 6); }));
 }

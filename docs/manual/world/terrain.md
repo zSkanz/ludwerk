@@ -352,11 +352,26 @@ The three numbers a terrain is decided at:
 
 ## Large worlds
 
-A terrain saved with a scene streams from disk once it is sixteen cells or
-more, each cell 64 m on a side. The world waits for the ground around the
-player before the first frame, loads cells ahead of the camera and evicts them
-behind it. **A cell somebody changed is never evicted**, so a crater stays a
-crater. See [Streaming a large world](manual:assets/streaming).
+A terrain saved with a scene streams from disk once it is 256 cells or more,
+each cell 64 m on a side -- a square a kilometre across. The world waits for
+the ground around the player before the first frame, loads cells ahead of the
+camera and evicts them behind it. **A cell somebody changed is never
+evicted**, so a crater stays a crater. See
+[Streaming a large world](manual:assets/streaming).
+
+**Everything that reads or writes the ground loads it first**, where it is
+still on disk: every edit, `ReadVoxels`, `HeightAt`, `ApplyRules` and a
+raycast from a script, and the editor's brush and its actions over the whole
+terrain. So copying a region with `ReadVoxels` and `WriteVoxels` copies ground
+the camera has never been near. **All of it, or none of it**: an edit that
+reaches more than 4 096 cells not loaded yet -- a square four kilometres
+across -- is refused before it changes anything, with the same words from a
+script and from the editor; do it in pieces.
+
+A streamed terrain's `VoxelSize` cannot change while its ground is on disk,
+and a cell saved at another size is refused rather than read at the wrong
+scale. `Clear` lets go of the cells on disk as well. A streamed terrain moved
+by its `Position` streams round the camera where it is now.
 
 ## In a match
 

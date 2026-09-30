@@ -1109,7 +1109,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = true,
             .inert = true,
-            .doc = "How wide one streamed cell of terrain is, in metres. Read-only: it is the streaming grid's own spacing, and a terrain that disagreed with it would have cells that load and unload on different boundaries from everything else in the world.\012\012**What a saved terrain streams by.** A terrain written with a scene and large enough to span sixteen cells or more is cut into cells of this size, rounded to whole columns of 32-voxel chunks, and each one is loaded and dropped around `StreamingService`'s foci on its terrain radii. A cell somebody changed is never dropped.",
+            .doc = "How wide one streamed cell of terrain is, in metres. Read-only: it is the streaming grid's own spacing, and a terrain that disagreed with it would have cells that load and unload on different boundaries from everything else in the world.\012\012**What a saved terrain streams by.** A terrain written with a scene and large enough to span 256 cells or more is cut into cells of this size, rounded to whole columns of 32-voxel chunks, and each one is loaded and dropped around `StreamingService`'s foci on its terrain radii. A cell somebody changed is never dropped.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getTerrainCellSize,
             .set = nullptr,

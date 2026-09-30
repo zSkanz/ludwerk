@@ -240,6 +240,7 @@
   "scene.err.terrain_heights_shape": "WriteHeights needs whole rows: {count} height(s) do not make rows of {columns} column(s). The table holds one height per column, row after row.",
   "scene.err.terrain_brush_too_large": "That edit covers more than {limit} voxel(s) -- a size or a radius no brush has -- so it changed nothing. Edit in pieces.",
   "scene.err.terrain_region_too_large": "That region is {count} voxel(s), and ReadVoxels reads at most {limit} at once. Read it in pieces.",
+  "scene.err.terrain_ground_too_wide": "That reaches more streamed ground than is loaded at once (at most {limit} cells of it). Do it in pieces.",
   "scene.err.terrain_voxels_size": "WriteVoxels needs a size of whole voxels from 0 up on each axis, at most a region ReadVoxels can read; ({x}, {y}, {z}) is not one.",
   "scene.err.terrain_voxels_value": "WriteVoxels: the occupancy at {index} is {value}. An occupancy is a number from 0 (air) to 1 (full).",
   "scene.err.terrain_voxels_shape": "WriteVoxels needs one material and one occupancy per voxel: the region is {count} voxel(s), and the tables hold {materials} material(s) and {occupancies} occupancy(ies).",

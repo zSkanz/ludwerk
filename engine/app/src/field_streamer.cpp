@@ -73,6 +73,8 @@ void FieldStreamer::adoptTerrain(const asset::ChunkIndex& index, const CellResol
     }
     // A different terrain's cells are nobody's now: its field went with it.
     m_terrainCells.clear();
+    // Its bounds were drawn where it stood when they were saved.
+    m_boundsOrigin.reset();
     if (!m_active) {
         m_manager.setIndex(merged);
         installCallbacks();
@@ -109,6 +111,8 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
         report.ok = false;
         return report;
     }
+    // The rows kept as they are must stand where the ones written will.
+    followTerrainOrigin();
     const asset::FieldSettings settings = component->field.settings();
     const core::u32 across = asset::terrainCellChunks(settings.voxelSize);
 
@@ -154,6 +158,15 @@ FieldStreamer::TerrainSaveReport FieldStreamer::saveTerrain(const TerrainCellWri
             }
         }
         cell.settings = settings;
+        // **More chunks than a cell may load is not written** (terrain audit
+        // TA16f): it was checked on decode only, so a cell saved past it never
+        // loaded again -- and the next save, refusing to write over a file it
+        // could not read, lost the ground. It stays as it is on disk, and the
+        // save says not everything was written.
+        if (cell.field.chunks().size() > asset::MaxCellChunks) {
+            report.ok = false;
+            continue;
+        }
         const std::vector<std::byte> bytes = asset::encodeTerrainCell(cell);
         const std::optional<std::string> urn = writer.write(id, bytes);
         if (!urn.has_value()) {
@@ -300,14 +313,15 @@ scene::VoxelComponent* FieldStreamer::voxels() const
     return found;
 }
 
-void FieldStreamer::loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells)
+bool FieldStreamer::loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells)
 {
     if (!m_active || m_world == nullptr)
-        return;
-    core::u32 read = 0;
+        return true;
+    followTerrainOrigin();
+    // The cells over the square not held yet, counted before any is read: an
+    // edit that cannot have all of them has none, and refuses untouched.
+    std::vector<const asset::ChunkIndexEntry*> wanted;
     for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
-        if (read >= maxCells)
-            break;
         const bool ground = entry.id.layer == asset::FieldLayerTerrain;
         if (!ground && entry.id.layer != asset::FieldLayerVoxels)
             continue;
@@ -316,13 +330,20 @@ void FieldStreamer::loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCell
         if (entry.bounds.max.x < low.x || entry.bounds.min.x > high.x || entry.bounds.max.z < low.z ||
             entry.bounds.min.z > high.z)
             continue;
-        const auto path = m_paths.find(entry.id);
+        wanted.push_back(&entry);
+        if (wanted.size() > maxCells)
+            return false;
+    }
+    for (const asset::ChunkIndexEntry* entry : wanted) {
+        const auto path = m_paths.find(entry->id);
         std::vector<std::byte> bytes;
+        // A cell that cannot be read is reported where the streamer reports
+        // one, and stays out: nothing better is on disk to wait for.
         if (path == m_paths.end() || !platform::readFile(path->second, bytes))
             continue;
-        if (materialize(entry.id, bytes) >= 0.0)
-            ++read;
+        (void)materialize(entry->id, bytes);
     }
+    return true;
 }
 
 f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> bytes)
@@ -339,6 +360,14 @@ f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> byt
         // A world whose script removed its terrain has nowhere to put the
         // ground; the cell counts as resident, and costs what reading it did.
         if (scene::TerrainComponent* component = terrain(); component != nullptr) {
+            // **A cell of other settings is refused, never merged** (terrain
+            // audit TA16b): its voxels are another size, or its band another
+            // height, and merged they were ground at the wrong scale -- saved
+            // that way. It is reported as one that could not be read.
+            const asset::FieldSettings& mine = component->field.settings();
+            if (cell.settings.voxelSize != mine.voxelSize || cell.settings.minHeight != mine.minHeight ||
+                cell.settings.maxHeight != mine.maxHeight)
+                return -1.0;
             // **Less every chunk the package's copy already holds**: the
             // field has it, or it was removed on purpose -- dug to nothing,
             // or removed by the authority -- and a cell that went out and came
@@ -406,10 +435,37 @@ void FieldStreamer::evict(asset::ChunkId id)
     m_voxelCells.erase(held);
 }
 
+void FieldStreamer::followTerrainOrigin()
+{
+    const scene::TerrainComponent* component = terrain();
+    if (component == nullptr)
+        return;
+    if (!m_boundsOrigin.has_value()) {
+        m_boundsOrigin = component->origin;
+        return;
+    }
+    const core::DVec3 delta{component->origin.x - m_boundsOrigin->x, component->origin.y - m_boundsOrigin->y,
+                            component->origin.z - m_boundsOrigin->z};
+    if (delta.x == 0.0 && delta.y == 0.0 && delta.z == 0.0)
+        return;
+    asset::ChunkIndex moved = m_manager.index();
+    for (asset::ChunkIndexEntry& entry : moved.chunks) {
+        if (entry.id.layer != asset::FieldLayerTerrain)
+            continue;
+        entry.bounds.min =
+            core::DVec3{entry.bounds.min.x + delta.x, entry.bounds.min.y + delta.y, entry.bounds.min.z + delta.z};
+        entry.bounds.max =
+            core::DVec3{entry.bounds.max.x + delta.x, entry.bounds.max.y + delta.y, entry.bounds.max.z + delta.z};
+    }
+    m_manager.replaceIndex(moved);
+    m_boundsOrigin = component->origin;
+}
+
 void FieldStreamer::pump(f64 budgetMilliseconds)
 {
     if (!m_active || m_world == nullptr)
         return;
+    followTerrainOrigin();
     const u64 started = platform::nowNs();
 
     // Finished reads, inside the budget, on `StreamingHost::pump`'s terms

@@ -1239,8 +1239,8 @@ declare extern type Terrain extends Instance with
     --- How wide one streamed cell of terrain is, in metres. Read-only: it is the streaming grid's own
     --- spacing, and a terrain that disagreed with it would have cells that load and unload on different
     --- boundaries from everything else in the world. **What a saved terrain streams by.** A terrain
-    --- written with a scene and large enough to span sixteen cells or more is cut into cells of this
-    --- size, rounded to whole columns of 32-voxel chunks, and each one is loaded and dropped around
+    --- written with a scene and large enough to span 256 cells or more is cut into cells of this size,
+    --- rounded to whole columns of 32-voxel chunks, and each one is loaded and dropped around
     --- `StreamingService`'s foci on its terrain radii. A cell somebody changed is never dropped.
     read CellSize: number
     --- Where this terrain's own origin sits in the world, in metres. **A terrain is an instance and it

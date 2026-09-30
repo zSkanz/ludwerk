@@ -559,6 +559,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A streamed terrain no longer loses ground** (D366, D367): every edit, read
+  and raycast loads the cells it reaches first -- all of them, or the edit is
+  refused before it changes anything (past 4 096 cells); `VoxelSize` cannot
+  change while cells are on disk; `Terrain:Clear()` lets go of them; a moved
+  terrain streams where it is now; a cell too large to load again is not
+  saved. The editor's whole-terrain actions and heightmap export read every
+  cell.
 - **Smooth never cuts through ground, and keeps its volume** (D365): on a thin
   slab it made a hole, and repeated passes dug a ball down below the ground it
   stood on. What comes off a bump now goes into the ground round it.

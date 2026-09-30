@@ -56,8 +56,10 @@ away is the same shape drawn close, at lower resolution.
   ground within centimetres; the seam between L and L+1 closed, by a ray grid;
   a coarse cell's material is the surface's; the sky term matches the level's
   own geometry; winding agrees with the surface-net sign.
-- [ ] Streamed-project tests for every case of TA16 -- written at the start
-  of T1, as each fix's failing test.
+- [x] Streamed-project tests for every case of TA16 -- written in T1, as each
+  fix's failing test (`field_streamer_tests.cpp`, `terrain_ground_tests.cpp`);
+  (f), a cell past `MaxCellChunks`, is refused at save by code alone -- a test
+  needs sixteen thousand chunks in one cell.
 - [x] A flight benchmark over the gallery and the owner's place, in
   `docs/perf-baselines.md`: p95, p99 and the worst frame.
 
@@ -66,7 +68,7 @@ away is the same shape drawn close, at lower resolution.
 - [x] TA5, TA15: each axis bounded before it is multiplied; NaN and oversized
   values refused in `WriteVoxels`; `WriteHeights` and `GrowBall` on a voxel and
   chunk budget, refused with the keyed error the other edits use.
-- [~] TA16, TA17c: every edit and whole-terrain action loads every cell it
+- [x] TA16, TA17c: every edit and whole-terrain action loads every cell it
   touches, or refuses before touching anything; the read verbs and the raycast
   load ground first; `VoxelSize` fixed while cells are on disk and a cell of
   other settings refused; `Clear()` drops the index; a moved terrain re-derives
@@ -93,6 +95,16 @@ away is the same shape drawn close, at lower resolution.
   say. The gentle hill a held brush wears down loses half a metre in thirty
   stamps rather than 0.6: the volume the old blur threw away now goes round
   the brush's rim.
+
+- **TA16 and TA17c (D366, D367)**: a load of ground is all or nothing, up
+  to 4 096 cells -- a square four kilometres across -- or the edit is refused
+  untouched, by `scene.err.terrain_ground_too_wide` from a script and the same
+  words in the editor; the read verbs and the raycast load first, the raycast
+  a kilometre at a time; `VoxelSize` is fixed while an index names cells, and
+  a cell of other settings is refused; `Clear` drops the index; the streamer
+  moves its terrain cells' bounds with the terrain; a cell past
+  `MaxCellChunks` is not written. The editor's whole-terrain actions load all
+  of the terrain first. `CellSize`'s doc says 256 cells, as the code does.
 
 ## T2 — the shape at a distance
 

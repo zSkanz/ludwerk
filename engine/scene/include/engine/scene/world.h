@@ -1007,13 +1007,22 @@ public:
     // that writes the ground asks for its square first. Set by the host, which
     // owns the streamers; a world nobody gave one has all its ground in memory.
     // Cells are columns, so the square is `low` to `high` in x and z, world
-    // space, and at most `maxCells` are read.
-    using GroundLoader = std::function<void(core::DVec3 low, core::DVec3 high, core::u32 maxCells)>;
+    // space.
+    //
+    // **All of it or none of it** (terrain audit TA16): true when every cell
+    // the square touches is in memory now. A square touching more than
+    // `maxCells` cells not loaded yet reads none of them and answers false --
+    // an edit then refuses before it touches anything, where a cap that read
+    // the first 256 and let the edit go on wrote only the edit over the rest,
+    // and a save kept that loss.
+    using GroundLoader = std::function<bool(core::DVec3 low, core::DVec3 high, core::u32 maxCells)>;
     void setGroundLoader(GroundLoader loader) { m_groundLoader = std::move(loader); }
-    void loadGround(core::DVec3 low, core::DVec3 high, core::u32 maxCells = 256) const
+    // The most cells one call loads: a square four kilometres a side of 64 m
+    // cells.
+    static constexpr core::u32 MaxGroundCells = 4096;
+    [[nodiscard]] bool loadGround(core::DVec3 low, core::DVec3 high, core::u32 maxCells = MaxGroundCells) const
     {
-        if (m_groundLoader)
-            m_groundLoader(low, high, maxCells);
+        return !m_groundLoader || m_groundLoader(low, high, maxCells);
     }
 
     // **How many writes this world has taken** through its own verbs --

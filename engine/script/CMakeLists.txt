@@ -73,6 +73,7 @@ engine_add_module_tests(script
         tests/sandbox_tests.cpp
         tests/datatype_tests.cpp
         tests/instance_binding_tests.cpp
+        tests/terrain_ground_tests.cpp
         tests/service_tests.cpp
         tests/signal_tests.cpp
         tests/task_tests.cpp

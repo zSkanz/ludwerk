@@ -106,10 +106,11 @@ public:
     void reconcile();
 
     // **Reads now every cell over a square that is not held** -- terrain and
-    // block alike, at most `maxCells` -- for an edit about to be made there
-    // (`World::loadGround`, terrain audit U1). A read later for one of them
-    // finds it held and changes nothing.
-    void loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells);
+    // block alike -- for an edit about to be made there (`World::loadGround`,
+    // terrain audit U1). A read later for one of them finds it held and
+    // changes nothing. **All or none** (TA16): more than `maxCells` to read,
+    // and none is read and the answer is false.
+    [[nodiscard]] bool loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCells);
 
     // Where a save writes one cell, and how it removes one.
     struct TerrainCellWriter
@@ -151,6 +152,10 @@ private:
     [[nodiscard]] scene::VoxelComponent* voxels() const;
     [[nodiscard]] f64 materialize(asset::ChunkId id, std::span<const std::byte> bytes);
     void evict(asset::ChunkId id);
+    // **The terrain cells' bounds follow the terrain** (terrain audit TA16d):
+    // they are in world space, drawn where the terrain stood, and a terrain
+    // moved stopped streaming in round the player. Moved by the difference.
+    void followTerrainOrigin();
 
     asset::StreamingManager m_manager;
     std::map<asset::ChunkId, std::filesystem::path> m_paths;
@@ -168,6 +173,8 @@ private:
     // When the current wait for the ground began, for the log line that ends it.
     u64 m_waitingSinceNs = 0;
     std::optional<core::DVec3> m_focusOverride;
+    // Where the terrain stood when its cells' bounds were drawn.
+    std::optional<core::DVec3> m_boundsOrigin;
 };
 
 } // namespace engine::app

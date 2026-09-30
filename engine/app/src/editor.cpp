@@ -7,8 +7,10 @@
 #include <engine/asset/image.h>
 #include <engine/asset/terrain_layers.h>
 #include <engine/core/content_path.h>
+#include <engine/core/i18n.h>
 #include <engine/core/json.h>
 #include <engine/core/json_writer.h>
+#include <engine/core/text_key.h>
 #include <engine/platform/file.h>
 #include <engine/render/debug_draw.h>
 #include <engine/render/lighting.h>
@@ -32,6 +34,27 @@
 
 namespace engine::app {
 using core::Vec3;
+namespace {
+
+// **What the editor says when an edit reaches more streamed ground than loads
+// at once** (terrain audit TA16): the words a script's refusal carries, so the
+// two say the same thing.
+[[nodiscard]] std::string groundTooWide()
+{
+    const core::I18nArg args[] = {{"limit", static_cast<core::i64>(scene::World::MaxGroundCells)}};
+    return core::engineCatalog().format(ENG_TR("scene.err.terrain_ground_too_wide"), args);
+}
+
+// Every cell of ground the world streams, read now: what an action over a
+// whole terrain needs before it looks at the terrain's extent.
+[[nodiscard]] bool loadAllGround(const scene::World& world)
+{
+    constexpr double Everywhere = 1.0e12;
+    return world.loadGround(core::DVec3{-Everywhere, 0.0, -Everywhere}, core::DVec3{Everywhere, 0.0, Everywhere});
+}
+
+} // namespace
+
 namespace {
 // **A script moved into a service takes the service's side** (ADR 0138 §2):
 // every `Script` in the subtree at `root` that now sits inside a script
@@ -4657,8 +4680,11 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
     // in -- and on the next save.
     if (m_strokeWorld != nullptr) {
         const double reach = radius + 8.0 * static_cast<double>(terrain.field.settings().voxelSize);
-        m_strokeWorld->loadGround(core::DVec3{worldAt.x - reach, 0.0, worldAt.z - reach},
-                                  core::DVec3{worldAt.x + reach, 0.0, worldAt.z + reach});
+        if (!m_strokeWorld->loadGround(core::DVec3{worldAt.x - reach, 0.0, worldAt.z - reach},
+                                       core::DVec3{worldAt.x + reach, 0.0, worldAt.z + reach})) {
+            m_status = EditorStatus{groundTooWide(), true};
+            return;
+        }
     }
 
     const BrushOp op = m_stroke.has_value() ? m_stroke->op : effectiveBrushOp();
@@ -5091,8 +5117,14 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
     {
         const double half =
             static_cast<double>(size) / 2.0 + 8.0 * static_cast<double>(terrain->field.settings().voxelSize);
-        world.loadGround(core::DVec3{terrain->origin.x - half, 0.0, terrain->origin.z - half},
-                         core::DVec3{terrain->origin.x + half, 0.0, terrain->origin.z + half}, 4096);
+        if (!world.loadGround(core::DVec3{terrain->origin.x - half, 0.0, terrain->origin.z - half},
+                              core::DVec3{terrain->origin.x + half, 0.0, terrain->origin.z + half})) {
+            // Refused before a voxel moved (TA16): the step recorded goes too.
+            if (existed)
+                m_history.retract();
+            m_status = EditorStatus{groundTooWide(), true};
+            return false;
+        }
     }
     const asset::EditReport laid = asset::fillFlat(terrain->field, core::DVec3{0.0, 0.0, 0.0}, size,
                                                    static_cast<f32>(static_cast<double>(height) - terrain->origin.y),
@@ -5142,11 +5174,14 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
     const core::i32 first = terrain.field.voxelIndex(-half);
     // Every cell of the square read first on a streamed terrain (terrain
     // audit U2's reason).
-    world.loadGround(core::DVec3{terrain.origin.x - half - 8.0 * static_cast<double>(voxel), 0.0,
-                                 terrain.origin.z - half - 8.0 * static_cast<double>(voxel)},
-                     core::DVec3{terrain.origin.x + half + 8.0 * static_cast<double>(voxel), 0.0,
-                                 terrain.origin.z + half + 8.0 * static_cast<double>(voxel)},
-                     4096);
+    if (!world.loadGround(core::DVec3{terrain.origin.x - half - 8.0 * static_cast<double>(voxel), 0.0,
+                                      terrain.origin.z - half - 8.0 * static_cast<double>(voxel)},
+                          core::DVec3{terrain.origin.x + half + 8.0 * static_cast<double>(voxel), 0.0,
+                                      terrain.origin.z + half + 8.0 * static_cast<double>(voxel)})) {
+        m_history.retract();
+        m_status = EditorStatus{groundTooWide(), true};
+        return false;
+    }
     const auto originY = static_cast<f32>(terrain.origin.y);
     const std::vector<float> heights = asset::hillHeights(
         terrain.field, first, first, columns, columns,
@@ -5180,6 +5215,13 @@ std::optional<std::filesystem::path> Editor::exportHeightmap(const scene::World&
     }
     const auto columns = static_cast<core::u32>(across);
     const double half = 0.5 * static_cast<double>(columns - 1u) * voxel;
+    // **Every cell of the square read first** (terrain audit TA17c): the
+    // export had black holes wherever a streamed cell was not loaded.
+    if (!world.loadGround(core::DVec3{terrain->origin.x - half, 0.0, terrain->origin.z - half},
+                          core::DVec3{terrain->origin.x + half, 0.0, terrain->origin.z + half})) {
+        m_status = EditorStatus{groundTooWide(), true};
+        return std::nullopt;
+    }
     const core::i32 first = terrain->field.voxelIndex(-half);
     const std::vector<float> tops =
         asset::columnHeights(terrain->field, first, first, columns, columns, settings.minHeight);
@@ -5220,6 +5262,12 @@ bool Editor::replaceMaterialEverywhere(scene::World& world, core::InstanceId roo
     scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
     if (terrain == nullptr || from == 0 || to == 0 || from == to || terrain->field.empty())
         return false;
+    // **All of the terrain, not what is loaded** (terrain audit TA17c): its
+    // streamed cells read first, or the whole action refused untouched.
+    if (!loadAllGround(world)) {
+        m_status = EditorStatus{groundTooWide(), true};
+        return false;
+    }
     const asset::FieldSettings& settings = terrain->field.settings();
     // Over what the field holds: its chunks' extent, and its height band.
     core::i32 minX = std::numeric_limits<core::i32>::max();
@@ -5519,6 +5567,11 @@ bool Editor::applyTerrainRules(scene::World& world, core::InstanceId root)
     scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
     if (terrain == nullptr || terrain->field.empty() || terrain->rules.empty())
         return false;
+    // All of it, streamed cells too (terrain audit TA17c).
+    if (!loadAllGround(world)) {
+        m_status = EditorStatus{groundTooWide(), true};
+        return false;
+    }
     // The whole field: its chunks' extent, in its own metres.
     const std::vector<asset::ChunkKey> keys = terrain->field.chunkKeys();
     core::i32 lowX = keys.front().x, lowY = keys.front().y, lowZ = keys.front().z;
@@ -5613,9 +5666,13 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     // with Flat Ground's reason (terrain audit U2).
     {
         const double margin = 8.0 * static_cast<double>(voxel);
-        world.loadGround(core::DVec3{terrain.origin.x - half - margin, 0.0, terrain.origin.z - halfRows - margin},
-                         core::DVec3{terrain.origin.x + half + margin, 0.0, terrain.origin.z + halfRows + margin},
-                         4096);
+        if (!world.loadGround(
+                core::DVec3{terrain.origin.x - half - margin, 0.0, terrain.origin.z - halfRows - margin},
+                core::DVec3{terrain.origin.x + half + margin, 0.0, terrain.origin.z + halfRows + margin})) {
+            m_history.retract();
+            m_status = EditorStatus{groundTooWide(), true};
+            return false;
+        }
     }
     (void)asset::writeHeights(terrain.field, firstX, firstZ, columns, heights, groundMaterial(terrain, spec.material));
     terrain.fieldRevision += 1;

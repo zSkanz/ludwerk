@@ -534,7 +534,10 @@ bool setTerrainVoxelSize(World& world, core::InstanceId id, const Value& value)
     // voxel onto a different one, which is lossy in a way nobody asked
     // for -- and the alternative to refusing is a terrain that silently loses
     // detail when somebody adjusts a number in a properties grid.
-    if (!terrain->field.empty())
+    // **Nor while its ground is on disk** (terrain audit TA16b): a streamed
+    // terrain's field is empty until its cells come in, and they came in at
+    // the old size, and were saved that way.
+    if (!terrain->field.empty() || !terrain->cellIndex.empty())
         return false;
 
     asset::FieldSettings settings = terrain->field.settings();

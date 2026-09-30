@@ -1493,21 +1493,26 @@ void pushTouched(lua_State* L, const asset::EditReport& report)
     lua_pushinteger(L, static_cast<int>(report.touched));
 }
 
-// **The ground under an edit, read first where it is not loaded yet**
-// (terrain audit U1): a script digging or building in a cell still on disk
-// made a chunk of only its edit, which shadowed the cell's own when it came
-// in. `reach` in metres round `center`, world space, and a margin for the
-// ramp and a smooth's blur.
+// **The ground under an edit or a read, loaded first where it is not yet**
+// (terrain audit U1, TA16): a script digging or building in a cell still on
+// disk made a chunk of only its edit, which shadowed the cell's own when it
+// came in -- and a read there read air. `reach` in metres round `center`,
+// world space, and a margin for the ramp and a smooth's blur. **All of it or
+// a refusal**: an edit reaching more ground than loads at once is refused
+// before it touches anything, by the same words the editor uses.
 void groundFirst(lua_State* L, const scene::TerrainComponent& terrain, core::Vec3 low, core::Vec3 high)
 {
     // A square that is not one reads nothing: its edit is refused anyway.
     if (!std::isfinite(low.x) || !std::isfinite(low.z) || !std::isfinite(high.x) || !std::isfinite(high.z))
         return;
     const double margin = 8.0 * static_cast<double>(terrain.field.settings().voxelSize);
-    world(L).loadGround(core::DVec3{static_cast<double>(std::min(low.x, high.x)) - margin, 0.0,
-                                    static_cast<double>(std::min(low.z, high.z)) - margin},
-                        core::DVec3{static_cast<double>(std::max(low.x, high.x)) + margin, 0.0,
-                                    static_cast<double>(std::max(low.z, high.z)) + margin});
+    const core::DVec3 from{static_cast<double>(std::min(low.x, high.x)) - margin, 0.0,
+                           static_cast<double>(std::min(low.z, high.z)) - margin};
+    if (!world(L).loadGround(from, core::DVec3{static_cast<double>(std::max(low.x, high.x)) + margin, 0.0,
+                                               static_cast<double>(std::max(low.z, high.z)) + margin})) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(scene::World::MaxGroundCells)}};
+        raise(L, ENG_TR("scene.err.terrain_ground_too_wide"), args);
+    }
 }
 
 void groundFirst(lua_State* L, const scene::TerrainComponent& terrain, core::Vec3 center, double reach)
@@ -1931,6 +1936,7 @@ int methodTerrainApplyRules(lua_State* L)
         lua_pushinteger(L, 0);
         return 1;
     }
+    groundFirst(L, *terrain, low, high);
     // The field's own space, like every other verb's.
     const auto local = [&](core::Vec3 at) {
         return core::DVec3{static_cast<double>(at.x) - terrain->origin.x, static_cast<double>(at.y) - terrain->origin.y,
@@ -1955,6 +1961,9 @@ int methodTerrainHeightAt(lua_State* L)
         lua_pushnil(L);
         return 1;
     }
+    // The column's cell, loaded first where it is on disk (TA16).
+    if (std::isfinite(x) && std::isfinite(z))
+        groundFirst(L, *terrain, core::Vec3{static_cast<float>(x), 0.0f, static_cast<float>(z)}, 0.0);
 
     // **Nil where there is no ground, rather than zero.** Zero is a legitimate
     // height and "there is nothing here" is not a height at all, so a script
@@ -2037,6 +2046,10 @@ int methodTerrainClear(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     if (scene::TerrainComponent* terrain = world(L).terrains().find(id); terrain != nullptr) {
         terrain->field = asset::TerrainField(terrain->field.settings());
+        // **And its cells on disk** (terrain audit TA16c), as the editor's
+        // Clear does: cleared in memory only, every cell not loaded streamed
+        // back in.
+        terrain->cellIndex.clear();
         terrain->fieldRevision += 1;
     }
     return 0;
@@ -2211,6 +2224,8 @@ int methodTerrainReadVoxels(lua_State* L)
         return 3;
     }
     const VoxelRegion region = regionOf(*terrain, low, high);
+    if (region.count() <= MaxVoxelRegion)
+        groundFirst(L, *terrain, low, high);
     if (region.count() > MaxVoxelRegion) {
         const core::I18nArg args[] = {{"count", static_cast<core::i64>(std::min<core::usize>(
                                                     region.count(), std::numeric_limits<core::i64>::max()))},

@@ -835,11 +835,37 @@ int workspaceGetWindAt(lua_State* L)
     return 1;
 }
 
+// **The ground along a ray, loaded first** where it is on disk (terrain audit
+// TA16): a ray over a cell not loaded went through ground a player could see.
+// A kilometre of it at a time, so a long ray loads what a load can hold rather
+// than nothing.
+void groundAlongRay(lua_State* L, core::Vec3 origin, core::Vec3 direction)
+{
+    const World& w = world(L);
+    const double across =
+        std::max(std::abs(static_cast<double>(direction.x)), std::abs(static_cast<double>(direction.z)));
+    if (!std::isfinite(across))
+        return;
+    const int pieces = std::clamp(static_cast<int>(std::ceil(across / 1024.0)), 1, 64);
+    for (int piece = 0; piece < pieces; ++piece) {
+        const double t0 = static_cast<double>(piece) / pieces;
+        const double t1 = static_cast<double>(piece + 1) / pieces;
+        const double ax = static_cast<double>(origin.x) + static_cast<double>(direction.x) * t0;
+        const double az = static_cast<double>(origin.z) + static_cast<double>(direction.z) * t0;
+        const double bx = static_cast<double>(origin.x) + static_cast<double>(direction.x) * t1;
+        const double bz = static_cast<double>(origin.z) + static_cast<double>(direction.z) * t1;
+        if (!w.loadGround(core::DVec3{std::min(ax, bx), 0.0, std::min(az, bz)},
+                          core::DVec3{std::max(ax, bx), 0.0, std::max(az, bz)}))
+            return;
+    }
+}
+
 int workspaceRaycast(lua_State* L)
 {
     const core::InstanceId workspace = checkInstance(L, 1);
     const core::Vec3 origin = checkVector3(L, 2);
     const core::Vec3 direction = checkVector3(L, 3);
+    groundAlongRay(L, origin, direction);
 
     scene::PhysicsSync* sync = services(L).physics;
     if (sync == nullptr) {
@@ -1731,10 +1757,13 @@ void blocksFirst(lua_State* L, const scene::VoxelComponent& voxels, core::i32 x0
                  core::i32 z1)
 {
     const auto size = static_cast<double>(voxels.blockSize);
-    world(L).loadGround(
-        core::DVec3{static_cast<double>(std::min(x0, x1)) * size, 0.0, static_cast<double>(std::min(z0, z1)) * size},
-        core::DVec3{static_cast<double>(std::max(x0, x1) + 1) * size, 0.0,
-                    static_cast<double>(std::max(z0, z1) + 1) * size});
+    if (!world(L).loadGround(core::DVec3{static_cast<double>(std::min(x0, x1)) * size, 0.0,
+                                         static_cast<double>(std::min(z0, z1)) * size},
+                             core::DVec3{static_cast<double>(std::max(x0, x1) + 1) * size, 0.0,
+                                         static_cast<double>(std::max(z0, z1) + 1) * size})) {
+        const core::I18nArg args[] = {{"limit", static_cast<core::i64>(World::MaxGroundCells)}};
+        raise(L, ENG_TR("scene.err.terrain_ground_too_wide"), args);
+    }
 }
 
 BlockCoord checkBlockCoord(lua_State* L, int index)
