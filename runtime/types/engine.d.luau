@@ -1261,7 +1261,10 @@ declare extern type Terrain extends Instance with
     --- Adds a ball of ground, or removes one when `material` is zero. Returns how many voxels it
     --- changed. Adding never takes ground away and removing never adds it: a voxel ends up as full as
     --- the fuller of it and the ball (adding), or as empty as the ball leaves it (removing). An
-    --- explosion crater is `FillBall(hit.Position, 4, 0)`.
+    --- explosion crater is `FillBall(hit.Position, 4, 0)`. **A place or a size that is not a finite
+    --- number is an error**, here and in every Terrain edit and read, and so is a negative radius: zero
+    --- is only ever ground that already was what was asked for, or an edit wholly outside `MinHeight`
+    --- to `MaxHeight`.
     function FillBall(self, center: vector, radius: number, material: number): number
     --- The same, as an axis-aligned box `size` across. Returns how many voxels it changed.
     function FillBlock(self, center: vector, size: vector, material: number): number
@@ -1326,7 +1329,7 @@ declare extern type Terrain extends Instance with
     --- caves as well**: the highest surface in the column, which is where a tree is planted or a player
     --- lands from above. Cast a ray with `Workspace:Raycast` when what you want is the first surface
     --- along a direction.
-    function HeightAt(self, x: number, z: number): number
+    function HeightAt(self, x: number, z: number): number?
     --- Writes a heightmap in one call: one height per column of voxels, `columns` to a row, row after
     --- row along +Z, starting at the column `corner` falls in (its X and Z; Y is not read). Returns how
     --- many voxels it changed. **This is the verb for ground that comes from somewhere** -- a

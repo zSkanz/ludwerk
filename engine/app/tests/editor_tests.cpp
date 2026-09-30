@@ -23,6 +23,7 @@
 #include "engine/app/editor.h"
 #include "engine/app/picking.h"
 #include "engine/asset/surface_shader.h"
+#include "engine/core/i18n.h"
 #include "engine/core/math.h"
 #include "engine/platform/file.h"
 #include "engine/render/debug_draw.h"
@@ -46,6 +47,11 @@ using engine::app::Inspector;
 using engine::app::ViewportRect;
 
 namespace {
+// **The editor's words are the engine catalog's** (R3 reaches the editor: the
+// owner's ruling of 2026-09-29): its undo labels and statuses read from it, so
+// every case here has it loaded, run alone or with the rest.
+[[maybe_unused]] const bool CatalogLoaded = core::engineCatalog().loadFromFile(ENG_TEST_CATALOG).ok;
+
 // A camera at the origin looking down -Z with a square 800x600 viewport, which
 // is deliberately not square: an aspect bug that survives `picking_tests.cpp`
 // would have to survive it here too.
@@ -3178,6 +3184,29 @@ struct MaterialDesk
 
 } // namespace
 
+TEST_CASE("the starter materials are given to a terrain in one action")
+{
+    // The terrain audit's editor list: eight rounds of + and a pick.
+    MaterialDesk desk("terrain-starters");
+    const core::InstanceId terrain = desk.world.create(desk.fixture.folderClass);
+    desk.world.terrains().add(terrain, scene::TerrainComponent{});
+    REQUIRE_FALSE(desk.world.setParent(terrain, desk.workspace).has_value());
+    const auto layers = [&] { return desk.world.terrains().find(terrain)->layers; };
+
+    const core::usize depth = desk.editor.history().depth();
+    REQUIRE(desk.editor.useStarterTerrainMaterials(desk.world, desk.workspace));
+    CHECK(std::filesystem::exists(desk.content / "materials" / "terrain" / "rock.material.json"));
+    REQUIRE(layers().size() == 8);
+    CHECK(layers()[0] == "asset://materials/terrain/grass.material.json");
+    CHECK(desk.editor.history().depth() == depth + 1);
+    CHECK(desk.editor.brush().material == 1);
+
+    // A terrain with materials already is not renumbered.
+    CHECK_FALSE(desk.editor.useStarterTerrainMaterials(desk.world, desk.workspace));
+    CHECK(desk.editor.status().failed);
+    CHECK(layers().size() == 8);
+}
+
 TEST_CASE("a terrain's materials are given it from Content, and it never makes one (D330)")
 {
     // The owner, 2026-09-29: materials the ground came with could not be
@@ -4494,7 +4523,8 @@ TEST_CASE("a brush click does not also select what is under the ground")
     rig.editor.setTool(Editor::Tool::Sculpt);
     REQUIRE(rig.editor.tool() == Editor::Tool::Sculpt);
 
-    const core::InstanceId decoy = rig.part({0.0, 0.0, 0.0});
+    // Buried: a part whose top shows above the ground is the click's (TA17b).
+    const core::InstanceId decoy = rig.part({0.0, -3.0, 0.0});
     rig.inspector.select(decoy);
     rig.inspector.clearSelection();
     REQUIRE_FALSE(rig.inspector.selection().valid());
@@ -4917,6 +4947,128 @@ TEST_CASE("hills replace the ground in one step (B4)")
     CHECK(asset::heightAt(rig.field().field, 10.0, 10.0) == before);
 }
 
+TEST_CASE("hills on a world with no terrain are one step, and a refusal leaves no terrain and no step")
+{
+    // The terrain audit's editor list: on a new world, hills took two undo
+    // steps -- Create Terrain, then Generate Hills -- and a refusal from the
+    // heights under them went unread, answering true with nothing laid.
+    BrushRig rig;
+    rig.world.destroy(rig.terrain);
+    rig.world.retireDestroyed();
+    const core::usize depth = rig.editor.history().depth();
+    Editor::HillSpec spec;
+    spec.size = 64.0f;
+    spec.low = 2.0f;
+    spec.high = 20.0f;
+    spec.scale = 32.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    CHECK(rig.editor.history().depth() == depth + 1);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK_FALSE(rig.editor.terrainIn(rig.world, rig.workspace).valid());
+
+    // Heights too steep to lay: refused, and the terrain it made goes too.
+    Editor::HillSpec steep = spec;
+    steep.size = 2048.0f;
+    steep.low = 0.0f;
+    steep.high = 60.0f;
+    steep.scale = 0.5f;
+    CHECK_FALSE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, steep));
+    CHECK(rig.editor.status().failed);
+    CHECK_FALSE(rig.editor.terrainIn(rig.world, rig.workspace).valid());
+    CHECK(rig.editor.history().depth() == depth);
+}
+
+TEST_CASE("applying rules writes what they draw in one step, and a pass that changes nothing keeps the redo")
+{
+    // The terrain audit's editor list: a pass that changed nothing was backed
+    // out with an undo, which wiped whatever was there to redo.
+    BrushRig rig;
+    asset::TerrainRule snow;
+    snow.material = 3;
+    snow.heightMin = 1000.0f;
+    rig.field().rules = {snow};
+
+    // Something to redo.
+    Editor::HillSpec spec;
+    spec.size = 32.0f;
+    spec.low = 2.0f;
+    spec.high = 6.0f;
+    spec.scale = 16.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    REQUIRE(rig.editor.history().redoLabel() == "Generate Hills");
+
+    // Ground nowhere near a rule's height: nothing to write.
+    CHECK_FALSE(rig.editor.applyTerrainRules(rig.world, rig.workspace));
+    CHECK_FALSE(rig.editor.status().failed);
+    // The hills are still what a redo brings back -- not the empty pass.
+    CHECK(rig.editor.history().redoLabel() == "Generate Hills");
+
+    // A rule the flat ground meets is written, in one step.
+    asset::TerrainRule everywhere;
+    everywhere.material = 3;
+    rig.field().rules = {everywhere};
+    const core::usize depth = rig.editor.history().depth();
+    CHECK(rig.editor.applyTerrainRules(rig.world, rig.workspace));
+    CHECK(rig.editor.history().depth() == depth + 1);
+    const std::optional<asset::TerrainHit> hit =
+        asset::raycastField(rig.field().field, core::DVec3{0.5, 20.0, 0.5}, core::Vec3{0.0f, -1.0f, 0.0f}, 40.0);
+    REQUIRE(hit.has_value());
+    CHECK(hit->material == 3);
+}
+
+TEST_CASE("a rule's bounds are kept in order")
+{
+    // The terrain audit's editor list: a lowest past its highest drew nothing.
+    BrushRig rig;
+    asset::TerrainRule rule;
+    rule.material = 3;
+    rule.slopeMin = 60.0f;
+    rule.slopeMax = 20.0f;
+    rule.heightMin = 50.0f;
+    rule.heightMax = -10.0f;
+    REQUIRE(rig.editor.setTerrainRules(rig.world, rig.root, {rule}, "Edit Terrain Rule", 0));
+    REQUIRE(rig.field().rules.size() == 1);
+    CHECK(static_cast<double>(rig.field().rules[0].slopeMin) == doctest::Approx(20.0));
+    CHECK(static_cast<double>(rig.field().rules[0].slopeMax) == doctest::Approx(60.0));
+    CHECK(static_cast<double>(rig.field().rules[0].heightMin) == doctest::Approx(-10.0));
+    CHECK(static_cast<double>(rig.field().rules[0].heightMax) == doctest::Approx(50.0));
+}
+
+TEST_CASE("replacing a material and applying rules reach a terrain too big for one edit")
+{
+    // The terrain audit's editor list: both edited the whole field's box at
+    // once, past `MaxEditVoxels` on any large terrain, and were refused whole
+    // -- the rules said "already what the rules draw".
+    BrushRig rig;
+    asset::TerrainField& field = rig.field().field;
+    field.setHeightRange(-8192.0f, 8192.0f);
+    (void)asset::fillBlock(field, core::DVec3{0.0, -2.0, 0.0}, core::Vec3{100.0f, 4.0f, 100.0f}, 1);
+    // A speck high up and one deep down make the chunks' own height range a
+    // tall one too.
+    (void)asset::fillBlock(field, core::DVec3{40.0, 8000.0, 40.0}, core::Vec3{2.0f, 2.0f, 2.0f}, 1);
+    (void)asset::fillBlock(field, core::DVec3{40.0, -8000.0, 40.0}, core::Vec3{2.0f, 2.0f, 2.0f}, 1);
+    const auto materialAt = [&](double x, double z) {
+        const std::optional<asset::TerrainHit> hit =
+            asset::raycastField(field, core::DVec3{x, 20.0, z}, core::Vec3{0.0f, -1.0f, 0.0f}, 40.0);
+        return hit.has_value() ? static_cast<int>(hit->material) : -1;
+    };
+    REQUIRE(materialAt(-45.5, 45.5) == 1);
+
+    REQUIRE(rig.editor.replaceMaterialEverywhere(rig.world, rig.root, 1, 2));
+    CHECK_FALSE(rig.editor.status().failed);
+    CHECK(materialAt(-45.5, 45.5) == 2);
+    CHECK(materialAt(45.5, -45.5) == 2);
+
+    asset::TerrainRule everywhere;
+    everywhere.material = 3;
+    rig.field().rules = {everywhere};
+    REQUIRE(rig.editor.applyTerrainRules(rig.world, rig.root));
+    CHECK_FALSE(rig.editor.status().failed);
+    CHECK(materialAt(-45.5, 45.5) == 3);
+    CHECK(materialAt(45.5, -45.5) == 3);
+}
+
 TEST_CASE("painting through the editor changes material and not height")
 {
     BrushRig rig;
@@ -5254,6 +5406,61 @@ TEST_CASE("the plane follows the stroke rather than the origin")
     CHECK(aim->position.y == doctest::Approx(6.0).epsilon(0.15));
 }
 
+TEST_CASE("an Add carried off the ground puts no ground in the air (TA17a)")
+{
+    // The owner's floating ball: once a stroke is running, a ray that misses
+    // the ground aims at the stroke's plane, and a held Add stamped a ball
+    // there in mid-air that then grew; dragged, it walked a bridge of balls into
+    // the sky. Add puts ground only where the person points at ground.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.field().field = asset::TerrainField(rig.field().field.settings());
+    asset::fillFlat(rig.field().field, core::DVec3{-20.0, 0.0, 0.0}, 24.0f, 6.0f, 1);
+    rig.field().fieldRevision += 1;
+
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushRadius(3.0f);
+
+    // On the ground, then off its edge over nothing, and held there.
+    rig.frame(rig.pixelOf(core::DVec3{-20.0, 6.0, 0.0}), true, true);
+    REQUIRE(rig.editor.sculpting());
+    for (int frame = 0; frame < 30; ++frame)
+        rig.frame(rig.pixelOf(core::DVec3{20.0, 6.0, 0.0}), false, true, 0.1);
+    rig.frame(rig.pixelOf(core::DVec3{20.0, 6.0, 0.0}), false, false);
+
+    // Past the ground's edge and a brush's reach from it, still nothing.
+    const asset::TerrainField& field = rig.field().field;
+    int solid = 0;
+    for (int x = 0; x <= 30; ++x) {
+        for (int y = 0; y <= 16; ++y) {
+            for (int z = -6; z <= 6; ++z)
+                solid += field.voxel(x, y, z).occupancy != 0 ? 1 : 0;
+        }
+    }
+    CHECK(solid == 0);
+}
+
+TEST_CASE("a click with the brush on a part selects the part and sculpts nothing behind it (TA17b)")
+{
+    // The brush drives before the pick, and raycast the terrain alone: a click
+    // on a part standing on the ground sculpted the ground behind it. The
+    // manual says clicking anything else puts the brush down.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Add);
+    rig.editor.setBrushRadius(3.0f);
+    const core::InstanceId crate = rig.part({0.0, 2.0, 0.0});
+    const std::uint64_t revision = rig.field().fieldRevision;
+
+    CHECK_FALSE(rig.frame(rig.pixelOf(core::DVec3{0.0, 2.0, 0.0}), true, true));
+    rig.frame(rig.pixelOf(core::DVec3{0.0, 2.0, 0.0}), false, false);
+    CHECK(rig.inspector.selection() == crate);
+    CHECK_FALSE(rig.editor.sculpting());
+    CHECK(rig.field().fieldRevision == revision);
+}
+
 // --- The block tool (V1) -----------------------------------------------------
 
 namespace {
@@ -5466,6 +5673,57 @@ TEST_CASE("a heightmap lays its ramp over the ground, and one undo takes it back
     CHECK(static_cast<double>(*asset::heightAt(rig.field().field, 0.5, 0.0)) == doctest::Approx(0.0));
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("an exported heightmap imports as the same ground, and a second export keeps the first")
+{
+    // The terrain audit's editor list: the export writes the world's floor and
+    // ceiling, the import's fields stood at 0 and 64 m, and a second export
+    // wrote over the first.
+    BrushRig rig;
+    const std::filesystem::path project = std::filesystem::temp_directory_path() / "engine-editor-heightmap-roundtrip";
+    std::error_code ignored;
+    std::filesystem::remove_all(project, ignored);
+    REQUIRE(platform::createDirectories(project / "content"));
+    REQUIRE(rig.editor.content().open(project / "content"));
+    // A hill to take out and bring back.
+    (void)asset::fillBall(rig.field().field, core::DVec3{0.0, 0.0, 0.0}, 5.0, 1);
+    const double top = static_cast<double>(*asset::heightAt(rig.field().field, 0.5, 0.5));
+    const double side = static_cast<double>(*asset::heightAt(rig.field().field, 3.5, 0.5));
+    REQUIRE(top > 3.0);
+
+    const std::optional<std::filesystem::path> first = rig.editor.exportHeightmap(rig.world, rig.root, 16.0f);
+    REQUIRE(first.has_value());
+    const std::optional<std::filesystem::path> second = rig.editor.exportHeightmap(rig.world, rig.root, 16.0f);
+    REQUIRE(second.has_value());
+    CHECK(*first != *second);
+    CHECK(platform::fileExists(*first));
+    CHECK(platform::fileExists(*second));
+
+    rig.editor.setHeightmapSource(*first);
+    const std::optional<Editor::HeightmapHint>& hint = rig.editor.heightmapHint();
+    REQUIRE(hint.has_value());
+    CHECK(static_cast<double>(hint->size) == doctest::Approx(16.0));
+    CHECK(static_cast<double>(hint->low) == doctest::Approx(-32.0));
+    CHECK(static_cast<double>(hint->high) == doctest::Approx(32.0));
+
+    // Flattened, then imported at what the export left: the hill is back.
+    (void)asset::fillBlock(rig.field().field, core::DVec3{0.0, 8.0, 0.0}, core::Vec3{20.0f, 16.0f, 20.0f}, 0);
+    REQUIRE(static_cast<double>(*asset::heightAt(rig.field().field, 0.5, 0.5)) == doctest::Approx(0.0));
+    Editor::HeightmapImport spec;
+    spec.source = *first;
+    spec.size = hint->size;
+    spec.low = hint->low;
+    spec.high = hint->high;
+    spec.material = 1;
+    REQUIRE(rig.editor.importHeightmap(rig.world, rig.root, rig.inspector, spec));
+    CHECK(static_cast<double>(*asset::heightAt(rig.field().field, 0.5, 0.5)) == doctest::Approx(top).epsilon(0.02));
+    CHECK(static_cast<double>(*asset::heightAt(rig.field().field, 3.5, 0.5)) == doctest::Approx(side).epsilon(0.02));
+
+    // An image from anywhere else offers nothing.
+    rig.editor.setHeightmapSource(project / "elsewhere.png");
+    CHECK_FALSE(rig.editor.heightmapHint().has_value());
+    std::filesystem::remove_all(project, ignored);
 }
 
 TEST_CASE("a file that is not a heightmap changes nothing and says so")
@@ -6221,6 +6479,31 @@ TEST_CASE("undo waits for a stroke to end, and a stroke that changed nothing tak
     rig.frame(pixel, false, false, 1.0 / 60.0);
     CHECK(rig.editor.history().depth() == before);
     CHECK(rig.editor.history().undoLabel() == "Earlier");
+}
+
+TEST_CASE("the brush aims at nothing with the pointer off the viewport, unless a stroke is under way")
+{
+    // The terrain audit's editor list: the ring stayed where the pointer left.
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+    rig.frame(pixel, false, false);
+    REQUIRE(rig.editor.brushAim().has_value());
+
+    rig.editor.setPointerOverViewport(false);
+    rig.frame(pixel, false, false);
+    CHECK_FALSE(rig.editor.brushAim().has_value());
+
+    // A stroke that began over the image carries on off it, as a drag does.
+    rig.editor.setPointerOverViewport(true);
+    rig.frame(pixel, true, true, 1.0 / 60.0);
+    rig.editor.setPointerOverViewport(false);
+    rig.frame(pixel, false, true, 1.0 / 60.0);
+    CHECK(rig.editor.brushAim().has_value());
+    rig.frame(pixel, false, false, 1.0 / 60.0);
+    rig.frame(pixel, false, false, 1.0 / 60.0);
+    CHECK_FALSE(rig.editor.brushAim().has_value());
 }
 
 TEST_CASE("a stroke that changes nothing leaves what redo would bring back (terrain audit E2)")

@@ -1165,7 +1165,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("FillBall"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Adds a ball of ground, or removes one when `material` is zero. Returns how many voxels it changed.\012\012Adding never takes ground away and removing never adds it: a voxel ends up as full as the fuller of it and the ball (adding), or as empty as the ball leaves it (removing). An explosion crater is `FillBall(hit.Position, 4, 0)`.",
+            .doc = "Adds a ball of ground, or removes one when `material` is zero. Returns how many voxels it changed.\012\012Adding never takes ground away and removing never adds it: a voxel ends up as full as the fuller of it and the ball (adding), or as empty as the ball leaves it (removing). An explosion crater is `FillBall(hit.Position, 4, 0)`.\012\012**A place or a size that is not a finite number is an error**, here and in every Terrain edit and read, and so is a negative radius: zero is only ever ground that already was what was asked for, or an edit wholly outside `MinHeight` to `MaxHeight`.",
         },
         MethodDesc{
             .name = atoms.intern("FillBlock"),

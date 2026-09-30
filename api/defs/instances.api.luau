@@ -1222,7 +1222,10 @@ local Classes: { Schema.Class } = {
                     .. "voxels it changed.\n\n"
                     .. "Adding never takes ground away and removing never adds it: a voxel ends up as full "
                     .. "as the fuller of it and the ball (adding), or as empty as the ball leaves it "
-                    .. "(removing). An explosion crater is `FillBall(hit.Position, 4, 0)`.",
+                    .. "(removing). An explosion crater is `FillBall(hit.Position, 4, 0)`.\n\n"
+                    .. "**A place or a size that is not a finite number is an error**, here and in every "
+                    .. "Terrain edit and read, and so is a negative radius: zero is only ever ground that "
+                    .. "already was what was asked for, or an edit wholly outside `MinHeight` to `MaxHeight`.",
             },
             {
                 Name = "FillBlock",
@@ -1412,7 +1415,7 @@ local Classes: { Schema.Class } = {
                     { Name = "x", Type = "number" },
                     { Name = "z", Type = "number" },
                 },
-                Returns = { "number" },
+                Returns = { "number?" },
                 ThreadSafety = "Unsafe",
                 Doc = "The height of the top of the ground here, in metres, or nil where there is none.\n\n"
                     .. "**The top, over caves as well**: the highest surface in the column, which is where "

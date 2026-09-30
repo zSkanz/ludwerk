@@ -82,6 +82,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The terrain editor asks before Clear All Ground, Replace with Flat Ground
+  and Replace with Hills**; gives a terrain the eight starter materials in one
+  action (**Use the Starter Materials**); and speaks through the engine
+  catalog, every word of it an i18n key (R3 reaches the editor, 2026-09-29).
+  The Settings tab is Setup everywhere, and its voxel size reaches 64 m.
+
 - **`engine-host --pace=HZ`**: a headless run waits out each frame's share of a
   second, the wait left out of `--frame-stats`, so work done beside the frame
   is measured against a camera moving as fast as a player's.
@@ -603,6 +609,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 - **No more bright streaks at a low sun, or dark notches under a lamp, on
   flat ground** (D372): the ground's grain drew a crease wherever its noise
   stepped at a cell's edge.
+- **The terrain editor does what it was asked** (terrain audit T4, D384-D391):
+  Add puts no ground in the air past the ground's edge; a click on a part
+  selects it rather than sculpting behind it; Apply to Voxels and Replace a
+  material everywhere reach every column of a large terrain, as one step that
+  keeps the redo; hills and a heightmap on a new world are one step, and a
+  refusal is said; an exported heightmap imports as the same ground and a
+  second export never overwrites the first; a rule's bounds stay in order;
+  the brush ring and chip go when they should; Foliage's Grow is Restore.
+- **A Terrain place or radius that is not a finite number is an error** (D390),
+  not a silent zero, and `HeightAt` is typed `number?`.
 - **No more ground floating past the edge of the loaded terrain, nor loaded
   ground left undrawn round it** (D383): a terrain node first built with
   nothing to draw was never built again when its ground streamed in.

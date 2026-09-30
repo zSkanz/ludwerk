@@ -17,6 +17,7 @@
 #pragma once
 
 #include <filesystem>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <string_view>
@@ -78,6 +79,13 @@ public:
     // screenshot or a log instead of silently vanishing.
     [[nodiscard]] std::string format(TextKey key, std::span<const I18nArg> args = {}) const;
 
+    // **A key's words as they stand, without a copy**, for an interface that
+    // draws them every frame (R3 reaches the editor: the owner's ruling of
+    // 2026-09-29). Nothing is substituted, so it is for a key with no
+    // placeholders; alive until the catalog is loaded again. A missing key is a
+    // visible marker, as `format` gives.
+    [[nodiscard]] const char* text(TextKey key) const noexcept;
+
     [[nodiscard]] usize size() const noexcept { return entries_.size(); }
 
     // --- Which language's plural rules apply (S6.9) --------------------------
@@ -117,5 +125,13 @@ private:
 // The process-wide engine catalog (`i18n/en.json`). Services, errors and the
 // log all resolve through this one.
 Catalog& engineCatalog();
+
+// The engine catalog's words for `key` (`Catalog::text`), and with arguments
+// (`Catalog::format`): the editor's spelling of both.
+[[nodiscard]] inline const char* tr(TextKey key) noexcept
+{
+    return engineCatalog().text(key);
+}
+[[nodiscard]] std::string tr(TextKey key, std::initializer_list<I18nArg> args);
 
 } // namespace engine::core

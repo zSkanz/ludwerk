@@ -4599,7 +4599,7 @@
               "Type": "number"
             }
           ],
-          "Returns": ["number"],
+          "Returns": ["number?"],
           "ThreadSafety": "Unsafe"
         },
         {

@@ -30,6 +30,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace engine::app {
@@ -51,6 +52,31 @@ namespace {
 {
     constexpr double Everywhere = 1.0e12;
     return world.loadGround(core::DVec3{-Everywhere, 0.0, -Everywhere}, core::DVec3{Everywhere, 0.0, Everywhere});
+}
+
+// **An action over a whole terrain, a chunk at a time** (the terrain audit's
+// editor list): the whole field's box is past what one edit may touch
+// (`MaxEditVoxels`) on any large terrain -- the owner's place is four times it
+// -- so Apply Rules and Replace Material were refused whole on it. Both decide
+// voxel by voxel, and only where there is ground, which is only in the chunks
+// the field holds: chunk by chunk is the same answer, and walks no air.
+// `edit(low, high)` is one chunk's box in field metres; the reports are summed.
+template <typename Edit>
+[[nodiscard]] asset::EditReport overChunks(const asset::TerrainField& field, Edit edit)
+{
+    const double chunk = static_cast<double>(asset::ChunkEdge) * static_cast<double>(field.settings().voxelSize);
+    // Inside the chunk by a hair on every side, so no box reaches a neighbour's
+    // first voxel.
+    const double inset = 1.0e-3 * static_cast<double>(field.settings().voxelSize);
+    asset::EditReport total;
+    for (const asset::ChunkKey& key : field.chunkKeys()) {
+        const asset::EditReport report =
+            edit(core::DVec3{key.x * chunk + inset, key.y * chunk + inset, key.z * chunk + inset},
+                 core::DVec3{(key.x + 1) * chunk - inset, (key.y + 1) * chunk - inset, (key.z + 1) * chunk - inset});
+        total.touched += report.touched;
+        total.refused = total.refused || report.refused;
+    }
+    return total;
 }
 
 } // namespace
@@ -601,27 +627,28 @@ namespace {
 [[nodiscard]] const char* strokeLabel(Editor::Tool tool, Editor::BrushOp op, bool thin) noexcept
 {
     if (tool == Editor::Tool::Paint) {
-        return "Paint Terrain";
+        return core::tr(ENG_TR("engine.editor.history.paint_terrain"));
     }
     if (tool == Editor::Tool::Foliage)
-        return thin ? "Thin Foliage" : "Paint Foliage";
+        return thin ? core::tr(ENG_TR("engine.editor.history.thin_foliage"))
+                    : core::tr(ENG_TR("engine.editor.history.restore_foliage"));
     // The words the Terrain panel shows, so the undo menu names what the
     // person picked.
     switch (op) {
     case Editor::BrushOp::Subtract:
-        return "Dig";
+        return core::tr(ENG_TR("engine.editor.terrain.sculpt.dig"));
     case Editor::BrushOp::Grow:
-        return "Raise";
+        return core::tr(ENG_TR("engine.editor.terrain.sculpt.raise"));
     case Editor::BrushOp::Erode:
-        return "Lower";
+        return core::tr(ENG_TR("engine.editor.terrain.sculpt.lower"));
     case Editor::BrushOp::Smooth:
-        return "Smooth";
+        return core::tr(ENG_TR("engine.editor.terrain.sculpt.smooth"));
     case Editor::BrushOp::Flatten:
-        return "Flatten";
+        return core::tr(ENG_TR("engine.editor.terrain.sculpt.flatten"));
     case Editor::BrushOp::Add:
         break;
     }
-    return "Add";
+    return core::tr(ENG_TR("engine.editor.terrain.sculpt.add"));
 }
 
 [[nodiscard]] Editor::Tool toolFrom(std::string_view name) noexcept
@@ -4342,9 +4369,14 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
             // nothing and say nothing): a stamp may touch at most
             // `MaxEditVoxels`, which small voxels reach at a modest radius.
             if (m_stroke->refused) {
-                m_status = EditorStatus{"the brush is too big for this terrain's voxels: make it smaller, or the "
-                                        "voxels bigger under Settings",
-                                        true};
+                m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.brush_too_big")), true};
+            }
+            // **Restoring puts back what was thinned, and only that** (the
+            // editor list: "Grow" planted nothing where nothing was thinned).
+            // Where a layer grows is its rules'; a stroke with nothing to put
+            // back says so rather than doing nothing silently.
+            else if (m_stroke->touched == 0 && m_tool == Tool::Foliage && !m_stroke->thin) {
+                m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nothing_to_restore")), false};
             }
         }
         m_stroke.reset();
@@ -4373,6 +4405,8 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
         // and a world with no terrain in it cannot have meant anything else.
         return false;
     }
+    if (!m_pointerOverViewport && !m_stroke.has_value())
+        return false;
 
     // **Against the live field, stroke or no stroke** (the owner, 2026-09-23:
     // "it does not see the changes while I hold the mouse"). A brush held down
@@ -4391,10 +4425,12 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
     const core::DVec3 localOrigin{ray.origin.x - terrain->origin.x, ray.origin.y - terrain->origin.y,
                                   ray.origin.z - terrain->origin.z};
     m_brushAim = asset::raycastField(aimAt, localOrigin, ray.direction, BrushReach);
+    m_brushAimOnPlane = false;
     if (m_brushAim.has_value()) {
         m_brushAim->position.x += terrain->origin.x;
         m_brushAim->position.y += terrain->origin.y;
         m_brushAim->position.z += terrain->origin.z;
+        m_lastGroundHeight = static_cast<f32>(m_brushAim->position.y);
     }
     else if (m_brushPlaneLock && (aimAt.empty() || m_stroke.has_value())) {
         // **The plane, when the ray met no ground** -- on a field with none,
@@ -4421,6 +4457,7 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
                 hit.normal = core::Vec3{0.0f, 1.0f, 0.0f};
                 hit.distance = along;
                 m_brushAim = hit;
+                m_brushAimOnPlane = true;
             }
         }
     }
@@ -4454,6 +4491,14 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
             // still the manipulator's and the pick's.
             return false;
 
+        // **A click on a part is the part's** (TA17b): the brush drives before
+        // the pick and casts at the terrain alone, so a click on a crate on the
+        // ground sculpted the ground behind the crate. What is nearer than the
+        // ground along the ray is what the click was for; the pick takes it.
+        if (const std::optional<PickHit> part = pickNearest(world, root, ray);
+            part.has_value() && static_cast<double>(part->distance) < m_brushAim->distance)
+            return false;
+
         // **The eyedropper** (B4): Alt and a click with Paint takes what the
         // ground there shows -- what is painted over it where that shows more
         // -- as the brush's material, and paints nothing.
@@ -4469,8 +4514,11 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
             if (shown != 0) {
                 setBrushMaterial(shown);
                 const bool named = shown <= terrain->layers.size();
-                m_status = EditorStatus{
-                    "picked " + (named ? terrain->layers[shown - 1u] : "material " + std::to_string(shown)), false};
+                m_status = EditorStatus{named ? core::tr(ENG_TR("engine.editor.terrain.status.picked"),
+                                                         {{"name", terrain->layers[shown - 1u]}})
+                                              : core::tr(ENG_TR("engine.editor.terrain.status.picked_id"),
+                                                         {{"id", static_cast<core::i64>(shown)}}),
+                                        false};
             }
             m_pending.reset();
             return true;
@@ -4501,6 +4549,17 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
 
         applyBrushAt(*terrain, m_brushAim->position);
         m_stroke->stamps += 1;
+        m_pending.reset();
+        return true;
+    }
+
+    // **Add puts ground only where it is pointed at ground** (TA17a): past the
+    // ground's edge a running stroke aims at its plane, and a held Add stamped
+    // a ball there in mid-air that grew, and a drag walked a bridge of them into
+    // the sky -- the owner's floating ball. The stroke runs on, and stamps again
+    // when the pointer is back on ground. An empty field has only the plane,
+    // and is where a first Add starts.
+    if (m_brushAimOnPlane && m_tool == Tool::Sculpt && m_stroke->op == BrushOp::Add && !terrain->field.empty()) {
         m_pending.reset();
         return true;
     }
@@ -4722,7 +4781,7 @@ void Editor::applyBrushAt(scene::TerrainComponent& terrain, core::DVec3 worldAt)
         // stroke rewrote ids no layer names, deciding what the ground would
         // become once somebody added one.
         if (terrain.layers.empty()) {
-            m_status = EditorStatus{"this terrain has no materials yet: add one under Paint first", true};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.no_materials")), true};
             return;
         }
         // Its mode, strength and falloff (ADR 0114); Ctrl turns a Blend into
@@ -5073,7 +5132,7 @@ core::InstanceId Editor::createTerrain(scene::World& world, core::InstanceId roo
         return {};
     }
 
-    m_history.record(world, "Create Terrain");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.create_terrain")));
     const core::InstanceId id = world.create(terrainClass);
     if (!id.valid()) {
         return {};
@@ -5103,7 +5162,7 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
     if (terrain == nullptr)
         return false;
     if (existed)
-        m_history.record(world, "Generate Ground");
+        m_history.record(world, core::tr(ENG_TR("engine.editor.history.generate_ground")));
 
     // **Laid with `fillFlat` rather than carved as a box.** Ground reaching the
     // world's floor is thousands of voxels a column; `fillFlat` lays the chunks
@@ -5120,8 +5179,7 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
         if (!world.loadGround(core::DVec3{terrain->origin.x - half, 0.0, terrain->origin.z - half},
                               core::DVec3{terrain->origin.x + half, 0.0, terrain->origin.z + half})) {
             // Refused before a voxel moved (TA16): the step recorded goes too.
-            if (existed)
-                m_history.retract();
+            backOutGround(world, inspector, existed, id);
             m_status = EditorStatus{groundTooWide(), true};
             return false;
         }
@@ -5132,11 +5190,8 @@ bool Editor::generateGround(scene::World& world, core::InstanceId rootOrWorkspac
     // **Too big for its voxels is said, and leaves no step** (terrain audit
     // E6): it recorded "Generate Ground", answered true and changed nothing.
     if (laid.refused) {
-        if (existed)
-            m_history.retract();
-        m_status = EditorStatus{"that square is too big for this terrain's voxels: make it smaller, or the voxels "
-                                "bigger under Settings",
-                                true};
+        backOutGround(world, inspector, existed, id);
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.square_too_big")), true};
         return false;
     }
 
@@ -5150,7 +5205,7 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
 {
     if (!(spec.size > 0.0f) || !std::isfinite(spec.low) || !std::isfinite(spec.high) || !(spec.high > spec.low) ||
         !(spec.scale > 0.0f) || spec.material == 0) {
-        m_status = EditorStatus{"hills need a size, a scale, and a top above their bottom", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.hills_spec")), true};
         return false;
     }
     const core::InstanceId existing = terrainIn(world, rootOrWorkspace);
@@ -5159,15 +5214,19 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
     constexpr core::u32 MaxColumns = 4096;
     const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
     if (across > static_cast<double>(MaxColumns)) {
-        m_status = EditorStatus{"that is more than 4096 columns across at this voxel size; make it smaller", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.too_many_columns")), true};
         return false;
     }
+    // **One step, whether or not the terrain was there** (the terrain audit's
+    // editor list): on a new world the terrain's making is the step.
+    const bool existed = existing.valid();
     const core::InstanceId id = createTerrain(world, rootOrWorkspace, inspector);
     if (world.terrains().find(id) == nullptr) {
-        m_status = EditorStatus{"this world has nowhere to put terrain", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nowhere")), true};
         return false;
     }
-    m_history.record(world, "Generate Hills");
+    if (existed)
+        m_history.record(world, core::tr(ENG_TR("engine.editor.history.generate_hills")));
     scene::TerrainComponent& terrain = *world.terrains().find(id);
     const auto columns = static_cast<core::u32>(across);
     const double half = 0.5 * static_cast<double>(columns - 1u) * static_cast<double>(voxel);
@@ -5178,7 +5237,7 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
                                       terrain.origin.z - half - 8.0 * static_cast<double>(voxel)},
                           core::DVec3{terrain.origin.x + half + 8.0 * static_cast<double>(voxel), 0.0,
                                       terrain.origin.z + half + 8.0 * static_cast<double>(voxel)})) {
-        m_history.retract();
+        backOutGround(world, inspector, existed, id);
         m_status = EditorStatus{groundTooWide(), true};
         return false;
     }
@@ -5186,12 +5245,32 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
     const std::vector<float> heights = asset::hillHeights(
         terrain.field, first, first, columns, columns,
         asset::HillSettings{spec.seed, spec.octaves, spec.scale, spec.low - originY, spec.high - originY});
-    (void)asset::writeHeights(terrain.field, first, first, columns, heights, groundMaterial(terrain, spec.material));
+    // **A refusal is read** (the editor list): heights too steep to lay are
+    // refused whole by `writeHeights`, and this answered true with nothing laid.
+    if (asset::writeHeights(terrain.field, first, first, columns, heights, groundMaterial(terrain, spec.material))
+            .refused) {
+        backOutGround(world, inspector, existed, id);
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.hills_too_steep")), true};
+        return false;
+    }
     terrain.fieldRevision += 1;
     m_sceneDirty = true;
-    m_status =
-        EditorStatus{"hills across " + std::to_string(columns) + " x " + std::to_string(columns) + " columns", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.terrain.status.hills_laid"), {{"columns", static_cast<core::i64>(columns)}}),
+        false};
     return true;
+}
+
+void Editor::backOutGround(scene::World& world, Inspector& inspector, bool existed, core::InstanceId terrain)
+{
+    if (!existed && terrain.valid()) {
+        // The terrain it made, and the step that made it.
+        if (inspector.selection() == terrain)
+            inspector.clearSelection();
+        world.destroy(terrain);
+        world.retireDestroyed();
+    }
+    m_history.retract();
 }
 
 std::optional<std::filesystem::path> Editor::exportHeightmap(const scene::World& world, core::InstanceId root, f32 size)
@@ -5199,18 +5278,18 @@ std::optional<std::filesystem::path> Editor::exportHeightmap(const scene::World&
     const core::InstanceId id = terrainIn(world, root);
     const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
     if (terrain == nullptr || terrain->field.empty() || !(size > 0.0f)) {
-        m_status = EditorStatus{"there is no ground to export", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nothing_to_export")), true};
         return std::nullopt;
     }
     if (m_content.root().empty()) {
-        m_status = EditorStatus{"open a project to export into", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.export_needs_project")), true};
         return std::nullopt;
     }
     const asset::FieldSettings& settings = terrain->field.settings();
     const double voxel = static_cast<double>(settings.voxelSize);
     const double across = std::round(static_cast<double>(size) / voxel) + 1.0;
     if (across > 4096.0) {
-        m_status = EditorStatus{"that is more than 4096 columns across at this voxel size; export it smaller", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.export_too_many_columns")), true};
         return std::nullopt;
     }
     const auto columns = static_cast<core::u32>(across);
@@ -5234,26 +5313,74 @@ std::optional<std::filesystem::path> Editor::exportHeightmap(const scene::World&
     for (std::size_t at = 0; at < tops.size(); ++at)
         image.samples[at] = (tops[at] - settings.minHeight) / range;
     const std::filesystem::path folder = m_content.root().parent_path() / "heightmaps";
-    const std::string stem = world.atoms().text(world.name(id)).empty()
+    const std::string name = world.atoms().text(world.name(id)).empty()
                                  ? std::string("terrain")
                                  : std::string(world.atoms().text(world.name(id)));
+    // **Never over an earlier export** (the editor list): a second export
+    // wrote over the first without a word. The next free name instead --
+    // `Terrain`, `Terrain-2`, ... -- and the status says which.
+    std::string stem = name;
+    for (int suffix = 2;
+         platform::fileExists(folder / (stem + ".png")) || platform::fileExists(folder / (stem + ".r16")) ||
+         platform::fileExists(folder / (stem + ".heightmap.json"));
+         ++suffix)
+        stem = name + "-" + std::to_string(suffix);
+    const auto floor = static_cast<double>(settings.minHeight) + terrain->origin.y;
+    const auto ceiling = static_cast<double>(settings.maxHeight) + terrain->origin.y;
+    // What the image's black and white stand for, and how wide it was taken:
+    // what an import needs to give the same ground back.
+    core::JsonWriter hint;
+    hint.beginObject();
+    hint.field("size", static_cast<double>(columns - 1u) * voxel);
+    hint.field("black", floor);
+    hint.field("white", ceiling);
+    hint.endObject();
     std::vector<std::byte> png;
     std::vector<std::byte> raw;
     if (asset::encodeHeightmap(image, asset::HeightmapFormat::Png16, png).has_value() ||
         asset::encodeHeightmap(image, asset::HeightmapFormat::Raw16, raw).has_value() ||
         !platform::createDirectories(folder) || !platform::writeFile(folder / (stem + ".png"), png) ||
-        !platform::writeFile(folder / (stem + ".r16"), raw)) {
-        m_status = EditorStatus{"could not write the heightmap under " + folder.string(), true};
+        !platform::writeFile(folder / (stem + ".r16"), raw) ||
+        !platform::writeTextFile(folder / (stem + ".heightmap.json"), hint.text())) {
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.terrain.status.export_failed"), {{"folder", folder.string()}}), true};
         return std::nullopt;
     }
-    const auto floor = static_cast<double>(settings.minHeight) + terrain->origin.y;
-    const auto ceiling = static_cast<double>(settings.maxHeight) + terrain->origin.y;
-    char heights[96];
-    std::snprintf(heights, sizeof(heights), "black %.1f m, white %.1f m", floor, ceiling);
-    m_status = EditorStatus{"heightmaps/" + stem + ".png and .r16, " + std::to_string(columns) + " x " +
-                                std::to_string(columns) + ", " + heights,
-                            false};
+    char black[32];
+    char white[32];
+    (void)std::snprintf(black, sizeof(black), "%.1f", floor);
+    (void)std::snprintf(white, sizeof(white), "%.1f", ceiling);
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.terrain.status.exported"), {{"name", stem},
+                                                                   {"columns", static_cast<core::i64>(columns)},
+                                                                   {"black", std::string_view(black)},
+                                                                   {"white", std::string_view(white)}}),
+        false};
     return folder / (stem + ".png");
+}
+
+void Editor::setHeightmapSource(std::filesystem::path source)
+{
+    m_heightmapSource = std::move(source);
+    m_heightmapHint.reset();
+    std::filesystem::path beside = m_heightmapSource;
+    beside.replace_extension(".heightmap.json");
+    std::string text;
+    core::JsonDocument document;
+    if (m_heightmapSource.empty() || !platform::readTextFile(beside, text) || !document.parse(text).ok)
+        return;
+    const core::JsonValue root = document.root();
+    const core::JsonValue size = root["size"];
+    const core::JsonValue black = root["black"];
+    const core::JsonValue white = root["white"];
+    if (size.type() != core::JsonType::Number || black.type() != core::JsonType::Number ||
+        white.type() != core::JsonType::Number)
+        return;
+    const HeightmapHint hint{static_cast<f32>(size.asNumber()), static_cast<f32>(black.asNumber()),
+                             static_cast<f32>(white.asNumber())};
+    if (std::isfinite(hint.size) && std::isfinite(hint.low) && std::isfinite(hint.high) && hint.size > 0.0f &&
+        hint.low < hint.high)
+        m_heightmapHint = hint;
 }
 
 bool Editor::replaceMaterialEverywhere(scene::World& world, core::InstanceId root, core::u8 from, core::u8 to)
@@ -5268,39 +5395,24 @@ bool Editor::replaceMaterialEverywhere(scene::World& world, core::InstanceId roo
         m_status = EditorStatus{groundTooWide(), true};
         return false;
     }
-    const asset::FieldSettings& settings = terrain->field.settings();
-    // Over what the field holds: its chunks' extent, and its height band.
-    core::i32 minX = std::numeric_limits<core::i32>::max();
-    core::i32 maxX = std::numeric_limits<core::i32>::min();
-    core::i32 minZ = minX;
-    core::i32 maxZ = maxX;
-    for (const auto& entry : terrain->field.chunks()) {
-        minX = std::min(minX, entry.first.x);
-        maxX = std::max(maxX, entry.first.x);
-        minZ = std::min(minZ, entry.first.z);
-        maxZ = std::max(maxZ, entry.first.z);
-    }
-    const double chunk = static_cast<double>(asset::ChunkEdge) * static_cast<double>(settings.voxelSize);
     scene::WorldSnapshot before = world.snapshot();
-    const asset::EditReport report = asset::replaceMaterial(
-        terrain->field,
-        core::DVec3{static_cast<double>(minX) * chunk, static_cast<double>(settings.minHeight),
-                    static_cast<double>(minZ) * chunk},
-        core::DVec3{static_cast<double>(maxX + 1) * chunk, static_cast<double>(settings.maxHeight),
-                    static_cast<double>(maxZ + 1) * chunk},
-        from, to);
-    if (report.refused) {
-        m_status = EditorStatus{"this terrain is too big to replace a material across at once", true};
+    const asset::EditReport report = overChunks(terrain->field, [&](core::DVec3 low, core::DVec3 high) {
+        return asset::replaceMaterial(terrain->field, low, high, from, to);
+    });
+    if (report.refused && report.touched == 0) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.replace_too_big")), true};
         return false;
     }
     if (report.touched == 0) {
-        m_status = EditorStatus{"no ground of that material to replace", false};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.replace_none")), false};
         return false;
     }
-    m_history.record(std::move(before), "Replace Material");
+    m_history.record(std::move(before), core::tr(ENG_TR("engine.editor.history.replace_material")));
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
-    m_status = EditorStatus{"replaced " + std::to_string(report.touched) + " voxel(s)", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.terrain.status.replaced"), {{"count", static_cast<core::i64>(report.touched)}}),
+        false};
     return true;
 }
 
@@ -5318,7 +5430,7 @@ bool Editor::clearTerrain(scene::World& world, core::InstanceId root, Inspector&
         return false;
     }
 
-    m_history.record(world, "Clear Terrain");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.clear_all_ground")));
     terrain->field = asset::TerrainField(terrain->field.settings());
     // **And its cells**, on a streamed terrain (terrain audit U2): cleared
     // only in memory, every cell not loaded streamed back in, and those let
@@ -5336,7 +5448,7 @@ core::InstanceId Editor::createFoliageLayer(scene::World& world, core::InstanceI
     const scene::ClassId layerClass = world.classes().findId(world.atoms().intern("FoliageLayer"));
     if (!terrain.valid() || layerClass == scene::InvalidClass)
         return {};
-    m_history.record(world, "Add Foliage Layer");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.add_foliage_layer")));
     const core::InstanceId id = world.create(layerClass);
     if (!id.valid())
         return {};
@@ -5356,7 +5468,7 @@ core::InstanceId Editor::addFoliageMesh(scene::World& world, core::InstanceId la
     const scene::ClassId meshClass = world.classes().findId(world.atoms().intern("FoliageMesh"));
     if (world.foliageLayers().find(layer) == nullptr || meshClass == scene::InvalidClass)
         return {};
-    m_history.record(world, "Add Foliage Mesh");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.add_foliage_mesh")));
     const core::InstanceId id = world.create(meshClass);
     if (!id.valid())
         return {};
@@ -5456,15 +5568,16 @@ core::usize Editor::writeStarterTerrainMaterials()
         asset::MaterialAsset variant;
         variant.parent = engine;
         if (!writeMaterialFile(absolute, variant)) {
-            m_status = EditorStatus{"could not write " + relative, true};
+            m_status = EditorStatus{
+                core::tr(ENG_TR("engine.editor.terrain.status.could_not_write"), {{"path", relative}}), true};
             return written;
         }
         ++written;
     }
     (void)m_content.refresh();
-    m_status = EditorStatus{written > 0
-                                ? "wrote " + std::to_string(written) + " starter terrain materials to materials/terrain"
-                                : "the starter terrain materials are already in materials/terrain",
+    m_status = EditorStatus{written > 0 ? core::tr(ENG_TR("engine.editor.terrain.status.starters_written"),
+                                                   {{"count", static_cast<core::i64>(written)}})
+                                        : std::string(core::tr(ENG_TR("engine.editor.terrain.status.starters_there"))),
                             false};
     return written;
 }
@@ -5485,6 +5598,42 @@ namespace {
 
 } // namespace
 
+bool Editor::useStarterTerrainMaterials(scene::World& world, core::InstanceId root)
+{
+    const core::InstanceId id = terrainIn(world, root);
+    const scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    if (terrain == nullptr)
+        return false;
+    if (!terrain->layers.empty()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.starters_has_materials")), true};
+        return false;
+    }
+    if (m_content.root().empty()) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.starters_need_project")), true};
+        return false;
+    }
+    (void)writeStarterTerrainMaterials();
+    if (m_status.value().failed)
+        return false;
+    std::vector<std::string> layers;
+    for (core::u8 index = 1;; ++index) {
+        const std::string engine = asset::engineTerrainUrn(index);
+        if (engine.empty() || layers.size() >= asset::MaxTerrainLayers)
+            break;
+        layers.push_back(terrainLayerUrn("materials/terrain/" + engine.substr(asset::EngineTerrainPrefix.size()) +
+                                         std::string(asset::MaterialSuffix)));
+    }
+    const std::size_t count = layers.size();
+    if (!setTerrainLayers(world, root, std::move(layers),
+                          core::tr(ENG_TR("engine.editor.history.use_starter_materials"))))
+        return false;
+    setBrushMaterial(1);
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.terrain.status.starters_given"), {{"count", static_cast<core::i64>(count)}}),
+        false};
+    return true;
+}
+
 bool Editor::addTerrainLayer(scene::World& world, core::InstanceId root, std::string_view materialPath)
 {
     const core::InstanceId id = terrainIn(world, root);
@@ -5493,18 +5642,20 @@ bool Editor::addTerrainLayer(scene::World& world, core::InstanceId root, std::st
     if (terrain == nullptr || urn.empty())
         return false;
     if (std::find(terrain->layers.begin(), terrain->layers.end(), urn) != terrain->layers.end()) {
-        m_status = EditorStatus{"the terrain already has that material", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.has_material")), true};
         return false;
     }
     if (terrain->layers.size() >= asset::MaxTerrainLayers) {
-        m_status =
-            EditorStatus{"a terrain has at most " + std::to_string(asset::MaxTerrainLayers) + " materials", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.too_many_materials"),
+                                         {{"count", static_cast<core::i64>(asset::MaxTerrainLayers)}}),
+                                true};
         return false;
     }
     std::vector<std::string> layers = terrain->layers;
     layers.push_back(urn);
     const auto added = static_cast<core::u8>(layers.size());
-    if (!setTerrainLayers(world, root, std::move(layers), "Add Terrain Material"))
+    if (!setTerrainLayers(world, root, std::move(layers),
+                          core::tr(ENG_TR("engine.editor.history.add_terrain_material"))))
         return false;
     setBrushMaterial(added);
     return true;
@@ -5521,12 +5672,13 @@ bool Editor::replaceTerrainLayer(scene::World& world, core::InstanceId root, cor
     if (terrain->layers[index - 1] == urn)
         return false;
     if (std::find(terrain->layers.begin(), terrain->layers.end(), urn) != terrain->layers.end()) {
-        m_status = EditorStatus{"the terrain already has that material", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.has_material")), true};
         return false;
     }
     std::vector<std::string> layers = terrain->layers;
     layers[index - 1] = urn;
-    if (!setTerrainLayers(world, root, std::move(layers), "Replace Terrain Material"))
+    if (!setTerrainLayers(world, root, std::move(layers),
+                          core::tr(ENG_TR("engine.editor.history.replace_terrain_material"))))
         return false;
     setBrushMaterial(index);
     return true;
@@ -5541,7 +5693,8 @@ bool Editor::removeLastTerrainLayer(scene::World& world, core::InstanceId root)
     std::vector<std::string> layers = terrain->layers;
     layers.pop_back();
     const auto remaining = static_cast<core::u8>(layers.size());
-    if (!setTerrainLayers(world, root, std::move(layers), "Remove Terrain Material"))
+    if (!setTerrainLayers(world, root, std::move(layers),
+                          core::tr(ENG_TR("engine.editor.history.remove_terrain_material"))))
         return false;
     if (m_brush.material > remaining)
         setBrushMaterial(std::max<core::u8>(remaining, 1));
@@ -5553,6 +5706,14 @@ bool Editor::setTerrainRules(scene::World& world, core::InstanceId root, std::ve
 {
     const core::InstanceId id = terrainIn(world, root);
     scene::TerrainComponent* terrain = id.valid() ? world.terrains().find(id) : nullptr;
+    // **A rule's bounds kept in order** (the terrain audit's editor list): a
+    // lowest past its highest drew nothing, and nothing said why.
+    for (asset::TerrainRule& rule : rules) {
+        if (rule.slopeMin > rule.slopeMax)
+            std::swap(rule.slopeMin, rule.slopeMax);
+        if (rule.heightMin > rule.heightMax)
+            std::swap(rule.heightMin, rule.heightMax);
+    }
     if (terrain == nullptr || rules.size() > asset::MaxTerrainRules || terrain->rules == rules)
         return false;
     m_history.record(world, std::string(label), coalesceKey);
@@ -5572,33 +5733,25 @@ bool Editor::applyTerrainRules(scene::World& world, core::InstanceId root)
         m_status = EditorStatus{groundTooWide(), true};
         return false;
     }
-    // The whole field: its chunks' extent, in its own metres.
-    const std::vector<asset::ChunkKey> keys = terrain->field.chunkKeys();
-    core::i32 lowX = keys.front().x, lowY = keys.front().y, lowZ = keys.front().z;
-    core::i32 highX = lowX, highY = lowY, highZ = lowZ;
-    for (const asset::ChunkKey& key : keys) {
-        lowX = std::min(lowX, key.x);
-        lowY = std::min(lowY, key.y);
-        lowZ = std::min(lowZ, key.z);
-        highX = std::max(highX, key.x);
-        highY = std::max(highY, key.y);
-        highZ = std::max(highZ, key.z);
-    }
-    const double chunk =
-        static_cast<double>(asset::ChunkEdge) * static_cast<double>(terrain->field.settings().voxelSize);
-    const core::DVec3 low{lowX * chunk, lowY * chunk, lowZ * chunk};
-    const core::DVec3 high{(highX + 1) * chunk - 1.0e-3, (highY + 1) * chunk - 1.0e-3, (highZ + 1) * chunk - 1.0e-3};
-
-    m_history.record(world, "Apply Terrain Rules");
-    const asset::EditReport report = asset::applyRules(terrain->field, terrain->rules, low, high, terrain->origin.y);
+    // Recorded once something changed: a record clears what redo would bring
+    // back, and a pass that changed nothing must leave it (the editor list: it
+    // was backed out with an undo, which spent the redo).
+    scene::WorldSnapshot before = world.snapshot();
+    const asset::EditReport report = overChunks(terrain->field, [&](core::DVec3 low, core::DVec3 high) {
+        return asset::applyRules(terrain->field, terrain->rules, low, high, terrain->origin.y);
+    });
     if (report.touched == 0) {
-        (void)m_history.undo(world);
-        m_status = EditorStatus{"the voxels already are what the rules draw", false};
+        // A refusal is not "nothing to do" (the editor list).
+        m_status = report.refused ? EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.rules_too_big")), true}
+                                  : EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.rules_nothing")), false};
         return false;
     }
+    m_history.record(std::move(before), core::tr(ENG_TR("engine.editor.history.apply_terrain_rules")));
     terrain->fieldRevision += 1;
     m_sceneDirty = true;
-    m_status = EditorStatus{std::to_string(report.touched) + " voxel(s) now hold what the rules drew", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.rules_applied"),
+                                     {{"count", static_cast<core::i64>(report.touched)}}),
+                            false};
     return true;
 }
 
@@ -5607,7 +5760,7 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
 {
     if (spec.source.empty() || !(spec.size > 0.0f) || !std::isfinite(spec.low) || !std::isfinite(spec.high) ||
         spec.material == 0) {
-        m_status = EditorStatus{"choose a heightmap, a size and a height range first", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_spec")), true};
         return false;
     }
     const std::string name = spec.source.filename().string();
@@ -5616,12 +5769,15 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     // heightmap refuses with the world untouched and no undo step to wade past.
     std::vector<std::byte> bytes;
     if (!platform::readFile(spec.source, bytes)) {
-        m_status = EditorStatus{"could not read " + name, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.could_not_read"), {{"name", name}}), true};
         return false;
     }
     asset::HeightImage image;
     if (const std::optional<core::EngineError> error = asset::decodeHeightmap(bytes, name, image); error.has_value()) {
-        m_status = EditorStatus{name + " is not a heightmap this can read: " + error->message, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.not_a_heightmap"),
+                                         {{"name", name}, {"reason", error->message}}),
+                                true};
         return false;
     }
 
@@ -5634,23 +5790,25 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     constexpr core::u32 MaxColumns = 4096;
     const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
     if (across > static_cast<double>(MaxColumns)) {
-        m_status = EditorStatus{"that is more than 4096 columns across at this voxel size; import it smaller", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_many_columns")), true};
         return false;
     }
     const auto columns = static_cast<core::u32>(across);
     const auto rows = std::max<core::u32>(
         1u, static_cast<core::u32>(std::lround(static_cast<double>(columns) * image.height / image.width)));
     if (rows > MaxColumns) {
-        m_status = EditorStatus{"that image is too tall for its width at this size; import it smaller", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_tall")), true};
         return false;
     }
 
+    const bool existed = existing.valid();
     const core::InstanceId id = createTerrain(world, rootOrWorkspace, inspector);
     if (world.terrains().find(id) == nullptr) {
-        m_status = EditorStatus{"this world has nowhere to put terrain", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nowhere")), true};
         return false;
     }
-    m_history.record(world, "Import Heightmap");
+    if (existed)
+        m_history.record(world, core::tr(ENG_TR("engine.editor.history.import_heightmap")));
     scene::TerrainComponent& terrain = *world.terrains().find(id);
 
     // Into the field's own space, which is the world's less the terrain's
@@ -5669,23 +5827,34 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
         if (!world.loadGround(
                 core::DVec3{terrain.origin.x - half - margin, 0.0, terrain.origin.z - halfRows - margin},
                 core::DVec3{terrain.origin.x + half + margin, 0.0, terrain.origin.z + halfRows + margin})) {
-            m_history.retract();
+            backOutGround(world, inspector, existed, id);
             m_status = EditorStatus{groundTooWide(), true};
             return false;
         }
     }
-    (void)asset::writeHeights(terrain.field, firstX, firstZ, columns, heights, groundMaterial(terrain, spec.material));
+    if (asset::writeHeights(terrain.field, firstX, firstZ, columns, heights, groundMaterial(terrain, spec.material))
+            .refused) {
+        backOutGround(world, inspector, existed, id);
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_steep"), {{"name", name}}), true};
+        return false;
+    }
     terrain.fieldRevision += 1;
     m_sceneDirty = true;
 
     const asset::FieldSettings& settings = terrain.field.settings();
     const bool clamped = std::min(spec.low, spec.high) - originY < settings.minHeight ||
                          std::max(spec.low, spec.high) - originY > settings.maxHeight;
-    std::string message = name + ": " + std::to_string(image.width) + " x " + std::to_string(image.height) +
-                          " pixels onto " + std::to_string(columns) + " x " + std::to_string(rows) + " columns";
-    if (clamped)
-        message += ", clamped to the terrain's MinHeight and MaxHeight";
-    m_status = EditorStatus{message, false};
+    const core::I18nArg args[] = {{"name", name},
+                                  {"width", static_cast<core::i64>(image.width)},
+                                  {"height", static_cast<core::i64>(image.height)},
+                                  {"columns", static_cast<core::i64>(columns)},
+                                  {"rows", static_cast<core::i64>(rows)}};
+    m_status =
+        EditorStatus{core::engineCatalog().format(clamped ? ENG_TR("engine.editor.terrain.status.imported_clamped")
+                                                          : ENG_TR("engine.editor.terrain.status.imported"),
+                                                  args),
+                     false};
     return true;
 }
 

@@ -6,7 +6,10 @@
 #include <array>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <imgui.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,6 +18,7 @@
 #include "engine/app/editor.h"
 #include "engine/app/inspector.h"
 #include "engine/asset/terrain_palette.h"
+#include "engine/core/i18n.h"
 #include "engine/scene/components.h"
 #include "engine/scene/value.h"
 #include "engine/scene/world.h"
@@ -91,62 +95,83 @@ void drawTerrainHeightmap(Editor& editor, scene::World& world, core::InstanceId 
 {
     const core::InstanceId terrainId = editor.terrainIn(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
-    const float labelWidth = ImGui::CalcTextSize("White at").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const float labelWidth = ImGui::CalcTextSize(core::tr(ENG_TR("engine.editor.terrain.heightmap.white"))).x +
+                             ImGui::GetStyle().ItemSpacing.x * 2.0f;
     {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("ground from a greyscale image: black is the lowest height, white the highest. "
-                            "16-bit PNG and RAW keep smooth slopes; 8-bit shows steps");
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.intro")));
         ImGui::PopTextWrapPos();
 
         const std::filesystem::path& source = editor.heightmapSource();
-        const std::string chosen = source.empty() ? std::string("no image chosen") : source.filename().string();
+        const std::string chosen = source.empty()
+                                       ? std::string(core::tr(ENG_TR("engine.editor.terrain.heightmap.none")))
+                                       : source.filename().string();
         ImGui::TextUnformatted(chosen.c_str());
         if (!source.empty())
             ImGui::SetItemTooltip("%s", source.string().c_str());
-        if (ImGui::Button("Choose Image...", ImVec2(-FLT_MIN, 0.0f)))
+        if (ImGui::Button(core::tr(ENG_TR("engine.editor.terrain.heightmap.choose")), ImVec2(-FLT_MIN, 0.0f)))
             commands.pickHeightmap = true;
 
         static f32 size = 256.0f;
         static f32 low = 0.0f;
         static f32 high = 64.0f;
-        ImGui::TextUnformatted("Size");
+        // An image this editor exported comes with the size and heights it was
+        // taken at, taken up once as it is chosen: the same ground back.
+        static std::filesystem::path adopted;
+        if (source != adopted) {
+            adopted = source;
+            if (const std::optional<Editor::HeightmapHint>& hint = editor.heightmapHint(); hint.has_value()) {
+                size = hint->size;
+                low = hint->low;
+                high = hint->high;
+            }
+        }
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.create.size")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##heightmap-size", &size, 1.0f, 8.0f, 2048.0f, "%.0f m");
-        ImGui::SetItemTooltip("how wide the image is laid, centred on the terrain's position");
-        ImGui::TextUnformatted("Black at");
+        ImGui::DragFloat("##heightmap-size", &size, 1.0f, 8.0f, 2048.0f,
+                         core::tr(ENG_TR("engine.editor.unit.metres_0")));
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.size_tip")));
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.heightmap.black")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##heightmap-low", &low, 0.25f, -1024.0f, 1024.0f, "%.1f m");
-        ImGui::TextUnformatted("White at");
+        ImGui::DragFloat("##heightmap-low", &low, 0.25f, -1024.0f, 1024.0f,
+                         core::tr(ENG_TR("engine.editor.unit.metres_1")));
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.heightmap.white")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##heightmap-high", &high, 0.25f, -1024.0f, 1024.0f, "%.1f m");
+        ImGui::DragFloat("##heightmap-high", &high, 0.25f, -1024.0f, 1024.0f,
+                         core::tr(ENG_TR("engine.editor.unit.metres_1")));
 
         // The cost before the click, as the flat-ground form shows it.
         const f32 voxel = terrain != nullptr ? terrain->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
         const auto columns = static_cast<int>(std::lround(size / std::max(voxel, 0.01f))) + 1;
-        ImGui::TextDisabled("%d columns across at %.2f m", columns, static_cast<double>(voxel));
+        char voxelText[32];
+        (void)std::snprintf(voxelText, sizeof(voxelText), "%.2f", static_cast<double>(voxel));
+        ImGui::TextDisabled(
+            "%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.columns"),
+                           {{"columns", static_cast<core::i64>(columns)}, {"voxel", std::string_view(voxelText)}})
+                      .c_str());
         if (terrain != nullptr) {
             const asset::FieldSettings& settings = terrain->field.settings();
             const auto originY = static_cast<f32>(terrain->origin.y);
             if (std::min(low, high) - originY < settings.minHeight ||
                 std::max(low, high) - originY > settings.maxHeight) {
                 ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextDisabled("past the terrain's height range; widen it under Settings or it is clamped");
+                ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.past_range")));
                 ImGui::PopTextWrapPos();
             }
         }
 
         ImGui::BeginDisabled(source.empty());
-        if (ImGui::Button(terrain == nullptr ? "Create Terrain from Heightmap" : "Import Heightmap",
+        if (ImGui::Button(terrain == nullptr ? core::tr(ENG_TR("engine.editor.terrain.heightmap.create"))
+                                             : core::tr(ENG_TR("engine.editor.terrain.heightmap.import")),
                           ImVec2(-FLT_MIN, 0.0f))) {
             (void)editor.importHeightmap(world, root, inspector,
                                          Editor::HeightmapImport{source, size, low, high, editor.brush().material});
         }
         ImGui::EndDisabled();
-        ImGui::SetItemTooltip("replaces the ground's height across the square; caves are left as they are, and one "
-                              "ctrl-Z takes it back");
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.import_tip")));
     }
 }
 
@@ -155,10 +180,11 @@ void drawTerrainSettings(Editor& editor, scene::World& world, core::InstanceId r
     const core::InstanceId terrainId = editor.terrainIn(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
     if (terrain == nullptr) {
-        ImGui::TextWrapped("Settings are the terrain's own: create one first.");
+        ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.terrain.setup.none")));
         return;
     }
-    const float labelWidth = ImGui::CalcTextSize("Voxel size").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const float labelWidth = ImGui::CalcTextSize(core::tr(ENG_TR("engine.editor.terrain.setup.voxel"))).x +
+                             ImGui::GetStyle().ItemSpacing.x * 2.0f;
     {
         const asset::FieldSettings& settings = terrain->field.settings();
         const bool empty = terrain->field.empty();
@@ -167,33 +193,36 @@ void drawTerrainSettings(Editor& editor, scene::World& world, core::InstanceId r
             inspector.enqueue(terrainId, world.atoms().intern(property), scene::Value{static_cast<double>(value)});
         };
 
-        ImGui::TextUnformatted("Voxel size");
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.setup.voxel")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 voxel = settings.voxelSize;
         ImGui::BeginDisabled(!empty);
-        if (ImGui::DragFloat("##voxel-size", &voxel, 0.01f, 0.1f, 8.0f, "%.2f m"))
+        // The whole range the property takes, 0.1 to 64 m (the editor list: it
+        // stopped at 8), on a scale where a tenth and a metre are both a drag.
+        if (ImGui::DragFloat("##voxel-size", &voxel, 0.01f, 0.1f, 64.0f,
+                             core::tr(ENG_TR("engine.editor.unit.metres_2")), ImGuiSliderFlags_Logarithmic))
             write("VoxelSize", voxel);
         ImGui::EndDisabled();
-        ImGui::SetItemTooltip(empty ? "how coarse the ground is. Smaller resolves more and costs more"
-                                    : "only while the terrain is empty: changing it would resample every "
-                                      "column. Clear Terrain first");
+        ImGui::SetItemTooltip("%s", empty ? core::tr(ENG_TR("engine.editor.terrain.setup.voxel_tip"))
+                                          : core::tr(ENG_TR("engine.editor.terrain.setup.voxel_locked_tip")));
 
-        ImGui::TextUnformatted("Lowest");
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.setup.lowest")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 lowest = settings.minHeight;
-        if (ImGui::DragFloat("##min-height", &lowest, 0.5f, -4096.0f, settings.maxHeight - 1.0f, "%.1f m"))
+        if (ImGui::DragFloat("##min-height", &lowest, 0.5f, -4096.0f, settings.maxHeight - 1.0f,
+                             core::tr(ENG_TR("engine.editor.unit.metres_1"))))
             write("MinHeight", lowest);
-        ImGui::SetItemTooltip("the deepest anything may dig. Set it before digging: a collider's precision is "
-                              "spread over this range");
-        ImGui::TextUnformatted("Highest");
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.setup.lowest_tip")));
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.setup.highest")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
         f32 highest = settings.maxHeight;
-        if (ImGui::DragFloat("##max-height", &highest, 0.5f, settings.minHeight + 1.0f, 4096.0f, "%.1f m"))
+        if (ImGui::DragFloat("##max-height", &highest, 0.5f, settings.minHeight + 1.0f, 4096.0f,
+                             core::tr(ENG_TR("engine.editor.unit.metres_1"))))
             write("MaxHeight", highest);
-        ImGui::SetItemTooltip("the highest ground may rise");
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.setup.highest_tip")));
         g_settingsGesture.settle(inspector);
     }
 }

@@ -277,14 +277,71 @@ marks in `terrain_levels_tests.cpp` are off, and the gallery's hole check
 
 ## T4 — tools that do what the person asked
 
-- [ ] TA17a: Add never puts ground where the person is not pointing at ground.
-- [ ] TA17b: a click on a part never sculpts.
-- [ ] Every item of the editor P2 list, one by one.
-- [ ] Starter materials in one action.
-- [ ] Refusals reported to scripts; `HeightAt` typed `number?`.
-- [ ] The manual matches the tools exactly.
-- [ ] The terrain editor's text through i18n keys (R3, the owner's ruling of
+- [x] TA17a: Add never puts ground where the person is not pointing at ground.
+- [x] TA17b: a click on a part never sculpts.
+- [x] Every item of the editor P2 list, one by one.
+- [x] Starter materials in one action.
+- [x] Refusals reported to scripts; `HeightAt` typed `number?`.
+- [x] The manual matches the tools exactly.
+- [x] The terrain editor's text through i18n keys (R3, the owner's ruling of
   2026-09-29).
+
+### T4 as it stands
+
+Done (D384-D391). The editor P2 list, item by item:
+
+- **Default tool**: Raise (`Brush::op` is Grow).
+- **Hills and heightmap import on a new world**: one step; a refusal from
+  `writeHeights` takes back the terrain it made and says why (D387).
+- **`applyTerrainRules`**: recorded only once something changed, so a pass
+  with nothing to do keeps the redo; a refusal is said (D386). **Found on the
+  way**: it and Replace a material everywhere edited the whole field's box,
+  past `MaxEditVoxels` on the owner's place, and were refused whole. Both walk
+  the field a chunk at a time now -- only where there is ground, so a tall
+  empty range costs nothing (0.8 s for a test terrain 16 km tall that took
+  5.7 s a column at a time).
+- **Confirmations**: Clear All Ground, Replace with Flat Ground and Replace
+  with Hills ask first; Clear All Ground has room between it and the export.
+- **Heightmap round trip**: the export leaves `<name>.heightmap.json`, the
+  import takes it up; an export takes the next free name (D388).
+- **Setup**: "Setup" everywhere (the tab, the tooltips, the statuses), "Clear
+  All Ground" everywhere (the undo label was "Clear Terrain"); the voxel size
+  reaches the property's 64 m, on a logarithmic drag.
+- **Rules**: bounds in order; Add Rule takes the layer named snow, or the last
+  (D389).
+- **Flatten**: the fixed height starts at the ground the brush last touched,
+  or the ground at the terrain's position, not at 0 m.
+- **Smooth's blur cap: measured and kept.** Raising it from 4 voxels to 6 or 8
+  made a stamp at radius 16 cost 92, 185 and 333 ms, and softened no more (the
+  ground's roughness after five stamps: 1.07, 1.07, 1.10 m). The comment that
+  said six was already four. What a big Smooth lacks is stamps, not reach; the
+  stamp's cost is T5's.
+- **Foliage**: the chip already went with the panel (E6). Grow could only put
+  back what was thinned -- the mask holds 0 to 255 of what the layer's rules
+  grow, and planting past them is a change of format, not a fix -- so it is
+  **Restore**, and a stroke with nothing to restore says where growth is
+  decided (D391).
+- **Ring, Shift, chip**: off the image the brush aims at nothing unless a
+  stroke is under way; the chip needs a terrain and shortens to fit (the size
+  and hint go first). **Shift keeps its three meanings** -- a click with it
+  smooths, `[ ]` with it change the strength, flying with it is faster: three
+  gestures, the reference editors' keys, and the manual now says so. The
+  owner's chip cut at the top-left was not reproduced docked at 100% scale, in
+  windows 1000 and 1600 px wide; F3 and 150% are not checked yet (T6's look).
+- **Scripts** (D390): a place or reach that is not finite, or a negative
+  radius, is an argument error on every Terrain edit and read; `HeightAt` is
+  `number?`.
+- **Starter materials**: **Use the Starter Materials**, on a terrain with none,
+  writes them where they are not and gives all eight in one step.
+- **i18n**: 253 keys under `engine.editor.terrain.*`, `engine.editor.unit.*`
+  and `engine.editor.history.*`; `core::tr(key)` gives a key's words without a
+  copy each frame, `core::tr(key, {args})` formats. The block world's panel
+  and verbs are the R3 ledger's.
+- **A false alarm worth knowing**: a project made from the `starter` template
+  has a 32 m part at y = 2 under the camera, and flat ground created at 0 m is
+  hidden under it -- it looked like terrain not being drawn in the editor. It
+  is drawn (checked on a copy with the part taken out, and the loader drawn
+  both ways from a standing view).
 
 ## T5 — performance
 

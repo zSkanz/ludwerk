@@ -160,6 +160,40 @@ describe("terrain", function()
         end):ToThrow()
     end)
 
+    it("refuses a place or a reach that is not a finite number, rather than answering zero", function()
+        -- The terrain audit: a NaN centre or an infinite radius changed
+        -- nothing and returned 0, which a script cannot tell from ground that
+        -- already was what it asked for.
+        local nan = 0 / 0
+        local origin = vector.create(0, 0, 0)
+        expect(function()
+            terrain:FillBall(vector.create(nan, 0, 0), 4, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, nan, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, math.huge, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:FillBall(origin, -1, Rock)
+        end):ToThrow()
+        expect(function()
+            terrain:SmoothBall(vector.create(0, math.huge, 0), 4)
+        end):ToThrow()
+        expect(function()
+            terrain:FlattenBall(origin, 4, nan)
+        end):ToThrow()
+        expect(function()
+            terrain:ReplaceMaterial(vector.create(-nan, 0, 0), vector.create(4, 4, 4), Rock, Sand)
+        end):ToThrow()
+        expect(function()
+            terrain:HeightAt(nan, 0)
+        end):ToThrow()
+        -- Wholly above the ceiling is not a mistake: nothing there to change.
+        expect(terrain:FillBall(vector.create(0, 10000, 0), 4, Rock)):ToBe(0)
+    end)
+
     it("refuses a region too large to count, and a size or an occupancy that is not a number (TA5)", function()
         -- Each side as long as a terrain can name: the three multiplied pass
         -- 2^64 and wrapped to a count the limit let through, and the loop then

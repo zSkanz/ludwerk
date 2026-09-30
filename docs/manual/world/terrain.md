@@ -241,14 +241,16 @@ terrain) has five modes along its top, in the order the work goes:
 |---|---|
 | **Sculpt** | Shaping the ground with a brush. |
 | **Paint** | The terrain's materials, painting them by hand, and the rules that paint by slope and height. |
-| **Foliage** | Layers of grass, flowers and trees, and a brush that grows or thins them. |
-| **Create** | Flat ground, ground from a heightmap, and clearing it all. |
+| **Foliage** | Layers of grass, flowers and trees, and a brush that thins them and puts back what was thinned. |
+| **Create** | Flat ground, hills, ground from a heightmap, and clearing it all. |
 | **Setup** | The voxel size and the height range. |
 
 Choosing a mode puts no brush in your hand; choosing a tool does. While a
 brush is in hand the viewport says so in its corner -- the tool, the size,
 and that **Esc** puts it down -- and clicking anything else also puts it down.
 Every stroke is one undo step, and a stroke that changed nothing leaves none.
+A click on a part in front of the ground is the part's: it is selected, and
+the ground behind it is not touched. The first tool in hand is Raise.
 
 ### Sculpt
 
@@ -257,8 +259,8 @@ Every stroke is one undo step, and a stroke that changed nothing leaves none.
 | Raise | 1 | Lifts the ground under the brush, most at its centre: a field rises, a cliff comes forward. |
 | Lower | 2 | Sinks the ground under the brush. |
 | Smooth | 3 | Softens bumps, fills pits and rounds off edges. Flat ground stays exactly where it is, a thin slab is never cut through, and nothing sinks below the ground round it: what comes off a bump goes into the ground beside it. |
-| Flatten | 4 | Levels the ground to one height: where the stroke starts, or a fixed height set under Brush. |
-| Add | 5 | A ball (or box) of ground where you aim; held still, it grows towards you. |
+| Flatten | 4 | Levels the ground to one height: where the stroke starts, or a fixed height set under Brush, which starts at the ground the brush last touched. |
+| Add | 5 | A ball (or box) of ground where you aim; held still, it grows towards you. Only where it points at ground: carried past the edge, it adds nothing until it is back. |
 | Dig | 6 | A ball (or box) taken away; held still, it tunnels in. |
 
 - **Hold Ctrl** for the opposite -- Raise lowers, Add digs -- and **hold
@@ -266,6 +268,9 @@ Every stroke is one undo step, and a stroke that changed nothing leaves none.
   is lit on its tile.
 - **[ and ]** make the brush smaller and bigger; with **Shift** they change
   its strength.
+- **Shift is read by what it is held with**: with a click it smooths, with
+  [ or ] it changes the strength, and with the right button held to fly it is
+  the camera's speed.
 - **Dragging** stamps the brush every step of the way; **holding it still**
   keeps working the ground under it, at a rate the strength sets.
 - The ring shows the brush: a circle on the ground, with a fainter one where a
@@ -283,7 +288,8 @@ or onto a swatch to put it in that one's place. A swatch's right-click
 replaces it, opens its material, or removes it (only the last: the ground's
 voxels are numbered by their place in the list); a double-click opens it.
 Right-click in Content for **New Terrain Starter Materials**: grass, sand,
-rock and five more, written under `materials/terrain/` as the project's own.
+rock and five more, written under `materials/terrain/` as the project's own. On a terrain with no materials yet, **Use the Starter Materials** does
+that and gives all eight to it, in one step.
 
 **Paint** paints the selected material under the brush without moving the
 ground. **How it goes on** chooses Blend (a little with every stamp, by the
@@ -301,8 +307,10 @@ whole terrain, in one step.
 
 **Paint by slope and height** lists the terrain's rules in order, each with
 its fields, a switch, and up, down and remove; every change shows at once,
-and a drag is one undo step. **Apply to Voxels** writes what the rules draw
-into the ground.
+and a drag is one undo step. A rule's lowest and highest are kept in order.
+**Add Rule** adds a height rule -- snow above a line -- of the material named
+snow, or the last one where none is. **Apply to Voxels** writes what the
+rules draw into the ground, all of it, however large, as one undo step.
 
 ### Create
 
@@ -311,12 +319,16 @@ largest hills **Scale** metres apart, **Octaves** sizes of smaller ones riding
 on them, and a **Seed** -- the same seed is the same hills. **Export
 Heightmap** writes the ground's heights across a square as a 16-bit PNG and a
 RAW under the project's `heightmaps/`, black at the world's floor and white at
-its ceiling, so importing it at those heights gives the same ground back.
+its ceiling, with a `.heightmap.json` beside them that holds the size and the
+two heights: choosing that image to import fills them in, and the import gives
+the same ground back. An export never writes over an earlier one; the next is
+`Terrain-2`, and so on.
 
 **Flat ground** lays a square of the size and at the world height asked for
 -- on a new world it makes the terrain, and it is one undo step either way.
 On a terrain that has ground, it levels the whole square, sculpting inside it
-included.
+included. **Replace with Flat Ground**, **Replace with Hills** and **Clear All
+Ground** ask first; one ctrl-Z brings the ground back after any of them.
 
 **From a heightmap** lays an image over the ground:
 
@@ -338,7 +350,8 @@ back.
 ### Setup
 
 The three numbers a terrain is decided at:
-- `VoxelSize`, which can change only while the terrain is empty;
+- `VoxelSize`, 0.1 to 64 m, which can change only while the terrain is empty
+  (**Clear All Ground**, under Create, empties it);
 - `MinHeight` and `MaxHeight`, the world's floor and ceiling.
 
 ## How it is drawn and collided

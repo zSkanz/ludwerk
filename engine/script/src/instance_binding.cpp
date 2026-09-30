@@ -1544,11 +1544,31 @@ void groundFirst(lua_State* L, const scene::TerrainComponent& terrain, core::Vec
     return static_cast<float>(value);
 }
 
+// **A place and a reach an edit can use, or a refusal** (the terrain audit's
+// "bad inputs fail silently"): a NaN centre or an infinite radius changed
+// nothing and returned 0, which a script cannot tell from ground that already
+// was what it asked for.
+[[nodiscard]] core::Vec3 checkPlace(lua_State* L, int arg)
+{
+    const core::Vec3 place = checkVector3(L, arg);
+    if (!std::isfinite(place.x) || !std::isfinite(place.y) || !std::isfinite(place.z))
+        luaL_argerror(L, arg, "a finite position");
+    return place;
+}
+
+[[nodiscard]] double checkReach(lua_State* L, int arg)
+{
+    const double reach = luaL_checknumber(L, arg);
+    if (!std::isfinite(reach) || reach < 0.0)
+        luaL_argerror(L, arg, "a finite distance, zero or more");
+    return reach;
+}
+
 int methodTerrainFillBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
     const core::u8 material = checkMaterial(L, 4);
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
@@ -1576,8 +1596,8 @@ int methodTerrainFillBall(lua_State* L)
 int methodTerrainRaiseBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
     const auto amount = static_cast<float>(luaL_checknumber(L, 4));
     const lua_Integer material = luaL_optinteger(L, 5, 0);
     if (material < 0 || material > 255)
@@ -1608,8 +1628,8 @@ int methodTerrainRaiseBall(lua_State* L)
 int methodTerrainGrowBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
     const auto amount = static_cast<float>(luaL_checknumber(L, 4));
     const lua_Integer material = luaL_optinteger(L, 5, 0);
     if (material < 0 || material > 255)
@@ -1638,8 +1658,8 @@ int methodTerrainGrowBall(lua_State* L)
 int methodTerrainFillBlock(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const core::Vec3 size = checkVector3(L, 3);
+    const core::Vec3 center = checkPlace(L, 2);
+    const core::Vec3 size = checkPlace(L, 3);
     const core::u8 material = checkMaterial(L, 4);
 
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
@@ -1664,7 +1684,7 @@ int methodTerrainFillBlock(lua_State* L)
 int methodTerrainWriteHeights(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 corner = checkVector3(L, 2);
+    const core::Vec3 corner = checkPlace(L, 2);
     const lua_Integer columns = luaL_checkinteger(L, 3);
     luaL_checktype(L, 4, LUA_TTABLE);
     // One id for every column, or a table of them parallel to the heights.
@@ -1929,8 +1949,8 @@ int methodTerrainSetRules(lua_State* L)
 int methodTerrainApplyRules(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 low = checkVector3(L, 2);
-    const core::Vec3 high = checkVector3(L, 3);
+    const core::Vec3 low = checkPlace(L, 2);
+    const core::Vec3 high = checkPlace(L, 3);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_pushinteger(L, 0);
@@ -1955,6 +1975,10 @@ int methodTerrainHeightAt(lua_State* L)
     const core::InstanceId id = liveInstance(L, 1);
     const auto x = static_cast<double>(luaL_checknumber(L, 2));
     const auto z = static_cast<double>(luaL_checknumber(L, 3));
+    if (!std::isfinite(x))
+        luaL_argerror(L, 2, "a finite number");
+    if (!std::isfinite(z))
+        luaL_argerror(L, 3, "a finite number");
 
     const scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -1962,8 +1986,7 @@ int methodTerrainHeightAt(lua_State* L)
         return 1;
     }
     // The column's cell, loaded first where it is on disk (TA16).
-    if (std::isfinite(x) && std::isfinite(z))
-        groundFirst(L, *terrain, core::Vec3{static_cast<float>(x), 0.0f, static_cast<float>(z)}, 0.0);
+    groundFirst(L, *terrain, core::Vec3{static_cast<float>(x), 0.0f, static_cast<float>(z)}, 0.0);
 
     // **Nil where there is no ground, rather than zero.** Zero is a legitimate
     // height and "there is nothing here" is not a height at all, so a script
@@ -1983,8 +2006,8 @@ int methodTerrainHeightAt(lua_State* L)
 int methodTerrainPaintBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
     const core::u8 material = checkMaterial(L, 4);
     // `{ Mode, Strength, Falloff }` (ADR 0114), each optional.
     asset::PaintOptions options;
@@ -2085,9 +2108,9 @@ int finishEdit(lua_State* L, scene::TerrainComponent& terrain, const asset::Edit
 int methodTerrainFillCylinder(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto height = static_cast<double>(luaL_checknumber(L, 3));
-    const auto radius = static_cast<double>(luaL_checknumber(L, 4));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double height = checkReach(L, 3);
+    const double radius = checkReach(L, 4);
     const core::u8 material = checkMaterial(L, 5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -2102,8 +2125,8 @@ int methodTerrainFillCylinder(lua_State* L)
 int methodTerrainSmoothBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
     const float strength = checkFinite(L, 4, 0.5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -2117,9 +2140,11 @@ int methodTerrainSmoothBall(lua_State* L)
 int methodTerrainFlattenBall(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 center = checkVector3(L, 2);
-    const auto radius = static_cast<double>(luaL_checknumber(L, 3));
-    const auto height = luaL_checknumber(L, 4);
+    const core::Vec3 center = checkPlace(L, 2);
+    const double radius = checkReach(L, 3);
+    const double height = luaL_checknumber(L, 4);
+    if (!std::isfinite(height))
+        luaL_argerror(L, 4, "a finite height");
     const float strength = checkFinite(L, 5, 1.0);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
@@ -2136,8 +2161,8 @@ int methodTerrainFlattenBall(lua_State* L)
 int methodTerrainReplaceMaterial(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 low = checkVector3(L, 2);
-    const core::Vec3 high = checkVector3(L, 3);
+    const core::Vec3 low = checkPlace(L, 2);
+    const core::Vec3 high = checkPlace(L, 3);
     const core::u8 from = checkMaterial(L, 4);
     const core::u8 to = checkMaterial(L, 5);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);
@@ -2214,8 +2239,8 @@ struct VoxelRegion
 int methodTerrainReadVoxels(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 low = checkVector3(L, 2);
-    const core::Vec3 high = checkVector3(L, 3);
+    const core::Vec3 low = checkPlace(L, 2);
+    const core::Vec3 high = checkPlace(L, 3);
     const scene::TerrainComponent* terrain = world(L).terrains().find(id);
     if (terrain == nullptr) {
         lua_createtable(L, 0, 0);
@@ -2261,8 +2286,8 @@ int methodTerrainReadVoxels(lua_State* L)
 int methodTerrainWriteVoxels(lua_State* L)
 {
     const core::InstanceId id = liveInstance(L, 1);
-    const core::Vec3 corner = checkVector3(L, 2);
-    const core::Vec3 size = checkVector3(L, 3);
+    const core::Vec3 corner = checkPlace(L, 2);
+    const core::Vec3 size = checkPlace(L, 3);
     luaL_checktype(L, 4, LUA_TTABLE);
     luaL_checktype(L, 5, LUA_TTABLE);
     scene::TerrainComponent* terrain = world(L).terrains().find(id);

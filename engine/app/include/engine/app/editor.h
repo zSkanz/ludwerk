@@ -2033,7 +2033,10 @@ public:
     // towards their target.
     struct Brush
     {
-        BrushOp op = BrushOp::Add;
+        // **Raise by default** (the terrain audit's editor list): the tool a
+        // first click on ground should do what it looks like -- lift it -- where
+        // Add stamped a ball on it.
+        BrushOp op = BrushOp::Grow;
         BrushShape shape = BrushShape::Sphere;
         // Metres.
         f32 radius = 4.0f;
@@ -2110,6 +2113,10 @@ public:
     // a building's pad takes: one level across many strokes.
     void setFlattenHeight(std::optional<f32> height) noexcept { m_flattenHeight = height; }
     [[nodiscard]] std::optional<f32> flattenHeight() const noexcept { return m_flattenHeight; }
+    // The world height the brush last met ground at: where a fixed Flatten
+    // height starts (the terrain audit's editor list: it started at 0 m,
+    // wherever the ground was). Nothing before the brush has aimed at any.
+    [[nodiscard]] std::optional<f32> lastGroundHeight() const noexcept { return m_lastGroundHeight; }
 
     // --- Making ground exist ---------------------------------------------
     //
@@ -2175,6 +2182,12 @@ public:
     // other material. A file already there is left as it is. Answers how many
     // it wrote.
     core::usize writeStarterTerrainMaterials();
+    // **The eight starters on a terrain in one action** (the terrain audit's
+    // editor list: it took eight rounds of + and a pick): written into the
+    // project where they are not yet, then given to a terrain that has no
+    // materials, in their order, as one undo step. Refused on a terrain that
+    // has materials already -- the voxels are numbered by their place.
+    bool useStarterTerrainMaterials(scene::World& world, core::InstanceId root);
 
     bool setTerrainLayers(scene::World& world, core::InstanceId root, std::vector<std::string> layers,
                           std::string_view label);
@@ -2221,6 +2234,11 @@ public:
         core::u8 material = 1;
     };
     bool generateHills(scene::World& world, core::InstanceId root, Inspector& inspector, const HillSpec& spec);
+    // **A ground verb that refused backs out whole**: the step it recorded, or
+    // -- on a world with no terrain, where its one step was the terrain's
+    // making -- the terrain it made, with that step. One undo step a verb, and
+    // none for a verb that did nothing.
+    void backOutGround(scene::World& world, Inspector& inspector, bool existed, core::InstanceId terrain);
 
     // **Writes the terrain's heights** over a square round its origin, one
     // sample a voxel, as a sixteen-bit PNG -- and, since it is square, as RAW
@@ -2243,7 +2261,20 @@ public:
     void setBrushPicking(bool picking) noexcept { m_brushPicking = picking; }
     // The file the Terrain panel imports from, as the picker last answered.
     [[nodiscard]] const std::filesystem::path& heightmapSource() const noexcept { return m_heightmapSource; }
-    void setHeightmapSource(std::filesystem::path source) { m_heightmapSource = std::move(source); }
+    void setHeightmapSource(std::filesystem::path source);
+    // **How an exported heightmap goes back** (the terrain audit's editor
+    // list): the export writes black at the world's floor and white at its
+    // ceiling, and the import's fields stood at 0 and 64 m, so the round trip
+    // gave other ground by default. An export leaves its size and heights
+    // beside the image (`<name>.heightmap.json`), and a source chosen with one
+    // offers them here. Nothing for an image from anywhere else.
+    struct HeightmapHint
+    {
+        f32 size = 0.0f;
+        f32 low = 0.0f;
+        f32 high = 0.0f;
+    };
+    [[nodiscard]] const std::optional<HeightmapHint>& heightmapHint() const noexcept { return m_heightmapHint; }
 
     // The terrain under the root the viewport is drawing, or nothing.
     [[nodiscard]] core::InstanceId terrainIn(const scene::World& world, core::InstanceId root) const;
@@ -2272,9 +2303,11 @@ public:
     // and it is why the engines with sparse storage all offer a plane to aim at.
     //
     // The plane is horizontal at the terrain's own origin, or at the height the
-    // stroke last hit ground, so extending a hillside past its edge continues it
-    // rather than dropping to zero. A heightmap engine never needs this because
-    // its plane is the allocation; ours is a fallback for the case theirs cannot
+    // stroke began at, so extending a hillside past its edge continues it
+    // rather than dropping to zero. **Add adds nothing there** (TA17a) unless
+    // the field is empty: it puts ground only where it is pointed at ground.
+    // A heightmap engine never needs this because its plane is the
+    // allocation; ours is a fallback for the case theirs cannot
     // have.
     [[nodiscard]] bool brushPlaneLock() const noexcept { return m_brushPlaneLock; }
     void setBrushPlaneLock(bool locked) noexcept
@@ -2588,6 +2621,11 @@ public:
     // frame it is held, over the image or not -- a drag that leaves the panel is
     // still a drag, and one that ends outside it still ends.
     void setPointer(core::Vec2 pixelInViewport, bool pressed, bool down) noexcept;
+    // Whether the pointer is over the image at all. **Off it, a brush aims at
+    // nothing** (the terrain audit's editor list): the ring stayed where the
+    // pointer had left the viewport, drawn under another panel or at the edge
+    // -- unless a stroke is under way, which carries on as a drag does.
+    void setPointerOverViewport(bool over) noexcept { m_pointerOverViewport = over; }
 
     // **What a double-click in the viewport opened** (S5.3), or nothing.
     //
@@ -2968,6 +3006,7 @@ private:
     // The world a stroke is in, for a brush that writes more than the field.
     scene::World* m_strokeWorld = nullptr;
     bool m_terrainPanelShown = true;
+    bool m_pointerOverViewport = true;
     core::u64 m_worldRestores = 0;
     TerrainSaver m_terrainSaver;
     ScriptFileSaver m_scriptFileSaver;
@@ -2978,10 +3017,15 @@ private:
     bool m_brushSmoothHeld = false;
     bool m_foliageThin = false;
     std::optional<f32> m_flattenHeight;
+    std::optional<f32> m_lastGroundHeight;
     std::filesystem::path m_heightmapSource;
+    std::optional<HeightmapHint> m_heightmapHint;
     core::u32 m_lastStrokeStamps = 0;
     Brush m_brush;
     std::optional<asset::TerrainHit> m_brushAim;
+    // Whether `m_brushAim` is the plane's, not the ground's: where an Add puts
+    // nothing (TA17a).
+    bool m_brushAimOnPlane = false;
     std::optional<Stroke> m_stroke;
 
     bool m_handlesShown = true;

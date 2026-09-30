@@ -56,6 +56,8 @@ Adds a ball of ground, or removes one when `material` is zero. Returns how many 
 
 Adding never takes ground away and removing never adds it: a voxel ends up as full as the fuller of it and the ball (adding), or as empty as the ball leaves it (removing). An explosion crater is `FillBall(hit.Position, 4, 0)`.
 
+**A place or a size that is not a finite number is an error**, here and in every Terrain edit and read, and so is a negative radius: zero is only ever ground that already was what was asked for, or an edit wholly outside `MinHeight` to `MaxHeight`.
+
 ### `FillBlock(center: vector, size: vector, material: number): number`
 
 The same, as an axis-aligned box `size` across. Returns how many voxels it changed.
@@ -84,7 +86,7 @@ Moves the surface near `center` outwards along its own slope by `amount` metres 
 
 The editor's Raise and Lower: a field rises, a cliff comes forward, an overhang grows down, and ground worn away goes back the way it came. Where it grows new ground, it is `material`, or the neighbouring ground's when that is not given.
 
-### `HeightAt(x: number, z: number): number`
+### `HeightAt(x: number, z: number): number?`
 
 The height of the top of the ground here, in metres, or nil where there is none.
 

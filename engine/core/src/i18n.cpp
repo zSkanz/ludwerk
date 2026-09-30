@@ -351,10 +351,23 @@ std::string Catalog::format(TextKey key, std::span<const I18nArg> args) const
     return out;
 }
 
+const char* Catalog::text(TextKey key) const noexcept
+{
+    const auto it = entries_.find(key.hash);
+    if (it == entries_.end())
+        return "[i18n:missing]";
+    return it->second.single.c_str();
+}
+
 Catalog& engineCatalog()
 {
     static Catalog catalog;
     return catalog;
+}
+
+std::string tr(TextKey key, std::initializer_list<I18nArg> args)
+{
+    return engineCatalog().format(key, std::span<const I18nArg>(args.begin(), args.size()));
 }
 
 } // namespace engine::core
