@@ -65,10 +65,28 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## W5 — the editor (§7)
 
-- [ ] The Water tool: River, Lake, Pool, Ocean; handles; insert and delete;
-  width handles; height by Ctrl-drag; "water at this height"; live preview;
-  one undo step per edit; the gizmo moves a whole body with its points.
-- [ ] An editor test driven by clicks and drags builds a river and a lake.
+**Its first slice came first** (the queue change of 2026-10-01: what the
+owner can see and use before what he cannot): the tool for the water there is
+today -- a level river through its points, a rectangle, a sea.
+
+- [x] **The Water tool, first slice** (`editor_water.cpp`, `Editor::driveWater`,
+  the Water panel): River -- a click a point at the end, the next stretch
+  shown before the click, a point dragged, a click on a point selects it for
+  Delete, Enter or Escape or **New river** puts it down, a click on a river
+  picks it up; Lake -- a rectangle dragged, level where the drag began, its
+  corners handles; Ocean -- a click at the height, one sea a world. One undo
+  step a click or a drag. The panel's numbers: surface height, width, depth,
+  flow speed. The manipulator is hidden while the tool is in hand: its
+  handles are the water's own.
+- [x] An editor test driven by clicks and drags builds a river and a lake
+  (`editor_tests.cpp`, eight cases), and both were drawn in the editor itself.
+- [ ] With W1: Pool and the lake's outline; a click on the ribbon inserts a
+  point; width handles; height by Ctrl-drag.
+- Later, found while doing it: a point laid where the ground is higher than
+  the river's level is under the ground (W1's descending rivers and W2's
+  carving are the answer, not the tool); **Create Hills** leaves the editor's
+  camera where it was, which is inside the new ground; selecting a `Water`
+  opens the panel but does not pick the tool up.
 
 ## W6 — by code, docs and the close (§8–9)
 
@@ -83,4 +101,8 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Findings
 
-(Filled in as the work finds what this plan assumed wrongly.)
+- **A new project's camera stands at the world's zero, looking at the
+  horizon** (W5, first slice): the plane a first river would be drawn on with
+  no ground is never ahead of a ray from there, and the first click of the
+  first river landed nowhere. With nothing solid under the pointer and zero
+  not ahead, the tool draws on a level ten metres under the eye.

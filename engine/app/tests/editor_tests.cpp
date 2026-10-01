@@ -7109,3 +7109,291 @@ TEST_CASE("a heightmap in a folder of tiles is laid whole, and is not an undo st
     CHECK(static_cast<double>(*asset::heightAt(rig.field().field, 34.5, 0.5)) == doctest::Approx(12.0).epsilon(0.02));
     std::filesystem::remove_all(folder, ignored);
 }
+
+// --- The Water tool (ADR 0146 section 7; the water ledger's W5) ---------------
+
+namespace {
+
+// The brush rig, looking straight down at its flat ground from sixty metres,
+// with the Water tool in hand and its panel open. The ground's top is at zero.
+struct WaterRig : BrushRig
+{
+    WaterRig()
+    {
+        lookDown(60.0);
+        editor.setTool(Editor::Tool::Water);
+        editor.setWaterPanelShown(true);
+    }
+
+    // One frame of the loop with the pointer over `at`, as the frame runs it:
+    // the tool first, then the manipulator, then the pick.
+    bool waterFrame(core::DVec3 at, bool pressed, bool down)
+    {
+        const core::Vec2 pixel = pixelOf(at);
+        if (pressed)
+            editor.requestPick(pixel);
+        editor.setPointer(pixel, pressed, down);
+        const bool took = editor.driveWater(world, workspace, inspector);
+        if (!took && !editor.driveGizmo(world, inspector))
+            editor.resolvePick(world, workspace, inspector);
+        inspector.applyPending(world);
+        return took;
+    }
+
+    void click(core::DVec3 at)
+    {
+        CHECK(waterFrame(at, true, true));
+        CHECK(waterFrame(at, false, false));
+    }
+
+    void drag(core::DVec3 from, core::DVec3 to)
+    {
+        CHECK(waterFrame(from, true, true));
+        for (int step = 1; step <= 4; ++step) {
+            const double t = static_cast<double>(step) / 4.0;
+            CHECK(waterFrame(
+                core::DVec3{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t},
+                false, true));
+        }
+        CHECK(waterFrame(to, false, false));
+    }
+
+    [[nodiscard]] std::vector<core::InstanceId> waters()
+    {
+        std::vector<core::InstanceId> found;
+        world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent&) {
+            if (world.alive(id) && world.isAncestorOf(workspace, id))
+                found.push_back(id);
+        });
+        return found;
+    }
+
+    [[nodiscard]] std::vector<core::Vec3> pointsOf(core::InstanceId water)
+    {
+        std::vector<core::Vec3> points;
+        for (core::InstanceId child = world.firstChild(water); child.valid(); child = world.nextSibling(child)) {
+            if (const scene::WaterPointComponent* point = world.waterPoints().find(child); point != nullptr)
+                points.push_back(point->position);
+        }
+        return points;
+    }
+};
+
+[[nodiscard]] bool near(core::f32 value, double wanted, double within = 0.3)
+{
+    return std::abs(static_cast<double>(value) - wanted) <= within;
+}
+
+} // namespace
+
+TEST_CASE("clicks with the River tool lay a river's course, a point and an undo step each")
+{
+    WaterRig rig;
+    rig.click({-10.0, 0.0, 0.0});
+    rig.click({0.0, 0.0, 5.0});
+    rig.click({10.0, 0.0, 0.0});
+
+    const std::vector<core::InstanceId> waters = rig.waters();
+    REQUIRE(waters.size() == 1);
+    const scene::WaterComponent* river = rig.world.waters().find(waters[0]);
+    REQUIRE(river != nullptr);
+    // A course, on the ground it was clicked on.
+    CHECK(river->shape == 2);
+    CHECK(river->surfaceLevel == doctest::Approx(0.25).epsilon(0.5));
+    CHECK(static_cast<double>(river->size.x) == doctest::Approx(static_cast<double>(rig.editor.waterWidth())));
+
+    const std::vector<core::Vec3> points = rig.pointsOf(waters[0]);
+    REQUIRE(points.size() == 3);
+    CHECK(near(points[0].x, -10.0));
+    CHECK(near(points[0].z, 0.0));
+    CHECK(near(points[1].x, 0.0));
+    CHECK(near(points[1].z, 5.0));
+    CHECK(near(points[2].x, 10.0));
+    CHECK(near(points[2].z, 0.0));
+
+    // The river stays in hand, which is what makes the next click its next
+    // point -- and the tool's clicks select nothing else.
+    CHECK(rig.inspector.selection() == waters[0]);
+
+    // A step a click: the last point, then the one before, then the river.
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    REQUIRE(rig.waters().size() == 1);
+    CHECK(rig.pointsOf(rig.waters()[0]).size() == 2);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(rig.pointsOf(rig.waters()[0]).size() == 1);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(rig.waters().empty());
+    CHECK_FALSE(rig.editor.history().canUndo());
+}
+
+TEST_CASE("the River tool shows the stretch the next click would add")
+{
+    WaterRig rig;
+    rig.click({-10.0, 0.0, 0.0});
+
+    // Hovering takes nothing: the pointer is still the viewport's.
+    CHECK_FALSE(rig.waterFrame({4.0, 0.0, 2.0}, false, false));
+    const Editor::WaterGuide& guide = rig.editor.waterGuide();
+    REQUIRE(guide.handles.size() == 1);
+    REQUIRE(guide.from.has_value());
+    REQUIRE(guide.aim.has_value());
+    CHECK(guide.from->x == doctest::Approx(-10.0).epsilon(0.05));
+    CHECK(guide.aim->x == doctest::Approx(4.0).epsilon(0.1));
+    CHECK(guide.aim->z == doctest::Approx(2.0).epsilon(0.2));
+    CHECK(guide.hot == -1);
+
+    // Over the point itself there is no stretch: a press there takes the point.
+    CHECK_FALSE(rig.waterFrame({-10.0, 0.25, 0.0}, false, false));
+    CHECK(rig.editor.waterGuide().hot == 0);
+    CHECK_FALSE(rig.editor.waterGuide().from.has_value());
+}
+
+TEST_CASE("a first river in an empty scene lands under the eye, where zero is not ahead of it")
+{
+    // A new project: no ground, and the camera at the origin looking at the
+    // horizon. The world's zero is never ahead of a ray from there.
+    WaterRig rig;
+    rig.world.destroy(rig.terrain);
+    rig.world.retireDestroyed();
+    rig.editor.setCamera(
+        core::perspective(60.0f * 3.14159265f / 180.0f, rig.rect.width / rig.rect.height, 0.1f, 5000.0f),
+        core::lookAt(core::Vec3{}, core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f}), core::DVec3{});
+
+    rig.click({-4.0, -10.0, -30.0});
+    rig.click({6.0, -10.0, -40.0});
+    REQUIRE(rig.waters().size() == 1);
+    const std::vector<core::Vec3> points = rig.pointsOf(rig.waters()[0]);
+    REQUIRE(points.size() == 2);
+    CHECK(near(points[0].x, -4.0));
+    CHECK(near(points[0].z, -30.0));
+    // The second on the river's own level, which is where the first put it.
+    CHECK(near(points[1].x, 6.0, 0.6));
+    CHECK(near(points[1].z, -40.0, 1.5));
+}
+
+TEST_CASE("a drag on a river's point moves it as one undo step, and a click on it selects it")
+{
+    WaterRig rig;
+    rig.click({-10.0, 0.0, 0.0});
+    rig.click({10.0, 0.0, 0.0});
+    const core::InstanceId river = rig.waters().at(0);
+    const core::usize before = rig.editor.history().depth();
+
+    rig.drag({10.0, 0.25, 0.0}, {12.0, 0.25, 8.0});
+    std::vector<core::Vec3> points = rig.pointsOf(river);
+    REQUIRE(points.size() == 2);
+    CHECK(near(points[1].x, 12.0));
+    CHECK(near(points[1].z, 8.0));
+    CHECK(near(points[0].x, -10.0));
+    // One step, however many frames the drag was.
+    CHECK(rig.editor.history().depth() == before + 1);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    points = rig.pointsOf(rig.waters().at(0));
+    CHECK(near(points[1].x, 10.0));
+    CHECK(near(points[1].z, 0.0));
+
+    // A click on a point is not a drag: nothing to undo, and the point is
+    // selected -- which is what Delete removes.
+    const core::usize steps = rig.editor.history().depth();
+    rig.click({-10.0, 0.25, 0.0});
+    CHECK(rig.editor.history().depth() == steps);
+    const core::InstanceId selected = rig.inspector.selection();
+    CHECK(rig.world.waterPoints().find(selected) != nullptr);
+
+    // Its river is still the one in hand: the next click adds to it, and
+    // does not start a second.
+    rig.click({0.0, 0.0, -12.0});
+    REQUIRE(rig.waters().size() == 1);
+    CHECK(rig.pointsOf(rig.waters()[0]).size() == 3);
+}
+
+TEST_CASE("a drag with the Lake tool lays a rectangle of water, and a corner of it resizes it")
+{
+    WaterRig rig;
+    rig.editor.setWaterOp(Editor::WaterOp::Lake);
+
+    CHECK(rig.waterFrame({-8.0, 0.0, -6.0}, true, true));
+    CHECK(rig.waterFrame({2.0, 0.0, 1.0}, false, true));
+    // What the drag would make is shown while it is made.
+    CHECK(rig.editor.waterGuide().rectangle.has_value());
+    CHECK(rig.waters().empty());
+    CHECK(rig.waterFrame({8.0, 0.0, 6.0}, false, true));
+    CHECK(rig.waterFrame({8.0, 0.0, 6.0}, false, false));
+
+    REQUIRE(rig.waters().size() == 1);
+    const core::InstanceId lake = rig.waters()[0];
+    {
+        const scene::WaterComponent* water = rig.world.waters().find(lake);
+        REQUIRE(water != nullptr);
+        CHECK(water->shape == 1);
+        CHECK(near(water->position.x, 0.0));
+        CHECK(near(water->position.z, 0.0));
+        CHECK(near(water->size.x, 16.0, 0.6));
+        CHECK(near(water->size.z, 12.0, 0.6));
+        CHECK(static_cast<double>(water->size.y) == doctest::Approx(static_cast<double>(rig.editor.waterDepth())));
+        // Level at the height the drag began at.
+        CHECK(water->surfaceLevel == doctest::Approx(0.0).epsilon(0.5));
+    }
+    CHECK(rig.inspector.selection() == lake);
+    CHECK(rig.editor.history().depth() == 1);
+
+    // Its corners are handles, and the one across stays where it is.
+    CHECK_FALSE(rig.waterFrame({0.0, 0.0, 0.0}, false, false));
+    REQUIRE(rig.editor.waterGuide().handles.size() == 4);
+    const double level = rig.world.waters().find(lake)->surfaceLevel;
+    rig.drag({8.0, level, 6.0}, {12.0, level, 10.0});
+    {
+        const scene::WaterComponent* water = rig.world.waters().find(lake);
+        CHECK(near(water->size.x, 20.0, 0.8));
+        CHECK(near(water->size.z, 16.0, 0.8));
+        CHECK(near(water->position.x, 2.0, 0.5));
+        CHECK(near(water->position.z, 2.0, 0.5));
+    }
+    CHECK(rig.waters().size() == 1);
+    CHECK(rig.editor.history().depth() == 2);
+
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(near(rig.world.waters().find(rig.waters().at(0))->size.x, 16.0, 0.6));
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(rig.waters().empty());
+}
+
+TEST_CASE("a Lake click that goes nowhere makes no lake")
+{
+    WaterRig rig;
+    rig.editor.setWaterOp(Editor::WaterOp::Lake);
+    rig.click({3.0, 0.0, 3.0});
+    CHECK(rig.waters().empty());
+    CHECK_FALSE(rig.editor.history().canUndo());
+}
+
+TEST_CASE("an Ocean click brings the sea up to the height clicked, and a world has one")
+{
+    WaterRig rig;
+    rig.editor.setWaterOp(Editor::WaterOp::Ocean);
+    rig.click({5.0, 0.0, 5.0});
+    REQUIRE(rig.waters().size() == 1);
+    const scene::WaterComponent* sea = rig.world.waters().find(rig.waters()[0]);
+    CHECK(sea->shape == 0);
+    CHECK(sea->surfaceLevel == doctest::Approx(0.0).epsilon(0.5));
+
+    // A second click moves that sea; it does not make another.
+    rig.click({-5.0, 0.0, -5.0});
+    CHECK(rig.waters().size() == 1);
+    CHECK(rig.editor.history().depth() == 2);
+}
+
+TEST_CASE("the Water tool acts only while its panel is open, and hides the manipulator while it does")
+{
+    WaterRig rig;
+    rig.click({-10.0, 0.0, 0.0});
+    REQUIRE(rig.waters().size() == 1);
+    // In hand, the river has the tool's handles and not the manipulator's.
+    CHECK_FALSE(rig.editor.gizmoFrame(rig.world, rig.inspector).has_value());
+
+    rig.editor.setWaterPanelShown(false);
+    CHECK_FALSE(rig.waterFrame({0.0, 0.0, 5.0}, true, true));
+    (void)rig.waterFrame({0.0, 0.0, 5.0}, false, false);
+    CHECK(rig.pointsOf(rig.waters().at(0)).size() == 1);
+    CHECK(rig.editor.waterGuide().handles.empty());
+}

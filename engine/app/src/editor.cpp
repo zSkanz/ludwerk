@@ -646,6 +646,8 @@ namespace {
         return "tiles";
     case Editor::Tool::Foliage:
         return "foliage";
+    case Editor::Tool::Water:
+        return "water";
     case Editor::Tool::Select:
         break;
     }
@@ -694,6 +696,8 @@ namespace {
         return Editor::Tool::Tiles;
     if (name == "foliage")
         return Editor::Tool::Foliage;
+    if (name == "water")
+        return Editor::Tool::Water;
     return Editor::Tool::Select;
 }
 
@@ -816,6 +820,12 @@ void Editor::rememberState(const std::filesystem::path& stateDirectory) const
     writer.field("op", m_blockOp == BlockOp::Break ? "break" : m_blockOp == BlockOp::Replace ? "replace" : "place");
     writer.field("type", static_cast<core::f64>(m_blockType));
     writer.endObject();
+    writer.key("water");
+    writer.beginObject();
+    writer.field("op", m_waterOp == WaterOp::Lake ? "lake" : m_waterOp == WaterOp::Ocean ? "ocean" : "river");
+    writer.field("width", static_cast<core::f64>(m_waterWidth));
+    writer.field("depth", static_cast<core::f64>(m_waterDepth));
+    writer.endObject();
     writer.endObject();
 
     writer.key("panels");
@@ -917,6 +927,14 @@ void Editor::recallState(const std::filesystem::path& stateDirectory)
             m_blockOp = op == "break" ? BlockOp::Break : op == "replace" ? BlockOp::Replace : BlockOp::Place;
             if (const core::JsonValue type = blocks["type"]; type.type() == core::JsonType::Number)
                 setBlockType(static_cast<asset::BlockId>(std::clamp(type.asNumber(), 1.0, 65535.0)));
+        }
+        if (const core::JsonValue water = tools["water"]; water.type() == core::JsonType::Object) {
+            const std::string_view op = water["op"].asString();
+            m_waterOp = op == "lake" ? WaterOp::Lake : op == "ocean" ? WaterOp::Ocean : WaterOp::River;
+            if (const core::JsonValue width = water["width"]; width.type() == core::JsonType::Number)
+                setWaterWidth(static_cast<f32>(width.asNumber()));
+            if (const core::JsonValue depth = water["depth"]; depth.type() == core::JsonType::Number)
+                setWaterDepth(static_cast<f32>(depth.asNumber()));
         }
     }
 
@@ -4232,6 +4250,11 @@ std::optional<GizmoFrame> Editor::gizmoFrame(const scene::World& world, const In
 {
     if (!editing(m_run) || !m_hasCamera || !m_handlesShown)
         return std::nullopt;
+    // **The Water tool's handles are the water's own**: its points, its
+    // corners. The manipulator over the river in hand would be a second set
+    // of handles in the middle of it, taking the clicks that lay its course.
+    if (m_tool == Tool::Water && m_waterPanelShown)
+        return std::nullopt;
 
     const core::InstanceId primary = inspector.selection();
     if (!primary.valid() || !world.alive(primary))
@@ -4477,7 +4500,7 @@ bool Editor::driveTiles(scene::World& world, core::InstanceId root, Inspector& i
 void Editor::setTool(Tool tool) noexcept
 {
     // Refused mid-stroke, exactly as `setGizmoMode` is refused mid-drag.
-    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value())
+    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value() || m_waterGesture.has_value())
         return;
     m_tool = tool;
     m_preferencesDirty = true;

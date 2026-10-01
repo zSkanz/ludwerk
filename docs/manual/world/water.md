@@ -22,6 +22,28 @@ swell.Parent = sea
 A part with a `Density` below the water's then floats, with no script: a crate
 of density 0.5 rides half under.
 
+## In the editor
+
+The **Tools** button, then **Water** (or the Water icon in the side bar, or `Tool: Water` in the
+command palette) opens the Water panel and puts the tool in hand. While it is,
+a click in the viewport draws water; Escape puts the tool down.
+
+| | |
+|---|---|
+| **River** | Click the ground: each click adds a point to the end of the river, and the first one starts it. The stretch the next click would add is shown before you click. Drag a point to move it. Click a point and press Delete to remove it. Enter, Escape or **New river** puts the river down, and the next click starts another; a click on a river with none in hand picks that one up. |
+| **Lake** | Press on the shore, at the height the water should come to, and drag across the hollow: a rectangle of water, level at the height the drag began at. Click a lake to pick it up, and drag a corner to resize it. |
+| **Ocean** | Click anywhere: the sea comes up to the height clicked. A world has one sea, and another click moves it. |
+
+The panel has the numbers you change between two clicks -- the surface's
+height, a river's width, the depth, how fast a river flows -- and everything
+else is in Properties, because the tool selects what it draws. Every click and
+every drag is one step of Undo.
+
+A river drawn today is level: it lies at the height of its first click, a
+little above the ground there, and where the ground rises along its course the
+ground covers it. Rivers that descend, banks that are cut into the ground and
+lakes of any outline are the next stages of ADR 0146.
+
 ## Shapes
 
 | `Shape` | Where it is |

@@ -90,6 +90,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The Water tool** (ADR 0146, its first stage): **Tools > Water** in the
+  editor. A river is drawn a click a point, with the next stretch shown
+  before the click; a lake is dragged as a rectangle, level at the height the
+  drag began at; a sea is a click at the height it comes to. Points and
+  corners are handles to drag, Delete removes a selected point, and every
+  click and drag is one undo step. The panel edits the height, the width, the
+  depth and the flow of the water in hand.
 - **A world larger than memory** (ADR 0149). Ground a game changes or makes
   is written to a cache on disk when the camera leaves and there is more of
   it than fits, and streams back from it, so a script that writes a world a

@@ -6940,6 +6940,11 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
             panels.tiles = true;
             ImGui::SetWindowFocus("Tiles###Tiles");
         }
+        if (iconMenuItem(icons, icons::ClassWater, core::tr(ENG_TR("engine.editor.transport.water")))) {
+            panels.water = true;
+            editor.setTool(Editor::Tool::Water);
+            ImGui::SetWindowFocus("###Water");
+        }
         ImGui::EndPopup();
     }
 
@@ -7097,6 +7102,18 @@ void reportLookInput(Editor& editor, bool overViewport)
     case Editor::Tool::Foliage:
         return editor.effectiveFoliageThin() ? core::tr(ENG_TR("engine.editor.terrain.chip.thin"))
                                              : core::tr(ENG_TR("engine.editor.terrain.chip.restore"));
+    case Editor::Tool::Water:
+        if (!editor.waterPanelShown())
+            break;
+        switch (editor.waterOp()) {
+        case Editor::WaterOp::River:
+            return core::tr(ENG_TR("engine.editor.water_panel.river"));
+        case Editor::WaterOp::Lake:
+            return core::tr(ENG_TR("engine.editor.water_panel.lake"));
+        case Editor::WaterOp::Ocean:
+            return core::tr(ENG_TR("engine.editor.water_panel.ocean"));
+        }
+        break;
     case Editor::Tool::Select:
     case Editor::Tool::Blocks:
     case Editor::Tool::Tiles:
@@ -7114,14 +7131,18 @@ void drawBrushChip(const Editor& editor, ImVec2 at, ImVec2 region)
     const std::string words = terrainBrushWords(editor);
     if (words.empty() || region.x < 160.0f || editor.inPlayMode())
         return;
+    // The Water tool has no size to say: what it draws is as wide as its
+    // panel says, and the stretch it shows.
+    const bool sized = editor.tool() != Editor::Tool::Water;
     char size[32];
     (void)std::snprintf(size, sizeof(size), "%.2f", static_cast<double>(editor.brush().radius));
-    std::string tail = core::tr(ENG_TR("engine.editor.terrain.chip.tail"), {{"size", std::string_view(size)}});
+    std::string tail = sized ? core::tr(ENG_TR("engine.editor.terrain.chip.tail"), {{"size", std::string_view(size)}})
+                             : std::string(core::tr(ENG_TR("engine.editor.water_panel.chip_tail")));
     const float scale = ImGui::GetStyle().FontScaleMain;
     const float pad = 8.0f * scale;
     // **Shortened to fit, never cut** (the editor list: at the right edge of a
     // narrow viewport): the size and the hint go first, the tool's name last.
-    if (ImGui::CalcTextSize((words + tail).c_str()).x + pad * 4.0f > region.x)
+    if (sized && ImGui::CalcTextSize((words + tail).c_str()).x + pad * 4.0f > region.x)
         tail = core::tr(ENG_TR("engine.editor.terrain.chip.tail_short"), {{"size", std::string_view(size)}});
     if (ImGui::CalcTextSize((words + tail).c_str()).x + pad * 4.0f > region.x)
         tail.clear();
@@ -7620,6 +7641,7 @@ void buildDefaultLayout(ImGuiID dockspace)
     ImGui::DockBuilderDockWindow("Terrain", right);
     ImGui::DockBuilderDockWindow("Blocks", right);
     ImGui::DockBuilderDockWindow("Tiles", right);
+    ImGui::DockBuilderDockWindow("Water", right);
     ImGui::DockBuilderDockWindow("Viewport Settings", right);
     // Under everything: the files, what the game said and the debugger. A tab
     // node opens on whichever window was docked last, so which one greets
@@ -9058,6 +9080,9 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
         if (iconMenuItem(icons, icons::ClassTilemap2D, core::tr(ENG_TR("engine.editor.menu_bar.tiles")), nullptr,
                          panels.tiles))
             panels.tiles = !panels.tiles;
+        if (iconMenuItem(icons, icons::ClassWater, core::tr(ENG_TR("engine.editor.menu_bar.water")), nullptr,
+                         panels.water))
+            panels.water = !panels.water;
         ImGui::Separator();
         panelItem(core::tr(ENG_TR("engine.editor.menu_bar.grid")), panels.showGrid);
         panelItem(core::tr(ENG_TR("engine.editor.menu_bar.collision_shapes")), panels.showCollision);
@@ -11270,6 +11295,8 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
             id = std::string(icons::ClassTerrain);
         else if (name.ends_with("###Tiles"))
             id = std::string(icons::ClassTilemap2D);
+        else if (name.ends_with("###Water"))
+            id = std::string(icons::ClassWater);
         else if (name.ends_with("###Blocks"))
             id = std::string(icons::ClassVoxelService);
         else if (name.ends_with("###Debug"))
@@ -13057,6 +13084,144 @@ void drawTilesPanel(Editor& editor, scene::World& world, core::InstanceId root, 
                                       .c_str());
 }
 
+// --- The Water panel (ADR 0146 section 7; the water ledger's W5) -------------
+//
+// Three things to draw, what a click does with the one chosen, and the few
+// numbers somebody changes between two clicks: how wide, how deep, how high,
+// how fast. Everything else a `Water` has is in Properties, where drawing it
+// has already put it -- the tool selects what it makes.
+void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, const IconAtlas* icons)
+{
+    const auto opButton = [&](Editor::WaterOp op, std::string_view icon, const char* word, const char* tip) {
+        const bool on = editor.waterOp() == op && editor.tool() == Editor::Tool::Water;
+        if (on)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        const float width = ImGui::CalcTextSize(word).x + ImGui::CalcTextSize(tabIconPad().c_str()).x +
+                            ImGui::GetStyle().FramePadding.x * 2.0f;
+        if (ImGui::GetContentRegionAvail().x < width && ImGui::GetCursorPosX() > ImGui::GetStyle().WindowPadding.x)
+            ImGui::NewLine();
+        if (labeledIconButton(icons, icon, word, ImVec2(width, 0.0f))) {
+            editor.setWaterOp(op);
+            editor.setTool(Editor::Tool::Water);
+        }
+        if (on)
+            ImGui::PopStyleColor();
+        ImGui::SetItemTooltip("%s", tip);
+    };
+    opButton(Editor::WaterOp::River, icons::ClassWaterPoint, core::tr(ENG_TR("engine.editor.water_panel.river")),
+             core::tr(ENG_TR("engine.editor.water_panel.river_tip")));
+    ImGui::SameLine();
+    opButton(Editor::WaterOp::Lake, icons::ActionShapeBlock, core::tr(ENG_TR("engine.editor.water_panel.lake")),
+             core::tr(ENG_TR("engine.editor.water_panel.lake_tip")));
+    ImGui::SameLine();
+    opButton(Editor::WaterOp::Ocean, icons::ClassWater, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
+             core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
+    ImGui::Separator();
+
+    if (editor.tool() != Editor::Tool::Water) {
+        ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.water_panel.pick_one")));
+        return;
+    }
+
+    const Editor::WaterOp op = editor.waterOp();
+    ImGui::TextWrapped("%s", op == Editor::WaterOp::River  ? core::tr(ENG_TR("engine.editor.water_panel.river_hint"))
+                             : op == Editor::WaterOp::Lake ? core::tr(ENG_TR("engine.editor.water_panel.lake_hint"))
+                                                           : core::tr(ENG_TR("engine.editor.water_panel.ocean_hint")));
+    ImGui::Spacing();
+
+    // A number dragged is one undo step, however many frames the drag lasts:
+    // the gesture opens when the field is taken and closes when it is let go.
+    const float fieldWidth = 120.0f * ImGui::GetStyle().FontScaleMain;
+    const auto number = [&](core::TextKey key, const char* id, float value, float speed, float low,
+                            float high) -> std::optional<float> {
+        float edited = value;
+        ImGui::SetNextItemWidth(fieldWidth);
+        const bool changed = ImGui::DragFloat(labelled(key, id).c_str(), &edited, speed, low, high, "%.2f",
+                                              ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemActivated())
+            (void)inspector.beginGesture();
+        if (ImGui::IsItemDeactivated())
+            inspector.endGesture();
+        return changed ? std::optional<float>(edited) : std::nullopt;
+    };
+
+    // `Enum.WaterShape`, as the component holds it.
+    constexpr core::i32 ShapeOcean = 0;
+    constexpr core::i32 ShapeBox = 1;
+    constexpr core::i32 ShapeSpline = 2;
+    const core::InstanceId inHand = Editor::waterInHand(world, inspector);
+    const scene::WaterComponent* water = inHand.valid() ? world.waters().find(inHand) : nullptr;
+    const core::i32 wanted = op == Editor::WaterOp::River  ? ShapeSpline
+                             : op == Editor::WaterOp::Lake ? ShapeBox
+                                                           : ShapeOcean;
+
+    if (water != nullptr && water->shape == wanted) {
+        // **The water in hand**, and its own numbers.
+        const std::string_view name = world.atoms().text(world.name(inHand));
+        if (op == Editor::WaterOp::River) {
+            core::i64 count = 0;
+            for (core::InstanceId child = world.firstChild(inHand); child.valid(); child = world.nextSibling(child))
+                count += world.waterPoints().find(child) != nullptr ? 1 : 0;
+            ImGui::TextDisabled(
+                "%s",
+                core::tr(ENG_TR("engine.editor.water_panel.drawing"), {{"name", name}, {"count", count}}).c_str());
+        }
+        else {
+            ImGui::TextDisabled("%s", std::string(name).c_str());
+        }
+        const core::Vec3 size = water->size;
+        if (const std::optional<float> level =
+                number(ENG_TR("engine.editor.water_panel.surface"), "###water-surface",
+                       static_cast<float>(water->surfaceLevel), 0.05f, -100000.0f, 100000.0f)) {
+            inspector.enqueue(inHand, world.atoms().intern("SurfaceLevel"),
+                              scene::Value{static_cast<core::f64>(*level)});
+        }
+        if (op == Editor::WaterOp::River) {
+            if (const std::optional<float> width =
+                    number(ENG_TR("engine.editor.water_panel.width"), "###water-width", size.x, 0.1f, 0.5f, 512.0f)) {
+                inspector.enqueue(inHand, world.atoms().intern("Size"),
+                                  scene::Value{core::Vec3{*width, size.y, size.z}});
+                editor.setWaterWidth(*width);
+            }
+        }
+        if (op != Editor::WaterOp::Ocean) {
+            if (const std::optional<float> depth =
+                    number(ENG_TR("engine.editor.water_panel.depth"), "###water-depth", size.y, 0.1f, 0.25f, 512.0f)) {
+                inspector.enqueue(inHand, world.atoms().intern("Size"),
+                                  scene::Value{core::Vec3{size.x, *depth, size.z}});
+                editor.setWaterDepth(*depth);
+            }
+        }
+        if (op == Editor::WaterOp::River) {
+            if (const std::optional<float> flow = number(ENG_TR("engine.editor.water_panel.flow"), "###water-flow",
+                                                         static_cast<float>(water->flowSpeed), 0.05f, -64.0f, 64.0f)) {
+                inspector.enqueue(inHand, world.atoms().intern("FlowSpeed"),
+                                  scene::Value{static_cast<core::f64>(*flow)});
+            }
+            ImGui::Spacing();
+            if (labeledIconButton(icons, icons::ActionAdd, core::tr(ENG_TR("engine.editor.water_panel.new_river"))))
+                editor.finishRiver(inspector);
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.water_panel.new_river_tip")));
+        }
+        return;
+    }
+
+    // **Nothing in hand**: what the next one is made with.
+    if (op == Editor::WaterOp::Ocean)
+        return;
+    if (op == Editor::WaterOp::River)
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.water_panel.nothing_in_hand")));
+    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.water_panel.new_water")));
+    if (op == Editor::WaterOp::River) {
+        if (const std::optional<float> width = number(ENG_TR("engine.editor.water_panel.width"), "###water-width",
+                                                      editor.waterWidth(), 0.1f, 0.5f, 512.0f))
+            editor.setWaterWidth(*width);
+    }
+    if (const std::optional<float> depth = number(ENG_TR("engine.editor.water_panel.depth"), "###water-depth",
+                                                  editor.waterDepth(), 0.1f, 0.25f, 512.0f))
+        editor.setWaterDepth(*depth);
+}
+
 // --- The command palette and quick open (the owner's queue, Q2) -------------
 //
 // **Every command here is one the menus, the ribbon or a key already run**,
@@ -13245,6 +13410,14 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
             ImGui::SetWindowFocus("Tiles###Tiles");
         },
         "Tool: Tiles");
+    add(
+        core::tr(ENG_TR("engine.editor.command.tool_water")), "", icons::ClassWater, true,
+        [&panels, &editor] {
+            panels.water = true;
+            editor.setTool(Editor::Tool::Water);
+            ImGui::SetWindowFocus("###Water");
+        },
+        "Tool: Water");
     add(
         core::tr(ENG_TR("engine.editor.command.view_frame_selection")), "F", icons::ClassCamera,
         world != nullptr && hasSelection,
@@ -13847,6 +14020,9 @@ void drawStatusBar(Editor& editor, const Inspector* inspector, EditorPanels& pan
         case Editor::Tool::Foliage:
             brush = core::tr(ENG_TR("engine.editor.status_bar.brush.foliage"));
             break;
+        case Editor::Tool::Water:
+            brush = editor.waterPanelShown() ? core::tr(ENG_TR("engine.editor.status_bar.brush.water")) : nullptr;
+            break;
         case Editor::Tool::Select:
             break;
         }
@@ -13937,6 +14113,7 @@ constexpr ActivityView ActivityViews[] = {
     {"###Terrain", ENG_TR("engine.editor.panel.terrain"), icons::ClassTerrain, &EditorPanels::terrain, ""},
     {"###Blocks", ENG_TR("engine.editor.panel.blocks"), icons::ClassVoxelService, &EditorPanels::blocks, ""},
     {"###Tiles", ENG_TR("engine.editor.panel.tiles"), icons::ClassTilemap2D, &EditorPanels::tiles, ""},
+    {"###Water", ENG_TR("engine.editor.panel.water"), icons::ClassWater, &EditorPanels::water, ""},
 };
 
 // Shows a panel, brings it to the front of its node and gives it the keyboard.
@@ -14685,6 +14862,8 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
                 panels.blocks = true;
             if (chosen.valid() && world->tilemaps2d().find(chosen) != nullptr)
                 panels.tiles = true;
+            if (chosen.valid() && world->waters().find(chosen) != nullptr)
+                panels.water = true;
         }
     }
 
@@ -14750,6 +14929,23 @@ terrainPanelDone:;
     }
     if (editor != nullptr)
         editor->setTilesPanelShown(tilesShown && panels.tiles);
+    // **The Water tool follows its panel** -- open, not in front, for the
+    // reason the terrain brush gives: the panel shares its dock with
+    // Properties, which selecting the river just drawn brings forward.
+    if (panels.water) {
+        if (rightColumn != 0)
+            ImGui::SetNextWindowDockID(rightColumn, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.water")) + "###Water").c_str(),
+                         &panels.water)) {
+            if (editor == nullptr || world == nullptr || inspector == nullptr)
+                ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_shell.no_world")));
+            else
+                drawWaterPanel(*editor, *world, *inspector, icons);
+        }
+        ImGui::End();
+    }
+    if (editor != nullptr)
+        editor->setWaterPanelShown(panels.water);
     if (panels.stats) {
         if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.stats")) + "###Stats").c_str(),
                          &panels.stats)) {
@@ -14824,6 +15020,14 @@ terrainPanelDone:;
         // and the honest one: while you are testing, the tool keeps one key.
         if (editor != nullptr && editor->inPlayMode())
             commands.play = false;
+        else if (editor != nullptr && world != nullptr && inspector != nullptr &&
+                 editor->tool() == Editor::Tool::Water && editor->waterPanelShown() &&
+                 Editor::waterInHand(*world, *inspector).valid()) {
+            // **The river first, then the tool**: Escape with a river in hand
+            // puts the river down, so the next click starts another; a second
+            // Escape puts the tool down.
+            editor->finishRiver(*inspector);
+        }
         else if (editor != nullptr && editor->tool() != Editor::Tool::Select) {
             // **Out of a brush before letting go of anything.** Q did this
             // until it became a fly key, and a brush somebody cannot put down
@@ -14990,6 +15194,11 @@ terrainPanelDone:;
         // Q out of the Tiles tool, whatever else the world has.
         if (editor->tool() == Editor::Tool::Tiles && ImGui::IsKeyPressed(ImGuiKey_Q, false))
             editor->setTool(Editor::Tool::Select);
+        // Enter ends the river being drawn, as it ends a path in every tool
+        // that draws one.
+        if (editor->tool() == Editor::Tool::Water && inspector != nullptr && !ImGui::GetIO().WantTextInput &&
+            (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
+            editor->finishRiver(*inspector);
 
         // **F frames the selection**, which is the one camera shortcut every
         // editor in this shape shares -- Unity, Unreal, Godot and Blender all

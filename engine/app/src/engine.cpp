@@ -3868,15 +3868,23 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                   inspector);
             if (tileTook)
                 editor.touch();
+            // The Water tool (ADR 0146 section 7), on the same terms again.
+            const bool waterTook =
+                !brushTook && !blockTook && !tileTook &&
+                editor.driveWater(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                  inspector);
+            if (waterTook)
+                editor.touch();
 
-            const bool gizmoTook = !brushTook && !blockTook && !tileTook && editor.driveGizmo(authored(), inspector);
+            const bool gizmoTook =
+                !brushTook && !blockTook && !tileTook && !waterTook && editor.driveGizmo(authored(), inspector);
             // A drag moves parts without ever producing a command, so the one
             // place that knows it happened is here.
             if (gizmoTook)
                 editor.touch();
 
             const core::InstanceId wasSelected = inspector.selection();
-            if (!gizmoTook && !brushTook && !blockTook && !tileTook)
+            if (!gizmoTook && !brushTook && !blockTook && !tileTook && !waterTook)
                 // The root the VIEWPORT is drawing, so a click can only land
                 // on something that is on screen -- the stage's workspace while
                 // a stamp is open, the host's otherwise.
@@ -5464,6 +5472,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         debugDraw.wireBox(centre, core::Vec3{half, half, 0.01f}, color);
                     }
                 }
+                // **What the Water tool has in hand and is aiming at**: the
+                // river's points or the lake's corners, and the stretch or
+                // the rectangle the next click or this drag would make.
+                if (editor.tool() == Editor::Tool::Water)
+                    submitWaterGuide(editor.waterGuide(), snapshot.camera.origin, debugDraw);
             }
 
             // Uploaded before the render pass opens, because a copy cannot run

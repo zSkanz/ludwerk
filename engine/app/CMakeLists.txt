@@ -56,6 +56,7 @@ engine_add_module(app
         src/terrain_overlay.cpp
         src/world_panels.cpp
         src/editor.cpp
+        src/editor_water.cpp
         src/command_palette.cpp
         src/editor_drive.cpp
         src/view_host.cpp

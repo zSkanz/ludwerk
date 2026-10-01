@@ -321,6 +321,9 @@ struct EditorPanels
     // **The Tiles tool's dock (the 2D layer)**, on the same terms: off until
     // the toolbar or selecting a `Tilemap2D` asks for it.
     bool tiles = false;
+    // **The Water tool's dock** (ADR 0146 section 7), on the same terms: off
+    // until the toolbar or selecting a `Water` asks for it.
+    bool water = false;
     // The stack, the variables and the transport (ADR 0057). On by default
     // because a debugger nobody can find is a debugger nobody uses, and it says
     // "running" when nothing is stopped rather than being empty.
@@ -1980,6 +1983,9 @@ public:
         // Paints a foliage layer's density by hand (ADR 0116): `Add` brings it
         // back towards what the rules grow, `Subtract` thins it to nothing.
         Foliage,
+        // Draws water where it goes (ADR 0146 section 7): a river a click a
+        // point, a lake a drag, a sea a click at the height it comes to.
+        Water,
     };
     [[nodiscard]] Tool tool() const noexcept { return m_tool; }
     // Refused mid-stroke, for the reason `setGizmoMode` is refused mid-drag:
@@ -2616,6 +2622,69 @@ public:
     void setTilesetPreview(const TilesetPreview& preview) noexcept { m_tilesetPreview = preview; }
     [[nodiscard]] const TilesetPreview& tilesetPreview() const noexcept { return m_tilesetPreview; }
 
+    // --- The Water tool (ADR 0146 section 7; the water ledger's W5) ---------
+    //
+    // What a click means with the Water tool in hand. `editor_water.cpp` says
+    // why it is a tool and not three more rows in the Explorer's menu.
+    enum class WaterOp : core::u8
+    {
+        // A click adds a point to the end of the river in hand; with none in
+        // hand it starts one. A drag on a point moves it.
+        River,
+        // A drag lays a rectangle of water, level at the height it began at.
+        // A drag on a corner of the lake in hand resizes it.
+        Lake,
+        // A click brings the sea up to the height clicked.
+        Ocean,
+    };
+    [[nodiscard]] WaterOp waterOp() const noexcept { return m_waterOp; }
+    void setWaterOp(WaterOp op) noexcept;
+    // What new water is made with: how wide a river is, and how far below
+    // its surface a river or a lake goes. Metres.
+    [[nodiscard]] f32 waterWidth() const noexcept { return m_waterWidth; }
+    void setWaterWidth(f32 metres) noexcept;
+    [[nodiscard]] f32 waterDepth() const noexcept { return m_waterDepth; }
+    void setWaterDepth(f32 metres) noexcept;
+
+    // **The tool follows its panel**, as the Tiles tool does: it takes the
+    // pointer only while the Water panel is open.
+    void setWaterPanelShown(bool shown) noexcept { m_waterPanelShown = shown; }
+    [[nodiscard]] bool waterPanelShown() const noexcept { return m_waterPanelShown; }
+
+    // **The water in hand**: the selected `Water`, or the one a selected
+    // point is a point of -- so a click on a point, which selects it for
+    // Delete, does not put its river down.
+    [[nodiscard]] static core::InstanceId waterInHand(const scene::World& world, const Inspector& inspector) noexcept;
+    // Puts the river down: the next click starts another.
+    void finishRiver(Inspector& inspector) noexcept;
+
+    // What the viewport draws for the tool, made by `driveWater` each frame.
+    struct WaterGuide
+    {
+        // A river's points in their order, or a lake's four corners, on the
+        // surface.
+        std::vector<core::DVec3> handles;
+        // Whether they close into an outline (a lake) or are a course.
+        bool closed = false;
+        // The handle under the pointer or being dragged; -1 for none.
+        core::i32 hot = -1;
+        // Where a click would land, when one would do something.
+        std::optional<core::DVec3> aim;
+        // The end of the river a click would add a stretch from, and how
+        // wide that stretch is.
+        std::optional<core::DVec3> from;
+        f32 width = 0.0f;
+        // A lake being dragged out: where it began and where the pointer is.
+        std::optional<std::array<core::DVec3, 2>> rectangle;
+    };
+    [[nodiscard]] const WaterGuide& waterGuide() const noexcept { return m_waterGuide; }
+
+    // Runs the Water tool for this frame, beside `driveTiles` and on the same
+    // terms: true when the pointer belongs to it. A click that lays a point, a
+    // drag that moves one and a drag that lays or resizes a lake are each one
+    // undo step.
+    bool driveWater(scene::World& world, core::InstanceId root, Inspector& inspector);
+
     [[nodiscard]] GizmoMode gizmoMode() const noexcept { return m_gizmoMode; }
     // Refused mid-drag: changing what a drag means half way through it is not
     // something a person can have meant. Choosing a mode shows the handles.
@@ -3086,6 +3155,40 @@ private:
     bool m_tilesPanelShown = true;
     TilesetPreview m_tilesetPreview;
 
+    // A Water gesture, from a press to its release.
+    struct WaterGesture
+    {
+        enum class Kind : core::u8
+        {
+            // A press that has already done its work: a point laid, a sea
+            // made. Held so that the release is the tool's too.
+            Click,
+            // A river's point under the pointer.
+            Point,
+            // A lake's corner under the pointer.
+            Corner,
+            // A lake being dragged out.
+            Rectangle,
+        };
+        Kind kind = Kind::Click;
+        core::InstanceId water;
+        core::InstanceId point;
+        core::i32 index = -1;
+        // A rectangle's first corner; for a corner drag, the corner across.
+        core::DVec3 anchor;
+        // The height the gesture runs at.
+        core::f64 level = 0.0;
+        core::Vec2 pressedAt;
+        // Whether it has changed anything, which is when its undo step is.
+        bool moved = false;
+    };
+    WaterOp m_waterOp = WaterOp::River;
+    f32 m_waterWidth = 8.0f;
+    f32 m_waterDepth = 4.0f;
+    bool m_waterPanelShown = false;
+    WaterGuide m_waterGuide;
+    std::optional<WaterGesture> m_waterGesture;
+
     Tool m_tool = Tool::Select;
     bool m_hasTerrain = false;
     core::InstanceId m_foliageLayer;
@@ -3206,5 +3309,10 @@ private:
 // come out camera-relative and therefore exact four kilometres from the origin.
 void submitGizmo(const GizmoFrame& frame, GizmoMode mode, std::optional<GizmoHandle> active, core::DVec3 cameraOrigin,
                  render::DebugDraw& draw);
+
+// What the Water tool has in hand and is aiming at, on the same terms: the
+// course or the outline, a handle a point, and the stretch or the rectangle
+// the next click or the drag under way would make.
+void submitWaterGuide(const Editor::WaterGuide& guide, core::DVec3 cameraOrigin, render::DebugDraw& draw);
 
 } // namespace engine::app
