@@ -11937,6 +11937,16 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
     else {
         ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.panel.no_terrain")));
     }
+    // The far ground being made in the background (ADR 0150): said while it
+    // is, and gone once it is all there.
+    // Not over an import: the bar under it is what is under way, and two
+    // percentages a line apart read as one job said twice.
+    if (terrain != nullptr && editor.farGroundProgress() < 1.0f && !editor.terrainImportRunning()) {
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.panel.far_ground"),
+                                           {{"percent", static_cast<core::i64>(editor.farGroundProgress() * 100.0f)}})
+                                      .c_str());
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.panel.far_ground_tip")));
+    }
 
     // **An import under way is the panel** (ADR 0149 §2): how far it is, and
     // the way out. Nothing else here is offered while the world is half laid

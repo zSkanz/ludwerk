@@ -432,16 +432,37 @@ the ground around the player before the first frame, loads cells ahead of the
 camera and evicts them behind it. See
 [Streaming a large world](manual:assets/streaming).
 
-**Ground a game changes or makes is kept, and not in memory**
+**What is past the load radius is drawn from files of its own**
+([ADR 0150](../../decisions/0150-the-far-ground-is-kept-on-disk-as-it-was-gathered-and-a-node-is-named-by-its-cells.md)):
+the far ground, as it is drawn at each of its three coarsest resolutions, kept
+under the project's `.engine/terrain-pyramid/` -- about a quarter of what the
+cells weigh. `ludwerk terrain import` makes them, and so does `ludwerk build`,
+which ships them; saving a cell brings up to date the few files it is in. A
+project saved before they existed makes them in the background the first time
+it is opened, nearest the camera first -- the editor's terrain panel says how
+far it is -- and the horizon over a part not made yet appears when it is. The
+folder is a cache: deleted, it is made again. With them a world sixteen
+kilometres across is flown corner to corner at a frame rate, in memory that
+does not rise with the distance.
+
+**Fast travel waits for the ground, briefly**: with
+`StreamingService.PauseOutsideLoadedArea` the simulation holds while the
+ground under the player loads, and for that time the frame is the ground's --
+ten kilometres away, a quarter of a second.
+
+**Ground a game changes or makes is kept, and not all of it in memory**
 ([ADR 0149](../../decisions/0149-changed-ground-is-kept-on-disk-for-the-session-and-a-world-larger-than-memory-is-imported-a-tile-at-a-time.md)).
 A cell somebody changed -- a crater, a tunnel, ground a script wrote where
-there was none -- is written to a cache on disk when the camera leaves, and
-comes back from there when somebody returns: a crater stays a crater, and a
-script that writes a world a tile a frame with `WriteHeights` holds the ground
-round the camera and no more. The cache is the run's own, under the project's
-`.engine/session/`, and goes when the run ends: what is to last is saved
-(`SaveService`, or the scene). Three things keep changed ground in memory
-instead:
+there was none -- stays in memory while there is room: 256 MiB of changed
+ground past the load radius, 64 MiB on a phone. Past that the furthest is
+written to a cache on disk, and comes back from there when somebody returns: a
+crater stays a crater, and a script that writes a world a tile a frame with
+`WriteHeights` holds the ground round the camera and that much more. A world a
+script makes that fits is never written out. The cache is the run's own -- in
+the machine's temporary folder for a game, under the project's
+`.engine/session/` in the editor -- and goes when the run ends: what is to
+last is saved (`SaveService`, or the scene). Three things keep changed ground
+in memory whatever it weighs:
 
 - a terrain under 256 cells, which does not stream at all;
 - the ground within reach of a body that is not anchored, or of a character,

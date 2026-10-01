@@ -1172,8 +1172,8 @@ local Classes: { Schema.Class } = {
                     .. "**What a saved terrain streams by.** A terrain written with a scene and large "
                     .. "enough to span 256 cells or more is cut into cells of this size, rounded to "
                     .. "whole columns of 32-voxel chunks, and each one is loaded and dropped around "
-                    .. "`StreamingService`'s foci on its terrain radii. A cell somebody changed is never "
-                    .. "dropped.",
+                    .. "`StreamingService`'s foci on its terrain radii. A cell somebody changed is written "
+                    .. "to the run's cache on disk when it is dropped, and comes back as it was changed.",
             },
             {
                 Name = "Position",

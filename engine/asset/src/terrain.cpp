@@ -291,6 +291,42 @@ std::shared_ptr<TerrainChunk> TerrainChunk::summary() const
     return out;
 }
 
+TerrainChunk::Kept TerrainChunk::kept() const
+{
+    Kept out;
+    out.main = m_main.value;
+    out.paint = m_paint.value;
+    out.rows = m_summary ? m_summaryRows : !uniform();
+    for (u32 axis = 0; axis < 3; ++axis) {
+        for (u32 high = 0; high < 2; ++high) {
+            if (faceSolid(axis, high != 0))
+                out.solidFaces = static_cast<u8>(out.solidFaces | (1u << (axis * 2u + high)));
+        }
+    }
+    out.digest = digest();
+    return out;
+}
+
+std::shared_ptr<TerrainChunk> TerrainChunk::summaryOf(const Kept& kept)
+{
+    auto out = std::make_shared<TerrainChunk>();
+    out->m_main.value = kept.main;
+    out->m_paint.value = kept.paint;
+    out->m_summaryRows = kept.rows;
+    out->m_solidFaces = kept.solidFaces;
+    out->m_summary = true;
+    out->m_digests.whole.store(kept.digest, std::memory_order_relaxed);
+    out->m_digests.wholeValid.store(true, std::memory_order_release);
+    for (u32 slot = 0; slot < 27; ++slot) {
+        u64 mixed = kept.digest ^ (0x9E3779B97F4A7C15ull * (slot + 1u));
+        mixed = (mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9ull;
+        mixed = (mixed ^ (mixed >> 27)) * 0x94D049BB133111EBull;
+        out->m_digests.borders[slot].store(mixed ^ (mixed >> 31), std::memory_order_relaxed);
+    }
+    out->m_digests.bordersValid.store((1u << 27) - 1u, std::memory_order_release);
+    return out;
+}
+
 u64 TerrainChunk::digest() const noexcept
 {
     if (!m_digests.wholeValid.load(std::memory_order_acquire)) {
@@ -455,6 +491,32 @@ void TerrainField::cacheSurface(ChunkKey key, u32 level, core::u64 content,
     kept.insert(kept.begin(), SurfaceEntry{content, std::move(surface)});
     if (kept.size() > SurfaceContentsKept)
         kept.resize(SurfaceContentsKept);
+}
+
+void TerrainField::dropSurfaces(std::span<const ChunkKey> keys) const
+{
+    const std::unique_lock writing(m_surfaces->lock);
+    for (const ChunkKey& key : keys) {
+        const auto first = m_surfaces->entries.lower_bound(std::pair{key, 0u});
+        auto last = first;
+        while (last != m_surfaces->entries.end() && last->first.first == key)
+            ++last;
+        m_surfaces->entries.erase(first, last);
+    }
+}
+
+void TerrainField::adoptSurface(ChunkKey key, u32 level, std::shared_ptr<const SurfaceLevel> surface)
+{
+    if (surface != nullptr)
+        m_adopted[std::pair{key, level}] = std::move(surface);
+}
+
+std::shared_ptr<const SurfaceLevel> TerrainField::adoptedSurface(ChunkKey key, u32 level) const noexcept
+{
+    if (m_adopted.empty())
+        return nullptr;
+    const auto found = m_adopted.find(std::pair{key, level});
+    return found == m_adopted.end() ? nullptr : found->second;
 }
 
 std::vector<ChunkKey> TerrainField::chunkKeys() const

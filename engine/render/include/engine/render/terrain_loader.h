@@ -244,6 +244,14 @@ private:
         core::u64 content = 0;
         core::u64 revision = ~0ull;
         core::u64 shownRevision = ~0ull;
+        // **What its content was last checked against** (ADR 0150): how many
+        // edits the ground had had, and where its cells stood. While neither
+        // has moved, ground has only streamed in and out, and the node is
+        // named by its cells whichever of them are resident.
+        core::u64 checkedEdits = ~0ull;
+        core::u64 checkedCells = ~0ull;
+        core::u64 shownEdits = ~0ull;
+        core::u64 shownCells = ~0ull;
         TerrainSides sides{};
         // Built: a node of empty ground is built and has no mesh.
         bool built = false;
@@ -272,7 +280,16 @@ private:
         double error = 0.0;
         // The last frame this node was drawn or wanted.
         core::u64 used = 0;
+        // **How many nodes under it are built**, at any depth (ADR 0150): what
+        // says, without a walk, that nothing under an unbuilt node can be
+        // drawn in its place. The selection asked every node of an unbuilt
+        // subtree, down to its leaves, twice a frame -- a thousand a top-level
+        // node, and forty thousand a frame over a world still being built. A
+        // node with any is kept while they are, built or not.
+        core::u32 builtBelow = 0;
     };
+    // Counts a node built, or no longer built, in every node over it.
+    void countBuilt(const scene::World* world, core::InstanceId terrain, TerrainNodeKey key, bool built);
 
     [[nodiscard]] Node* find(const scene::World* world, core::InstanceId terrain, TerrainNodeKey key) noexcept;
     [[nodiscard]] const Node* find(const scene::World* world, core::InstanceId terrain,
@@ -334,6 +351,8 @@ private:
         core::InstanceId terrain;
         std::shared_ptr<const asset::TerrainField> field;
         core::u64 revision = 0;
+        // The edits the ground had had when the snapshot was taken.
+        core::u64 edits = 0;
     };
     std::vector<Shown> m_shown;
 };

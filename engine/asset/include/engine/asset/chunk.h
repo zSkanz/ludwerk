@@ -211,6 +211,11 @@ struct ChunkIndexEntry
     std::string urn;
     u32 instanceCount = 0;
     u32 bytes = 0;
+    // **What a cell of ground holds, as one number** (ADR 0150;
+    // `terrainCellSignature`), written by whoever wrote the cell. Zero where
+    // nobody did -- an index from before, or a cell of parts -- and the cell is
+    // then read to learn it.
+    core::u64 signature = 0;
 };
 
 struct ChunkIndex

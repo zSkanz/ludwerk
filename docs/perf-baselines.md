@@ -1516,6 +1516,102 @@ reason for P5c. The far ground reads level-0 cells to draw coarse nodes and
 re-derives every drawn node's content from all the cells under it whenever one
 comes or goes; 65 536 cells is thirty times the fixture it was measured on.
 
+**These two rows were taken with `--screenshot`**, which builds every node of
+the terrain inside the frame that asks for it: they are that, and not the
+game's frame. Without it the same flight on `6263333f` is the "before" row of
+the next section. The memory is the same either way.
+
+## A world that size, flown (ADR 0150)
+
+The terrain-editing ledger's P5c. The sixteen-kilometre world of the section
+before -- 65 536 cells of hills at a 1 m voxel, 4.0 GB -- on this machine, the
+`win-msvc-dev` build with the GPU's debug layer on, headless, `--pace=60`, no
+`--screenshot`, 2026-10-01. Memory is the process's private bytes, sampled
+twice a second from outside. `tests/perf/farflight` is the flight.
+
+**The targets**, and what was measured against them. p99 under 16.6 ms and no
+frame over 33 ms once past the first seconds; memory level, and bounded by
+what is in view:
+
+| | Median | p95 | p99 | Worst | Over 33 ms | Memory |
+|---|---|---|---|---|---|---|
+| Flight corner to corner, 200 m/s an axis, `FarPlane` 1 500 | 4.6 ms | 8.9 ms | **11.9 ms** | 22.9 ms | **0** | level at 790 MiB, peak 839 |
+| The same, `FarPlane` 6 000 | 5.7 ms | 9.5 ms | **11.5 ms** | 24.5 ms | **0** | level at 810 MiB, peak 870 |
+| Camera still, `FarPlane` 6 000 (180 draws, 385 000 triangles) | 5.7 ms | 6.2 ms | **8.3 ms** | 9.8 ms | **0** | 801 MiB, flat |
+| Before: the flight at 1 500 on `6263333f`, the package | 18.0 ms | 28.4 ms | 33.5 ms | -- | 77 | 2.6 GiB and rising |
+
+**The bound.** What the flight holds is the ground inside the terrain radius
+and two cells (the streaming's own hysteresis), the meshes of the nodes in
+view, 384 of the far ground's files decoded (some 64 MiB), the summaries of
+1 024 cells -- and the world's index, the one part that follows the world and
+not the view: 1.9 KiB a cell, 125 MiB here. Of the 800 MiB, 350 are the
+process before any ground (the dev build, the debug layer).
+
+**Fast travel**: a teleport of ten kilometres with
+`StreamingService.PauseOutsideLoadedArea`, the simulation held until the
+ground under the player is resident.
+
+| | Ground under the player | Worst frame after |
+|---|---|---|
+| This build | **252 to 268 ms** | 13 ms |
+| Before the held ring was read where it stands | 2.4 s | 35 to 49 ms, three seconds on, as the meshes left behind were released at once |
+
+**Laying it**, far ground's files and all, with `--import-terrain=hills`:
+
+| | Time | Of it, writing cells out | Of it, the far ground's files | Peak |
+|---|---|---|---|---|
+| 16 383 m, 65 536 cells | **430 s** | 56 s | about 100 s | **575 MiB** |
+
+The far ground's files are 957 MB in 5 376 files, a quarter of what the cells
+weigh. The memory an import gains as it goes is 1.9 KiB a cell: the index.
+The section before has 411 s and 617 MiB without the files, 148 s of it
+writing cells out: they are encoded on every worker now (D409).
+
+**A project saved before the files existed** -- the same world, its index
+with no signatures and no far ground on disk -- opened with the camera still
+and `FarPlane` 6 000: the files are made in the background at 1.9 blocks a
+second, 232 of the 324 in the first two minutes, the whole world in under
+three. While they are: median 5.1 ms, p99 8.2 ms, worst 12.5 ms, no frame
+over 16.7 ms. A block made alone on one thread is 1.2 to 2 s.
+
+**A script laying a world at run time**, `Terrain:WriteHeights` a tile of 512
+columns a Heartbeat, the camera at a corner with the 512 m terrain radius.
+Changed ground is held to 256 MiB of voxels before any is written (D409),
+which is some 420 MiB of the process -- the price of not writing a world that
+fits:
+
+| | Time | Peak |
+|---|---|---|
+| 8 km, the camera sees 1 km | 69 s | 1 062 MiB |
+| 8 km, the camera sees the world (`FarPlane = 20000`) | 73 s | 1 170 MiB |
+| 16 km, the camera sees 1 km | 298 s | 1 116 MiB |
+| 8 km and 20 km seen, before ADR 0150 | 94 s | 1 120 MiB and rising with the world |
+| 8 km and 1 km seen, everything far written out (ADR 0149 as it was) | 95 s | 640 MiB |
+
+Four times the world is four times the seconds and 54 MiB more: the index.
+What rose with the world before was a summary of every chunk of every cell
+the camera could see, kept for good.
+
+**A world a script makes in one frame**: `terrain_far_plane`'s twelve
+kilometres of flat ground, 35 344 cells, 305 MiB held and 4 MiB as cells.
+
+| | Before the first frame |
+|---|---|
+| ADR 0149 as it was: every cell past the radius written out | 38 s after the 13 s the script takes, on Windows; thirteen minutes in the Linux container, through a mounted source tree |
+| Held, less the 49 MiB that do not fit | 3 s |
+
+Of the 38 s, 18 were asking for the cache's folder once a cell and 3 were
+taking each cell out of the field one at a time; the 17 left are the files
+themselves, 0.5 ms each whatever is in them and however many threads write.
+
+**The gate's miniature** (`terrain_far_flight`): four kilometres, 4 356 cells
+and 36 blocks, laid and flown out and back twice, 4 200 frames at
+320 x 180. On this machine 5 287 cells come in and 5 060 go out, 200 or more of
+the far ground's files are read and no cell is read to make one, and the peak
+is 340 MiB with the second lap 6% over the first; on lavapipe in the Linux
+container the peak is 560 MiB and the median frame 24 ms, which is why the
+frame is not what it gates.
+
 ## The local gate (ADR 0148)
 
 `scripts/localgate.ps1`, the full run, on the development machine (20 logical

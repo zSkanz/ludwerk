@@ -394,3 +394,33 @@ TEST_CASE("an index written before cells had a real extent still reads")
     CHECK(index.chunks[0].bounds.min.x == doctest::Approx(512.0));
     CHECK(index.chunks[0].bounds.max.x == doctest::Approx(768.0));
 }
+
+TEST_CASE("an index row says what its cell of ground holds, and an index from before says nothing (ADR 0150)")
+{
+    seedRealCatalog();
+    ChunkIndex index;
+    index.chunkSize = 64.0f;
+    ChunkIndexEntry known;
+    known.id = ChunkId{3, -2, 0};
+    known.bounds = chunkBounds(known.id, index.chunkSize);
+    known.urn = "terrain/main/cell_3_-2.lterrain";
+    // Past what a JSON number holds: every bit must come back.
+    known.signature = 0xF123456789ABCDEFull;
+    index.chunks.push_back(known);
+    ChunkIndexEntry unknown = known;
+    unknown.id = ChunkId{4, -2, 0};
+    unknown.signature = 0;
+    index.chunks.push_back(unknown);
+
+    const std::string text = writeChunkIndex(index);
+    ChunkIndex parsed;
+    REQUIRE_FALSE(readChunkIndex(text, parsed).has_value());
+    REQUIRE(parsed.chunks.size() == 2);
+    CHECK(parsed.find(known.id)->signature == 0xF123456789ABCDEFull);
+    CHECK(parsed.find(unknown.id)->signature == 0u);
+    // A row with none writes none, so an index of parts is the index it was.
+    CHECK(text.find("f123456789abcdef") != std::string::npos);
+    ChunkIndex plain;
+    plain.chunks.push_back(unknown);
+    CHECK(writeChunkIndex(plain).find("\"sig\"") == std::string::npos);
+}

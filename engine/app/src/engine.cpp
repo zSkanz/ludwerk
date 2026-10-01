@@ -1208,6 +1208,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // put the whole materialisation burst in the measured window.
     SoakRecorder soak(60);
     core::u64 lastFrameNs = 0;
+    // What the ground's own streaming cost the frame before, for the soak: it
+    // is streaming as the parts' is, and the hitch check is about both.
+    f64 groundPumpMs = 0.0;
+    f64 groundPumpCpuMs = -1.0;
     core::u64 paceMarkNs = 0;
     // **How fast a window's frames are made** (ADR 0147, G0): the limiter and
     // what it is told. `framePresented` is whether the frame before had a
@@ -1303,10 +1307,18 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // Terrain and block worlds, streamed on a grid of their own (ADR 0075).
     FieldStreamer fields;
     // **Changed ground nobody is near is kept on disk for the session** (ADR
-    // 0149): this run's folder, beside the project or in the machine's
-    // temporary folder, removed when the run ends. Not for a run that exists
-    // to be compared with another -- a replay, a conformance run -- whose
-    // world must be a function of its inputs and nothing a disk did.
+    // 0149): this run's folder, removed when the run ends. Not for a run that
+    // exists to be compared with another -- a replay, a conformance run --
+    // whose world must be a function of its inputs and nothing a disk did.
+    //
+    // **Beside the project where a save takes the cache's files** -- the
+    // editor, an import: they are moved into the scene's folder, and on one
+    // disk a move is a rename. **In the machine's temporary folder for a game
+    // that is running** (ADR 0150 §7): nothing of it is saved by moving, and
+    // its project may be where nothing can be written -- an installed game --
+    // or where writing tens of thousands of files is slow: a source tree
+    // mounted into a container took thirteen minutes over what the container's
+    // own disk does in one.
     struct SessionCache
     {
         FieldStreamer& fields;
@@ -1315,7 +1327,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     if (options.replayRoot.empty() && options.conformanceRoot.empty()) {
         std::error_code sessionError;
         const bool project = std::filesystem::is_directory(options.scriptPath, sessionError);
-        const std::filesystem::path base = project
+        const bool savedFrom = options.editor || options.terrainImport.has_value();
+        const std::filesystem::path base = project && savedFrom
                                                ? options.scriptPath / ".engine" / "session"
                                                : std::filesystem::temp_directory_path(sessionError) / "engine-session";
         // A run that died left its folder: a day old, it is nobody's.
@@ -1766,8 +1779,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         };
                         if (outcome.partsActive)
                             (void)streaming.addIndex(outcome.index, inCache);
-                        if (!outcome.fieldIndex.chunks.empty())
+                        if (!outcome.fieldIndex.chunks.empty()) {
                             fields.setIndex(outcome.fieldIndex, inCache);
+                            // The far ground's files beside the cells they
+                            // are of (ADR 0150): with the cache, in a build.
+                            fields.setPyramidFolder(outcome.directory / "terrain-pyramid");
+                        }
                         return outcome.scenePath;
                     }
                 }
@@ -1894,9 +1911,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
     // **Partitioned and nothing else** (ADR 0053). The boot above has already
     // done the work through the hook; there is no second code path, which is
-    // the whole point of putting it there. This just declines to run a frame.
-    if (options.partitionOnly)
-        return std::nullopt;
+    // the whole point of putting it there. This just declines to run a frame --
+    // once the far ground's files are made (below, where the terrain's cells
+    // are known).
 
     // **The scene's tree as types, and nothing else** (ADR 0078).
     if (options.writeTypesOnly) {
@@ -1958,6 +1975,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             scene.resize(scene.size() - Suffix.size());
         return app::syncScriptFiles(*host, scene).summary();
     });
+
+    // **The partition step makes the far ground's files too** (ADR 0150), so a
+    // built game ships them and no player's machine gathers a kilometre of
+    // ground to draw a horizon.
+    if (options.partitionOnly) {
+        terrainCells.frame(host->world(), host->workspace(), 0, std::nullopt);
+        fields.setWorld(&host->world(), host->workspace());
+        if (!fields.buildFarGround([](core::f32 done) {
+                const core::I18nArg args[] = {{"percent", static_cast<core::i64>(std::lround(done * 100.0f))}};
+                core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.far_ground_progress"), args);
+            }))
+            core::log(core::LogLevel::Warn, ENG_TR("engine.cli.warn.far_ground_unwritten"), {});
+        return std::nullopt;
+    }
 
     LiveCharacterReplay characterReplay(host);
     network.setReferenceProbe(held);
@@ -2027,6 +2058,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             editor.driveTerrainImport(world, inspector, 0.0);
             terrainCells.frame(world, host->workspace(), editor.worldRestores(), cursor);
             fields.setSpillAllowed(true);
+            fields.setLooseBudget(0);
             fields.setWorld(&world, host->workspace());
             fields.pump(8.0);
             if (platform::nowNs() - saidNs > 5'000'000'000ull && editor.terrainImportRunning()) {
@@ -2044,6 +2076,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             host->bootSceneApplied() ? editor.saveOpenScene(world) : editor.saveSceneAs(world, options.startupScene);
         if (!saved)
             return refused();
+        // **And its far ground** (ADR 0150): every block's files, from the
+        // cells as they were just saved, so the first look at the world reads
+        // a file a node and not the world.
+        terrainCells.frame(world, host->workspace(), editor.worldRestores(), std::nullopt);
+        if (!fields.buildFarGround([](core::f32 done) {
+                const core::I18nArg progress[] = {{"percent", static_cast<core::i64>(std::lround(done * 100.0f))}};
+                core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.far_ground_progress"), progress);
+            }))
+            core::log(core::LogLevel::Warn, ENG_TR("engine.cli.warn.far_ground_unwritten"), {});
         const core::I18nArg args[] = {{"what", editor.status().message},
                                       {"cells", static_cast<core::i64>(fields.spilled())},
                                       {"ms", static_cast<core::i64>(std::llround(fields.spillMilliseconds()))}};
@@ -2246,16 +2287,30 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 if (const std::vector<asset::StreamingFocus> foci = streaming.collectFoci(); !foci.empty())
                     focusPosition = core::toVec3(foci.front().position);
 
-                soak.sample({.frameMs = frameMs,
-                             // The PREVIOUS frame's pump, because this sample is
-                             // taken before this frame's. Off by one frame and
-                             // deliberately so: every pump is counted exactly
-                             // once, which is the property a histogram needs.
-                             .streamingMs = streaming.lastPumpMilliseconds(),
-                             .streamingCpuMs = streaming.lastPumpCpuMilliseconds(),
-                             .residentBytes = platform::residentBytes(),
-                             .instanceCount = static_cast<core::u64>(host->world().instanceCount()),
-                             .focus = focusPosition});
+                const asset::TerrainPyramid::Stats farGround = fields.farGroundStats();
+                soak.sample(
+                    {.frameMs = frameMs,
+                     // The PREVIOUS frame's pump, because this sample is
+                     // taken before this frame's. Off by one frame and
+                     // deliberately so: every pump is counted exactly
+                     // once, which is the property a histogram needs.
+                     //
+                     // **The parts' and the ground's together**: the
+                     // ground streams through its own pump, and a
+                     // flight over a terrain spends all of its
+                     // streaming there. In CPU time when both can say;
+                     // a pump that did not run cost none.
+                     .streamingMs = streaming.lastPumpMilliseconds() + groundPumpMs,
+                     .streamingCpuMs = groundPumpCpuMs < 0.0
+                                           ? streaming.lastPumpCpuMilliseconds()
+                                           : std::max(0.0, streaming.lastPumpCpuMilliseconds()) + groundPumpCpuMs,
+                     .residentBytes = platform::residentBytes(),
+                     .instanceCount = static_cast<core::u64>(host->world().instanceCount()),
+                     .groundCellsIn = fields.stats().chunksLoaded,
+                     .groundCellsOut = fields.stats().chunksEvicted,
+                     .farGroundFiles = farGround.filesRead,
+                     .farGroundCellsRead = farGround.cellsRead,
+                     .focus = focusPosition});
             }
             lastFrameNs = sampleNs;
             phaseSimMs = 0.0;
@@ -3918,14 +3973,38 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                            options.editor && editing(editor.runState())
                                ? std::optional<core::DVec3>(editor.cameraCFrame().position)
                                : std::nullopt);
-        const f64 streamBudget = streaming.active() && fields.active() ? 1.0 : 2.0;
+        // **While the simulation is held for the ground, the ground has the
+        // frame** (ADR 0150): nothing moves until the ring under the player is
+        // resident -- the first load, or a fast travel with
+        // `PauseOutsideLoadedArea` -- so the two milliseconds that protect a
+        // tick protect nothing, and at a cell or two a frame ten kilometres'
+        // jump waited 2.4 s for a hundred cells. Eight, and the picture still
+        // moves.
+        const bool groundHeld =
+            fields.active() && (!fields.primed() || (host->world().engineState().streamingPauseOutsideLoadedArea &&
+                                                     !fields.minimumRingResident()));
+        const f64 streamBudget = groundHeld ? 8.0 : (streaming.active() && fields.active() ? 1.0 : 2.0);
         // In a match the ground's replication reads what changed from memory
         // (ADR 0149 §1.8). Pumped whether or not anything streams yet: a
         // world no file describes becomes a streamed one when its far ground
         // is first written out.
         fields.setSpillAllowed(!network.active() && !editingByHand);
+        // An import is laying the world on disk, so all of it goes as it is
+        // laid; a game holds what fits (D409).
+        fields.setLooseBudget(options.editor && editor.terrainImportRunning() ? 0 : FieldStreamer::LooseBudgetBytes);
         fields.setWorld(&host->world(), host->workspace());
-        fields.pump(streamBudget);
+        {
+            const core::u64 groundStartedNs = platform::nowNs();
+            const core::i64 groundStartedCpuNs = platform::threadCpuNs();
+            fields.pump(streamBudget, groundHeld);
+            groundPumpMs = static_cast<f64>(platform::nowNs() - groundStartedNs) / 1.0e6;
+            const core::i64 groundEndedCpuNs = platform::threadCpuNs();
+            groundPumpCpuMs = groundStartedCpuNs >= 0 && groundEndedCpuNs >= groundStartedCpuNs
+                                  ? static_cast<f64>(groundEndedCpuNs - groundStartedCpuNs) / 1.0e6
+                                  : -1.0;
+        }
+        if (options.editor)
+            editor.setFarGroundProgress(fields.farGroundProgress());
         if (streaming.active()) {
             streaming.setWorld(&host->world(), host->workspace());
             streaming.setPhysics(host->physics());
@@ -6040,9 +6119,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // not happen.
     std::optional<core::EngineError> soakFailure;
     if (!options.soakReportPath.empty()) {
-        const SoakThresholds thresholds{.memoryCeilingBytes = options.soakCeilingBytes,
-                                        .minimumInstances = options.soakMinimumInstances,
-                                        .returnRadiusMetres = options.soakReturnRadiusMetres};
+        SoakThresholds thresholds{.memoryCeilingBytes = options.soakCeilingBytes,
+                                  .memoryGrowthTolerance = static_cast<f64>(options.soakMemoryGrowthPercent) / 100.0,
+                                  .minimumInstances = options.soakMinimumInstances,
+                                  .minimumGroundCells = options.soakMinimumGroundCells,
+                                  .returnRadiusMetres = options.soakReturnRadiusMetres};
+        if (options.soakFrameP99Ms != 0)
+            thresholds.wholeFrameP99Ms = static_cast<f64>(options.soakFrameP99Ms);
         const SoakVerdict verdict = soak.evaluate(thresholds);
 
         std::ofstream report(options.soakReportPath, std::ios::binary);

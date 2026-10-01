@@ -2,6 +2,9 @@
 
 - Status: accepted (built; `docs/briefs/terrain-editing-perf.md`, P5b)
 - Date: 2026-10-01
+- Amended by: [0150](0150-the-far-ground-is-kept-on-disk-as-it-was-gathered-and-a-node-is-named-by-its-cells.md)
+  section 7 -- a game's cache is in the machine's temporary folder, and
+  changed ground is held until it does not fit a budget.
 - Decided by: the owner -- *"um mapa do tamanho de GTA V deveria ser
   possível"* -- through ludwerk-08, who approved the two halves below on
   2026-10-01. By the owner's standing rule of 2026-09-30 the means are what

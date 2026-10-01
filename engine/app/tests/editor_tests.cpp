@@ -7045,6 +7045,29 @@ TEST_CASE("hills wider than one table are laid a tile at a time, and a cancel pu
     CHECK(rig.editor.takeTerrainImportOutcome() == Editor::ImportOutcome::None);
 }
 
+TEST_CASE("a cancelled import on a world with no terrain leaves no terrain, and nothing to save")
+{
+    BrushRig rig;
+    rig.world.destroy(rig.terrain);
+    REQUIRE_FALSE(rig.editor.terrainIn(rig.world, rig.workspace).valid());
+    REQUIRE_FALSE(rig.editor.sceneDirty());
+    const core::usize depth = rig.editor.history().depth();
+    Editor::HillSpec spec;
+    spec.size = 6000.0f;
+    spec.low = 0.0f;
+    spec.high = 24.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    REQUIRE(rig.editor.terrainImportRunning());
+    rig.editor.driveTerrainImport(rig.world, rig.inspector, 0.0);
+    REQUIRE(rig.editor.terrainIn(rig.world, rig.workspace).valid());
+
+    rig.editor.cancelTerrainImport(rig.world, rig.inspector);
+    CHECK_FALSE(rig.editor.terrainIn(rig.world, rig.workspace).valid());
+    CHECK(rig.editor.history().depth() == depth);
+    // The terrain's making marked the scene changed; put back, it is not.
+    CHECK_FALSE(rig.editor.sceneDirty());
+}
+
 TEST_CASE("a heightmap in a folder of tiles is laid whole, and is not an undo step")
 {
     BrushRig rig;

@@ -77,6 +77,7 @@ engine_add_module_tests(render
         "terrain_disk|a node of ground on disk*"
     SHARD_FILES
         "terrain_loader|*terrain_loader_tests.cpp"
+        "terrain_pyramid|*terrain_pyramid_tests.cpp"
     SOURCES
         tests/debug_draw_tests.cpp
         tests/cluster_tests.cpp
@@ -92,6 +93,7 @@ engine_add_module_tests(render
         tests/animation_tests.cpp
         tests/mesh_loader_tests.cpp
         tests/terrain_loader_tests.cpp
+        tests/terrain_pyramid_tests.cpp
         tests/terrain_seam_tests.cpp
         tests/foliage_tests.cpp
         tests/particles_tests.cpp

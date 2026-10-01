@@ -715,3 +715,41 @@ TEST_CASE("a chunk that arrives after the focus has left is let go, not kept (D4
     CHECK(harness.manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Resident);
     CHECK(harness.materialized.size() == 9);
 }
+
+TEST_CASE("a payload materialised is not held on to (D408)")
+{
+    // `raw = {}` assigns no elements and keeps the room: every cell of ground
+    // ever streamed in kept its file's size in bytes, resident or evicted,
+    // for as long as the world stood.
+    seedRealCatalog();
+    StreamingManager manager;
+    manager.setIndex(gridIndex(2));
+    std::vector<ChunkId> asked;
+    int materialised = 0;
+    StreamingCallbacks callbacks;
+    callbacks.beginLoad = [&](ChunkId id, const ChunkIndexEntry&) {
+        asked.push_back(id);
+        return true;
+    };
+    callbacks.materializeBytes = [&](ChunkId, std::span<const std::byte>) {
+        ++materialised;
+        return 0.0;
+    };
+    callbacks.evict = [](ChunkId) {};
+    manager.setCallbacks(std::move(callbacks));
+    StreamingBudget budget;
+    budget.milliseconds = 1000.0;
+    budget.maxInFlight = 64;
+    const StreamingFocus here[] = {focusAt(CellCentre, 256.0, 300.0)};
+    manager.setFoci(here);
+    manager.tick(budget);
+    REQUIRE(asked.size() == 9);
+    const std::vector<std::byte> payload(64u * 1024u, std::byte{7});
+    for (const ChunkId id : asked)
+        manager.onChunkLoaded(id, payload);
+    CHECK(manager.heldBytes() >= 9u * payload.size());
+    manager.tick(budget);
+    REQUIRE(materialised == 9);
+    CHECK(manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Resident);
+    CHECK(manager.heldBytes() == 0u);
+}

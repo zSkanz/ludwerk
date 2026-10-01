@@ -259,7 +259,7 @@ void StreamingManager::tick(const StreamingBudget& budget)
             }
             entry.state = ChunkState::Unloaded;
             entry.decoded = Chunk{};
-            entry.raw = {};
+            entry.raw = std::vector<std::byte>();
             entry.bytes = 0;
         }
     }
@@ -314,7 +314,12 @@ void StreamingManager::tick(const StreamingBudget& budget)
 
             if (entry.state == ChunkState::Decoded && m_callbacks.materializeBytes) {
                 const f64 cost = m_callbacks.materializeBytes(indexEntry.id, entry.raw);
-                entry.raw = {};
+                // **A new vector, not `= {}`** (D408): that is an assignment
+                // of no elements, which keeps the room -- every cell ever
+                // loaded kept its file's bytes' worth for as long as the
+                // world stood, 316 MiB after one flight across sixteen
+                // kilometres.
+                entry.raw = std::vector<std::byte>();
                 if (cost < 0.0) {
                     entry.state = ChunkState::Failed;
                     m_stats.failed += 1;
@@ -372,6 +377,14 @@ void StreamingManager::tick(const StreamingBudget& budget)
     }
 
     m_stats.worstTickMs = std::max(m_stats.worstTickMs, nowMs() - started);
+}
+
+u64 StreamingManager::heldBytes() const noexcept
+{
+    u64 held = 0;
+    for (const Entry& entry : m_entries)
+        held += entry.raw.capacity();
+    return held;
 }
 
 ChunkState StreamingManager::stateOf(ChunkId id) const noexcept

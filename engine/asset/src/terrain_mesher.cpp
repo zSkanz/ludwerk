@@ -995,6 +995,10 @@ void prepareSurface(const TerrainField& field, ChunkKey key, u32 level)
 
 std::shared_ptr<const SurfaceLevel> surfaceOf(const TerrainField& field, ChunkKey key, u32 level)
 {
+    // One given comes first (ADR 0150): it is the chunk's surface whatever
+    // the field holds round it now.
+    if (std::shared_ptr<const SurfaceLevel> given = field.adoptedSurface(key, level); given != nullptr)
+        return given;
     return field.cachedSurface(key, level, surfaceKey(field, key));
 }
 
@@ -1137,18 +1141,23 @@ void missingSurfaces(const TerrainField& field, const MeshRegion& region, std::v
     wanted.erase(std::unique(wanted.begin(), wanted.end()), wanted.end());
     for (usize at = 0; at < wanted.size();) {
         const ChunkKey key = wanted[at].first;
+        // **What was given is not asked after** (ADR 0150): neither whether
+        // the chunk is plain all round nor what it is keyed by -- 27
+        // neighbours each, for every chunk of a node read from a file.
+        u32 open = 0;
+        for (; at < wanted.size() && wanted[at].first == key; ++at) {
+            if (field.adoptedSurface(key, wanted[at].second) == nullptr)
+                open |= 1u << wanted[at].second;
+        }
         // Air or rock all round has nothing to gather, and `meshField` knows
         // it without asking the cache.
-        if (plainAround(field, key)) {
-            while (at < wanted.size() && wanted[at].first == key)
-                ++at;
+        if (open == 0 || plainAround(field, key))
             continue;
-        }
         const core::u64 content = surfaceKey(field, key);
         u32 levels = 0;
-        for (; at < wanted.size() && wanted[at].first == key; ++at) {
-            if (field.cachedSurface(key, wanted[at].second, content) == nullptr)
-                levels |= 1u << wanted[at].second;
+        for (u32 level = 1; level < ChunkLevels; ++level) {
+            if ((open & (1u << level)) != 0 && field.cachedSurface(key, level, content) == nullptr)
+                levels |= 1u << level;
         }
         if (levels != 0)
             out.push_back(SurfaceWant{key, levels});
@@ -1229,6 +1238,10 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             return nullptr;
         if (const auto found = surfaceMemo.find({key, at}); found != surfaceMemo.end())
             return found->second.get();
+        // One given (ADR 0150) is taken as it is, with nothing asked of the
+        // chunks round it.
+        if (std::shared_ptr<const SurfaceLevel> given = from.adoptedSurface(key, at); given != nullptr)
+            return surfaceMemo.emplace(std::pair{key, at}, std::move(given)).first->second.get();
         // Air or rock all round first: nothing to find, and nothing of the
         // chunks' lazily kept digests touched for it.
         if (plainAround(from, key)) {

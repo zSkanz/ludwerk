@@ -713,6 +713,34 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_soak_gate.cmake)
     set_tests_properties(openworld_soak PROPERTIES TIMEOUT 900)
 
+    # **The far flight** (ADR 0150): a world wider than one table laid by
+    # `--import-terrain`, the far ground's files it leaves counted, and a
+    # flight out and back over it, twice, under a memory ceiling. What it
+    # holds is that a world is made and flown in bounded memory -- the flight
+    # found three leaks that rose with distance before it was a gate (D405,
+    # D406, D408) -- that the ground under it came in and went out, and that the far
+    # ground was drawn from its files with none made again.
+    #
+    # Four kilometres at a metre voxel: 4 356 cells and thirty-six blocks,
+    # laid in a quarter of a minute. On a real device (see the script): it
+    # takes its turn with the tests that draw. The ceiling is the peak
+    # measured, with headroom on the soaks' terms; `docs/perf-baselines.md`
+    # has both.
+    add_test(NAME terrain_far_flight
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/perf/farflight
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/farflight
+            -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/far-flight.json
+            -DSIZE=4100
+            -DBLOCKS=36
+            -DFRAMES=4200
+            -DCEILING_MB=768
+            -DMIN_GROUND=2000
+            -DGROWTH=15
+            -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_far_flight_gate.cmake)
+    set_tests_properties(terrain_far_flight PROPERTIES TIMEOUT 900)
+
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)
     set_tests_properties(perf_budget PROPERTIES TIMEOUT 600 LABELS perf)
@@ -1482,7 +1510,7 @@ if(ENG_BUILD_TESTS)
     # **Timed, so alone** (`RUN_SERIAL`): a frame ceiling or a tick budget
     # measured while twenty other processes compile shaders is a measurement
     # of the machine's load.
-    foreach(timed IN ITEMS perf_budget streaming_soak openworld_soak)
+    foreach(timed IN ITEMS perf_budget streaming_soak openworld_soak terrain_far_flight)
         if(TEST ${timed})
             set_property(TEST ${timed} APPEND PROPERTY RUN_SERIAL TRUE)
         endif()
@@ -1502,8 +1530,8 @@ if(ENG_BUILD_TESTS)
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
-        foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential editor_seam replica_seam
-        descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
+        terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
+        editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)

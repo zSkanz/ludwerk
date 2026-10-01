@@ -66,6 +66,9 @@ struct StreamedWorld
         (void)world.setParent(ground, workspace);
         world.voxels().add(workspace, scene::VoxelComponent{});
 
+        // Everything far is written out, as an import has it: what is held
+        // first has its own case (D409).
+        streamer.setLooseBudget(0);
         directory = std::filesystem::temp_directory_path() / "engine-field-streamer-tests";
         std::error_code ignored;
         std::filesystem::remove_all(directory, ignored);
@@ -538,6 +541,106 @@ TEST_CASE("a world no file describes streams once its far ground is written out,
     }
 }
 
+TEST_CASE("ground that fits in memory is not written out, and past that the furthest goes first (D409)")
+{
+    IoScope io;
+    // A world no file describes, 324 cells of it, as a script makes one.
+    const auto made = [](StreamedWorld& streamed) -> asset::TerrainField& {
+        streamed.streamer.reset();
+        streamed.streamer.setWorld(&streamed.world, streamed.workspace);
+        streamed.streamer.setSessionFolder(streamed.directory / "session");
+        asset::TerrainField& field = streamed.world.terrains().find(streamed.ground)->field;
+        (void)asset::fillBlock(field, core::DVec3{0.0, -20.0, 0.0}, core::Vec3{1152.0f, 40.0f, 1152.0f}, 1);
+        streamed.world.terrains().find(streamed.ground)->fieldRevision += 1;
+        return field;
+    };
+    core::usize everythingFar = 0;
+    core::usize held = 0;
+    {
+        // What an import asks for: everything far, whatever it weighs.
+        StreamedWorld streamed;
+        asset::TerrainField& field = made(streamed);
+        held = field.bytes();
+        for (int frame = 0; frame < 200; ++frame)
+            streamed.streamer.pump(50.0);
+        everythingFar = streamed.streamer.sessionCells();
+        REQUIRE(everythingFar > 200u);
+    }
+    {
+        // **A game holds what fits**: a megabyte or two of ground under the
+        // budget a game has, and not one file is made of it.
+        StreamedWorld streamed;
+        streamed.streamer.setLooseBudget(app::FieldStreamer::LooseBudgetBytes);
+        asset::TerrainField& field = made(streamed);
+        const std::size_t whole = field.chunks().size();
+        REQUIRE(held < app::FieldStreamer::LooseBudgetBytes);
+        for (int frame = 0; frame < 200; ++frame)
+            streamed.streamer.pump(50.0);
+        CHECK(streamed.streamer.sessionCells() == 0u);
+        CHECK_FALSE(streamed.streamer.active());
+        CHECK(field.chunks().size() == whole);
+        CHECK(streamed.holds(8, 8));
+    }
+    {
+        // **Past it, the furthest goes until what is left fits**: with room
+        // for half of it, the far corner is written out and ground nearer --
+        // far enough to go, were there no room -- is still held.
+        StreamedWorld streamed;
+        streamed.streamer.setLooseBudget(held / 2);
+        asset::TerrainField& field = made(streamed);
+        for (int frame = 0; frame < 200; ++frame)
+            streamed.streamer.pump(50.0);
+        CHECK(streamed.streamer.active());
+        CHECK(streamed.streamer.sessionCells() > 0u);
+        CHECK(streamed.streamer.sessionCells() < everythingFar);
+        CHECK(streamed.streamer.looseBytes() <= held / 2);
+        CHECK(field.bytes() <= held / 2 + held / 20);
+        CHECK_FALSE(streamed.holds(8, 8));
+        CHECK_FALSE(streamed.holds(-9, -9));
+        CHECK(streamed.holds(0, 0));
+        // And it comes back, like any cell of the cache.
+        streamed.lookFrom(core::DVec3{520.0, 0.0, 520.0});
+        REQUIRE(streamed.pumpUntil([&] { return streamed.holds(8, 8); }));
+    }
+}
+
+TEST_CASE("a terrain's cells adopted after the world came up are waited for like any ground (D412)")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    // The engine's own order: the scene's partition is given to the streamer
+    // first -- none here, so nothing streams and nothing is waited for -- and
+    // the terrain saved as a folder of cells is adopted when its scene is in.
+    asset::ChunkIndex cells;
+    cells.chunkSize = streamed.index.chunkSize;
+    for (const asset::ChunkIndexEntry& entry : streamed.index.chunks) {
+        if (entry.id.layer == asset::FieldLayerTerrain)
+            cells.chunks.push_back(entry);
+    }
+    const auto resolve = [&streamed](const asset::ChunkIndexEntry& entry) {
+        return std::optional<std::filesystem::path>(streamed.directory / entry.urn);
+    };
+    streamed.streamer.setIndex(asset::ChunkIndex{}, resolve);
+    streamed.streamer.setWorld(&streamed.world, streamed.workspace);
+    streamed.streamer.pump(50.0);
+    REQUIRE_FALSE(streamed.streamer.active());
+    REQUIRE(streamed.streamer.primed());
+
+    streamed.streamer.adoptTerrain(cells, resolve);
+    REQUIRE(streamed.streamer.active());
+    // The simulation is held on this: a character put on that ground at the
+    // first tick fell through it while its cells were still on their way.
+    CHECK_FALSE(streamed.streamer.primed());
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    CHECK(streamed.streamer.minimumRingResident());
+    CHECK(streamed.holds(0, 0));
+
+    // A save that turns the ground it holds into cells adopts them too, and
+    // there is nothing to wait for: it is all in memory.
+    streamed.streamer.adoptTerrain(cells, resolve, true);
+    CHECK(streamed.streamer.primed());
+}
+
 TEST_CASE("in a match changed ground stays in memory, cache or no cache")
 {
     IoScope io;
@@ -808,4 +911,150 @@ TEST_CASE("the far ground is told of a cell that goes to the session cache, and 
     CHECK(source->cells().size() == cells + 1);
     CHECK(source->summaries(asset::ChunkId{25, 25, asset::FieldLayerTerrain}) != nullptr);
     CHECK(source->summaries(beside).get() == kept.get());
+}
+
+// --- The far ground, kept on disk (ADR 0150) ---------------------------------
+
+TEST_CASE("a cell written out says what it holds, and the far ground's files are made of it")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    const std::filesystem::path session = streamed.directory / "session";
+    streamed.streamer.setSessionFolder(session);
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    REQUIRE(terrain.cellSource != nullptr);
+    // No folder of its own: the files are the session's.
+    REQUIRE(terrain.cellSource->pyramid() != nullptr);
+
+    (void)terrain.field.setVoxel(4, -2, 4, asset::Voxel{asset::FullOccupancy, 3});
+    streamed.lookFrom(core::DVec3{420.0, 0.0, 420.0});
+    REQUIRE(streamed.pumpUntil([&] { return !streamed.holds(0, 0); }));
+    streamed.streamer.pump(50.0);
+
+    // The row of the cell in the cache says what the cache's file holds, and
+    // so does the source the far ground reads.
+    const asset::ChunkId under{0, 0, asset::FieldLayerTerrain};
+    const asset::ChunkIndexEntry* row = streamed.streamer.index().find(under);
+    REQUIRE(row != nullptr);
+    CHECK(row->signature != 0u);
+    std::vector<std::byte> bytes;
+    REQUIRE(platform::readFile(session / "cell_0_0.lterrain", bytes));
+    asset::TerrainCell cell;
+    REQUIRE_FALSE(asset::decodeTerrainCell(bytes, cell).has_value());
+    CHECK(row->signature == asset::terrainCellSignature(cell.field, 0, 0, asset::terrainCellChunks(2.0f)));
+    CHECK(terrain.cellSource->signature(under) == row->signature);
+
+    // All of the far ground, now: every block's files, and nothing left to do.
+    REQUIRE(streamed.streamer.buildFarGround());
+    CHECK(streamed.streamer.farGroundProgress() == 1.0f);
+    CHECK(std::filesystem::exists(session / "pyramid" / "L5" / "0_0.lnode"));
+    CHECK(terrain.cellSource->pyramid()->current(*terrain.cellSource, 0, 0));
+}
+
+TEST_CASE("a save writes what each cell holds into its row")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    (void)terrain.field.setVoxel(4, -2, 4, asset::Voxel{asset::FullOccupancy, 3});
+    terrain.fieldRevision += 1;
+    app::FieldStreamer::TerrainCellWriter writer;
+    writer.write = [&](asset::ChunkId id, std::span<const std::byte> bytes) -> std::optional<std::string> {
+        const std::string name = "saved_" + std::to_string(id.x) + "_" + std::to_string(id.z);
+        REQUIRE(platform::writeFile(streamed.directory / name, bytes));
+        return name;
+    };
+    writer.read = [&](const asset::ChunkIndexEntry& entry) -> std::optional<std::vector<std::byte>> {
+        std::vector<std::byte> bytes;
+        if (!platform::readFile(streamed.directory / entry.urn, bytes))
+            return std::nullopt;
+        return bytes;
+    };
+    writer.remove = [](const asset::ChunkIndexEntry&) {};
+    writer.resolve = [&](const asset::ChunkIndexEntry& entry) {
+        return std::optional<std::filesystem::path>(streamed.directory / entry.urn);
+    };
+    const app::FieldStreamer::TerrainSaveReport report = streamed.streamer.saveTerrain(writer);
+    REQUIRE(report.ok);
+    const asset::ChunkIndexEntry* row = report.index.find(asset::ChunkId{0, 0, asset::FieldLayerTerrain});
+    REQUIRE(row != nullptr);
+    CHECK(row->signature == asset::terrainCellSignature(terrain.field, 0, 0, asset::terrainCellChunks(2.0f)));
+    // And it is in the index as written, for the next run.
+    asset::ChunkIndex read;
+    REQUIRE_FALSE(asset::readChunkIndex(asset::writeChunkIndex(report.index), read).has_value());
+    CHECK(read.find(asset::ChunkId{0, 0, asset::FieldLayerTerrain})->signature == row->signature);
+}
+
+TEST_CASE("ground coming in and going out as it is on disk is not an edit")
+{
+    // What the renderer checks a node's content by (ADR 0150): the field's
+    // revision moves for every cell that streams, and its edits do not.
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    const auto edits = [&] { return terrain.fieldRevision - terrain.streamedRevisions; };
+    const core::u64 atStart = edits();
+    const core::u64 revision = terrain.fieldRevision;
+
+    streamed.lookFrom(core::DVec3{420.0, 0.0, 420.0});
+    REQUIRE(streamed.pumpUntil([&] { return streamed.holds(6, 6) && !streamed.holds(-1, -1); }));
+    CHECK(terrain.fieldRevision > revision);
+    CHECK(edits() == atStart);
+
+    // A dig is one; and the cell it was in, kept or written out, is another
+    // cell than its file.
+    (void)terrain.field.setVoxel(204, -2, 204, asset::Voxel{});
+    terrain.fieldRevision += 1;
+    CHECK(edits() == atStart + 1);
+}
+
+TEST_CASE("the far ground's files are made in the background, and again for a cell that changes")
+{
+    IoScope io;
+    StreamedWorld streamed;
+    const std::filesystem::path pyramid = streamed.directory / "far";
+    streamed.streamer.setPyramidFolder(pyramid);
+    streamed.streamer.setSessionFolder(streamed.directory / "session");
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    // The rows of this index say nothing of what a cell holds: a project
+    // saved before. Built once, a block at a time, behind the frames.
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.farGroundProgress() == 1.0f; }));
+    CHECK(std::filesystem::exists(pyramid / "L5" / "0_0.lnode"));
+    CHECK(std::filesystem::exists(pyramid / "L5" / "-1_-1.lnode"));
+    scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
+    REQUIRE(terrain.cellSource->pyramid()->current(*terrain.cellSource, 0, 0));
+
+    // A crater, written out: its block is behind until it is made again.
+    (void)terrain.field.setVoxel(4, -2, 4, asset::Voxel{});
+    streamed.lookFrom(core::DVec3{420.0, 0.0, 420.0});
+    REQUIRE(streamed.pumpUntil([&] { return !streamed.holds(0, 0); }));
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.farGroundProgress() == 1.0f; }));
+    CHECK(terrain.cellSource->pyramid()->current(*terrain.cellSource, 0, 0));
+}
+
+TEST_CASE("held for the ground, the ring under the player is read at once")
+{
+    // A fast travel with the simulation waiting: a frame's rounds of reads
+    // gave a few cells a frame, and the ring was seconds away.
+    IoScope io;
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    streamed.lookFrom(core::DVec3{-420.0, 0.0, -420.0});
+    REQUIRE_FALSE(streamed.holds(-7, -7));
+    // The ring is asked after where the camera is now only once a pump has
+    // seen it there: one pump, which reads the ring and puts it in.
+    streamed.streamer.pump(50.0, true);
+    CHECK(streamed.streamer.minimumRingResident());
+    CHECK(streamed.holds(-7, -7));
+    CHECK(streamed.holds(-6, -8));
+
+    // Not held, the same jump is what the reads give a frame: not all of it
+    // in one.
+    streamed.lookFrom(core::DVec3{420.0, 0.0, -420.0});
+    REQUIRE_FALSE(streamed.holds(6, -7));
+    streamed.streamer.pump(50.0, false);
+    CHECK_FALSE(streamed.streamer.minimumRingResident());
 }

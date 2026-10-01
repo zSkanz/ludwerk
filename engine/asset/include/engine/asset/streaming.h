@@ -209,6 +209,11 @@ public:
     void tick(const StreamingBudget& budget);
 
     [[nodiscard]] ChunkState stateOf(ChunkId id) const noexcept;
+    // **The bytes it holds of payloads that arrived**, waiting to be
+    // materialised: what a read left, counted as it is held -- the room, not
+    // the length. Nothing once every chunk is resident or let go (D408). A
+    // walk of every entry: for a test and an overlay, not a frame.
+    [[nodiscard]] u64 heldBytes() const noexcept;
     [[nodiscard]] const StreamingStats& stats() const noexcept { return m_stats; }
     void resetStats() noexcept;
 

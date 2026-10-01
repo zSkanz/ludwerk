@@ -63,6 +63,16 @@ struct SoakThresholds
     // running a particular fly-through knows what it declared.
     u64 memoryCeilingBytes = 0;
 
+    // **How much the last quarter's peak may exceed the second quarter's**, as
+    // a fraction (ADR 0150). A ceiling says how much; this says whether it is
+    // still rising, on any machine and any device -- a software rasteriser
+    // holds half as much again as a GPU does, of what is the same world. For a
+    // path that covers the same ground in both quarters -- out and back,
+    // twice: a flight that keeps what it has flown over holds a lap more the
+    // second time. D405 and D408 were both that, and both were under every
+    // ceiling this world would have been given. Zero asserts nothing.
+    f64 memoryGrowthTolerance = 0.0;
+
     // How much the last quarter of the run may exceed the second quarter.
     // Not zero: a world whose chunk residency varies with where the circuit
     // happens to end legitimately differs by a few per cent between windows.
@@ -83,6 +93,16 @@ struct SoakThresholds
     // exactly what a leak-detector should see, which is why it cannot be the
     // only thing it looks at.
     u64 minimumInstances = 0;
+
+    // **The same, for a world that is ground** (ADR 0150): a terrain has one
+    // instance however wide it is, so `minimumInstances` cannot say whether a
+    // flight over one flew over anything. This many cells of ground have to
+    // have come in AND gone out again by the end of the run, and at least one
+    // of the far ground's files has to have been read -- a still camera, a
+    // world with no cells, a run too fast for a single read to land, all pass
+    // every other check here with the best numbers this instrument can print.
+    // Zero asserts nothing.
+    u64 minimumGroundCells = 0;
 
     // --- The revisited-place check (D066's named successor) ------------------
     //
@@ -146,6 +166,15 @@ struct SoakSample
     u64 residentBytes = 0;
     u64 instanceCount = 0;
 
+    // The ground, counted since the run began: cells streamed in, cells let
+    // go, and files of the far ground read (`minimumGroundCells`) -- and how
+    // many cells the far ground read whole to make a file again, which over a
+    // world whose files are up to date is none.
+    u64 groundCellsIn = 0;
+    u64 groundCellsOut = 0;
+    u64 farGroundFiles = 0;
+    u64 farGroundCellsRead = 0;
+
     // Where the streaming focus was, in world metres.
     //
     // **This is what makes D066's successor possible.** The growth check
@@ -182,9 +211,17 @@ struct SoakVerdict
     f64 worstStreamingCpuMs = -1.0;
     u64 peakResidentBytes = 0;
     u64 finalResidentBytes = 0;
+    // The peak of the second quarter and of the last (`memoryGrowthTolerance`).
+    u64 earlyResidentBytes = 0;
+    u64 lateResidentBytes = 0;
     u64 earlyInstances = 0;
     u64 lateInstances = 0;
     u64 peakInstances = 0;
+    // The ground's counts at the last frame.
+    u64 groundCellsIn = 0;
+    u64 groundCellsOut = 0;
+    u64 farGroundFiles = 0;
+    u64 farGroundCellsRead = 0;
 
     // The returning-focus check's own two numbers -- the median instance count
     // over every revisited place, early and late -- and whether it ran at all.

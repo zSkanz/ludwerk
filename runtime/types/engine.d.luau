@@ -1251,7 +1251,8 @@ declare extern type Terrain extends Instance with
     --- boundaries from everything else in the world. **What a saved terrain streams by.** A terrain
     --- written with a scene and large enough to span 256 cells or more is cut into cells of this size,
     --- rounded to whole columns of 32-voxel chunks, and each one is loaded and dropped around
-    --- `StreamingService`'s foci on its terrain radii. A cell somebody changed is never dropped.
+    --- `StreamingService`'s foci on its terrain radii. A cell somebody changed is written to the run's
+    --- cache on disk when it is dropped, and comes back as it was changed.
     read CellSize: number
     --- Where this terrain's own origin sits in the world, in metres. **A terrain is an instance and it
     --- can be moved.** Every voxel, every collider and every brush stroke is offset by this rather than

@@ -19,6 +19,7 @@ engine_add_module(asset
         src/terrain_raycast.cpp
         src/terrain_cell.cpp
         src/field_cells.cpp
+        src/terrain_pyramid.cpp
         src/terrain_palette.cpp
         src/terrain_layers.cpp
         src/terrain_rules.cpp

@@ -47,6 +47,20 @@ TerrainCells::TerrainCells(FieldStreamer& fields, std::filesystem::path contentR
     : m_fields(fields), m_contentRoot(std::move(contentRoot))
 {}
 
+std::filesystem::path TerrainCells::pyramidFolder(const std::string& cellIndex) const
+{
+    if (cellIndex.empty())
+        return {};
+    // Beside the project's other caches, under the index's own name: a scene
+    // and its ground have one, and a second scene another.
+    std::string name = std::filesystem::path(cellIndex).parent_path().generic_string();
+    for (char& letter : name) {
+        if (letter == '/' || letter == '\\' || letter == ':')
+            letter = '_';
+    }
+    return m_contentRoot.parent_path() / ".engine" / "terrain-pyramid" / (name.empty() ? std::string("terrain") : name);
+}
+
 FieldStreamer::CellResolver TerrainCells::resolver() const
 {
     return [root = m_contentRoot](const asset::ChunkIndexEntry& entry) -> std::optional<std::filesystem::path> {
@@ -67,6 +81,11 @@ void TerrainCells::frame(scene::World& world, core::InstanceId workspace, core::
         m_adoptedTerrain = terrainId;
         m_fields.setWorld(&world, workspace);
         m_fields.adoptTerrain(wanted.empty() ? asset::ChunkIndex{} : readCells(m_contentRoot, wanted), resolver());
+        // Its far ground's files (ADR 0150): kept with the project for a
+        // terrain saved as cells. One with no index keeps whatever folder it
+        // was given -- the partition's, for a terrain cut from its scene.
+        if (!wanted.empty())
+            m_fields.setPyramidFolder(pyramidFolder(wanted));
     }
     if (restores != m_restores) {
         m_restores = restores;
@@ -120,6 +139,7 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
     m_adopted = wanted;
     m_adoptedTerrain = terrainId;
     m_fields.setWorld(&world, workspace);
+    m_fields.setPyramidFolder(pyramidFolder(wanted));
 
     FieldStreamer::TerrainCellWriter writer;
     writer.write = [&folder, root = m_contentRoot](asset::ChunkId id,

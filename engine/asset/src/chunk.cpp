@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
@@ -395,6 +398,12 @@ std::string writeChunkIndex(const ChunkIndex& index)
         json.field("urn", entry.urn);
         json.field("instances", static_cast<u64>(entry.instanceCount));
         json.field("bytes", static_cast<u64>(entry.bytes));
+        // In hexadecimal: sixty-four bits do not fit a JSON number.
+        if (entry.signature != 0) {
+            char text[17];
+            (void)std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(entry.signature));
+            json.field("sig", std::string(text));
+        }
         json.field("minY", entry.bounds.min.y);
         json.field("maxY", entry.bounds.max.y);
         // The horizontal extent, which is NOT derivable from the id: an atomic
@@ -451,6 +460,12 @@ std::optional<core::EngineError> readChunkIndex(std::string_view json, ChunkInde
         entry.urn = std::string(row["urn"].asString());
         entry.instanceCount = static_cast<u32>(row["instances"].asInteger());
         entry.bytes = static_cast<u32>(row["bytes"].asInteger());
+        if (row.has("sig")) {
+            const std::string text(row["sig"].asString());
+            char* end = nullptr;
+            const unsigned long long held = std::strtoull(text.c_str(), &end, 16);
+            entry.signature = end == text.c_str() + text.size() ? static_cast<core::u64>(held) : 0;
+        }
 
         entry.bounds = chunkBounds(entry.id, out.chunkSize);
         // The vertical extent is the one thing the footprint cannot derive, and

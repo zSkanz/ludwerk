@@ -47,6 +47,9 @@ public:
 
 private:
     [[nodiscard]] FieldStreamer::CellResolver resolver() const;
+    // Where the far ground's files of the terrain with this index are kept
+    // (ADR 0150): under the project's `.engine/terrain-pyramid/`.
+    [[nodiscard]] std::filesystem::path pyramidFolder(const std::string& cellIndex) const;
 
     FieldStreamer& m_fields;
     std::filesystem::path m_contentRoot;

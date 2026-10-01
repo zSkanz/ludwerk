@@ -94,6 +94,10 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         }
     }
     verdict.finalResidentBytes = m_samples.back().residentBytes;
+    verdict.groundCellsIn = m_samples.back().groundCellsIn;
+    verdict.groundCellsOut = m_samples.back().groundCellsOut;
+    verdict.farGroundFiles = m_samples.back().farGroundFiles;
+    verdict.farGroundCellsRead = m_samples.back().farGroundCellsRead;
 
     std::sort(times.begin(), times.end());
     verdict.medianMs = percentile(times, 0.5);
@@ -108,9 +112,11 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
     if (quarter > 0) {
         for (usize i = quarter; i < quarter * 2; ++i) {
             verdict.earlyInstances = std::max(verdict.earlyInstances, m_samples[i].instanceCount);
+            verdict.earlyResidentBytes = std::max(verdict.earlyResidentBytes, m_samples[i].residentBytes);
         }
         for (usize i = quarter * 3; i < m_samples.size(); ++i) {
             verdict.lateInstances = std::max(verdict.lateInstances, m_samples[i].instanceCount);
+            verdict.lateResidentBytes = std::max(verdict.lateResidentBytes, m_samples[i].residentBytes);
         }
     }
 
@@ -120,6 +126,15 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         const core::I18nArg args[] = {{"peak", static_cast<core::i64>(verdict.peakInstances)},
                                       {"minimum", static_cast<core::i64>(thresholds.minimumInstances)}};
         verdict.failures.push_back(core::makeError(ENG_TR("engine.soak.err.empty_world"), args));
+    }
+    if (thresholds.minimumGroundCells > 0 &&
+        (verdict.groundCellsIn < thresholds.minimumGroundCells ||
+         verdict.groundCellsOut < thresholds.minimumGroundCells || verdict.farGroundFiles == 0)) {
+        const core::I18nArg args[] = {{"in", static_cast<core::i64>(verdict.groundCellsIn)},
+                                      {"out", static_cast<core::i64>(verdict.groundCellsOut)},
+                                      {"files", static_cast<core::i64>(verdict.farGroundFiles)},
+                                      {"minimum", static_cast<core::i64>(thresholds.minimumGroundCells)}};
+        verdict.failures.push_back(core::makeError(ENG_TR("engine.soak.err.still_ground"), args));
     }
 
     if (verdict.hitches > 0) {
@@ -157,6 +172,22 @@ SoakVerdict SoakRecorder::evaluate(const SoakThresholds& thresholds) const
         verdict.quarantined.push_back(core::makeError(ENG_TR("engine.soak.err.over_ceiling"), args));
 #else
         verdict.failures.push_back(core::makeError(ENG_TR("engine.soak.err.over_ceiling"), args));
+#endif
+    }
+
+    if (thresholds.memoryGrowthTolerance > 0.0 && verdict.earlyResidentBytes > 0 &&
+        static_cast<f64>(verdict.lateResidentBytes) >
+            static_cast<f64>(verdict.earlyResidentBytes) * (1.0 + thresholds.memoryGrowthTolerance)) {
+        const core::I18nArg args[] = {
+            {"early", static_cast<core::i64>(verdict.earlyResidentBytes / (1024 * 1024))},
+            {"late", static_cast<core::i64>(verdict.lateResidentBytes / (1024 * 1024))},
+            {"tolerance", static_cast<core::i64>(thresholds.memoryGrowthTolerance * 100.0 + 0.5)}};
+#ifdef ENG_SANITIZERS_ENABLED
+        // Quarantined under a sanitizer, as the ceiling is and for its reason:
+        // freed memory is kept in quarantine there, and what rises is the tool.
+        verdict.quarantined.push_back(core::makeError(ENG_TR("engine.soak.err.memory_growing"), args));
+#else
+        verdict.failures.push_back(core::makeError(ENG_TR("engine.soak.err.memory_growing"), args));
 #endif
     }
 
@@ -346,6 +377,9 @@ std::string SoakRecorder::report(const SoakThresholds& thresholds) const
     out << "  \"peakResidentBytes\": " << verdict.peakResidentBytes << ",\n";
     out << "  \"finalResidentBytes\": " << verdict.finalResidentBytes << ",\n";
     out << "  \"memoryCeilingBytes\": " << thresholds.memoryCeilingBytes << ",\n";
+    out << "  \"earlyResidentBytes\": " << verdict.earlyResidentBytes << ",\n";
+    out << "  \"lateResidentBytes\": " << verdict.lateResidentBytes << ",\n";
+    out << "  \"memoryGrowthTolerance\": " << fixed(thresholds.memoryGrowthTolerance, 3) << ",\n";
     out << "  \"earlyInstances\": " << verdict.earlyInstances << ",\n";
     out << "  \"lateInstances\": " << verdict.lateInstances << ",\n";
     out << "  \"peakInstances\": " << verdict.peakInstances << ",\n";
@@ -360,6 +394,11 @@ std::string SoakRecorder::report(const SoakThresholds& thresholds) const
     out << "  \"furthestMetres\": " << fixed(verdict.furthestMetres, 2) << ",\n";
     out << "  \"revisitFrameGap\": " << verdict.revisitFrameGap << ",\n";
     out << "  \"minimumInstances\": " << thresholds.minimumInstances << ",\n";
+    out << "  \"groundCellsIn\": " << verdict.groundCellsIn << ",\n";
+    out << "  \"groundCellsOut\": " << verdict.groundCellsOut << ",\n";
+    out << "  \"farGroundFiles\": " << verdict.farGroundFiles << ",\n";
+    out << "  \"farGroundCellsRead\": " << verdict.farGroundCellsRead << ",\n";
+    out << "  \"minimumGroundCells\": " << thresholds.minimumGroundCells << ",\n";
 
     out << "  \"histogram\": [\n";
     for (usize i = 0; i < buckets.size(); ++i) {

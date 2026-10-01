@@ -265,28 +265,143 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
 
 Held whole, the 16 km world is some 12 GiB before a save.
 
-- [ ] **The flight over it is not there** -- and was not before: the same
-  numbers on the build before this stage. Corner to corner over the 16 km
-  world at 200 m/s an axis, `FarPlane` 1 500 m, 60 Hz paced: the resident
-  ground stays what the radius holds (2 000 to 2 300 chunks), and **memory
-  climbs to 2.07 GiB, the median frame is 17 ms, p95 130 ms, 756 of 6 589
-  frames over 33 ms**. With the camera still and `FarPlane` 6 000 m: 2.3 GiB
-  and p95 300 ms while the far ground builds. The session cache is not in
-  it; the far ground is (ADR 0144): it reads every level-0 cell a far node
-  covers to summarise it, keeps a summary of each for good, and works out a
-  node's content from all of them whenever any cell comes or goes. At 2 200
-  cells that was 3 ms; at 65 536 it is the frame. **What a world this size
-  needs is coarse levels on disk** -- a pyramid of cells, each level twice
-  the voxel, written when a cell is saved or imported -- so a far node reads
-  one cell of its own level, and what is kept is bounded by what is in view.
-  Its own stage (P5c), and its own ADR.
-- [ ] **An import's memory grows some 6 KiB a cell laid** (202 to 604 MiB over
-  the 16 km): about 1 KiB of it is the index and the paths, and the rest is
-  not in live blocks -- the allocator's, not found. It is bounded by the
-  world's cells, not its voxels.
-- [ ] **The editor's panel during an import has not been looked at**: the
-  progress bar and Cancel are tested through `Editor`, not seen. With the
-  other pictures of the editor that wait for the desktop.
+- [x] **The flight over it** was not there -- and had not been before: the
+  far ground read every level-0 cell a far node covers, kept a summary of
+  each for good, and worked out a node's content from all of them whenever
+  any cell came or went. At 2 200 cells that was 3 ms; at 65 536 it was the
+  frame. P5c, below.
+- [x] **An import's memory growing some 6 KiB a cell laid**: 1.9 KiB once
+  D408 and the summaries were out of it, and that is the index. P5c.
+- [x] **The editor's panel during an import**: looked at, with a cancel in
+  the middle of sixteen kilometres. P5c.
+
+## P5c — a world that size, flown (ADR 0150)
+
+The order: *"The owner's goal is a GTA-sized map he can fly and play, not
+just one that can be made."* Six conditions; each is named below.
+
+- [x] **The far ground is kept on disk as it was gathered** (condition 1;
+  `asset::TerrainPyramid`, `terrain_pyramid.h`): a file a node at levels 3, 4
+  and 5 -- cells of 8, 16 and 32 voxels -- holding, a chunk, the surface ADR
+  0140 gathers and what a coarse mesh reads of the chunk without its voxels.
+  Never voxels averaged to a coarser voxel. `terrain_pyramid_tests` runs the
+  T2 tests on the files with nothing resident: the gallery's two-metre slab
+  and its balls have triangles at every level kept, flat ground is within
+  2 cm, a coarse cell takes the material on top, paint survives -- and a node
+  built from the files is, vertex for vertex, the node the whole ground gives.
+  ADR 0144's follow-up, "persisting the gathered coarse surfaces", is this.
+- [x] **Incremental** (condition 2): a cell is known by what it holds
+  (`terrainCellSignature`, in its row of the index as `"sig"`); a block -- a
+  top-level node's footprint, 32 chunk columns, 21 files -- regathers the
+  columns of a cell that holds something else and the columns beside them,
+  from that cell and the eight round it, and writes the files those columns
+  are in: one a level. The test holds a crater to nine cells read, one block
+  and three files.
+- [x] **A node is named by its cells, and asked only when it could have
+  changed**: its content is its cells' signatures, not every chunk under it;
+  the terrain counts which of its revisions were ground streaming in or out
+  as it is on disk (`TerrainComponent::streamedRevisions`), and while neither
+  the edits nor the cells have moved no node is checked. That walk was
+  11.6 ms of every frame of the flight.
+- [x] **The selection does not walk what is not built** (`Node::builtBelow`),
+  and **far ground is built from the top down** (`farUnbuilt`): forty thousand
+  nodes were asked after a frame while the far ground was behind.
+- [x] **Bounded** (condition 4): 384 decoded files, 1 024 cells' summaries,
+  and what was gathered of a cell's chunks goes when the cell does
+  (`TerrainField::dropSurfaces`). Three leaks of the streaming under it, each
+  rising with the distance flown: D405, D406, and **D408** -- a cell's bytes
+  were kept, at their capacity, after the cell was made of them.
+- [x] **The 6 KiB a cell of an import is accounted for**: measured again it is
+  1.9 KiB a cell, and it is the index -- a row, its path and the manager's
+  entry. The rest was D408 and the summaries, which no longer grow.
+- [x] **Old projects** (condition 5): an index whose rows say nothing of what
+  a cell holds has its blocks brought up to date in the background, nearest
+  the camera first, a block at a time off the main thread
+  (`FieldStreamer::pumpFarGround`); the block's own file remembers each cell
+  by its file's size and time, so the next run reads none of them. The
+  terrain panel says how far it is. The world is never held for it.
+- [x] **Held for the ground** (the fast-travel target): while the simulation
+  waits for the ground under a player, the ring is read where it stands,
+  nearest first, inside 8 ms a frame -- not asked of a service that answers a
+  few reads a frame.
+- [x] **A gate** (condition 3; `terrain_far_flight`,
+  `tests/streamsoak/run_far_flight_gate.cmake`): four kilometres laid by
+  `--import-terrain`, the far ground's files counted, and the world flown out
+  and back twice on a real device. It fails on ground that did not stream in
+  and out, on far ground not read from its files, on a cell read whole to
+  make a file the import had made, on a second lap that holds 15% more than
+  the first, and on a frame's worth of time inside streaming. **The first
+  version of it ran `--rhi=null` and passed over nothing**: no renderer, so no
+  node of the far ground was ever asked for. Found because 75 MiB was too
+  good. The soak's report now counts the ground (`--soak-min-ground`) and
+  compares the laps (`--soak-memory-growth`); a ceiling wide enough for a
+  software rasteriser would have passed every leak this flight found.
+- [x] **The editor's panel during an import, looked at** (condition 6;
+  `--editor-drive`, pictures in the session's scratchpad): sixteen kilometres
+  of hills from the Create tab -- the size typed, the note that it is laid a
+  tile at a time, the bar, Cancel. Cancelled at 17%: "import cancelled; the
+  world is as it was", the panel back to "This world has no terrain yet", no
+  cell and no far-ground file left on disk, the frame rate back from 8 to
+  100. Three things seen and changed: the scene was left marked as changed
+  (D410); the far ground's own percentage was said a line above the import's
+  bar, two numbers for what reads as one job; and nothing else. One seen and
+  left: the editor draws at 8 to 10 frames a second while a tile is laid each
+  frame, and the console takes a "frame took 90 ms" warning every five
+  seconds of it.
+
+- [x] **Built and flown as a game** -- the owner tests through the package.
+  `ludwerk build` of the gate's four-kilometre world, and the folder it
+  makes run: **an exported game with a streamed terrain had no ground**
+  (D411, since ADR 0087): the cells were packed, and the engine streams them
+  as files. They ship as files now, the far ground's with them. And **a
+  terrain saved as cells was not waited for at start** (D412): the first
+  ticks ran over nothing, and whoever stood there fell.
+
+**What the gate's clock found, in ADR 0149's own stage** (D409): every
+changed cell past the load radius was written out, whatever it weighed, and a
+file is two thirds of a millisecond on Windows however many threads write.
+`terrain_far_plane` -- twelve kilometres of flat ground a script makes in one
+frame, 305 MiB held, 4 MiB as cells -- went from under a minute to 142 s, and
+to 716 s in the Linux container, and was pushed. Now: changed ground is held
+until it does not fit (256 MiB of voxels, 64 on a phone), the furthest first
+past that; a game's cache is in the machine's temporary folder; many cells at
+once are encoded on every worker. `terrain_far_plane` is 33 s and 74 s.
+
+**The Linux stage compiles what CI compiles** (D407): the Tier-2 image had
+libstdc++ 13 and the hosted runner has 14, which no longer brings
+`<algorithm>` in by the way. ADR 0149's push was red for it for two hours.
+
+**The bench** (`docs/perf-baselines.md`, "A world that size, flown"), the
+16 km world of 65 536 cells, the dev build, paced at 60:
+
+| | Median | p99 | Over 33 ms | Memory |
+|---|---|---|---|---|
+| Flight corner to corner at 200 m/s, `FarPlane` 1 500 | 4.6 ms | 11.9 ms | 0 | level at 790 MiB |
+| The same, `FarPlane` 6 000 | 5.7 ms | 11.5 ms | 0 | level at 810 MiB |
+| Camera still, `FarPlane` 6 000 | 5.7 ms | 8.3 ms | 0 | 801 MiB, flat |
+| Before, the flight at 1 500 | 18.0 ms | 33.5 ms | 77 | 2.6 GiB, rising |
+
+A teleport of ten kilometres has ground under the player in 252 to 268 ms
+(2.4 s before). The import with the far ground's files is 430 s and
+575 MiB. A project from before makes its files in the background in
+under three minutes, at a p99 of 8.2 ms while it does.
+
+- [ ] **The session cache as one file** (ADR 0150 section 7.4). A file a cell
+  costs half a millisecond to create on Windows whatever it holds: 65 536 of
+  them are most of what an import's writing costs, and the reason changed
+  ground is held to a budget and not written as it goes. Cells appended to a
+  file of the run, found by an offset, make writing one cost what encoding it
+  does. It needs reads of a part of a file from the streaming's IO, and a
+  save that writes the cells out and does not rename them.
+- [ ] **The editor during an import draws at 8 to 10 frames a second**: a
+  tile is laid inside each frame. Enough for a bar and Cancel; not what an
+  editor should feel like. The tile on a worker, the frame free.
+- [ ] **The streaming manager walks every row of its index a tick**: a third
+  of a millisecond at 65 536 cells. A world four times that would notice.
+- [ ] **The block world has no far ground**, and a cell of it somebody built
+  in is still never let go.
+- [ ] **The async IO service answers 150 to 250 reads a second**, and it is
+  not known why; the held ring reads where it stands instead of asking it.
 
 ## P6 — the frame rate follows the monitor
 

@@ -293,6 +293,15 @@ struct EngineOptions
     // What "the world loaded" means for this particular scene. Zero asserts
     // nothing; see `soak.h` for why a soak needs to be told.
     u64 soakMinimumInstances = 0;
+    // The same for a world that is ground: cells in, and out again.
+    u64 soakMinimumGroundCells = 0;
+    // How many per cent the last quarter's peak memory may be over the second
+    // quarter's. Zero asserts nothing.
+    u64 soakMemoryGrowthPercent = 0;
+    // The whole frame's 99th percentile the soak allows, in milliseconds, for
+    // a run on a device whose frame is not the engine's to keep -- a software
+    // rasteriser. Zero keeps `SoakThresholds`' own.
+    u64 soakFrameP99Ms = 0;
 
     // The quality family, already resolved through its three layers by the time
     // it gets here (project_config.h): a preset, the project file, the flags.

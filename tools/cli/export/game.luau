@@ -38,7 +38,10 @@ export type Side = "all" | "client" | "server"
 --- on disk under it, server code as often as not, and the developer's own save
 --- slots (the script-sides audit). A game carries the pack, its manifest and the
 --- partition cache, and none of these.
-local EditorOnly = { "editor.json", "import", "check", "types", "match", "export", "trash", "conflicts", "saves" }
+--- And `session`: a run's own cache of changed ground (ADR 0149), which a run
+--- that died leaves behind -- tens of thousands of files of nobody's.
+local EditorOnly =
+    { "editor.json", "import", "check", "types", "match", "export", "trash", "conflicts", "saves", "session" }
 local EditorOnlyPrefixes = { "editor-layout" }
 
 local function editorOnly(name: string): boolean
@@ -108,21 +111,70 @@ local function copyTree(from: string, to: string, skip: ((string) -> boolean)?, 
     end
 end
 
+--- **A streamed terrain's cells are files, and stay files** (D411). A terrain
+--- of 256 cells or more is saved as a folder of them beside its scene (ADR
+--- 0087), and the engine streams them from disk by name: a cell is read off
+--- the frame's thread as a file, never through the content mounts. Packed with
+--- the rest of `content/` they were in the game and out of its reach -- an
+--- exported game with a large terrain had no ground at all, and a pack four
+--- gigabytes larger for it.
+local CellExtension = ".lterrain"
+
+local function isCell(name: string): boolean
+    return string.sub(name, -#CellExtension) == CellExtension
+end
+
+--- Whether `directory` is a terrain's folder of cells: it holds one.
+local function holdsCells(directory: string): boolean
+    for _, entry in fs.listDirectory(directory) do
+        if entry.type == "file" and isCell(entry.name) then
+            return true
+        end
+    end
+    return false
+end
+
+--- A cell, or the index of the folder it is in.
+local function cellFile(name: string, cells: boolean): boolean
+    return isCell(name) or (cells and name == "index.json")
+end
+
 --- A tree of hard links to `from`, or copies where a link is refused (another
 --- volume, a file system without them). Only for trees nothing writes into.
+--- Terrain cells are left out: they ship beside the pack (`copyCells`).
 local function linkTree(from: string, to: string)
     fs.createDirectory(to, { makeParents = true })
+    local cells = holdsCells(from)
     for _, entry in fs.listDirectory(from) do
         local source = projectlib.joined(from, entry.name)
         local target = projectlib.joined(to, entry.name)
         if entry.type == "dir" then
             linkTree(source, target)
-        elseif entry.type == "file" then
+        elseif entry.type == "file" and not cellFile(entry.name, cells) then
             if not pcall(fs.link, source, target) then
                 fs.copy(source, target)
             end
         end
     end
+end
+
+--- Every terrain's folder of cells under `from`, copied under `to` at the
+--- path it has -- and nothing else of the tree. Returns how many files.
+local function copyCells(from: string, to: string): number
+    local copied = 0
+    local cells = holdsCells(from)
+    for _, entry in fs.listDirectory(from) do
+        local source = projectlib.joined(from, entry.name)
+        local target = projectlib.joined(to, entry.name)
+        if entry.type == "dir" then
+            copied += copyCells(source, target)
+        elseif entry.type == "file" and cellFile(entry.name, cells) then
+            fs.createDirectory(to, { makeParents = true })
+            fs.copy(source, target)
+            copied += 1
+        end
+    end
+    return copied
 end
 
 local function removeTree(target: string)
@@ -465,6 +517,13 @@ local function compose(options: ComposeOptions)
         if options.sideManifest ~= nil and fs.exists(options.sideManifest) then
             fs.copy(options.sideManifest, projectlib.joined(target, "content.manifest.json"))
         end
+        -- The streamed terrain's cells, beside the pack that left them out:
+        -- at `content/`, where the engine looks for them (D411). Both sides
+        -- of a dedicated game carry them -- the server stands on the ground
+        -- too.
+        if fs.exists(options.content) then
+            copyCells(options.content, projectlib.joined(game, "content"))
+        end
         return
     end
 
@@ -491,6 +550,7 @@ return {
     stripGlobal = stripGlobal,
     stripStamp = stripStamp,
     stageContent = stageContent,
+    copyCells = copyCells,
     withServerRole = withServerRole,
     compose = compose,
     copyTree = copyTree,

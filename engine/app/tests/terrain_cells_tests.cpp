@@ -48,6 +48,7 @@ struct Editing
 
     explicit Editing(const std::filesystem::path& contentRoot) : content(contentRoot), cells(fields, contentRoot)
     {
+        fields.setLooseBudget(0);
         workspace = world.create(fixture.workspaceClass);
         world.workspaces().add(workspace, scene::WorkspaceComponent{});
         ground = world.create(fixture.folderClass);

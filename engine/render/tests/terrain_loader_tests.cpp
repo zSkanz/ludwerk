@@ -604,8 +604,10 @@ TEST_CASE("a node of ground on disk is the node the resident ground gives, befor
         const auto at = std::tuple{key.level, key.x, key.z};
         auto found = expectedOf.find(at);
         if (found == expectedOf.end())
+            // The whole ground, resident, of the same cells: a node is named by
+            // what its cells hold (ADR 0150), wherever they are.
             found =
-                expectedOf.emplace(at, std::pair{meshTerrainNode(whole, key), terrainNodeContent(whole, nullptr, key)})
+                expectedOf.emplace(at, std::pair{meshTerrainNode(whole, key), terrainNodeContent(whole, &source, key)})
                     .first;
         return found->second;
     };

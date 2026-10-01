@@ -11,6 +11,7 @@
 // about the world rather than about a walk (R10).
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -70,6 +71,16 @@ inline constexpr core::i32 FieldLayerVoxels = 1;
 // Takes a cell's chunks back out of `field`.
 void removeTerrainCell(TerrainField& field, const TerrainCell& cell);
 
+// **What a cell holds, as one number** (ADR 0150): the keys and digests of the
+// chunks in its columns, in key order -- never zero, which stands for a cell
+// nobody has read. The same from a cell's own field and from a field that
+// holds the cell's ground with the ground round it, so what a node of the far
+// ground is built from can be named by its cells whether they are resident or
+// not: the same number while a cell comes in and goes out untouched, and
+// another the moment somebody edits it.
+[[nodiscard]] core::u64 terrainCellSignature(const TerrainField& field, core::i32 cellX, core::i32 cellZ,
+                                             core::u32 cellChunks) noexcept;
+
 // --- A streamed terrain's cells, for drawing (ADR 0144) -----------------------
 
 // **The cells a streamed terrain is made of, readable from any thread**: what
@@ -81,6 +92,8 @@ void removeTerrainCell(TerrainField& field, const TerrainCell& cell);
 // ground is built from does not change as its cells come in and go out: a
 // resident chunk and the one read from its cell are the same chunk, and the
 // node keyed on either is the same node.
+class TerrainPyramid;
+
 class TerrainCellSource
 {
 public:
@@ -91,6 +104,9 @@ public:
     using Summaries = std::vector<TerrainField::Entry>;
 
     TerrainCellSource(core::u32 cellChunks, std::vector<ChunkId> cells, Reader read);
+    // The same, with what each cell holds (`terrainCellSignature`) where it
+    // is known: parallel to `cells`, zero for a cell nobody has read.
+    TerrainCellSource(core::u32 cellChunks, std::vector<ChunkId> cells, std::vector<core::u64> signatures, Reader read);
 
     // **Cells whose file is another now, and cells that are gone** (ADR 0149):
     // a cell written to the session cache, a cell a save wrote, a cell dug to
@@ -100,7 +116,47 @@ public:
     // read the whole far ground again, and with ground written out every
     // frame that was every frame. From the thread that owns the terrain;
     // every reader below may run beside it.
-    void update(std::span<const ChunkId> changed, std::span<const ChunkId> gone);
+    // `signatures`, parallel to `changed`, is what each now holds where
+    // whoever changed it knows -- it wrote the cell -- and may be shorter:
+    // a cell with none is read to learn it.
+    void update(std::span<const ChunkId> changed, std::span<const ChunkId> gone,
+                std::span<const core::u64> signatures = {});
+
+    // **What each cell over the chunk columns `[x0, x1] x [z0, z1]` holds**
+    // (`terrainCellSignature`), by (x, z); zero for one nobody has read. What
+    // a node's content is made of (ADR 0150): asked every frame of every node
+    // drawn, so it is a walk of the cells and nothing else.
+    void signaturesIn(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1,
+                      std::vector<std::pair<ChunkId, core::u64>>& out) const;
+    // What one cell holds, or zero.
+    [[nodiscard]] core::u64 signature(ChunkId id) const;
+    // **Moves whenever a cell changes, comes, goes or is first read**: while
+    // it stands, every signature is what it was, and whoever named something
+    // by them need not ask again.
+    [[nodiscard]] core::u64 revision() const noexcept { return m_revision.load(std::memory_order_acquire); }
+    // Learnt by whoever read the cell. Kept unless the cell changed meanwhile:
+    // a signature is never put over a newer one's.
+    void learnSignature(ChunkId id, core::u64 signature) const;
+
+    // **The far ground's files** (ADR 0150), where the terrain has them: what
+    // a coarse node is built from in place of the cells under it. Set once,
+    // by whoever made the source, before anything draws from it.
+    void setPyramid(std::shared_ptr<TerrainPyramid> pyramid) noexcept { m_pyramid = std::move(pyramid); }
+    [[nodiscard]] TerrainPyramid* pyramid() const noexcept { return m_pyramid.get(); }
+
+    // **A cell's file as one number that changes when the file does** -- its
+    // size and when it was written -- or zero where that is not known. For a
+    // cell whose row does not say what it holds, an index from before ADR
+    // 0150: the far ground's files remember what such a cell held and this,
+    // and while this is the same the cell need not be read to learn it again.
+    using Stamper = std::function<core::u64(ChunkId)>;
+    void setStamper(Stamper stamper) { m_stamper = std::move(stamper); }
+    [[nodiscard]] core::u64 stampOf(ChunkId id) const { return m_stamper ? m_stamper(id) : 0; }
+
+    // How many cells' summaries are kept at once: the least lately asked for
+    // go. A summary is read again in a millisecond; kept for every cell ever
+    // seen, they were what a flight over a large world held on to.
+    static constexpr core::usize SummariesKept = 1024;
 
     // How many chunk columns a cell is on a side.
     [[nodiscard]] core::u32 cellChunks() const noexcept { return m_cellChunks; }
@@ -135,7 +191,23 @@ private:
     // Guards the cells and what is kept of them.
     mutable std::mutex m_lock;
     std::vector<ChunkId> m_cells;
-    mutable std::map<std::pair<core::i32, core::i32>, std::shared_ptr<const Summaries>> m_summaries;
+    // Parallel to `m_cells`: what each holds, zero where nobody has read it.
+    mutable std::vector<core::u64> m_signatures;
+    // The lowest and highest z of any cell, kept as the cells change: asked
+    // every frame, and a walk of every cell when it was worked out each time.
+    // Never narrowed when a cell goes -- a box a little wide costs nothing.
+    core::i32 m_lowZ = 0;
+    core::i32 m_highZ = -1;
+    mutable std::atomic<core::u64> m_revision{1};
+    struct KeptSummaries
+    {
+        std::shared_ptr<const Summaries> summaries;
+        core::u64 used = 0;
+    };
+    mutable std::map<std::pair<core::i32, core::i32>, KeptSummaries> m_summaries;
+    mutable core::u64 m_summaryClock = 0;
+    std::shared_ptr<TerrainPyramid> m_pyramid;
+    Stamper m_stamper;
 };
 
 // --- Block worlds ------------------------------------------------------------

@@ -300,6 +300,25 @@ public:
     [[nodiscard]] std::shared_ptr<TerrainChunk> summary() const;
     [[nodiscard]] bool summarized() const noexcept { return m_summary; }
 
+    // **A summary as a file keeps it** (ADR 0150): the value and the paint,
+    // whether the chunk was more than one value, which faces are solid, and
+    // its digest. Twelve bytes where a summary's 27 border digests are 216:
+    // those key a gathered surface by what was round the chunk, and a surface
+    // read back from a file is given, not looked up (`adoptSurface`).
+    struct Kept
+    {
+        core::u16 main = 0;
+        core::u16 paint = 0;
+        bool rows = false;
+        core::u8 solidFaces = 0;
+        core::u64 digest = 0;
+    };
+    // Of a chunk or of a summary alike.
+    [[nodiscard]] Kept kept() const;
+    // The summary again. Its border digests are made from its own digest, so
+    // nothing ever reads voxels it does not have for one.
+    [[nodiscard]] static std::shared_ptr<TerrainChunk> summaryOf(const Kept& kept);
+
 private:
     [[nodiscard]] static core::u32 rowIndex(core::u32 y, core::u32 z) noexcept { return y * ChunkEdge + z; }
     void invalidate() noexcept;
@@ -637,6 +656,25 @@ public:
     void cacheSurface(ChunkKey key, core::u32 level, core::u64 content,
                       std::shared_ptr<const SurfaceLevel> surface) const;
 
+    // **A chunk's gathered surface at a level, given** (ADR 0150): read back
+    // from the far ground's files, where it was kept as it was gathered. The
+    // mesher takes one of these before it looks one up by content, and gathers
+    // none for a chunk that has one -- which is the point: the chunk's voxels
+    // are on disk, and so are its neighbours'. **This field's alone**: a copy
+    // made before does not have them, and they go with the field. Written
+    // before anything meshes from it; read from any thread after.
+    // **Lets go of what was gathered of these chunks**, at every level: for
+    // ground that has left the field. The cache is shared by every copy of
+    // the field and was never emptied, so a camera crossing a large world
+    // kept the surfaces of all the ground it had ever been over -- two
+    // gigabytes of them, sixteen kilometres on. A copy still meshing one of
+    // these chunks misses, and gathers it again from the chunks it holds.
+    void dropSurfaces(std::span<const ChunkKey> keys) const;
+
+    void adoptSurface(ChunkKey key, core::u32 level, std::shared_ptr<const SurfaceLevel> surface);
+    [[nodiscard]] std::shared_ptr<const SurfaceLevel> adoptedSurface(ChunkKey key, core::u32 level) const noexcept;
+    [[nodiscard]] bool adoptsSurfaces() const noexcept { return !m_adopted.empty(); }
+
 private:
     struct SurfaceEntry
     {
@@ -668,6 +706,9 @@ private:
     // Shared by copies, looked up by key and never walked: nothing about the
     // world reaches it but what it was asked.
     std::shared_ptr<SurfaceCache> m_surfaces = std::make_shared<SurfaceCache>();
+    // Surfaces given (`adoptSurface`), by chunk and level. Looked up, never
+    // walked.
+    std::map<std::pair<ChunkKey, core::u32>, std::shared_ptr<const SurfaceLevel>> m_adopted;
 };
 
 // A batch of voxel writes: caches the chunk it is in, and normalises every

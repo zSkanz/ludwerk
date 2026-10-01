@@ -209,4 +209,73 @@ test.suite("packaging", function(suite)
 
         removeTree(parent)
     end)
+
+    suite:case("a packaged game with a streamed terrain has its ground (D411)", function()
+        if not platform.win32 then
+            return
+        end
+        local host = projectlib.findEngine()
+        assert.that(host ~= nil, "no engine host was found; build one or set ENG_HOST")
+
+        local parent, project = scaffold("packageterrain")
+        -- Eleven hundred metres of hills: 324 cells, past the 256 at which a
+        -- terrain is saved as a folder of cells beside its scene and streamed
+        -- (ADR 0087). The command is the one `ludwerk terrain import` runs.
+        local laid = process.run({
+            host :: string,
+            project,
+            "--import-terrain=hills",
+            "--import-size=1100",
+            "--import-high=40",
+        })
+        assert.that(laid.ok, `the terrain was not laid:\n{laid.stdout}{laid.stderr}`)
+        local cells = projectlib.joined(project, "content", "terrain", "scenes", "main.scene")
+        assert.that(fs.exists(projectlib.joined(cells, "index.json")), "the import saved no folder of cells")
+
+        local result = build.run({ path = project, output = nil, target = "windows", force = false, devHost = true })
+        assert.eq(result, 0)
+        local output = projectlib.joined(project, "dist", "windows")
+        local game = projectlib.joined(output, "game")
+
+        -- **The cells are files in the game, where the engine streams them
+        -- from, and not in the pack**, which it never reads a cell through:
+        -- packed, they were a game with no ground and a pack as large as the
+        -- world.
+        local shipped = projectlib.joined(game, "content", "terrain", "scenes", "main.scene")
+        assert.that(fs.exists(projectlib.joined(shipped, "index.json")), "the game has no index of its terrain's cells")
+        local count = 0
+        for _, entry in fs.listDirectory(shipped) do
+            if string.sub(entry.name, -9) == ".lterrain" then
+                count += 1
+            end
+        end
+        assert.that(count >= 256, `the game carries {count} cells of its terrain`)
+        local manifest = fs.readFileToString(projectlib.joined(game, ".engine", "content.manifest.json"))
+        assert.that(string.find(manifest, ".lterrain", 1, true) == nil, "the pack carries the terrain's cells")
+        assert.that(string.find(manifest, "main.scene.json", 1, true) ~= nil, "the pack lost the scene")
+        -- The far ground's files (ADR 0150) go with it, made by the import.
+        assert.that(
+            fs.exists(projectlib.joined(game, ".engine", "terrain-pyramid")),
+            "the game carries no far ground for its terrain"
+        )
+        -- And nothing of a run's own cache.
+        assert.that(not fs.exists(projectlib.joined(game, ".engine", "session")), "the game carries a session cache")
+
+        -- Run with no arguments but the test's own, and the index is found:
+        -- before, the game said that nothing mounted resolved it, and ran on
+        -- over no ground. That the ground then streams in and is waited for
+        -- is the engine's (`field_streamer_tests`, D412) -- not asserted here,
+        -- where the binary packaged may be the player a gate before this one
+        -- built.
+        local ran =
+            process.run({ projectlib.joined(output, "packageterrain.exe"), "--headless", "--frames=60", "--exit" })
+        local said = ran.stdout .. ran.stderr
+        assert.that(ran.ok, `the packaged game exited non-zero:\n{said}`)
+        assert.that(
+            string.find(said, "nothing mounted resolves", 1, true) == nil,
+            `the packaged game could not find its terrain's cells:\n{said}`
+        )
+
+        removeTree(parent)
+    end)
 end)

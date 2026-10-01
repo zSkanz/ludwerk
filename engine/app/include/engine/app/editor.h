@@ -2257,6 +2257,13 @@ public:
     [[nodiscard]] const std::filesystem::path& heightFunctionSource() const noexcept { return m_heightFunctionSource; }
     void setHeightFunctionSource(std::filesystem::path source) { m_heightFunctionSource = std::move(source); }
 
+    // **How much of the far ground's files are up to date** (ADR 0150), 0 to
+    // 1, as the streamer says: shown in the terrain panel while it is short
+    // of all of it -- a project saved before the files existed builds them in
+    // the background, and so does an import's ground.
+    void setFarGroundProgress(f32 progress) noexcept { m_farGroundProgress = progress; }
+    [[nodiscard]] f32 farGroundProgress() const noexcept { return m_farGroundProgress; }
+
     [[nodiscard]] bool terrainImportRunning() const noexcept { return m_import != nullptr; }
     [[nodiscard]] f32 terrainImportProgress() const noexcept;
     // Where the tile being laid is, in the world.
@@ -3108,11 +3115,15 @@ private:
         std::unique_ptr<scene::WorldSnapshot> before;
         // Whether the terrain was there before: its making was a step.
         bool existed = false;
+        // Whether the scene had changes to save before: a cancel puts the
+        // world back, and the scene is then as unsaved as it was.
+        bool wasDirty = false;
         std::string name;
         core::u64 startedNs = 0;
     };
     std::unique_ptr<ImportJob> m_import;
     ImportOutcome m_importOutcome = ImportOutcome::None;
+    f32 m_farGroundProgress = 1.0f;
     HeightFunctionLoader m_heightFunctionLoader;
     std::filesystem::path m_heightFunctionSource;
     // Starts `m_import` over `columns` x `rows` columns round the terrain's

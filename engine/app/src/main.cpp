@@ -305,6 +305,29 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.soakMinimumInstances = parsed;
             continue;
         }
+        if (arg.starts_with("--soak-min-ground=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.soakMinimumGroundCells = parsed;
+            continue;
+        }
+        if (arg.starts_with("--soak-memory-growth=") || arg.starts_with("--soak-frame-p99-ms=")) {
+            const std::string_view value = arg.substr(arg.find('=') + 1);
+            engine::core::u64 parsed = 0;
+            if (!numericValue(value, parsed) || parsed == 0) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", value}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            (arg.starts_with("--soak-memory-growth=") ? options.soakMemoryGrowthPercent : options.soakFrameP99Ms) =
+                parsed;
+            continue;
+        }
         // The render target's size. Windowed it is the window; headless it is the
         // offscreen texture. The M4 gate records a frame-time baseline at 1080p
         // and the host had no way to be asked for one.

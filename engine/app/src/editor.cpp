@@ -6117,6 +6117,7 @@ bool Editor::beginTerrainImport(scene::World& world, core::InstanceId rootOrWork
     // the terrain is made, so a cancelled import on a new world leaves none.
     job->before = std::make_unique<scene::WorldSnapshot>(world.snapshot());
     job->existed = terrainIn(world, rootOrWorkspace).valid();
+    job->wasDirty = m_sceneDirty;
     job->terrain = createTerrain(world, rootOrWorkspace, inspector);
     job->name = std::move(name);
     job->startedNs = platform::nowNs();
@@ -6230,9 +6231,12 @@ void Editor::endTerrainImport(scene::World& world, Inspector& inspector, bool ke
     }
     world.restore(*job->before);
     ++m_worldRestores;
-    // The terrain's making was a step of the history, and is not one now.
+    // The terrain's making was a step of the history, and is not one now --
+    // and it marked the scene changed, which it no longer is: seen on screen,
+    // "the world is as it was" beside a title that asked to be saved.
     if (!job->existed)
         m_history.retract();
+    m_sceneDirty = job->wasDirty;
     inspector.pruneDead(world);
     inspector.onWorldRestored();
     m_importOutcome = ImportOutcome::Dropped;

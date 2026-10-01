@@ -291,12 +291,24 @@ void extractTerrain(std::string_view scene, const PartitionSettings& settings, P
         if (cells.size() < settings.minimumFieldCells)
             return;
         const core::u32 across = asset::terrainCellChunks(whole.field.settings().voxelSize);
+        const core::usize firstRow = out.fieldIndex.chunks.size();
         out.report.terrainCells = writeFieldCells(
             cells, asset::FieldLayerTerrain, settings, out.fieldIndex,
             [](const asset::TerrainCell& cell) { return asset::encodeTerrainCell(cell); },
             [across, origin](const asset::TerrainCell& cell) {
                 return asset::terrainCellBounds(cell, across, origin);
             });
+        // What each holds, for the far ground (ADR 0150): by its row's id.
+        // The rows are in the cells' order, less any that could not be
+        // written.
+        core::usize next = 0;
+        for (core::usize row = firstRow; row < out.fieldIndex.chunks.size(); ++row) {
+            asset::ChunkIndexEntry& entry = out.fieldIndex.chunks[row];
+            while (next < cells.size() && (cells[next].x != entry.id.x || cells[next].z != entry.id.z))
+                ++next;
+            if (next < cells.size())
+                entry.signature = asset::terrainCellSignature(cells[next].field, cells[next].x, cells[next].z, across);
+        }
 
         asset::TerrainCell empty;
         empty.settings = whole.field.settings();

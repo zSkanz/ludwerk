@@ -164,6 +164,30 @@ bool terrainCellUntouched(const TerrainField& field, const TerrainCell& cell, u3
     return true;
 }
 
+core::u64 terrainCellSignature(const TerrainField& field, i32 cellX, i32 cellZ, u32 cellChunks) noexcept
+{
+    // Order-sensitive, over the chunks in key order: x, then z, then y.
+    const auto mix = [](core::u64 seed, core::u64 value) noexcept {
+        core::u64 z = seed ^ (value + 0x9E3779B97F4A7C15ull + (seed << 6) + (seed >> 2));
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    const auto across = static_cast<i32>(std::max<u32>(cellChunks, 1u));
+    core::u64 held = 0x7E88A1C0DE5EED01ull;
+    for (i32 x = cellX * across; x < (cellX + 1) * across; ++x) {
+        for (i32 z = cellZ * across; z < (cellZ + 1) * across; ++z) {
+            for (const TerrainField::Entry& entry : field.column(x, z)) {
+                held = mix(held, static_cast<core::u64>(static_cast<u32>(entry.first.x)));
+                held = mix(held, static_cast<core::u64>(static_cast<u32>(entry.first.y)));
+                held = mix(held, static_cast<core::u64>(static_cast<u32>(entry.first.z)));
+                held = mix(held, entry.second->digest());
+            }
+        }
+    }
+    return held == 0 ? 1 : held;
+}
+
 void removeTerrainCell(TerrainField& field, const TerrainCell& cell)
 {
     const std::vector<ChunkKey> keys = cell.field.chunkKeys();
@@ -326,25 +350,99 @@ namespace {
 } // namespace
 
 TerrainCellSource::TerrainCellSource(u32 cellChunks, std::vector<ChunkId> cells, Reader read)
-    : m_cellChunks(std::max<u32>(cellChunks, 1u)), m_read(std::move(read)), m_cells(std::move(cells))
+    : TerrainCellSource(cellChunks, std::move(cells), {}, std::move(read))
+{}
+
+TerrainCellSource::TerrainCellSource(u32 cellChunks, std::vector<ChunkId> cells, std::vector<core::u64> signatures,
+                                     Reader read)
+    : m_cellChunks(std::max<u32>(cellChunks, 1u)), m_read(std::move(read))
 {
-    std::sort(m_cells.begin(), m_cells.end(), cellBefore);
+    // Sorted together: a signature stays its cell's.
+    signatures.resize(cells.size(), 0);
+    std::vector<usize> order(cells.size());
+    for (usize at = 0; at < order.size(); ++at)
+        order[at] = at;
+    std::sort(order.begin(), order.end(), [&](usize a, usize b) { return cellBefore(cells[a], cells[b]); });
+    m_cells.reserve(cells.size());
+    m_signatures.reserve(cells.size());
+    for (const usize at : order) {
+        m_cells.push_back(cells[at]);
+        m_signatures.push_back(signatures[at]);
+    }
+    bool any = false;
+    for (const ChunkId& cell : m_cells) {
+        m_lowZ = any ? std::min(m_lowZ, cell.z) : cell.z;
+        m_highZ = any ? std::max(m_highZ, cell.z) : cell.z;
+        any = true;
+    }
 }
 
-void TerrainCellSource::update(std::span<const ChunkId> changed, std::span<const ChunkId> gone)
+void TerrainCellSource::update(std::span<const ChunkId> changed, std::span<const ChunkId> gone,
+                               std::span<const core::u64> signatures)
 {
     const std::lock_guard<std::mutex> lock(m_lock);
+    m_revision.fetch_add(1, std::memory_order_acq_rel);
     for (const ChunkId& cell : gone) {
         const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), cell, cellBefore);
-        if (at != m_cells.end() && at->x == cell.x && at->z == cell.z)
+        if (at != m_cells.end() && at->x == cell.x && at->z == cell.z) {
+            m_signatures.erase(m_signatures.begin() + (at - m_cells.begin()));
             m_cells.erase(at);
+        }
         m_summaries.erase({cell.x, cell.z});
     }
-    for (const ChunkId& cell : changed) {
-        const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), cell, cellBefore);
-        if (at == m_cells.end() || at->x != cell.x || at->z != cell.z)
+    for (usize index = 0; index < changed.size(); ++index) {
+        const ChunkId& cell = changed[index];
+        const core::u64 signature = index < signatures.size() ? signatures[index] : 0;
+        auto at = std::lower_bound(m_cells.begin(), m_cells.end(), cell, cellBefore);
+        if (at == m_cells.end() || at->x != cell.x || at->z != cell.z) {
+            const auto offset = at - m_cells.begin();
+            m_lowZ = m_cells.empty() ? cell.z : std::min(m_lowZ, cell.z);
+            m_highZ = m_cells.empty() ? cell.z : std::max(m_highZ, cell.z);
             m_cells.insert(at, cell);
+            m_signatures.insert(m_signatures.begin() + offset, signature);
+        }
+        else {
+            m_signatures[static_cast<usize>(at - m_cells.begin())] = signature;
+        }
         m_summaries.erase({cell.x, cell.z});
+    }
+}
+
+void TerrainCellSource::signaturesIn(i32 x0, i32 x1, i32 z0, i32 z1,
+                                     std::vector<std::pair<ChunkId, core::u64>>& out) const
+{
+    const auto n = static_cast<i32>(m_cellChunks);
+    const i32 cx0 = floorDivide(x0, n);
+    const i32 cx1 = floorDivide(x1, n);
+    const i32 cz0 = floorDivide(z0, n);
+    const i32 cz1 = floorDivide(z1, n);
+    const std::lock_guard<std::mutex> lock(m_lock);
+    for (i32 x = cx0; x <= cx1; ++x) {
+        auto at = std::lower_bound(m_cells.begin(), m_cells.end(), ChunkId{x, cz0, FieldLayerTerrain}, cellBefore);
+        for (; at != m_cells.end() && at->x == x && at->z <= cz1; ++at)
+            out.emplace_back(*at, m_signatures[static_cast<usize>(at - m_cells.begin())]);
+    }
+}
+
+core::u64 TerrainCellSource::signature(ChunkId id) const
+{
+    const std::lock_guard<std::mutex> lock(m_lock);
+    const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), id, cellBefore);
+    if (at == m_cells.end() || at->x != id.x || at->z != id.z)
+        return 0;
+    return m_signatures[static_cast<usize>(at - m_cells.begin())];
+}
+
+void TerrainCellSource::learnSignature(ChunkId id, core::u64 signature) const
+{
+    const std::lock_guard<std::mutex> lock(m_lock);
+    const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), id, cellBefore);
+    if (at == m_cells.end() || at->x != id.x || at->z != id.z)
+        return;
+    core::u64& known = m_signatures[static_cast<usize>(at - m_cells.begin())];
+    if (known == 0) {
+        known = signature;
+        m_revision.fetch_add(1, std::memory_order_acq_rel);
     }
 }
 
@@ -360,13 +458,7 @@ std::optional<std::array<i32, 4>> TerrainCellSource::extent() const noexcept
     if (m_cells.empty())
         return std::nullopt;
     const auto n = static_cast<i32>(m_cellChunks);
-    i32 lowZ = m_cells.front().z;
-    i32 highZ = lowZ;
-    for (const ChunkId& cell : m_cells) {
-        lowZ = std::min(lowZ, cell.z);
-        highZ = std::max(highZ, cell.z);
-    }
-    return std::array<i32, 4>{m_cells.front().x * n, m_cells.back().x * n + n - 1, lowZ * n, highZ * n + n - 1};
+    return std::array<i32, 4>{m_cells.front().x * n, m_cells.back().x * n + n - 1, m_lowZ * n, m_highZ * n + n - 1};
 }
 
 void TerrainCellSource::cellsIn(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<ChunkId>& out) const
@@ -382,10 +474,13 @@ void TerrainCellSource::cellsWithin(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<
     const i32 cx1 = floorDivide(x1, n);
     const i32 cz0 = floorDivide(z0, n);
     const i32 cz1 = floorDivide(z1, n);
-    auto at =
-        std::lower_bound(m_cells.begin(), m_cells.end(), cx0, [](const ChunkId& cell, i32 x) { return cell.x < x; });
-    for (; at != m_cells.end() && at->x <= cx1; ++at) {
-        if (at->z >= cz0 && at->z <= cz1)
+    // **A search a column of cells, not a walk of it**: the cells are sorted by
+    // x, then z, and a world sixteen kilometres across has 256 in each column
+    // -- walked for every node of the selection every frame, that was the
+    // frame.
+    for (i32 x = cx0; x <= cx1; ++x) {
+        auto at = std::lower_bound(m_cells.begin(), m_cells.end(), ChunkId{x, cz0, FieldLayerTerrain}, cellBefore);
+        for (; at != m_cells.end() && at->x == x && at->z <= cz1; ++at)
             out.push_back(*at);
     }
 }
@@ -398,10 +493,10 @@ bool TerrainCellSource::covers(i32 x0, i32 x1, i32 z0, i32 z1) const noexcept
     const i32 cx1 = floorDivide(x1, n);
     const i32 cz0 = floorDivide(z0, n);
     const i32 cz1 = floorDivide(z1, n);
-    auto at =
-        std::lower_bound(m_cells.begin(), m_cells.end(), cx0, [](const ChunkId& cell, i32 x) { return cell.x < x; });
-    for (; at != m_cells.end() && at->x <= cx1; ++at) {
-        if (at->z >= cz0 && at->z <= cz1)
+    for (i32 x = cx0; x <= cx1; ++x) {
+        const auto at =
+            std::lower_bound(m_cells.begin(), m_cells.end(), ChunkId{x, cz0, FieldLayerTerrain}, cellBefore);
+        if (at != m_cells.end() && at->x == x && at->z <= cz1)
             return true;
     }
     return false;
@@ -418,20 +513,48 @@ std::shared_ptr<const TerrainCellSource::Summaries> TerrainCellSource::summaries
 {
     {
         const std::lock_guard<std::mutex> lock(m_lock);
-        if (const auto found = m_summaries.find({id.x, id.z}); found != m_summaries.end())
-            return found->second;
+        if (const auto found = m_summaries.find({id.x, id.z}); found != m_summaries.end()) {
+            found->second.used = ++m_summaryClock;
+            return found->second.summaries;
+        }
     }
     std::optional<TerrainCell> cell = read(id);
-    if (!cell.has_value())
+    if (!cell.has_value()) {
+        // Nothing of it will be drawn, and that is known now: a cell nobody
+        // could read stayed "not read yet", and the node over it was built
+        // again every frame.
+        learnSignature(id, terrainCellSignature(TerrainField{}, id.x, id.z, m_cellChunks));
         return nullptr;
+    }
     auto made = std::make_shared<Summaries>();
     made->reserve(cell->field.chunks().size());
     for (const TerrainField::Entry& entry : cell->field.chunks())
         made->emplace_back(entry.first, entry.second->summary());
+    // What it holds, learnt from the read (ADR 0150).
+    const core::u64 held = terrainCellSignature(cell->field, id.x, id.z, m_cellChunks);
     const std::lock_guard<std::mutex> lock(m_lock);
+    if (const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), id, cellBefore);
+        at != m_cells.end() && at->x == id.x && at->z == id.z) {
+        core::u64& known = m_signatures[static_cast<usize>(at - m_cells.begin())];
+        if (known == 0) {
+            known = held;
+            m_revision.fetch_add(1, std::memory_order_acq_rel);
+        }
+    }
+    // The least lately asked for go, a quarter at once.
+    if (m_summaries.size() >= SummariesKept) {
+        std::vector<std::pair<core::u64, std::pair<i32, i32>>> byAge;
+        byAge.reserve(m_summaries.size());
+        for (const auto& [at, kept] : m_summaries)
+            byAge.emplace_back(kept.used, at);
+        std::sort(byAge.begin(), byAge.end());
+        for (usize at = 0; at < byAge.size() / 4; ++at)
+            m_summaries.erase(byAge[at].second);
+    }
     // Two threads that both read it keep the first: the same cell, the same
     // summaries.
-    return m_summaries.emplace(std::pair{id.x, id.z}, std::move(made)).first->second;
+    return m_summaries.emplace(std::pair{id.x, id.z}, KeptSummaries{std::move(made), ++m_summaryClock})
+        .first->second.summaries;
 }
 
 void TerrainCellSource::digestsIn(i32 x0, i32 x1, i32 z0, i32 z1,
@@ -446,7 +569,7 @@ void TerrainCellSource::digestsIn(i32 x0, i32 x1, i32 z0, i32 z1,
             const auto found = m_summaries.find({cell.x, cell.z});
             if (found == m_summaries.end())
                 continue;
-            for (const TerrainField::Entry& entry : *found->second) {
+            for (const TerrainField::Entry& entry : *found->second.summaries) {
                 if (entry.first.x >= x0 && entry.first.x <= x1 && entry.first.z >= z0 && entry.first.z <= z1)
                     out.emplace_back(entry.first, entry.second->digest());
             }

@@ -151,6 +151,82 @@ TEST_CASE("frames that are ALL slow fail the backstop, whatever the cause")
     CHECK(mentions(verdict, "engine.soak.err.slow_frames"));
 }
 
+TEST_CASE("a flight that streamed no ground fails when ground was declared (ADR 0150)")
+{
+    seedRealCatalog();
+
+    // The numbers a run over a world that never moved prints: fast, flat, and
+    // nothing in or out.
+    SoakRecorder still(0);
+    steady(still, 400, 0.5, 33, 0.0);
+    CHECK(still.evaluate({}).ok);
+    const SoakVerdict stood = still.evaluate({.minimumGroundCells = 200});
+    CHECK_FALSE(stood.ok);
+    CHECK(mentions(stood, "engine.soak.err.still_ground"));
+
+    const auto flown = [](u64 cellsIn, u64 cellsOut, u64 files) {
+        SoakRecorder recorder(0);
+        for (int i = 0; i < 400; ++i) {
+            const u64 frame = static_cast<u64>(i) + 1;
+            recorder.sample({.frameMs = 4.0,
+                             .streamingMs = 0.5,
+                             .residentBytes = 512u * 1024u * 1024u,
+                             .instanceCount = 33,
+                             .groundCellsIn = cellsIn * frame / 400,
+                             .groundCellsOut = cellsOut * frame / 400,
+                             .farGroundFiles = files * frame / 400});
+        }
+        return recorder.evaluate({.minimumGroundCells = 200});
+    };
+    const SoakVerdict flew = flown(900, 650, 40);
+    CHECK(flew.ok);
+    CHECK(flew.groundCellsIn == 900);
+    CHECK(flew.groundCellsOut == 650);
+    CHECK(flew.farGroundFiles == 40);
+    CHECK(flew.farGroundCellsRead == 0);
+    // In and never out is a world that only fills; out is asked for too.
+    CHECK_FALSE(flown(900, 0, 40).ok);
+    // And ground streamed with no far ground read is a far ground built from
+    // its cells, which is what the files are there to stop.
+    CHECK_FALSE(flown(900, 650, 0).ok);
+}
+
+TEST_CASE("memory that is a lap higher the second time fails, under any ceiling (ADR 0150)")
+{
+    seedRealCatalog();
+
+    // Four legs over the same ground. `perLap` is what a flight that keeps
+    // what it flew over adds each one.
+    const auto flown = [](u64 perLapMiB) {
+        SoakRecorder recorder(0);
+        for (int i = 0; i < 400; ++i) {
+            const u64 level = 350 + static_cast<u64>(i % 100 < 50 ? i % 100 : 100 - i % 100) / 5;
+            recorder.sample({.frameMs = 4.0,
+                             .streamingMs = 0.5,
+                             .residentBytes = (level + perLapMiB * static_cast<u64>(i) / 200) * 1024u * 1024u,
+                             .instanceCount = 33});
+        }
+        return recorder;
+    };
+    // Level, with the breathing a streamed world has: passes, and says so.
+    const SoakVerdict level = flown(0).evaluate({.memoryGrowthTolerance = 0.15});
+    CHECK(level.ok);
+    CHECK(level.earlyResidentBytes == level.lateResidentBytes);
+    // Two hundred megabytes a lap, under a ceiling it never reaches.
+    const SoakRecorder leaking = flown(200);
+    CHECK(leaking.evaluate({.memoryCeilingBytes = 2048ull * 1024u * 1024u}).ok);
+    const SoakVerdict leaked =
+        leaking.evaluate({.memoryCeilingBytes = 2048ull * 1024u * 1024u, .memoryGrowthTolerance = 0.15});
+#ifdef ENG_SANITIZERS_ENABLED
+    CHECK(mentionsQuarantined(leaked, "engine.soak.err.memory_growing"));
+#else
+    CHECK_FALSE(leaked.ok);
+    CHECK(mentions(leaked, "engine.soak.err.memory_growing"));
+#endif
+    // Not declared, not asserted.
+    CHECK(leaking.evaluate({}).ok);
+}
+
 TEST_CASE("the declared ceiling is only asserted when it is declared")
 {
     seedRealCatalog();

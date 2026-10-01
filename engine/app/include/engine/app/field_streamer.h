@@ -39,9 +39,11 @@
 #include "engine/asset/chunk.h"
 #include "engine/asset/field_cells.h"
 #include "engine/asset/streaming.h"
+#include "engine/asset/terrain_pyramid.h"
 #include "engine/core/id.h"
 #include "engine/core/math.h"
 #include "engine/core/types.h"
+#include "engine/jobs/jobs.h"
 #include "engine/platform/async_io.h"
 
 namespace engine::scene {
@@ -60,6 +62,12 @@ class FieldStreamer
 public:
     using CellResolver = std::function<std::optional<std::filesystem::path>(const asset::ChunkIndexEntry&)>;
 
+    FieldStreamer();
+    FieldStreamer(const FieldStreamer&) = delete;
+    FieldStreamer& operator=(const FieldStreamer&) = delete;
+    // Waits for a block of the far ground still being built off this thread.
+    ~FieldStreamer();
+
     // The partition's field index, each entry's file resolved once. An empty
     // index leaves the streamer inactive, which every world without a large
     // field is.
@@ -75,7 +83,15 @@ public:
     void setWorld(scene::World* world, core::InstanceId workspace);
 
     // One frame: finished reads, the foci, and the manager's tick.
-    void pump(f64 budgetMilliseconds);
+    //
+    // **`held`: the simulation is waiting for this ground** (ADR 0150) -- the
+    // first load, or a fast travel with `PauseOutsideLoadedArea`. The budget
+    // is then spent in rounds: reads harvested, cells put in, more reads
+    // asked for, and again, until it is gone or the ring is resident. One
+    // round a frame took what four reads at a time could give -- a hundred
+    // and fifty cells a second, two seconds for the ring under a player who
+    // had jumped ten kilometres -- with most of the frame spent waiting.
+    void pump(f64 budgetMilliseconds, bool held = false);
 
     // True once the minimum ring around the foci has been resident. Stays true.
     [[nodiscard]] bool primed() const noexcept { return m_primed; }
@@ -102,6 +118,27 @@ public:
     // the world as it was, and the cache is not in it -- a cell changed with
     // a brush stays in memory until it is saved, as it always did.
     void setSpillAllowed(bool allowed) noexcept { m_spillAllowed = allowed; }
+    // **How much changed ground is held before any is written out** (D409),
+    // in bytes of voxels: past it, the furthest goes to the cache until what
+    // is left fits. The cache is there to bound memory, and a file a cell is
+    // what it costs -- two thirds of a millisecond on Windows however many
+    // threads write, most of it not the engine's: twelve kilometres of flat
+    // ground a script made in a frame is 305 MiB held and 34 000 files
+    // written, thirty-eight seconds before the first frame for four megabytes
+    // of cells. Zero writes out everything far, which is what an import asks
+    // for: it is laying the world on disk. A quarter of it on a phone, where
+    // memory is the scarcer of the two.
+    //
+    // A stopgap as much as a rule: with the cache one file and not a file a
+    // cell, writing a cell out costs what encoding it does and there is
+    // nothing to trade (`docs/briefs/terrain-editing-perf.md`, P5c, open).
+#if defined(__ANDROID__)
+    static constexpr core::usize LooseBudgetBytes = 64u * 1024u * 1024u;
+#else
+    static constexpr core::usize LooseBudgetBytes = 256u * 1024u * 1024u;
+#endif
+    void setLooseBudget(core::usize bytes) noexcept { m_looseBudget = bytes; }
+    [[nodiscard]] core::usize looseBytes() const noexcept { return m_looseTotal; }
 
     // **A layer over the cache, for what may be taken back whole** (§1.6):
     // Play in the editor, and an import that may be cancelled. Cells written
@@ -128,6 +165,29 @@ public:
     // The cache dropped and every cell it had taken over given back to the
     // scene's own file; ground only the cache held is forgotten.
     void dropSession();
+
+    // --- The far ground, kept on disk (ADR 0150) ------------------------------
+
+    // **Where the far ground's files are**: a folder that outlives the run,
+    // beside the project's other caches, for a terrain whose cells are saved.
+    // Empty -- the default -- and they go in the session's folder, with the
+    // session; with no session folder either there are none, and a coarse
+    // node reads the cells under it as it always did.
+    void setPyramidFolder(std::filesystem::path folder);
+    // **How much of the far ground is up to date**, 0 to 1: the blocks whose
+    // files say what their cells say, of the blocks the terrain has. One when
+    // there is nothing to build. It is brought up to date in the background, a
+    // block at a time, nearest the focus first -- a project saved before the
+    // files existed builds them once, and is never held for it.
+    [[nodiscard]] core::f32 farGroundProgress() const;
+    // What the far ground's files have cost since the terrain's cells were
+    // known -- files read, cells read whole to make one again: what a soak
+    // asks, to know its far ground was drawn from them and none was remade.
+    [[nodiscard]] asset::TerrainPyramid::Stats farGroundStats() const;
+    // **All of it, now, on every worker**: what `ludwerk terrain import` and
+    // the partition step do, so nobody waits for it later. `said` is told how
+    // far it is, now and then. False when a block could not be written.
+    bool buildFarGround(const std::function<void(core::f32)>& said = {});
 
     // --- A terrain saved as cells, in the editor (ADR 0087) -------------------
 
@@ -235,6 +295,18 @@ private:
     bool m_cellSourceStale = true;
     // Cells whose file or whose being there changed since the source was told.
     std::set<asset::ChunkId> m_cellsChanged;
+    // The far ground's files (ADR 0150): where, the blocks known to be up to
+    // date, and the one being brought up to date off this thread.
+    std::filesystem::path m_pyramidFolder;
+    std::set<std::pair<core::i32, core::i32>> m_farCurrent;
+    struct FarBuild;
+    std::shared_ptr<FarBuild> m_farBuild;
+    // A block could not be written: nothing more is built in the background.
+    bool m_farBroken = false;
+    // Schedules the next block's build, nearest `focus` first.
+    void pumpFarGround(std::span<const asset::StreamingFocus> foci);
+    // Every block the terrain's cells reach, as (x, z).
+    [[nodiscard]] std::vector<std::pair<core::i32, core::i32>> farBlocks() const;
     std::map<asset::ChunkId, std::filesystem::path> m_paths;
     // What each resident cell brought, held for the reason the header gives.
     std::map<asset::ChunkId, asset::TerrainCell> m_terrainCells;
@@ -292,7 +364,10 @@ private:
     // The cells of ground no loaded cell accounts for, found when the ground
     // changes rather than every frame: the field's revision, the evictions
     // refused and the cells held, as they were when it was last worked out.
-    std::set<asset::ChunkId> m_loose;
+    // With what each holds, in bytes of voxels.
+    std::map<asset::ChunkId, core::usize> m_loose;
+    core::usize m_looseTotal = 0;
+    core::usize m_looseBudget = LooseBudgetBytes;
     bool m_looseValid = false;
     u64 m_looseRevision = 0;
     u64 m_looseKept = 0;

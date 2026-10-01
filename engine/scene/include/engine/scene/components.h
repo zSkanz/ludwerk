@@ -889,6 +889,13 @@ struct TerrainComponent
     // `ShapeDesc::pointsRevision` uses, and for the same reason: comparing the
     // contents would mean keeping a copy of them.
     core::u64 fieldRevision = 0;
+    // **How many of those were ground coming in or going out as it is on
+    // disk** (ADR 0150): a cell streamed in where the field held none of it,
+    // a cell let go untouched. The rest are edits. What the ground is drawn
+    // from is the same before and after one of these, so the renderer, which
+    // names every node by its cells, has nothing to check again -- and on a
+    // world being flown over these are most frames.
+    core::u64 streamedRevisions = 0;
 
     // How wide one streamed cell is, in metres. Not settable from a script: it
     // is the streaming grid's own spacing, and a terrain that disagreed with it
