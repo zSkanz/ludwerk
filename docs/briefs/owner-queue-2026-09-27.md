@@ -81,6 +81,29 @@ repository. Each was reproduced by running before it was fixed.
 - [x] And: `NetworkService:Disconnect()` never told the server, which held the
       player until its timeout (D217).
 
+### The owner's report of 2026-10-01
+
+- [x] **Anything placed in the world is clickable and movable** (D399). A friend
+      of the owner's could not move a `Water`. The sweep of the class registry
+      found every class with a writable world `Position`, `CFrame` or `From`
+      that is not a `PVInstance`, and what each now does:
+
+      | Class | Clicked by | Moved as |
+      |---|---|---|
+      | `Water` | its surface: an ocean anywhere, a lake over its box, a river over its ribbon | its surface: `SurfaceLevel` up and down; a lake's `Position`; a river's points together. The scale gizmo sizes a lake and a river's width |
+      | `WaterPoint` | a marker on it, clickable through the water | its own `Position` |
+      | `Terrain` | its ground | its origin, `Position` |
+      | `Decal` | a marker | its `CFrame`, relative to the part it is on |
+      | `NavigationLink` | a marker between its ends | both ends together |
+      | `Tilemap2D` | its tiles (the 2D view) | its `Position` on the plane |
+      | `PointLight`, `SpotLight`, `Attachment`, `Bone`, `Camera`, `Part2D` | already: a marker, a sprite | already |
+
+      Held for every class to come by `editor_tests`' registry sweep: a new
+      class with a writable `Position`, `CFrame` or `From` and no gizmo fails
+      by name. A screen's UI is not in it -- its position is on the screen. A
+      river's points are edited one by one here; drawing and inserting them is
+      the water ledger's (ADR 0146).
+
 ## Q1 — `UIGradient` and `UIStroke`, with the new features
 
 Both classes as the other platform ships them today, including the features it

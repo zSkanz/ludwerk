@@ -517,6 +517,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Anything placed in the world can be clicked and moved in the editor**
+  (D399): a `Water` by its surface, a `Terrain` by its ground, and a
+  `WaterPoint`, a `Decal` and a `NavigationLink` by a marker; the move gizmo
+  moves each by how it is placed -- a river by all its points, a water's height
+  as its `SurfaceLevel`, a decal relative to its part -- and the scale gizmo
+  sizes a lake and a river's width. A click on the ground selects the terrain.
 - **The editor speaks through the catalog** (ADR 0145, supersedes ADR 0046's
   exemption): every panel, menu, dialog, the command palette, the status line
   and the undo history's labels read their words from `i18n/en.json`, so the

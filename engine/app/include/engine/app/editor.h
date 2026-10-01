@@ -2842,6 +2842,16 @@ private:
         // A sprite on the plane: a `Position` and a `Rotation` about Z rather
         // than a `CFrame` (the 2D layer).
         Part2D,
+        // **Placed without being a part** (D399). A `Water`: its surface
+        // height is `SurfaceLevel`, a lake's middle its `Position`, and a
+        // river its points, which a drag moves together.
+        Water,
+        // A `Position` and nothing else: a river's point, a terrain.
+        Position,
+        // The same on the plane: a `Tilemap2D`.
+        Position2D,
+        // A `NavigationLink`: its two ends, moved together.
+        NavigationLink,
     };
 
     // Puts one dragged instance at a world `CFrame` by whatever route its kind
@@ -2869,6 +2879,15 @@ private:
         // already was summed the drag once per frame (the owner's "a light drag
         // moved it a lot"). Empty for every other kind.
         std::vector<std::vector<std::pair<core::InstanceId, core::CFrameD>>> inside;
+        // For a water, its own `Position` and `SurfaceLevel` at the START: the
+        // frame the gizmo sits on says the surface's height and not where the
+        // `Position` was. Zero for every other kind.
+        std::vector<core::Vec3> positions;
+        std::vector<core::f64> levels;
+        // Whether the scale gizmo writes its `Size`: a part, a sprite, a lake,
+        // a river (its width) and a decal have one; a camera, a light, a model
+        // and a point do not, and writing one was a refused write per frame.
+        std::vector<core::u8> sized;
         core::u64 gesture = 0;
     };
 

@@ -175,6 +175,15 @@ void collectPickMarkers(const scene::World& world, core::InstanceId root, std::v
 [[nodiscard]] std::optional<PickHit> pickMarker(std::span<const PickMarker> markers, const PickRay& ray, f32 radius,
                                                 f32 occludedBeyond) noexcept;
 
+// **What has a surface but is not a part** (D399): the water a ray meets at its
+// surface -- an ocean anywhere, a lake over its box, a river over its ribbon --
+// and the terrain whose ground it meets, each the nearest along the ray. They
+// are separate from `pickNearest` because the editor ranks them: a marker on
+// the water's own points is clickable through it, and the ground is solid.
+[[nodiscard]] std::optional<PickHit> pickWater(const scene::World& world, core::InstanceId root, const PickRay& ray);
+[[nodiscard]] std::optional<PickHit> pickGround(const scene::World& world, core::InstanceId root, const PickRay& ray,
+                                                double reach = 4096.0);
+
 // How big a marker is, in metres. Small enough not to be a target over the part
 // it sits on, big enough to hit without aiming.
 inline constexpr f32 kPickMarkerRadius = 0.28f;

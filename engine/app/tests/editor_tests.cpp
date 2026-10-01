@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../../audio/generated/class_descriptors.gen.h"
+#include "../../render/generated/class_descriptors.gen.h"
 #include "../../ui/generated/class_descriptors.gen.h"
 #include "class_descriptors.gen.h"
 #include "engine/app/editor.h"
@@ -4017,6 +4018,315 @@ TEST_CASE("something with no transform anywhere gets no gizmo, which is honest")
     inspector.select(folder);
 
     CHECK_FALSE(editor.gizmoFrame(world, inspector).has_value());
+}
+
+// --- Anything placed in the world can be grabbed (D399) ---------------------
+//
+// The owner's report: a friend could not move a `Water` in the editor. `Water`,
+// `WaterPoint`, `Terrain`, `Decal`, `NavigationLink` and `Tilemap2D` are placed
+// in the world without being a `PVInstance`, and the gizmo and the pick knew
+// only parts, cameras, attachments, lights, models and sprites -- so they could
+// be moved by typing numbers and no other way.
+
+namespace {
+
+// The rig, looking down -Z from a little above the water, with the classes the
+// sweep below needs: the render, audio, UI and input layers' as well as the
+// scene's, because a `Decal` and a light are registered by the render layer.
+struct PlacedRig : DragRig
+{
+    PlacedRig()
+    {
+        render::generated::registerClasses(classes, atoms);
+        look({0.0, 8.0, 0.0});
+        editor.setSnap(false);
+    }
+
+    [[nodiscard]] core::InstanceId make(std::string_view className, core::InstanceId parent = {})
+    {
+        const scene::ClassId cls = classes.findId(atoms.intern(className));
+        REQUIRE(cls != scene::InvalidClass);
+        const core::InstanceId id = world.create(cls);
+        REQUIRE(id.valid());
+        REQUIRE_FALSE(world.setParent(id, parent.valid() ? parent : root).has_value());
+        return id;
+    }
+
+    // A click on `point`, resolved the way the viewport resolves one.
+    [[nodiscard]] core::InstanceId click(core::DVec3 point)
+    {
+        editor.requestPick(pixelOf(point));
+        const std::optional<app::PickHit> hit = editor.resolvePick(world, root, inspector);
+        return hit.has_value() ? hit->instance : core::InstanceId{};
+    }
+
+    // A drag of the X arm by `metres`, in three frames, and the gizmo's
+    // position before it.
+    core::DVec3 dragX(double metres)
+    {
+        const std::optional<GizmoFrame> frame = editor.gizmoFrame(world, inspector);
+        REQUIRE(frame.has_value());
+        const core::DVec3 grab =
+            frame->transform.position + core::DVec3{static_cast<core::f64>(frame->size) * 0.7, 0.0, 0.0};
+        this->frame(pixelOf(grab), true, true);
+        REQUIRE(editor.gizmoDragging());
+        this->frame(pixelOf(grab + core::DVec3{metres * 0.5, 0.0, 0.0}), false, true);
+        this->frame(pixelOf(grab + core::DVec3{metres, 0.0, 0.0}), false, true);
+        this->frame(pixelOf(grab + core::DVec3{metres, 0.0, 0.0}), false, false);
+        CHECK_FALSE(editor.gizmoDragging());
+        return frame->transform.position;
+    }
+};
+
+[[nodiscard]] double x(core::Vec3 v)
+{
+    return static_cast<double>(v.x);
+}
+
+} // namespace
+
+TEST_CASE("a lake is selected by a click on its surface and moved with the gizmo, one undo step")
+{
+    PlacedRig rig;
+    const core::InstanceId lake = rig.make("Water");
+    scene::WaterComponent* water = rig.world.waters().find(lake);
+    REQUIRE(water != nullptr);
+    water->shape = 1;
+    water->position = core::Vec3{0.0f, 0.0f, -30.0f};
+    water->size = core::Vec3{20.0f, 4.0f, 20.0f};
+    water->surfaceLevel = 0.0;
+
+    CHECK(rig.click({0.0, 0.0, -30.0}) == lake);
+    REQUIRE(rig.inspector.selection() == lake);
+
+    // On the surface, over the middle: where the water is.
+    const core::DVec3 at = rig.dragX(4.0);
+    CHECK(at.x == doctest::Approx(0.0));
+    CHECK(at.y == doctest::Approx(0.0));
+    CHECK(at.z == doctest::Approx(-30.0));
+    CHECK(x(rig.world.waters().find(lake)->position) == doctest::Approx(4.0).epsilon(0.01));
+    CHECK(rig.world.waters().find(lake)->surfaceLevel == doctest::Approx(0.0));
+
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(x(rig.world.waters().find(lake)->position) == doctest::Approx(0.0).epsilon(0.001));
+    CHECK_FALSE(rig.editor.history().canUndo());
+}
+
+TEST_CASE("a lake raised with the gizmo raises its surface")
+{
+    PlacedRig rig;
+    const core::InstanceId lake = rig.make("Water");
+    scene::WaterComponent* water = rig.world.waters().find(lake);
+    water->shape = 1;
+    water->position = core::Vec3{0.0f, 0.0f, -30.0f};
+    water->surfaceLevel = 0.0;
+    rig.inspector.select(lake);
+
+    const std::optional<GizmoFrame> frame = rig.editor.gizmoFrame(rig.world, rig.inspector);
+    REQUIRE(frame.has_value());
+    const core::DVec3 grab =
+        frame->transform.position + core::DVec3{0.0, static_cast<core::f64>(frame->size) * 0.7, 0.0};
+    rig.frame(rig.pixelOf(grab), true, true);
+    REQUIRE(rig.editor.gizmoDragging());
+    rig.frame(rig.pixelOf(grab + core::DVec3{0.0, 2.0, 0.0}), false, true);
+    rig.frame(rig.pixelOf(grab + core::DVec3{0.0, 2.0, 0.0}), false, false);
+
+    CHECK(rig.world.waters().find(lake)->surfaceLevel == doctest::Approx(2.0).epsilon(0.01));
+}
+
+TEST_CASE("a lake's size is the scale gizmo's, and a thing with no size is not written one")
+{
+    PlacedRig rig;
+    const core::InstanceId lake = rig.make("Water");
+    scene::WaterComponent* water = rig.world.waters().find(lake);
+    water->shape = 1;
+    water->position = core::Vec3{0.0f, 0.0f, -30.0f};
+    water->size = core::Vec3{10.0f, 4.0f, 10.0f};
+    const core::InstanceId point = rig.make("WaterPoint");
+    rig.world.waterPoints().find(point)->position = core::Vec3{3.0f, 0.0f, -30.0f};
+    rig.inspector.select(point);
+    rig.inspector.add(lake);
+    rig.editor.setGizmoMode(GizmoMode::Scale);
+
+    const std::optional<GizmoFrame> frame = rig.editor.gizmoFrame(rig.world, rig.inspector);
+    REQUIRE(frame.has_value());
+    const core::DVec3 grab =
+        frame->transform.position + core::DVec3{static_cast<core::f64>(frame->size) * 0.9, 0.0, 0.0};
+    rig.frame(rig.pixelOf(grab), true, true);
+    REQUIRE(rig.editor.gizmoDragging());
+    rig.frame(rig.pixelOf(grab + core::DVec3{static_cast<core::f64>(frame->size), 0.0, 0.0}), false, true);
+    rig.frame(rig.pixelOf(grab + core::DVec3{static_cast<core::f64>(frame->size), 0.0, 0.0}), false, false);
+
+    CHECK(x(rig.world.waters().find(lake)->size) > 15.0);
+    CHECK(static_cast<double>(rig.world.waters().find(lake)->size.y) == doctest::Approx(4.0));
+    // A point has a position and nothing else; the drag moved nothing of it.
+    CHECK(x(rig.world.waterPoints().find(point)->position) == doctest::Approx(3.0));
+}
+
+TEST_CASE("a river moved with the gizmo moves all its points by the same delta")
+{
+    PlacedRig rig;
+    const core::InstanceId river = rig.make("Water");
+    scene::WaterComponent* water = rig.world.waters().find(river);
+    water->shape = 2;
+    water->size = core::Vec3{6.0f, 2.0f, 6.0f};
+    water->surfaceLevel = 0.0;
+    std::array<core::InstanceId, 3> points{};
+    for (std::size_t at = 0; at < points.size(); ++at) {
+        points[at] = rig.make("WaterPoint", river);
+        rig.world.waterPoints().find(points[at])->position =
+            core::Vec3{-8.0f + 8.0f * static_cast<float>(at), 0.0f, -30.0f};
+    }
+
+    // A click on the ribbon between two points is the river's.
+    CHECK(rig.click({-4.0, 0.0, -30.0}) == river);
+
+    // In the middle of its points, at its surface.
+    const core::DVec3 at = rig.dragX(4.0);
+    CHECK(at.x == doctest::Approx(0.0));
+    CHECK(at.z == doctest::Approx(-30.0));
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const double was = -8.0 + 8.0 * static_cast<double>(index);
+        CHECK(x(rig.world.waterPoints().find(points[index])->position) == doctest::Approx(was + 4.0).epsilon(0.01));
+    }
+
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(x(rig.world.waterPoints().find(points[0])->position) == doctest::Approx(-8.0).epsilon(0.001));
+}
+
+TEST_CASE("a river's point is a marker, clicked and moved on its own")
+{
+    PlacedRig rig;
+    const core::InstanceId river = rig.make("Water");
+    rig.world.waters().find(river)->shape = 2;
+    const core::InstanceId first = rig.make("WaterPoint", river);
+    const core::InstanceId second = rig.make("WaterPoint", river);
+    rig.world.waterPoints().find(first)->position = core::Vec3{-6.0f, 0.0f, -30.0f};
+    rig.world.waterPoints().find(second)->position = core::Vec3{6.0f, 0.0f, -30.0f};
+
+    // On the point itself, which the ribbon under it does not take.
+    CHECK(rig.click({6.0, 0.0, -30.0}) == second);
+    (void)rig.dragX(2.0);
+    CHECK(x(rig.world.waterPoints().find(second)->position) == doctest::Approx(8.0).epsilon(0.01));
+    CHECK(x(rig.world.waterPoints().find(first)->position) == doctest::Approx(-6.0));
+}
+
+TEST_CASE("a terrain is selected by a click on its ground and moved with the gizmo")
+{
+    PlacedRig rig;
+    const core::InstanceId terrain = rig.make("Terrain");
+    scene::TerrainComponent* component = rig.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    component->field.setHeightRange(-32.0f, 32.0f);
+    // Its origin in front of the camera, which is where its gizmo is: a
+    // terrain is moved by its origin.
+    component->origin = core::DVec3{0.0, 0.0, -30.0};
+    asset::fillBlock(component->field, core::DVec3{0.0, -4.0, 0.0}, core::Vec3{40.0f, 8.0f, 40.0f}, 1);
+
+    CHECK(rig.click({0.0, 0.0, -30.0}) == terrain);
+    (void)rig.dragX(4.0);
+    CHECK(rig.world.terrains().find(terrain)->origin.x == doctest::Approx(4.0).epsilon(0.01));
+    CHECK(rig.world.terrains().find(terrain)->origin.z == doctest::Approx(-30.0).epsilon(0.001));
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(rig.world.terrains().find(terrain)->origin.x == doctest::Approx(0.0).epsilon(0.001));
+}
+
+TEST_CASE("a part in front of the water is the part's click")
+{
+    PlacedRig rig;
+    const core::InstanceId lake = rig.make("Water");
+    scene::WaterComponent* water = rig.world.waters().find(lake);
+    water->shape = 0;
+    water->surfaceLevel = 0.0;
+    const core::InstanceId crate = rig.part({0.0, 0.5, -30.0});
+    CHECK(rig.click({0.0, 1.0, -30.0}) == crate);
+    CHECK(rig.click({0.0, 0.0, -60.0}) == lake);
+}
+
+TEST_CASE("a decal on a part moves the way an attachment does: relative to the part")
+{
+    PlacedRig rig;
+    const core::InstanceId wall = rig.part({10.0, 0.0, -30.0});
+    const core::InstanceId decal = rig.make("Decal", wall);
+    scene::DecalComponent* component = rig.world.decals().find(decal);
+    REQUIRE(component != nullptr);
+    component->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+
+    CHECK(rig.click({10.0, 1.0, -30.0}) == decal);
+    const core::DVec3 at = rig.dragX(2.0);
+    CHECK(at.x == doctest::Approx(10.0));
+    CHECK(rig.world.decals().find(decal)->cframe.position.x == doctest::Approx(2.0).epsilon(0.01));
+    CHECK(rig.world.decals().find(decal)->cframe.position.y == doctest::Approx(1.0).epsilon(0.001));
+}
+
+TEST_CASE("a navigation link moves both its ends by the same delta")
+{
+    PlacedRig rig;
+    const core::InstanceId link = rig.make("NavigationLink");
+    scene::NavigationLinkComponent* component = rig.world.navigationLinks().find(link);
+    REQUIRE(component != nullptr);
+    component->from = core::DVec3{-2.0, 0.0, -30.0};
+    component->to = core::DVec3{2.0, 2.0, -30.0};
+
+    CHECK(rig.click({0.0, 1.0, -30.0}) == link);
+    (void)rig.dragX(3.0);
+    CHECK(rig.world.navigationLinks().find(link)->from.x == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(rig.world.navigationLinks().find(link)->to.x == doctest::Approx(5.0).epsilon(0.01));
+    CHECK(rig.world.navigationLinks().find(link)->to.y == doctest::Approx(2.0).epsilon(0.001));
+}
+
+TEST_CASE("every class placed in the world gets a gizmo -- the registry, swept")
+{
+    // **The rule, held for every class to come**: a class with a `Position`,
+    // a `CFrame` or a `From` is somewhere, and somewhere is a place a gizmo
+    // can be. A new class that is placed without the editor knowing how to
+    // move it fails here, by name.
+    PlacedRig rig;
+    engine::audio::generated::registerClasses(rig.classes, rig.atoms);
+    engine::ui::generated::registerClasses(rig.classes, rig.atoms);
+    const core::NameAtom position = rig.atoms.intern("Position");
+    const core::NameAtom cframe = rig.atoms.intern("CFrame");
+    const core::NameAtom from = rig.atoms.intern("From");
+    // A part to hang what is relative to one on.
+    const core::InstanceId holder = rig.part({0.0, 0.0, -30.0});
+
+    std::vector<std::string> unplaced;
+    const scene::ClassId uiObject = rig.classes.findId(rig.atoms.intern("UIObject"));
+    for (std::size_t index = 1; index <= rig.classes.classCount(); ++index) {
+        const auto cls = static_cast<scene::ClassId>(index);
+        const scene::ClassDescriptor* desc = rig.classes.find(cls);
+        if (desc == nullptr || scene::hasFlag(desc->flags, scene::ClassFlags::Service) ||
+            scene::hasFlag(desc->flags, scene::ClassFlags::Abstract) ||
+            scene::hasFlag(desc->flags, scene::ClassFlags::NotCreatable))
+            continue;
+        bool placed = false;
+        for (const scene::ClassDescriptor* walk = desc; walk != nullptr; walk = rig.classes.find(walk->super)) {
+            for (const scene::PropertyDesc& property : walk->properties) {
+                const bool spatial = property.type == scene::ValueType::Vector3 ||
+                                     property.type == scene::ValueType::CFrame ||
+                                     property.type == scene::ValueType::Vector2;
+                if (!property.readOnly && spatial &&
+                    (property.name == position || property.name == cframe || property.name == from))
+                    placed = true;
+            }
+        }
+        // A UI element's position is on the screen, and the screen is not
+        // where the gizmo is.
+        if (!placed || (uiObject != scene::InvalidClass && rig.classes.isA(cls, uiObject)))
+            continue;
+        const core::InstanceId id = rig.world.create(cls);
+        if (!id.valid())
+            continue;
+        (void)rig.world.setParent(id, holder);
+        rig.inspector.select(id);
+        if (!rig.editor.gizmoFrame(rig.world, rig.inspector).has_value())
+            unplaced.emplace_back(rig.atoms.text(desc->name));
+    }
+    std::string names;
+    for (const std::string& name : unplaced)
+        names += name + " ";
+    INFO("placed in the world but not movable: ", names);
+    CHECK(unplaced.empty());
 }
 
 // --- Looking somewhere else while it runs (S5.8) -----------------------------

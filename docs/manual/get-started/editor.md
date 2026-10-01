@@ -90,6 +90,15 @@ Clicking in the viewport casts a ray and selects what it hits. The selection is
 outlined in the viewport, revealed in the explorer, and expanded in the
 properties panel.
 
+**Anything placed in the world can be clicked and moved.** A part by its shape,
+the terrain by its ground, a water by its surface (an ocean anywhere, a lake
+over its box, a river over its ribbon). What has no shape of its own shows a
+small wire sphere to click: a camera, a light, an attachment, a decal, a river's
+point, a navigation link. The move gizmo moves any of them, and the scale gizmo
+sizes those that have a `Size` -- a lake's width, depth and length, a river's
+width. A river moved as a whole moves all its points; a point moved alone moves
+only itself. Raising a water raises its `SurfaceLevel`.
+
 The properties panel is generated from the same API definition the reference
 pages are, so it knows a property's type, its enum, whether it is read-only, and
 whether it is **stored and not yet acted on** — and it says so rather than

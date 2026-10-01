@@ -3980,6 +3980,49 @@ namespace {
 // part it is on, so the world one is the derived `WorldCFrame` the mirror keeps.
 // A `Model` has no transform at all and is located by its PIVOT, which is what
 // `PivotTo` moves and therefore the only point a gizmo on one could honestly be.
+// Where a water is for the gizmo: on its surface, over a lake's or an ocean's
+// `Position` and over the middle of a river's points (D399).
+[[nodiscard]] core::CFrameD waterFrameOf(const scene::World& world, core::InstanceId id,
+                                         const scene::WaterComponent& water)
+{
+    core::CFrameD frame;
+    frame.position = core::DVec3{static_cast<core::f64>(water.position.x), water.surfaceLevel,
+                                 static_cast<core::f64>(water.position.z)};
+    if (water.shape != 2)
+        return frame;
+    core::f64 x = 0.0;
+    core::f64 z = 0.0;
+    core::usize count = 0;
+    for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
+        if (const scene::WaterPointComponent* point = world.waterPoints().find(child); point != nullptr) {
+            x += static_cast<core::f64>(point->position.x);
+            z += static_cast<core::f64>(point->position.z);
+            ++count;
+        }
+    }
+    if (count > 0)
+        frame.position =
+            core::DVec3{x / static_cast<core::f64>(count), water.surfaceLevel, z / static_cast<core::f64>(count)};
+    return frame;
+}
+
+// The frame a decal's `CFrame` is relative to: the part it is on, the world
+// otherwise.
+[[nodiscard]] core::CFrameD decalParentOf(const scene::World& world, core::InstanceId id)
+{
+    if (const scene::PartComponent* part = world.parts().find(world.parentOf(id)); part != nullptr)
+        return part->cframe;
+    return core::CFrameD{};
+}
+
+// A point with no turn of its own.
+[[nodiscard]] core::CFrameD placedAt(core::DVec3 position)
+{
+    core::CFrameD frame;
+    frame.position = position;
+    return frame;
+}
+
 [[nodiscard]] std::optional<core::CFrameD> gizmoTransformOf(const scene::World& world, core::InstanceId id)
 {
     if (const scene::PartComponent* part = world.parts().find(id); part != nullptr)
@@ -4001,6 +4044,22 @@ namespace {
         frame.rotation = core::fromAxisAngle(core::Vec3{0.0f, 0.0f, 1.0f}, sprite->rotation * 3.14159265f / 180.0f);
         return frame;
     }
+    // **What is placed without being a part** (D399): a friend of the owner
+    // could not move a `Water` -- nothing here knew where one was.
+    if (const scene::WaterComponent* water = world.waters().find(id); water != nullptr)
+        return waterFrameOf(world, id, *water);
+    if (const scene::WaterPointComponent* point = world.waterPoints().find(id); point != nullptr)
+        return placedAt(core::toDVec3(point->position));
+    if (const scene::TerrainComponent* terrain = world.terrains().find(id); terrain != nullptr)
+        return placedAt(terrain->origin);
+    if (const scene::DecalComponent* decal = world.decals().find(id); decal != nullptr)
+        return decalParentOf(world, id) * decal->cframe;
+    if (const scene::NavigationLinkComponent* link = world.navigationLinks().find(id); link != nullptr)
+        return placedAt(core::DVec3{(link->from.x + link->to.x) * 0.5, (link->from.y + link->to.y) * 0.5,
+                                    (link->from.z + link->to.z) * 0.5});
+    if (const scene::Tilemap2DComponent* tilemap = world.tilemaps2d().find(id); tilemap != nullptr)
+        return placedAt(
+            core::DVec3{static_cast<core::f64>(tilemap->position.x), static_cast<core::f64>(tilemap->position.y), 0.0});
     return std::nullopt;
 }
 
@@ -4053,6 +4112,52 @@ void Editor::applyDragTransform(scene::World& world, Inspector& inspector, core:
         const f32 degrees = std::atan2(after.rotation.m[0][1], after.rotation.m[0][0]) * 180.0f / 3.14159265f;
         inspector.enqueue(id, world.atoms().intern("Position"), scene::Value{position});
         inspector.enqueue(id, world.atoms().intern("Rotation"), scene::Value{static_cast<core::f64>(degrees)});
+        return;
+    }
+
+    case DragKind::Water: {
+        // **On its surface**: up and down is `SurfaceLevel`. A river is its
+        // points, each moved by the whole drag from where it was at the start
+        // -- as a spline actor is -- and turned with it; a lake or an ocean is
+        // its `Position`, which does not turn.
+        const core::CFrameD delta = after * core::inverse(drag.before[index]);
+        const core::f64 rise = after.position.y - drag.before[index].position.y;
+        inspector.enqueue(id, world.atoms().intern("SurfaceLevel"), scene::Value{drag.levels[index] + rise});
+        if (!drag.inside[index].empty()) {
+            const core::NameAtom positionName = world.atoms().intern("Position");
+            for (const auto& [point, start] : drag.inside[index]) {
+                if (world.alive(point))
+                    inspector.enqueue(point, positionName, scene::Value{core::toVec3((delta * start).position)});
+            }
+            return;
+        }
+        const core::Vec3 was = drag.positions[index];
+        const core::Vec3 moved = core::toVec3(after.position - drag.before[index].position);
+        inspector.enqueue(id, world.atoms().intern("Position"),
+                          scene::Value{core::Vec3{was.x + moved.x, was.y + moved.y, was.z + moved.z}});
+        return;
+    }
+
+    case DragKind::Position:
+        inspector.enqueue(id, world.atoms().intern("Position"), scene::Value{core::toVec3(after.position)});
+        return;
+
+    case DragKind::Position2D:
+        inspector.enqueue(
+            id, world.atoms().intern("Position"),
+            scene::Value{core::Vec2{static_cast<f32>(after.position.x), static_cast<f32>(after.position.y)}});
+        return;
+
+    case DragKind::NavigationLink: {
+        // Both ends by the same delta, from where they were at the start.
+        const core::CFrameD delta = after * core::inverse(drag.before[index]);
+        const auto& ends = drag.inside[index];
+        if (ends.size() == 2) {
+            inspector.enqueue(id, world.atoms().intern("From"),
+                              scene::Value{core::toVec3((delta * ends[0].second).position)});
+            inspector.enqueue(id, world.atoms().intern("To"),
+                              scene::Value{core::toVec3((delta * ends[1].second).position)});
+        }
         return;
     }
 
@@ -5995,6 +6100,24 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
                     parent = attachment->worldCFrame * core::inverse(attachment->cframe);
                 }
             }
+            else if (world.decals().find(id) != nullptr) {
+                // A decal's `CFrame` is relative to the part it is on, as an
+                // attachment's is, and is divided back through it the same way.
+                kind = DragKind::Attachment;
+                parent = decalParentOf(world, id);
+            }
+            else if (world.waters().find(id) != nullptr) {
+                kind = DragKind::Water;
+            }
+            else if (world.waterPoints().find(id) != nullptr || world.terrains().find(id) != nullptr) {
+                kind = DragKind::Position;
+            }
+            else if (world.tilemaps2d().find(id) != nullptr) {
+                kind = DragKind::Position2D;
+            }
+            else if (world.navigationLinks().find(id) != nullptr) {
+                kind = DragKind::NavigationLink;
+            }
             else {
                 kind = DragKind::Model;
             }
@@ -6002,9 +6125,19 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
             drag.targets.push_back(id);
             drag.before.push_back(*at);
             const scene::Part2DComponent* sprite = world.parts2d().find(id);
+            const scene::WaterComponent* water = world.waters().find(id);
+            const scene::DecalComponent* decal = world.decals().find(id);
             drag.sizes.push_back(part != nullptr     ? part->size
                                  : sprite != nullptr ? core::Vec3{sprite->size.x, sprite->size.y, 1.0f}
+                                 : water != nullptr  ? water->size
+                                 : decal != nullptr  ? decal->size
                                                      : core::Vec3{1.0f, 1.0f, 1.0f});
+            // An ocean has no edge to size; a lake and a river do.
+            const bool sized =
+                part != nullptr || sprite != nullptr || decal != nullptr || (water != nullptr && water->shape != 0);
+            drag.sized.push_back(sized ? 1 : 0);
+            drag.positions.push_back(water != nullptr ? water->position : core::Vec3{});
+            drag.levels.push_back(water != nullptr ? water->surfaceLevel : 0.0);
             drag.kinds.push_back(kind);
             drag.parents.push_back(parent);
             std::vector<std::pair<core::InstanceId, core::CFrameD>> inside;
@@ -6015,6 +6148,17 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
                     if (const scene::PartComponent* held = world.parts().find(descendant); held != nullptr)
                         inside.emplace_back(descendant, held->cframe);
                 }
+            }
+            else if (kind == DragKind::Water && water->shape == 2) {
+                for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
+                    if (const scene::WaterPointComponent* point = world.waterPoints().find(child); point != nullptr)
+                        inside.emplace_back(child, placedAt(core::toDVec3(point->position)));
+                }
+            }
+            else if (kind == DragKind::NavigationLink) {
+                const scene::NavigationLinkComponent* link = world.navigationLinks().find(id);
+                inside.emplace_back(id, placedAt(link->from));
+                inside.emplace_back(id, placedAt(link->to));
             }
             drag.inside.push_back(std::move(inside));
         }
@@ -6145,6 +6289,8 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
     }
 
     for (core::usize index = 0; index < drag.targets.size(); ++index) {
+        if (drag.sized[index] == 0)
+            continue;
         const Vec3 was = drag.sizes[index];
         Vec3 now{was.x * factor.x, was.y * factor.y, was.z * factor.z};
         if (snapping()) {
@@ -6339,6 +6485,13 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
         // is not behind the solid hit: a marker is an aiming target rather than a
         // shape, so being smaller must not make it harder to click, and being behind
         // a wall must still make it unreachable.
+        // **The ground is solid** (D399): a click on a terrain's ground is the
+        // terrain's, unless a part is nearer.
+        if (const std::optional<PickHit> ground = pickGround(world, root, ray);
+            ground.has_value() && (!hit.has_value() || ground->distance < hit->distance)) {
+            hit = ground;
+        }
+
         static std::vector<PickMarker> markers;
         collectPickMarkers(world, root, markers, poses);
         // Not the one the eye is inside (`eyeInsideMarker`).
@@ -6348,6 +6501,13 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
                            hit.has_value() ? hit->distance : std::numeric_limits<f32>::infinity());
             marker.has_value()) {
             hit = marker;
+        }
+        // **Then the water's surface**, in front of what is under it -- but
+        // not over a marker: a river's points sit on it, and a surface that
+        // took their clicks would leave them reachable only from the tree.
+        else if (const std::optional<PickHit> water = pickWater(world, root, ray);
+                 water.has_value() && (!hit.has_value() || water->distance < hit->distance)) {
+            hit = water;
         }
 
         // **A click selects the thing, not the part it is made of** (S5.3). A

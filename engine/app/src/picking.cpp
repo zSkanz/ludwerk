@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cmath>
 #include <engine/app/picking.h>
+#include <engine/asset/terrain.h>
 #include <engine/scene/components.h>
+#include <engine/scene/water.h>
 #include <engine/scene/world.h>
 #include <limits>
 
@@ -255,6 +257,20 @@ std::optional<core::DVec3> markerPoint(const scene::World& world, core::Instance
         return posed.camera(id).position;
     if (world.parts().find(id) != nullptr)
         return posed.part(id).position;
+    // **What is placed without being a part** (D399): a river's point, a
+    // decal, a navigation link -- each where it says it is, a decal on a part
+    // relative to that part, a link at the middle of its two ends.
+    if (const scene::WaterPointComponent* point = world.waterPoints().find(id); point != nullptr)
+        return core::toDVec3(point->position);
+    if (const scene::DecalComponent* decal = world.decals().find(id); decal != nullptr) {
+        const core::InstanceId parent = world.parentOf(id);
+        // raw: the decal's own offset, or a placement by hand, as the renderer reads it.
+        return world.parts().find(parent) != nullptr ? (posed.part(parent) * decal->cframe).position
+                                                     : decal->cframe.position; // raw: as above.
+    }
+    if (const scene::NavigationLinkComponent* link = world.navigationLinks().find(id); link != nullptr)
+        return core::DVec3{(link->from.x + link->to.x) * 0.5, (link->from.y + link->to.y) * 0.5,
+                           (link->from.z + link->to.z) * 0.5};
 
     // **Otherwise the nearest ancestor that has one**, which is not a fallback
     // but the rule the renderer already follows: a `PointLight` has no position
@@ -298,6 +314,56 @@ void collectPickMarkers(const scene::World& world, core::InstanceId root, std::v
     sweep(world.pointLights());
     sweep(world.spotLights());
     sweep(world.ragdolls());
+    sweep(world.waterPoints());
+    sweep(world.decals());
+    sweep(world.navigationLinks());
+}
+
+std::optional<PickHit> pickWater(const scene::World& world, core::InstanceId root, const PickRay& ray)
+{
+    std::optional<PickHit> best;
+    if (std::abs(static_cast<double>(ray.direction.y)) < 1e-6)
+        return best;
+    world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent& water) {
+        if (!inWorld(world, id, root))
+            return;
+        // At its surface's rest height: the waves are a few tenths of a metre
+        // either side of it, and a click is not that precise.
+        const double along = (water.surfaceLevel - ray.origin.y) / static_cast<double>(ray.direction.y);
+        if (!(along > 0.0))
+            return;
+        const double x = ray.origin.x + static_cast<double>(ray.direction.x) * along;
+        const double z = ray.origin.z + static_cast<double>(ray.direction.z) * along;
+        if (!scene::waterCovers(world, id, x, z, nullptr))
+            return;
+        const auto distance = static_cast<f32>(along);
+        if (!best.has_value() || distance < best->distance ||
+            (distance == best->distance && id.index < best->instance.index))
+            best = PickHit{id, distance};
+    });
+    return best;
+}
+
+std::optional<PickHit> pickGround(const scene::World& world, core::InstanceId root, const PickRay& ray, double reach)
+{
+    std::optional<PickHit> best;
+    world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
+        if (!inWorld(world, id, root) || terrain.field.empty())
+            return;
+        // In the field's own space, as the brush casts: a terrain is moved by
+        // its origin and the field knows nothing of it.
+        const core::DVec3 local{ray.origin.x - terrain.origin.x, ray.origin.y - terrain.origin.y,
+                                ray.origin.z - terrain.origin.z};
+        const std::optional<asset::TerrainHit> hit = asset::raycastField(terrain.field, local, ray.direction, reach);
+        // Not the ground the eye is in or on: from there every ray meets it at
+        // once, whatever it is aimed at (`eyeInsideMarker`'s rule).
+        if (!hit.has_value() || hit->distance <= 0.01)
+            return;
+        const auto distance = static_cast<f32>(hit->distance);
+        if (!best.has_value() || distance < best->distance)
+            best = PickHit{id, distance};
+    });
+    return best;
 }
 
 std::optional<PickHit> pickMarker(std::span<const PickMarker> markers, const PickRay& ray, f32 radius,
