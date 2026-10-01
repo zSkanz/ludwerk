@@ -1328,9 +1328,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         std::error_code sessionError;
         const bool project = std::filesystem::is_directory(options.scriptPath, sessionError);
         const bool savedFrom = options.editor || options.terrainImport.has_value();
-        const std::filesystem::path base = project && savedFrom
-                                               ? options.scriptPath / ".engine" / "session"
-                                               : std::filesystem::temp_directory_path(sessionError) / "engine-session";
+        std::filesystem::path base = project && savedFrom
+                                         ? options.scriptPath / ".engine" / "session"
+                                         : std::filesystem::temp_directory_path(sessionError) / "engine-session";
+        // **Where it can write, when it cannot write there**: an app on a
+        // phone is told the system's temporary folder and may not write it,
+        // and changed ground with nowhere to go stays in memory for good. Its
+        // own storage then, as the log's is.
+        if (!platform::createDirectories(base) && !platform::paths().userDir.empty())
+            base = platform::paths().userDir / "session";
         // A run that died left its folder: a day old, it is nobody's.
         if (std::filesystem::is_directory(base, sessionError)) {
             for (const std::filesystem::directory_entry& left :

@@ -175,7 +175,10 @@ Measured on the way to the gate, and amending ADR 0149 section 1:
 ground's files counted, and the world flown out and back twice **on a real
 device** -- with no renderer nothing asks for a node of the far ground, and
 the first version of the gate, on the null device as the soaks beside it are,
-passed over a flight that built none. It fails when:
+passed over a flight that built none. Paced at 240 frames a second, four
+times a game's clock: unpaced, a fast machine flies the world in four seconds
+with the disk a lap behind, and the laps compared are not the same ground. It
+fails when:
 
 - fewer than 2 000 cells of ground streamed in, or out
   (`--soak-min-ground`): a world that stood still has the best numbers;

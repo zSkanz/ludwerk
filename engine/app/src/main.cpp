@@ -1112,6 +1112,15 @@ int main(int argc, char** argv)
             options.backend = *none;
     }
 
+    // **Nor does an import** (D413): it lays ground and saves it, and draws
+    // none of it. With the ordinary device it could not run where there is no
+    // GPU -- a build machine, CI's Linux runner -- and `ludwerk terrain
+    // import` there said that no graphics device could be created.
+    if (options.terrainImport.has_value() && !options.backendChosen) {
+        if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
+            options.backend = *none;
+    }
+
     if (const std::optional<engine::core::EngineError> error = engine::app::run(options)) {
         engine::core::logText(LogLevel::Error, error->message);
         if (!error->detail.empty())

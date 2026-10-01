@@ -1606,9 +1606,9 @@ themselves, 0.5 ms each whatever is in them and however many threads write.
 
 **The gate's miniature** (`terrain_far_flight`): four kilometres, 4 356 cells
 and 36 blocks, laid and flown out and back twice, 4 200 frames at
-320 x 180. On this machine 5 287 cells come in and 5 060 go out, 200 or more of
+320 x 180, paced at 240. On this machine 5 287 cells come in and 5 060 go out, 200 or more of
 the far ground's files are read and no cell is read to make one, and the peak
-is 340 MiB with the second lap 6% over the first; on lavapipe in the Linux
+is 330 MiB with the second lap 2% over the first; on lavapipe in the Linux
 container the peak is 560 MiB and the median frame 24 ms, which is why the
 frame is not what it gates.
 

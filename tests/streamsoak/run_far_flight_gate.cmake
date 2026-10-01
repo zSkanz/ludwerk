@@ -23,6 +23,8 @@
 # on a GPU -- and what is asserted of it is that it did not stall.
 cmake_minimum_required(VERSION 3.24)
 
+set(ENG_NO_DEVICE_EXIT_CODE 4)
+
 foreach(required HOST PROJECT WORK REPORT SIZE BLOCKS FRAMES CEILING_MB MIN_GROUND GROWTH)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "run_far_flight_gate.cmake needs -D${required}=")
@@ -59,12 +61,18 @@ message(STATUS "far flight: ${cellCount} cells, ${topCount} blocks of far ground
 # renderer, and with none nothing asks for a node of the far ground -- the
 # first version of this gate ran so, and passed over a flight that read
 # thirty-six files and built nothing. Small frames, so a software device is
-# not what the run costs; not paced, so the camera crosses the world faster
-# against the clock than it does in a game, and the far ground is built behind
-# it harder than a player can ask.
+# not what the run costs.
+#
+# **Paced at 240**, four times a game's clock: a frame is a sixtieth of a
+# second of flight whatever it took, and with nothing holding it a fast
+# machine's millisecond frames fly the world in four seconds -- the disk is
+# then a lap behind, the second quarter of the run holds half the ground the
+# last one does, and the lap-over-lap check fails a flight that leaks nothing
+# (seen: 267 MiB against 325, with 2 927 cells in where a paced run has
+# 5 295). A slow device is under the pace and not held by it.
 execute_process(
     COMMAND "${HOST}" "${WORK}"
-        --headless --frames=${FRAMES} --exit --width=320 --height=180
+        --headless --frames=${FRAMES} --pace=240 --exit --width=320 --height=180
         --soak-report=${REPORT}
         --soak-ceiling-mb=${CEILING_MB}
         --soak-min-ground=${MIN_GROUND}
@@ -74,6 +82,14 @@ execute_process(
     OUTPUT_VARIABLE soakOutput
     ERROR_VARIABLE soakOutput)
 message(STATUS "${soakOutput}")
+# **No device, no flight** -- and said, not passed: the hosted Linux runner has
+# no GPU and no software one either, and the first push of this gate was red
+# there. The import and the count of its files above have run by now, on the
+# null device an import takes (D413); what is skipped is the flight.
+if(soakResult EQUAL ENG_NO_DEVICE_EXIT_CODE)
+    message("ENG_TEST_SKIP: no graphics device on this machine")
+    return()
+endif()
 if(NOT soakResult EQUAL 0)
     message(FATAL_ERROR "the far flight failed its gate (${soakResult}); the report is at ${REPORT}")
 endif()

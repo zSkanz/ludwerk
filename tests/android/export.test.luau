@@ -66,6 +66,93 @@ local function badging(tools: android.Tools, apk: string): string
 end
 
 test.suite("android export", function(suite)
+    suite:case("an APK of a game with a streamed terrain carries its cells and its far ground (D411)", function()
+        local tools = ready()
+        if tools == nil then
+            return
+        end
+        local host = projectlib.findEngine()
+        if host == nil then
+            print("no engine host on this machine, so the terrain's export to Android was not exercised")
+            return
+        end
+        local parent = projectlib.joined(repositoryRoot(), ".engine-android-terrain-test")
+        removeTree(parent)
+        fs.createDirectory(parent, { makeParents = true })
+        assert.eq(new.run({ name = "androidterrain", template = "starter", parent = parent }), 0)
+        local project = projectlib.joined(parent, "androidterrain")
+        -- 324 cells: past the 256 at which a terrain is a folder of cells.
+        local laid = process.run({
+            host :: string,
+            project,
+            "--import-terrain=hills",
+            "--import-size=1100",
+            "--import-high=40",
+        })
+        assert.that(laid.ok, `the terrain was not laid:\n{laid.stdout}{laid.stderr}`)
+
+        assert.eq(build.run({ path = project, output = nil, target = "android", force = false, devHost = false }), 0)
+
+        -- **What the phone extracts is what `payload.txt` lists** -- an APK's
+        -- assets cannot be listed from native code -- so a cell that is not
+        -- in the list is a cell the game never has, whatever the APK holds.
+        local assets = projectlib.joined(project, ".engine", "export", "android", "stage", "assets")
+        local listed = fs.readFileToString(projectlib.joined(assets, "payload.txt"))
+        local cells = 0
+        local far = 0
+        for line in string.gmatch(listed, "[^\r\n]+") do
+            if string.sub(line, -9) == ".lterrain" then
+                cells += 1
+                assert.that(
+                    string.sub(line, 1, 21) == "game/content/terrain/",
+                    `a cell is listed where the engine does not look: {line}`
+                )
+                assert.that(fs.exists(projectlib.joined(assets, line)), `{line} is listed and not staged`)
+            elseif string.sub(line, -6) == ".lnode" then
+                far += 1
+                assert.that(
+                    string.sub(line, 1, 29) == "game/.engine/terrain-pyramid/",
+                    `a file of the far ground is listed where the engine does not look: {line}`
+                )
+            end
+        end
+        assert.that(cells >= 256, `the payload lists {cells} cells of the terrain`)
+        assert.that(far > 0, "the payload lists none of the far ground's files")
+        assert.that(
+            string.find(listed, "game/content/terrain/scenes/main.scene/index.json", 1, true) ~= nil,
+            "the payload does not list the index of the terrain's cells"
+        )
+        assert.that(string.find(listed, "/session/", 1, true) == nil, "the payload carries a run's session cache")
+        -- And the pack, which the engine never reads a cell through, has none.
+        local manifest = fs.readFileToString(projectlib.joined(assets, "game", ".engine", "content.manifest.json"))
+        assert.that(string.find(manifest, ".lterrain", 1, true) == nil, "the pack carries the terrain's cells")
+
+        -- The APK itself, read back with the JDK's own tool: the template
+        -- drops what it is not told to keep, and a dot-folder is one.
+        local apk = projectlib.joined(project, "dist", "android", "androidterrain-0.1.0.apk")
+        assert.that(fs.exists(apk), `no APK at {apk}`)
+        local jar = projectlib.joined(
+            (tools :: android.Tools).jdk,
+            "bin",
+            if fs.exists(projectlib.joined((tools :: android.Tools).jdk, "bin", "jar.exe")) then "jar.exe" else "jar"
+        )
+        local entries = process.run({ jar, "tf", apk })
+        assert.that(entries.ok, `the APK could not be listed:\n{entries.stdout}{entries.stderr}`)
+        local inApk = 0
+        for line in string.gmatch(entries.stdout, "[^\r\n]+") do
+            if string.sub(line, -9) == ".lterrain" then
+                inApk += 1
+            end
+        end
+        assert.eq(inApk, cells)
+        assert.that(
+            string.find(entries.stdout, "assets/game/.engine/terrain-pyramid/", 1, true) ~= nil,
+            "the APK dropped the far ground's files"
+        )
+
+        removeTree(parent)
+    end)
+
     suite:case("a release APK is signed with the project's own key, and its code went up", function()
         local tools = ready()
         if tools == nil then

@@ -739,7 +739,9 @@ if(ENG_BUILD_TESTS)
             -DMIN_GROUND=2000
             -DGROWTH=15
             -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_far_flight_gate.cmake)
-    set_tests_properties(terrain_far_flight PROPERTIES TIMEOUT 900)
+    set_tests_properties(terrain_far_flight PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 900)
 
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)

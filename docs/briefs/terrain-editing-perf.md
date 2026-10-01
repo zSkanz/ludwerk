@@ -27,7 +27,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - **A faster brush leaves the same ground.** `terrain_tests` pins the voxels a
   run of every brush leaves (`every brush's result is fixed`, `a smooth
   stamp's result is fixed`), serially and on the job pool.
-- The full `scripts/localgate.ps1` before each push.
+- The full `scripts/localgate.ps1` before each push, and its test times read:
+  a test that took three times what it did is a finding, not a detail (D409
+  went out that way).
+- **After every push, CI is read before the next item starts**
+  (`gh run list`, `gh run view --log-failed`). A change to `docs/` alone is
+  gated too (`scripts/localgate.ps1 -Only docs`). ADR 0149's push was red for
+  two hours with nobody looking, and its fix red again for a defect's number
+  (D407).
 
 ## P1 — a stamp in a frame's budget
 
@@ -357,6 +364,23 @@ just one that can be made."* Six conditions; each is named below.
   terrain saved as cells was not waited for at start** (D412): the first
   ticks ran over nothing, and whoever stood there fell.
 
+- [x] **And as an APK** (ludwerk-08's order after the report: "the same
+  class as D411, and the owner tests on his phone"). `ludwerk build --target
+  android` of the same world: the APK carries the 4 356 cells at
+  `game/content/terrain/`, the index, and the far ground's 488 files under
+  `game/.engine/terrain-pyramid/`, and `payload.txt` -- the list the phone
+  extracts by, an APK's assets not being a file system -- names every one.
+  What the APK holds, extracted as the phone extracts it and run: the ground
+  is waited for and streams (5 295 cells in, 5 065 out), the far ground is
+  read from the shipped files, no cell is read to make one.
+  `tests/android`, "an APK of a game with a streamed terrain carries its
+  cells and its far ground". **Not run on a device**: there is no emulator
+  on this machine and none was installed, and nothing is put on the owner's
+  phone but by him. One thing fixed by reading: a game's session cache went
+  to the system's temporary folder, which an app may not write -- changed
+  ground would have stayed in memory for good; it goes to the app's own
+  storage where the first is refused.
+
 **What the gate's clock found, in ADR 0149's own stage** (D409): every
 changed cell past the load radius was written out, whatever it weighed, and a
 file is two thirds of a millisecond on Windows however many threads write.
@@ -402,6 +426,11 @@ under three minutes, at a p99 of 8.2 ms while it does.
   in is still never let go.
 - [ ] **The async IO service answers 150 to 250 reads a second**, and it is
   not known why; the held ring reads where it stands instead of asking it.
+- [ ] **A streamed terrain on a phone, run**: checked to the APK's contents
+  and no further. The first launch extracts a file a cell.
+
+These five and the first are a ledger of their own after R3 (ludwerk-08,
+2026-10-01); the session cache as one file removes the budget.
 
 ## P6 — the frame rate follows the monitor
 
