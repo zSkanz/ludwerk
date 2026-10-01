@@ -169,7 +169,9 @@ jobs:
         run: scripts/gates/docs-lint.sh
 
   # ---------------------------------------------------------------------------
-  # Tier-1 (Windows) and Tier-2 (Linux) build + test. third_party is vendored
+  # Tier-2 (Linux) build + test; Tier-1 is `build-test-windows` below, lifted out
+  # of this matrix on 2026-10-01 so that macOS waits for this job alone.
+  # third_party is vendored
   # in-tree (ADR 0021), so there is no dependency-fetch step: the checkout plus
   # the one hash-pinned DirectXShaderCompiler archive (ADR 0032) is the whole
   # input.
@@ -199,7 +201,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, preset: win-msvc-dev }
           - { os: ubuntu-latest, preset: linux-clang-dev }
     runs-on: ${{ matrix.os }}
     # The hang guard, not a schedule. It was 45, then 30 on a cold run measured
@@ -370,24 +371,6 @@ jobs:
             sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-
             sccache-${{ runner.os }}-${{ matrix.preset }}-
 
-      # The presets use the Ninja generator with `strategy: external`, so the
-      # MSVC environment must be established first. vswhere avoids hardcoding
-      # an edition/year that changes with the runner image.
-      #
-      # `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` is not a tuning knob,
-      # it is what makes the compiler cache above do anything at all on this
-      # tier. sccache refuses any MSVC compilation whose PDB is shared with
-      # another compilation (src/compiler/msvc.rs, "shared pdb"), and CMake
-      # hands every object in a target the same `/Fd<target>.pdb`, so under the
-      # default `/Zi` the Windows hit rate is exactly zero -- silently, since
-      # those land in `Non-cacheable compilations` with no reason recorded.
-      # `Embedded` is `/Z7`: the same debug information, carried in the object
-      # files, with the executable's PDB still produced by the linker.
-      #
-      # Passed here rather than written into CMakePresets.json on purpose. It is
-      # a property of *this* environment, not of the dev profile: locally, `/Zi`
-      # is the better default (smaller objects, faster incremental links) and
-      # nobody is sharing a compiler cache.
       # **Before the build, not after it.**
       #
       # This step used to sit below the build and the tests, which was fine while
@@ -443,43 +426,6 @@ jobs:
           # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
           # rokit.toml (R5); the interactive trust prompt has no answer in CI.
           "$HOME/.rokit/bin/rokit" install --no-trust-check
-
-      - name: Configure, build and test (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSPATH=%%i
-          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-          cmake --preset ${{ matrix.preset }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded || exit /b 1
-          cmake --build --preset ${{ matrix.preset }} || exit /b 1
-          ctest --preset ${{ matrix.preset }} -LE gpu-golden -j 4 > ctest.log 2>&1 || (type ctest.log & exit /b 1)
-          type ctest.log
-
-      # **What a runner is allowed to skip, named** (S7.2). CTest counts a skip
-      # as a pass, so six gates that need a graphics device or a display have
-      # reported green on every push without executing: `editor_seam` and
-      # `editor_shell` open a window, and the four differentials render two
-      # frames and compare them. Nothing said so, in the summary or anywhere
-      # else, which is the whole complaint -- the local gate has failed on an
-      # unexpected skip since S7.3 and this half was owed. `replica_seam` (N1)
-      # joined them: it renders a host and its replica side by side, and a
-      # runner with no device skips it for the reason `editor_seam` skips.
-      #
-      # The list is a CEILING and not a prediction: a runner that HAS a device
-      # runs them and passes, and needs no edit here. What fails is anything
-      # ELSE skipping, which is the regression worth catching -- a test that
-      # quietly stops finding its fixture skips exactly like a test that cannot
-      # find a GPU, and until now both were green.
-      #
-      # The three `screenshot_gate*` are absent because `-LE gpu-golden`
-      # excludes them outright rather than skipping them: a pixel golden is tied
-      # to the GPU that recorded it, which architecture.md §9 says is why the
-      # capture gate and not the image comparison is the blocking render gate.
-      - name: No test skipped that was not expected to (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          scripts/gates/assert-no-skips.sh ctest.log             editor_seam replica_seam editor_shell rhi_sdlgpu chunk_grid_differential             graphics_settings_differential local_shadow_differential             example_ragdoll_builds triangle_sample descriptor_heap_overflow             surface_contract_proof_specular surface_contract_proof_meshes user_surface_proof device_loss_survived ui_appearance_gate views_gate mirrors_gate subworld_gate ortho_gate terrain_gallery_holes terrain_shadow_acne terrain_material_channels block_faces_colours terrain_rules_agree foliage_card_shadows terrain_tiling terrain_paint_edge terrain_far terrain_far_plane terrain_far_flight
 
       - name: Configure, build and test (Linux)
         if: runner.os == 'Linux'
@@ -588,6 +534,286 @@ jobs:
       #
       # Warns rather than fails: this step reports on the build, it does not
       # judge it, and a cache that got worse is not a reason to reject a commit.
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          command -v sccache >/dev/null 2>&1 || exit 0
+
+          stats="$(sccache --show-stats 2>&1)"
+          # Matched on the label as a line prefix and read as the last field, so
+          # that sccache's runtime-computed column widths cannot break this.
+          field() { awk -v k="$1" 'index($0, k) == 1 { print $NF; exit }' <<< "$stats"; }
+
+          hits="$(field 'Cache hits')"
+          misses="$(field 'Cache misses')"
+          declined_calls="$(field 'Non-cacheable calls')"
+          declined_compilations="$(field 'Non-cacheable compilations')"
+
+          headline="$(awk -v h="$hits" -v m="$misses" 'BEGIN {
+            n = h + m
+            if (n > 0) printf "**%d of %d cacheable compilations hit (%d%%)**", h, n, 100 * h / n
+            else printf "**no cacheable compilations recorded**"
+          }')"
+
+          {
+            echo "### sccache — ${{ matrix.preset }}"
+            echo
+            echo "$headline"
+            echo
+            echo "\`${declined_calls:-?}\` calls declined before compiling (expected — SDL3's precompiled headers) · \`${declined_compilations:-?}\` compilations declined (expected 0)"
+            echo
+            echo '```'
+            printf '%s\n' "$stats"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf '%s\n' "$stats"
+
+          if [[ "$declined_compilations" =~ ^[0-9]+$ ]] && (( declined_compilations > 0 )); then
+            echo "::warning::sccache declined ${declined_compilations} compilation(s) on ${{ matrix.preset }} with no reason recorded — the usual cause is MSVC debug information reverting to a shared PDB, which makes this cache do nothing"
+          fi
+
+          # Stopped explicitly because SCCACHE_IDLE_TIMEOUT=0 means it never
+          # stops on its own, and actions/cache's save runs after this step.
+          sccache --stop-server > /dev/null 2>&1 || true
+
+  # ---------------------------------------------------------------------------
+  # Tier-1 (Windows), in three jobs (C0, `docs/briefs/streaming-cleanup.md`).
+  #
+  # **The build was never what this tier waited for.** Measured on 2026-10-01:
+  # configure and build, 6 minutes with the compiler cache at 97%; the tests,
+  # 22 -- a hosted Windows runner has four cores and no GPU, the tests that
+  # draw are rasterised in software, and 95 tests summing to an hour of
+  # machine time went through `-j 4`. So the tests are what is divided: each
+  # shard builds the tree (from the cache, the cheap part) and runs every third
+  # test, `ctest -I <shard>,,3`. No artifact is handed between jobs: a build
+  # tree is gigabytes to upload and download, and the cache already makes a
+  # second build cost what the hand-off would.
+  #
+  # What bounds a shard is its longest test, not its sum -- `terrain_far_plane`
+  # and `terrain_shadow_acne` are several minutes each on this device -- so a
+  # fourth shard would buy nothing; a shorter test would.
+  #
+  # Out of `build-test`'s matrix, and that is half the point: `build-macos`
+  # needs the Linux leg's shaders and nothing of this job, and inside one
+  # matrix it waited for both.
+  # ---------------------------------------------------------------------------
+  build-test-windows:
+    name: build-test (windows-latest, win-msvc-dev, ${{ matrix.shard }}/${{ matrix.shards }})
+    needs: changes
+    if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.code != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, preset: win-msvc-dev, shard: 1, shards: 3 }
+          - { os: windows-latest, preset: win-msvc-dev, shard: 2, shards: 3 }
+          - { os: windows-latest, preset: win-msvc-dev, shard: 3, shards: 3 }
+    runs-on: ${{ matrix.os }}
+    # The hang guard, as on `build-test`.
+    timeout-minutes: 60
+    env:
+      SCCACHE_CACHE_SIZE: "1G"
+      SCCACHE_IDLE_TIMEOUT: "0"
+    steps:
+      # The shared steps are `build-test`'s, where each is explained.
+      - uses: actions/checkout@v4
+
+      # As in `build-test`, where it is explained.
+      - name: Set the out-of-tree build root (R14) and the compiler-cache location
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+          # Set rather than left to sccache's per-platform default, so that the
+          # actions/cache step below has one path it can name on every OS.
+          echo "SCCACHE_DIR=${RUNNER_TEMP}/sccache" >> "$GITHUB_ENV"
+
+      # As in `build-test`, where it is explained.
+      - name: Install sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Windows) triple="x86_64-pc-windows-msvc";     ext="zip";    exe="sccache.exe" ;;
+            Linux)   triple="x86_64-unknown-linux-musl";  ext="tar.gz"; exe="sccache" ;;
+            *) echo "::error::no pinned sccache artifact for ${RUNNER_OS}"; exit 1 ;;
+          esac
+          # The release names its assets with the leading "v" twice: once in the
+          # tag, once in the file name.
+          name="sccache-v${SCCACHE_VERSION}-${triple}"
+          archive="${RUNNER_TEMP}/${name}.${ext}"
+          curl -fsSL -o "$archive" \
+            "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${name}.${ext}"
+          mkdir -p "${RUNNER_TEMP}/sccache-bin"
+          if [[ "$ext" == "zip" ]]; then
+            unzip -q "$archive" -d "${RUNNER_TEMP}/sccache-bin"
+          else
+            tar -xzf "$archive" -C "${RUNNER_TEMP}/sccache-bin"
+          fi
+          # The archive holds one top-level directory named after the asset.
+          #
+          # Proved by absolute path rather than by prepending to PATH and
+          # running `sccache`: on Windows $RUNNER_TEMP is `D:\a\_temp`, and a
+          # drive letter inside bash's colon-separated PATH splits into two
+          # useless entries at the colon. $GITHUB_PATH does not have that
+          # problem -- the runner appends it with the platform's own separator,
+          # which is also what the `cmd` build step below needs.
+          "${RUNNER_TEMP}/sccache-bin/${name}/${exe}" --version
+          echo "${RUNNER_TEMP}/sccache-bin/${name}" >> "$GITHUB_PATH"
+
+      # As in `build-test`, where it is explained.
+      - name: Cache the pinned DirectXShaderCompiler archive
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.zip
+            ${{ runner.temp }}/engine-build/toolchains/dxc/**/*.tar.gz
+          key: dxc-${{ runner.os }}-${{ hashFiles('third_party/manifest.json') }}
+
+      # **One shard saves the cache and the others only read it**: all three
+      # compile the same objects, `actions/cache` never overwrites a key, and
+      # three saves a run would be three copies against the repository's
+      # ten gigabytes.
+      - name: Cache the compiler cache
+        if: matrix.shard == 1
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-
+            sccache-${{ runner.os }}-${{ matrix.preset }}-
+
+      - name: Restore the compiler cache
+        if: matrix.shard != 1
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('third_party/manifest.json', 'CMakePresets.json', 'cmake/**') }}-
+            sccache-${{ runner.os }}-${{ matrix.preset }}-
+
+      # As in `build-test`, where it is explained.
+      - name: Install the pinned Luau toolchain
+        if: runner.os != 'macOS'
+        shell: bash
+        env:
+          # Rokit resolves every pinned tool through api.github.com, and
+          # unauthenticated that is sixty requests an hour shared across the
+          # runner's whole IP -- so it returns 403 on a busy afternoon and the
+          # step dies with "GitHub error: 403 Forbidden" for a release that is
+          # public and present. It happened once, on the push that closed M4.5,
+          # and the job it killed had already built and passed all 25 tests.
+          #
+          # `GITHUB_TOKEN` is the workflow's own automatic token: nothing to
+          # create, nothing to store, and read-only on a fork's pull request,
+          # which is all this needs.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) archive="rokit-${ROKIT_VERSION}-windows-x86_64.zip" ;;
+            *)       archive="rokit-${ROKIT_VERSION}-linux-x86_64.zip" ;;
+          esac
+          curl -fsSL -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/${archive}"
+          unzip -q /tmp/rokit.zip -d /tmp/rokit
+          /tmp/rokit/rokit self-install
+          # **A Windows path on Windows.** `$HOME` in the runner's bash is
+          # `/c/Users/runneradmin`, and `$GITHUB_PATH` is read by every later
+          # step -- including the ctest one, which runs under `cmd` where a POSIX
+          # path means nothing. The Linux tier found `lute` and the Windows tier
+          # did not, on the same step, which is what gave this away.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cygpath -w "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          else
+            echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          fi
+          # Before `install`, so every release lookup it makes is authenticated.
+          # The subcommand and its flag are read off the pinned binary's own
+          # `--help` at 1.2.0 rather than from documentation for some other
+          # version (MASTER_PROMPT §9).
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          # --no-trust-check: the tools are pinned in the in-repo, ADR-gated
+          # rokit.toml (R5); the interactive trust prompt has no answer in CI.
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+
+      # The presets use the Ninja generator with `strategy: external`, so the
+      # MSVC environment must be established first. vswhere avoids hardcoding
+      # an edition/year that changes with the runner image.
+      #
+      # `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` is not a tuning knob,
+      # it is what makes the compiler cache above do anything at all on this
+      # tier. sccache refuses any MSVC compilation whose PDB is shared with
+      # another compilation (src/compiler/msvc.rs, "shared pdb"), and CMake
+      # hands every object in a target the same `/Fd<target>.pdb`, so under the
+      # default `/Zi` the Windows hit rate is exactly zero -- silently, since
+      # those land in `Non-cacheable compilations` with no reason recorded.
+      # `Embedded` is `/Z7`: the same debug information, carried in the object
+      # files, with the executable's PDB still produced by the linker.
+      #
+      # Passed here rather than written into CMakePresets.json on purpose. It is
+      # a property of *this* environment, not of the dev profile: locally, `/Zi`
+      # is the better default (smaller objects, faster incremental links) and
+      # nobody is sharing a compiler cache.
+      #
+      # **And a third of the tests**: `-I <shard>,,<shards>` is every third test
+      # by its number, which one configure gives every shard alike.
+      - name: Configure, build and test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSPATH=%%i
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake --preset ${{ matrix.preset }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} || exit /b 1
+          ctest --preset ${{ matrix.preset }} -LE gpu-golden -j 4 -I ${{ matrix.shard }},,${{ matrix.shards }} > ctest.log 2>&1 || (type ctest.log & exit /b 1)
+          type ctest.log
+
+      # **What a runner is allowed to skip, named** (S7.2). CTest counts a skip
+      # as a pass, so six gates that need a graphics device or a display have
+      # reported green on every push without executing: `editor_seam` and
+      # `editor_shell` open a window, and the four differentials render two
+      # frames and compare them. Nothing said so, in the summary or anywhere
+      # else, which is the whole complaint -- the local gate has failed on an
+      # unexpected skip since S7.3 and this half was owed. `replica_seam` (N1)
+      # joined them: it renders a host and its replica side by side, and a
+      # runner with no device skips it for the reason `editor_seam` skips.
+      #
+      # The list is a CEILING and not a prediction: a runner that HAS a device
+      # runs them and passes, and needs no edit here. What fails is anything
+      # ELSE skipping, which is the regression worth catching -- a test that
+      # quietly stops finding its fixture skips exactly like a test that cannot
+      # find a GPU, and until now both were green.
+      #
+      # The three `screenshot_gate*` are absent because `-LE gpu-golden`
+      # excludes them outright rather than skipping them: a pixel golden is tied
+      # to the GPU that recorded it, which architecture.md §9 says is why the
+      # capture gate and not the image comparison is the blocking render gate.
+      - name: No test skipped that was not expected to (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          scripts/gates/assert-no-skips.sh ctest.log             editor_seam replica_seam editor_shell rhi_sdlgpu chunk_grid_differential             graphics_settings_differential local_shadow_differential             example_ragdoll_builds triangle_sample descriptor_heap_overflow             surface_contract_proof_specular surface_contract_proof_meshes user_surface_proof device_loss_survived ui_appearance_gate views_gate mirrors_gate subworld_gate ortho_gate terrain_gallery_holes terrain_shadow_acne terrain_material_channels block_faces_colours terrain_rules_agree foliage_card_shadows terrain_tiling terrain_paint_edge terrain_far terrain_far_plane terrain_far_flight
+
+      # As in `build-test`, where it is explained.
+      - name: ludwerk test (the CLI's path to the conformance suite)
+        if: matrix.shard == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/ludwerk.sh test tests/conformance | tail -n 3
+
+      # As in `build-test`, where it is explained.
+      - name: Hot reload, end to end (M3 gate)
+        if: matrix.shard == 1
+        shell: bash
+        run: lute test tests/hotreload
+
+      # As in `build-test`, where it is explained.
       - name: sccache statistics
         if: always()
         shell: bash
@@ -790,10 +1016,11 @@ jobs:
     # errors still builds; a documentation-only push does not build at all; and a
     # tag push is skipped because the tag points at a commit this job already
     # built when it landed.
-    # And after `build-test`, whose Linux leg compiles this job's shaders
-    # (D167, ADR 0032). That costs the wall time of the other build before this
-    # one starts; the alternative is capture gates that compare a stream
-    # recorded with no pipelines against one recorded with them.
+    # And after `build-test`, which compiles this job's shaders (D167, ADR
+    # 0032). That costs the Linux job's seven minutes before this one starts --
+    # and no longer the Windows tier's thirty: it is a job of its own now. The
+    # alternative is capture gates that compare a stream recorded with no
+    # pipelines against one recorded with them.
     needs: [changes, build-test]
     if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.code != 'false' }}
     runs-on: macos-latest

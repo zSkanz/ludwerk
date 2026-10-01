@@ -1512,7 +1512,13 @@ if(ENG_BUILD_TESTS)
     # **Timed, so alone** (`RUN_SERIAL`): a frame ceiling or a tick budget
     # measured while twenty other processes compile shaders is a measurement
     # of the machine's load.
-    foreach(timed IN ITEMS perf_budget streaming_soak openworld_soak terrain_far_flight)
+    #
+    # `terrain_far_flight` is not one of them, though it is a soak: what it
+    # asserts of time is the streaming's own share of a frame, read in the
+    # thread's CPU time where the platform has it, and its frame is a software
+    # rasteriser's on a runner -- five and a half minutes alone, with every
+    # other test waiting (C0, `docs/briefs/streaming-cleanup.md`).
+    foreach(timed IN ITEMS perf_budget streaming_soak openworld_soak)
         if(TEST ${timed})
             set_property(TEST ${timed} APPEND PROPERTY RUN_SERIAL TRUE)
         endif()

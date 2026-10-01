@@ -27,9 +27,15 @@ endforeach()
 file(REMOVE_RECURSE "${OUTPUT}")
 file(MAKE_DIRECTORY "${OUTPUT}")
 
-# Frames enough for the far nodes, built off the frame's thread, to be drawn.
+# **Frames enough for the far ground to be all there**: a run that takes a
+# picture builds its terrain inside the frame, 256 nodes a frame, and this
+# world's five kilometres of view are some ninety frames of them -- at sixty
+# the row under the line was still sky. Twice that. It was 360 paced at 60,
+# from when the nodes were built off the frame's thread and what they needed
+# was time: on a runner with no GPU each frame is most of a second, and the
+# test was eight minutes of a job.
 execute_process(
-    COMMAND "${HOST}" "${SCRIPT}" --headless --frames=360 --pace=60 --exit "--screenshot=${OUTPUT}/far-plane.png"
+    COMMAND "${HOST}" "${SCRIPT}" --headless --frames=180 --exit "--screenshot=${OUTPUT}/far-plane.png"
             --debug-view=holes --width=640 --height=360
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output

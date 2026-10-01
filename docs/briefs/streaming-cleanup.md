@@ -2,11 +2,13 @@
 
 **ludwerk-08's order of 2026-10-01**, after P5c (`terrain-editing-perf.md`) and
 the editor's catalog (`r3-editor-i18n.md`): *"A small cleanup ledger for the
-open items, after R3."* Five things P5c measured, said and did not do. Before
-ADR 0147's G1 to G5, water and F2.
+open items, after R3."* Five things P5c measured, said and did not do, and
+one before them that every push pays: CI. Before ADR 0147's G1 to G5, water
+and F2.
 
 | Stage | What | Decision |
 |---|---|---|
+| C0 | CI in twenty minutes or less: every push pays it | this ledger |
 | C1 | The streaming's reads are as fast as the disk, not as the frame | this ledger |
 | C2 | The session cache is one file, and the budget it stood in for goes | an ADR of its own, amending 0149 and 0150 §7 |
 | C3 | The streaming manager asks only the cells near a focus | this ledger |
@@ -27,8 +29,39 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - **Built and run as a game** before it is called done -- `ludwerk build`,
   and the folder it makes -- because a project and a build of one read the
   ground by different roads (D411).
-- The full `scripts/localgate.ps1` before each push, its test times read;
-  CI read after each push before the next stage starts.
+- The full `scripts/localgate.ps1` before each push, its test times read.
+- **CI is read before the NEXT push, not waited for** (ludwerk-08,
+  2026-10-01): after a push the next stage starts; before the push after it,
+  the run before is read, and a red one is fixed first. Never a push over a
+  run still going -- `cancel-in-progress` takes it. One push a stage.
+
+## C0 — CI in twenty minutes
+
+**Measured 2026-10-01**, on the run of `82b4492a` (`gh api .../jobs`): the
+Windows job was 30 m 44 s, and of it **the build was 6 minutes** -- sccache at
+97% -- and **the tests 22**: 95 tests summing to an hour of machine time
+through `-j 4`, on a runner with four cores and no GPU, where every test that
+draws is rasterised in software. `terrain_far_plane` 486 s,
+`terrain_shadow_acne` 415 s, `terrain_far_flight` 330 s -- that one alone,
+with every other test waiting, because it was listed as timed. macOS waited
+behind all of it for the Linux leg's shaders: 42 minutes a push.
+
+- [x] **The Windows tests in three jobs** (`build-test-windows`): each builds
+  from the compiler cache and runs every third test (`ctest -I <shard>,,3`).
+  No artifact between jobs -- a build tree is gigabytes to hand over, and the
+  cache makes a second build cost what the hand-off would. One shard saves
+  the cache; the others only read it.
+- [x] **macOS waits for Linux alone**: Windows is out of `build-test`'s
+  matrix, so `build-macos` needs the job whose shaders it takes and no other.
+- [x] **`terrain_far_flight` takes its turn** and is not run alone: what it
+  asserts of time is the streaming's share of a frame, in the thread's CPU
+  time. Its whole-frame backstop is two seconds -- "did not stall".
+- [x] **`terrain_far_plane` draws 180 frames, not 360**: what its far ground
+  needs is frames (256 nodes built a frame, ninety for that world), and the
+  360 paced at 60 were from when it needed time.
+- [ ] Measured after: the run of this push, a job at a time, in
+  `docs/perf-baselines.md`. If a shard is still past ten minutes, its
+  longest test is what to shorten -- a fourth shard buys nothing.
 
 ## C1 — reads as fast as the disk
 

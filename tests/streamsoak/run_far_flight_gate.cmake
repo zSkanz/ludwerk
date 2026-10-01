@@ -20,7 +20,9 @@
 #
 # Frame times are in `docs/perf-baselines.md`, where a human put them: the
 # whole frame here is the device's -- 24 ms at the median on lavapipe, 1.6 ms
-# on a GPU -- and what is asserted of it is that it did not stall.
+# on a GPU, 80 on a hosted Windows runner beside three other tests -- and what
+# is asserted of it is that it did not stall: two seconds at the 99th
+# percentile. It runs beside the other tests, not alone.
 cmake_minimum_required(VERSION 3.24)
 
 set(ENG_NO_DEVICE_EXIT_CODE 4)
@@ -77,7 +79,7 @@ execute_process(
         --soak-ceiling-mb=${CEILING_MB}
         --soak-min-ground=${MIN_GROUND}
         --soak-memory-growth=${GROWTH}
-        --soak-frame-p99-ms=250
+        --soak-frame-p99-ms=2000
     RESULT_VARIABLE soakResult
     OUTPUT_VARIABLE soakOutput
     ERROR_VARIABLE soakOutput)

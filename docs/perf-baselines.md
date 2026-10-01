@@ -1633,7 +1633,28 @@ profile was compiled again.
 
 After a header every module includes changed (`log.h`), the same run was
 12.4 minutes: the three Linux release profiles recompile, which no cache
-shortens, and are the long pole.
+shortens, and are the long pole. Four runs of 2026-10-01 with code changed:
+556 to 915 s.
+
+## CI (the cleanup ledger's C0)
+
+A push to `main`, from its first job starting to its last ending, on GitHub's
+hosted runners (four cores, no GPU), 2026-10-01:
+
+| | Before ADR 0148 | After it | With the Windows tests in three jobs |
+|---|---|---|---|
+| The run | 41 to 55 min | 36 to 43 min | to be measured on this push |
+| Linux job | -- | 6 to 7.5 min | |
+| Windows job | -- | 25 to 31 min | |
+| macOS job | -- | 7 to 17 min, after both | |
+
+Where the Windows job's 30 m 44 s went on `82b4492a`: configure 40 s, build
+5 min (sccache 868 hits of 898), **tests 22 min** -- 95 tests, 3 581 s of them
+through `-j 4`. The longest: `terrain_far_plane` 486 s, `terrain_shadow_acne`
+415 s, `terrain_far_flight` 330 s (run alone), `app` 252 s,
+`terrain_gallery_holes` 203 s, `terrain_far` 202 s. On the development
+machine's GPU the same six are 28, 40, 45, 83, 6 and 38 s: the runner draws
+in software.
 
 | | Before | After |
 |---|---|---|
