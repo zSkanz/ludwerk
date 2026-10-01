@@ -114,6 +114,13 @@ void setPointerPosition(Window& window, f32 x, f32 y);
 // multiplying by an unscaled default (D055).
 [[nodiscard]] f32 windowDisplayScale(const Window& window) noexcept;
 
+// **What a frame's pacing asks of its window** (ADR 0147, G0): whether
+// somebody is at it, whether it is put away, and how often its display
+// refreshes -- 0 when the display will not say.
+[[nodiscard]] bool windowFocused(const Window& window) noexcept;
+[[nodiscard]] bool windowMinimized(const Window& window) noexcept;
+[[nodiscard]] f32 windowRefreshRate(const Window& window) noexcept;
+
 // How far in from each window edge it is safe to draw, in PIXELS: left, top,
 // right, bottom. Zero on a desktop window; a notch, a rounded corner or a
 // system gesture bar is what makes it not.

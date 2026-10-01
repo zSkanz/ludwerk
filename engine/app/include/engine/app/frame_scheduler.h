@@ -95,6 +95,8 @@ public:
     // deliberately NOT rescaled: it holds real time owed to the simulation, and
     // that debt is the same number of seconds whatever the tick becomes.
     void setFixedDt(f64 seconds) noexcept { timing_.fixedDt = seconds; }
+    // How many ticks a frame may run to catch up; see `catchUpTicksFor`.
+    void setMaxCatchUpTicks(u32 ticks) noexcept { timing_.maxCatchUpTicks = ticks > 0 ? ticks : 1; }
 
     // **The clock it is fed changed** (audit A9): the synthetic clock counts
     // from zero and the real one from boot, so the first real frame after a

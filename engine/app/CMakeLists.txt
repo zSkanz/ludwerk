@@ -11,6 +11,7 @@ engine_add_module(app
         src/network_session.cpp
         src/match_launcher.cpp
         src/export_runner.cpp
+        src/frame_pacing.cpp
         src/frame_scheduler.cpp
         src/backends.cpp
         src/engine.cpp
@@ -298,6 +299,7 @@ add_custom_command(TARGET engine_host POST_BUILD
 engine_add_module_tests(app
     SOURCES
         tests/pointer_ownership_tests.cpp
+        tests/frame_pacing_tests.cpp
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp
         tests/foliage_editor_tests.cpp

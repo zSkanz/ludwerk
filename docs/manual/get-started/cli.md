@@ -190,6 +190,7 @@ engine-host [script.luau | project-dir]
    --[no-]contact-shadows --[no-]anti-aliasing --[no-]auto-exposure]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance]
   [--pace=HZ]
+  [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --version | --help
 ```
 
@@ -218,6 +219,12 @@ engine-host [script.luau | project-dir]
 wait left out of `--frame-stats`: without it a headless flight is over in a
 second or two, and ground built beside the frame is measured against a camera
 moving far faster than anyone flies.
+
+**A window's frames are paced**, over the project's `[display]`: `--vsync`
+and `--no-vsync` say whether a frame waits for the display, `--max-frame-rate=N`
+caps it (0 for no cap), and `--background-frame-rate=N` is the rate while the
+window is unfocused or minimised (10 unless the project says otherwise; 0 for
+no throttle). A headless run, and one with `--pace`, is not paced by them.
 
 **A run that takes a picture builds its terrain in the frame** that draws it,
 rather than beside it as a game does: headless frames run flat out, and the

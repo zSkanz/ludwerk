@@ -20,10 +20,33 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## G0 — the frame pacing (urgent part, first)
 
-- [ ] VSync on by default (desktop and Android), `MaxFrameRate`, the background
+- [x] VSync on by default (desktop and Android), `MaxFrameRate`, the background
   throttle; the editor's frame rate following the monitor by default.
-- [ ] Measured: VSync off + 60 cap gives 16.7 ms ± jitter; the editor unfocused
-  drops to the background rate; headless and `--pace` unchanged.
+  `[display] vsync`, `max_frame_rate`, `background_frame_rate` in
+  `project.toml`, the flags over them; `rhi::IDevice::setVSync` asks the
+  swapchain for it by name; `FrameLimiter` holds a cap to a grid, and
+  `SyncWatch` puts the refresh in its place where the display's sync was asked
+  for and is not holding -- no backbuffer, or a driver told to ignore it. A
+  throttled frame runs every tick it owes (`catchUpTicksFor`): ten frames a
+  second at sixty ticks is six a frame, where the clamp of four ran the game
+  at two thirds of its speed.
+- [x] Measured (`examples/03-physics-playground`, `--frame-stats`, 300 frames,
+  the development machine, a 240 Hz display):
+
+  | | Median | p99 | Worst |
+  |---|---|---|---|
+  | `--no-vsync --max-frame-rate=60` | **16.665 ms** | 17.04 ms | 17.45 ms |
+  | `--no-vsync`, no cap | 0.78 ms | 1.88 ms | 2.26 ms |
+  | VSync, in front (the default) | 8.53 ms | 12.84 ms | 13.06 ms |
+  | Minimised, the background rate | **100.02 ms** | 100.54 ms | 100.61 ms |
+  | The editor, in front (the default) | 8.53 ms | 13.20 ms | 13.41 ms |
+  | The editor, `--no-vsync` and no throttle | 0.94 ms | 1.73 ms | 2.63 ms |
+
+  A minimised window had no backbuffer to wait on, and its loop ran flat out:
+  that is the two thousand frames a second. Headless and `--pace` are not
+  paced by any of it; their tests and goldens did not move.
+- [ ] The editor's own rate as a preference (match the monitor, 30 to 240,
+  unlimited) is G4's, with the rest of Editor Preferences -> Performance.
 
 ## G1 — the model (§1–2)
 
@@ -62,4 +85,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Findings
 
-(Filled in as the work finds what this plan assumed wrongly.)
+- **G0: with VSync on, this machine's 240 Hz display shows a frame every
+  second or third refresh** -- 8.5 ms median for a frame that costs under one
+  -- in a window, on the D3D12 backend, in the dev build with the GPU debug
+  layer. The sync holds; the rate is half the display's. To look at with the
+  window modes (G1): the frames SDL allows in flight, and what the compositor
+  does to a windowed swapchain.
+- **G0: the RHI gained one method**, `IDevice::setVSync`, with a body that says
+  no -- a backend with no display has nothing to set. ADR 0043 froze the seam
+  against backend types and draw paths; this is neither, and is recorded here
+  rather than passed over.
+- **G0: nothing could say why the owner's editor ran unpaced in front**, where
+  SDL's default present mode is already the display's sync and this machine
+  holds it. `SyncWatch` is the answer that does not need to know: thirty frames
+  in a row faster than the display could have let through, and the refresh is
+  the cap.

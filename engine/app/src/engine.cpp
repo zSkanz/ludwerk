@@ -45,6 +45,7 @@
 #include "engine/app/dev_control.h"
 #include "engine/app/editor.h"
 #include "engine/app/field_streamer.h"
+#include "engine/app/frame_pacing.h"
 #include "engine/app/frame_scheduler.h"
 #include "engine/app/icons.h"
 #include "engine/app/inspector.h"
@@ -1026,6 +1027,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         if (!device->claimWindow(*window))
             return core::makeError(ENG_TR("rhi.err.window_claim_failed"), {}, "SDL_ClaimWindowForGPUDevice");
+            // **The display's sync, asked for by name** (ADR 0147, G0). A phone's
+            // is always on: its compositor shows nothing between refreshes.
+#if defined(__ANDROID__)
+        (void)device->setVSync(*window, true);
+#else
+        (void)device->setVSync(*window, options.pacing.vsync);
+#endif
     }
 
     // Headless has no swapchain, so it owns a target of its own. Everything
@@ -1200,6 +1208,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     SoakRecorder soak(60);
     core::u64 lastFrameNs = 0;
     core::u64 paceMarkNs = 0;
+    // **How fast a window's frames are made** (ADR 0147, G0): the limiter and
+    // what it is told. `framePresented` is whether the frame before had a
+    // backbuffer -- a minimised window has none, and its loop span flat out.
+    const bool paced = !options.headless && options.paceHz == 0 && window != nullptr;
+    FrameLimiter frameLimiter;
+    SyncWatch syncWatch;
+    bool framePresented = true;
+    core::u64 pacedFrameNs = 0;
+    const core::u32 baseCatchUpTicks = FrameTiming{}.maxCatchUpTicks;
 
     // Where everything was one tick ago (D047). Owned by the frame loop rather
     // than by the world, because it is not world state: a reload replaces the
@@ -2141,6 +2158,29 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             paceMarkNs = platform::nowNs();
             if (lastFrameNs != 0)
                 lastFrameNs = paceMarkNs;
+        }
+        // **The frame's cap** (ADR 0147, G0): none in front while the display
+        // holds the frames; the background rate while nobody is looking; the
+        // game's own cap; and the display's refresh where its sync was asked
+        // for and is not holding. Waited out here, at the frame's end, and
+        // counted in what a frame is measured to have taken -- it is how long
+        // the frame was on the screen.
+        if (paced) {
+            FrameWindowState state;
+            state.focused = platform::windowFocused(*window);
+            state.minimized = platform::windowMinimized(*window);
+            state.refreshRate = platform::windowRefreshRate(*window);
+            state.presented = framePresented;
+            const core::u64 now = platform::nowNs();
+            if (pacedFrameNs != 0 && framePresented && state.focused)
+                syncWatch.sample(now - pacedFrameNs, state.refreshRate);
+            state.syncHeld = syncWatch.held();
+            const core::u32 cap = frameCapFor(options.pacing, state);
+            if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
+                platform::sleepNs(wait);
+            pacedFrameNs = platform::nowNs();
+            // A frame held to ten a second owes six ticks, not four.
+            scheduler.setMaxCatchUpTicks(catchUpTicksFor(baseCatchUpTicks, scheduler.timing().fixedDt, cap));
         }
 
         // The FrameStart safe point. Overlay edits are applied HERE and not
@@ -4555,6 +4595,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const core::u64 acquireNs = platform::nowNs();
             const rhi::Swapchain swapchain = device->acquireSwapchain(*window);
             phaseWaitMs += msSince(acquireNs);
+            framePresented = swapchain.texture.valid();
             target = swapchain.texture;
             targetFormat = swapchain.format;
             targetWidth = swapchain.width;

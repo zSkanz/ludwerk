@@ -517,6 +517,14 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Frames are paced** (ADR 0147, stage G0). A window's frames wait for its
+  display (`[display] vsync = true`, the default), may be capped
+  (`max_frame_rate`), and are drawn ten times a second while the window is
+  unfocused or minimised (`background_frame_rate`; 0 turns it off). A
+  minimised window used to be drawn as fast as the machine went. The editor
+  is paced the same way. `--[no-]vsync`, `--max-frame-rate=N` and
+  `--background-frame-rate=N` on the command line. The simulation is
+  untouched: a throttled window runs every tick it owes.
 - **Terrain is drawn as far as the camera sees** (D403): out to
   `Camera.FarPlane`, where it stopped at 4 096 m whatever the camera. A world
   wider than the default 5 000 m needs a camera with a larger `FarPlane`.

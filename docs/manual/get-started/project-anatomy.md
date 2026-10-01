@@ -99,6 +99,11 @@ size = [1280, 720]
 fullscreen = false
 resizable = true
 
+[display]
+vsync = true
+max_frame_rate = 0
+background_frame_rate = 10
+
 [dev]
 port = 4560
 
@@ -116,6 +121,7 @@ quality = "high"
 |---|---|
 | `[project]` | `name` (becomes the built executable's name), `id` (reverse-DNS; groups taskbar buttons on Windows, and the Android package), `version` (`X.Y.Z`, stamped by every export), `company`, `icon` (one square PNG, 1024 pixels is best: every export makes its own sizes from it), `scene` |
 | `[window]` | `title`, `size` (or `width` and `height`), `fullscreen`, `resizable` |
+| `[display]` | How fast frames are made. `vsync` — a frame waits for the display's refresh; on unless it says otherwise, and always on a phone. `max_frame_rate` — frames a second at most, 0 for no cap; the only limit with `vsync` off, and a cap under the refresh with it on. `background_frame_rate` — the rate while the window is unfocused or minimised, 10 by default, 0 for no throttle. The simulation ticks at its own rate whatever these say |
 | `[dev]` | `port` — default 4560 |
 | `[network]` | `server` — where `NetworkService:Join()` goes with no address; `timeout` — seconds a silent connection is kept, 10 by default |
 | `[assets]` | `content` — where the asset compiler reads from |

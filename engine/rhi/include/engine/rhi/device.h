@@ -160,6 +160,19 @@ public:
     [[nodiscard]] virtual bool claimWindow(platform::Window& window) = 0;
     virtual void releaseWindow(platform::Window& window) = 0;
 
+    // **Whether a claimed window's frames wait for its display** (ADR 0147,
+    // G0). On: each present is shown on a refresh, and the frame waits for
+    // one. Off: shown as soon as it is done -- the newest frame on the next
+    // refresh where the backend can, torn where it cannot. Answers whether
+    // the window presents the way that was asked; a backend with no display
+    // has nothing to set and says no.
+    virtual bool setVSync(platform::Window& window, bool on)
+    {
+        (void)window;
+        (void)on;
+        return false;
+    }
+
     [[nodiscard]] virtual BufferHandle createBuffer(const BufferDesc& desc) = 0;
     [[nodiscard]] virtual TextureHandle createTexture(const TextureDesc& desc) = 0;
     [[nodiscard]] virtual SamplerHandle createSampler(const SamplerDesc& desc) = 0;

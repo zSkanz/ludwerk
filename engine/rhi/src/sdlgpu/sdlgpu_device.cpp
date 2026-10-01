@@ -307,6 +307,25 @@ public:
         return true;
     }
 
+    bool setVSync(platform::Window& window, bool on) override
+    {
+        if (lost_)
+            return false;
+        SDL_Window* native = platform::nativeWindow(window);
+        // Without the sync: the newest frame on the next refresh where the
+        // backend has that mode, and torn where it has only that.
+        SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+        if (!on) {
+            if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_MAILBOX))
+                mode = SDL_GPU_PRESENTMODE_MAILBOX;
+            else if (SDL_WindowSupportsGPUPresentMode(device_, native, SDL_GPU_PRESENTMODE_IMMEDIATE))
+                mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+            else
+                return false;
+        }
+        return SDL_SetGPUSwapchainParameters(device_, native, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+    }
+
     void releaseWindow(platform::Window& window) override
     {
         if (lost_)

@@ -116,6 +116,38 @@ TEST_CASE("a flag beats the file and the preset both")
     CHECK(config.graphics.quality == render::QualityLevel::Low);
 }
 
+TEST_CASE("a project says how fast its frames are made, and a flag says otherwise")
+{
+    // ADR 0147, G0: `[display]`. With no file a window waits for its display,
+    // has no cap, and is drawn ten times a second while nobody looks.
+    const app::ProjectConfig bare = app::loadProjectConfig({}, {});
+    CHECK(bare.pacing.vsync);
+    CHECK(bare.pacing.maxFrameRate == 0u);
+    CHECK(bare.pacing.backgroundFrameRate == 10u);
+
+    const ProjectDir project("[project]\nname = \"Paced\"\n\n[display]\nvsync = false\nmax_frame_rate = 144\n"
+                             "background_frame_rate = 0\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
+    CHECK_FALSE(config.pacing.vsync);
+    CHECK(config.pacing.maxFrameRate == 144u);
+    CHECK(config.pacing.backgroundFrameRate == 0u);
+
+    // A rate nobody can mean is not taken: the default stands.
+    const ProjectDir absurd("[display]\nmax_frame_rate = 100000\nbackground_frame_rate = -3\n");
+    const app::ProjectConfig kept = app::loadProjectConfig(absurd.path, {});
+    CHECK(kept.pacing.maxFrameRate == 0u);
+    CHECK(kept.pacing.backgroundFrameRate == 10u);
+
+    // `--vsync --max-frame-rate=60` over the file, key by key.
+    app::GraphicsOverrides flags;
+    flags.vsync = true;
+    flags.maxFrameRate = 60;
+    const app::FramePacing typed = app::pacingWith(config.pacing, flags);
+    CHECK(typed.vsync);
+    CHECK(typed.maxFrameRate == 60u);
+    CHECK(typed.backgroundFrameRate == 0u);
+}
+
 TEST_CASE("a project with no file is the defaults plus the command line")
 {
     app::GraphicsOverrides overrides;

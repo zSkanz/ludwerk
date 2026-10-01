@@ -147,6 +147,17 @@ namespace {
 
 } // namespace
 
+FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noexcept
+{
+    if (overrides.vsync.has_value())
+        file.vsync = *overrides.vsync;
+    if (overrides.maxFrameRate.has_value())
+        file.maxFrameRate = *overrides.maxFrameRate;
+    if (overrides.backgroundFrameRate.has_value())
+        file.backgroundFrameRate = *overrides.backgroundFrameRate;
+    return file;
+}
+
 ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const GraphicsOverrides& overrides,
                                 std::string* diagnostic)
 {
@@ -207,6 +218,12 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.saveMaxSlotBytes = static_cast<core::u64>(*value);
     if (const std::optional<std::string_view> value = document.string("project.company"))
         config.company = *value;
+    if (const std::optional<bool> value = document.boolean("display.vsync"))
+        config.pacing.vsync = *value;
+    if (const std::optional<f64> value = numberIn(document, "display.max_frame_rate", 0.0, 1000.0))
+        config.pacing.maxFrameRate = static_cast<core::u32>(*value);
+    if (const std::optional<f64> value = numberIn(document, "display.background_frame_rate", 0.0, 1000.0))
+        config.pacing.backgroundFrameRate = static_cast<core::u32>(*value);
     if (const std::optional<bool> value = document.boolean("window.fullscreen"))
         config.fullscreen = *value;
     if (const std::optional<bool> value = document.boolean("window.resizable"))

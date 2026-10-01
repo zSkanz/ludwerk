@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 
+#include "engine/app/frame_pacing.h"
 #include "engine/core/types.h"
 #include "engine/render/settings.h"
 
@@ -39,6 +40,11 @@ struct GraphicsOverrides
     std::optional<bool> antiAliasing;
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
+    // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`
+    // (ADR 0147, G0), over `[display]`.
+    std::optional<bool> vsync;
+    std::optional<core::u32> maxFrameRate;
+    std::optional<core::u32> backgroundFrameRate;
     // `--force-surface=NAME`: a test instrument (ADR 0091), never a project setting.
     std::optional<std::string> forcedSurface;
     // `--debug-view=NAME`: a test instrument (terrain audit T0).
@@ -65,6 +71,11 @@ struct ProjectConfig
     // `[window] size`, or zero when the file does not say.
     core::i32 windowWidth = 0;
     core::i32 windowHeight = 0;
+
+    // **How fast frames are made** (ADR 0147, G0), `[display]`: `vsync`
+    // (on unless it says otherwise), `max_frame_rate` (0, no cap) and
+    // `background_frame_rate` (10; 0, no throttle), each under its flag.
+    FramePacing pacing;
 
     // `[project] icon` -- a project-relative path to a PNG or `.ico`. A PNG is
     // what the host's window wears while the game is being made; `ludwerk build`
@@ -158,6 +169,10 @@ struct ProjectConfig
 //
 // `diagnostic` is filled on a parse failure and is developer-facing (R3 exempt,
 // like every other config diagnostic in the engine).
+// The file's pacing under the command line's (ADR 0147, G0): a flag typed
+// beats `[display]`, key by key.
+[[nodiscard]] FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noexcept;
+
 [[nodiscard]] ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot,
                                               const GraphicsOverrides& overrides, std::string* diagnostic = nullptr);
 

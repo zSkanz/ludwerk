@@ -228,6 +228,25 @@ f32 windowDisplayScale(const Window& window) noexcept
     return scale > 0.0f ? scale : 1.0f;
 }
 
+bool windowFocused(const Window& window) noexcept
+{
+    return (SDL_GetWindowFlags(window.handle()) & SDL_WINDOW_INPUT_FOCUS) != 0;
+}
+
+bool windowMinimized(const Window& window) noexcept
+{
+    return (SDL_GetWindowFlags(window.handle()) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
+}
+
+f32 windowRefreshRate(const Window& window) noexcept
+{
+    const SDL_DisplayID display = SDL_GetDisplayForWindow(window.handle());
+    if (display == 0)
+        return 0.0f;
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(display);
+    return mode != nullptr && mode->refresh_rate > 0.0f ? mode->refresh_rate : 0.0f;
+}
+
 WindowInsets windowSafeAreaInsets(const Window& window) noexcept
 {
     WindowInsets insets;

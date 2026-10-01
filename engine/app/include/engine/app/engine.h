@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "engine/app/frame_pacing.h"
 #include "engine/core/error.h"
 #include "engine/core/types.h"
 #include "engine/platform/window.h"
@@ -229,6 +230,11 @@ struct EngineOptions
     // built off the main thread, TA14) is measured against a camera moving
     // thirty times too fast. Zero runs flat out.
     core::u32 paceHz = 0;
+
+    // **How fast a window's frames are made** (ADR 0147, G0): the display's
+    // sync, a cap, and the rate while nobody is looking. A headless run and
+    // one with `--pace` are not paced by it.
+    FramePacing pacing;
 
     // **`--gpu-debug`: the GPU debug layer, asked for by name** (D183). Off
     // means whatever the profile decides -- see `gpuValidationWanted`.

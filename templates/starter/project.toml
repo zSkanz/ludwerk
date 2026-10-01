@@ -17,6 +17,14 @@ scene = "scenes/main.scene.json"
 title = "{{name}}"
 size = [1280, 720]
 
+[display]
+# How fast frames are made (ADR 0147). A frame waits for the display unless
+# vsync is off; max_frame_rate caps it, 0 for no cap; and a window nobody is
+# looking at is drawn background_frame_rate times a second, 0 for no throttle.
+# vsync = true
+# max_frame_rate = 0
+# background_frame_rate = 10
+
 [graphics]
 # The quality preset (ADR 0044): "low", "medium", "high" or "ultra". A key
 # below overrides the preset, and `ludwerk run --quality=...` overrides both.
