@@ -576,7 +576,11 @@ struct RenderWorld
     // Every terrain draw's geomorph (`DrawItem::terrainMorph`), for the same
     // reason.
     std::vector<TerrainMorph> terrainMorphs;
-    // The GPU terrains, drawn by node rather than by `DrawItem`.
+    // The GPU terrains, drawn by node rather than by `DrawItem`. **One with
+    // no ground yet is here too** (terrain audit T5): a streamed terrain
+    // before its first cell has its pipelines and its layers' arrays made
+    // while the world loads, not in the first frame its ground is drawn --
+    // 16 ms in the middle of play.
     std::vector<RenderTerrain> terrains;
     // **This frame's foliage** (ADR 0116), appended by `FoliageSystem::append`:
     // the runs of instances the cull reads and the meshes it fills.

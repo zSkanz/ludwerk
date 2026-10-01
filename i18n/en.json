@@ -634,7 +634,7 @@
   "engine.editor.terrain.foliage.add_layer": "Add Layer",
   "engine.editor.terrain.foliage.add_layer_tip": "a layer that grows on every material of this terrain; set its rules in Properties",
   "engine.editor.terrain.foliage.add_mesh": "Add Mesh",
-  "engine.editor.terrain.foliage.add_mesh_tip": "a mesh the chosen layer grows; pick its Mesh in Properties",
+  "engine.editor.terrain.foliage.add_mesh_tip": "a mesh the chosen layer grows; pick which below",
   "engine.editor.terrain.foliage.brush_down": "Pick Restore or Thin, then drag over the ground.",
   "engine.editor.terrain.foliage.density": "Paint density",
   "engine.editor.terrain.foliage.layer_row": {
@@ -849,5 +849,19 @@
   "engine.editor.material.hex_tiling_tip": "lays the textures on a hexagonal grid of cells, each moved and turned at random, for a photograph whose repeat shows most; three reads of each texture instead of one",
   "engine.editor.material.inherited_tip": "inherited from the parent material -- change it to make it this one's own",
   "engine.editor.material.tiling_far_scale_tip": "how many times larger the second sample of the textures is, blended in with distance: 1 none",
-  "engine.editor.material.tiling_variation_tip": "how much a pattern tens of metres across varies the colour, so the repeat does not read as a grid: 0 none"
+  "engine.editor.material.tiling_variation_tip": "how much a pattern tens of metres across varies the colour, so the repeat does not read as a grid: 0 none",
+  "engine.editor.terrain.foliage.field.align_to_normal": "Leans with slope",
+  "engine.editor.terrain.foliage.field.mesh": "Mesh",
+  "engine.editor.terrain.foliage.field.random_rotation": "Random turn",
+  "engine.editor.terrain.foliage.field.scale_max": "Largest",
+  "engine.editor.terrain.foliage.field.scale_min": "Smallest",
+  "engine.editor.terrain.foliage.field.sink": "Sink",
+  "engine.editor.terrain.foliage.field.stiffness": "Stiffness",
+  "engine.editor.terrain.foliage.field.weight": "Share",
+  "engine.editor.terrain.foliage.field.wind_response": "Wind",
+  "engine.editor.terrain.foliage.mesh_row_tip": "the fields below belong to this mesh; click to open all of them in Properties",
+  "engine.editor.terrain.foliage.meshes": "Meshes",
+  "engine.editor.terrain.foliage.no_mesh": "(no mesh chosen)",
+  "engine.editor.terrain.foliage.no_meshes": "This layer grows nothing yet: Add Mesh, then pick the mesh it grows.",
+  "engine.editor.terrain.foliage.remove_mesh_tip": "stop growing this mesh (Ctrl+Z brings it back)"
 }

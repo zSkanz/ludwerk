@@ -582,7 +582,24 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
     [branch] if (any(input.Covers > 0u))
     {
         uint3 tops = input.Tops;
-        float3 shares = input.Corners * (float3(input.Covers) / 255.0f);
+        uint3 covers = input.Covers;
+        // **A corner whose own ground is what is painted over the others shows
+        // it wholly** (D396): paint blended until it is all that shows becomes
+        // the ground, with nothing over it -- and across a triangle from such a
+        // corner to one still painted, the cover fell to half in the middle and
+        // the ground under the paint showed through as a line inside the
+        // painted patch.
+        [unroll] for (uint corner = 0; corner < 3u; ++corner)
+        {
+            const uint own = ids[corner];
+            const bool paintedHere = (covers.x > 0u && tops.x == own) || (covers.y > 0u && tops.y == own) ||
+                                     (covers.z > 0u && tops.z == own);
+            if (covers[corner] == 0u && paintedHere) {
+                tops[corner] = own;
+                covers[corner] = 255u;
+            }
+        }
+        float3 shares = input.Corners * (float3(covers) / 255.0f);
         if (tops.y == tops.x) {
             shares.x += shares.y;
             shares.y = 0.0f;

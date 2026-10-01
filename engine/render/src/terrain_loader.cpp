@@ -1221,7 +1221,10 @@ void TerrainLoader::appendRenderTerrains(const scene::World& world, core::Instan
 {
     const std::vector<std::string> engineLayers = asset::defaultTerrainLayers();
     world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
-        if (terrain.field.empty() || !inWorld(world, id, root))
+        // **With no ground yet too** (terrain audit T5): a streamed terrain
+        // before its first cell has its pipelines and its layers' arrays made
+        // while the world loads, not in the first frame its ground is drawn.
+        if (!inWorld(world, id, root))
             return;
         RenderTerrain entry;
         entry.id = id;

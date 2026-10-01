@@ -257,3 +257,20 @@ partitioner buckets records as it reads, so its peak is one record.
 which is what atomic models need and no more. A general nested-instance
 serialization is `.scene.json`'s job and duplicating it in a payload read
 thousands of times per session is a cost with no caller.
+
+## Amendment, 2026-09-30: ground is measured across the ground
+
+The terrain audit's T5 (D397). **A cell of ground -- terrain or voxels -- is
+as near as the column it stands in**: the focus is taken to the cell's own
+height before the distance is measured (`StreamingLayerRadii::planar`, set by
+the field streamer for both). Parts and every other layer keep the distance
+through the air.
+
+Through the air, a camera 1 200 m up with the 1 024 m terrain radius had no
+ground under it at all; flying down, the disc of loaded cells grew with every
+metre and the edge of what was loaded showed as the cells' corners, a
+sawtooth. And the cells came and went the whole flight -- each one rebuilding
+the nodes it lands in -- which was most of what the flight over the owner's
+place cost: its p99 went from 20 ms to 8.3 to 8.9 (`docs/perf-baselines.md`).
+Measured across the ground, what is loaded under a camera is what is loaded
+under a person standing there, and a place no wider than the radius loads once.

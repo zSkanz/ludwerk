@@ -498,9 +498,14 @@ void FieldStreamer::pump(f64 budgetMilliseconds)
     std::vector<asset::StreamingFocus> foci =
         m_focusOverride.has_value() ? std::vector<asset::StreamingFocus>{streamingFocusAt(*m_world, *m_focusOverride)}
                                     : collectStreamingFoci(*m_world, m_workspace);
+    //
+    // **And across the ground** (terrain audit T5): a cell of ground is as
+    // near as the column it stands in, however high the camera is.
     for (asset::StreamingFocus& focus : foci) {
         focus.layers[asset::FieldLayerTerrain] = focus.layers[2];
         focus.layers[asset::FieldLayerVoxels] = focus.layers[2];
+        focus.layers[asset::FieldLayerTerrain].planar = true;
+        focus.layers[asset::FieldLayerVoxels].planar = true;
     }
     m_manager.setFoci(foci);
     m_manager.setEnabled(m_world->engineState().streamingEnabled);

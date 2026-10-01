@@ -11,6 +11,12 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace engine::jobs {
 namespace {
 
@@ -290,6 +296,15 @@ void execute(u32 slot)
 
 void workerLoop(u32 index)
 {
+#ifdef _WIN32
+    // **Below the thread that schedules** (terrain audit T5): with the ground
+    // being built on every core, a worker woken by `notify` came back with
+    // the foreground boost and took the core of the thread that woke it --
+    // the main thread then sat in `schedule` for up to 12 ms, the flight's
+    // worst frames. Below normal, the frame's own thread runs first and the
+    // pool takes everything it leaves. Windows only: the boost is Windows'.
+    (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
     t_workerIndex = index;
     Pool& p = pool();
 

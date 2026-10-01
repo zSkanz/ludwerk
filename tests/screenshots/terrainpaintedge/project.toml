@@ -1,0 +1,15 @@
+# Paint blended until it is the ground, beside paint not yet (D396): the
+# ground under the paint must not show through along the line between them.
+# A project rather than a bare scene so the driver and a person run it the
+# same way; the world is built by its script.
+
+[project]
+name = "Ludwerk Terrain Paint Edge"
+id = "dev.ludwerk.terrainpaintedge"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Paint Edge"
+width = 960
+height = 540

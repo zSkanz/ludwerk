@@ -211,7 +211,7 @@ void StreamingManager::tick(const StreamingBudget& budget)
         bool inside = false;
         bool pastDrop = true;
         for (const StreamingFocus& focus : m_foci) {
-            const f64 distance = core::distanceSquared(indexEntry.bounds, focus.position);
+            const f64 distance = focus.distanceSquaredTo(indexEntry.bounds, indexEntry.id.layer);
             best = std::min(best, distance);
 
             const f64 loadRadius = focus.loadRadiusFor(indexEntry.id.layer);
@@ -397,7 +397,7 @@ bool StreamingManager::minimumRingResident() const noexcept
             // **A cell that failed counts as settled** (audit A2): it is never
             // retried, so waited for it held the simulation at zero ticks for
             // good. The world goes on without it, and its failure was logged.
-            if (core::distanceSquared(m_index.chunks[i].bounds, focus.position) <= minSquared &&
+            if (focus.distanceSquaredTo(m_index.chunks[i].bounds, m_index.chunks[i].id.layer) <= minSquared &&
                 m_entries[i].state != ChunkState::Resident && m_entries[i].state != ChunkState::Failed) {
                 return false;
             }

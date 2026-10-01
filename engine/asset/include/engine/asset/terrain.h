@@ -460,6 +460,12 @@ struct SurfaceCell
     // The material most of its level-0 vertices carry, lowest id on a tie.
     [[nodiscard]] core::u8 material() const noexcept;
 
+    // **The paint's cover summed** over its level-0 vertices, counting at 255
+    // each one whose own ground is the paint (D396): paint blended until it
+    // is the ground has nothing over it, and counted as a cover of nothing it
+    // halved the cover beside paint that has not.
+    [[nodiscard]] float paintCover() const noexcept;
+
     // **Where its vertex goes**, as an offset from its low corner in level-0
     // voxels, inside `[0, span]`: the point nearest every one of its
     // vertices' tangent planes -- so an edge or a corner the cell holds is

@@ -222,6 +222,47 @@ TEST_CASE("ground under a plate a coarse level does not draw is not darkened by 
         CHECK(darkest > 0.99f);
 }
 
+TEST_CASE("paint that became the ground, beside paint that has not, shows the paint across the line (D396)")
+{
+    // Sand blended over grass at full strength becomes sand ground, with
+    // nothing over it; beside it, at nine tenths, it stays grass with sand
+    // over. A vertex gathering both averaged the first as a cover of nothing:
+    // along the line the cover halved and the grass showed through.
+    TerrainField field(settingsOf());
+    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 64.0f, 0.0f, 1);
+    PaintOptions blend;
+    blend.mode = PaintMode::Blend;
+    blend.strength = 1.0f;
+    (void)paintBall(field, core::DVec3{0.0, 0.0, 0.0}, 6.0, 2, blend);
+    blend.strength = 0.9f;
+    (void)paintBall(field, core::DVec3{8.0, 0.0, 0.0}, 6.0, 2, blend);
+    for (core::u32 level = 0; level <= 1; ++level) {
+        CAPTURE(level);
+        const TerrainMesh meshed = meshAt(field, level, 32, -8, 8);
+        int seen = 0;
+        for (const Vertex& vertex : meshed.mesh.vertices) {
+            // The line and a metre or two either side of it, well inside both.
+            if (vertex.normal.y < 0.9f || vertex.position.x < 4.0f || vertex.position.x > 8.0f ||
+                std::abs(vertex.position.z) > 2.0f)
+                continue;
+            ++seen;
+            const auto corner = static_cast<core::u32>(vertex.uv[1] + 0.5f);
+            const auto unpack = [corner](float packed) {
+                return (static_cast<core::u32>(packed + 0.5f) >> (8u * corner)) & 0xFFu;
+            };
+            const core::u32 ground = unpack(vertex.uv[0]);
+            const core::u32 top = unpack(vertex.tangent[2]);
+            const core::u32 cover = unpack(vertex.tangent[3]);
+            CAPTURE(vertex.position.x);
+            CAPTURE(ground);
+            CAPTURE(top);
+            CAPTURE(cover);
+            CHECK((ground == 2u || (top == 2u && cover >= 200u)));
+        }
+        REQUIRE(seen > 0);
+    }
+}
+
 TEST_CASE("paint on the ground survives every level")
 {
     // TA7: a coarse cell took its materials from its fullest voxel, the first

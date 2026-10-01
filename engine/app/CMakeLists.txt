@@ -1054,6 +1054,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **Paint that became the ground, beside paint that has not** (D396): the
+    # ground under the paint must not show through along the line between
+    # them. See the driver.
+    add_test(NAME terrain_paint_edge
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSTEPS=$<TARGET_FILE:imgsteps>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainpaintedge
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-paint-edge
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_paint_edge.cmake)
+    set_tests_properties(terrain_paint_edge PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **A terrain layer reads only the channels its maps promise** (terrain
     # audit TA13): the same ground with a metallic-roughness map whose R is
     # empty, and with none, drawn the same; and a normal map's up bending the

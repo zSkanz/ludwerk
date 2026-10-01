@@ -522,6 +522,37 @@ TEST_CASE("a size class keeps its own distance")
     CHECK_FALSE(harness.manager.minimumRingResident());
 }
 
+TEST_CASE("a planar layer is measured across the ground, whatever the focus's height (terrain audit T5)")
+{
+    seedRealCatalog();
+
+    // A camera 1 200 m over cell (0, 0) with a 300 m radius: through the air
+    // no cell is within reach, and the ground under it was not there.
+    const engine::core::DVec3 high{CellCentre.x, 1200.0, CellCentre.z};
+    StreamingBudget budget;
+    budget.milliseconds = 1000.0;
+    {
+        Harness harness(gridIndex(4));
+        const StreamingFocus foci[] = {focusAt(high, 256.0, 300.0)};
+        harness.manager.setFoci(foci);
+        harness.settle(budget);
+        CHECK(harness.manager.stats().resident == 0);
+    }
+    {
+        Harness harness(gridIndex(4));
+        StreamingFocus focus = focusAt(high, 256.0, 300.0);
+        focus.layers[0].planar = true;
+        harness.manager.setFoci({&focus, 1});
+        harness.settle(budget);
+        // The same nine as a focus standing on it (the first case).
+        CHECK(harness.manager.stats().resident == 9);
+        CHECK(harness.manager.stateOf(ChunkId{1, 1, 0}) == ChunkState::Resident);
+        CHECK(harness.manager.stateOf(ChunkId{2, 0, 0}) == ChunkState::Unloaded);
+        // And its minimum ring is the one under it.
+        CHECK(harness.manager.minimumRingResident());
+    }
+}
+
 TEST_CASE("a layer with no radius of its own follows the focus's own pair")
 {
     seedRealCatalog();

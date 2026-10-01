@@ -82,6 +82,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **The terrain's Foliage tab lists the chosen layer's meshes**, each with its
+  mesh, share, sizes and wind, and a button to remove it -- no trip to the
+  Explorer to change what a layer grows.
 - **A terrain layer's repeat is broken up** (ADR 0113's amendment): three
   material fields, read by a terrain -- `TilingVariation` (a colour drift
   over tens of metres, 0.5 by default), `TilingFarScale` (a second, larger
@@ -624,6 +627,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   refusal is said; an exported heightmap imports as the same ground and a
   second export never overwrites the first; a rule's bounds stay in order;
   the brush ring and chip go when they should; Foliage's Grow is Restore.
+- **Flying high keeps the ground under you** (D397): terrain streams by how
+  far a cell is across the ground, not through the air, so a camera far up no
+  longer sees the ground vanish or its edge as a sawtooth -- and a flight over
+  a streamed place stutters far less (its worst frames from 45 ms to 16).
+- **Paint blended until it is the ground no longer shows a line of the ground
+  under it** (D396) beside paint that has not reached it.
 - **The ground is one surface where chunks meet** (D394, ADR 0143): a ball,
   a character or a car crossing from one terrain chunk to the next no longer
   hops, slows or jolts, and a ball rolling over any ground no longer bounces

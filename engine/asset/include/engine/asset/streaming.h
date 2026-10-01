@@ -64,6 +64,12 @@ struct StreamingLayerRadii
 {
     f64 minRadius = 0.0;
     f64 loadRadius = 0.0;
+    // **Measured across the ground, not through the air** (terrain audit
+    // T5): the height between the focus and a cell is not counted. Ground is
+    // looked down at: a camera 1 200 m up with a 1 024 m radius measured
+    // through the air had no ground under it at all, and coming down it saw
+    // the loaded cells' corners as a sawtooth edge.
+    bool planar = false;
 };
 
 // A thing the world streams around. `MinRadius` is the must-have ring
@@ -92,6 +98,16 @@ struct StreamingFocus
     {
         const f64 own = inRange(layer) ? layers[static_cast<usize>(layer)].loadRadius : 0.0;
         return own > 0.0 ? own : loadRadius;
+    }
+
+    // How far a cell of `layer` is, squared: through the air, or across the
+    // ground for a planar layer (the focus taken to the cell's own height).
+    [[nodiscard]] f64 distanceSquaredTo(const core::DAABB& bounds, core::i32 layer) const noexcept
+    {
+        core::DVec3 from = position;
+        if (inRange(layer) && layers[static_cast<usize>(layer)].planar)
+            from.y = from.y < bounds.min.y ? bounds.min.y : (from.y > bounds.max.y ? bounds.max.y : from.y);
+        return core::distanceSquared(bounds, from);
     }
 
 private:

@@ -1375,3 +1375,43 @@ by 2160, 900 frames, two runs each:
 The default costs about 0.1 ms a frame at 4K on this card, hex tiling about
 0.2: each map read twice, and four times. A weaker GPU pays more of it, a
 phone most; the owner decides whether hex becomes a default.
+
+### The flight's worst frame (terrain audit T5)
+
+The same flights, `--pace=60`, 1920 by 1080, 2026-09-30, three runs each.
+**First, today's machine against the TA14 commit**: rebuilt at `4a7405f3` in a
+worktree, the owner's place flew a p95 of 8.3 to 8.9 ms, a p99 of 14.4 to 15.1
+and a worst of 44 to 57 -- not the table above's, so the rows below are
+compared with these, not with that. And `main` had gone back from there: a p95
+of 12.3 to 12.7, a p99 of 19.6 to 23.3, a worst of 42 to 50. Bisected to D383
+(`a04783ca`): a node built empty is built again when its ground comes -- right,
+and on a flight whose loaded cells came and went with the camera's height it
+was rebuilding all the time.
+
+| The owner's place | Median | p95 | p99 | Worst |
+|---|---|---|---|---|
+| `main` before | 3.41, 3.65, 3.52 ms | 12.7, 12.3, 12.7 ms | 19.6, 20.9, 23.3 ms | 45.6, 50.2, 41.6 ms |
+| Ground streamed across the ground (D397) | 2.71, 2.72, 2.72 ms | 6.7, 6.9, 7.3 ms | 8.3, 8.7, 8.9 ms | 17.6, 25.7, 16.7 ms |
+| **And the workers below the main thread, and a terrain's pipelines made while it loads** | **2.73, 2.69, 2.66 ms** | **6.96, 6.95, 7.03 ms** | **8.8, 8.7, 8.5 ms** | **17.9, 15.2, 16.6 ms** |
+
+| The gallery | Median | p95 | p99 | Worst |
+|---|---|---|---|---|
+| After TA14 (above) | 0.98, 0.98, 0.97 ms | 1.85, 1.89, 1.86 ms | 5.13, 5.13, 4.97 ms | 16.1, 12.4, 13.3 ms |
+| Now | 1.03, 1.04, 1.04 ms | 1.54, 1.77, 1.62 ms | 3.39, 3.81, 3.70 ms | 6.4, 6.0, 6.0 ms |
+
+**What the worst frames were**, found with a timeline of each frame over 8 ms:
+
+- **`jobs::schedule` for 2 to 12 ms** while handing the ground's build to the
+  workers -- not running it, waiting: a worker woken by the call came back
+  with Windows' boost and took the core of the thread that woke it, every
+  core being busy with the ground. The workers now run below normal priority,
+  and no call took over 1 ms in three flights. Splitting the pool's one
+  condition variable in two, so a finished job wakes only those waiting for
+  one, was measured too: within the runs' spread, and left out.
+- **16 ms of `render` in the first frame with ground**, once: the terrain's
+  pipelines and its layers' arrays, made in the first frame a terrain has
+  ground to draw. A terrain with none yet is handed to the renderer too now,
+  so they are made while the world loads.
+- **What is left**: frames whose ground goes up (4 to 7 ms of uploads when a
+  dozen nodes land in one frame) and frames waiting on the GPU or the display
+  for 9 to 12 ms, a few a flight. None is over 33 ms.

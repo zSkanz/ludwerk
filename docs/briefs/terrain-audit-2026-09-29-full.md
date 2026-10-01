@@ -345,10 +345,11 @@ Done (D384-D391). The editor P2 list, item by item:
 
 ## T5 — performance
 
-- [ ] TA14: meshing and colliders off the main thread or on a budget; p99
+- [x] TA14: meshing and colliders off the main thread or on a budget; p99
   under 16.6 ms and no terrain spike in the worst frame, before and after.
-  Meshing: done (ADR 0141), the p99 met, the worst frame not yet; colliders:
-  not yet.
+  Meshing (ADR 0141) and colliders (D392); the owner's place's p99 8.5 to 8.8
+  ms, its worst 15 to 18, the terrain's own spikes -- scheduling, the first
+  frame's pipelines, the cells coming and going -- gone (D397).
 - [x] The collider does not pay for the sky term.
 - [x] Continuous digging rebuilds only what changed (P4), with a baseline.
 - [x] TA18: an edit invalidates only the navmesh tiles it touches.
@@ -417,8 +418,28 @@ Done (D384-D391). The editor P2 list, item by item:
   repeats; hex takes it to 0.05, at 0.2 ms a frame at 4K against the
   default's 0.1. Whether hex becomes a default is the owner's. The fields are
   in the material editor, named through the catalog.
-- **Still to do in T5**: the flight's worst frame (18 to 25 ms: scheduling the
-  workers and putting meshes up), and the streaming radius and its sawtooth.
+- **The streaming radius and its sawtooth** (D397, ADR 0053's amendment):
+  ground streamed by its distance through the air, so a camera 1 200 m up had
+  none under it, and coming down saw the loaded cells' corners. A cell of
+  ground is now as near as its column. That also stopped the cells coming and
+  going all flight: the owner's place's p99 went from 20 ms to under 9.
+- **The flight's worst frame**, bisected first: `main` had gone from a p95 of
+  8.5 ms to 12.5 since TA14, at D383 -- nodes rebuilt as their ground came,
+  which on a flight streaming cells in and out was all the time. Then each
+  frame over 8 ms timed: `jobs::schedule` waiting up to 12 ms for its own core
+  back from a worker it woke (the workers run below normal priority now), and
+  16 ms once for the terrain's pipelines, made in the first frame with ground
+  (a terrain with none yet is handed to the renderer, so they are made while
+  it loads). The owner's place: worst 15 to 18 ms, p99 8.5 to 8.8, none over
+  33; the gallery's worst 6 ms. What is left is ground going up and the GPU,
+  a few frames a flight (`perf-baselines.md`).
+- **Paint that became the ground, beside paint that has not** (D396, the
+  owner, painting sand on grass): a line of grass inside the sand. Fixed in the
+  mesher and the shader; `terrain_paint_edge` photographs it.
+- **The foliage panel lists a layer's meshes** (the owner: "how do I change
+  the mesh"): each named by its file, with the mesh picker, its share, sizes,
+  lean, sink and wind, and a remove button, drawn by the Properties panel's own
+  editors.
 
 **TA14's meshing is pulled forward, ahead of T3** (ludwerk-08's check of T2 on
 the owner's place: the building had to leave the frame before the owner flies

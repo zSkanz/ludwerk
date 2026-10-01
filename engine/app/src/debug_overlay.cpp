@@ -11914,6 +11914,101 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                 (void)editor.addFoliageMesh(world, editor.foliageLayer(), inspector);
             ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.foliage.add_mesh_tip")));
 
+            // **The chosen layer's meshes, each edited here** (the owner,
+            // 2026-09-30: a layer said "5 meshes" and nothing more, and which
+            // mesh grew was found only by opening the layer in the Explorer).
+            // Each row is named by its mesh file and opens on the fields a
+            // person tunes, drawn by the Properties panel's own editors -- the
+            // same picker, the same drop target, the same undo.
+            if (chosen != nullptr) {
+                std::vector<core::InstanceId> meshes;
+                for (core::InstanceId child = world.firstChild(editor.foliageLayer()); child.valid();
+                     child = world.nextSibling(child)) {
+                    if (world.foliageMeshes().find(child) != nullptr)
+                        meshes.push_back(child);
+                }
+                ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.terrain.foliage.meshes")));
+                if (meshes.empty())
+                    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.terrain.foliage.no_meshes")));
+                struct FoliageField
+                {
+                    const char* name;
+                    core::TextKey label;
+                };
+                static const std::array<FoliageField, 9> Fields{{
+                    FoliageField{"Mesh", ENG_TR("engine.editor.terrain.foliage.field.mesh")},
+                    FoliageField{"Weight", ENG_TR("engine.editor.terrain.foliage.field.weight")},
+                    FoliageField{"ScaleMin", ENG_TR("engine.editor.terrain.foliage.field.scale_min")},
+                    FoliageField{"ScaleMax", ENG_TR("engine.editor.terrain.foliage.field.scale_max")},
+                    FoliageField{"RandomRotation", ENG_TR("engine.editor.terrain.foliage.field.random_rotation")},
+                    FoliageField{"AlignToNormal", ENG_TR("engine.editor.terrain.foliage.field.align_to_normal")},
+                    FoliageField{"Sink", ENG_TR("engine.editor.terrain.foliage.field.sink")},
+                    FoliageField{"WindResponse", ENG_TR("engine.editor.terrain.foliage.field.wind_response")},
+                    FoliageField{"Stiffness", ENG_TR("engine.editor.terrain.foliage.field.stiffness")},
+                }};
+                const scene::ClassId meshClass = world.classes().findId(world.atoms().intern("FoliageMesh"));
+                core::InstanceId removed;
+                for (core::usize index = 0; index < meshes.size(); ++index) {
+                    const core::InstanceId mesh = meshes[index];
+                    const std::span<const core::InstanceId> target(&meshes[index], 1);
+                    ImGui::PushID(static_cast<int>(index));
+                    const SharedValue file = sharedValue(world, target, world.atoms().intern("Mesh"));
+                    const std::string* path = std::get_if<std::string>(&file.value);
+                    const std::string title =
+                        path != nullptr && !path->empty()
+                            ? std::filesystem::path(*path).stem().string()
+                            : std::string(core::tr(ENG_TR("engine.editor.terrain.foliage.no_mesh")));
+                    const float removeWidth = ImGui::GetFrameHeight();
+                    // Open where there is something to decide -- a mesh not
+                    // chosen yet -- or where the whole layer fits; a long list
+                    // reads as its names.
+                    const bool unchosen = path == nullptr || path->empty();
+                    const bool open =
+                        ImGui::TreeNodeEx("##mesh",
+                                          (unchosen || meshes.size() <= 2 ? ImGuiTreeNodeFlags_DefaultOpen : 0) |
+                                              ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                          "%s", title.c_str());
+                    if (ImGui::IsItemClicked())
+                        inspector.select(mesh);
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.foliage.mesh_row_tip")));
+                    ImGui::SameLine(ImGui::GetContentRegionMax().x - removeWidth);
+                    if (iconButton(icons, icons::ActionDelete, ImGui::GetFontSize(), "remove", "x",
+                                   core::tr(ENG_TR("engine.editor.terrain.foliage.remove_mesh_tip"))))
+                        removed = mesh;
+                    if (open) {
+                        if (meshClass != scene::InvalidClass &&
+                            ImGui::BeginTable("##fields", 2, ImGuiTableFlags_SizingStretchProp)) {
+                            ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
+                                                    ImGui::GetFontSize() * 7.5f);
+                            ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                            for (const FoliageField& field : Fields) {
+                                const scene::PropertyDesc* descriptor =
+                                    world.classes().findProperty(meshClass, world.atoms().intern(field.name));
+                                if (descriptor == nullptr)
+                                    continue;
+                                ImGui::PushID(field.name);
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::AlignTextToFramePadding();
+                                ImGui::TextUnformatted(core::tr(field.label));
+                                if (descriptor->doc[0] != 0)
+                                    ImGui::SetItemTooltip("%s", descriptor->doc);
+                                ImGui::TableSetColumnIndex(1);
+                                drawEditor(world, root, inspector, target, *descriptor,
+                                           sharedValue(world, target, descriptor->name), &editor.content(), icons,
+                                           nullptr, &commands);
+                                ImGui::PopID();
+                            }
+                            ImGui::EndTable();
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (removed.valid())
+                    (void)editor.deleteInstance(world, removed, root, inspector);
+            }
+
             ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.terrain.foliage.density")));
             const bool painting = tool == Editor::Tool::Foliage;
             const bool thin = painting ? editor.effectiveFoliageThin() : editor.foliageThin();

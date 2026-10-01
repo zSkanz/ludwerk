@@ -11,6 +11,26 @@
 namespace engine::asset {
 namespace {
 
+// **A corner whose own ground is what is painted over the others counts as
+// covered wholly by it** (D396). Paint blended until it is all that shows
+// becomes the ground, with nothing over it; averaged as a cover of nothing
+// beside corners still painted, it halved the cover across the cell and the
+// ground under the paint showed through along the line between them. Only a
+// material painted somewhere in the cell: an unpainted corner of the ground
+// under a stroke still thins the stroke at its edge.
+void coverWithOwnGround(const std::array<core::u8, 8>& bare, const std::array<core::u8, 8>& overs,
+                        std::array<int, 8>& covers, int kinds) noexcept
+{
+    for (const core::u8 own : bare) {
+        if (own == 0)
+            continue;
+        for (int slot = 0; slot < kinds; ++slot) {
+            if (overs[static_cast<core::usize>(slot)] == own)
+                covers[static_cast<core::usize>(slot)] += 255;
+        }
+    }
+}
+
 using core::i32;
 using core::u16;
 using core::u32;
@@ -349,6 +369,16 @@ u8 SurfaceCell::material() const noexcept
     return best;
 }
 
+float SurfaceCell::paintCover() const noexcept
+{
+    float sum = cover;
+    for (usize at = 0; at < materials.size(); ++at) {
+        if (top != 0 && votes[at] > 0 && materials[at] == top)
+            sum += 255.0f * static_cast<float>(votes[at]);
+    }
+    return sum;
+}
+
 std::array<float, 3> SurfaceCell::point(u32 span) const noexcept
 {
     const auto wide = [](float value) { return static_cast<double>(value); };
@@ -661,6 +691,7 @@ SurfaceLevels buildSurfaces(const TerrainField& field, ChunkKey key, u32 levels)
                 int solid = 0;
                 std::array<u8, 8> overs{};
                 std::array<int, 8> covers{};
+                std::array<u8, 8> bare{};
                 int overKinds = 0;
                 for (int at = 0; at < 8; ++at) {
                     if ((inside & (1 << at)) == 0)
@@ -676,8 +707,10 @@ SurfaceLevels buildSurfaces(const TerrainField& field, ChunkKey key, u32 levels)
                     ++counts[static_cast<usize>(slot)];
                     const u16 painted = paintAt(cx + 1 + o[0], cy + 1 + o[1], cz + 1 + o[2]);
                     const auto over = static_cast<u8>(painted & 0xFF);
-                    if (over == 0 || (painted >> 8) == 0)
+                    if (over == 0 || (painted >> 8) == 0) {
+                        bare[static_cast<usize>(at)] = m;
                         continue;
+                    }
                     int p = 0;
                     while (p < overKinds && overs[static_cast<usize>(p)] != over)
                         ++p;
@@ -685,6 +718,7 @@ SurfaceLevels buildSurfaces(const TerrainField& field, ChunkKey key, u32 levels)
                         overs[static_cast<usize>(overKinds++)] = over;
                     covers[static_cast<usize>(p)] += painted >> 8;
                 }
+                coverWithOwnGround(bare, overs, covers, overKinds);
                 u8 material = seen[0];
                 int best = counts[0];
                 for (int slot = 1; slot < kinds; ++slot) {
@@ -1645,8 +1679,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         vertexMaterial.push_back(material);
         const bool painted = cell->topVotes > 0 && cell->top != material && cell->top != 0;
         vertexTop.push_back(painted ? cell->top : u8{0});
-        vertexCover.push_back(painted ? static_cast<u8>(std::clamp<long>(std::lround(cell->cover * inverse), 0, 255))
-                                      : u8{0});
+        vertexCover.push_back(
+            painted ? static_cast<u8>(std::clamp<long>(std::lround(cell->paintCover() * inverse), 0, 255)) : u8{0});
         stitched.emplace(key, made);
         return made;
     };
@@ -1753,6 +1787,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                         std::array<int, 8> covers{};
                         int topKinds = 0;
                         int solid = 0;
+                        std::array<u8, 8> bare{};
                         for (int at = 0; at < 8; ++at) {
                             if ((inside & (1 << at)) == 0)
                                 continue;
@@ -1760,8 +1795,11 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                             const auto& offset = CornerOffsets[static_cast<usize>(at)];
                             const u16 painted = paintAt(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]);
                             const auto over = static_cast<u8>(painted & 0xFF);
-                            if (over == 0 || (painted >> 8) == 0)
+                            if (over == 0 || (painted >> 8) == 0) {
+                                bare[static_cast<usize>(at)] =
+                                    materialAt(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]);
                                 continue;
+                            }
                             int slot = 0;
                             while (slot < topKinds && overs[static_cast<usize>(slot)] != over)
                                 ++slot;
@@ -1771,6 +1809,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                             }
                             covers[static_cast<usize>(slot)] += painted >> 8;
                         }
+                        coverWithOwnGround(bare, overs, covers, topKinds);
                         int most = 0;
                         for (int slot = 0; slot < topKinds; ++slot) {
                             const int sum = covers[static_cast<usize>(slot)];
@@ -2064,8 +2103,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             vertexMaterial.push_back(material);
             const bool painted = cell->topVotes > 0 && cell->top != material && cell->top != 0;
             vertexTop.push_back(painted ? cell->top : u8{0});
-            vertexCover.push_back(painted ? static_cast<u8>(std::clamp(std::lround(cell->cover * inverse), 0l, 255l))
-                                          : u8{0});
+            vertexCover.push_back(
+                painted ? static_cast<u8>(std::clamp(std::lround(cell->paintCover() * inverse), 0l, 255l)) : u8{0});
             faceNormals.push_back(Vec3{0.0f, 0.0f, 0.0f});
             if (oneSided) {
                 cellVertex[seat] = index32;
