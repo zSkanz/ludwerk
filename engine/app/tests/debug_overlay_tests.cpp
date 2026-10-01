@@ -470,8 +470,13 @@ TEST_CASE("on a real device, F3 flips the panel")
             // shipped, and a loader that needed it would break every theme
             // written in between -- so this builds one on disk without it and
             // checks that every lookup still answers and no tint does.
+            // **A folder of this run's own** (D414). This case runs twice at
+            // once -- `editor_shell` is the same binary filtered to it, beside
+            // `app` running all of them -- and with one name for both, one
+            // run's `remove_all` took the theme the other was about to load.
+            const std::string run = std::to_string(engine::platform::nowNs());
             const std::filesystem::path plain =
-                std::filesystem::temp_directory_path() / "engine-plain-theme" / "icons" / "default";
+                std::filesystem::temp_directory_path() / ("engine-plain-theme-" + run) / "icons" / "default";
             std::filesystem::remove_all(plain.parent_path().parent_path());
             std::filesystem::create_directories(plain / "class");
             std::filesystem::copy_file(iconRoot / "icons" / "default" / "class" / "Part.png",
@@ -508,7 +513,7 @@ TEST_CASE("on a real device, F3 flips the panel")
             // defaults would prove the constants were reachable rather than
             // that they were read.
             const std::filesystem::path moved =
-                std::filesystem::temp_directory_path() / "engine-moved-badge" / "icons" / "default";
+                std::filesystem::temp_directory_path() / ("engine-moved-badge-" + run) / "icons" / "default";
             std::filesystem::remove_all(moved.parent_path().parent_path());
             std::filesystem::create_directories(moved / "class");
             std::filesystem::copy_file(iconRoot / "icons" / "default" / "class" / "Part.png",
