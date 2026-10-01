@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     # A milestone tag runs the static gates -- documentation, Luau, formatting --
     # and nothing else. Every compile job skips a tag deliberately, because the
     # tag points at a commit those jobs already built when it landed on `main`,
