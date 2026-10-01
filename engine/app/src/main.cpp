@@ -4,6 +4,7 @@
 #include <Luau/Bytecode.h>
 #include <lua.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstdio>
