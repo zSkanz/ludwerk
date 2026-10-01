@@ -137,7 +137,21 @@ if(ENG_SHADER_TOOLCHAIN)
     set(SPIRV_CROSS_ENABLE_REFLECT  OFF CACHE BOOL "" FORCE)
     set(SPIRV_CROSS_ENABLE_UTIL     OFF CACHE BOOL "" FORCE)
 
+    # **A fixed timestamp, as reproducible builds set one** (ADR 0148).
+    # SPIRV-Cross writes `string(TIMESTAMP)` into `gitversion.h` on every
+    # configure, and every gate configures: the C API recompiled, the shader
+    # cross-compiler relinked, and every shader of every profile was built
+    # again -- most of a no-change run's Linux release builds. CMake reads the
+    # time from `SOURCE_DATE_EPOCH` when it is set; it is set for this one
+    # subdirectory and put back.
+    set(engine_saved_epoch "$ENV{SOURCE_DATE_EPOCH}")
+    set(ENV{SOURCE_DATE_EPOCH} 0)
     add_subdirectory(spirv_cross ${CMAKE_BINARY_DIR}/third_party/spirv_cross SYSTEM)
+    if(engine_saved_epoch STREQUAL "")
+        unset(ENV{SOURCE_DATE_EPOCH})
+    else()
+        set(ENV{SOURCE_DATE_EPOCH} "${engine_saved_epoch}")
+    endif()
 
     # SPIRV-Cross names its targets with hyphens and its exported packages with
     # underscores; SDL_shadercross tests for the underscore form to decide

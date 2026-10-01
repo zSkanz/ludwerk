@@ -29,6 +29,29 @@ if ($env:ENG_BUILD_ROOT.StartsWith($repoRoot)) {
 }
 New-Item -ItemType Directory -Force $env:ENG_BUILD_ROOT | Out-Null
 
+# --- The compiler cache (ADR 0148) -------------------------------------------
+# sccache at the version CI pins (`SCCACHE_VERSION` in ci.yml, the one place it
+# is written), unpacked beside the build trees where the root CMakeLists looks
+# for it. A build compiles through it from the next configure; without it the
+# build is what it always was.
+$sccacheVersion = (Select-String -Path (Join-Path $repoRoot '.github/workflows/ci.yml') `
+        -Pattern 'SCCACHE_VERSION: "([^"]+)"').Matches[0].Groups[1].Value
+$sccacheDir = Join-Path $env:ENG_BUILD_ROOT 'toolchains\sccache'
+$sccacheExe = Join-Path $sccacheDir 'sccache.exe'
+$sccacheHave = if (Test-Path $sccacheExe) { (& $sccacheExe --version) -replace '^sccache\s+', '' } else { '' }
+if ($sccacheHave -ne $sccacheVersion) {
+    $name = "sccache-v$sccacheVersion-x86_64-pc-windows-msvc"
+    $zip = Join-Path $env:TEMP "$name.zip"
+    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/mozilla/sccache/releases/download/v$sccacheVersion/$name.zip" -OutFile $zip
+    $unpacked = Join-Path $env:TEMP $name
+    if (Test-Path $unpacked) { Remove-Item -Recurse -Force $unpacked }
+    Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
+    New-Item -ItemType Directory -Force $sccacheDir | Out-Null
+    Copy-Item (Join-Path $unpacked 'sccache.exe') $sccacheExe -Force
+    Remove-Item $zip, $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-Host "  ok  sccache $sccacheVersion -> $sccacheExe"
+
 # --- Native toolchain -------------------------------------------------------
 function Test-Tool([string]$name, [string]$hint) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue

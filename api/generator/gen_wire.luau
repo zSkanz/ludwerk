@@ -36,6 +36,17 @@ local Brand = require("../../tools/cli/brand")
 local Schema = require("../wire/schema")
 local Wire = require("../wire")
 
+--- Written only when the text differs from what is there (ADR 0148): a build
+--- recompiles everything that includes a file whose time moved, and a
+--- regeneration that changed nothing must not cost one.
+local function writeIfChanged(path: string, text: string)
+    local ok, existing = pcall(fs.readFileToString, path)
+    if ok and existing == text then
+        return
+    end
+    fs.writeStringToFile(path, text)
+end
+
 local OutputPath = "engine/replication/generated/wire_schema.gen.h"
 local SpecificationPath = "docs/protocol/wire.md"
 
@@ -288,7 +299,7 @@ local directory = "engine/replication/generated"
 if not fs.exists(directory) then
     fs.createDirectory(directory, { makeParents = true })
 end
-fs.writeStringToFile(OutputPath, table.concat(lines, "\n"))
+writeIfChanged(OutputPath, table.concat(lines, "\n"))
 
 local fieldCount = #Common
 for _, class in Classes do
@@ -522,7 +533,7 @@ say("")
 if not fs.exists("docs/protocol") then
     fs.createDirectory("docs/protocol", { makeParents = true })
 end
-fs.writeStringToFile(SpecificationPath, table.concat(doc, "\n"))
+writeIfChanged(SpecificationPath, table.concat(doc, "\n"))
 
 print(
     `gen_wire: wrote {OutputPath} and {SpecificationPath} -- protocol v{Wire.ProtocolVersion}, `

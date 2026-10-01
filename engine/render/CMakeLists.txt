@@ -71,6 +71,12 @@ engine_add_module_tests(render
     MODULES
         render
         rhi_null
+    # The terrain loader's cases are half the executable's minute, and one of
+    # them half of that: three shards that run side by side (ADR 0148).
+    SHARD_CASES
+        "terrain_disk|a node of ground on disk*"
+    SHARD_FILES
+        "terrain_loader|*terrain_loader_tests.cpp"
     SOURCES
         tests/debug_draw_tests.cpp
         tests/cluster_tests.cpp

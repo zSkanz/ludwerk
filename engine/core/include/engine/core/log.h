@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -58,6 +59,15 @@ void resetLogSink();
 // Returns false when the file cannot be opened, which is not fatal to anything:
 // the console sink is untouched and the caller reports it.
 [[nodiscard]] bool openLogFile(const std::filesystem::path& path);
+
+// **The log at `path`, or the one beside it another run is not writing**
+// (the owner's queue, Q0). A log another process holds -- a second run from
+// the same folder -- is left to it: this run writes `stem_2`, `stem_3`, ...
+// up to `stem_9`, as the major engines number theirs. The one it takes is
+// rotated first, its previous contents kept as `stem.previous` (audit A15),
+// and only when nobody holds it. Which one it took, or nothing when none
+// would open.
+[[nodiscard]] std::optional<std::filesystem::path> openLogFileBeside(const std::filesystem::path& path);
 
 // Flushes and closes it. Idempotent, and safe without a preceding open.
 void closeLogFile() noexcept;

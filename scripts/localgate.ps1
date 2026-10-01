@@ -30,6 +30,19 @@
 #   scripts/localgate.ps1 -SkipLinux   # ONLY when Docker is genuinely unavailable
 #   scripts/localgate.ps1 -Only format -Fix   # rewrite the C++ tree instead of checking it
 #   scripts/localgate.ps1 -AllowSkips         # ONLY on a machine with no GPU
+#   scripts/localgate.ps1 -Only windows -Tests 'render|terrain_far'
+#                                             # THE INNER LOOP: build, then only the
+#                                             # tests matching the regex (ctest -R);
+#                                             # the full run once per push
+#   scripts/localgate.ps1 -Serial             # the stages one after another, as
+#                                             # before ADR 0148, to read one log
+#
+# **The full run is three lanes at once** (ADR 0148): the docs lint alone; this
+# machine's own build -- luau, then windows, then android, which needs the
+# windows stage's tools; and the container's -- format, then linux, then
+# shipping, inside Docker's half of the CPUs. Each lane is this script run
+# again with `-Stages`, its log kept and printed whole when it ends, and the
+# run is as long as its longest lane.
 #
 # **A skipped test is a failure here.** Six gates in this repository answer
 # `ENG_TEST_SKIP` when there is no graphics device, and ctest counts a skip as
@@ -59,9 +72,20 @@ param(
     # Only meaningful with -Only lavapipe: rewrite the goldens rather than
     # compare against them. A flag, and never something a comparison run can do
     # on its own -- a gate that rewrites its own expectation is not a gate.
-    [switch]$Record
+    [switch]$Record,
+    # The stages one after another in this process, as the gate ran before
+    # ADR 0148.
+    [switch]$Serial,
+    # With -Only windows: build, and run only the ctest entries matching this
+    # regex -- the inner loop of ADR 0148. The full run is the outer one.
+    [string]$Tests,
+    # A lane: these stages, in this order, in this process. What the full run
+    # starts three of; not usually typed.
+    [string[]]$Stages
 )
 . "$PSScriptRoot/lib/brand.ps1"
+# `-File` hands a lane its stages as one string; a lane is a list.
+if ($Stages) { $Stages = @($Stages | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 
 # 'Continue', not 'Stop', and this is not laziness. Windows PowerShell 5.1 turns
 # a native command's stderr into error records; under 'Stop' the first line of
@@ -115,6 +139,7 @@ function Invoke-Stage {
     param([string]$Name, [scriptblock]$Body)
 
     if ($Only -and $Only -ne $Name) { return }
+    if ($Stages -and -not ($Stages -contains $Name)) { return }
     # Both container stages answer to the same switch: -SkipLinux means "Docker
     # is not available here", and the formatting gate runs in that same image
     # because that is where the pinned clang-format lives.
@@ -188,6 +213,77 @@ function Initialize-Tier2Image {
     if ($LASTEXITCODE -ne 0) { throw "the Tier-2 image failed to build" }
 }
 
+# --- The full run: three lanes at once (ADR 0148) -----------------------------
+#
+# A full run is not run here: it starts three copies of this script, each with
+# the stages of one lane, and waits for them. Every lane's log is written to a
+# file and printed whole, in a fixed order, when all three are done -- so the
+# output reads as one gate rather than three interleaved ones. A lane's stages
+# report as they always did; the parent reads their `ok` and `FAIL` lines.
+if (-not $Only -and -not $Stages -and -not $Serial) {
+    $lanes = [ordered]@{
+        'docs'      = @('docs')
+        'host'      = @('luau', 'windows', 'android')
+        'container' = @('format', 'linux', 'shipping')
+    }
+    $self = Join-Path $PSScriptRoot 'localgate.ps1'
+    $started = [Diagnostics.Stopwatch]::StartNew()
+    $running = @()
+    foreach ($lane in $lanes.Keys) {
+        $log = Join-Path $env:TEMP "engine-localgate-lane-$lane-$PID.txt"
+        $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$self`"", '-Stages', ($lanes[$lane] -join ','))
+        if ($SkipLinux) { $arguments += '-SkipLinux' }
+        if ($AllowSkips) { $arguments += '-AllowSkips' }
+        Write-Host "[gate] lane $lane`: $($lanes[$lane] -join ' -> ')" -ForegroundColor Cyan
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -NoNewWindow -PassThru `
+            -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+        # Read once now: Windows PowerShell reports a started process's exit code
+        # only if its handle was taken while it ran, and as nothing otherwise.
+        $null = $process.Handle
+        $running += [pscustomobject]@{ Lane = $lane; Process = $process; Log = $log }
+    }
+    $results = @()
+    $failed = @()
+    foreach ($entry in $running) {
+        $entry.Process.WaitForExit()
+        Write-Host ""
+        Write-Host "##### lane $($entry.Lane) #####" -ForegroundColor Cyan
+        if (Test-Path $entry.Log) { Get-Content $entry.Log }
+        if (Test-Path "$($entry.Log).err") { Get-Content "$($entry.Log).err" | Where-Object { $_ -notmatch '^\s*$' } }
+        $lines = if (Test-Path $entry.Log) { Get-Content $entry.Log } else { @() }
+        $tail = $false
+        foreach ($line in $lines) {
+            if ($line -match '^=== local gate ===') { $tail = $true; continue }
+            if ($tail -and $line -match '^\s+(ok|FAIL|skip)\s+(\S+)') {
+                $results += $line
+                if ($Matches[1] -eq 'FAIL') { $failed += $Matches[2] }
+            }
+        }
+        if ($entry.Process.ExitCode -ne 0 -and -not ($failed | Where-Object { $lanes[$entry.Lane] -contains $_ })) {
+            $failed += "lane $($entry.Lane)"
+        }
+        Remove-Item $entry.Log, "$($entry.Log).err" -ErrorAction SilentlyContinue
+    }
+    $started.Stop()
+    Pop-Location
+    Write-Host ""
+    Write-Host "=== local gate ===" -ForegroundColor Cyan
+    $results | ForEach-Object { Write-Host $_ }
+    Write-Host "  wall  $([math]::Round($started.Elapsed.TotalSeconds, 1)) s, three lanes at once"
+    if ($failed.Count -gt 0) {
+        Write-Host ""
+        Write-Host "FAILED: $($failed -join ', ')" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ""
+    if ($SkipLinux) {
+        Write-Host "green, but the Linux tier did not run -- Clang has not seen this change" -ForegroundColor Yellow
+    } else {
+        Write-Host "green (macOS is Tier-3 and only CI can build it)" -ForegroundColor Green
+    }
+    exit 0
+}
+
 Invoke-Stage 'docs' {
     & (Get-BashPath) 'scripts/gates/docs-lint.sh'
     if ($LASTEXITCODE -ne 0) { throw "docs-lint failed" }
@@ -253,12 +349,17 @@ Invoke-Stage 'windows' {
     # that stopped registering tests would otherwise report success having run
     # nothing, which is the same shape of lie the skip check below exists for.
     $ctestLog = Join-Path $env:TEMP "engine-localgate-ctest-$PID.txt"
+    # **Every core** (ADR 0148): the tests that measure time run alone and the
+    # ones that draw take three GPU slots (`engine/app/CMakeLists.txt`), and
+    # the rest share the machine.
+    $ctestJobs = [Environment]::ProcessorCount
+    $ctestFilter = if ($Tests) { "-R `"$Tests`"" } else { '' }
     $script = @"
 chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1
 cmake --preset win-msvc-dev || exit /b 1
 cmake --build --preset win-msvc-dev || exit /b 1
-ctest --preset win-msvc-dev --output-on-failure --no-tests=error > "$ctestLog" 2>&1 || (type "$ctestLog" & exit /b 1)
+ctest --preset win-msvc-dev --output-on-failure --no-tests=error -j $ctestJobs $ctestFilter > "$ctestLog" 2>&1 || (type "$ctestLog" & exit /b 1)
 type "$ctestLog"
 "@
     $temp = Join-Path $env:TEMP "engine-localgate-$PID.cmd"
@@ -271,6 +372,8 @@ type "$ctestLog"
         Remove-Item $temp -ErrorAction SilentlyContinue
         Remove-Item $ctestLog -ErrorAction SilentlyContinue
     }
+    # The inner loop stops at the tests it was asked for.
+    if ($Tests) { return }
 
     # The CLI's own path to the same suite. The M3 gate wants `ludwerk test` green
     # on both tiers, and it is a different path from ctest's: it launches the
@@ -591,7 +694,7 @@ if ($SkipLinux) {
     # Named rather than folded into a generic "partial", because this is the one
     # skip that hides a whole compiler's diagnostics.
     Write-Host "green, but the Linux tier did not run -- Clang has not seen this change" -ForegroundColor Yellow
-} elseif ($Only) {
+} elseif ($Only -or $Stages) {
     Write-Host "green (partial run -- macOS is Tier-3 and only CI can build it)" -ForegroundColor Yellow
 } else {
     Write-Host "green (macOS is Tier-3 and only CI can build it)" -ForegroundColor Green

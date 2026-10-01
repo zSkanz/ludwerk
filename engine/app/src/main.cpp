@@ -880,7 +880,15 @@ int main(int argc, char** argv)
         return engine::core::openLogFile(path);
     };
     std::filesystem::path logPath = options.logFile.empty() ? artifactDir / "engine.log" : options.logFile;
-    bool logOpened = openRotated(logPath);
+    // **A second run from the same folder writes the log beside the first's**
+    // (`openLogFileBeside`), rather than taking it from the run still writing it.
+    const auto openBeside = [&logPath]() {
+        const std::optional<std::filesystem::path> opened = engine::core::openLogFileBeside(logPath);
+        if (opened.has_value())
+            logPath = *opened;
+        return opened.has_value();
+    };
+    bool logOpened = options.logFile.empty() ? openBeside() : openRotated(logPath);
     // **Where it can write, when it cannot write here** (audit A15): a game
     // installed where a player may not write -- Program Files -- had no log
     // and no crash report at all. Its own folder then, as a phone's already is.
@@ -890,7 +898,7 @@ int main(int argc, char** argv)
         std::filesystem::create_directories(fallback, error);
         artifactDir = fallback;
         logPath = artifactDir / "engine.log";
-        logOpened = openRotated(logPath);
+        logOpened = openBeside();
     }
     const bool handlerInstalled = engine::platform::installCrashHandler(artifactDir);
 

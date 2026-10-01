@@ -3,6 +3,10 @@
 #include <cstdio>
 #ifdef _WIN32
 #include <share.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 #include <string>
 #include <utility>
@@ -104,11 +108,64 @@ bool openLogFile(const std::filesystem::path& path)
     std::FILE* file = ::_wfsopen(path.c_str(), L"wb", _SH_DENYWR);
 #else
     std::FILE* file = std::fopen(path.c_str(), "wb");
+    // The same rule as Windows' share mode, by an advisory lock: one writer.
+    if (file != nullptr && ::flock(::fileno(file), LOCK_EX | LOCK_NB) != 0) {
+        std::fclose(file);
+        file = nullptr;
+    }
 #endif
     if (file == nullptr)
         return false;
     fileSlot() = file;
     return true;
+}
+
+namespace {
+
+// Whether another writer holds `path`, asked without truncating it.
+[[nodiscard]] bool heldByAnother(const std::filesystem::path& path)
+{
+    std::error_code error;
+    if (!std::filesystem::exists(path, error))
+        return false;
+#ifdef _WIN32
+    std::FILE* probe = ::_wfsopen(path.c_str(), L"ab", _SH_DENYWR);
+    if (probe == nullptr)
+        return true;
+    std::fclose(probe);
+    return false;
+#else
+    const int fd = ::open(path.c_str(), O_WRONLY | O_APPEND);
+    if (fd < 0)
+        return true;
+    const bool held = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
+    ::close(fd);
+    return held;
+#endif
+}
+
+} // namespace
+
+std::optional<std::filesystem::path> openLogFileBeside(const std::filesystem::path& path)
+{
+    for (int sibling = 1; sibling <= 9; ++sibling) {
+        std::filesystem::path candidate = path;
+        if (sibling > 1)
+            candidate.replace_filename(path.stem().string() + "_" + std::to_string(sibling) +
+                                       path.extension().string());
+        if (heldByAnother(candidate))
+            continue;
+        // **The run before keeps its log** (audit A15): one generation, beside it.
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error)) {
+            std::filesystem::path previous = candidate;
+            previous.replace_filename(candidate.stem().string() + ".previous" + candidate.extension().string());
+            std::filesystem::rename(candidate, previous, error);
+        }
+        if (openLogFile(candidate))
+            return candidate;
+    }
+    return std::nullopt;
 }
 
 void closeLogFile() noexcept

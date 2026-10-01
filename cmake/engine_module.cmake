@@ -117,12 +117,18 @@ endfunction()
 # ctest under `name`. MODULES lists the Ludwerk targets under test when the
 # directory holds more than one -- a seam and its backends, say -- and defaults
 # to `name` itself.
+#
+# **Shards** (ADR 0148): an executable whose cases take a minute between them
+# is the long pole of a parallel ctest. `SHARD_CASES "suffix|pattern"` runs the
+# cases matching a doctest pattern as `name_suffix`, and `SHARD_FILES
+# "suffix|pattern"` the cases of the source files matching one; `name` runs
+# what is left. Every case runs once, in exactly one of them.
 function(engine_add_module_tests name)
     if(NOT ENG_BUILD_TESTS)
         return()
     endif()
 
-    cmake_parse_arguments(ARG "" "" "SOURCES;DEPS;MODULES" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;DEPS;MODULES;SHARD_CASES;SHARD_FILES" ${ARGN})
     if(NOT ARG_SOURCES)
         message(FATAL_ERROR "engine_add_module_tests(${name}): SOURCES is required")
     endif()
@@ -146,5 +152,34 @@ function(engine_add_module_tests name)
         target_link_libraries(${target} PRIVATE engine::${module})
     endforeach()
 
-    add_test(NAME ${name} COMMAND ${target})
+    set(cases "")
+    foreach(shard IN LISTS ARG_SHARD_CASES)
+        string(REPLACE "|" ";" parts "${shard}")
+        list(GET parts 0 suffix)
+        list(GET parts 1 pattern)
+        add_test(NAME ${name}_${suffix} COMMAND ${target} "--test-case=${pattern}")
+        list(APPEND cases "${pattern}")
+    endforeach()
+    string(JOIN "," caseFilter ${cases})
+    set(files "")
+    foreach(shard IN LISTS ARG_SHARD_FILES)
+        string(REPLACE "|" ";" parts "${shard}")
+        list(GET parts 0 suffix)
+        list(GET parts 1 pattern)
+        set(arguments "--source-file=${pattern}")
+        if(caseFilter)
+            list(APPEND arguments "--test-case-exclude=${caseFilter}")
+        endif()
+        add_test(NAME ${name}_${suffix} COMMAND ${target} ${arguments})
+        list(APPEND files "${pattern}")
+    endforeach()
+    string(JOIN "," fileFilter ${files})
+    set(rest "")
+    if(caseFilter)
+        list(APPEND rest "--test-case-exclude=${caseFilter}")
+    endif()
+    if(fileFilter)
+        list(APPEND rest "--source-file-exclude=${fileFilter}")
+    endif()
+    add_test(NAME ${name} COMMAND ${target} ${rest})
 endfunction()

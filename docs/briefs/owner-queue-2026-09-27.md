@@ -49,9 +49,10 @@ feature to be tried before anything new. What that sweep found:
 - [x] The nightly's sanitizers: `memcpy` from an empty vector's null data
       in the UI gradient upload (every capture gate aborted on it) and in an
       archive test. `-Only asan` passes all 70 locally.
-- [ ] Two games started from the same folder share one `engine.log`, and the
-      second says it cannot open it. A match tested from one folder always
-      does this.
+- [x] Two games started from the same folder shared one `engine.log`, and the
+      second said it could not open it; a match tested from one folder always
+      did this. The second run writes `engine_2.log` now, and never rotates a
+      log another run holds (D401, 2026-10-01).
 
 ### The owner's list of 2026-09-28
 

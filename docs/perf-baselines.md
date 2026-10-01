@@ -1467,3 +1467,38 @@ smooth drags (`--editor-drive`, `--frame-stats`).
 |---|---|---|---|
 | `tests/bench/terrain_smooth` (128 m of hills, a smooth a tick at 8 m, every fourth at 16 m) | **2.93 ms** | 5.75 ms | 16 ms |
 | `tests/bench/terrain_paint` (the same hills, a blend a tick at 24 m) | **3.55 ms** | 5.91 ms | 16 ms |
+
+## The local gate (ADR 0148)
+
+`scripts/localgate.ps1`, the full run, on the development machine (20 logical
+cores, Docker capped at 10), 2026-10-01. Warm is a run with nothing changed
+since the last; before ADR 0148 even that rebuilt -- the generators rewrote
+their outputs and SPIRV-Cross restamped a header, so every shader of every
+profile was compiled again.
+
+| Stage | Before, one after another | After, three lanes at once (warm) |
+|---|---|---|
+| docs | 88 s | 76 s |
+| luau | 87 s | 91 s |
+| format | 29 s | 28 s |
+| windows | 720 s (ctest 362 s) | 139 s (ctest 90 s) |
+| linux | 722 s (ctest 462 s) | 225 s (ctest 169 s) |
+| shipping | 520 s | 156 s |
+| android | 140 s | 25 s |
+| **Wall** | **about 38 min** | **6.8 min** (409 s) |
+
+After a header every module includes changed (`log.h`), the same run was
+12.4 minutes: the three Linux release profiles recompile, which no cache
+shortens, and are the long pole.
+
+| | Before | After |
+|---|---|---|
+| ctest, `win-msvc-dev`, 97 entries | 362 s, one at a time | **90 s** at 20 jobs |
+| `engine_render_tests` as one entry / as three shards | 87 s | 38, 30 and under 20 s side by side |
+| A clean rebuild of `win-msvc-dev` (`ninja -t clean`, then build) | 576 s | **66 s** through sccache, 892 of 892 objects from the cache |
+| The inner loop: `-Only windows -Tests '<regex>'`, nothing to build, two tests | -- | 4 s |
+
+The ten slowest ctest entries of the serial run, which is where the shards and
+the slots came from: `render` 87 s, `app` 41 s, `terrain_far` 41 s, `asset`
+27 s, `openworld_soak` 22 s, `terrain_shadow_acne` 16 s, `capture_gate_look`
+15 s, `streaming_soak` 15 s, `example_boot_22-atmosphere` 15 s, `net` 13 s.

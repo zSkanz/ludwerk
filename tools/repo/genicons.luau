@@ -30,6 +30,17 @@ local fs = require("@std/fs")
 local json = require("@std/json")
 local process = require("@std/process")
 
+--- Written only when the text differs from what is there (ADR 0148): a build
+--- recompiles everything that includes a file whose time moved, and a
+--- regeneration that changed nothing must not cost one.
+local function writeIfChanged(path: string, text: string)
+    local ok, existing = pcall(fs.readFileToString, path)
+    if ok and existing == text then
+        return
+    end
+    fs.writeStringToFile(path, text)
+end
+
 local ThemePath = "icons/default/theme.json"
 local OutputPath = "engine/app/generated/icon_ids.gen.h"
 
@@ -122,6 +133,6 @@ local directory = string.match(OutputPath, "^(.*)/[^/]*$")
 if directory ~= nil and not fs.exists(directory) then
     fs.createDirectory(directory, { makeParents = true })
 end
-fs.writeStringToFile(OutputPath, table.concat(lines, "\n"))
+writeIfChanged(OutputPath, table.concat(lines, "\n"))
 
 print(`genicons: wrote {OutputPath} -- {#ids} id(s)`)

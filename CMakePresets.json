@@ -64,11 +64,14 @@
     { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev" }
   ],
   "testPresets": [
-    { "name": "win-msvc-debug",    "configurePreset": "win-msvc-debug",    "output": { "outputOnFailure": true } },
-    { "name": "win-msvc-dev",      "configurePreset": "win-msvc-dev",      "output": { "outputOnFailure": true } },
+    { "name": "win-msvc-debug",    "configurePreset": "win-msvc-debug",    "output": { "outputOnFailure": true },
+      "execution": { "resourceSpecFile": "${sourceDir}/tests/ctest-resources.json" } },
+    { "name": "win-msvc-dev",      "configurePreset": "win-msvc-dev",      "output": { "outputOnFailure": true },
+      "execution": { "resourceSpecFile": "${sourceDir}/tests/ctest-resources.json" } },
     { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": { "outputOnFailure": true } },
     { "name": "linux-clang-dev",   "configurePreset": "linux-clang-dev",   "output": { "outputOnFailure": true } },
     { "name": "linux-clang-asan",  "configurePreset": "linux-clang-asan",  "output": { "outputOnFailure": true } },
-    { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev",   "output": { "outputOnFailure": true } }
+    { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev",   "output": { "outputOnFailure": true },
+      "execution": { "resourceSpecFile": "${sourceDir}/tests/ctest-resources.json" } }
   ]
 }

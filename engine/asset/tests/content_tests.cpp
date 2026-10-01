@@ -51,7 +51,9 @@ struct Fixture
     Fixture()
     {
         std::error_code ec;
-        root = std::filesystem::temp_directory_path(ec) / "engine-content-tests";
+        // A name of its own: the app's content-tree tests clear `engine-content-tests`,
+        // and ctest runs the two executables at once (ADR 0148).
+        root = std::filesystem::temp_directory_path(ec) / "engine-asset-content-tests";
         std::filesystem::remove_all(root, ec);
         std::filesystem::create_directories(root / "loose" / "models", ec);
         REQUIRE(std::filesystem::is_directory(root / "loose" / "models"));

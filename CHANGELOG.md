@@ -517,6 +517,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **A second run from the same folder keeps its own log** (D401): where
+  another run is writing `engine.log`, this one writes `engine_2.log` (up to
+  `engine_9.log`) instead of logging to the console alone, and the first
+  run's log is never rotated out from under it.
 - **Smoothing terrain no longer lags** (D400): a smooth stamp at radius 8 costs
   about 2 ms instead of 55 to 83, and the editor smoothing the owner's place
   holds p99 under 18 ms where it stalled for half a second. Wide paint strokes

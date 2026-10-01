@@ -111,6 +111,17 @@ RUN curl -fsSL "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VER
     && rm -rf /tmp/rokit.zip /tmp/rokit-bin
 ENV PATH="/root/.rokit/bin:${PATH}"
 
+# The compiler cache CI uses, at CI's pin (`SCCACHE_VERSION` in ci.yml; ADR
+# 0148). The root CMakeLists finds it and compiles through it; its cache is on
+# the build volume, so it survives the container as the objects do.
+ARG SCCACHE_VERSION=0.17.0
+RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/sccache.tar.gz \
+    && tar -xzf /tmp/sccache.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl"
+ENV SCCACHE_DIR=/build/sccache
+ENV SCCACHE_CACHE_SIZE=8G
+
 # Out-of-tree (R14), and on a named volume so an incremental run reuses the
 # previous one's objects. That is what makes this fast enough to run before
 # every push -- the first build is a cold one, every build after it is not.

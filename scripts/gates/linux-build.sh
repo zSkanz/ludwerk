@@ -67,7 +67,10 @@ echo "== test =="
 ctestLog="$(mktemp)"
 trap 'rm -f "$ctestLog"' EXIT
 set +e
-xvfb-run -a ctest --preset "$preset" --output-on-failure --no-tests=error     --label-exclude gpu-golden 2>&1 | tee "$ctestLog"
+# Every core the container has (ADR 0148): the tests that measure time run
+# alone, and lavapipe draws on the CPU, so nothing else needs to take turns.
+xvfb-run -a ctest --preset "$preset" --output-on-failure --no-tests=error -j "$(nproc)" \
+    --label-exclude gpu-golden 2>&1 | tee "$ctestLog"
 ctestStatus=${PIPESTATUS[0]}
 set -e
 if [ "$ctestStatus" -ne 0 ]; then

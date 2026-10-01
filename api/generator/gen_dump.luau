@@ -40,6 +40,17 @@ local process = require("@std/process")
 local Definition = require("../defs")
 local Schema = require("../schema")
 
+--- Written only when the text differs from what is there (ADR 0148): a build
+--- recompiles everything that includes a file whose time moved, and a
+--- regeneration that changed nothing must not cost one.
+local function writeIfChanged(path: string, text: string)
+    local ok, existing = pcall(fs.readFileToString, path)
+    if ok and existing == text then
+        return
+    end
+    fs.writeStringToFile(path, text)
+end
+
 local OutputPath = "api/api-dump.json"
 
 --- The engine version is read from the one file that defines it rather than
@@ -512,7 +523,7 @@ if #Errors > 0 then
     process.exit(1)
 end
 
-fs.writeStringToFile(OutputPath, table.concat(Lines, "\n"))
+writeIfChanged(OutputPath, table.concat(Lines, "\n"))
 
 print(`gen_dump: wrote {OutputPath} -- engine {Version}`)
 print(

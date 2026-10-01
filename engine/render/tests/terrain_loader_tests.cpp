@@ -11,6 +11,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "engine/asset/terrain.h"
@@ -545,6 +546,18 @@ TEST_CASE("a node of ground on disk is the node the resident ground gives, befor
             [](const asset::TerrainCell& cell) { return std::abs(cell.x - 2) <= 1 && std::abs(cell.z + 1) <= 1; }),
     };
 
+    // What the whole ground gives a node, meshed once and asked of by every
+    // resident set: the dearest half of this test, done three times over.
+    std::map<std::tuple<core::u32, core::i32, core::i32>, std::pair<asset::TerrainMesh, core::u64>> expectedOf;
+    const auto expectedFor = [&](const TerrainNodeKey& key) -> const std::pair<asset::TerrainMesh, core::u64>& {
+        const auto at = std::tuple{key.level, key.x, key.z};
+        auto found = expectedOf.find(at);
+        if (found == expectedOf.end())
+            found =
+                expectedOf.emplace(at, std::pair{meshTerrainNode(whole, key), terrainNodeContent(whole, nullptr, key)})
+                    .first;
+        return found->second;
+    };
     int compared = 0;
     for (const asset::TerrainField& resident : residents) {
         for (core::u32 level = 1; level <= TerrainTopLevel; ++level) {
@@ -557,7 +570,7 @@ TEST_CASE("a node of ground on disk is the node the resident ground gives, befor
                     CAPTURE(level);
                     CAPTURE(x);
                     CAPTURE(z);
-                    const asset::TerrainMesh expected = meshTerrainNode(whole, key);
+                    const auto& [expected, wholeContent] = expectedFor(key);
                     const TerrainNodeBuild built = buildTerrainNodeFromCells(resident, source, key);
                     REQUIRE(built.mesh.mesh.vertices.size() == expected.mesh.vertices.size());
                     REQUIRE(built.mesh.mesh.indices == expected.mesh.indices);
@@ -576,7 +589,7 @@ TEST_CASE("a node of ground on disk is the node the resident ground gives, befor
                     // What it was built from is what the whole ground gives, what
                     // the ground on disk gives now its cells have been read, and
                     // what it will give once they are resident.
-                    CHECK(built.content == terrainNodeContent(whole, nullptr, key));
+                    CHECK(built.content == wholeContent);
                     CHECK(terrainNodeContent(resident, &source, key) == built.content);
                     ++compared;
                 }

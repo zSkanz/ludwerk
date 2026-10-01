@@ -41,6 +41,28 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # scanner becomes a real requirement rather than a tax.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# **A compiler cache, when one is installed** (ADR 0148). sccache, at the
+# version CI pins, keys each object by its preprocessed source and its flags,
+# so what a branch switch, a regenerated file with the same contents or a
+# fresh build tree would recompile comes back from the cache instead. Local
+# only: nothing it touches ships. `scripts/bootstrap.ps1` and the Tier-2 image
+# install it; without it the build is what it always was. CI passes its own
+# launcher, which this leaves alone. MSVC's shared PDB is the one thing sccache
+# cannot cache, so the debug information goes into each object instead
+# (`Embedded`, as CI already builds) and the linker still writes the PDB.
+option(ENG_COMPILER_CACHE "Compile through sccache when it is installed" ON)
+if(ENG_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(ENG_SCCACHE sccache HINTS "$ENV{ENG_BUILD_ROOT}/toolchains/sccache")
+    if(ENG_SCCACHE)
+        set(CMAKE_C_COMPILER_LAUNCHER "${ENG_SCCACHE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${ENG_SCCACHE}")
+        if(MSVC)
+            set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        endif()
+        message(STATUS "Compiling through ${ENG_SCCACHE}")
+    endif()
+endif()
+
 # Profiles: debug | dev | profile | player | shipping (docs/architecture.md §8)
 set(ENG_PROFILE "dev" CACHE STRING "Ludwerk build profile")
 

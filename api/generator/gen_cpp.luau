@@ -61,6 +61,17 @@ local process = require("@std/process")
 local Definition = require("../defs")
 local Schema = require("../schema")
 
+--- Written only when the text differs from what is there (ADR 0148): a build
+--- recompiles everything that includes a file whose time moved, and a
+--- regeneration that changed nothing must not cost one.
+local function writeIfChanged(path: string, text: string)
+    local ok, existing = pcall(fs.readFileToString, path)
+    if ok and existing == text then
+        return
+    end
+    fs.writeStringToFile(path, text)
+end
+
 --- An engine module that registers classes into scene's registry.
 type Module = {
     Name: string,
@@ -1002,7 +1013,7 @@ for _, output in Outputs do
     if directory ~= nil and not fs.exists(directory) then
         fs.createDirectory(directory, { makeParents = true })
     end
-    fs.writeStringToFile(output.Path, table.concat(output.Lines, "\n"))
+    writeIfChanged(output.Path, table.concat(output.Lines, "\n"))
     print(`gen_cpp: wrote {output.Path}`)
 end
 
