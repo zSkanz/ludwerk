@@ -517,6 +517,9 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Terrain is drawn as far as the camera sees** (D403): out to
+  `Camera.FarPlane`, where it stopped at 4 096 m whatever the camera. A world
+  wider than the default 5 000 m needs a camera with a larger `FarPlane`.
 - **Sculpted terrain no longer crosses itself** (D402): where two surfaces
   passed within a voxel of each other -- a thin wall, two hollows side by
   side -- the ground showed faces meeting in an X and black triangles until it

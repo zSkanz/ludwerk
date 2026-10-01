@@ -148,6 +148,15 @@ struct TerrainLodSettings
     double viewDistance = 4096.0;
 };
 
+// **The settings a camera gives** (terrain-editing ledger, P5): `base`, with
+// the pixels a metre covers from the projection and the picture's height
+// (zero for an orthographic view, which keeps the distance rule), the pixel
+// budget, and **the ground drawn as far as the camera sees** -- its far
+// plane. A view distance of its own, 4096 m whatever the camera, ended an
+// 8 km world half-way across in a scalloped edge of whole nodes.
+[[nodiscard]] TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat4& projection,
+                                               core::f32 farPlane, core::u32 targetHeight, double pixelError) noexcept;
+
 class TerrainLoader
 {
 public:

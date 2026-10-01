@@ -14,7 +14,7 @@ professional sculpting tools do (the owner's standing rule of 2026-09-30).
 | P2 | Paint as cheap | this ledger |
 | P3 | No mesh folded over itself, at any level, after any sequence | this ledger |
 | P4 | A save writes only the cells that changed | this ledger |
-| P5 | A world the size of a city's: 8 km and past it | this ledger |
+| P5 | A world the size of a city's: 8 km and past it | this ledger, D403; an importer for what no script can hold (P5b) |
 | P6 | The frame rate follows the monitor, in the editor and in games | moved to [ADR 0147](../decisions/0147-graphics-and-display-settings-are-one-model-the-project-sets-the-player-chooses-a-script-reads-and-writes.md), `settings-kickoff.md` G0 |
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
@@ -146,10 +146,40 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
 
 ## P5 — a city's worth of world
 
-- [ ] The V-shaped notches in the far silhouette of an 8 km world at a 2 m
-  voxel, from (-3500, 900, -3500) towards (1500, 0, 1500).
-- [ ] A 16 384 by 16 384 world at a 1 m voxel, saved as cells and streamed:
-  memory bounded, the flight smooth.
+- [x] **The V-shaped notches were the ground ending** (D403). ludwerk-08's
+  picture -- an 8 km world at a 2 m voxel from (-3500, 900, -3500) towards
+  (1500, 0, 1500) -- reproduced to the pixel. The height function's own
+  silhouette from that camera, worked out apart, is one smooth dome with its
+  top 417 pixels down; the picture's "silhouette" was 480 to 560 down, which
+  is ground 4.8 km from the camera in a world that reaches 10.7. The loader
+  drew nothing past `viewDistance`, 4 096 m, whatever the camera's
+  `FarPlane`, and dropped whole nodes by their distance: a scalloped edge with
+  a notch where two nodes met, against haze the colour of the sky.
+- [x] **The ground is drawn as far as the camera sees**
+  (`render::terrainLodFor`): the view distance is the camera's far plane. The
+  same camera with `FarPlane = 20000` draws the world whole, the dome's top at
+  418 pixels: 278 000 triangles for 91 000, median frame 2.2 ms for 1.5, and
+  the same 15 frames over 33 ms either way -- the script writing its tiles.
+  `terrain_loader_tests` holds it.
+- [ ] **A 16 384 by 16 384 world at a 1 m voxel, saved as cells and streamed**
+  -- not measured, because **nothing can make one**. What stands in the way,
+  found trying:
+  - A script generates ground resident: 8 km at a 2 m voxel peaks at 787 MiB,
+    so 16 km at 1 m is some 12 GiB before anything is saved. **A cell
+    somebody changed is never evicted**, by design, so streaming does not
+    relieve a generator.
+  - `--save-scene` writes what a script built in its boot, and a boot is one
+    drain under the 5 s watchdog: a row of eight 1 km tiles, and then the
+    scene is written -- inline, 206 MB of JSON for that row, where the
+    editor's save would have cut cells.
+  - The editor refuses an edit that reaches more than 4 096 cells not loaded.
+
+  A world that size is imported, not sculpted in one go, in every engine that
+  has one. What this stage needs is an importer that writes cells straight to
+  disk a tile at a time -- from a heightmap, or from a script's function of
+  `(x, z)` -- and never holds more than a tile: `ludwerk terrain import`, and
+  the editor's Create tab over it. Its own stage, P5b, with its own bench: the
+  flight over the result, memory bounded by the load radius.
 
 ## P6 — the frame rate follows the monitor
 

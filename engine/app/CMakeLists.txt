@@ -1478,24 +1478,32 @@ if(ENG_BUILD_TESTS)
     # test that does not draw. Where the GPU is lavapipe -- the Linux
     # container, which is the CPU -- there is nothing to share but cores, and
     # no group is asked for.
+    set(drawn_tests
+        screenshot_gate screenshot_gate_contact screenshot_gate_ui screenshot_gate_instanced
+        screenshot_gate_sprites ui_appearance_gate views_gate mirrors_gate ortho_gate subworld_gate
+        surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
+        graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
+        terrain_tiling terrain_far terrain_paint_edge terrain_material_channels foliage_card_shadows
+        terrain_rules_agree block_faces_colours chunk_grid_differential editor_seam replica_seam
+        descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)
         set(ENG_TEST_GPU_LOCK ON)
     endif()
-    if(ENG_TEST_GPU_LOCK)
-        foreach(drawn IN ITEMS
-                screenshot_gate screenshot_gate_contact screenshot_gate_ui screenshot_gate_instanced
-                screenshot_gate_sprites ui_appearance_gate views_gate mirrors_gate ortho_gate subworld_gate
-                surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
-                graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
-                terrain_tiling terrain_far terrain_paint_edge terrain_material_channels foliage_card_shadows
-                terrain_rules_agree block_faces_colours chunk_grid_differential editor_seam replica_seam
-                descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
-            if(TEST ${drawn})
-                set_property(TEST ${drawn} PROPERTY RESOURCE_GROUPS "gpu:1")
-            endif()
-        endforeach()
-    endif()
+    foreach(drawn IN LISTS drawn_tests)
+        if(NOT TEST ${drawn})
+            continue()
+        endif()
+        if(ENG_TEST_GPU_LOCK)
+            set_property(TEST ${drawn} PROPERTY RESOURCE_GROUPS "gpu:1")
+        endif()
+        # **A timeout is a hang guard, not a budget.** Where the device is a
+        # software rasteriser -- a hosted runner's WARP, the container's
+        # lavapipe -- a picture is minutes of CPU, and drawn beside three
+        # others it is three times that: `terrain_far` passed in 100 s alone
+        # on CI and was cut at 300 s the first time it ran at `-j 4`.
+        set_property(TEST ${drawn} PROPERTY TIMEOUT 900)
+    endforeach()
 
     # **One project folder, one test at a time**: a run writes its log and its
     # caches beside the project, and two runs of one folder fight over both.

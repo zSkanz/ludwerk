@@ -794,6 +794,21 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
     return count;
 }
 
+TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat4& projection, core::f32 farPlane,
+                                 core::u32 targetHeight, double pixelError) noexcept
+{
+    TerrainLodSettings lod = base;
+    lod.pixelScale = projection.m[3][3] == 0.0f && targetHeight > 0
+                         ? static_cast<f64>(projection.m[1][1]) * 0.5 * static_cast<f64>(targetHeight)
+                         : 0.0;
+    lod.pixelError = pixelError;
+    // Past the far plane nothing is drawn whatever is selected; short of it,
+    // what is not selected is a hole in the ground.
+    if (farPlane > 0.0f && std::isfinite(farPlane))
+        lod.viewDistance = static_cast<f64>(farPlane);
+    return lod;
+}
+
 u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world, core::AtomTable& atoms,
                         MeshCache& cache, MeshLibrary& library)
 {

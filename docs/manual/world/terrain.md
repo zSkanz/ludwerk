@@ -380,6 +380,12 @@ The three numbers a terrain is decided at:
 
 ## Large worlds
 
+**The ground is drawn as far as the camera sees**: out to its `FarPlane`,
+5 000 m unless a script or the scene says otherwise. A world wider than that
+needs a camera that sees further -- `camera.FarPlane = 20000` shows an 8 km
+world whole from one corner -- and fog to meet it. What is far is drawn at a
+lower resolution, chosen by how many pixels its error would cover.
+
 A terrain saved with a scene streams from disk once it is 256 cells or more,
 each cell 64 m on a side -- a square a kilometre across. The world waits for
 the ground around the player before the first frame, loads cells ahead of the

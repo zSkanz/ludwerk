@@ -4880,14 +4880,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // distance covers -- from the projection and the picture's
                 // height -- and how many a terrain cell may. An orthographic
                 // view keeps the distance rule.
-                render::TerrainLodSettings lod = terrainLoader.lodSettings();
-                const core::Mat4& projection = snapshot.camera.projection;
-                lod.pixelScale = projection.m[3][3] == 0.0f && targetHeight > 0
-                                     ? static_cast<f64>(projection.m[1][1]) * 0.5 * static_cast<f64>(targetHeight)
-                                     : 0.0;
-                lod.pixelError = static_cast<f64>(renderer != nullptr ? renderer->settings().terrainPixelError
-                                                                      : options.graphics.terrainPixelError);
-                terrainLoader.setLodSettings(lod);
+                // **And how far**: as far as the camera sees (`terrainLodFor`).
+                terrainLoader.setLodSettings(render::terrainLodFor(
+                    terrainLoader.lodSettings(), snapshot.camera.projection, snapshot.camera.farPlane,
+                    static_cast<core::u32>(targetHeight > 0 ? targetHeight : 0),
+                    static_cast<f64>(renderer != nullptr ? renderer->settings().terrainPixelError
+                                                         : options.graphics.terrainPixelError)));
                 voxelLoader.setFocus(snapshot.camera.origin);
                 foliage.setFocus(snapshot.camera.origin);
             }
