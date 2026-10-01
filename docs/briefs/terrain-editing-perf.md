@@ -89,12 +89,50 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
 
 ## P3 — a mesh that never folds
 
-- [ ] The owner's "X" was not reproduced by ludwerk-08 (the arcs he saw were
-  the camera inside a sculpted ball). A fuzz test of random sculpt sequences
-  -- raise, lower, add, dig, smooth at full strength, sharp shapes -- meshed
-  at every level, every triangle checked: none crossing another, none folded
-  against its neighbours, no edge shared by more than two. The suspect is the
-  surface vertex placed outside its cell on a sharp feature.
+- [x] **Found by fuzz, and it was the mesher.** `terrain_mesh_validation_tests`
+  sculpts a slab with 24 random brushes from each of 16 fixed seeds -- raises
+  and digs at full strength, sharp boxes, smooths -- and checks every triangle
+  of the result against every triangle near it. At full detail, before:
+
+  | | Over 16 seeds | Worst seed |
+  |---|---|---|
+  | Edges shared by four faces | 86 | 27 |
+  | Triangles lit from behind | 117 | 35 |
+  | Triangles through each other, or folded over an edge | 0 | 0 |
+
+  A lattice cell had one vertex, so every sheet of surface that passed through
+  it was joined there: a wall a voxel thin, two hollows a corner apart. Their
+  quads met on the edge beside that vertex, four faces to an edge -- in
+  section, an X, which is what the owner drew; and a smooth, which moves the
+  sheets apart, cured it.
+- [x] **A vertex a sheet** (`cellSheets`, `terrain_mesher.cpp`): a cell's
+  crossed edges are traced face by face into the sheets they belong to, a face
+  with all four edges crossed deciding by its four corners -- which both cells
+  that share it read alike -- and each sheet has its own vertex; a quad takes,
+  from each of its four cells, the vertex of the sheet its edge is on. A cell
+  with one sheet, which is nearly all of them, is as it was: no golden, no
+  digest and no trace moved. A vertex whose gradient points against its own
+  faces -- beside a second sheet a voxel away -- takes its faces' normal.
+
+  | After | Over 16 seeds | Worst seed |
+  |---|---|---|
+  | Edges shared by four faces | 6 | 2 |
+  | Triangles lit from behind | 21 | 12 |
+  | Open or inconsistently wound edges | 0 | 0 |
+
+- [x] **What is left, and why**: a neck thinner than a voxel -- two hollows, or
+  two masses, that the field joins through the middle of a lattice face. One
+  vertex a sheet a cell cannot hold a tube that thin; its four faces meet on
+  one edge and do not cross. The test holds it under one in two thousand
+  triangles of ground built to have them.
+- [x] **The coarse levels** gather the same ground (ADR 0140): a slab thinner
+  than a coarse cell is a sheet drawn both ways by design, and two sheets in
+  one coarse cell share its vertex. Triangles through each other there: 47 in
+  53 000 at level 1, 30 in 13 000 at level 2 -- drawn only from where the
+  level's error is under the pixel budget. Held under one in fifty; unchanged
+  by this stage.
+- Meshing a full-detail node costs what it did: 21.6 ms before, 22.2 after
+  (`what meshing a terrain node costs`).
 
 ## P4 — saving only what changed
 

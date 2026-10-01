@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::asset {
@@ -65,6 +66,141 @@ constexpr std::array<std::array<int, 2>, 12> CellEdges{{
     {2, 6},
     {3, 7}, // along z
 }};
+
+// The edge of a cell that runs along `axis` at `(a, b)` on its other two axes,
+// lower axis first: which of `CellEdges` it is.
+constexpr std::array<std::array<std::array<u8, 2>, 2>, 3> EdgeAt = [] {
+    std::array<std::array<std::array<u8, 2>, 2>, 3> table{};
+    for (usize edge = 0; edge < CellEdges.size(); ++edge) {
+        const auto& from = CornerOffsets[static_cast<usize>(CellEdges[edge][0])];
+        const auto& to = CornerOffsets[static_cast<usize>(CellEdges[edge][1])];
+        for (usize axis = 0; axis < 3; ++axis) {
+            if (from[axis] == to[axis])
+                continue;
+            const usize first = axis == 0 ? 1 : 0;
+            const usize second = axis == 2 ? 1 : 2;
+            table[axis][static_cast<usize>(from[first])][static_cast<usize>(from[second])] = static_cast<u8>(edge);
+        }
+    }
+    return table;
+}();
+
+// The six faces of a cell: their four corners in order round the face, and
+// the edge from each corner to the next.
+struct CellFace
+{
+    std::array<u8, 4> corners{};
+    std::array<u8, 4> edges{};
+};
+constexpr std::array<CellFace, 6> CellFaces = [] {
+    std::array<CellFace, 6> faces{};
+    constexpr std::array<std::array<int, 2>, 4> Round{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
+    for (usize axis = 0; axis < 3; ++axis) {
+        const usize first = axis == 0 ? 1 : 0;
+        const usize second = axis == 2 ? 1 : 2;
+        for (int side = 0; side < 2; ++side) {
+            CellFace& face = faces[axis * 2 + static_cast<usize>(side)];
+            for (usize at = 0; at < 4; ++at) {
+                for (usize corner = 0; corner < CornerOffsets.size(); ++corner) {
+                    const auto& offset = CornerOffsets[corner];
+                    if (offset[axis] == side && offset[first] == Round[at][0] && offset[second] == Round[at][1])
+                        face.corners[at] = static_cast<u8>(corner);
+                }
+            }
+            for (usize at = 0; at < 4; ++at) {
+                const int a = face.corners[at];
+                const int b = face.corners[(at + 1) % 4];
+                for (usize edge = 0; edge < CellEdges.size(); ++edge) {
+                    if ((CellEdges[edge][0] == a && CellEdges[edge][1] == b) ||
+                        (CellEdges[edge][0] == b && CellEdges[edge][1] == a))
+                        face.edges[at] = static_cast<u8>(edge);
+                }
+            }
+        }
+    }
+    return faces;
+}();
+
+// **The sheets of surface a cell holds** (terrain-editing ledger, P3): which
+// of its crossed edges belong together, as a component number per edge, and
+// how many there are.
+//
+// A cell with one vertex joins every sheet that passes through it: where two
+// meet in a cell -- a wall a voxel thin, two hollows a corner apart -- their
+// quads shared that one vertex and the edge beside it, four faces to an edge,
+// and the surface crossed itself there (the owner's "uma malha se cruzando
+// formando um X"). A sheet is traced face by face: a face two of whose edges
+// are crossed joins those two; a face with all four crossed has its ground
+// corners on a diagonal, and joins the edges round each air corner when the
+// ground runs across the face (its four corners average half full or more),
+// round each ground corner when the air does. Both cells that share the face
+// read the same four corners, so they agree, and the two sheets stay two.
+[[nodiscard]] int cellSheets(int inside, const std::array<float, 8>& corner, std::array<u8, 12>& sheetOf) noexcept
+{
+    std::array<u8, 12> parent{};
+    std::array<bool, 12> crossed{};
+    for (usize edge = 0; edge < 12; ++edge) {
+        parent[edge] = static_cast<u8>(edge);
+        crossed[edge] = ((inside >> CellEdges[edge][0]) & 1) != ((inside >> CellEdges[edge][1]) & 1);
+    }
+    const auto find = [&parent](u8 edge) {
+        while (parent[edge] != edge)
+            edge = parent[edge];
+        return edge;
+    };
+    const auto join = [&](u8 a, u8 b) {
+        const u8 ra = find(a);
+        const u8 rb = find(b);
+        // The lower edge leads: the numbering is the same whatever the order.
+        if (ra < rb)
+            parent[rb] = ra;
+        else
+            parent[ra] = rb;
+    };
+    for (const CellFace& face : CellFaces) {
+        int count = 0;
+        for (const u8 edge : face.edges)
+            count += crossed[edge] ? 1 : 0;
+        if (count == 2) {
+            u8 first = 0xFF;
+            for (const u8 edge : face.edges) {
+                if (!crossed[edge])
+                    continue;
+                if (first == 0xFF)
+                    first = edge;
+                else
+                    join(first, edge);
+            }
+        }
+        else if (count == 4) {
+            // In doubles, where four bytes over 255 add exactly: both cells
+            // get the same sum whatever order their corners come in.
+            double sum = 0.0;
+            for (const u8 at : face.corners)
+                sum += static_cast<double>(corner[at]);
+            const bool groundAcross = sum >= 2.0;
+            for (usize at = 0; at < 4; ++at) {
+                const bool ground = ((inside >> face.corners[at]) & 1) != 0;
+                // The two edges that meet at this corner.
+                if (ground != groundAcross)
+                    join(face.edges[at], face.edges[(at + 3) % 4]);
+            }
+        }
+    }
+    int sheets = 0;
+    std::array<u8, 12> number{};
+    number.fill(0xFF);
+    sheetOf.fill(0xFF);
+    for (u8 edge = 0; edge < 12; ++edge) {
+        if (!crossed[edge])
+            continue;
+        const u8 root = find(edge);
+        if (number[root] == 0xFF)
+            number[root] = static_cast<u8>(sheets++);
+        sheetOf[edge] = number[root];
+    }
+    return sheets;
+}
 
 // Where along an edge occupancy passes one half. Guarded for two equal ends,
 // which cannot straddle the half -- but a caller that asks should get the
@@ -1678,6 +1814,9 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     std::map<u8, std::vector<u32>> buckets;
     // Which level-0 vertices had no gradient to take a normal from.
     std::vector<bool> flatNormals;
+    // The level-0 cells that hold more than one sheet, by cell: the vertex each
+    // of their twelve edges takes. Looked up and never walked (R10).
+    std::unordered_map<u32, std::array<u32, 12>> sheetCells;
     if (level == 0) {
         for (i32 cz = 0; cz < cellsZ; ++cz) {
             for (i32 cy = 0; cy < cellsY; ++cy) {
@@ -1694,46 +1833,59 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     if (inside == 0 || inside == 0xFF)
                         continue;
 
-                    float sumX = 0.0f;
-                    float sumY = 0.0f;
-                    float sumZ = 0.0f;
-                    Vec3 normalSum{0.0f, 0.0f, 0.0f};
-                    int crossings = 0;
-                    for (const std::array<int, 2>& edgeCorners : CellEdges) {
-                        const auto a = static_cast<usize>(edgeCorners[0]);
-                        const auto b = static_cast<usize>(edgeCorners[1]);
-                        if (((inside >> a) & 1) == ((inside >> b) & 1))
-                            continue;
-                        const float t = crossingAt(corner[a], corner[b]);
-                        const auto& oa = CornerOffsets[a];
-                        const auto& ob = CornerOffsets[b];
-                        sumX += static_cast<float>(oa[0]) + static_cast<float>(ob[0] - oa[0]) * t;
-                        sumY += static_cast<float>(oa[1]) + static_cast<float>(ob[1] - oa[1]) * t;
-                        sumZ += static_cast<float>(oa[2]) + static_cast<float>(ob[2] - oa[2]) * t;
-                        const Vec3 na = normalAt(cx + 1 + oa[0], cy + 1 + oa[1], cz + 1 + oa[2]);
-                        const Vec3 nb = normalAt(cx + 1 + ob[0], cy + 1 + ob[1], cz + 1 + ob[2]);
-                        normalSum.x += na.x + (nb.x - na.x) * t;
-                        normalSum.y += na.y + (nb.y - na.y) * t;
-                        normalSum.z += na.z + (nb.z - na.z) * t;
-                        ++crossings;
+                    // **A vertex a sheet** (`cellSheets`): nearly every cell holds
+                    // one, and its vertex is the mean of all its crossings as it
+                    // always was; a cell two sheets pass through gets one each.
+                    std::array<u8, 12> sheetOf{};
+                    const int sheets = cellSheets(inside, corner, sheetOf);
+                    std::array<Vec3, 4> sheetPosition{};
+                    std::array<Vec3, 4> sheetNormal{};
+                    std::array<bool, 4> sheetFlat{};
+                    for (int sheet = 0; sheet < sheets && sheet < 4; ++sheet) {
+                        float sumX = 0.0f;
+                        float sumY = 0.0f;
+                        float sumZ = 0.0f;
+                        Vec3 normalSum{0.0f, 0.0f, 0.0f};
+                        int crossings = 0;
+                        for (usize edge = 0; edge < CellEdges.size(); ++edge) {
+                            if (sheetOf[edge] != sheet)
+                                continue;
+                            const auto a = static_cast<usize>(CellEdges[edge][0]);
+                            const auto b = static_cast<usize>(CellEdges[edge][1]);
+                            const float t = crossingAt(corner[a], corner[b]);
+                            const auto& oa = CornerOffsets[a];
+                            const auto& ob = CornerOffsets[b];
+                            sumX += static_cast<float>(oa[0]) + static_cast<float>(ob[0] - oa[0]) * t;
+                            sumY += static_cast<float>(oa[1]) + static_cast<float>(ob[1] - oa[1]) * t;
+                            sumZ += static_cast<float>(oa[2]) + static_cast<float>(ob[2] - oa[2]) * t;
+                            const Vec3 na = normalAt(cx + 1 + oa[0], cy + 1 + oa[1], cz + 1 + oa[2]);
+                            const Vec3 nb = normalAt(cx + 1 + ob[0], cy + 1 + ob[1], cz + 1 + ob[2]);
+                            normalSum.x += na.x + (nb.x - na.x) * t;
+                            normalSum.y += na.y + (nb.y - na.y) * t;
+                            normalSum.z += na.z + (nb.z - na.z) * t;
+                            ++crossings;
+                        }
+                        const float inverse = 1.0f / static_cast<float>(crossings);
+                        // The cell's low corner is lattice point `min - 1 + c`,
+                        // whose centre is half a step in.
+                        sheetPosition[static_cast<usize>(sheet)] = Vec3{
+                            (static_cast<float>(region.minX - 1 + cx) + sumX * inverse + 0.5f) * step,
+                            (static_cast<float>(region.minY - 1 + cy) + sumY * inverse + 0.5f) * step,
+                            (static_cast<float>(region.minZ - 1 + cz) + sumZ * inverse + 0.5f) * step,
+                        };
+                        const float normalLength = std::sqrt(normalSum.x * normalSum.x + normalSum.y * normalSum.y +
+                                                             normalSum.z * normalSum.z);
+                        sheetNormal[static_cast<usize>(sheet)] =
+                            normalLength < 1e-8f ? Vec3{0.0f, 1.0f, 0.0f}
+                                                 : Vec3{normalSum.x / normalLength, normalSum.y / normalLength,
+                                                        normalSum.z / normalLength};
+                        sheetFlat[static_cast<usize>(sheet)] = normalLength < 1e-8f;
                     }
-                    const float inverse = 1.0f / static_cast<float>(crossings);
-                    // The cell's low corner is lattice point `min - 1 + c`, whose
-                    // centre is half a step in.
-                    const Vec3 position{
-                        (static_cast<float>(region.minX - 1 + cx) + sumX * inverse + 0.5f) * step,
-                        (static_cast<float>(region.minY - 1 + cy) + sumY * inverse + 0.5f) * step,
-                        (static_cast<float>(region.minZ - 1 + cz) + sumZ * inverse + 0.5f) * step,
-                    };
-                    const float normalLength =
-                        std::sqrt(normalSum.x * normalSum.x + normalSum.y * normalSum.y + normalSum.z * normalSum.z);
-                    const Vec3 normal =
-                        normalLength < 1e-8f
-                            ? Vec3{0.0f, 1.0f, 0.0f}
-                            : Vec3{normalSum.x / normalLength, normalSum.y / normalLength, normalSum.z / normalLength};
+                    const Vec3 position = sheetPosition[0];
+                    const Vec3 normal = sheetNormal[0];
                     if (flatNormals.size() <= out.mesh.vertices.size())
                         flatNormals.resize(out.mesh.vertices.size() + 1, false);
-                    flatNormals[out.mesh.vertices.size()] = normalLength < 1e-8f;
+                    flatNormals[out.mesh.vertices.size()] = sheetFlat[0];
 
                     // **The commonest material among the cell's SOLID corners**,
                     // lowest id on a tie. An air corner has no material.
@@ -1840,6 +1992,37 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     vertexMaterial.push_back(material);
                     vertexTop.push_back(top);
                     vertexCover.push_back(cover);
+
+                    // The cell's other sheets: the same ground, each where its
+                    // own crossings put it, and which vertex each edge takes.
+                    if (sheets > 1) {
+                        std::array<u32, 12> byEdge{};
+                        std::array<u32, 4> sheetVertex{};
+                        sheetVertex[0] = cellVertex[cellIndex(cx, cy, cz)];
+                        for (int sheet = 1; sheet < sheets && sheet < 4; ++sheet) {
+                            const auto at = static_cast<usize>(sheet);
+                            Vertex other = vertex;
+                            other.position = sheetPosition[at];
+                            other.normal = sheetNormal[at];
+                            other.tangent[1] = drawn ? skyVisibility(other.position, other.normal) : 1.0f;
+                            sheetVertex[at] = static_cast<u32>(out.mesh.vertices.size());
+                            if (flatNormals.size() <= out.mesh.vertices.size())
+                                flatNormals.resize(out.mesh.vertices.size() + 1, false);
+                            flatNormals[out.mesh.vertices.size()] = sheetFlat[at];
+                            out.mesh.vertices.push_back(other);
+                            morphs.push_back(drawn ? morphFrom(region.minX - 1 + cx, region.minY - 1 + cy,
+                                                               region.minZ - 1 + cz, other.position)
+                                                   : other.position);
+                            morphTags.push_back(tagOf(level, region.minX - 1 + cx, region.minZ - 1 + cz));
+                            out.colliderPoints.push_back(other.position);
+                            vertexMaterial.push_back(material);
+                            vertexTop.push_back(top);
+                            vertexCover.push_back(cover);
+                        }
+                        for (usize edge = 0; edge < 12; ++edge)
+                            byEdge[edge] = sheetOf[edge] < 4 ? sheetVertex[sheetOf[edge]] : sheetVertex[0];
+                        sheetCells.emplace(static_cast<u32>(cellIndex(cx, cy, cz)), byEdge);
+                    }
                 }
             }
         }
@@ -1853,8 +2036,11 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     u32& vertex = cellVertex[cellIndex(cx, cy, cz)];
                     if (vertex == NoVertex)
                         continue;
-                    if (const u32 shared = stitchedVertex(band, cx, cy, cz); shared != NoVertex)
+                    if (const u32 shared = stitchedVertex(band, cx, cy, cz); shared != NoVertex) {
                         vertex = shared;
+                        // Every sheet of a stitched cell is the neighbour's vertex.
+                        sheetCells.erase(static_cast<u32>(cellIndex(cx, cy, cz)));
+                    }
                 }
             }
         }
@@ -1903,14 +2089,33 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         };
         // The four cells in the order that faces the edge's positive direction;
         // `reverse` faces it the other way.
+        // The vertex of the cell `c` on the sheet that crosses the edge along
+        // `axis` from owned point `o`: the cell's one vertex, or, where it
+        // holds two sheets, the one that edge belongs to.
+        const auto sheetVertexOf = [&](const std::array<i32, 3>& c, usize axis, const std::array<i32, 3>& o) {
+            const usize seat = cellIndex(c[0], c[1], c[2]);
+            const u32 vertex = cellVertex[seat];
+            if (vertex == NoVertex || sheetCells.empty())
+                return vertex;
+            const auto split = sheetCells.find(static_cast<u32>(seat));
+            if (split == sheetCells.end())
+                return vertex;
+            // The cell whose low corner is the point before `o` has local
+            // index `o`, and the edge on its high side; the next, its low.
+            const usize first = axis == 0 ? 1 : 0;
+            const usize second = axis == 2 ? 1 : 2;
+            const auto la = static_cast<usize>(1 - (c[first] - o[first]));
+            const auto lb = static_cast<usize>(1 - (c[second] - o[second]));
+            return split->second[EdgeAt[axis][la][lb]];
+        };
         const auto quad = [&](std::array<i32, 3> c0, std::array<i32, 3> c1, std::array<i32, 3> c2,
-                              std::array<i32, 3> c3, bool reverse) {
+                              std::array<i32, 3> c3, bool reverse, usize axis, std::array<i32, 3> o) {
             if (reverse)
                 std::swap(c1, c3);
-            const u32 a = cellVertex[cellIndex(c0[0], c0[1], c0[2])];
-            const u32 b = cellVertex[cellIndex(c1[0], c1[1], c1[2])];
-            const u32 c = cellVertex[cellIndex(c2[0], c2[1], c2[2])];
-            const u32 d = cellVertex[cellIndex(c3[0], c3[1], c3[2])];
+            const u32 a = sheetVertexOf(c0, axis, o);
+            const u32 b = sheetVertexOf(c1, axis, o);
+            const u32 c = sheetVertexOf(c2, axis, o);
+            const u32 d = sheetVertexOf(c3, axis, o);
             if (a == NoVertex || b == NoVertex || c == NoVertex || d == NoVertex)
                 return;
             // **Split along the shorter diagonal.** A quad whose four vertices
@@ -1968,15 +2173,15 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                         // Along x: cells (x) by (y-1, y) by (z-1, z).
                         if (here != (occupancy(ox + 3, oy + 2, oz + 2) >= 0.5f))
                             quad({ox + 1, oy, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox + 1, oy, oz + 1},
-                                 !here);
+                                 !here, 0, {ox, oy, oz});
                         // Along y: (x-1, x) by (y) by (z-1, z); this order faces down.
                         if (here != (occupancy(ox + 2, oy + 3, oz + 2) >= 0.5f))
                             quad({ox, oy + 1, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
-                                 here);
+                                 here, 1, {ox, oy, oz});
                         // Along z: (x-1, x) by (y-1, y) by (z).
                         if (here != (occupancy(ox + 2, oy + 2, oz + 3) >= 0.5f))
                             quad({ox, oy, oz + 1}, {ox + 1, oy, oz + 1}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
-                                 !here);
+                                 !here, 2, {ox, oy, oz});
                     }
                 }
             }
@@ -2000,11 +2205,15 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         }
         // **A vertex with no gradient takes its faces' normal** (the mesh P2): on
         // a feature a voxel thin, occupancy's two sides cancel, and straight up
-        // lit a wall or an underside as a floor.
+        // lit a wall or an underside as a floor. **And one whose gradient points
+        // against its own faces** (terrain-editing ledger, P3): beside a second
+        // sheet a voxel away the gradient is the other sheet's as much as its
+        // own, and a face lit from behind is a black triangle on the ground.
         for (usize index = 0; index < std::min(faceSums.size(), flatNormals.size()); ++index) {
-            if (!flatNormals[index])
-                continue;
             const Vec3 n = faceSums[index];
+            const Vec3& own = out.mesh.vertices[index].normal;
+            if (!flatNormals[index] && own.x * n.x + own.y * n.y + own.z * n.z >= 0.0f)
+                continue;
             const float length = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
             if (length > 1e-12f)
                 out.mesh.vertices[index].normal = Vec3{n.x / length, n.y / length, n.z / length};

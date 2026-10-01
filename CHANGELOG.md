@@ -517,6 +517,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Sculpted terrain no longer crosses itself** (D402): where two surfaces
+  passed within a voxel of each other -- a thin wall, two hollows side by
+  side -- the ground showed faces meeting in an X and black triangles until it
+  was smoothed. Each surface has its own vertices there now. Ground without
+  such places is drawn exactly as before.
 - **A second run from the same folder keeps its own log** (D401): where
   another run is writing `engine.log`, this one writes `engine_2.log` (up to
   `engine_9.log`) instead of logging to the console alone, and the first
