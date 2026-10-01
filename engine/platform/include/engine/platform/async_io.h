@@ -76,9 +76,20 @@ using IoCallback = std::function<void(IoRequest request, IoStatus status, std::v
 // the job pool has one: a runaway caller should hit a named limit.
 inline constexpr u32 MaxIoRequests = 512;
 
-// `maxInFlight` is how many reads SDL is allowed to have open at once.
-// Idempotent, like `platform::init`.
-[[nodiscard]] bool initIo(u32 maxInFlight = 4);
+// How much may have been read and not collected yet before the service stops
+// asking the disk for more: a frame that stalls comes back to this much read
+// ahead of it. Sixty-four megabytes is a thousand cells of ground.
+inline constexpr u64 DefaultIoReadyCeiling = 64ull * 1024ull * 1024ull;
+
+// `maxInFlight` is how many reads the disk is asked for at once -- and only
+// that: a read stops counting when it has landed, not when a frame collects
+// it. Idempotent, like `platform::init`.
+//
+// `harvestOnPump` is for a test that needs a read to stay in flight until it
+// pumps: results are then taken from SDL inside `pumpIo`, on its thread, as
+// they were before the service had a thread for it -- and the budget is
+// reads a pump again.
+[[nodiscard]] bool initIo(u32 maxInFlight = 8, bool harvestOnPump = false);
 
 // Cancels what is still queued, waits for what SDL already has, and frees the
 // queue. Safe without a successful `initIo`.
@@ -94,9 +105,10 @@ void shutdownIo();
 // keep it alive.
 [[nodiscard]] IoRequest readFileAsync(const std::filesystem::path& path, IoPriority priority, IoCallback callback = {});
 
-// Collects finished reads, fires their callbacks, and admits queued requests
-// into the freed slots. Call once per frame from the thread that owns the
-// frame.
+// Fires the callbacks of the reads that have landed, on this thread and in the
+// order they landed. Call once per frame from the thread that owns the frame.
+// It collects nothing and admits nothing: a read lands, and the next is
+// admitted, as the disk answers.
 void pumpIo();
 
 [[nodiscard]] IoStatus ioStatus(IoRequest request) noexcept;
@@ -128,7 +140,12 @@ struct IoStats
     u32 queued = 0;
     // Finished, with bytes nobody has taken yet.
     u32 ready = 0;
+    // Bytes read and not collected yet, against the ceiling.
+    u64 readyBytes = 0;
 };
+
+// The ceiling on what waits to be collected (`DefaultIoReadyCeiling`).
+void setIoReadyCeiling(u64 bytes) noexcept;
 
 [[nodiscard]] IoStats ioStats() noexcept;
 void resetIoStats() noexcept;

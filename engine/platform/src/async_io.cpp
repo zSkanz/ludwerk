@@ -35,6 +35,10 @@ struct Request
     // freed, and the slot is released without anybody being told.
     bool abandoned = false;
 
+    // What of `bytes` is counted against `Service::readyBytes`: a read that has
+    // landed and that nobody has collected yet.
+    u64 held = 0;
+
     // The order this request was submitted in. Ties inside a priority band
     // break by submission order rather than by slot number, so the queue is
     // FIFO within a band and cannot starve an old request behind a new one of
@@ -66,6 +70,33 @@ struct Service
     std::condition_variable wake;
     bool stopping = false;
     u32 maxInFlight = 4;
+
+    // **The harvester, and why it exists** (C1 of the streaming cleanup).
+    //
+    // A read stopped counting against `maxInFlight` only when `pumpIo`
+    // collected it, and `pumpIo` runs on the frame's thread, once a pump. So
+    // the budget did not bound what the disk was asked at once -- it bounded
+    // reads A FRAME: four of them, 240 a second at sixty frames, on a disk
+    // that reads thousands. A flight over streamed ground outran it; the
+    // same service with a millisecond frame read 2 600 cells a second.
+    //
+    // This thread waits on SDL's queue and lands each result the moment it
+    // arrives: the bytes are copied, the status set, the slot's place in
+    // flight freed. `pumpIo` then only hands out what has landed -- the
+    // callbacks still fire on its thread, in the order the reads landed.
+    //
+    // Not started when `harvestOnPump` is set, which the queue's own tests
+    // ask for: they hold the one slot with a read that must not finish until
+    // the test pumps.
+    std::thread harvester;
+    bool harvestOnPump = false;
+    // Slots whose callback is owed, in the order they landed.
+    std::vector<u32> landed;
+    // What has landed and not been collected, and how much of it may wait.
+    // The submitter admits nothing past the ceiling: a frame that stalls
+    // comes back to this much read ahead of it and no more.
+    u64 readyBytes = 0;
+    u64 readyCeiling = DefaultIoReadyCeiling;
     u64 nextSequence = 1;
 
     std::array<Request, MaxIoRequests> requests{};
@@ -99,6 +130,11 @@ struct Service
         if (submitter.joinable()) {
             submitter.join();
         }
+        // It wakes from SDL's queue within its bounded wait and sees
+        // `stopping`.
+        if (harvester.joinable()) {
+            harvester.join();
+        }
     }
 };
 
@@ -116,6 +152,8 @@ void releaseSlotLocked(Service& s, u32 slot)
     request.callback = {};
     request.bytes.clear();
     request.bytes.shrink_to_fit();
+    s.readyBytes -= std::min(s.readyBytes, request.held);
+    request.held = 0;
     request.allocated = false;
     request.inFlight = false;
     request.abandoned = false;
@@ -135,7 +173,7 @@ void releaseSlotLocked(Service& s, u32 slot)
 // there is nothing to admit.
 [[nodiscard]] u32 pickLocked(Service& s)
 {
-    if (s.inFlight >= s.maxInFlight || s.queued.empty()) {
+    if (s.inFlight >= s.maxInFlight || s.queued.empty() || s.readyBytes >= s.readyCeiling) {
         return MaxIoRequests;
     }
 
@@ -171,7 +209,9 @@ void submitLoop()
         std::string path;
         {
             std::unique_lock<std::mutex> lock(s.mutex);
-            s.wake.wait(lock, [&s] { return s.stopping || (s.inFlight < s.maxInFlight && !s.queued.empty()); });
+            s.wake.wait(lock, [&s] {
+                return s.stopping || (s.inFlight < s.maxInFlight && !s.queued.empty() && s.readyBytes < s.readyCeiling);
+            });
             if (s.stopping) {
                 return;
             }
@@ -209,9 +249,95 @@ void submitLoop()
     }
 }
 
+// Caller holds the lock. One result from SDL's queue: the bytes copied into
+// its request, the status set, the place in flight freed.
+void landLocked(Service& s, const SDL_AsyncIOOutcome& outcome)
+{
+    const u32 slot = static_cast<u32>(reinterpret_cast<std::uintptr_t>(outcome.userdata));
+    if (slot >= MaxIoRequests) {
+        if (outcome.buffer != nullptr) {
+            SDL_free(outcome.buffer);
+        }
+        return;
+    }
+
+    Request& request = s.requests[slot];
+    request.inFlight = false;
+    if (s.inFlight > 0) {
+        s.inFlight -= 1;
+    }
+
+    const bool ok = outcome.result == SDL_ASYNCIO_COMPLETE;
+    if (ok && outcome.buffer != nullptr) {
+        const usize size = static_cast<usize>(outcome.bytes_transferred);
+        if (!request.abandoned) {
+            request.bytes.resize(size);
+            if (size > 0) {
+                std::memcpy(request.bytes.data(), outcome.buffer, size);
+            }
+            request.held = size;
+            s.readyBytes += size;
+        }
+        s.stats.bytesRead += size;
+    }
+    if (outcome.buffer != nullptr) {
+        // SDL_LoadFileAsync allocates with SDL_malloc and documents that the
+        // caller frees it; the copy above is what lets the free happen here
+        // rather than at some later take.
+        SDL_free(outcome.buffer);
+    }
+
+    if (request.abandoned) {
+        s.stats.cancelled += 1;
+        releaseSlotLocked(s, slot);
+        return;
+    }
+
+    request.status = ok ? IoStatus::Ready : IoStatus::Failed;
+    if (ok) {
+        s.stats.completed += 1;
+    }
+    else {
+        s.stats.failed += 1;
+    }
+    if (request.callback) {
+        s.landed.push_back(slot);
+    }
+}
+
+// The harvester thread. See `Service::harvester`.
+void harvestLoop()
+{
+    Service& s = service();
+    for (;;) {
+        SDL_AsyncIOQueue* queue = nullptr;
+        {
+            const std::lock_guard<std::mutex> lock(s.mutex);
+            if (s.stopping) {
+                return;
+            }
+            queue = s.queue;
+        }
+
+        // A bounded wait, so `stopping` is seen: SDL documents that a waiter
+        // may also wake for nothing, and a false return is that or the bound.
+        SDL_AsyncIOOutcome outcome{};
+        if (!SDL_WaitAsyncIOResult(queue, &outcome, 50)) {
+            continue;
+        }
+
+        {
+            const std::lock_guard<std::mutex> lock(s.mutex);
+            landLocked(s, outcome);
+        }
+        // A place in flight came free.
+        s.wake.notify_one();
+    }
+}
+
 } // namespace
 
-bool initIo(u32 maxInFlight)
+bool initIo(u32 maxInFlight, bool harvestOnPump)
 {
     Service& s = service();
     const std::lock_guard<std::mutex> lock(s.mutex);
@@ -236,13 +362,20 @@ bool initIo(u32 maxInFlight)
         s.freeSlots.push_back(slot);
     }
     s.queued.clear();
+    s.landed.clear();
     s.inFlight = 0;
+    s.readyBytes = 0;
+    s.readyCeiling = DefaultIoReadyCeiling;
     s.nextSequence = 1;
     s.stopping = false;
+    s.harvestOnPump = harvestOnPump;
     s.initialized = true;
 
-    // Started last, so it cannot observe a half-built service.
+    // Started last, so they cannot observe a half-built service.
     s.submitter = std::thread(submitLoop);
+    if (!harvestOnPump) {
+        s.harvester = std::thread(harvestLoop);
+    }
     return true;
 }
 
@@ -281,6 +414,13 @@ void shutdownIo()
         s.submitter.join();
     }
     s.submitter = std::thread();
+    // And the harvester, before the drain below counts what is left: two
+    // threads taking results off one queue would each miss what the other
+    // took.
+    if (s.harvester.joinable()) {
+        s.harvester.join();
+    }
+    s.harvester = std::thread();
 
     // Re-read after the join. A request the submitter admitted between the two
     // locks above is in flight now and was not a moment ago, and draining one
@@ -417,64 +557,32 @@ void pumpIo()
             return;
         }
 
-        SDL_AsyncIOOutcome outcome{};
-        while (SDL_GetAsyncIOResult(s.queue, &outcome)) {
-            const u32 slot = static_cast<u32>(reinterpret_cast<std::uintptr_t>(outcome.userdata));
-            if (slot >= MaxIoRequests) {
-                if (outcome.buffer != nullptr) {
-                    SDL_free(outcome.buffer);
-                }
-                continue;
-            }
-
-            Request& request = s.requests[slot];
-            request.inFlight = false;
-            if (s.inFlight > 0) {
-                s.inFlight -= 1;
-            }
-
-            const bool ok = outcome.result == SDL_ASYNCIO_COMPLETE;
-            if (ok && outcome.buffer != nullptr) {
-                const usize size = static_cast<usize>(outcome.bytes_transferred);
-                if (!request.abandoned) {
-                    request.bytes.resize(size);
-                    if (size > 0) {
-                        std::memcpy(request.bytes.data(), outcome.buffer, size);
-                    }
-                }
-                s.stats.bytesRead += size;
-            }
-            if (outcome.buffer != nullptr) {
-                // SDL_LoadFileAsync allocates with SDL_malloc and documents
-                // that the caller frees it; the copy above is what lets the
-                // free happen here rather than at some later take.
-                SDL_free(outcome.buffer);
-            }
-
-            if (request.abandoned) {
-                s.stats.cancelled += 1;
-                releaseSlotLocked(s, slot);
-                continue;
-            }
-
-            request.status = ok ? IoStatus::Ready : IoStatus::Failed;
-            if (ok) {
-                s.stats.completed += 1;
-            }
-            else {
-                s.stats.failed += 1;
-            }
-
-            if (request.callback) {
-                completed.push_back(Completed{IoRequest{slot, request.generation}, request.status,
-                                              std::move(request.bytes), std::move(request.callback)});
-                releaseSlotLocked(s, slot);
+        // With no harvester -- the queue's tests -- results are landed here, as
+        // they always were. With one, this finds none: it took them as they
+        // came.
+        if (s.harvestOnPump) {
+            SDL_AsyncIOOutcome outcome{};
+            while (SDL_GetAsyncIOResult(s.queue, &outcome)) {
+                landLocked(s, outcome);
             }
         }
 
-        // A completion freed a place in flight, so there may be room for the
-        // next queued read. Notified under the lock the predicate reads, which
-        // is the rule D037 was about.
+        // The callbacks owed, in the order their reads landed.
+        for (const u32 slot : s.landed) {
+            Request& request = s.requests[slot];
+            if (!request.allocated || !request.callback) {
+                continue;
+            }
+            completed.push_back(Completed{IoRequest{slot, request.generation}, request.status, std::move(request.bytes),
+                                          std::move(request.callback)});
+            releaseSlotLocked(s, slot);
+        }
+        s.landed.clear();
+
+        // A completion freed a place in flight, or what was collected made
+        // room under the ceiling, so there may be room for the next queued
+        // read. Notified under the lock the predicate reads, which is the
+        // rule D037 was about.
         if (!s.queued.empty()) {
             wakeSubmitter = true;
         }
@@ -515,6 +623,10 @@ bool takeIoResult(IoRequest request, std::vector<std::byte>& out)
     }
     out = std::move(slot.bytes);
     releaseSlotLocked(s, request.index);
+    // Room under the ceiling, for a read that was waiting on it.
+    if (!s.queued.empty()) {
+        s.wake.notify_one();
+    }
     return true;
 }
 
@@ -543,6 +655,9 @@ void cancelIo(IoRequest request)
     if (at != s.queued.end()) {
         s.queued.erase(at);
     }
+    // Landed and not handed out yet: its callback is not owed any more, and
+    // the slot may be another request's by the next pump.
+    std::erase(s.landed, request.index);
     s.stats.cancelled += 1;
     releaseSlotLocked(s, request.index);
 }
@@ -561,12 +676,23 @@ void setIoPriority(IoRequest request, IoPriority priority)
     slot.priority = priority;
 }
 
+void setIoReadyCeiling(u64 bytes) noexcept
+{
+    Service& s = service();
+    {
+        const std::lock_guard<std::mutex> lock(s.mutex);
+        s.readyCeiling = std::max<u64>(bytes, 1);
+    }
+    s.wake.notify_one();
+}
+
 IoStats ioStats() noexcept
 {
     Service& s = service();
     const std::lock_guard<std::mutex> lock(s.mutex);
     IoStats out = s.stats;
     out.inFlight = s.inFlight;
+    out.readyBytes = s.readyBytes;
     out.queued = static_cast<u32>(s.queued.size());
     out.ready = 0;
     for (const Request& request : s.requests) {

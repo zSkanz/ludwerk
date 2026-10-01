@@ -1556,6 +1556,11 @@ ground under the player is resident.
 | This build | **252 to 268 ms** | 13 ms |
 | Before the held ring was read where it stands | 2.4 s | 35 to 49 ms, three seconds on, as the meshes left behind were released at once |
 
+With the streaming's reads freed as they land and not once a pump (the cleanup
+ledger's C1), the same travel **without** the held ring read where it stands
+is 270 to 287 ms, where it was 2 003: the async service was four reads a pump.
+The flight is unchanged by it -- sixty cells a second was inside that.
+
 **Laying it**, far ground's files and all, with `--import-terrain=hills`:
 
 | | Time | Of it, writing cells out | Of it, the far ground's files | Peak |

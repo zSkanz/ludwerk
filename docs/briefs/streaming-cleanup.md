@@ -73,14 +73,36 @@ disk was never the limit: unpaced, with a millisecond frame, the same service
 read 2 600 cells a second. P5c went round it for the one case that could not
 wait (the ring the simulation is held for is read where it stands).
 
-- [ ] A read stops counting when it completes, not when the frame collects
-  it: results harvested off the frame's thread into a list `pumpIo` hands
-  out, so the budget bounds what the disk is asked at once and nothing else.
-- [ ] What is waiting to be collected is bounded in bytes, so a frame that
-  stalls does not come back to a gigabyte of cells read for it.
-- [ ] Measured: cells a second on the sixteen-kilometre flight, paced at 60;
-  the teleport's ground with the held path's synchronous read taken out, to
-  see whether it is still needed.
+- [x] **A read stops counting when it completes, not when the frame collects
+  it** (`async_io.cpp`, the harvester): a thread waits on SDL's queue and
+  lands each result as it arrives -- bytes copied, status set, the place in
+  flight freed -- and `pumpIo` only hands out what has landed. Callbacks still
+  fire on the pump's thread, in the order the reads landed. The budget is
+  eight reads at once, and it bounds the disk and nothing else.
+- [x] **What waits to be collected is bounded in bytes**: 64 MiB
+  (`DefaultIoReadyCeiling`), past which nothing more is admitted until
+  something is taken. A frame that stalls comes back to that much and no
+  more.
+- [x] The queue's own tests hold a read in flight until they pump, so they
+  ask for the old harvest (`initIo(1, true)`); three new ones for the new:
+  reads land with no pump at all, callbacks keep their thread and their
+  order, and the ceiling holds and lets the rest through.
+- [x] **Measured** on the sixteen-kilometre world, the dev build, paced at 60
+  (`docs/perf-baselines.md`):
+
+  | Ten kilometres' fast travel | Ground under the player |
+  |---|---|
+  | Reads freed once a pump, the held ring not read where it stands | 2 003 ms |
+  | **Reads freed as they land**, the same | **270 to 287 ms** |
+  | And the held ring read where it stands (P5c) | 236 to 251 ms |
+
+  The flight at 200 m/s is the same either way -- 6 547 cells in against
+  6 649, median 4.1 ms, p99 12 ms: sixty cells a second was inside what four
+  a pump could give, with the streamer pumping several times a frame. What
+  the budget starved was a burst: a ring of four hundred cells at once.
+- [x] **The held ring's synchronous read stays**: it is 35 ms faster than the
+  service still, and it is what a world held for its ground has when there
+  is no service at all.
 
 ## C2 — the session cache as one file
 
