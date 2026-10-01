@@ -42,6 +42,7 @@ engine_add_module(asset
     DEPS
         core
         platform
+        jobs
 )
 
 # stb_image and stb_image_write. Header-only and SYSTEM, so upstream's warnings

@@ -1444,3 +1444,26 @@ and p99 are as they were the same evening (8.3 to 9.2 and 10.2 to 11.2 ms,
 against 8.7 and 11.1 for 391dc046 rebuilt beside it); the median is 0.5 ms
 higher, 3.5 against 3.0, which is the far ground drawn in the first seconds
 before its cells come in.
+
+### A brush stamp (the terrain-editing ledger, P1 and P2)
+
+`docs/briefs/terrain-editing-perf.md`, 2026-10-01, `win-msvc-dev` on the
+development machine. A stamp is timed round the call (`editbench`: 512 m of
+rolling hills at a 1 m voxel, a stamp a frame for 300 frames; the unit bench
+is `engine_asset_tests --test-case="what a smooth stamp costs" --no-skip`, on
+the pool), and the editor drive is the owner's place with ludwerk-08's thirty
+smooth drags (`--editor-drive`, `--frame-stats`).
+
+| | Before | After |
+|---|---|---|
+| `SmoothBall` r 8, `editbench` | 82.7 ms | **2.3 ms** |
+| `SmoothBall` r 4 / 16, 1 m voxels, unit bench | 12.5 / 98.2 ms | **0.5 / 3.2 ms** |
+| `SmoothBall` r 16 / 32, 0.5 m voxels, unit bench | 217 / 853 ms | 8.9 / 41 ms |
+| `PaintBall` r 24 blend, `editbench` | 4.8 ms | **2.5 ms** |
+| `GrowBall` r 16 / `FlattenBall` r 10 / dig r 6, `editbench` | 2.4 / 0.4 / 0.5 ms | 2.1 / 0.3 / 0.3 ms |
+| The editor, smoothing the owner's place: p95 / p99 / over 33 ms | 420 / 561 ms / 210 frames | **14.4 / 17.7 ms / 0** |
+
+| Bench (`perf_budget`) | Mean tick | Worst | Budget |
+|---|---|---|---|
+| `tests/bench/terrain_smooth` (128 m of hills, a smooth a tick at 8 m, every fourth at 16 m) | **2.93 ms** | 5.75 ms | 16 ms |
+| `tests/bench/terrain_paint` (the same hills, a blend a tick at 24 m) | **3.55 ms** | 5.91 ms | 16 ms |

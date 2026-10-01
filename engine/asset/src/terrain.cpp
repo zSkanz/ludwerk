@@ -728,6 +728,20 @@ void TerrainField::setHeightRange(float minHeight, float maxHeight) noexcept
 
 // --- FieldWriter ---------------------------------------------------------------
 
+Voxel FieldWriter::get(i32 x, i32 y, i32 z) const noexcept
+{
+    const ChunkKey key = chunkOf(x, y, z);
+    if (!m_readValid || !(key == m_readKey)) {
+        m_read = m_field.findChunk(key);
+        m_readKey = key;
+        m_readValid = true;
+    }
+    if (m_read == nullptr)
+        return Voxel{};
+    return m_read->get(static_cast<u32>(floorMod(x, Edge)), static_cast<u32>(floorMod(y, Edge)),
+                       static_cast<u32>(floorMod(z, Edge)));
+}
+
 TerrainChunk* FieldWriter::chunkAt(i32 x, i32 y, i32 z, bool air)
 {
     const ChunkKey key = chunkOf(x, y, z);
@@ -739,6 +753,9 @@ TerrainChunk* FieldWriter::chunkAt(i32 x, i32 y, i32 z, bool air)
             return nullptr;
         m_last = m_field.chunkFor(key);
         m_lastKey = key;
+        m_read = m_last;
+        m_readKey = key;
+        m_readValid = true;
         const auto at = std::lower_bound(m_touched.begin(), m_touched.end(), key);
         if (at == m_touched.end() || !(*at == key))
             m_touched.insert(at, key);
@@ -788,6 +805,7 @@ void FieldWriter::finish()
     // `chunkFor` may have inserted chunks and moved the others, so the cached
     // pointer is dropped before anything else.
     m_last = nullptr;
+    m_readValid = false;
     for (const ChunkKey key : m_touched)
         m_field.finishChunk(key);
 }

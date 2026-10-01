@@ -19,6 +19,7 @@
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_cell.h"
 #include "engine/asset/terrain_palette.h"
+#include "engine/jobs/jobs.h"
 
 using namespace engine;
 using namespace engine::asset;
@@ -1045,10 +1046,97 @@ TEST_CASE("field settings are checked as the floats they are (audit F9)")
     CHECK(asset::saneFieldSettings(asset::FieldSettings{0.1f, -1e6f, 1e6f}));
 }
 
+namespace {
+
+// Every chunk's key and digest, in the field's order: equal for two fields
+// that hold the same voxels.
+[[nodiscard]] core::u64 fieldDigest(const TerrainField& field)
+{
+    core::u64 hash = 0xCBF29CE484222325ull;
+    const auto mix = [&hash](core::u64 value) {
+        hash ^= value;
+        hash *= 0x100000001B3ull;
+    };
+    for (const TerrainField::Entry& entry : field.chunks()) {
+        mix(static_cast<core::u64>(static_cast<core::u32>(entry.first.x)));
+        mix(static_cast<core::u64>(static_cast<core::u32>(entry.first.y)));
+        mix(static_cast<core::u64>(static_cast<core::u32>(entry.first.z)));
+        mix(entry.second->digest());
+    }
+    return hash;
+}
+
+// What `smoothBall` left before it was made cheap (2026-10-01).
+constexpr core::u64 SmoothedDigest = 8464619714787391466ull;
+// And what every brush left, the same day.
+constexpr core::u64 BrushedDigest = 194318197966584899ull;
+
+} // namespace
+
+TEST_CASE("a smooth stamp's result is fixed: a faster smooth smooths the same ground the same way")
+{
+    // **What makes a smooth cheap must not change what it does** (the owner's
+    // editing lag, 2026-10-01): a stamp at radius 8 read eight hundred thousand
+    // voxels to move a few hundred. This pins the voxels a run of stamps
+    // leaves -- on a hill, a wall and a thin slab, so every axis has surfaces
+    // to move -- to what they were before the stamp was made cheaper, and on
+    // the pool to what they are without it (R10).
+    const auto smoothed = [] {
+        TerrainField field(settingsOf(1.0f));
+        (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 96.0f, 0.0f, 1);
+        (void)growBall(field, core::DVec3{-12.0, 0.0, 0.0}, 10.0, 6.0f, 1);
+        (void)fillBlock(field, core::DVec3{14.0, 6.0, 0.0}, core::Vec3{3.0f, 12.0f, 20.0f}, 2);
+        (void)fillBlock(field, core::DVec3{0.0, 9.0, 18.0}, core::Vec3{24.0f, 1.5f, 10.0f}, 3);
+        for (int stamp = 0; stamp < 12; ++stamp) {
+            const double along = -16.0 + 3.0 * static_cast<double>(stamp);
+            (void)smoothBall(field, core::DVec3{along, 4.0, 2.0 + static_cast<double>(stamp % 3) * 6.0},
+                             stamp % 2 == 0 ? 8.0 : 4.0, stamp % 4 == 0 ? 1.0f : 0.5f);
+        }
+        return fieldDigest(field);
+    };
+    const core::u64 serial = smoothed();
+    MESSAGE("smoothed field digest " << serial);
+    CHECK(serial == SmoothedDigest);
+
+    jobs::init(4);
+    const core::u64 pooled = smoothed();
+    jobs::shutdown();
+    CHECK(pooled == SmoothedDigest);
+}
+
+TEST_CASE("every brush's result is fixed: faster writes write the same ground")
+{
+    // **The same pin for every verb**, across a stroke of each over hills, a
+    // wall and a slab: what a faster read or write path may not change.
+    TerrainField field(settingsOf(1.0f));
+    (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 96.0f, 0.0f, 1);
+    (void)growBall(field, core::DVec3{-12.0, 0.0, 0.0}, 10.0, 6.0f, 1);
+    (void)fillBlock(field, core::DVec3{14.0, 6.0, 0.0}, core::Vec3{3.0f, 12.0f, 20.0f}, 2);
+    for (int stamp = 0; stamp < 10; ++stamp) {
+        const double along = -20.0 + 4.0 * static_cast<double>(stamp);
+        const core::DVec3 at{along, 2.0, static_cast<double>(stamp % 3) * 5.0 - 5.0};
+        (void)growBall(field, at, 6.0, stamp % 2 == 0 ? 1.5f : -1.0f, 1);
+        (void)raiseBall(field, at + core::DVec3{0.0, 0.0, 8.0}, 5.0, 0.8f, 3);
+        (void)flattenBall(field, at + core::DVec3{0.0, 0.0, -8.0}, 7.0, 1.0f, 0.5f);
+        (void)fillBall(field, at + core::DVec3{0.0, 3.0, 14.0}, 2.5, stamp % 3 == 0 ? 0 : 2);
+        PaintOptions paint;
+        paint.mode = static_cast<PaintMode>(stamp % 4);
+        paint.strength = 0.6f;
+        paint.falloff = 0.5f;
+        paint.mask.bySlope = stamp % 5 == 0;
+        paint.mask.slopeMax = 40.0f;
+        (void)paintBall(field, at, 9.0, static_cast<core::u8>(2 + stamp % 3), paint);
+    }
+    MESSAGE("brushed field digest " << fieldDigest(field));
+    CHECK(fieldDigest(field) == BrushedDigest);
+}
+
 TEST_CASE("what a smooth stamp costs" * doctest::skip())
 {
-    for (const auto& [voxel, radius] :
-         {std::pair{1.0f, 4.0}, std::pair{1.0f, 16.0}, std::pair{0.5f, 16.0}, std::pair{0.5f, 32.0}}) {
+    // On the pool, as the engine runs it.
+    jobs::init();
+    for (const auto& [voxel, radius] : {std::pair{1.0f, 4.0}, std::pair{1.0f, 8.0}, std::pair{1.0f, 16.0},
+                                        std::pair{0.5f, 16.0}, std::pair{0.5f, 32.0}}) {
         TerrainField field(settingsOf(voxel));
         (void)fillFlat(field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 0.0f, 1);
         (void)growBall(field, core::DVec3{0.0, 0.0, 0.0}, radius, static_cast<float>(radius) * 0.5f, 1);
@@ -1059,6 +1147,7 @@ TEST_CASE("what a smooth stamp costs" * doctest::skip())
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         MESSAGE("voxel " << voxel << " radius " << radius << ": " << ms / stamps << " ms a stamp");
     }
+    jobs::shutdown();
 }
 
 TEST_CASE("a field's chunk box follows the chunks it holds")

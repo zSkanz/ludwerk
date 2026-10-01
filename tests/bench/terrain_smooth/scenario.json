@@ -1,0 +1,7 @@
+{
+  "name": "terrain_smooth",
+  "script": "init.luau",
+  "seed": 20261001,
+  "ticks": 240,
+  "budgetMs": 16.0
+}

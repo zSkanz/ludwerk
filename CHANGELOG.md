@@ -517,6 +517,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Smoothing terrain no longer lags** (D400): a smooth stamp at radius 8 costs
+  about 2 ms instead of 55 to 83, and the editor smoothing the owner's place
+  holds p99 under 18 ms where it stalled for half a second. Wide paint strokes
+  cost half what they did. The ground every brush leaves is unchanged.
 - **Anything placed in the world can be clicked and moved in the editor**
   (D399): a `Water` by its surface, a `Terrain` by its ground, and a
   `WaterPoint`, a `Decal` and a `NavigationLink` by a marker; the move gizmo

@@ -681,7 +681,11 @@ public:
     FieldWriter(const FieldWriter&) = delete;
     FieldWriter& operator=(const FieldWriter&) = delete;
 
-    [[nodiscard]] Voxel get(core::i32 x, core::i32 y, core::i32 z) const noexcept { return m_field.voxel(x, y, z); }
+    // **Through the chunk it read last** (the owner's editing lag,
+    // 2026-10-01): a brush reads every voxel of its ball, and finding each
+    // one's chunk among thousands by a binary search was most of what a paint
+    // stamp cost.
+    [[nodiscard]] Voxel get(core::i32 x, core::i32 y, core::i32 z) const noexcept;
     // Answers whether the voxel changed. A voxel written with no paint over
     // the material it already is keeps the paint it had (ADR 0114).
     bool set(core::i32 x, core::i32 y, core::i32 z, Voxel voxel);
@@ -702,6 +706,12 @@ private:
     std::vector<ChunkKey> m_touched;
     ChunkKey m_lastKey{};
     TerrainChunk* m_last = nullptr;
+    // The chunk `get` read last, null where there is none: set again by every
+    // write, which is where a chunk shared with a snapshot is cloned, and
+    // dropped by `finish`, which may drop chunks.
+    mutable ChunkKey m_readKey{};
+    mutable const TerrainChunk* m_read = nullptr;
+    mutable bool m_readValid = false;
     core::u32 m_changed = 0;
 };
 

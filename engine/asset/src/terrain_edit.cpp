@@ -14,6 +14,7 @@
 
 #include "engine/asset/terrain.h"
 #include "engine/core/dmath.h"
+#include "engine/jobs/jobs.h"
 
 namespace engine::asset {
 namespace {
@@ -194,10 +195,18 @@ void readBox(const TerrainField& field, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 s
                    static_cast<usize>(sizeX) +
                static_cast<usize>(x - x0);
     };
-    std::array<core::u16, ChunkEdge> row{};
-    std::array<core::u16, ChunkEdge> paint{};
-    for (i32 cz = floorDiv(z0, edge); cz <= floorDiv(z0 + sizeZ - 1, edge); ++cz) {
-        for (i32 cx = floorDiv(x0, edge); cx <= floorDiv(x0 + sizeX - 1, edge); ++cx) {
+    // **A chunk column a range, on the pool**: each column fills its own part
+    // of `out`, and the field is only read.
+    const i32 firstColumnX = floorDiv(x0, edge);
+    const i32 firstColumnZ = floorDiv(z0, edge);
+    const auto columnsX = static_cast<usize>(floorDiv(x0 + sizeX - 1, edge) - firstColumnX + 1);
+    const auto columnsZ = static_cast<usize>(floorDiv(z0 + sizeZ - 1, edge) - firstColumnZ + 1);
+    const auto readColumns = [&](usize firstColumn, usize endColumn, u32) noexcept {
+        std::array<core::u16, ChunkEdge> row{};
+        std::array<core::u16, ChunkEdge> paint{};
+        for (usize column = firstColumn; column < endColumn; ++column) {
+            const i32 cz = firstColumnZ + static_cast<i32>(column / columnsX);
+            const i32 cx = firstColumnX + static_cast<i32>(column % columnsX);
             for (const TerrainField::Entry& entry : field.column(cx, cz)) {
                 const i32 cy = entry.first.y;
                 const i32 lowY = std::max(y0, cy * edge);
@@ -234,7 +243,8 @@ void readBox(const TerrainField& field, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 s
                 }
             }
         }
-    }
+    };
+    jobs::parallelFor("terrain.readBox", jobs::Domain::SimVisible, 0, columnsX * columnsZ, 1, readColumns);
 }
 
 // The occupancies of one voxel column over `[low, high]`, read once so a brush
@@ -701,7 +711,13 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
     // How far along its axis a neighbour's crossing may be and still count as
     // the same surface: across the kernel at a slope of one, and the ramp.
     const i32 window = 2 * kernel + RampReach;
-    const i32 pad = kernel + window + RampReach + 2;
+    // **What a stamp reads, and no more** (the owner's editing lag,
+    // 2026-10-01: a stamp at radius 8 read 800 000 voxels to move a few
+    // hundred, 82 ms). Along a row, a crossing in the box looks `window` past
+    // itself for its neighbours' and its ramp reaches `RampReach` further;
+    // across, it looks `kernel` rows away and `facing` one more. The margin
+    // is the larger of the two, not their sum.
+    const i32 pad = std::max(window + RampReach + 2, kernel + 1);
     const i32 x0 = box.minX - pad;
     const i32 y0 = box.minY - pad;
     const i32 z0 = box.minZ - pad;
@@ -714,11 +730,21 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
                                       static_cast<usize>(size[0]) * static_cast<usize>(size[1])};
     std::vector<Voxel> copy;
     readBox(field, x0, y0, z0, size[0], size[1], size[2], copy);
-    const std::vector<Voxel> original = copy;
+    // What the box held, to write back only what changed: the box's own
+    // voxels, not the margin round it, which is never written.
+    const std::array<i32, 3> boxSize{box.maxX - box.minX + 1, box.maxY - box.minY + 1, box.maxZ - box.minZ + 1};
+    const auto boxSlot = [&](i32 x, i32 y, i32 z) {
+        return (static_cast<usize>(z - box.minZ) * static_cast<usize>(boxSize[1]) + static_cast<usize>(y - box.minY)) *
+                   static_cast<usize>(boxSize[0]) +
+               static_cast<usize>(x - box.minX);
+    };
+    std::vector<Voxel> original(static_cast<usize>(boxSize[0]) * static_cast<usize>(boxSize[1]) *
+                                static_cast<usize>(boxSize[2]));
     const auto at = [&](std::array<i32, 3> p) {
         return static_cast<usize>(p[0]) * stride[0] + static_cast<usize>(p[1]) * stride[1] +
                static_cast<usize>(p[2]) * stride[2];
     };
+    walk(box, [&](i32 x, i32 y, i32 z) { original[boxSlot(x, y, z)] = copy[at({x - x0, y - y0, z - z0})]; });
     const auto occupancyAt = [&](std::array<i32, 3> p) {
         for (int axis = 0; axis < 3; ++axis)
             p[static_cast<usize>(axis)] =
@@ -756,16 +782,28 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
         for (i32 du = -kernel; du <= kernel; ++du)
             kernelTotal += du == 0 && dv == 0 ? 0.0 : kernelWeight(du, dv);
     }
+    // The same weights as a table, row by row, so the loop over a crossing's
+    // neighbours reads them rather than taking an exponential each.
+    const i32 kernelWidth = 2 * kernel + 1;
+    std::vector<double> kernelTable(static_cast<usize>(kernelWidth) * static_cast<usize>(kernelWidth));
+    for (i32 dv = -kernel; dv <= kernel; ++dv) {
+        for (i32 du = -kernel; du <= kernel; ++du)
+            kernelTable[static_cast<usize>(dv + kernel) * static_cast<usize>(kernelWidth) +
+                        static_cast<usize>(du + kernel)] = kernelWeight(du, dv);
+    }
     struct Crossing
     {
-        double at = 0.0;    // along the row, in voxels from the row's start
-        core::i8 sense = 0; // +1 ground below, air above; -1 the other way
-        bool owned = false; // its surface faces this row's axis most
+        double at = 0.0;     // along the row, in voxels from the row's start
+        double weight = 0.0; // the brush's there
+        core::i8 sense = 0;  // +1 ground below, air above; -1 the other way
+        bool owned = false;  // its surface faces this row's axis most
     };
+    // Half full or more, as a byte: what `occupancy >= 0.5` reads.
+    constexpr u8 HalfFull = 128;
+    static_assert(static_cast<float>(HalfFull) / static_cast<float>(FullOccupancy) >= 0.5f &&
+                  static_cast<float>(HalfFull - 1) / static_cast<float>(FullOccupancy) < 0.5f);
     std::vector<Crossing> crossings;
     std::vector<usize> firstOf;
-    std::vector<float> row;
-    std::vector<Voxel> rowVoxels;
 
     for (const int axis : {1, 0, 2}) {
         const auto a = static_cast<usize>(axis);
@@ -787,46 +825,110 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
         };
         crossings.clear();
         firstOf.assign(rows + 1, 0);
-        for (i32 cv = 0; cv < size[v]; ++cv) {
-            for (i32 cu = 0; cu < size[u]; ++cu) {
-                firstOf[rowIndex(cu, cv)] = crossings.size();
+        // **Only the rows a crossing in the box reads**: those within `kernel`
+        // of the box across. The rest of the padded box is there for the
+        // length of these rows, and a row outside the band holds no crossing
+        // anything asks for.
+        const i32 bandLowU = low[u] - origin[u] - kernel;
+        const i32 bandHighU = high[u] - origin[u] + kernel;
+        const i32 bandLowV = low[v] - origin[v] - kernel;
+        const i32 bandHighV = high[v] - origin[v] + kernel;
+        // **The band's rows on the pool**, each range's crossings in its own
+        // bucket and merged in range order -- the order of the rows -- so the
+        // list is the same whichever worker scanned which (R10).
+        const i32 bandU = std::clamp(bandHighU, -1, size[u] - 1) - std::clamp(bandLowU, 0, size[u]) + 1;
+        const i32 bandV = std::clamp(bandHighV, -1, size[v] - 1) - std::clamp(bandLowV, 0, size[v]) + 1;
+        const i32 bandFirstU = std::clamp(bandLowU, 0, size[u]);
+        const i32 bandFirstV = std::clamp(bandLowV, 0, size[v]);
+        const usize bandRows = bandU > 0 && bandV > 0 ? static_cast<usize>(bandU) * static_cast<usize>(bandV) : 0;
+        constexpr usize ScanGrain = 64;
+        std::vector<std::vector<Crossing>> buckets(jobs::rangeCount(0, bandRows, ScanGrain));
+        std::vector<u32> rowCounts(bandRows, 0);
+        const auto scanRows = [&](usize firstRow, usize endRow, u32 range) noexcept {
+            std::vector<Crossing>& found = buckets[range];
+            for (usize band = firstRow; band < endRow; ++band) {
+                const i32 cv = bandFirstV + static_cast<i32>(band / static_cast<usize>(bandU));
+                const i32 cu = bandFirstU + static_cast<i32>(band % static_cast<usize>(bandU));
+                const usize before = found.size();
                 std::array<i32, 3> p{};
                 p[u] = cu;
                 p[v] = cv;
+                // **Along the row by its stride, a byte at a time**: a crossing
+                // is where one voxel is half full and the next is not, and the
+                // fractions are taken only there. Reading each voxel through a
+                // clamped three-axis lookup was most of a stamp's cost.
+                p[a] = 0;
+                const usize base = at(p);
+                const usize stepAlong = stride[a];
+                u8 hereByte = copy[base].occupancy;
                 for (i32 k = 0; k + 1 < span; ++k) {
-                    p[a] = k;
-                    const float here = occupancyAt(p);
-                    p[a] = k + 1;
-                    const float next = occupancyAt(p);
-                    if ((here >= 0.5f) == (next >= 0.5f))
+                    const u8 nextByte = copy[base + static_cast<usize>(k + 1) * stepAlong].occupancy;
+                    const bool solid = hereByte >= HalfFull;
+                    if (solid == (nextByte >= HalfFull)) {
+                        hereByte = nextByte;
                         continue;
+                    }
+                    const float here = static_cast<float>(hereByte) / static_cast<float>(FullOccupancy);
+                    const float next = static_cast<float>(nextByte) / static_cast<float>(FullOccupancy);
+                    hereByte = nextByte;
                     const double t = static_cast<double>((0.5f - here) / (next - here));
                     Crossing crossing;
                     crossing.at = static_cast<double>(k) + t;
-                    crossing.sense = here >= 0.5f ? core::i8{1} : core::i8{-1};
+                    crossing.sense = solid ? core::i8{1} : core::i8{-1};
+                    crossing.weight = static_cast<double>(falloff(distanceOf(crossing.at, cu, cv), radius));
                     p[a] = t < 0.5 ? k : k + 1;
                     crossing.owned = facing(p) == axis;
-                    crossings.push_back(crossing);
+                    found.push_back(crossing);
                 }
+                rowCounts[band] = static_cast<u32>(found.size() - before);
+            }
+        };
+        jobs::parallelFor("terrain.smoothScan", jobs::Domain::SimVisible, 0, bandRows, ScanGrain, scanRows);
+        for (const std::vector<Crossing>& bucket : buckets)
+            crossings.insert(crossings.end(), bucket.begin(), bucket.end());
+        // Every row's first crossing, the band's from their counts and the
+        // rest empty, in the order `rowIndex` numbers them.
+        usize running = 0;
+        for (i32 cv = 0; cv < size[v]; ++cv) {
+            for (i32 cu = 0; cu < size[u]; ++cu) {
+                firstOf[rowIndex(cu, cv)] = running;
+                if (cu < bandFirstU || cu >= bandFirstU + bandU || cv < bandFirstV || cv >= bandFirstV + bandV)
+                    continue;
+                running += rowCounts[static_cast<usize>(cv - bandFirstV) * static_cast<usize>(bandU) +
+                                     static_cast<usize>(cu - bandFirstU)];
             }
         }
         firstOf[rows] = crossings.size();
 
         // Each owned crossing inside the box: where the same surface is in the
         // rows round it, averaged, and how far towards that this stamp moves it.
-        for (i32 cv = low[v] - origin[v]; cv <= high[v] - origin[v]; ++cv) {
-            for (i32 cu = low[u] - origin[u]; cu <= high[u] - origin[u]; ++cu) {
-                const usize line = rowIndex(cu, cv);
-                const usize begin = firstOf[line];
-                const usize end = firstOf[line + 1];
+        //
+        // **Row by row on the pool** (the owner's editing lag): a row's moves
+        // read only the crossings, which no row writes, and its rewrite
+        // touches only its own voxels -- so the rows are independent, and
+        // the ground they leave is the same whichever worker ran which (R10).
+        const i32 firstU = low[u] - origin[u];
+        const i32 firstV = low[v] - origin[v];
+        const auto countU = static_cast<usize>(high[u] - low[u] + 1);
+        const auto countV = static_cast<usize>(high[v] - low[v] + 1);
+        const auto moveRows = [&](usize firstRow, usize endRow, u32) noexcept {
+            std::vector<double> moves;
+            std::vector<float> row;
+            std::vector<Voxel> rowVoxels;
+            for (usize line = firstRow; line < endRow; ++line) {
+                const i32 cv = firstV + static_cast<i32>(line / countU);
+                const i32 cu = firstU + static_cast<i32>(line % countU);
+                const usize rowAt = rowIndex(cu, cv);
+                const usize begin = firstOf[rowAt];
+                const usize end = firstOf[rowAt + 1];
                 bool rowMoved = false;
-                std::vector<double> moves(end - begin, 0.0);
+                moves.assign(end - begin, 0.0);
                 for (usize c = begin; c < end; ++c) {
                     const Crossing& own = crossings[c];
                     const i32 cell = static_cast<i32>(std::floor(own.at + 0.5));
                     if (!own.owned || cell + origin[a] < low[a] || cell + origin[a] > high[a])
                         continue;
-                    const double weightHere = static_cast<double>(falloff(distanceOf(own.at, cu, cv), radius));
+                    const double weightHere = own.weight;
                     if (weightHere <= 0.0)
                         continue;
                     // **In flux form** (terrain audit TA4): each neighbour gives
@@ -843,24 +945,27 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
                             const i32 nv = cv + dv;
                             if ((du == 0 && dv == 0) || nu < 0 || nv < 0 || nu >= size[u] || nv >= size[v])
                                 continue;
-                            const double k = kernelWeight(du, dv);
+                            const double k =
+                                kernelTable[static_cast<usize>(dv + kernel) * static_cast<usize>(kernelWidth) +
+                                            static_cast<usize>(du + kernel)];
                             if (k <= 0.0)
                                 continue;
                             // The same surface there: the nearest owned crossing
                             // of the same sense within the window.
                             const usize other = rowIndex(nu, nv);
                             double nearest = std::numeric_limits<double>::max();
+                            double weightThere = 0.0;
                             for (usize n = firstOf[other]; n < firstOf[other + 1]; ++n) {
                                 if (crossings[n].sense != own.sense || !crossings[n].owned)
                                     continue;
-                                if (std::abs(crossings[n].at - own.at) < std::abs(nearest - own.at))
+                                if (std::abs(crossings[n].at - own.at) < std::abs(nearest - own.at)) {
                                     nearest = crossings[n].at;
+                                    weightThere = crossings[n].weight;
+                                }
                             }
                             if (nearest == std::numeric_limits<double>::max() ||
                                 std::abs(nearest - own.at) > static_cast<double>(window))
                                 continue;
-                            const double weightThere =
-                                static_cast<double>(falloff(distanceOf(nearest, nu, nv), radius));
                             flux += k * std::sqrt(weightHere * weightThere) * (nearest - own.at);
                             sum += k * nearest;
                             weights += k;
@@ -937,14 +1042,15 @@ EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float st
                     }
                 }
             }
-        }
+        };
+        jobs::parallelFor("terrain.smooth", jobs::Domain::SimVisible, 0, countU * countV, 32, moveRows);
     }
 
     // What changed in the box, written.
     FieldWriter writer(field);
     walk(box, [&](i32 x, i32 y, i32 z) {
         const usize here = at({x - x0, y - y0, z - z0});
-        if (copy[here] == original[here])
+        if (copy[here] == original[boxSlot(x, y, z)])
             return;
         writer.set(x, y, z, copy[here]);
     });
@@ -1305,7 +1411,12 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         return report;
     }
     FieldWriter writer(field);
-    walk(box, [&](i32 x, i32 y, i32 z) {
+    // **The ball's rows, not its box's** (the owner's editing lag): a row is
+    // walked only across the chord the ball cuts in it, a voxel wider each
+    // side, so the corners of the box -- half of it -- are never read. The
+    // distance test below still decides each voxel.
+    const double voxelSize = static_cast<double>(field.settings().voxelSize);
+    const auto visit = [&](i32 x, i32 y, i32 z) {
         const double distance =
             length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z);
         if (distance > radius)
@@ -1346,7 +1457,21 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         const Voxel painted = paintedVoxel(old, material, options.mode, weight);
         if (!(painted == old))
             writer.setExact(x, y, z, painted);
-    });
+    };
+    for (i32 z = box.minZ; z <= box.maxZ; ++z) {
+        const double dz = field.voxelCenter(z) - center.z;
+        for (i32 y = box.minY; y <= box.maxY; ++y) {
+            const double dy = field.voxelCenter(y) - center.y;
+            const double rest = radius * radius - dy * dy - dz * dz;
+            if (rest < -voxelSize * voxelSize)
+                continue;
+            const double half = std::sqrt(std::max(rest, 0.0)) + voxelSize;
+            const i32 first = std::max(box.minX, field.voxelIndex(center.x - half));
+            const i32 last = std::min(box.maxX, field.voxelIndex(center.x + half));
+            for (i32 x = first; x <= last; ++x)
+                visit(x, y, z);
+        }
+    }
     writer.finish();
     report.touched = writer.changed();
     return report;
