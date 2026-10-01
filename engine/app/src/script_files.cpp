@@ -9,6 +9,7 @@
 #include <set>
 
 #include "engine/app/world_host.h"
+#include "engine/core/i18n.h"
 #include "engine/platform/file.h"
 #include "engine/scene/world.h"
 #include "engine/script/modules.h"
@@ -130,21 +131,26 @@ std::string ScriptFileSync::summary() const
     if (!changedAnything() && problems.empty())
         return {};
     std::string out;
-    const auto part = [&](std::size_t count, std::string_view what) {
+    // Each part is a sentence of its own with its count in it; how two are
+    // joined is the catalog's too.
+    const auto join = [&out](core::TextKey how, const std::string& next) {
+        out = out.empty() ? next : core::tr(how, {{"status", out}, {"note", next}});
+    };
+    const auto part = [&](std::size_t count, core::TextKey what, std::string_view where = {}) {
         if (count == 0)
             return;
-        if (!out.empty())
-            out += ", ";
-        out += std::to_string(count) + " " + std::string(what);
+        join(ENG_TR("engine.editor.status.with_item"),
+             core::tr(what, {{"count", static_cast<core::i64>(count)}, {"where", where}}));
     };
-    part(written.size(), "script file(s) written");
-    part(moved.size(), "moved");
-    part(trashed.size(), "moved to " + (trash.empty() ? std::string(".engine/trash") : trash));
-    part(renamed.size(), "renamed to a free file name");
-    part(updated.size(), "script file(s) saved");
-    part(conflicts.size(), "changed on disk too -- kept, with the editor's text in .engine/conflicts");
+    part(written.size(), ENG_TR("engine.editor.scripts.saved.written"));
+    part(moved.size(), ENG_TR("engine.editor.scripts.saved.moved"));
+    part(trashed.size(), ENG_TR("engine.editor.scripts.saved.trashed"),
+         trash.empty() ? std::string_view(".engine/trash") : std::string_view(trash));
+    part(renamed.size(), ENG_TR("engine.editor.scripts.saved.renamed"));
+    part(updated.size(), ENG_TR("engine.editor.scripts.saved.updated"));
+    part(conflicts.size(), ENG_TR("engine.editor.scripts.saved.conflicts"));
     for (const std::string& problem : problems)
-        out += (out.empty() ? "" : "; ") + problem;
+        join(ENG_TR("engine.editor.status.with_clause"), problem);
     return out;
 }
 
@@ -308,7 +314,8 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
             if (ec) {
                 // Not moved, so not lost either: it stays where it is, and the
                 // next open mounts it. Said.
-                report.problems.push_back("could not move " + path + " to the trash: " + ec.message());
+                report.problems.push_back(core::tr(ENG_TR("engine.editor.scripts.problem.not_trashed"),
+                                                   {{"path", path}, {"reason", ec.message()}}));
                 ec.clear();
                 continue;
             }
@@ -364,7 +371,8 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
         ec.clear();
         if (text == nullptr || !platform::writeTextFile(file, *text)) {
             // Kept in the scene rather than lost: not a file, so saved there.
-            report.problems.push_back("could not write " + target + "; the script stays in the scene");
+            report.problems.push_back(
+                core::tr(ENG_TR("engine.editor.scripts.problem.not_written_stays"), {{"path", target}}));
             world.setMounted(candidate->id, false);
             continue;
         }
@@ -412,11 +420,13 @@ ScriptFileSync syncScriptFiles(WorldHost& host, std::string_view sceneName)
             if (platform::writeTextFile(aside, *text))
                 report.conflicts.push_back(candidate->target);
             else
-                report.problems.push_back("could not keep the editor's text of " + candidate->target);
+                report.problems.push_back(
+                    core::tr(ENG_TR("engine.editor.scripts.problem.not_kept_aside"), {{"path", candidate->target}}));
             continue;
         }
         if (!platform::writeTextFile(file, *text)) {
-            report.problems.push_back("could not write " + candidate->target);
+            report.problems.push_back(
+                core::tr(ENG_TR("engine.editor.scripts.problem.not_written"), {{"path", candidate->target}}));
             continue;
         }
         script::setMountedHash(L, candidate->target, edited);
@@ -449,7 +459,8 @@ ScriptFileSync followSceneScripts(WorldHost& host, std::string_view fromScene, s
     if (!std::filesystem::is_directory(from, ec))
         return report;
     if (std::filesystem::exists(to, ec)) {
-        report.problems.push_back(toRoot + " is already there, so " + fromRoot + " was left where it is");
+        report.problems.push_back(
+            core::tr(ENG_TR("engine.editor.scripts.problem.already_there"), {{"to", toRoot}, {"from", fromRoot}}));
         return report;
     }
     std::filesystem::create_directories(to.parent_path(), ec);
@@ -459,8 +470,9 @@ ScriptFileSync followSceneScripts(WorldHost& host, std::string_view fromScene, s
     else
         std::filesystem::rename(from, to, ec);
     if (ec) {
-        report.problems.push_back("could not " + std::string(copy ? "copy " : "move ") + fromRoot + ": " +
-                                  ec.message());
+        report.problems.push_back(core::tr(copy ? ENG_TR("engine.editor.scripts.problem.not_copied")
+                                                : ENG_TR("engine.editor.scripts.problem.not_moved"),
+                                           {{"path", fromRoot}, {"reason", ec.message()}}));
         return report;
     }
     (copy ? report.written : report.moved).push_back(toRoot);

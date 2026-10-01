@@ -150,7 +150,7 @@ TEST_CASE("a terrain too large for its scene becomes cells, streams around the c
     editor.terrain().fieldRevision += 1;
     std::string note;
     REQUIRE(editor.cells.save(editor.world, editor.workspace, scene, note));
-    CHECK(note.find("terrain: 1 cell(s) written") != std::string::npos);
+    CHECK(note.find("terrain: 1 cell written") != std::string::npos);
     CHECK(cellFiles(content.path / folder) == written);
 
     // Saved, the edited cell is an ordinary cell again: looking elsewhere lets

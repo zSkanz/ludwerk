@@ -26,7 +26,10 @@ local json = require("@std/json")
 local net = require("@lute/net")
 local task = require("@lute/task")
 
+local catalog = require("./catalog")
 local project = require("./project")
+
+local tr = catalog.tr
 
 export type Message = { [string]: any }
 
@@ -244,7 +247,7 @@ local function start(options: Options): Handle
             end)
         )
     end
-    log(`watching {#watched} directories`)
+    log(tr("cli.dev.info.watching", { count = #watched }))
 
     task.spawn(function()
         while running do

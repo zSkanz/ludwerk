@@ -2417,12 +2417,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // **Which property**, so the history -- and the toast an undo shows
             // -- says "Edit CFrame" rather than "Edit".
             const std::span<const PendingWrite> writes = inspector.pending();
-            std::string label = "Edit";
             const core::NameAtom first = writes.front().property;
             const bool oneProperty = std::all_of(
                 writes.begin(), writes.end(), [first](const PendingWrite& write) { return write.property == first; });
-            if (oneProperty && first.valid())
-                label += " " + std::string(authored().atoms().text(first));
+            const std::string label = oneProperty && first.valid()
+                                          ? core::tr(ENG_TR("engine.editor.history.edit_property"),
+                                                     {{"property", authored().atoms().text(first)}})
+                                          : std::string(core::tr(ENG_TR("engine.editor.history.edit")));
             editor.history().record(authored(), label, coalesceKeyFor(inspector.gesture(), inspector.pending()));
         }
 
@@ -2583,16 +2584,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         plan.area = platform::usableDisplayArea();
                         if (match.start(plan)) {
                             editor.setMatchRunning(true);
-                            editor.report("started a match of " + std::to_string(match.size()) + " window(s)", false);
+                            editor.report(core::tr(ENG_TR("engine.editor.status.started_a_match"),
+                                                   {{"count", static_cast<core::i64>(match.size())}}),
+                                          false);
                         }
                         else {
-                            editor.report("the match could not start: " + plan.host.string(), true);
+                            editor.report(core::tr(ENG_TR("engine.editor.status.match_could_not_start"),
+                                                   {{"host", plan.host.string()}}),
+                                          true);
                         }
                     }
                     else if (!*editorCommands.match && editor.matchRunning()) {
                         match.stop();
                         editor.setMatchRunning(false);
-                        editor.report("stopped the match", false);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.stopped_the_match")), false);
                     }
                 }
 
@@ -2624,7 +2629,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     const std::string relative =
                         std::filesystem::relative(file, host->projectRoot(), ec).generic_string();
                     if (!platform::writeTextFile(file, request->source)) {
-                        editor.report("could not write " + relative, true);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", relative}}),
+                                      true);
                     }
                     else if (const core::InstanceId mounted =
                                  host->mountScriptFile(relative, request->root, request->container, request->module);
@@ -2636,7 +2642,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         inspector.select(mounted);
                         inspector.reveal(mounted);
                         scriptToOpen = mounted;
-                        editor.report("wrote " + relative, false);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.wrote"), {{"path", relative}}), false);
                     }
                 }
 
@@ -2783,7 +2789,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     else {
                         // Said rather than silent: a click that does nothing is
                         // indistinguishable from a control that does not work.
-                        editor.report("nothing open is " + at.chunk, true);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.nothing_open_is"), {{"chunk", at.chunk}}),
+                                      true);
                     }
                 }
 
@@ -2916,7 +2923,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                         tab->document.text()))
                                 scripts.markSaved(index);
                             else
-                                editor.report("could not write " + tab->file, true);
+                                editor.report(
+                                    core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", tab->file}}),
+                                    true);
                         }
                         else if (tab->origin == ScriptOrigin::Stamp) {
                             // **A stamp's script is saved by saving the STAMP**,
@@ -2965,20 +2974,22 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                 std::error_code ec;
                                 std::filesystem::create_directories(aside.parent_path(), ec);
                                 if (platform::writeTextFile(aside, text))
-                                    editor.report(tab->file +
-                                                      " changed on disk since it was opened -- kept; this "
-                                                      "version is in .engine/conflicts/" +
-                                                      tab->file,
+                                    editor.report(core::tr(ENG_TR("engine.editor.status.changed_on_disk_kept_aside"),
+                                                           {{"file", tab->file}}),
                                                   true);
                                 else
-                                    editor.report("could not keep " + tab->file + " aside; nothing was written", true);
+                                    editor.report(core::tr(ENG_TR("engine.editor.status.could_not_keep_aside"),
+                                                           {{"file", tab->file}}),
+                                                  true);
                             }
                             else if (platform::writeTextFile(file, text)) {
                                 script::setMountedHash(state, tab->file, script::scriptTextHash(text));
                                 scripts.markSaved(index);
                             }
                             else {
-                                editor.report("could not write " + tab->file, true);
+                                editor.report(
+                                    core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", tab->file}}),
+                                    true);
                             }
                         }
                         // **And nothing else happens, which is the whole of it.**
@@ -3112,7 +3123,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         editorCommands.quit = false;
                         editorCommands.newProject = false;
                         editorCommands.openProject = false;
-                        editor.report("not everything saved, so nothing was closed -- " + editor.status().message,
+                        editor.report(core::tr(ENG_TR("engine.editor.status.not_everything_saved"),
+                                               {{"reason", editor.status().message}}),
                                       true);
                     }
                 }
@@ -3513,7 +3525,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     else {
                         // Dropped on the sky: said, rather than a drop that
                         // did nothing and looked as if it had worked.
-                        editor.report("nothing under the pointer to wear " + editorCommands.assignMaterialPath, true);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.nothing_to_wear"),
+                                               {{"material", editorCommands.assignMaterialPath}}),
+                                      true);
                     }
                 }
                 if (!editorCommands.assignSkyboxPath.empty())
@@ -3538,7 +3552,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 const auto openContentFile = [&](const std::string& relative) {
                     std::string text;
                     if (!platform::readTextFile(editor.content().root() / std::filesystem::path(relative), text)) {
-                        editor.report("could not read " + relative, true);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", relative}}),
+                                      true);
                         return;
                     }
                     (void)scripts.openFile(relative, std::filesystem::path(relative).filename().string(), text);
@@ -3654,8 +3669,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             // a duplicate is called something, and the next
                             // thing a person does is find it.
                             const std::string made = editor.content().duplicate(entry);
-                            editor.report(made.empty() ? "could not duplicate " + entry.name : "duplicated to " + made,
-                                          made.empty());
+                            editor.report(
+                                made.empty() ? core::tr(ENG_TR("engine.editor.status.could_not_duplicate"),
+                                                        {{"name", entry.name}})
+                                             : core::tr(ENG_TR("engine.editor.status.duplicated_to"), {{"path", made}}),
+                                made.empty());
                             // A duplicated scene gets its own copy of its code.
                             if (!made.empty() && made.ends_with(".scene.json")) {
                                 const app::ScriptFileSync followed = app::followSceneScripts(
@@ -3669,9 +3687,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             const std::string before = entry.path;
                             std::string after;
                             if (editor.inPlayMode()) {
-                                editor.report("stop the game first -- a file moved during play is one the stop "
-                                              "would point everything back away from",
-                                              true);
+                                editor.report(core::tr(ENG_TR("engine.editor.status.stop_before_moving_a_file")), true);
                             }
                             else if (editor.content().rename(entry, editorCommands.renameContentTo, &after) &&
                                      editor.followContent(host->world(), before, after).has_value()) {
@@ -3742,7 +3758,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // Of a placed instance, which is in the scene's world: with
                     // a stamp open the id names something in the stamp's (B10).
                     if (stageOf() != nullptr) {
-                        editor.report("close the stamp to revert or apply what a placed one changed", true);
+                        editor.report(core::tr(ENG_TR("engine.editor.status.close_the_stamp_first")), true);
                     }
                     else if (*editorCommands.overrideApply) {
                         (void)editor.applyOverride(host->world(), host->runtime().dataModel(),
@@ -3802,9 +3818,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // Said out loud, because a tab vanishing is a thing that
                     // happened TO somebody -- and if it was dirty, the text went
                     // with the instance it belonged to.
-                    editor.report(orphaned == 1
-                                      ? "Closed a script tab; its instance was deleted"
-                                      : std::to_string(orphaned) + " script tabs closed; their instances were deleted",
+                    editor.report(core::tr(ENG_TR("engine.editor.status.script_tabs_closed"),
+                                           {{"count", static_cast<core::i64>(orphaned)}}),
                                   false);
                 }
             }

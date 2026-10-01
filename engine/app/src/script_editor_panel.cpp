@@ -813,8 +813,9 @@ void drawZoomReadout(const ScriptEditor& editor, const PaneMetrics& m)
     const float left = Seconds - g_zoomShownFor;
     const float alpha = std::min(1.0f, left / Fade);
 
-    char label[32]{};
-    (void)std::snprintf(label, sizeof(label), "%d%%   Ctrl+0", static_cast<int>(std::round(editor.zoom() * 100.0f)));
+    const std::string shownZoom = core::tr(ENG_TR("engine.editor.script.zoom"),
+                                           {{"percent", static_cast<core::i64>(std::round(editor.zoom() * 100.0f))}});
+    const char* const label = shownZoom.c_str();
 
     const ThemePalette& p = currentTheme().palette;
     const ImVec2 size = ImGui::CalcTextSize(label);
@@ -2181,9 +2182,17 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         // three toggles are buttons with padding on both sides, the count is
         // as wide as its longest text, and the two steps and the close are
         // square -- seven items after the field, so seven gaps.
-        const float toggles = ImGui::CalcTextSize("Aa").x + ImGui::CalcTextSize("ab").x + ImGui::CalcTextSize(".*").x +
-                              style.FramePadding.x * 6.0f;
-        const float count = std::max(ImGui::CalcTextSize("999 of 999").x, ImGui::CalcTextSize("No results").x);
+        // The three toggles wear signs, not words: the same in every language.
+        static constexpr const char* MatchCaseSign = "Aa";
+        static constexpr const char* WholeWordSign = "ab";
+        static constexpr const char* RegexSign = ".*";
+        const float toggles = ImGui::CalcTextSize(MatchCaseSign).x + ImGui::CalcTextSize(WholeWordSign).x +
+                              ImGui::CalcTextSize(RegexSign).x + style.FramePadding.x * 6.0f;
+        // As wide as the count reads at its longest, in the reader's words.
+        const core::I18nArg most[] = {{"index", static_cast<core::i64>(999)}, {"count", static_cast<core::i64>(999)}};
+        const float count = std::max(
+            ImGui::CalcTextSize(core::tr(ENG_TR("engine.editor.script.match_of"), {most[0], most[1]}).c_str()).x,
+            ImGui::CalcTextSize(core::tr(ENG_TR("engine.editor.script.found"), {most[1]}).c_str()).x);
         const float trailing = toggles + count + rowHeight * 3.0f + style.ItemSpacing.x * 7.0f + 2.0f;
         const float field = std::max(90.0f, ImGui::GetContentRegionAvail().x - trailing);
         if (!valid)
@@ -2192,7 +2201,8 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
             ImGui::SetKeyboardFocusHere();
             tab.focusFind = false;
         }
-        const bool entered = stringField("##find-text", "find", tab.findText, field);
+        const bool entered =
+            stringField("##find-text", core::tr(ENG_TR("engine.editor.find_box.find")), tab.findText, field);
         const bool findActive = ImGui::IsItemActive();
         if (!valid) {
             ImGui::PopStyleColor();
@@ -2203,11 +2213,11 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         if (entered)
             stepMatch(tab, !ImGui::GetIO().KeyShift);
         ImGui::SameLine();
-        (void)findToggle("Aa", "match case", tab.matchCase);
+        (void)findToggle(MatchCaseSign, core::tr(ENG_TR("engine.editor.find_box.match_case_tip")), tab.matchCase);
         ImGui::SameLine();
-        (void)findToggle("ab", "whole word", tab.wholeWord);
+        (void)findToggle(WholeWordSign, core::tr(ENG_TR("engine.editor.find_box.whole_word_tip")), tab.wholeWord);
         ImGui::SameLine();
-        (void)findToggle(".*", "regular expression", tab.regex);
+        (void)findToggle(RegexSign, core::tr(ENG_TR("engine.editor.find_box.regular_expression_tip")), tab.regex);
         ImGui::SameLine();
 
         // "3 of 12", or how many when the caret is on none of them.
@@ -2258,14 +2268,15 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         if (tab.replaceOpen) {
             ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), rowHeight));
             ImGui::SameLine();
-            (void)stringField("##replace-text", "replace", tab.replaceText, field);
+            (void)stringField("##replace-text", core::tr(ENG_TR("engine.editor.find_box.replace_hint")),
+                              tab.replaceText, field);
             const bool replaceActive = ImGui::IsItemActive();
             ImGui::SameLine();
             ImGui::BeginDisabled(tab.matches.empty());
             // **Replace takes the match the caret is on**, then moves to the
             // next -- the first press only selects one, when the caret is on
             // none, so nothing is replaced that was never shown.
-            if (scriptAction(actionButton, icons::ActionReplace, "Replace")) {
+            if (scriptAction(actionButton, icons::ActionReplace, core::tr(ENG_TR("engine.editor.find_box.replace")))) {
                 if (const std::optional<std::size_t> on = currentMatch(tab); on.has_value()) {
                     const Range done =
                         tab.document.replaceMatch(tab.matches[*on], tab.findText, tab.replaceText, options);
@@ -2276,7 +2287,8 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
                 stepMatch(tab, true);
             }
             ImGui::SameLine();
-            if (scriptAction(actionButton, icons::ActionReplaceAll, "Replace all")) {
+            if (scriptAction(actionButton, icons::ActionReplaceAll,
+                             core::tr(ENG_TR("engine.editor.find_box.replace_all")))) {
                 if (tab.document.replaceAll(tab.findText, tab.replaceText, options) > 0) {
                     tab.caret = Caret{};
                     edited(out, index);
@@ -3178,7 +3190,8 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
         ImGui::SetNextWindowDockID(console->DockId, ImGuiCond_FirstUseEver);
     }
 
-    if (!ImGui::Begin((tabIconPad() + "Run and Debug###Debug").c_str(), &open)) {
+    if (!ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.run_and_debug")) + "###Debug").c_str(),
+                      &open)) {
         ImGui::End();
         return;
     }
@@ -3199,22 +3212,22 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
             ImGui::NewLine();
     };
     ImGui::BeginDisabled(!debug.parked);
-    if (scriptAction(actionButton, icons::ActionPlay, "Continue"))
+    if (scriptAction(actionButton, icons::ActionPlay, core::tr(ENG_TR("engine.editor.debug_panel.continue"))))
         out.step = DebugStep::Continue;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.let_the_script_run_on_tip")));
-    nextControl("Over");
-    if (scriptAction(actionButton, icons::ActionStepOver, "Over"))
+    nextControl(core::tr(ENG_TR("engine.editor.debug_panel.over")));
+    if (scriptAction(actionButton, icons::ActionStepOver, core::tr(ENG_TR("engine.editor.debug_panel.over"))))
         out.step = DebugStep::Over;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_over_execute_the_current_tip")));
-    nextControl("Into");
-    if (scriptAction(actionButton, icons::ActionStepInto, "Into"))
+    nextControl(core::tr(ENG_TR("engine.editor.debug_panel.into")));
+    if (scriptAction(actionButton, icons::ActionStepInto, core::tr(ENG_TR("engine.editor.debug_panel.into"))))
         out.step = DebugStep::Into;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_into_enter_the_next_tip")));
-    nextControl("Out");
-    if (scriptAction(actionButton, icons::ActionStepOut, "Out"))
+    nextControl(core::tr(ENG_TR("engine.editor.debug_panel.out")));
+    if (scriptAction(actionButton, icons::ActionStepOut, core::tr(ENG_TR("engine.editor.debug_panel.out"))))
         out.step = DebugStep::Out;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_out_finish_the_current_tip")));
@@ -3291,9 +3304,9 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
         const DebugFrameView& frame = debug.frames[debug.selectedFrame];
         if (ImGui::BeginTable("##vars", 3,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("name");
-            ImGui::TableSetupColumn("type");
-            ImGui::TableSetupColumn("value");
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.debug_panel.column.name")));
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.debug_panel.column.type")));
+            ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.debug_panel.column.value")));
             ImGui::TableHeadersRow();
             const auto row = [](const DebugValueView& value) {
                 ImGui::TableNextRow();

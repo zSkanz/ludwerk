@@ -333,9 +333,10 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
         // **Left alone.** It could not be read when the project opened, so what
         // this world holds of it is not what it holds, and writing -- or
         // deleting it for being empty -- would lose the difference.
-        terrainNote += (terrainNote.empty() ? "" : " -- ") +
-                       std::string("content/global.json could not be read when the project opened, so it was not "
-                                   "written; fix it and reopen");
+        const char* const unreadable = core::tr(ENG_TR("engine.editor.status.global_unreadable_note"));
+        terrainNote = terrainNote.empty() ? std::string(unreadable)
+                                          : core::tr(ENG_TR("engine.editor.status.with_note"),
+                                                     {{"status", terrainNote}, {"note", unreadable}});
     }
     else if (!m_content.root().empty()) {
         const std::filesystem::path global = m_content.root() / "global.json";
@@ -372,25 +373,32 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     if (!m_content.root().empty())
         (void)writeSceneDefinitions(world, m_content.root().parent_path());
 
-    std::string message = "saved " + std::to_string(report.instances) + " instance(s) to " + path.string();
+    const auto noted = [](const std::string& status, const std::string& note) {
+        return core::tr(ENG_TR("engine.editor.status.with_note"), {{"status", status}, {"note", note}});
+    };
+    std::string message = core::tr(ENG_TR("engine.editor.status.saved_instances_to"),
+                                   {{"count", static_cast<core::i64>(report.instances)}, {"path", path.string()}});
     if (!terrainNote.empty())
-        message += " -- " + terrainNote;
+        message = noted(message, terrainNote);
     if (!scriptNote.empty())
-        message += " -- " + scriptNote;
+        message = noted(message, scriptNote);
     // Counted rather than swallowed. A reference that pointed outside the scene
     // is a thing the person authored and the file cannot hold, and finding that
     // out when you reopen is finding it out too late.
-    if (report.droppedReferences > 0)
-        message += " (" + std::to_string(report.droppedReferences) + " reference(s) outside the scene were dropped)";
+    if (report.droppedReferences > 0) {
+        message = core::tr(ENG_TR("engine.editor.status.with_aside"),
+                           {{"status", message},
+                            {"note", core::tr(ENG_TR("engine.editor.status.scene_references_dropped"),
+                                              {{"count", static_cast<core::i64>(report.droppedReferences)}})}});
+    }
     // **Said out loud, because the alternative is finding out days later.** A
     // stamped instance whose contents no longer match its file is written in
     // full and unlinked -- the scene keeps everything, but the instance stops
     // following the stamp, and nothing about looking at it says so. Adding a
     // child to one is the ordinary way to arrive here.
     if (report.unlinkedStamps > 0) {
-        message += " -- " + std::to_string(report.unlinkedStamps) +
-                   " stamped instance(s) no longer match their stamp and were unlinked; add or remove anything "
-                   "inside one and it stops being an instance of the file";
+        message = noted(message, core::tr(ENG_TR("engine.editor.status.stamps_unlinked"),
+                                          {{"count", static_cast<core::i64>(report.unlinkedStamps)}}));
     }
     m_status = EditorStatus{message, report.unlinkedStamps > 0};
     return true;
@@ -433,16 +441,22 @@ bool Editor::load(scene::World& world, const std::filesystem::path& path, Inspec
     inspector.select(core::InstanceId{});
     inspector.onWorldChanged();
 
-    std::string message = "loaded " + std::to_string(report.instances) + " instance(s) from " + path.string();
-    if (report.unknownClasses > 0)
-        message += " (" + std::to_string(report.unknownClasses) + " unknown class(es) skipped)";
+    std::string message = core::tr(ENG_TR("engine.editor.status.loaded_instances_from"),
+                                   {{"count", static_cast<core::i64>(report.instances)}, {"path", path.string()}});
+    if (report.unknownClasses > 0) {
+        message = core::tr(ENG_TR("engine.editor.status.with_aside"),
+                           {{"status", message},
+                            {"note", core::tr(ENG_TR("engine.editor.status.unknown_classes_skipped"),
+                                              {{"count", static_cast<core::i64>(report.unknownClasses)}})}});
+    }
     // **A stamp the scene names and the content no longer has** (B4): its
     // instances are not in the world, and saving now would take them out of
     // the file too -- said loudly, rather than found out later.
     if (report.missingStamps > 0) {
-        message += " -- " + std::to_string(report.missingStamps) +
-                   " stamped instance(s) not loaded: their stamp file is gone or moved. Put it back before saving, "
-                   "or saving drops them";
+        message = core::tr(ENG_TR("engine.editor.status.with_note"),
+                           {{"status", message},
+                            {"note", core::tr(ENG_TR("engine.editor.status.stamps_not_loaded"),
+                                              {{"count", static_cast<core::i64>(report.missingStamps)}})}});
     }
     m_status = EditorStatus{message, report.missingStamps > 0};
     return true;
@@ -1696,11 +1710,17 @@ std::string Editor::moveContent(scene::World& world, std::string_view from, std:
     if (!followed.has_value())
         return {};
     const std::size_t references = *followed;
-    std::string said = "moved to " + moved;
-    if (references > 0)
-        said += " -- " + std::to_string(references) + " reference(s) follow it";
-    if (m_undoClearedByMove)
-        said += "; what came before it can no longer be undone";
+    std::string said = core::tr(ENG_TR("engine.editor.status.moved_to"), {{"path", moved}});
+    if (references > 0) {
+        said = core::tr(ENG_TR("engine.editor.status.with_note"),
+                        {{"status", said},
+                         {"note", core::tr(ENG_TR("engine.editor.status.references_follow"),
+                                           {{"count", static_cast<core::i64>(references)}})}});
+    }
+    if (m_undoClearedByMove) {
+        said = core::tr(ENG_TR("engine.editor.status.with_clause"),
+                        {{"status", said}, {"note", core::tr(ENG_TR("engine.editor.status.undo_cleared_by_move"))}});
+    }
     report(std::move(said), false);
     return moved;
 }
@@ -2524,11 +2544,18 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     if (followed > 0 || moved.unlinkedStamps > 0)
         m_sceneDirty = true;
 
-    std::string message = "applied " + name + " to " + path;
-    if (followed > 0)
-        message += ", " + std::to_string(followed) + " in the world";
-    if (moved.unlinkedStamps > 0)
-        message += ", " + std::to_string(moved.unlinkedStamps) + " left alone (changed structurally)";
+    const auto item = [](const std::string& status, const std::string& note) {
+        return core::tr(ENG_TR("engine.editor.status.with_item"), {{"status", status}, {"note", note}});
+    };
+    std::string message = core::tr(ENG_TR("engine.editor.status.applied_to"), {{"name", name}, {"path", path}});
+    if (followed > 0) {
+        message = item(message, core::tr(ENG_TR("engine.editor.status.in_the_world"),
+                                         {{"count", static_cast<core::i64>(followed)}}));
+    }
+    if (moved.unlinkedStamps > 0) {
+        message = item(message, core::tr(ENG_TR("engine.editor.status.left_alone"),
+                                         {{"count", static_cast<core::i64>(moved.unlinkedStamps)}}));
+    }
     m_status = EditorStatus{message};
     return true;
 }
@@ -2585,14 +2612,22 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
         m_sceneDirty = true;
 
     m_stamp.dirty = false;
-    std::string message = "saved " + m_stamp.path + " (" + std::to_string(report.instances) + " instance(s))";
-    if (followed > 0)
-        message += ", " + std::to_string(followed) + " in the world";
+    const auto item = [](const std::string& status, const std::string& note) {
+        return core::tr(ENG_TR("engine.editor.status.with_item"), {{"status", status}, {"note", note}});
+    };
+    std::string message = core::tr(ENG_TR("engine.editor.status.saved_stamp"),
+                                   {{"path", m_stamp.path}, {"count", static_cast<core::i64>(report.instances)}});
+    if (followed > 0) {
+        message = item(message, core::tr(ENG_TR("engine.editor.status.in_the_world"),
+                                         {{"count", static_cast<core::i64>(followed)}}));
+    }
     // Said out loud rather than counted quietly: an instance somebody changed
     // structurally stops following its stamp, and finding that out by noticing
     // one lamp post did not move is how a person stops trusting the link.
-    if (moved.unlinkedStamps > 0)
-        message += ", " + std::to_string(moved.unlinkedStamps) + " left alone (changed structurally)";
+    if (moved.unlinkedStamps > 0) {
+        message = item(message, core::tr(ENG_TR("engine.editor.status.left_alone"),
+                                         {{"count", static_cast<core::i64>(moved.unlinkedStamps)}}));
+    }
     // **Counted rather than swallowed**, exactly as `save` counts a scene's
     // (D133). A stamp is written from its root DOWN, so a reference pointing at
     // anything outside that subtree cannot be carried: it came back as `null`
@@ -2600,8 +2635,8 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     // every instance in the world. A material is a URN now (ADR 0090) and never
     // arrives here; a constraint's attachment still can.
     if (report.droppedReferences > 0) {
-        message += ", " + std::to_string(report.droppedReferences) +
-                   " reference(s) outside the stamp were dropped -- put what they name INSIDE it";
+        message = item(message, core::tr(ENG_TR("engine.editor.status.stamp_references_dropped"),
+                                         {{"count", static_cast<core::i64>(report.droppedReferences)}}));
     }
     m_status = EditorStatus{message, report.droppedReferences > 0};
     return true;
@@ -2633,7 +2668,10 @@ bool Editor::closeStamp(scene::World& game, core::InstanceId gameRoot, Inspector
     m_history.clear();
     inspector.onWorldChanged();
 
-    m_status = EditorStatus{wrote ? "saved and closed " + closed : "closed " + closed, false};
+    m_status = EditorStatus{
+        core::tr(wrote ? ENG_TR("engine.editor.status.saved_and_closed") : ENG_TR("engine.editor.status.closed"),
+                 {{"name", closed}}),
+        false};
     return true;
 }
 
@@ -3030,7 +3068,9 @@ bool Editor::reparent(scene::World& world, std::span<const core::InstanceId> ids
     }
     if (plan.movable.empty()) {
         m_status =
-            EditorStatus{plan.refused > 0 ? "nothing there can be moved into that" : "already there", plan.refused > 0};
+            EditorStatus{core::tr(plan.refused > 0 ? ENG_TR("engine.editor.status.nothing_can_be_moved_into_that")
+                                                   : ENG_TR("engine.editor.status.already_there")),
+                         plan.refused > 0};
         return false;
     }
 
@@ -3618,19 +3658,19 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
     for (core::InstanceId walk = world.parentOf(script); walk.valid(); walk = world.parentOf(walk)) {
         if (isClass(world, walk, "GlobalScriptService") || isClass(world, walk, "ServerScriptService") ||
             isClass(world, walk, "ClientScriptService"))
-            return whole("its file is written with the scene");
+            return whole(core::tr(ENG_TR("engine.editor.status.why.file_written_with_scene")));
     }
 
     const core::NameAtom sourceKey = world.atoms().intern("Source");
     const std::optional<scene::Value> source = world.getProperty(script, sourceKey);
     const std::string* text = source.has_value() ? std::get_if<std::string>(&*source) : nullptr;
     if (text == nullptr)
-        return whole("this script has no source to save on its own");
+        return whole(core::tr(ENG_TR("engine.editor.status.why.no_source")));
 
     const std::filesystem::path path = m_content.root() / std::filesystem::path(m_openScene);
     std::string saved;
     if (!platform::readTextFile(path, saved))
-        return whole("the scene has not been saved before");
+        return whole(core::tr(ENG_TR("engine.editor.status.why.never_saved")));
 
     // **The saved file, in a world of its own**, with the same registries and
     // the same services at the top, so every name and class means the same.
@@ -3656,14 +3696,14 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
     }
 
     if (scene::readScene(disk, saved, nullptr, stampSource()).has_value())
-        return whole("the saved scene could not be read back");
+        return whole(core::tr(ENG_TR("engine.editor.status.why.unreadable")));
     scene::StampLibrary stamps(disk, stampSource());
     if (scene::writeScene(disk, nullptr, &stamps) != saved)
-        return whole("the saved file does not come back unchanged through a read and a write");
+        return whole(core::tr(ENG_TR("engine.editor.status.why.not_round_trip")));
 
     const core::InstanceId target = follow(disk, diskTop, pathOf(world, script));
     if (!target.valid() || disk.classOf(target) != world.classOf(script))
-        return whole("this script is not in the saved scene yet (new, renamed or moved since)");
+        return whole(core::tr(ENG_TR("engine.editor.status.why.not_in_saved_scene")));
 
     (void)disk.setProperty(target, sourceKey, scene::Value{*text});
     scene::SceneIoReport report;
@@ -3698,7 +3738,8 @@ void Editor::reportImport(const ContentTree::ImportReport& report) noexcept
     // **Counted, and the refusals named.** "Imported 3 files" is a sentence
     // nobody has to act on; "2 already here" is one they do, and the names are
     // what tells them which.
-    std::string message = "imported " + std::to_string(report.imported.size()) + " file(s)";
+    std::string message = core::tr(ENG_TR("engine.editor.status.imported_files"),
+                                   {{"count", static_cast<core::i64>(report.imported.size())}});
     const auto listOf = [](const std::vector<std::string>& names) {
         std::string joined;
         for (const std::string& name : names) {
@@ -3710,17 +3751,23 @@ void Editor::reportImport(const ContentTree::ImportReport& report) noexcept
     };
     // **Counted apart**, because a person who dragged in one file and sees
     // "imported 7" would reasonably wonder what the other six are.
-    if (!report.companions.empty())
-        message += " and " + std::to_string(report.companions.size()) + " it needs";
+    if (!report.companions.empty()) {
+        message = core::tr(ENG_TR("engine.editor.status.import_and_companions"),
+                           {{"status", message}, {"count", static_cast<core::i64>(report.companions.size())}});
+    }
+    const auto clause = [&message](core::TextKey what, const std::string& names) {
+        message = core::tr(ENG_TR("engine.editor.status.with_clause"),
+                           {{"status", message}, {"note", core::tr(what, {{"names", names}})}});
+    };
     if (!report.skipped.empty())
-        message += "; skipped " + listOf(report.skipped) + " (already here)";
+        clause(ENG_TR("engine.editor.status.import_skipped"), listOf(report.skipped));
     if (!report.failed.empty())
-        message += "; could not read " + listOf(report.failed);
+        clause(ENG_TR("engine.editor.status.import_unreadable"), listOf(report.failed));
     // **The one that decides whether the model works.** A `.gltf` whose buffer
     // was not beside it imports perfectly and loads nothing, and this is the
     // only moment anybody can be told which file to go and find.
     if (!report.missing.empty())
-        message += "; NOT beside it: " + listOf(report.missing) + " -- the model will not load without them";
+        clause(ENG_TR("engine.editor.status.import_missing"), listOf(report.missing));
 
     m_status = EditorStatus{message, !report.failed.empty() || !report.missing.empty()};
 }
@@ -5025,8 +5072,9 @@ asset::BlockId Editor::addBlockType(scene::World& world, Inspector& inspector, s
 {
     scene::VoxelComponent* voxels = voxelsIn(world);
     if (voxels == nullptr || name.empty()) {
-        m_status =
-            EditorStatus{voxels == nullptr ? "this world has no block world" : "a block type needs a name", true};
+        m_status = EditorStatus{core::tr(voxels == nullptr ? ENG_TR("engine.editor.status.no_block_world")
+                                                           : ENG_TR("engine.editor.status.block_type_needs_a_name")),
+                                true};
         return asset::AirBlock;
     }
     (void)inspector;
@@ -5238,9 +5286,10 @@ bool Editor::driveBlocks(scene::World& world, Inspector& inspector)
             // ctrl-Z through wondering what it was.
             if (m_blockStroke->gesture == 0) {
                 m_blockStroke->gesture = inspector.beginGesture();
-                const char* label = m_blockOp == BlockOp::Break     ? "Break Block"
-                                    : m_blockOp == BlockOp::Replace ? "Replace Block"
-                                                                    : "Place Block";
+                const char* label =
+                    core::tr(m_blockOp == BlockOp::Break     ? ENG_TR("engine.editor.history.break_block")
+                             : m_blockOp == BlockOp::Replace ? ENG_TR("engine.editor.history.replace_block")
+                                                             : ENG_TR("engine.editor.history.place_block"));
                 m_history.record(world, label, m_blockStroke->gesture);
                 voxels = voxelsIn(world);
             }

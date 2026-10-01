@@ -36,6 +36,10 @@ more where it cannot yet: names in tables, sentences built from pieces.
    each file may show at most its count of raw words, and a file showing
    fewer fails until its count is lowered, so what one change translates the
    next cannot spend. It reaches zero when the ledger closes, and goes.
+   **Reached zero on 2026-10-01 and removed** (`docs/briefs/r3-editor-i18n.md`,
+   E5): the lint allows no file a raw word, and reads every literal of the
+   editor's files and the CLI's for a sentence, not only the calls it knows
+   to show one.
 4. **What stays a literal**: an ImGui id (`##value`), a format with no word
    (`%.2f`), a keyboard shortcut's name, a file extension, a URI scheme --
    data, not prose. Units are words (`m`, `deg`) and go through the catalog.

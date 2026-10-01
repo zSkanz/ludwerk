@@ -28,6 +28,7 @@
 #include <string_view>
 
 #include "engine/core/math.h"
+#include "engine/core/text_key.h"
 #include "engine/core/types.h"
 
 namespace engine::app {
@@ -83,8 +84,8 @@ struct ScriptColorInfo
     // What the file stores. Renaming one resets that colour for everybody, so
     // it is an identifier, not a label.
     std::string_view id;
-    // What the Preferences page says.
-    std::string_view label;
+    // What the Preferences page says, from the catalog (ADR 0145).
+    core::TextKey label;
 };
 
 [[nodiscard]] std::span<const ScriptColorInfo, kScriptColorCount> scriptColorInfo() noexcept;
@@ -141,7 +142,8 @@ inline constexpr std::size_t kScriptActionCount = static_cast<std::size_t>(Scrip
 struct ScriptActionInfo
 {
     std::string_view id;
-    std::string_view label;
+    // What the Preferences page calls it, from the catalog.
+    core::TextKey label;
     // `Ctrl+Shift+K`: modifiers in that order, then the key's ImGui name.
     std::string_view chord;
 };

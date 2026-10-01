@@ -258,7 +258,17 @@ void drawBlockLook(Editor& editor, scene::World& world, Inspector& inspector)
     int opacity = std::clamp(type.opacity, 0, 2);
     ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.block_look.opacity")));
     ImGui::SetNextItemWidth(-FLT_MIN);
-    changed |= ImGui::Combo("##block-opacity", &opacity, "Opaque\0Cutout\0Translucent\0");
+    {
+        // ImGui takes the choices as one string, a NUL after each.
+        std::string choices;
+        for (const core::TextKey each :
+             {ENG_TR("engine.editor.block_look.opaque"), ENG_TR("engine.editor.block_look.cutout"),
+              ENG_TR("engine.editor.block_look.translucent")}) {
+            choices += core::tr(each);
+            choices.push_back('\0');
+        }
+        changed |= ImGui::Combo("##block-opacity", &opacity, choices.c_str());
+    }
     ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.block_look.cutout_keeps_an_image_s_tip")));
     f32 transparency = type.transparency;
     if (opacity == 2) {

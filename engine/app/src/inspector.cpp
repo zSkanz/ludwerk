@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "engine/core/i18n.h"
 #include "engine/core/math.h"
 #include "engine/scene/enum_registry.h"
 
@@ -880,15 +881,15 @@ const char* setResultLabel(scene::World::SetResult result) noexcept
 {
     switch (result) {
     case scene::World::SetResult::Changed:
-        return "changed";
+        return core::tr(ENG_TR("engine.editor.write_result.changed"));
     case scene::World::SetResult::Unchanged:
-        return "unchanged";
+        return core::tr(ENG_TR("engine.editor.write_result.unchanged"));
     case scene::World::SetResult::UnknownProperty:
-        return "unknown property";
+        return core::tr(ENG_TR("engine.editor.write_result.unknown_property"));
     case scene::World::SetResult::ReadOnly:
-        return "read-only";
+        return core::tr(ENG_TR("engine.editor.write_result.read_only"));
     case scene::World::SetResult::InvalidValue:
-        return "invalid value";
+        return core::tr(ENG_TR("engine.editor.write_result.invalid_value"));
     }
     return "?";
 }

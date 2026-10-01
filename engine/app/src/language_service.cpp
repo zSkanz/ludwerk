@@ -19,6 +19,7 @@
 #include <regex>
 #include <unordered_map>
 
+#include "engine/core/i18n.h"
 #include "engine/scene/world.h"
 
 namespace engine::app {
@@ -646,7 +647,7 @@ struct LanguageCore::Impl
             const Luau::LoadDefinitionFileResult loaded = frontend.loadDefinitionFile(
                 globals, globals.globalScope, creatable.definitions, "@engine", /*captureComments*/ false, false);
             if (!loaded.success && loadError.empty()) {
-                loadError = "the engine definitions did not load";
+                loadError = core::tr(ENG_TR("engine.editor.script.check.definitions_did_not_load"));
                 if (!loaded.parseResult.errors.empty())
                     loadError += ": " + loaded.parseResult.errors.front().getMessage();
                 else if (loaded.module != nullptr && !loaded.module->errors.empty())
@@ -1011,7 +1012,7 @@ LanguageCheck LanguageCore::check(const std::string& module)
         if (const auto* count = Luau::get<Luau::TypeInstantiationCountMismatch>(error);
             count != nullptr && count->maximumTypes == 0 && count->providedTypePacks == 0 &&
             count->maximumTypePacks > 0 && count->providedTypes <= count->maximumTypePacks)
-            diagnostic.message += " It takes a type pack: write the types in parentheses, as in <<(Vector2)>>.";
+            diagnostic.message += core::tr(ENG_TR("engine.editor.script.check.takes_a_type_pack"));
         diagnostic.severity = Severity::Error;
         out.diagnostics.push_back(std::move(diagnostic));
     }

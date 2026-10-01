@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "engine/asset/image.h"
+#include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/jobs/jobs.h"
 #include "engine/platform/file.h"
@@ -224,7 +225,8 @@ bool IconAtlas::load(rhi::IDevice& device, rhi::ICmdList& cmd, const std::filesy
 
     Source fallbackTheme;
     if (!readTheme(contentDir / "icons" / "default", fallbackTheme, m_fallbackId)) {
-        m_status = "no icon theme found under " + (contentDir / "icons" / "default").string();
+        m_status =
+            core::tr(ENG_TR("engine.editor.icons.no_theme"), {{"path", (contentDir / "icons" / "default").string()}});
         return false;
     }
     m_sources.push_back(std::move(fallbackTheme));
@@ -281,7 +283,7 @@ bool IconAtlas::load(rhi::IDevice& device, rhi::ICmdList& cmd, const std::filesy
             break;
         atlasSize *= 2u;
         if (atlasSize > 4096u) {
-            m_status = "the icon set no longer fits a 4096-square atlas";
+            m_status = core::tr(ENG_TR("engine.editor.icons.does_not_fit"));
             return false;
         }
     }
@@ -404,7 +406,7 @@ bool IconAtlas::load(rhi::IDevice& device, rhi::ICmdList& cmd, const std::filesy
         .debugName = "editor-icons",
     });
     if (!m_texture.valid()) {
-        m_status = "the icon atlas texture could not be created";
+        m_status = core::tr(ENG_TR("engine.editor.icons.no_texture"));
         return false;
     }
 
@@ -412,10 +414,12 @@ bool IconAtlas::load(rhi::IDevice& device, rhi::ICmdList& cmd, const std::filesy
     m_atlasSize = atlasSize;
 
     const core::u64 elapsedNs = platform::nowNs() - startedNs;
-    m_status = std::to_string(drawn) + " icon(s) in a " + std::to_string(atlasSize) + "-square atlas, " +
-               std::to_string(elapsedNs / 1000000u) + " ms";
-    if (missing > 0)
-        m_status += ", " + std::to_string(missing) + " not drawn yet";
+    m_status =
+        core::tr(missing > 0 ? ENG_TR("engine.editor.icons.drawn_some_missing") : ENG_TR("engine.editor.icons.drawn"),
+                 {{"count", static_cast<core::i64>(drawn)},
+                  {"size", static_cast<core::i64>(atlasSize)},
+                  {"ms", static_cast<core::i64>(elapsedNs / 1000000u)},
+                  {"missing", static_cast<core::i64>(missing)}});
     return true;
 }
 

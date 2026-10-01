@@ -8,6 +8,7 @@
 #include <span>
 
 #include "engine/app/inspector.h"
+#include "engine/core/i18n.h"
 #include "engine/core/name_atom.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/world.h"
@@ -138,8 +139,8 @@ void collectMembers(const scene::ClassRegistry& classes, const core::AtomTable& 
             for (const scene::EventDesc& event : descriptor->events) {
                 const std::string_view name = atoms.text(event.name);
                 if (fresh(name))
-                    push(out, request, std::string(name), "event", event.doc != nullptr ? event.doc : "",
-                         CompletionKind::Event);
+                    push(out, request, std::string(name), core::tr(ENG_TR("engine.editor.script.kind.event")),
+                         event.doc != nullptr ? event.doc : "", CompletionKind::Event);
             }
         }
         for (const scene::MethodDesc& method : descriptor->methods) {
@@ -486,8 +487,9 @@ void collectServices(const scene::ClassRegistry& classes, const core::AtomTable&
         const scene::ClassDescriptor* descriptor = classes.find(id);
         if (descriptor == nullptr || !hasFlag(descriptor->flags, scene::ClassFlags::Service))
             continue;
-        push(out, request, std::string(atoms.text(descriptor->name)), "service",
-             descriptor->doc != nullptr ? descriptor->doc : "", CompletionKind::Service);
+        push(out, request, std::string(atoms.text(descriptor->name)),
+             core::tr(ENG_TR("engine.editor.script.kind.service")), descriptor->doc != nullptr ? descriptor->doc : "",
+             CompletionKind::Service);
     }
 }
 
@@ -714,8 +716,9 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
             const scene::ClassDescriptor* descriptor = classes.find(id);
             if (descriptor == nullptr || (creating && !creatable(*descriptor)))
                 continue;
-            push(out, request, std::string(atoms.text(descriptor->name)), "class",
-                 descriptor->doc != nullptr ? descriptor->doc : "", CompletionKind::Class);
+            push(out, request, std::string(atoms.text(descriptor->name)),
+                 core::tr(ENG_TR("engine.editor.script.kind.class")), descriptor->doc != nullptr ? descriptor->doc : "",
+                 CompletionKind::Class);
         }
         sortCompletions(out, request.prefix);
         return;
@@ -725,7 +728,8 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
             scene::TagSet tags;
             tree.world->collectAllTags(tags);
             for (const core::NameAtom tag : tags)
-                push(out, request, std::string(atoms.text(tag)), "tag", "", CompletionKind::Identifier);
+                push(out, request, std::string(atoms.text(tag)), core::tr(ENG_TR("engine.editor.script.kind.tag")), "",
+                     CompletionKind::Identifier);
         }
         sortCompletions(out, request.prefix);
         return;
@@ -747,14 +751,16 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
             scene::AttributeMap attributes;
             tree.world->collectAttributes(at, attributes);
             for (const auto& [name, value] : attributes)
-                push(out, request, std::string(atoms.text(name)), "attribute", "", CompletionKind::Property);
+                push(out, request, std::string(atoms.text(name)),
+                     core::tr(ENG_TR("engine.editor.script.kind.attribute")), "", CompletionKind::Property);
         }
         else if (at.valid() && tree.world != nullptr) {
             for (core::InstanceId up = tree.world->parentOf(at); up.valid(); up = tree.world->parentOf(up)) {
                 const std::string_view name = atoms.text(tree.world->name(up));
                 const auto taken = [name](const Completion& row) { return row.label == name; };
                 if (!name.empty() && std::find_if(out.begin(), out.end(), taken) == out.end())
-                    push(out, request, std::string(name), "ancestor", "", CompletionKind::Instance);
+                    push(out, request, std::string(name), core::tr(ENG_TR("engine.editor.script.kind.ancestor")), "",
+                         CompletionKind::Instance);
             }
         }
         sortCompletions(out, request.prefix);
@@ -762,7 +768,8 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
     }
     if (request.quoted == CompletionQuoted::Asset) {
         for (const std::string& path : tree.assets)
-            push(out, request, "asset://" + path, "asset", "", CompletionKind::Module);
+            push(out, request, "asset://" + path, core::tr(ENG_TR("engine.editor.script.kind.asset")), "",
+                 CompletionKind::Module);
         sortCompletions(out, request.prefix);
         return;
     }
@@ -859,18 +866,21 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
     }
     else {
         for (const std::string_view keyword : kKeywords)
-            push(out, request, std::string(keyword), "keyword", "", CompletionKind::Keyword);
+            push(out, request, std::string(keyword), core::tr(ENG_TR("engine.editor.script.kind.keyword")), "",
+                 CompletionKind::Keyword);
         for (const std::string_view global : kEngineGlobals)
-            push(out, request, std::string(global), "global", "", CompletionKind::Global);
+            push(out, request, std::string(global), core::tr(ENG_TR("engine.editor.script.kind.global")), "",
+                 CompletionKind::Global);
         // Luau's own: `typeof`, `pcall`, `assert`, `_VERSION` -- the names
         // somebody types most and the ones an engine-only list would have left
         // out entirely.
         for (const script::StdName& global : script::stdGlobals())
             push(out, request, std::string(global.name), std::string(global.type), "", CompletionKind::Global);
         // And the library tables themselves, so `mat` finds `math`.
-        push(out, request, "task", "library", "", CompletionKind::Library);
+        push(out, request, "task", core::tr(ENG_TR("engine.editor.script.kind.library")), "", CompletionKind::Library);
         for (const script::StdLibrary& library : script::stdLibraries())
-            push(out, request, std::string(library.name), "library", "", CompletionKind::Library);
+            push(out, request, std::string(library.name), core::tr(ENG_TR("engine.editor.script.kind.library")), "",
+                 CompletionKind::Library);
 
         // Every class the engine ships, so `Instance.new("Par` finds `Part` --
         // and so does somebody typing a service's name.
@@ -880,7 +890,9 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
                 continue;
             const std::string_view name = atoms.text(descriptor->name);
             push(out, request, std::string(name),
-                 hasFlag(descriptor->flags, scene::ClassFlags::Service) ? "service" : "class",
+                 core::tr(hasFlag(descriptor->flags, scene::ClassFlags::Service)
+                              ? ENG_TR("engine.editor.script.kind.service")
+                              : ENG_TR("engine.editor.script.kind.class")),
                  descriptor->doc != nullptr ? descriptor->doc : "",
                  hasFlag(descriptor->flags, scene::ClassFlags::Service) ? CompletionKind::Service
                                                                         : CompletionKind::Class);
@@ -921,7 +933,8 @@ void collectCompletions(const ScriptDocument& document, const CompletionRequest&
                     found->scope = std::min(found->scope, scope);
                     return;
                 }
-                push(out, request, word, "in this file", "", CompletionKind::Identifier);
+                push(out, request, word, core::tr(ENG_TR("engine.editor.script.kind.in_this_file")), "",
+                     CompletionKind::Identifier);
                 out.back().scope = scope;
             };
             for (const std::string& word : visible)
@@ -1008,9 +1021,7 @@ void lintInstanceAccess(const ScriptDocument& document, const scene::ClassRegist
             out.push_back(Diagnostic{
                 .at = Position{line, column + 1},
                 .length = static_cast<core::u32>(member.size()),
-                .message = "`" + member +
-                           "` is a child: a dot reads it, and it is replaced by parenting another instance, not by "
-                           "assignment",
+                .message = core::tr(ENG_TR("engine.editor.script.check.child_assigned"), {{"name", member}}),
                 .severity = Severity::Warning,
             });
         }

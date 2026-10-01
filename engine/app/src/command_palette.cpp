@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include "engine/app/ui_theme.h"
+#include "engine/core/i18n.h"
 #endif
 
 namespace engine::app {
@@ -229,7 +230,8 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
         char buffer[256]{};
         const std::size_t length = std::min(query_.size(), sizeof(buffer) - 1);
         std::copy_n(query_.data(), length, buffer);
-        const char* hint = commandsMode ? "> Type the name of a command" : "Search files by name (type > for commands)";
+        const char* hint = core::tr(commandsMode ? ENG_TR("engine.editor.palette.commands_hint")
+                                                 : ENG_TR("engine.editor.palette.files_hint"));
         if (ImGui::InputTextWithHint("##query", hint, buffer, sizeof(buffer))) {
             query_ = buffer;
             selected_ = 0;
@@ -256,7 +258,8 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
         const float row = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2.0f;
         const int visible = std::min(count, 12);
         if (count == 0) {
-            ImGui::TextDisabled(commandsMode ? "No matching commands" : "No matching files");
+            ImGui::TextDisabled("%s", core::tr(commandsMode ? ENG_TR("engine.editor.palette.no_matching_commands")
+                                                            : ENG_TR("engine.editor.palette.no_matching_files")));
         }
         else if (ImGui::BeginChild("##results", ImVec2(0.0f, row * static_cast<float>(visible) + 2.0f),
                                    ImGuiChildFlags_None)) {
@@ -297,7 +300,7 @@ void CommandPalette::draw(std::span<const PaletteItem> commands, std::span<const
                 // The recently used commands say so, as the editor this follows
                 // labels them.
                 if (commandsMode && query_.empty() && match.score >= 100000 - 64 && item.shortcut.empty()) {
-                    const char* label = "recently used";
+                    const char* label = core::tr(ENG_TR("engine.editor.palette.recently_used"));
                     ImGui::SameLine(right - ImGui::CalcTextSize(label).x - 6.0f);
                     ImGui::TextDisabled("%s", label);
                 }

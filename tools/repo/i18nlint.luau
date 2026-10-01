@@ -122,10 +122,57 @@ local EditorSinks: { [string]: { number } } = {
     -- What the status line says, from the editor and from what it runs.
     report = { 1 },
     refuse = { 1 },
+    -- **E4: the helpers and shapes the first pass could not see.**
+    iconBeginMenu = { 3 },
+    searchField = { 3 },
+    crumbButton = { 1 },
+    dragNumber = { 1, 6 },
+    strikeText = { 1 },
+    preferenceReset = { 3 },
+    beginEditorDialog = { 1 },
+    menuCommand = { 2 },
+    statusItem = { 4 },
+    welcomeLink = { 3 },
+    primaryButton = { 1 },
+    stringField = { 1, 2 },
+    findToggle = { 1, 2 },
+    scriptAction = { 3 },
+    drawIconPreviews = { 2 },
+    TableSetupColumn = { 1 },
+    Begin = { 1 },
+    -- A word measured is a word shown: measured in English, a translated
+    -- button is the wrong width.
+    CalcTextSize = { 1 },
+    -- A label built in a buffer, and a value's format with its unit in it.
+    snprintf = { 3 },
 }
+-- A stat's value and a number field's unit are formats: `statRow`'s second
+-- argument, `numberRow`'s fifth, `Combo`'s list of choices.
+EditorSinks.statRow = { 1, 2 }
+-- `Text("%s", cond ? "one" : "other")`: the words are the argument after the
+-- format.
+EditorSinks.Text = { 1, 2 }
+EditorSinks.TextDisabled = { 1, 2 }
+EditorSinks.TextWrapped = { 1, 2 }
+EditorSinks.TextColored = { 2, 3 }
+EditorSinks.BulletText = { 1, 2 }
+EditorSinks.SetItemTooltip = { 1, 2 }
+EditorSinks.SetTooltip = { 1, 2 }
+-- Lambdas a panel names its own rows with.
+EditorSinks.toggle = { 2, 4 }
+EditorSinks.opButton = { 3, 4 }
+EditorSinks.modeButton = { 3, 4 }
+EditorSinks.stepField = { 4, 5, 8 }
+EditorSinks.statusText = { 7 }
+EditorSinks.numberRow = { 1, 5 }
+EditorSinks.Combo = { 1, 3 }
+
+--- The sinks that are methods of the editor: `editor.report(...)` from the
+--- engine's loop. The call finder leaves `x.name(` alone for every other
+--- sink -- `table.row(` is not a row of the Properties panel.
+local MemberSinks: { [string]: boolean } = { report = true, refuse = true, shows = true }
 -- And `EditorStatus{...}`, braced: its first member is the line shown.
 local EditorRoot = "engine/app"
-local EditorBaselinePath = "tools/repo/i18n_editor_baseline.json"
 
 local CliExemptFiles: { [string]: boolean } = {
     -- The catalog loader's own failure path: same reason as the engine's.
@@ -372,10 +419,16 @@ end
 --- below exists so that the next version of that mistake fails loudly.
 local SinkCallsSeen = { count = 0 }
 
-local function eachCall(source: string, name: string, visit: (open: number, close: number, at: number) -> ())
+local function eachCall(
+    source: string,
+    name: string,
+    visit: (open: number, close: number, at: number) -> (),
+    member: boolean?
+)
     local index = 1
+    local before = if member then "[^%w_]" else "[^%w_.]"
     while true do
-        local start, finish = string.find(source, `[^%w_.]{name}%s*%(`, index)
+        local start, finish = string.find(source, `{before}{name}%s*%(`, index)
         if start == nil then
             break
         end
@@ -445,7 +498,7 @@ end
 --- and escapes are taken out.
 local function humanLiteral(text: string): boolean
     local shown = string.match(text, "^(.-)##") or text
-    shown = string.gsub(shown, "%%[%-%+ #0]*%d*%.?%d*[%a]", "")
+    shown = string.gsub(shown, "%%[%-%+ #0]*%d*%.?[%d%*]*[hlzjt]*[%a]", "")
     shown = string.gsub(shown, "\\x%x%x", "")
     shown = string.gsub(shown, "\\.", "")
     return string.find(shown, "%a%a") ~= nil
@@ -471,23 +524,92 @@ local function topLevelLiteral(text: string): string?
     return nil
 end
 
+--- **Every literal of an argument that is shown as it is written** (E4): at
+--- the argument's own level -- the arms of a `?:`, the pieces of a `+` -- and
+--- inside plain parentheses or a `std::string(...)` round one. A literal
+--- handed to any other call is that call's: a catalog key, a slot's name, a
+--- name looked up. The first pass read only an argument that BEGAN with a
+--- literal, and `mixed ? "mixed" : "select one part"` begins with a name.
+local Transparent: { [string]: boolean } = {
+    [""] = true,
+    ["std::string"] = true,
+    ["std::string_view"] = true,
+    ["string"] = true,
+    ["string_view"] = true,
+}
+
+local function shownLiterals(text: string): { string }
+    local found: { string } = {}
+    -- One entry a nesting level: whether a literal inside it is still shown.
+    local shown: { boolean } = {}
+    local index = 1
+    while index <= #text do
+        local c = string.sub(text, index, index)
+        if c == "(" then
+            local callee = string.match(string.sub(text, 1, index - 1), "([%w_:]*)%s*$") or ""
+            table.insert(shown, Transparent[callee] == true and (#shown == 0 or shown[#shown]))
+        elseif c == "{" or c == "[" then
+            table.insert(shown, false)
+        elseif c == ")" or c == "}" or c == "]" then
+            table.remove(shown)
+        elseif c == "'" then
+            index += if string.sub(text, index + 1, index + 1) == "\\" then 3 else 2
+        elseif c == '"' then
+            local scan = index + 1
+            while scan <= #text do
+                local inner = string.sub(text, scan, scan)
+                if inner == "\\" then
+                    scan += 1
+                elseif inner == '"' then
+                    break
+                end
+                scan += 1
+            end
+            if #shown == 0 or shown[#shown] then
+                table.insert(found, string.sub(text, index + 1, scan - 1))
+            end
+            index = scan
+        end
+        index += 1
+    end
+    return found
+end
+
+--- A helper's name that is another helper's in another file: `stringField`
+--- is a labelled text field in the script editor and a JSON reader in the
+--- export runner, whose second argument is a member's name.
+local SinkElsewhere: { [string]: { [string]: boolean } } = {
+    ["engine/app/src/export_runner.cpp"] = { stringField = true },
+    -- A value as the Properties panel writes it -- `nil`, `true`, `pos x, y,
+    -- z`, `rgb r, g, b` -- is a notation, the one a script reads back, and the
+    -- inspector's tests compare it.
+    ["engine/app/src/inspector.cpp"] = { snprintf = true },
+}
+
 --- **The editor's raw words, counted per file** (ADR 0145): each shown
 --- argument of an `EditorSinks` call, and the first member of an
 --- `EditorStatus{...}`, that is a literal with a word in it.
 local function editorLiterals(file: string): { { line: number, text: string } }
     local source = fs.readFileToString(file)
     local found: { { line: number, text: string } } = {}
+    local notHere = SinkElsewhere[string.gsub(file, "\\", "/")] or {}
     for sink, positions in EditorSinks do
+        if notHere[sink] then
+            continue
+        end
         eachCall(source, sink, function(open, close, _at)
             local arguments = topLevelArguments(source, open, close)
             for _, position in positions do
                 local argument = arguments[position]
-                local literal = if argument ~= nil then topLevelLiteral(argument.text) else nil
-                if literal ~= nil and humanLiteral(literal) then
-                    table.insert(found, { line = lineOf(source, argument.at), text = literal })
+                if argument ~= nil then
+                    for _, literal in shownLiterals(argument.text) do
+                        if humanLiteral(literal) then
+                            table.insert(found, { line = lineOf(source, argument.at), text = literal })
+                        end
+                    end
                 end
             end
-        end)
+        end, MemberSinks[sink])
     end
     local index = 1
     while true do
@@ -502,6 +624,73 @@ local function editorLiterals(file: string): { { line: number, text: string } }
         end
     end
     return found
+end
+
+--- **A sentence that reaches no sink** (E4): `message += " reference(s) were
+--- dropped"`, a status put together in a variable, a name in a table. No call
+--- finder reads those, so the editor's files are read whole: a literal with
+--- two words in it, outside a catalog key's own `ENG_TR(...)`, is prose --
+--- unless it is one of the things below that only look like it.
+---
+--- The list is the point. A command's id is the English it was first given
+--- and what a saved keybinding names; a heading's id is what the table and
+--- its tests know it by; a line of Luau the editor writes into a file is
+--- script. Each is data, said here once, and anything not here is a string
+--- nobody can translate.
+local EditorDataLiterals: { [string]: boolean } = {
+    -- Command ids (`CommandPalette`, the menus, `runCommand`).
+    ["File: New Scene"] = true,
+    ["File: New Project..."] = true,
+    ["File: Open Project..."] = true,
+    ["File: Go to File..."] = true,
+    ["File: Save Scene As..."] = true,
+    ["File: Close Stamp"] = true,
+    ["Preferences: Open Settings"] = true,
+    ["Preferences: Project Settings"] = true,
+    ["Preferences: Keyboard Shortcuts"] = true,
+    ["Edit: Paste Into"] = true,
+    ["Edit: Group as Folder"] = true,
+    ["View: Frame Selection"] = true,
+    ["View: Toggle Side Bar"] = true,
+    ["View: Reset Layout"] = true,
+    ["Run: Step One Tick"] = true,
+    -- Window ids a saved layout names.
+    ["Viewport Settings"] = true,
+    ["Collision Shapes"] = true,
+    -- A Properties heading's id (`propertyCategory`), and a theme's first name.
+    ["Default Agent"] = true,
+    ["Orbit Dark"] = true,
+    ["Orbit Light"] = true,
+    -- Luau the editor writes: a new script's text, the scene's definitions.
+    ["local module = {}\\n\\nreturn module\\n"] = true,
+    ['print(\\"Hello World!\\")\\n'] = true,
+    ["declare extern type "] = true,
+    ["export type "] = true,
+    ["declare function "] = true,
+    ["declare Instance: {\\n    new: "] = true,
+    ["declare workspace: "] = true,
+    ["\\ndeclare game: DataModel & {\\n"] = true,
+    -- Said before there is a catalog to say it from, and to a developer.
+    ["engine-host: cannot load the message catalog: "] = true,
+    ["[imgui-error] In window "] = true,
+    -- An error's `detail`: developer context, never localised (`error.h`).
+    ["the message is not valid JSON"] = true,
+    ["partition manifest"] = true,
+    ["this build"] = true,
+}
+
+--- Files that are data from end to end: the header a generated file starts
+--- with, written in Luau comments.
+local EditorDataFiles: { [string]: boolean } = {
+    ["engine/app/src/scene_definitions.cpp"] = true,
+}
+
+local function proseLiteral(text: string): boolean
+    local shown = string.match(text, "^(.-)##") or text
+    shown = string.gsub(shown, "%%[%-%+ #0]*%d*%.?[%d%*]*[hlzjt]*[%a]", "")
+    shown = string.gsub(shown, "\\x%x%x", "")
+    shown = string.gsub(shown, "\\.", " ")
+    return string.find(shown, "%a%a+ +%a%a+") ~= nil
 end
 
 --- The CLI half: `print` may not carry a string literal. Machine output goes
@@ -548,6 +737,114 @@ local function lintCliFile(file: string, findings: { Finding })
                 })
             end
         end)
+    end
+end
+
+--- **The CLI's sentences no `print` carries** (E5): a reason handed back in a
+--- table, a line given to a logger. Every literal of a CLI file with two words
+--- in it, outside a `tr(...)`, is prose -- unless it is named below as what it
+--- is: a file the CLI writes, a command line it quotes, a format it emits.
+local CliDataLiterals: { [string]: boolean } = {
+    -- Files the CLI writes: a launcher, the build's marker, a desktop entry.
+    ["@echo off\\r\\n"] = true,
+    ["Written by `ludwerk build`. This directory is cleared on every rebuild.\\n"] = true,
+    ["[Desktop Entry]"] = true,
+    -- Luau it writes for the analysis: type definitions.
+    ["declare Instance: {"] = true,
+    ["type InstanceClasses = {"] = true,
+    -- A folder's name on macOS, and the debug keystore's own.
+    ["Application Support"] = true,
+    ["Ludwerk Debug"] = true,
+    -- What `ludwerk test` emits for a machine: TAP and JUnit, with the
+    -- interpolations taken out as this lint reads them.
+    ['<?xml version="1.0" encoding="UTF-8"?>'] = true,
+    ['<testsuites tests="" failures="">'] = true,
+    ['  <testsuite name="conformance" tests="" failures="">'] = true,
+    ['    <testcase name=""/>'] = true,
+    ['    <testcase name="">'] = true,
+    ["TAP version 13"] = true,
+    ["not ok  - "] = true,
+    -- An assertion on the CLI's own code, for whoever is writing it.
+    ['progress: "" is not one of the documented steps'] = true,
+}
+
+--- Every string literal of a Luau source, each with its line: `"..."`,
+--- `'...'` and backtick strings, with `{...}` taken out of the last. Comments
+--- and long strings are stepped over -- a long string is a file's text.
+local function luauLiterals(source: string): { { text: string, line: number, at: number } }
+    local literals: { { text: string, line: number, at: number } } = {}
+    local size = #source
+    local index = 1
+    local line = 1
+    while index <= size do
+        local c = string.sub(source, index, index)
+        if c == "\n" then
+            line += 1
+            index += 1
+        elseif c == "-" and string.sub(source, index + 1, index + 1) == "-" then
+            local long = string.match(source, "^%-%-%[(=*)%[", index)
+            if long ~= nil then
+                local closing = string.find(source, "]" .. long .. "]", index, true)
+                local stop = if closing ~= nil then closing + #long + 1 else size
+                for _ in string.gmatch(string.sub(source, index, stop), "\n") do
+                    line += 1
+                end
+                index = stop + 1
+            else
+                local newline = string.find(source, "\n", index, true)
+                index = if newline ~= nil then newline else size + 1
+            end
+        elseif c == "[" and string.match(source, "^%[=*%[", index) ~= nil then
+            local level = string.match(source, "^%[(=*)%[", index) :: string
+            local closing = string.find(source, "]" .. level .. "]", index, true)
+            local stop = if closing ~= nil then closing + #level + 1 else size
+            for _ in string.gmatch(string.sub(source, index, stop), "\n") do
+                line += 1
+            end
+            index = stop + 1
+        elseif c == '"' or c == "'" or c == "`" then
+            local scan = index + 1
+            while scan <= size do
+                local inner = string.sub(source, scan, scan)
+                if inner == "\\" then
+                    scan += 1
+                elseif inner == c or inner == "\n" then
+                    break
+                end
+                scan += 1
+            end
+            local text = string.sub(source, index + 1, scan - 1)
+            if c == "`" then
+                text = string.gsub(text, "%b{}", "")
+            end
+            table.insert(literals, { text = text, line = line, at = index })
+            index = scan + 1
+        else
+            index += 1
+        end
+    end
+    return literals
+end
+
+local function cliProse(file: string, findings: { Finding })
+    if CliExemptFiles[(string.gsub(file, "\\", "/"))] then
+        return
+    end
+    local source = fs.readFileToString(file)
+    for _, literal in luauLiterals(source) do
+        if not proseLiteral(literal.text) or CliDataLiterals[literal.text] then
+            continue
+        end
+        -- A key's own parameters, a module's path, a test's name.
+        local before = string.sub(source, math.max(1, literal.at - 16), literal.at - 1)
+        if string.find(before, "tr%(%s*$") ~= nil or string.find(before, "require%(%s*$") ~= nil then
+            continue
+        end
+        table.insert(findings, {
+            file = file,
+            line = literal.line,
+            detail = `"{literal.text}" is a sentence outside the catalog; use tr(key), or name it in CliDataLiterals`,
+        })
     end
 end
 
@@ -660,6 +957,29 @@ local KeySpine: { [string]: boolean } = { err = true, warn = true, info = true }
 --- through `ENG_TR`, where `collectKeyUses` already has it, and widening the
 --- shape to reach them would cost the precision that makes this sweep quiet
 --- enough to keep.
+--- The editor's sentences no sink reaches: every two-word literal of `file`
+--- that is not a catalog key's own and not named as data.
+local function editorProse(file: string): { { line: number, text: string } }
+    local key = string.gsub(file, "\\", "/")
+    if EditorDataFiles[key] then
+        return {}
+    end
+    local source = fs.readFileToString(file)
+    local found: { { line: number, text: string } } = {}
+    for _, literal in stringLiterals(source) do
+        if not proseLiteral(literal.text) or EditorDataLiterals[literal.text] then
+            continue
+        end
+        -- A key is `ENG_TR("...")`; an include is a path.
+        local before = string.sub(source, math.max(1, literal.at - 24), literal.at - 1)
+        if string.find(before, "ENG_TR%(%s*$") ~= nil or string.find(before, "#include%s*$") ~= nil then
+            continue
+        end
+        table.insert(found, { line = lineOf(source, literal.at), text = literal.text })
+    end
+    return found
+end
+
 local function looksLikeMessageKey(text: string): boolean
     local segments: { string } = {}
     for segment in string.gmatch(text, "[^.]+") do
@@ -787,48 +1107,37 @@ local function main()
     end
     for _, file in cliFiles do
         lintCliFile(file, findings)
+        cliProse(file, findings)
     end
 
     for _, finding in findings do
         print(`i18nlint: {finding.file}:{finding.line}: {finding.detail} (R3)`)
     end
 
-    -- **The editor, held to a baseline that only shrinks** (ADR 0145): every
-    -- file's count of raw words may not grow, and a file that lost some must
-    -- say so in the baseline, so the next one cannot spend them.
-    local baseline: { [string]: number } = {}
-    if fs.exists(EditorBaselinePath) then
-        local decoded = json.asObject(json.deserialize(fs.readFileToString(EditorBaselinePath)))
-        if decoded then
-            for key, value in decoded :: json.Object do
-                if typeof(key) == "string" and typeof(value) == "number" then
-                    baseline[key] = value
-                end
-            end
-        end
-    end
+    -- **The editor, with none allowed** (ADR 0145, closed by E5): the baseline
+    -- that let a file keep the raw words it had reached zero and went. A
+    -- literal an editor sink shows, or a sentence in an editor file, fails.
     local editorOver = 0
-    local editorUnder = 0
     local editorTotal = 0
     for _, file in collectFiles(EditorRoot, EngineSuffixes) do
         local key = string.gsub(file, "\\", "/")
         local literals = editorLiterals(file)
+        -- The sentences no sink reaches, counted with the words that one does.
+        if string.sub(key, -4) == ".cpp" then
+            for _, prose in editorProse(file) do
+                table.insert(literals, prose)
+            end
+        end
         editorTotal += #literals
-        local allowed = baseline[key] or 0
-        if #literals > allowed then
+        if #literals > 0 then
             editorOver += 1
-            print(`i18nlint: {key}: {#literals} raw editor string(s), {allowed} allowed (ADR 0145, R3):`)
+            print(`i18nlint: {key}: {#literals} raw editor string(s) (ADR 0145, R3):`)
             for _, literal in literals do
                 print(`i18nlint:   {key}:{literal.line}: "{literal.text}"`)
             end
-        elseif #literals < allowed then
-            editorUnder += 1
-            print(
-                `i18nlint: {key}: {#literals} raw editor string(s) now -- lower its baseline from {allowed} in {EditorBaselinePath}`
-            )
         end
     end
-    print(`i18nlint: {editorTotal} raw editor string(s) left to translate (ADR 0145)`)
+    print(`i18nlint: {editorTotal} raw editor string(s) (ADR 0145)`)
 
     -- A key on the wire is a reference like any other, so it counts here or the
     -- unreferenced tally would name an entry that something does use.
@@ -881,10 +1190,7 @@ local function main()
         fail(`{#findings} hardcoded user-facing string(s) — every one goes through a catalog (R3)`)
     end
     if editorOver > 0 then
-        fail(`{editorOver} file(s) put more raw words in the editor than {EditorBaselinePath} allows (R3)`)
-    end
-    if editorUnder > 0 then
-        fail(`{editorUnder} file(s) have fewer raw words than {EditorBaselinePath} says: lower it, so it only shrinks`)
+        fail(`{editorOver} file(s) show the editor's reader words that are not the catalog's (R3)`)
     end
 end
 

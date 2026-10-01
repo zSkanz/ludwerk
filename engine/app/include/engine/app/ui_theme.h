@@ -148,6 +148,10 @@ struct Theme
 // Every theme this build carries, in the order the Preferences dialog lists
 // them. The first is the default.
 [[nodiscard]] std::span<const Theme> themes() noexcept;
+// A theme's name as the reader's language has it (ADR 0145): `Theme::name` is
+// the English it was first given, and what a theme this build does not know
+// by id still shows.
+[[nodiscard]] std::string shownName(const Theme& theme);
 
 // The theme called `id`, or the default when nothing is. A file naming a theme
 // this build does not have is a file from another build, not a broken one --

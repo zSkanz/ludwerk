@@ -17,15 +17,18 @@
 	it does not understand is how a `[dev] port` ends up not applying.
 ]]
 
+local catalog = require("./catalog")
+
+local tr = catalog.tr
+
 export type Value = string | number | boolean | { Value }
 export type Table = { [string]: any }
 
 export type Result = {
     ok: boolean,
     table: Table,
-    -- Developer-facing: a malformed config is a startup failure and never
-    -- something a player sees, so this is exempt from R3 the same way the
-    -- engine's JSON diagnostics are.
+    -- What is wrong with the file, in the reader's language (R3, E5): the
+    -- person who reads it is the one who wrote the `project.toml`.
     diagnostic: string,
     line: number,
 }
@@ -87,7 +90,7 @@ local function parseBasicString(text: string): Parsed
             elseif escape == '"' or escape == "\\" then
                 table.insert(out, escape)
             else
-                return { value = nil, rest = text, error = `unsupported escape \\{escape}` }
+                return { value = nil, rest = text, error = tr("cli.toml.err.unsupported_escape", { escape = escape }) }
             end
             index += 2
         elseif c == '"' then
@@ -97,13 +100,13 @@ local function parseBasicString(text: string): Parsed
             index += 1
         end
     end
-    return { value = nil, rest = text, error = "unterminated string" }
+    return { value = nil, rest = text, error = tr("cli.toml.err.unterminated_string") }
 end
 
 local function parseLiteralString(text: string): Parsed
     local closing = string.find(text, "'", 2, true)
     if closing == nil then
-        return { value = nil, rest = text, error = "unterminated literal string" }
+        return { value = nil, rest = text, error = tr("cli.toml.err.unterminated_literal") }
     end
     return { value = string.sub(text, 2, closing - 1), rest = string.sub(text, closing + 1) }
 end
@@ -129,7 +132,7 @@ local function parseArray(text: string): Parsed
             return { value = items, rest = string.sub(rest, 2) }
         end
         if head ~= "," then
-            return { value = nil, rest = rest, error = "expected , or ] in an array" }
+            return { value = nil, rest = rest, error = tr("cli.toml.err.array_separator") }
         end
         rest = trim(string.sub(rest, 2))
         -- A trailing comma before the bracket is legal TOML.
@@ -155,7 +158,7 @@ function parseValue(text: string): Parsed
 
     local token = string.match(body, "^[^,%]%s]+")
     if token == nil then
-        return { value = nil, rest = body, error = "expected a value" }
+        return { value = nil, rest = body, error = tr("cli.toml.err.expected_a_value") }
     end
     local rest = string.sub(body, #token + 1)
 
@@ -172,7 +175,7 @@ function parseValue(text: string): Parsed
         return { value = number, rest = rest }
     end
 
-    return { value = nil, rest = body, error = `not a value this reader supports: {token}` }
+    return { value = nil, rest = body, error = tr("cli.toml.err.unsupported_value", { token = token }) }
 end
 
 --- Splits `a.b.c` into its parts, honouring quoted segments.
@@ -248,7 +251,7 @@ local function parse(text: string): Result
             return {
                 ok = false,
                 table = root,
-                diagnostic = "arrays of tables are not supported in project.toml",
+                diagnostic = tr("cli.toml.err.arrays_of_tables"),
                 line = lineNumber,
             }
         end
@@ -256,11 +259,16 @@ local function parse(text: string): Result
         if string.sub(line, 1, 1) == "[" then
             local closing = string.find(line, "]", 2, true)
             if closing == nil then
-                return { ok = false, table = root, diagnostic = "unterminated table header", line = lineNumber }
+                return {
+                    ok = false,
+                    table = root,
+                    diagnostic = tr("cli.toml.err.unterminated_header"),
+                    line = lineNumber,
+                }
             end
             local parts = splitKey(string.sub(line, 2, closing - 1))
             if parts == nil then
-                return { ok = false, table = root, diagnostic = "malformed table header", line = lineNumber }
+                return { ok = false, table = root, diagnostic = tr("cli.toml.err.malformed_header"), line = lineNumber }
             end
             current = descend(root, parts)
             continue
@@ -268,12 +276,12 @@ local function parse(text: string): Result
 
         local equals = string.find(line, "=", 1, true)
         if equals == nil then
-            return { ok = false, table = root, diagnostic = "expected key = value", line = lineNumber }
+            return { ok = false, table = root, diagnostic = tr("cli.toml.err.expected_key_value"), line = lineNumber }
         end
 
         local parts = splitKey(string.sub(line, 1, equals - 1))
         if parts == nil then
-            return { ok = false, table = root, diagnostic = "malformed key", line = lineNumber }
+            return { ok = false, table = root, diagnostic = tr("cli.toml.err.malformed_key"), line = lineNumber }
         end
 
         local parsed = parseValue(string.sub(line, equals + 1))
@@ -284,7 +292,7 @@ local function parse(text: string): Result
             return {
                 ok = false,
                 table = root,
-                diagnostic = `trailing text after the value: {trim(parsed.rest)}`,
+                diagnostic = tr("cli.toml.err.trailing_text", { text = trim(parsed.rest) }),
                 line = lineNumber,
             }
         end

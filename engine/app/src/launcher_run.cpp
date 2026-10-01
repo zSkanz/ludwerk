@@ -26,6 +26,7 @@
 #include "engine/app/launcher.h"
 #include "engine/asset/image.h"
 #include "engine/core/build_info.h"
+#include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/platform/event.h"
@@ -162,7 +163,8 @@ std::optional<core::EngineError> runLauncher(const EngineOptions& options)
             if (isProjectDirectory(chosen))
                 view.open = chosen;
             else
-                view.message = chosen.string() + " is not a project: it has no project.toml and no src/client.";
+                view.message =
+                    core::tr(ENG_TR("engine.editor.launcher_open.not_a_project"), {{"path", chosen.string()}});
         }
 
         if (view.browse) {

@@ -5,6 +5,7 @@
 #include <span>
 #include <sstream>
 
+#include "engine/core/i18n.h"
 #include "engine/core/toml.h"
 #include "engine/core/toml_edit.h"
 #include "engine/platform/file.h"
@@ -235,8 +236,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
             config.version = *value;
         }
         else if (diagnostic != nullptr) {
-            *diagnostic = std::string(projectRoot.string()) + "/project.toml: [project] version \"" +
-                          std::string(*value) + "\" is not X.Y.Z";
+            *diagnostic = core::tr(ENG_TR("engine.editor.project_settings.version_not_semver"),
+                                   {{"project", projectRoot.string()}, {"version", *value}});
         }
     }
 
@@ -302,11 +303,12 @@ bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_v
     // its window.
     std::string text;
     if (std::filesystem::exists(file) && !readFile(file, text))
-        return fail("could not read " + file.string());
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_read"), {{"path", file.string()}}));
 
     const std::optional<std::string> edited = core::setTomlValue(text, key, rendered);
     if (!edited.has_value())
-        return fail("could not place " + std::string(key) + " in " + file.string());
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_place"),
+                             {{"key", key}, {"path", file.string()}}));
 
     // **Parsed before it is written.** The edit is textual, so a value somebody
     // typed can produce a file the reader refuses -- and the failure mode of
@@ -314,11 +316,12 @@ bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_v
     // whose whole job is to be safe to poke at.
     core::TomlDocument check;
     if (const core::TomlDocument::ParseResult result = check.parse(*edited, file.string()); !result.ok) {
-        return fail("that would leave " + file.filename().string() + " unreadable: " + result.diagnostic);
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.would_be_unreadable"),
+                             {{"file", file.filename().string()}, {"reason", result.diagnostic}}));
     }
 
     if (!platform::writeTextFile(file, *edited))
-        return fail("could not write " + file.string());
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_write"), {{"path", file.string()}}));
     return true;
 }
 

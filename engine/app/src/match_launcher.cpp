@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "engine/core/i18n.h"
+
 namespace engine::app {
 
 std::vector<platform::WindowPlacement> MatchLauncher::tiles(const platform::WindowPlacement& area, int count)
@@ -51,7 +53,8 @@ std::vector<MatchCommand> MatchLauncher::commands(const MatchPlan& plan)
 
     int player = 0;
     MatchCommand authority;
-    authority.name = plan.dedicated ? "Server" : "Host";
+    authority.name =
+        core::tr(plan.dedicated ? ENG_TR("engine.editor.match.server") : ENG_TR("engine.editor.match.host"));
     authority.arguments = {host, project, (plan.dedicated ? "--serve=" : "--host=") + port,
                            "--label=" + authority.name};
     logOf(plan.dedicated ? "server.log" : "host.log", authority.arguments);
@@ -63,7 +66,7 @@ std::vector<MatchCommand> MatchLauncher::commands(const MatchPlan& plan)
     const int clients = plan.dedicated ? players : players - 1;
     for (int index = 1; index <= clients; ++index) {
         MatchCommand client;
-        client.name = "Client " + std::to_string(index);
+        client.name = core::tr(ENG_TR("engine.editor.match.client"), {{"index", static_cast<core::i64>(index)}});
         client.arguments = {host, project, "--join=127.0.0.1:" + port, "--label=" + client.name};
         logOf("client" + std::to_string(index) + ".log", client.arguments);
         windowOf(player++, client.arguments);

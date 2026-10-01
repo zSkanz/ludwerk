@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
 #include "engine/platform/file.h"
@@ -207,7 +208,7 @@ std::string parseAdbDevice(std::string_view output)
             continue;
         const std::size_t model = line.find("model:");
         if (model == std::string_view::npos)
-            return "Android device";
+            return core::tr(ENG_TR("engine.editor.export_window.android_device"));
         std::string name(line.substr(model + 6, line.find(' ', model) - (model + 6)));
         std::replace(name.begin(), name.end(), '_', ' ');
         while (!name.empty() && (name.back() == '\r' || name.back() == ' '))

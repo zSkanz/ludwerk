@@ -22,6 +22,10 @@ export type Node =
 
 export type Layout = { indent: number }
 
+local catalog = require("./catalog")
+
+local tr = catalog.tr
+
 local JsonDoc = {}
 
 local function fail(text: string, at: number, what: string): never
@@ -29,7 +33,7 @@ local function fail(text: string, at: number, what: string): never
     for _ in string.gmatch(string.sub(text, 1, at), "\n") do
         line += 1
     end
-    error(`json: {what} at line {line}`, 0)
+    error(tr("cli.json.err.at_line", { what = what, line = line }), 0)
 end
 
 local function skipSpace(text: string, at: number): number
@@ -55,7 +59,7 @@ local function readString(text: string, at: number): (string, string, number)
     while true do
         local char = string.sub(text, index, index)
         if char == "" then
-            fail(text, at, "an unterminated string")
+            fail(text, at, tr("cli.json.err.unterminated_string"))
         end
         if char == '"' then
             break
@@ -66,14 +70,14 @@ local function readString(text: string, at: number): (string, string, number)
                 local hex = string.sub(text, index + 2, index + 5)
                 local code = tonumber(hex, 16)
                 if code == nil then
-                    fail(text, index, "a bad \\u escape")
+                    fail(text, index, tr("cli.json.err.bad_unicode_escape"))
                 end
                 table.insert(out, utf8.char(code :: number))
                 index += 6
             else
                 local plain = Escapes[escape]
                 if plain == nil then
-                    fail(text, index, "a bad escape")
+                    fail(text, index, tr("cli.json.err.bad_escape"))
                 end
                 table.insert(out, plain)
                 index += 2
@@ -99,12 +103,12 @@ local function readValue(text: string, at: number): (Node, number)
         while true do
             at = skipSpace(text, at)
             if string.sub(text, at, at) ~= '"' then
-                fail(text, at, "a key that is not a string")
+                fail(text, at, tr("cli.json.err.key_not_a_string"))
             end
             local key, _, afterKey = readString(text, at)
             at = skipSpace(text, afterKey)
             if string.sub(text, at, at) ~= ":" then
-                fail(text, at, "a missing ':'")
+                fail(text, at, tr("cli.json.err.missing_colon"))
             end
             local value, afterValue = readValue(text, at + 1)
             if values[key] == nil then
@@ -117,7 +121,7 @@ local function readValue(text: string, at: number): (Node, number)
                 return { kind = "object", keys = keys, values = values }, at + 1
             end
             if separator ~= "," then
-                fail(text, at, "a missing ',' in an object")
+                fail(text, at, tr("cli.json.err.missing_comma_object"))
             end
             at += 1
         end
@@ -136,7 +140,7 @@ local function readValue(text: string, at: number): (Node, number)
                 return { kind = "array", items = items }, at + 1
             end
             if separator ~= "," then
-                fail(text, at, "a missing ',' in an array")
+                fail(text, at, tr("cli.json.err.missing_comma_array"))
             end
             at += 1
         end
@@ -152,7 +156,7 @@ local function readValue(text: string, at: number): (Node, number)
     end
     local first, last = string.find(text, "^-?%d+%.?%d*[eE]?[-+]?%d*", at)
     if first == nil then
-        fail(text, at, "an unexpected character")
+        fail(text, at, tr("cli.json.err.unexpected_character"))
     end
     return { kind = "number", raw = string.sub(text, first :: number, last :: number) }, (last :: number) + 1
 end
@@ -162,7 +166,7 @@ end
 function JsonDoc.parse(text: string): (Node, Layout)
     local node, after = readValue(text, 1)
     if skipSpace(text, after) <= #text then
-        fail(text, after, "trailing text")
+        fail(text, after, tr("cli.json.err.trailing_text"))
     end
     local indent = 0
     local secondLine = string.match(text, "\n( +)")

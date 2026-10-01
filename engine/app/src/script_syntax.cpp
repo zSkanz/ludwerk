@@ -16,6 +16,7 @@
 
 #include "engine/app/script_complete.h"
 #include "engine/app/script_document.h"
+#include "engine/core/i18n.h"
 #include "engine/script/stdlib.h"
 
 #if ENG_LUAU_COMPILER
@@ -739,7 +740,7 @@ public:
     const auto* index = call->func->as<Luau::AstExprIndexName>();
     const auto* owner = index != nullptr ? index->expr->as<Luau::AstExprGlobal>() : nullptr;
     if (owner == nullptr)
-        return "the call";
+        return core::tr(ENG_TR("engine.editor.script.check.the_call"));
     return std::string(owner->name.value) + "." + index->index.value;
 }
 
@@ -767,12 +768,12 @@ public:
                                 before->location.end.line == call->location.begin.line;
             if (joined) {
                 const std::string name = before->vars.data[0]->name.value;
-                warn(before->location, "`local " + name + "` is declared without a value, and " + calleeName(call) +
-                                           "(...) after it is a separate statement -- a missing `=`?");
+                warn(before->location, core::tr(ENG_TR("engine.editor.script.check.missing_assignment"),
+                                                {{"name", name}, {"callee", calleeName(call)}}));
             }
             else if (pureCall(call)) {
                 warn(call->location,
-                     "the result of " + calleeName(call) + "(...) is not used, so this call does nothing");
+                     core::tr(ENG_TR("engine.editor.script.check.result_unused"), {{"callee", calleeName(call)}}));
             }
         }
         return true;
@@ -806,8 +807,7 @@ public:
                 .length = where.begin.line == where.end.line && where.end.column > where.begin.column
                               ? static_cast<core::u32>(where.end.column - where.begin.column)
                               : 0,
-                .message = std::string("Promise.") + std::string(method) +
-                           " ignores what its executor returns: call resolve(...), or use Promise.try",
+                .message = core::tr(ENG_TR("engine.editor.script.check.promise_executor_return"), {{"method", method}}),
                 .severity = Severity::Warning,
             });
         }
@@ -817,8 +817,8 @@ public:
     bool visit(Luau::AstExprGlobal* node) override
     {
         if (!known(node->name.value))
-            report(node->location, std::string("unknown global `") + node->name.value +
-                                       "` -- nothing declares it, and the globals table is frozen");
+            report(node->location, core::tr(ENG_TR("engine.editor.script.check.unknown_global"),
+                                            {{"name", std::string_view(node->name.value)}}));
         return true;
     }
 
@@ -853,7 +853,7 @@ public:
             // would leave somebody no way to say so.
             if (!name.empty() && name.front() == '_')
                 continue;
-            report(local->location, std::string("`") + std::string(name) + "` is never used");
+            report(local->location, core::tr(ENG_TR("engine.editor.script.check.never_used"), {{"name", name}}));
         }
     }
 

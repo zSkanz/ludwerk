@@ -271,7 +271,7 @@ void SurfaceCompiler::compile(const std::string& urn, rhi::ShaderFormat format)
             resolved.kind == asset::AssetKind::Surface ? asset::decodeSurface(resolved.bytes) : std::nullopt;
         const asset::SurfaceCode* code = packed.has_value() ? packed->code(targetOf(format)) : nullptr;
         if (code == nullptr) {
-            errors.push_back(SurfaceError{urn, 0, "the pack holds no bytecode of it for this backend"});
+            errors.push_back(SurfaceError{urn, 0, core::tr(ENG_TR("engine.editor.surface.no_bytecode_for_backend"))});
             finish(false);
             return;
         }
@@ -297,7 +297,7 @@ void SurfaceCompiler::compile(const std::string& urn, rhi::ShaderFormat format)
     }
 
     if (resolved.source != asset::ResolvedContent::Source::Loose) {
-        errors.push_back(SurfaceError{urn, 0, "not a file this editor can compile"});
+        errors.push_back(SurfaceError{urn, 0, core::tr(ENG_TR("engine.editor.surface.not_a_file_to_compile"))});
         finish(false);
         return;
     }

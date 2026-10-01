@@ -127,7 +127,7 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
             const std::filesystem::path to = m_contentRoot / std::filesystem::path(folder) / name;
             if (!platform::readFile(m_contentRoot / std::filesystem::path(entry.urn), bytes) ||
                 !platform::createDirectories(to.parent_path()) || !platform::writeFile(to, bytes)) {
-                note = "could not copy " + entry.urn;
+                note = core::tr(ENG_TR("engine.editor.terrain.save.could_not_copy"), {{"file", entry.urn}});
                 return false;
             }
             entry.urn = folder + "/" + name;
@@ -182,20 +182,21 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
     if (!platform::writeFileDurable(
             m_contentRoot / std::filesystem::path(wanted),
             std::span<const std::byte>(reinterpret_cast<const std::byte*>(indexText.data()), indexText.size()))) {
-        note = "could not write " + wanted;
+        note = core::tr(ENG_TR("engine.editor.terrain.save.could_not_write"), {{"file", wanted}});
         return false;
     }
     // Emptied cells go now that no index names them (audit A12).
     for (const asset::ChunkIndexEntry& entry : saved.emptied)
         writer.remove(entry);
     if (!saved.ok) {
-        note = "some of the terrain's cells could not be written";
+        note = core::tr(ENG_TR("engine.editor.terrain.save.cells_unwritten"));
         return false;
     }
-    note = "terrain: " + std::to_string(saved.written) + " cell(s) written, " + std::to_string(saved.unchanged) +
-           " unchanged";
-    if (saved.removed > 0)
-        note += ", " + std::to_string(saved.removed) + " emptied";
+    note = core::tr(saved.removed > 0 ? ENG_TR("engine.editor.terrain.save.cells_written_emptied")
+                                      : ENG_TR("engine.editor.terrain.save.cells_written"),
+                    {{"count", static_cast<core::i64>(saved.written)},
+                     {"unchanged", static_cast<core::i64>(saved.unchanged)},
+                     {"emptied", static_cast<core::i64>(saved.removed)}});
     return true;
 }
 

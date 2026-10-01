@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
 #include "engine/core/log.h"
@@ -203,6 +204,19 @@ constexpr Theme kThemes[]{kDark, kLight, kOrbitDark, kOrbitLight};
 }
 
 } // namespace
+
+std::string shownName(const Theme& theme)
+{
+    if (theme.id == "dark")
+        return core::tr(ENG_TR("engine.editor.theme.dark"));
+    if (theme.id == "light")
+        return core::tr(ENG_TR("engine.editor.theme.light"));
+    if (theme.id == "orbit-dark")
+        return core::tr(ENG_TR("engine.editor.theme.orbit_dark"));
+    if (theme.id == "orbit-light")
+        return core::tr(ENG_TR("engine.editor.theme.orbit_light"));
+    return std::string(theme.name);
+}
 
 std::span<const Theme> themes() noexcept
 {

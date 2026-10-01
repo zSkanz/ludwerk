@@ -15,7 +15,7 @@ TEST_CASE("every script colour and command has a name, and no two share one")
     std::set<std::string_view> colours;
     for (const ScriptColorInfo& info : scriptColorInfo()) {
         CHECK_FALSE(info.id.empty());
-        CHECK_FALSE(info.label.empty());
+        CHECK(info.label.hash != 0u);
         CHECK(colours.insert(info.id).second);
     }
     std::set<std::string_view> actions;
