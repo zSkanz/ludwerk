@@ -11,9 +11,9 @@
 // `--rhi=null` have no GPU device, and a headless run has no window. That is a
 // normal outcome, not a failure, and `active()` is how a caller asks.
 //
-// R3 does not apply to what this draws. The overlay exists for whoever is
-// building the engine, never for a player, so its labels are literals rather
-// than catalog keys -- the same reason a GPU debug-group name is one.
+// **R3 applies to what this draws** (ADR 0145, superseding 0046's
+// exemption): the editor will ship in other languages, so every word it shows
+// is a catalog key. `tools/repo/i18n_editor_baseline.json` counts what is left.
 #pragma once
 
 #include <span>

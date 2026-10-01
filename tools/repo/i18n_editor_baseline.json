@@ -1,0 +1,3 @@
+{
+  "$comment": "ADR 0145: how many raw words each editor file may still show, by the lint's editor sinks. Only ever lowered; tools/repo/i18nlint.luau fails a file that shows more, and one that shows fewer until this says so. A file not listed may show none."
+}

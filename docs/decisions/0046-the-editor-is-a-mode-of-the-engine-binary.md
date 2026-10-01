@@ -76,6 +76,10 @@ Three consequences follow and are part of this decision:
   (`engine/app/src/debug_overlay.cpp:713`). That work would be a UI framework,
   not an editor.
 
+**Superseded by [0145](0145-the-editor-speaks-through-the-catalog-too.md):
+the editor speaks through the catalog too** -- the owner, 2026-09-29: it will
+ship in other languages. What follows was the decision until then.
+
 **R3 does not apply to what the editor draws**, on the same grounds
 `debug_overlay.h:14-16` already claims for the overlay: it exists for whoever is
 building a game, never for a player. Strings a *game* shows still obey R3, and

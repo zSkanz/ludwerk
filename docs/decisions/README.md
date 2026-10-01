@@ -86,7 +86,7 @@ What becomes easier/harder; costs accepted; follow-ups.
 | [0043](0043-per-instance-vertex-stepping.md) | The frozen RHI gains per-instance vertex stepping, and nothing else |
 | [0044](0044-graphics-settings-are-host-settings.md) | Graphics settings are host settings, in three layers |
 | [0045](0045-a-packaged-game-is-a-folder-that-ships-source.md) | A packaged game is a folder, and it ships Luau source |
-| [0046](0046-the-editor-is-a-mode-of-the-engine-binary.md) | The editor is a mode of the engine binary, drawn in ImGui |
+| [0046](0046-the-editor-is-a-mode-of-the-engine-binary.md) | The editor is a mode of the engine binary, drawn in ImGui; its exemption from R3 superseded by 0145 |
 | [0047](0047-the-world-is-data-and-scripts-are-behaviour.md) | The world is data and scripts are behaviour |
 | [0048](0048-content-is-the-source-and-an-instance-is-a-link-to-it.md) | Content is the source, an instance is a link to it, and editing breaks the link |
 | [0049](0049-a-stamp-is-a-source-and-an-instance-carries-its-mark.md) | A Stamp is a source, an instance carries its mark, and editing it breaks the mark |
@@ -184,3 +184,4 @@ What becomes easier/harder; costs accepted; follow-ups.
 | [0142](0142-terrain-shadows-are-pushed-by-their-slope.md) | The terrain culls back faces in the shadow pass and is pushed by its own depth slope times the filter reach, plus a texel, up to N.L 0.1, in cascades and local tiles; contact shadows ignore the plane a ray starts on; the grain noise hashes its lattice by integers; `--debug-view=shadow` and `bend` with `imgshadow` and `imgsteps` prove them (amends 0082) |
 | [0143](0143-terrain-chunk-colliders-carry-a-band-so-their-seams-are-inside.md) | Each terrain chunk's collider carries a band of its neighbours' triangles that only lends its edges, refused in contacts; dynamic bodies and characters remove internal edges; chosen over a compound, a ring and a listener by a harness driving balls, characters and Jolt's vehicle across seams (amends 0066, 0082) |
 | [0144](0144-ground-is-drawn-from-the-whole-terrain-and-streaming-governs-only-what-is-resident.md) | A streamed terrain is drawn whole: a node whose ground is not resident is built from its cells read from disk, by the same coarse-level function, a row of cells at a time; chunk digests are kept so nothing rebuilds as cells stream in; render only (amends 0053, 0140) |
+| [0145](0145-the-editor-speaks-through-the-catalog-too.md) | R3 reaches the editor: every word it shows is a catalog key, `i18nlint` reads the editor's ImGui calls and helpers, and a per-file baseline of raw words only shrinks (supersedes 0046's exemption) |

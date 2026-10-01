@@ -824,8 +824,8 @@ private:
 // silently dropped four references is a save somebody should be told about.
 struct EditorStatus
 {
-    // Shown until something else happens. Not a catalog key: R3 does not govern
-    // what an editor draws (ADR 0046), and this text names paths and counts.
+    // Shown until something else happens. **Already in the reader's language**
+    // (ADR 0145): made with `core::tr`, the paths and counts in its slots.
     std::string message;
     bool failed = false;
 };

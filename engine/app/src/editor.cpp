@@ -239,7 +239,7 @@ void Editor::play(scene::World& world)
     // one would mean pressing play and finding the view somewhere they left it a
     // session ago, with nothing on screen saying why.
     m_cameraDetached = false;
-    m_status = EditorStatus{"playing", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.playing")), false};
 }
 
 void Editor::setPaused(bool paused) noexcept
@@ -273,7 +273,7 @@ void Editor::stop(scene::World& world, Inspector& inspector)
     inspector.pruneDead(world);
     inspector.onWorldRestored();
 
-    m_status = EditorStatus{"stopped -- the world is back where you pressed play", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stopped_the_world_is_back")), false};
 }
 
 bool Editor::save(scene::World& world, const std::filesystem::path& path)
@@ -282,7 +282,7 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // game did -- parts its scripts made, parts it destroyed -- and saving it
     // made every one of those the scene's: duplicated at the next run, or gone.
     if (m_run != RunState::Editing) {
-        m_status = EditorStatus{"stop the game first -- what is on screen is the game running, not the scene", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stop_the_game_first_what")), true};
         return false;
     }
 
@@ -290,7 +290,9 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // written before them would name cells that are not there yet.
     std::string terrainNote;
     if (m_terrainSaver && !m_terrainSaver(world, path, terrainNote)) {
-        m_status = EditorStatus{"could not write the terrain's cells: " + terrainNote, true};
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.status.could_not_write_the_terrain"), {{"terrain_note", terrainNote}}),
+            true};
         return false;
     }
     // The scripts' files next, for the reason the cells come first: the scene
@@ -307,7 +309,8 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     const std::string text = scene::writeScene(world, &report, &stamps);
 
     if (!platform::createDirectories(path.parent_path()) || !platform::writeTextFileDurable(path, text)) {
-        m_status = EditorStatus{"could not write " + path.string(), true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path.string()}}), true};
         return false;
     }
 
@@ -327,7 +330,8 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
         const std::filesystem::path global = m_content.root() / "global.json";
         if (const std::string globalText = scene::writeGlobal(world, nullptr, &stamps); !globalText.empty()) {
             if (!platform::writeTextFileDurable(global, globalText)) {
-                m_status = EditorStatus{"could not write " + global.string(), true};
+                m_status = EditorStatus{
+                    core::tr(ENG_TR("engine.editor.status.could_not_write_2"), {{"global", global.string()}}), true};
                 return false;
             }
         }
@@ -385,7 +389,8 @@ bool Editor::load(scene::World& world, const std::filesystem::path& path, Inspec
 {
     std::string text;
     if (!platform::readTextFile(path, text)) {
-        m_status = EditorStatus{"could not read " + path.string(), true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", path.string()}}), true};
         return false;
     }
 
@@ -509,7 +514,8 @@ void Editor::setFolderColor(scene::World& world, core::InstanceId id, std::optio
     if (!world.alive(id))
         return;
 
-    m_history.record(world, color.has_value() ? "Colour" : "Clear Colour");
+    m_history.record(world, color.has_value() ? core::tr(ENG_TR("engine.editor.history.colour"))
+                                              : core::tr(ENG_TR("engine.editor.history.clear_colour")));
     const core::NameAtom atom = world.atoms().intern(FolderColorAttribute);
     // A `Nil` value removes it, which the world's own setter documents -- so
     // clearing a colour is the same call as setting one and there is no second
@@ -1045,7 +1051,7 @@ bool Editor::undo(scene::World& world, Inspector& inspector)
 
     // "Undone: Edit CFrame" -- what the step was, as the history names it (the
     // owner: "undid Edit" read strangely).
-    m_status = EditorStatus{"Undone: " + label, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.undone"), {{"label", label}}), false};
     return true;
 }
 
@@ -1061,7 +1067,7 @@ bool Editor::redo(scene::World& world, Inspector& inspector)
     inspector.pruneDead(world);
     inspector.onWorldRestored();
 
-    m_status = EditorStatus{"Redone: " + label, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.redone"), {{"label", label}}), false};
     return true;
 }
 
@@ -1100,13 +1106,12 @@ bool Editor::deleteInstance(scene::World& world, core::InstanceId id, core::Inst
         return false;
 
     if (isEngineOwned(world, id, root)) {
-        m_status =
-            EditorStatus{"that one belongs to the engine -- services and the world itself cannot be deleted", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_one_belongs_to_the")), true};
         return false;
     }
 
     const std::string name(world.atoms().text(world.name(id)));
-    m_history.record(world, "Delete " + name);
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.delete"), {{"name", name}}));
     if (!world.destroy(id))
         return false;
 
@@ -1130,7 +1135,7 @@ bool Editor::deleteInstance(scene::World& world, core::InstanceId id, core::Inst
     // what was deleted pointing at an instance the world has retired.
     inspector.pruneDead(world);
 
-    m_status = EditorStatus{"deleted " + name + " -- there is no undo yet; reopening the scene brings it back", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.deleted_there_is_no_undo"), {{"name", name}}), false};
     return true;
 }
 
@@ -1146,11 +1151,12 @@ bool Editor::duplicateInstance(scene::World& world, core::InstanceId id, core::I
     if (isEngineOwned(world, id, root)) {
         // "One per world" is what a service IS. A second one would make every
         // `GetService` a question with two answers.
-        m_status = EditorStatus{"a service is one per world, so there is no second one to make", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_service_is_one_per")), true};
         return false;
     }
 
-    m_history.record(world, "Duplicate " + std::string(world.atoms().text(world.name(id))));
+    m_history.record(
+        world, core::tr(ENG_TR("engine.editor.history.duplicate"), {{"name", world.atoms().text(world.name(id))}}));
     const core::InstanceId copy = world.clone(id);
     if (!copy.valid())
         return false;
@@ -1161,7 +1167,8 @@ bool Editor::duplicateInstance(scene::World& world, core::InstanceId id, core::I
     inspector.select(copy);
     inspector.reveal(copy);
 
-    m_status = EditorStatus{"duplicated " + std::string(world.atoms().text(world.name(id))), false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.duplicated"), {{"name", world.atoms().text(world.name(id))}}), false};
     return true;
 }
 
@@ -1173,7 +1180,7 @@ bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::I
 
     const scene::ClassDescriptor* descriptor = world.classes().find(classId);
     if (descriptor == nullptr || !creatable(*descriptor)) {
-        m_status = EditorStatus{"that class cannot be created", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_class_cannot_be_created")), true};
         return false;
     }
 
@@ -1186,21 +1193,22 @@ bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::I
     // that has to be asked of the ANCESTRY, because a chunk marks its folder
     // and not the ground inside it.
     if (!canParentInto(world, parent, root)) {
-        m_status = EditorStatus{"that was made by the engine, so nothing authored can live in it", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_was_made_by_the")), true};
         return false;
     }
 
-    m_history.record(world, "Create " + std::string(world.atoms().text(descriptor->name)));
+    m_history.record(
+        world, core::tr(ENG_TR("engine.editor.history.create"), {{"name", world.atoms().text(descriptor->name)}}));
 
     const core::InstanceId made = world.create(classId);
     if (!made.valid()) {
-        m_status = EditorStatus{"could not create that class", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_create_that_class")), true};
         return false;
     }
     if (world.setParent(made, parent).has_value()) {
         (void)world.destroy(made);
         world.retireDestroyed();
-        m_status = EditorStatus{"that cannot be parented there", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_cannot_be_parented_there")), true};
         return false;
     }
     if (runContext.has_value()) {
@@ -1315,7 +1323,8 @@ bool Editor::createInstance(scene::World& world, scene::ClassId classId, core::I
     inspector.select(made);
     inspector.reveal(made);
 
-    m_status = EditorStatus{"added a " + std::string(world.atoms().text(descriptor->name)), false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.added_a"), {{"name", world.atoms().text(descriptor->name)}}), false};
     return true;
 }
 
@@ -1482,17 +1491,19 @@ void Editor::copySelection(const scene::World& world, std::span<const core::Inst
         m_clipboardMarks.push_back(std::move(marks));
     }
 
-    m_status = EditorStatus{"copied " + std::to_string(m_clipboard.size()) + " instance(s)", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.copied_instance_s"),
+                                     {{"count", static_cast<core::i64>(m_clipboard.size())}}),
+                            false};
 }
 
 bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceId root, Inspector& inspector)
 {
     if (m_clipboard.empty()) {
-        m_status = EditorStatus{"there is nothing to paste", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_nothing_to_paste")), true};
         return false;
     }
     if (!canParentInto(world, parent, root)) {
-        m_status = EditorStatus{"nothing authored can live in that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_authored_can_live_in")), true};
         return false;
     }
     // **Not a stamp inside itself**, as placing one refuses: an instance of
@@ -1501,7 +1512,7 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
         for (const std::vector<ClipboardMark>& marks : m_clipboardMarks) {
             for (const ClipboardMark& mark : marks) {
                 if (mark.stamp == m_stamp.path) {
-                    m_status = EditorStatus{"that is an instance of this stamp, which cannot go inside itself", true};
+                    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_an_instance_of")), true};
                     return false;
                 }
             }
@@ -1509,7 +1520,8 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
     }
 
     // Recorded before the first one, so a paste of four is one press of ctrl-Z.
-    m_history.record(world, m_clipboard.size() == 1 ? "Paste" : "Paste " + std::to_string(m_clipboard.size()));
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.paste_count"),
+                                     {{"count", static_cast<core::i64>(m_clipboard.size())}}));
 
     std::vector<core::InstanceId> pasted;
     for (core::usize index = 0; index < m_clipboard.size(); ++index) {
@@ -1534,13 +1546,15 @@ bool Editor::paste(scene::World& world, core::InstanceId parent, core::InstanceI
         // Nothing was built, so the step is taken back rather than left: a step
         // that undoes nothing eats a press of ctrl-Z.
         (void)m_history.undo(world);
-        m_status = EditorStatus{"nothing in the clipboard could be pasted", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_in_the_clipboard_could")), true};
         return false;
     }
 
     inspector.select(pasted);
     inspector.reveal(pasted.front());
-    m_status = EditorStatus{"pasted " + std::to_string(pasted.size()) + " instance(s)", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.pasted_instance_s"), {{"count", static_cast<core::i64>(pasted.size())}}),
+        false};
     return true;
 }
 
@@ -1549,7 +1563,7 @@ bool Editor::placeMesh(scene::World& world, std::string_view path, core::Instanc
 {
     const scene::ClassId meshPart = world.classes().findId(world.atoms().lookup("MeshPart"));
     if (meshPart == scene::InvalidClass) {
-        m_status = EditorStatus{"this build has no MeshPart", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.this_build_has_no_meshpart")), true};
         return false;
     }
     if (!createInstance(world, meshPart, parent, root, inspector))
@@ -1571,7 +1585,7 @@ bool Editor::placeMesh(scene::World& world, std::string_view path, core::Instanc
     }
     m_meshFits.push_back(MeshFit{made, restOn, 0});
     touch();
-    m_status = EditorStatus{"placed " + stem, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.placed"), {{"value", stem}}), false};
     return true;
 }
 
@@ -1654,14 +1668,13 @@ std::string Editor::moveContent(scene::World& world, std::string_view from, std:
     // **Not during play**: the stop puts back the world as it was before play,
     // with every path the move just rewrote pointing at where the file was.
     if (inPlayMode()) {
-        report("stop the game first -- a file moved during play is one the stop would point everything back away from",
-               true);
+        report(core::tr(ENG_TR("engine.editor.status.stop_the_game_first_a")), true);
         return {};
     }
     std::string why;
     const std::string moved = m_content.move(from, intoFolder, &why);
     if (moved.empty()) {
-        report("could not move " + std::string(from) + ": " + why, true);
+        report(core::tr(ENG_TR("engine.editor.status.could_not_move"), {{"from", from}, {"why", why}}), true);
         return {};
     }
     if (moved == from)
@@ -1694,9 +1707,9 @@ std::optional<std::size_t> Editor::followContent(scene::World& world, std::strin
         const bool undone = platform::renameFile(m_content.root() / std::filesystem::path(std::string(to)),
                                                  m_content.root() / std::filesystem::path(std::string(from)));
         (void)m_content.refresh();
-        report("could not rewrite " + rewritten.failed.front().filename().string() + (undone ? ", so " : ", and ") +
-                   std::string(from) +
-                   (undone ? " stayed where it was" : " could not be moved back -- move it back by hand"),
+        report(core::tr(undone ? ENG_TR("engine.editor.status.could_not_rewrite_stayed")
+                               : ENG_TR("engine.editor.status.could_not_rewrite_stranded"),
+                        {{"file", rewritten.failed.front().filename().string()}, {"from", from}}),
                true);
         return std::nullopt;
     }
@@ -1788,8 +1801,9 @@ core::u32 Editor::stampChangedOnDisk(scene::World& world, core::InstanceId gameR
     if (followed > 0) {
         world.retireDestroyed();
         m_sceneDirty = true;
-        m_status = EditorStatus{
-            std::string(path) + " changed on disk; " + std::to_string(followed) + " instance(s) follow it", false};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.changed_on_disk_instance_s"),
+                                         {{"path", path}, {"count", static_cast<core::i64>(followed)}}),
+                                false};
     }
     return followed;
 }
@@ -1798,13 +1812,13 @@ bool Editor::breakStamp(scene::World& world, core::InstanceId id)
 {
     const core::InstanceId stampRoot = world.stampRootOf(id);
     if (!stampRoot.valid()) {
-        m_status = EditorStatus{"that is not a stamped instance", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_a_stamped")), true};
         return false;
     }
 
-    m_history.record(world, "Break Stamp");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.break_stamp")));
     world.setStamp(stampRoot, core::NameAtom{});
-    m_status = EditorStatus{"broken; it is its own now", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.broken_it_is_its_own")), false};
     return true;
 }
 
@@ -1836,18 +1850,18 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
                        core::AtomTable& atoms, Inspector& inspector)
 {
     if (m_run != RunState::Editing) {
-        m_status = EditorStatus{"stop the world before opening a stamp", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stop_the_world_before_opening")), true};
         return false;
     }
     if (m_stamp.open()) {
-        m_status = EditorStatus{"a stamp is already open", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_open")), true};
         return false;
     }
 
     const std::string relative = normalizeStampPath(path);
     std::string text;
     if (!platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
-        m_status = EditorStatus{"that stamp is not there any more", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
         return false;
     }
 
@@ -1859,14 +1873,14 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
     // The stage resolves materials where the game does (ADR 0090).
     stage->world().setMaterialLibrary(m_materials);
     if (!stage->workspace().valid()) {
-        m_status = EditorStatus{"could not build a stage for that stamp", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_build_a_stage")), true};
         return false;
     }
 
     scene::SceneIoReport report;
     const core::InstanceId root = scene::readStamp(stage->world(), text, stage->workspace(), relative, &report);
     if (!root.valid()) {
-        m_status = EditorStatus{"that stamp could not be read", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
         return false;
     }
 
@@ -1882,7 +1896,7 @@ bool Editor::openStamp(std::string_view path, scene::ClassRegistry& classes, sce
     inspector.select(root);
     inspector.reveal(root);
 
-    m_status = EditorStatus{"editing " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.editing"), {{"relative", relative}}), false};
     return true;
 }
 
@@ -1933,13 +1947,13 @@ std::string Editor::createMaterial(std::string_view name)
 {
     const std::string relative = normalizeMaterialPath(name);
     if (relative.empty() || !sceneNameIsUsable(relative)) {
-        m_status = EditorStatus{"that is not a name a material can have", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_a_name")), true};
         return {};
     }
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
     std::error_code ec;
     if (std::filesystem::exists(absolute, ec)) {
-        m_status = EditorStatus{"something is already called that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.something_is_already_called_that")), true};
         return {};
     }
     // **The engine default's values, declaring nothing** (ADR 0090): a new
@@ -1948,11 +1962,12 @@ std::string Editor::createMaterial(std::string_view name)
     asset::MaterialAsset material;
     material.written = asset::AllMaterialFields;
     if (!writeMaterialFile(absolute, material)) {
-        m_status = EditorStatus{"could not write " + relative, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_3"), {{"relative", relative}}), true};
         return {};
     }
     (void)m_content.refresh();
-    m_status = EditorStatus{"created " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.created"), {{"relative", relative}}), false};
     return relative;
 }
 
@@ -2023,22 +2038,23 @@ std::string Editor::createSurfaceShader(std::string_view name)
 {
     const std::string relative = normalizeShaderPath(name);
     if (relative.empty() || !sceneNameIsUsable(relative)) {
-        m_status = EditorStatus{"that is not a name a surface shader can have", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_a_name_2")), true};
         return {};
     }
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
     std::error_code ec;
     if (std::filesystem::exists(absolute, ec)) {
-        m_status = EditorStatus{"something is already called that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.something_is_already_called_that")), true};
         return {};
     }
     std::filesystem::create_directories(absolute.parent_path(), ec);
     if (!platform::writeTextFile(absolute, SurfaceShaderTemplate)) {
-        m_status = EditorStatus{"could not write " + relative, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_3"), {{"relative", relative}}), true};
         return {};
     }
     (void)m_content.refresh();
-    m_status = EditorStatus{"created " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.created"), {{"relative", relative}}), false};
     return relative;
 }
 
@@ -2048,18 +2064,18 @@ std::string Editor::createMaterialVariant(std::string_view parent, std::string_v
     std::string text;
     if (parentPath.empty() || !platform::readTextFile(m_content.root() / std::filesystem::path(parentPath), text) ||
         !asset::readMaterialAsset(text).has_value()) {
-        m_status = EditorStatus{"there is no material to make a variant of", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_no_material_to")), true};
         return {};
     }
     const std::string relative = normalizeMaterialPath(name);
     if (relative.empty() || !sceneNameIsUsable(relative) || relative == parentPath) {
-        m_status = EditorStatus{"that is not a name a material can have", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_a_name")), true};
         return {};
     }
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(relative);
     std::error_code ec;
     if (std::filesystem::exists(absolute, ec)) {
-        m_status = EditorStatus{"something is already called that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.something_is_already_called_that")), true};
         return {};
     }
     // A parent and nothing of its own: it looks exactly like the parent until
@@ -2067,11 +2083,14 @@ std::string Editor::createMaterialVariant(std::string_view parent, std::string_v
     asset::MaterialAsset variant;
     variant.parent = contentUrn(parentPath);
     if (!writeMaterialFile(absolute, variant)) {
-        m_status = EditorStatus{"could not write " + relative, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_3"), {{"relative", relative}}), true};
         return {};
     }
     (void)m_content.refresh();
-    m_status = EditorStatus{"created " + relative + ", a variant of " + parentPath, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.created_a_variant_of"),
+                                     {{"relative", relative}, {"parent_path", parentPath}}),
+                            false};
     return relative;
 }
 
@@ -2116,7 +2135,7 @@ std::string_view skyFaceOfName(std::string_view fileName) noexcept
 bool Editor::assignSkybox(scene::World& world, std::string_view path, core::InstanceId sky)
 {
     if (!world.alive(sky) || world.destroyed(sky) || world.skies().find(sky) == nullptr) {
-        m_status = EditorStatus{"drop sky pictures on a Sky", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.drop_sky_pictures_on_a")), true};
         return false;
     }
 
@@ -2136,14 +2155,15 @@ bool Editor::assignSkybox(scene::World& world, std::string_view path, core::Inst
             faces.emplace_back(property, std::string(asset::AssetScheme) + entry.path);
     }
     if (faces.empty()) {
-        m_status = EditorStatus{"no picture there is named for a face (back, down, front, left, right, up)", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.no_picture_there_is_named")), true};
         return false;
     }
 
-    m_history.record(world, "Assign Sky Pictures");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.assign_sky_pictures")));
     for (const auto& [property, urn] : faces)
         (void)world.setProperty(sky, world.atoms().intern(property), scene::Value{urn});
-    m_status = EditorStatus{std::to_string(faces.size()) + (faces.size() == 1 ? " face" : " faces") + " set", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.faces_set"), {{"count", static_cast<core::i64>(faces.size())}}), false};
     return true;
 }
 
@@ -2169,11 +2189,11 @@ bool Editor::assignMaterialTo(scene::World& world, std::string_view path, std::s
             everyTargetAlready = false;
     }
     if (live > 0 && everyTargetAlready) {
-        m_status = EditorStatus{"already " + relative, false};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.already"), {{"relative", relative}}), false};
         return true;
     }
 
-    m_history.record(world, "Assign Material");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.assign_material")));
     core::usize written = 0;
     for (const core::InstanceId target : targets) {
         if (!world.alive(target) || world.destroyed(target))
@@ -2186,11 +2206,11 @@ bool Editor::assignMaterialTo(scene::World& world, std::string_view path, std::s
         // Nothing selected is a part, so nothing changed and nothing is left
         // on the stack.
         (void)m_history.undo(world);
-        m_status = EditorStatus{"nothing selected takes that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_selected_takes_that")), true};
         return false;
     }
     touch();
-    m_status = EditorStatus{"assigned " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.assigned"), {{"relative", relative}}), false};
     return true;
 }
 
@@ -2205,26 +2225,30 @@ bool Editor::openMaterial(std::string_view path)
             return true;
         const std::string previous = m_material.path;
         if (!saveMaterial()) {
-            m_status = EditorStatus{"could not save " + previous + ", so it stays open", true};
+            m_status = EditorStatus{
+                core::tr(ENG_TR("engine.editor.status.could_not_save_so_it"), {{"previous", previous}}), true};
             return false;
         }
     }
     std::string text;
     if (relative.empty() || !platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
-        m_status = EditorStatus{"could not read " + relative, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read_2"), {{"relative", relative}}), true};
         return false;
     }
     std::string error;
     std::optional<asset::MaterialAsset> read = asset::readMaterialAsset(text, nullptr, &error);
     if (!read.has_value()) {
-        m_status = EditorStatus{relative + " is not a material: " + error, true};
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.status.is_not_a_material"), {{"relative", relative}, {"error", error}}),
+            true};
         return false;
     }
     closeMaterial();
     m_material.path = relative;
     m_material.asset = *read;
     m_material.saved = *read;
-    m_status = EditorStatus{"editing " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.editing"), {{"relative", relative}}), false};
     return true;
 }
 
@@ -2282,7 +2306,8 @@ bool Editor::saveMaterial()
         return false;
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_material.path);
     if (!writeMaterialFile(absolute, m_material.asset)) {
-        m_status = EditorStatus{"could not write " + m_material.path, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", m_material.path}}), true};
         return false;
     }
     m_material.saved = m_material.asset;
@@ -2291,7 +2316,7 @@ bool Editor::saveMaterial()
     // moment later anyway -- and a variant of this material follows with it.
     if (m_materials != nullptr)
         m_materials->forget(contentUrn(m_material.path));
-    m_status = EditorStatus{"saved " + m_material.path, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.saved"), {{"path", m_material.path}}), false};
     return true;
 }
 
@@ -2310,14 +2335,14 @@ std::vector<core::NameAtom> Editor::overridesOf(const scene::World& world, core:
 bool Editor::revertOverride(scene::World& world, core::InstanceId id, core::NameAtom property)
 {
     if (!id.valid() || !world.alive(id) || !property.valid()) {
-        m_status = EditorStatus{"there is nothing selected to revert", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_nothing_selected_to")), true};
         return false;
     }
 
     scene::StampLibrary stamps(world, stampSource());
     const std::optional<scene::Value> theirs = scene::stampReferenceValue(world, id, property, stamps);
     if (!theirs.has_value()) {
-        m_status = EditorStatus{"that is not part of a stamp, so there is nothing to revert to", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of")), true};
         return false;
     }
 
@@ -2329,30 +2354,30 @@ bool Editor::revertOverride(scene::World& world, core::InstanceId id, core::Name
     // a junk one in its place (D134).
     const scene::PropertyDesc* descriptor = world.classes().findProperty(world.classOf(id), property);
     if (descriptor == nullptr || descriptor->get == nullptr) {
-        m_status = EditorStatus{name + " is not a property of that instance", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.is_not_a_property_of"), {{"name", name}}), true};
         return false;
     }
     const std::optional<scene::Value> mine = descriptor->get(world, id);
     if (mine.has_value() && *mine == *theirs) {
-        m_status = EditorStatus{name + " already matches the stamp"};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.already_matches_the_stamp"), {{"name", name}})};
         return true;
     }
 
-    m_history.record(world, "Revert " + name);
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.revert"), {{"name", name}}));
     const scene::World::SetResult wrote = world.setProperty(id, property, *theirs);
     if (wrote != scene::World::SetResult::Changed && wrote != scene::World::SetResult::Unchanged) {
-        m_status = EditorStatus{"could not revert " + name, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_revert"), {{"name", name}}), true};
         return false;
     }
     touch();
-    m_status = EditorStatus{"reverted " + name + " to the stamp"};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.reverted_to_the_stamp"), {{"name", name}})};
     return true;
 }
 
 bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core::InstanceId id, core::NameAtom property)
 {
     if (!id.valid() || !world.alive(id) || !property.valid()) {
-        m_status = EditorStatus{"there is nothing selected to apply", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_nothing_selected_to_2")), true};
         return false;
     }
 
@@ -2366,7 +2391,7 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
         stampRoot = world.parentOf(stampRoot);
     }
     if (!mark.valid()) {
-        m_status = EditorStatus{"that is not part of a stamp, so there is nothing to apply to", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_part_of_2")), true};
         return false;
     }
     const std::string path(world.atoms().text(mark));
@@ -2375,32 +2400,34 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     // two writers of one file and the one a person can see would lose. Said
     // rather than silently preferred: the stage is right there.
     if (m_stamp.open() && m_stamp.path == path) {
-        m_status = EditorStatus{path + " is open for editing; apply from the stage instead", true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.is_open_for_editing_apply"), {{"path", path}}), true};
         return false;
     }
 
     const std::string name(world.atoms().text(property));
     const scene::PropertyDesc* descriptor = world.classes().findProperty(world.classOf(id), property);
     if (descriptor == nullptr || descriptor->get == nullptr) {
-        m_status = EditorStatus{name + " is not a property of that instance", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.is_not_a_property_of"), {{"name", name}}), true};
         return false;
     }
     const std::optional<scene::Value> mine = descriptor->get(world, id);
     if (!mine.has_value()) {
-        m_status = EditorStatus{"could not read " + name, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read_3"), {{"name", name}}), true};
         return false;
     }
     // **A reference names an instance of THIS world**, and the file's scratch
     // copy has its own ids -- written there, it pointed at whatever held that
     // number (B14). Refused, and said.
     if (descriptor->type == scene::ValueType::Instance) {
-        m_status = EditorStatus{name + " points at an instance, which a stamp file cannot take from here", true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.points_at_an_instance_which"), {{"name", name}}), true};
         return false;
     }
 
     const std::optional<std::string> before = stampSource()(path);
     if (!before.has_value()) {
-        m_status = EditorStatus{"could not read " + path, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", path}}), true};
         return false;
     }
 
@@ -2411,7 +2438,7 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     scene::World scratch(world.classes(), world.enums(), world.atoms(), 1u);
     const core::InstanceId scratchRoot = scene::readStamp(scratch, *before, core::InstanceId{}, path);
     if (!scratchRoot.valid()) {
-        m_status = EditorStatus{"could not read " + path, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_read"), {{"path", path}}), true};
         return false;
     }
 
@@ -2436,7 +2463,8 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
         for (core::u32 skipped = 0; skipped < *step && child.valid(); ++skipped)
             child = scratch.nextSibling(child);
         if (!child.valid()) {
-            m_status = EditorStatus{"that instance is not in " + path + " any more", true};
+            m_status =
+                EditorStatus{core::tr(ENG_TR("engine.editor.status.that_instance_is_not_in"), {{"path", path}}), true};
             return false;
         }
         target = child;
@@ -2446,13 +2474,15 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     // different thing in the file (B14).
     // One registry for both worlds, so the class ids compare.
     if (scratch.classOf(target) != world.classOf(id)) {
-        m_status = EditorStatus{"that instance is not in " + path + " any more", true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.that_instance_is_not_in"), {{"path", path}}), true};
         return false;
     }
 
     const scene::World::SetResult intoStamp = scratch.setProperty(target, property, *mine);
     if (intoStamp != scene::World::SetResult::Changed && intoStamp != scene::World::SetResult::Unchanged) {
-        m_status = EditorStatus{"could not write " + name + " into " + path, true};
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.status.could_not_write_into"), {{"name", name}, {"path", path}}), true};
         return false;
     }
 
@@ -2460,7 +2490,7 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
     const std::string after = scene::writeStamp(scratch, scratchRoot, &wrote);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(path);
     if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, after)) {
-        m_status = EditorStatus{"could not write " + path, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path}}), true};
         return false;
     }
 
@@ -2495,7 +2525,7 @@ bool Editor::applyOverride(scene::World& world, core::InstanceId gameRoot, core:
 bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
 {
     if (!m_stamp.open() || m_stage == nullptr || !m_stage->world().alive(m_stamp.root)) {
-        m_status = EditorStatus{"there is no stamp open to save", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.there_is_no_stamp_open")), true};
         return false;
     }
 
@@ -2509,7 +2539,8 @@ bool Editor::saveStamp(scene::World& game, core::InstanceId gameRoot)
     const std::string text = scene::writeStamp(m_stage->world(), m_stamp.root, &report, &stamps);
     const std::filesystem::path absolute = m_content.root() / std::filesystem::path(m_stamp.path);
     if (!platform::createDirectories(absolute.parent_path()) || !platform::writeTextFileDurable(absolute, text)) {
-        m_status = EditorStatus{"could not write " + m_stamp.path, true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", m_stamp.path}}), true};
         return false;
     }
 
@@ -2576,8 +2607,9 @@ bool Editor::closeStamp(scene::World& game, core::InstanceId gameRoot, Inspector
     // away behind a message that said it had closed -- on a read-only or locked
     // file, the one case where the edits exist nowhere else.
     if (save && !wrote) {
-        m_status =
-            EditorStatus{"could not save " + closed + ", so it is still open -- " + m_status.value().message, true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_save_so_it_2"),
+                                         {{"closed", closed}, {"message", m_status.value().message}}),
+                                true};
         return false;
     }
 
@@ -2602,7 +2634,7 @@ std::string Editor::createStampOfClass(scene::World& world, core::InstanceId roo
 
     const scene::ClassDescriptor* descriptor = world.classes().find(classId);
     if (descriptor == nullptr) {
-        m_status = EditorStatus{"no such class", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.no_such_class")), true};
         return {};
     }
 
@@ -2611,12 +2643,12 @@ std::string Editor::createStampOfClass(scene::World& world, core::InstanceId roo
     const std::string relative = normalizeStampPath(name);
     std::error_code ec;
     if (std::filesystem::exists(m_content.root() / std::filesystem::path(relative), ec)) {
-        m_status = EditorStatus{"something is already called that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.something_is_already_called_that")), true};
         return {};
     }
 
     // Recorded BEFORE the instance exists, so one undo takes both back.
-    m_history.record(world, "New Stamp");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.new_stamp")));
 
     const core::InstanceId made = world.create(classId);
     // Named after the file, minus its folders and its suffix -- which is what
@@ -2629,7 +2661,7 @@ std::string Editor::createStampOfClass(scene::World& world, core::InstanceId roo
     world.setName(made, world.atoms().intern(stem));
     if (world.setParent(made, root).has_value()) {
         (void)m_history.undo(world);
-        m_status = EditorStatus{"nothing authored can live in that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_authored_can_live_in")), true};
         return {};
     }
 
@@ -2644,25 +2676,25 @@ std::string Editor::createStampOfClass(scene::World& world, core::InstanceId roo
         return {};
     }
 
-    m_status = EditorStatus{"created " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.created"), {{"relative", relative}}), false};
     return relative;
 }
 
 bool Editor::createStamp(scene::World& world, core::InstanceId id, core::InstanceId root, std::string_view name)
 {
     if (!world.alive(id)) {
-        m_status = EditorStatus{"nothing to make a stamp of", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_to_make_a_stamp")), true};
         return false;
     }
     if (!stampNameIsUsable(name)) {
-        m_status = EditorStatus{"that is not a usable stamp name", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_a_usable")), true};
         return false;
     }
     // Engine-owned, or inside something a system made: neither is somebody's
     // authored work, and a stamp of a streamed chunk is a recording of where
     // streaming happened to be.
     if (isEngineOwned(world, id, root) || !canParentInto(world, id, root)) {
-        m_status = EditorStatus{"that is not something a person authored", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_not_something_a")), true};
         return false;
     }
 
@@ -2673,7 +2705,7 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // decides.
     for (core::InstanceId child = world.firstChild(id); child.valid();) {
         if (world.stampOf(child).valid()) {
-            m_status = EditorStatus{"that already contains a stamped instance", true};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_already_contains_a_stamped")), true};
             return false;
         }
         if (const core::InstanceId inner = world.firstChild(child); inner.valid()) {
@@ -2693,10 +2725,7 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
         world.collectDescendants(id, subtree);
         for (const core::InstanceId each : subtree) {
             if (world.mounted(each)) {
-                m_status = EditorStatus{
-                    "that holds scripts that are files in src/ -- copy them into a folder outside the script "
-                    "services, and make the stamp from that",
-                    true};
+                m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_holds_scripts_that_are")), true};
                 return false;
             }
         }
@@ -2706,7 +2735,7 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // there is lost the next time it is saved (B6).
     for (core::InstanceId above = world.parentOf(id); above.valid(); above = world.parentOf(above)) {
         if (world.stampOf(above).valid()) {
-            m_status = EditorStatus{"that is inside a stamped instance -- break its link first", true};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_is_inside_a_stamped")), true};
             return false;
         }
     }
@@ -2717,11 +2746,11 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // be measured against a file they were never made from.
     std::error_code taken;
     if (std::filesystem::exists(absolute, taken)) {
-        m_status = EditorStatus{"a stamp is already called that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_is_already_called")), true};
         return false;
     }
     if (!platform::createDirectories(absolute.parent_path())) {
-        m_status = EditorStatus{"could not make the folder for that stamp", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_make_the_folder")), true};
         return false;
     }
 
@@ -2730,7 +2759,7 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // code the stamp has to carry.
     const std::string text = scene::writeCopy(world, id, &report);
     if (!platform::writeTextFileDurable(absolute, text)) {
-        m_status = EditorStatus{"could not write that stamp", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write_that_stamp")), true};
         return false;
     }
 
@@ -2738,13 +2767,15 @@ bool Editor::createStamp(scene::World& world, core::InstanceId id, core::Instanc
     // a copy of it that nothing connects is two things that drift apart by
     // tomorrow, which is the state this whole model exists to avoid.
     if (!m_stampRecorded)
-        m_history.record(world, "Create Stamp");
+        m_history.record(world, core::tr(ENG_TR("engine.editor.history.create_stamp")));
     world.setStamp(id, world.atoms().intern(relative));
     // The world changed: the scene has something to save (B8).
     touch();
 
     (void)m_content.refresh();
-    m_status = EditorStatus{"stamped " + std::to_string(report.instances) + " instance(s) into " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stamped_instance_s_into"),
+                                     {{"count", static_cast<core::i64>(report.instances)}, {"relative", relative}}),
+                            false};
     return true;
 }
 
@@ -2800,28 +2831,28 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
                               core::InstanceId root, Inspector& inspector, bool linked)
 {
     if (!canParentInto(world, parent, root)) {
-        m_status = EditorStatus{"nothing authored can live in that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_authored_can_live_in")), true};
         return false;
     }
     // **Not into a stamp being edited** (B6): a stamp inside a stamp is a
     // question the format has not answered, and the inner one was lost on the
     // next save of the outer.
     if (linked && m_stage != nullptr && &world == &m_stage->world()) {
-        m_status = EditorStatus{"a stamp cannot hold another stamp yet", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_stamp_cannot_hold_another")), true};
         return false;
     }
 
     const std::string relative = normalizeStampPath(name);
     std::string text;
     if (!platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
-        m_status = EditorStatus{"that stamp is not there any more", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
         return false;
     }
 
     // Recorded BEFORE the instance exists, so one undo takes the whole subtree
     // back -- which is what `WorldSnapshot` makes cheap and what a
     // reversible-command design would have made hard (`editor.h` says why).
-    m_history.record(world, "Stamp");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.stamp")));
 
     scene::SceneIoReport report;
     const core::InstanceId placed = scene::readStamp(world, text, parent, relative, &report);
@@ -2831,7 +2862,7 @@ bool Editor::instantiateStamp(scene::World& world, std::string_view name, core::
         // it also removes whatever partial subtree the read managed before it
         // gave up.
         (void)m_history.undo(world);
-        m_status = EditorStatus{"that stamp could not be read", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
         return false;
     }
     adoptServiceSide(world, placed);
@@ -2912,7 +2943,7 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
         if (live > 0 && everyTargetAlready) {
             // Nothing to do, and saying so is the honest answer: the part is
             // wearing what was dropped on it.
-            m_status = EditorStatus{"already " + relative, false};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.already"), {{"relative", relative}}), false};
             return true;
         }
     }
@@ -2920,13 +2951,13 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
     // **Recorded before the world is touched**, so the placement and every write
     // it enables are one press of ctrl-Z. Two steps would mean undoing a drop
     // left a material in the world that nothing points at.
-    m_history.record(world, "Assign");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.assign")));
 
     if (!subject.valid()) {
         std::string text;
         if (!platform::readTextFile(m_content.root() / std::filesystem::path(relative), text)) {
             (void)m_history.undo(world);
-            m_status = EditorStatus{"that stamp is not there any more", true};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_is_not_there")), true};
             return false;
         }
 
@@ -2934,7 +2965,7 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
         subject = scene::readStamp(world, text, parent, relative, &report);
         if (!subject.valid()) {
             (void)m_history.undo(world);
-            m_status = EditorStatus{"that stamp could not be read", true};
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_stamp_could_not_be")), true};
             return false;
         }
         adoptServiceSide(world, subject);
@@ -2962,12 +2993,12 @@ bool Editor::assignStampTo(scene::World& world, core::InstanceId root, core::Ins
         // The class does not take it, or the setter refused the class of what
         // was dropped. Nothing changed, so nothing is left on the stack.
         (void)m_history.undo(world);
-        m_status = EditorStatus{"nothing selected takes that", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_selected_takes_that")), true};
         return false;
     }
 
     m_sceneDirty = true;
-    m_status = EditorStatus{"assigned " + relative, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.assigned"), {{"relative", relative}}), false};
     return true;
 }
 
@@ -2983,7 +3014,7 @@ bool Editor::reparent(scene::World& world, std::span<const core::InstanceId> ids
     // something the person had stopped thinking about.
     const ReparentPlan plan = planReparent(world, ids, newParent, root);
     if (plan.targetRefuses) {
-        m_status = EditorStatus{"nothing authored can live in that -- the scene does not save what is put there", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_authored_can_live_in_2")), true};
         return false;
     }
     if (plan.movable.empty()) {
@@ -2993,7 +3024,8 @@ bool Editor::reparent(scene::World& world, std::span<const core::InstanceId> ids
     }
 
     core::usize refused = plan.refused;
-    m_history.record(world, plan.movable.size() == 1 ? "Reparent" : "Reparent " + std::to_string(plan.movable.size()));
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.reparent_count"),
+                                     {{"count", static_cast<core::i64>(plan.movable.size())}}));
     for (const core::InstanceId id : plan.movable) {
         if (world.setParent(id, newParent).has_value())
             ++refused;
@@ -3046,18 +3078,18 @@ bool Editor::reorder(scene::World& world, core::InstanceId child, core::u32 inde
         return false;
 
     if (index >= count) {
-        m_status = EditorStatus{"cannot move there", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.cannot_move_there")), true};
         return false;
     }
     if (index == at) {
         // Not an error. Dropping a row back where it started is a person
         // changing their mind, and a red status line for it would be the tool
         // scolding somebody for a gesture it invited.
-        m_status = EditorStatus{"already there", false};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.already_there")), false};
         return false;
     }
 
-    m_history.record(world, "Reorder");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.reorder")));
     if (world.moveChild(parent, child, index) != scene::World::MoveResult::Moved)
         return false;
 
@@ -3065,7 +3097,7 @@ bool Editor::reorder(scene::World& world, core::InstanceId child, core::u32 inde
     // the stamp and not to the scene behind it (B15).
     touch();
     inspector.reveal(child);
-    m_status = EditorStatus{"reordered", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.reordered")), false};
     return true;
 }
 
@@ -3087,12 +3119,12 @@ bool Editor::deleteInstances(scene::World& world, std::span<const core::Instance
     }
 
     if (removable.empty()) {
-        m_status =
-            EditorStatus{"that one belongs to the engine -- services and the world itself cannot be deleted", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.that_one_belongs_to_the")), true};
         return false;
     }
 
-    m_history.record(world, "Delete " + std::to_string(removable.size()) + " instances");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.delete_instances"),
+                                     {{"count", static_cast<core::i64>(removable.size())}}));
 
     core::usize removed = 0;
     for (const core::InstanceId id : removable) {
@@ -3111,7 +3143,9 @@ bool Editor::deleteInstances(scene::World& world, std::span<const core::Instance
 
     inspector.pruneDead(world);
     inspector.onWorldRestored();
-    m_status = EditorStatus{"deleted " + std::to_string(removed) + " instance(s)", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.deleted_instance_s"), {{"count", static_cast<core::i64>(removed)}}),
+        false};
     return true;
 }
 
@@ -3155,7 +3189,7 @@ bool Editor::groupSelection(scene::World& world, std::span<const core::InstanceI
                             Inspector& inspector, bool asFolder)
 {
     if (ids.empty()) {
-        m_status = EditorStatus{"select something to group", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.select_something_to_group")), true};
         return false;
     }
 
@@ -3180,13 +3214,13 @@ bool Editor::groupSelection(scene::World& world, std::span<const core::InstanceI
         wantsModel = false;
 
     if (movable.empty()) {
-        m_status = EditorStatus{"nothing there can be grouped -- the world and its services stay where they are", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_there_can_be_grouped")), true};
         return false;
     }
 
     const scene::ClassId containerClass = world.classes().findId(world.atoms().intern(wantsModel ? "Model" : "Folder"));
     if (containerClass == scene::InvalidClass) {
-        m_status = EditorStatus{"this build has no class to group into", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.this_build_has_no_class")), true};
         return false;
     }
 
@@ -3194,11 +3228,12 @@ bool Editor::groupSelection(scene::World& world, std::span<const core::InstanceI
 
     // **Recorded before the create**, so one ctrl-Z takes the whole group back
     // rather than leaving an empty container behind.
-    m_history.record(world, movable.size() == 1 ? "Group" : "Group " + std::to_string(movable.size()));
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.group_count"),
+                                     {{"count", static_cast<core::i64>(movable.size())}}));
 
     const core::InstanceId container = world.create(containerClass);
     if (!container.valid()) {
-        m_status = EditorStatus{"this build has no class to group into", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.this_build_has_no_class")), true};
         return false;
     }
     world.setName(container, world.atoms().intern(wantsModel ? "Model" : "Folder"));
@@ -3220,7 +3255,8 @@ bool Editor::groupSelection(scene::World& world, std::span<const core::InstanceI
     // undoes the reason you grouped them.
     inspector.select(container);
     inspector.reveal(container);
-    m_status = EditorStatus{"grouped " + std::to_string(moved) + " instance(s)", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.grouped_instance_s"), {{"count", static_cast<core::i64>(moved)}}), false};
     return true;
 }
 
@@ -3228,7 +3264,7 @@ bool Editor::ungroupSelection(scene::World& world, std::span<const core::Instanc
                               Inspector& inspector)
 {
     if (ids.empty()) {
-        m_status = EditorStatus{"select a group to take apart", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.select_a_group_to_take")), true};
         return false;
     }
 
@@ -3242,11 +3278,12 @@ bool Editor::ungroupSelection(scene::World& world, std::span<const core::Instanc
     }
 
     if (containers.empty()) {
-        m_status = EditorStatus{"nothing selected has anything in it to take out", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_selected_has_anything_in")), true};
         return false;
     }
 
-    m_history.record(world, containers.size() == 1 ? "Ungroup" : "Ungroup " + std::to_string(containers.size()));
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.ungroup_count"),
+                                     {{"count", static_cast<core::i64>(containers.size())}}));
 
     std::vector<core::InstanceId> freed;
     for (const core::InstanceId container : containers) {
@@ -3283,7 +3320,9 @@ bool Editor::ungroupSelection(scene::World& world, std::span<const core::Instanc
     if (!freed.empty())
         inspector.reveal(freed.front());
 
-    m_status = EditorStatus{"took out " + std::to_string(freed.size()) + " instance(s)", false};
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.took_out_instance_s"), {{"count", static_cast<core::i64>(freed.size())}}),
+        false};
     return true;
 }
 
@@ -3305,11 +3344,12 @@ bool Editor::duplicateInstances(scene::World& world, std::span<const core::Insta
     }
 
     if (copyable.empty()) {
-        m_status = EditorStatus{"nothing there can be duplicated", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.nothing_there_can_be_duplicated")), true};
         return false;
     }
 
-    m_history.record(world, "Duplicate " + std::to_string(copyable.size()) + " instances");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.duplicate_instances"),
+                                     {{"count", static_cast<core::i64>(copyable.size())}}));
 
     std::vector<core::InstanceId> copies;
     for (const core::InstanceId id : copyable) {
@@ -3326,7 +3366,9 @@ bool Editor::duplicateInstances(scene::World& world, std::span<const core::Insta
     inspector.select(copies);
     if (!copies.empty())
         inspector.reveal(copies.front());
-    m_status = EditorStatus{"duplicated " + std::to_string(copies.size()) + " instance(s)", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.duplicated_instance_s"),
+                                     {{"count", static_cast<core::i64>(copies.size())}}),
+                            false};
     return true;
 }
 
@@ -3339,13 +3381,14 @@ bool Editor::renameInstance(scene::World& world, core::InstanceId id, core::Inst
         // **A script reaches a service by NAME** -- `game.Workspace` is a
         // lookup, not a keyword -- so renaming one breaks every line that does
         // it, in files nothing here can see.
-        m_status = EditorStatus{"a service's name is how scripts find it, so it is not one to change", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_service_s_name_is")), true};
         return false;
     }
 
-    m_history.record(world, "Rename " + std::string(world.atoms().text(world.name(id))));
+    m_history.record(world,
+                     core::tr(ENG_TR("engine.editor.history.rename"), {{"name", world.atoms().text(world.name(id))}}));
     world.setName(id, world.atoms().intern(name));
-    m_status = EditorStatus{"renamed to " + std::string(name), false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.renamed_to"), {{"name", name}}), false};
     return true;
 }
 
@@ -3364,7 +3407,7 @@ void Editor::newScene(scene::World& world, Inspector& inspector)
     m_sceneDirty = false;
     inspector.select(core::InstanceId{});
     inspector.onWorldChanged();
-    m_status = EditorStatus{"new scene -- untitled until you save it", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.new_scene_untitled_until_you")), false};
 }
 
 std::string Editor::normalizeScenePath(std::string_view typed)
@@ -3420,7 +3463,8 @@ bool Editor::saveSceneAs(scene::World& world, std::string_view relativePath)
 {
     const std::string path = normalizeScenePath(relativePath);
     if (!sceneNameIsUsable(path)) {
-        m_status = EditorStatus{"\"" + std::string(relativePath) + "\" is not a path inside content/", true};
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.status.is_not_a_path_inside"), {{"relative_path", relativePath}}), true};
         return false;
     }
     // **Never over another scene.** Every other create path refuses a name
@@ -3428,7 +3472,7 @@ bool Editor::saveSceneAs(scene::World& world, std::string_view relativePath)
     // its scripts' folder over without a word.
     std::error_code taken;
     if (path != m_openScene && std::filesystem::exists(m_content.root() / std::filesystem::path(path), taken)) {
-        m_status = EditorStatus{"a scene is already called that -- choose another name, or open it", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.a_scene_is_already_called")), true};
         return false;
     }
 
@@ -3471,14 +3515,14 @@ bool Editor::openScene(scene::World& world, std::string_view relativePath, Inspe
     m_sceneDirty = false;
     // The status `load` set names the file; naming the scene is more useful,
     // because the browser is already showing the file.
-    m_status = EditorStatus{"opened " + m_openScene, false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.opened"), {{"open_scene", m_openScene}}), false};
     return true;
 }
 
 bool Editor::saveOpenScene(scene::World& world)
 {
     if (m_openScene.empty()) {
-        m_status = EditorStatus{"no scene is open -- open one from the content browser first", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.no_scene_is_open_open")), true};
         return false;
     }
     return save(world, m_content.root() / std::filesystem::path(m_openScene));
@@ -3550,7 +3594,7 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
     const auto whole = [&](const std::string& why) {
         if (!saveOpenScene(world))
             return ScriptSave::Failed;
-        m_status = EditorStatus{"saved the whole scene: " + why, false};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.saved_the_whole_scene"), {{"why", why}}), false};
         return ScriptSave::Scene;
     };
 
@@ -3614,7 +3658,8 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
     scene::SceneIoReport report;
     const std::string patched = scene::writeScene(disk, &report, &stamps);
     if (!platform::writeTextFileDurable(path, patched)) {
-        m_status = EditorStatus{"could not write " + path.string(), true};
+        m_status =
+            EditorStatus{core::tr(ENG_TR("engine.editor.status.could_not_write"), {{"path", path.string()}}), true};
         return ScriptSave::Failed;
     }
 
@@ -3625,9 +3670,10 @@ Editor::ScriptSave Editor::saveSceneScript(scene::World& world, core::InstanceId
         if (scene::writeScene(world, nullptr, &live) == patched)
             m_sceneDirty = false;
     }
-    m_status = EditorStatus{"saved " + std::string(world.atoms().text(world.name(script))) + " into " +
-                                path.filename().string() + " -- nothing else in the scene was written",
-                            false};
+    m_status =
+        EditorStatus{core::tr(ENG_TR("engine.editor.status.saved_into_nothing_else_in"),
+                              {{"script", world.atoms().text(world.name(script))}, {"path", path.filename().string()}}),
+                     false};
     return ScriptSave::Script;
 }
 
@@ -4247,7 +4293,9 @@ bool Editor::driveTiles(scene::World& world, core::InstanceId root, Inspector& i
             // is a step somebody presses ctrl-Z through wondering what it was.
             if (m_tileStroke->gesture == 0) {
                 m_tileStroke->gesture = inspector.beginGesture();
-                m_history.record(world, m_tileOp == TileOp::Erase ? "Erase Tiles" : "Paint Tiles",
+                m_history.record(world,
+                                 m_tileOp == TileOp::Erase ? core::tr(ENG_TR("engine.editor.history.erase_tiles"))
+                                                           : core::tr(ENG_TR("engine.editor.history.paint_tiles")),
                                  m_tileStroke->gesture);
                 tilemap = world.tilemaps2d().find(target);
                 if (tilemap == nullptr)
@@ -4876,10 +4924,10 @@ asset::BlockId Editor::addBlockType(scene::World& world, Inspector& inspector, s
         }
     }
     if (voxels->types.size() >= 65535) {
-        m_status = EditorStatus{"the block world has every type it can hold", true};
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.the_block_world_has_every")), true};
         return asset::AirBlock;
     }
-    m_history.record(world, "Add Block Type");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.add_block_type")));
     // Recorded before the write, so look the component up again: the record
     // does not move pools, but nothing here should depend on that.
     voxels = voxelsIn(world);
@@ -4901,7 +4949,7 @@ bool Editor::setBlockTypeColors(scene::World& world, Inspector& inspector, asset
     scene::VoxelBlockType& type = voxels->types[id - 1u];
     if (type.color == top && type.side == side && type.bottom == bottom)
         return false;
-    m_history.record(world, "Recolour Block Type", gesture);
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.recolour_block_type")), gesture);
     scene::VoxelBlockType& live = voxelsIn(world)->types[id - 1u];
     live.color = top;
     live.side = side;
@@ -4929,7 +4977,7 @@ bool Editor::setBlockTypeLook(scene::World& world, Inspector& inspector, asset::
     if (type.texture == textures[0] && type.sideTexture == textures[1] && type.bottomTexture == textures[2] &&
         type.opacity == opacity && type.transparency == clamped)
         return false;
-    m_history.record(world, "Change Block Look", gesture);
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.change_block_look")), gesture);
     scene::VoxelBlockType& live = voxelsIn(world)->types[id - 1u];
     live.texture = textures[0];
     live.sideTexture = textures[1];
@@ -4947,10 +4995,10 @@ bool Editor::clearBlocks(scene::World& world, Inspector& inspector)
     scene::VoxelComponent* voxels = voxelsIn(world);
     if (voxels == nullptr || voxels->grid.chunkCount() == 0)
         return false;
-    m_history.record(world, "Clear Blocks");
+    m_history.record(world, core::tr(ENG_TR("engine.editor.history.clear_blocks")));
     voxelsIn(world)->grid.clear();
     m_sceneDirty = true;
-    m_status = EditorStatus{"every block removed; one ctrl-Z brings them back", false};
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.every_block_removed_one_ctrl")), false};
     return true;
 }
 

@@ -517,6 +517,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **The editor speaks through the catalog** (ADR 0145, supersedes ADR 0046's
+  exemption): every panel, menu, dialog, the command palette, the status line
+  and the undo history's labels read their words from `i18n/en.json`, so the
+  editor can ship in another language. In English it reads as it did; window
+  and dialog ids are unchanged, so a saved layout still applies.
+  The repository's i18n lint holds the editor's raw words at zero.
 - **A terrain far away is the same shape, at lower resolution** (ADR 0140,
   terrain audit T2). A coarse level is the level-0 surface gathered: a coarse
   cell's vertex is the point nearest the level-0 surface inside it, its material

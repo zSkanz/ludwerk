@@ -5,6 +5,7 @@
 #include <ctime>
 #include <engine/app/content_tree.h>
 #include <engine/core/content_path.h>
+#include <engine/core/i18n.h>
 #include <engine/core/json.h>
 #include <engine/platform/file.h>
 #include <fstream>
@@ -391,7 +392,7 @@ std::string ContentTree::move(std::string_view from, std::string_view intoFolder
         return std::string{};
     };
     if (m_root.empty() || from.empty())
-        return refuse("nothing to move");
+        return refuse(core::tr(ENG_TR("engine.editor.content.nothing_to_move")));
     const std::string source(from);
     const std::string folder(intoFolder);
     const std::size_t slash = source.rfind('/');
@@ -401,20 +402,20 @@ std::string ContentTree::move(std::string_view from, std::string_view intoFolder
         return source;
     // Into itself, or into a folder inside it: a folder cannot hold itself.
     if (folder == source || folder.starts_with(source + "/"))
-        return refuse("a folder cannot go inside itself");
+        return refuse(core::tr(ENG_TR("engine.editor.content.a_folder_cannot_go_inside")));
 
     std::error_code ec;
     const std::filesystem::path oldPath = m_root / std::filesystem::path(source);
     const std::filesystem::path newFolder = folder.empty() ? m_root : m_root / std::filesystem::path(folder);
     if (!std::filesystem::exists(oldPath, ec))
-        return refuse("it is not there any more");
+        return refuse(core::tr(ENG_TR("engine.editor.content.it_is_not_there_any")));
     if (!std::filesystem::is_directory(newFolder, ec))
-        return refuse("the folder is not there any more");
+        return refuse(core::tr(ENG_TR("engine.editor.content.the_folder_is_not_there")));
     if (std::filesystem::exists(newFolder / std::filesystem::path(name), ec))
-        return refuse("something there already has that name");
+        return refuse(core::tr(ENG_TR("engine.editor.content.something_there_already_has_that")));
     std::filesystem::rename(oldPath, newFolder / std::filesystem::path(name), ec);
     if (ec)
-        return refuse("the file system refused the move");
+        return refuse(core::tr(ENG_TR("engine.editor.content.the_file_system_refused_the")));
     (void)refresh();
     return folder.empty() ? name : folder + "/" + name;
 }

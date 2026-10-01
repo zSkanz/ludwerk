@@ -69,7 +69,7 @@ bool textureSlot(const char* label, ContentTree& content, scene::World& world, c
     if (ImGui::BeginCombo("##texture", preview.c_str())) {
         if (ImGui::IsWindowAppearing())
             candidates = content.filesOfKind(ContentKind::Texture);
-        if (ImGui::Selectable("(none)", current.empty())) {
+        if (ImGui::Selectable(core::tr(ENG_TR("engine.editor.texture_slot.none")), current.empty())) {
             slot = core::NameAtom{};
             changed = true;
         }
@@ -81,7 +81,7 @@ bool textureSlot(const char* label, ContentTree& content, scene::World& world, c
             }
         }
         if (candidates.empty())
-            ImGui::TextDisabled("No images under content/. Import one first.");
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.texture_slot.no_images_under_content_import")));
         ImGui::EndCombo();
     }
     ImGui::PopID();
@@ -236,26 +236,28 @@ void drawBlockLook(Editor& editor, scene::World& world, Inspector& inspector)
     const scene::VoxelBlockType type = voxels->types[selected - 1u];
 
     std::array<core::NameAtom, 3> textures{type.texture, type.sideTexture, type.bottomTexture};
-    bool changed = textureSlot("Top image", editor.content(), world, textures[0]);
-    changed |= textureSlot("Side image", editor.content(), world, textures[1]);
-    changed |= textureSlot("Bottom image", editor.content(), world, textures[2]);
+    bool changed =
+        textureSlot(core::tr(ENG_TR("engine.editor.block_look.top_image")), editor.content(), world, textures[0]);
+    changed |=
+        textureSlot(core::tr(ENG_TR("engine.editor.block_look.side_image")), editor.content(), world, textures[1]);
+    changed |=
+        textureSlot(core::tr(ENG_TR("engine.editor.block_look.bottom_image")), editor.content(), world, textures[2]);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("the colours above tint the images, so white shows an image as drawn");
+    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.block_look.the_colours_above_tint_the")));
     ImGui::PopTextWrapPos();
 
     // `Enum.BlockOpacity`, in its order.
     int opacity = std::clamp(type.opacity, 0, 2);
-    ImGui::TextUnformatted("Opacity");
+    ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.block_look.opacity")));
     ImGui::SetNextItemWidth(-FLT_MIN);
     changed |= ImGui::Combo("##block-opacity", &opacity, "Opaque\0Cutout\0Translucent\0");
-    ImGui::SetItemTooltip("Cutout keeps an image's holes, for leaves and fences. Translucent blends, for glass "
-                          "and water");
+    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.block_look.cutout_keeps_an_image_s_tip")));
     f32 transparency = type.transparency;
     if (opacity == 2) {
-        ImGui::TextUnformatted("Transparency");
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.block_look.transparency")));
         ImGui::SetNextItemWidth(-FLT_MIN);
         changed |= ImGui::SliderFloat("##block-transparency", &transparency, 0.0f, 1.0f, "%.2f");
-        ImGui::SetItemTooltip("how much shows through where the image has no alpha of its own");
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.block_look.how_much_shows_through_where_tip")));
     }
 
     if (changed) {

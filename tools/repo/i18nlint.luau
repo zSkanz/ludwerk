@@ -56,6 +56,77 @@ local EngineExemptions: { [string]: string } = {
 --- different function precisely so this lint can tell them apart.
 local CliSinks = { "print" }
 
+--- **The editor's own words** (ADR 0145, R3 without the editor's exemption):
+--- the calls that put text on the screen, and which of their arguments is the
+--- text, counted from one. A literal there with a word in it -- past an ImGui
+--- `##id`, a printf conversion and an escape -- is a string nobody can
+--- translate. A shortcut (`MenuItem`'s second argument) is a key's name, not
+--- prose, and is not counted.
+local EditorSinks: { [string]: { number } } = {
+    Text = { 1 },
+    TextUnformatted = { 1 },
+    TextWrapped = { 1 },
+    TextDisabled = { 1 },
+    TextColored = { 2 },
+    LabelText = { 1, 2 },
+    BulletText = { 1 },
+    Button = { 1 },
+    SmallButton = { 1 },
+    Checkbox = { 1 },
+    RadioButton = { 1 },
+    MenuItem = { 1 },
+    BeginMenu = { 1 },
+    Selectable = { 1 },
+    SetItemTooltip = { 1 },
+    SetTooltip = { 1 },
+    SeparatorText = { 1 },
+    CollapsingHeader = { 1 },
+    TreeNode = { 1 },
+    TreeNodeEx = { 1, 3 },
+    BeginTabItem = { 1 },
+    InputTextWithHint = { 2 },
+    BeginPopupModal = { 1 },
+    SliderFloat = { 1, 5 },
+    SliderInt = { 1, 5 },
+    DragFloat = { 1, 6 },
+    DragInt = { 1, 6 },
+    Combo = { 1 },
+    BeginCombo = { 1, 2 },
+    InputText = { 1 },
+    InputFloat = { 1 },
+    InputInt = { 1 },
+    ColorEdit3 = { 1 },
+    ColorEdit4 = { 1 },
+    AddText = { 3, 4 },
+    -- The editor's helpers round them.
+    labeledIconButton = { 3 },
+    iconButton = { 5, 6 },
+    terrainTile = { 3 },
+    iconMenuItem = { 3 },
+    toolButton = { 2, 3 },
+    sectionName = { 1 },
+    brushDown = { 1 },
+    propertiesSection = { 1 },
+    numberRow = { 1 },
+    preferenceHint = { 1 },
+    dialogButton = { 1 },
+    panelItem = { 1 },
+    heading = { 1 },
+    sectionLabel = { 1 },
+    textureSlot = { 1 },
+    statRow = { 1 },
+    section = { 1 },
+    row = { 1 },
+    -- The preferences' search: it matches the words as shown.
+    shows = { 1 },
+    -- What the status line says, from the editor and from what it runs.
+    report = { 1 },
+    refuse = { 1 },
+}
+-- And `EditorStatus{...}`, braced: its first member is the line shown.
+local EditorRoot = "engine/app"
+local EditorBaselinePath = "tools/repo/i18n_editor_baseline.json"
+
 local CliExemptFiles: { [string]: boolean } = {
     -- The catalog loader's own failure path: same reason as the engine's.
     ["tools/cli/catalog.luau"] = true,
@@ -310,7 +381,11 @@ local function eachCall(source: string, name: string, visit: (open: number, clos
         end
         index = (finish :: number) + 1
 
-        local open = string.find(source, "(", start :: number, true) :: number
+        -- The parenthesis after the NAME: the match starts a character before
+        -- it, and in `if (log(...` that character is the `if`'s own -- whose
+        -- one argument held no literal, so a call inside a condition was
+        -- never checked at all.
+        local open = string.find(source, "(", (start :: number) + 1 + #name, true) :: number
         local close = matchingParen(source, open)
         if close ~= nil then
             SinkCallsSeen.count += 1
@@ -363,6 +438,70 @@ local function lintEngineFile(file: string, findings: { Finding })
             end
         end)
     end
+end
+
+--- Whether a literal, as written between its quotes, says something a person
+--- reads: a word of two letters or more once an ImGui id, printf conversions
+--- and escapes are taken out.
+local function humanLiteral(text: string): boolean
+    local shown = string.match(text, "^(.-)##") or text
+    shown = string.gsub(shown, "%%[%-%+ #0]*%d*%.?%d*[%a]", "")
+    shown = string.gsub(shown, "\\x%x%x", "")
+    shown = string.gsub(shown, "\\.", "")
+    return string.find(shown, "%a%a") ~= nil
+end
+
+--- The first literal of an argument at its own nesting level, as written.
+local function topLevelLiteral(text: string): string?
+    local trimmed = string.match(text, "^%s*(.-)%s*$") or text
+    if string.sub(trimmed, 1, 1) ~= '"' then
+        return nil
+    end
+    local index = 2
+    while index <= #trimmed do
+        local c = string.sub(trimmed, index, index)
+        if c == "\\" then
+            index += 2
+        elseif c == '"' then
+            return string.sub(trimmed, 2, index - 1)
+        else
+            index += 1
+        end
+    end
+    return nil
+end
+
+--- **The editor's raw words, counted per file** (ADR 0145): each shown
+--- argument of an `EditorSinks` call, and the first member of an
+--- `EditorStatus{...}`, that is a literal with a word in it.
+local function editorLiterals(file: string): { { line: number, text: string } }
+    local source = fs.readFileToString(file)
+    local found: { { line: number, text: string } } = {}
+    for sink, positions in EditorSinks do
+        eachCall(source, sink, function(open, close, _at)
+            local arguments = topLevelArguments(source, open, close)
+            for _, position in positions do
+                local argument = arguments[position]
+                local literal = if argument ~= nil then topLevelLiteral(argument.text) else nil
+                if literal ~= nil and humanLiteral(literal) then
+                    table.insert(found, { line = lineOf(source, argument.at), text = literal })
+                end
+            end
+        end)
+    end
+    local index = 1
+    while true do
+        local start, finish = string.find(source, "[^%w_]EditorStatus%s*{", index)
+        if start == nil then
+            break
+        end
+        index = (finish :: number) + 1
+        local literal = topLevelLiteral(string.sub(source, finish :: number + 1, (finish :: number) + 400))
+        if literal ~= nil and humanLiteral(literal) then
+            table.insert(found, { line = lineOf(source, finish :: number), text = literal })
+        end
+    end
+    return found
 end
 
 --- The CLI half: `print` may not carry a string literal. Machine output goes
@@ -654,6 +793,43 @@ local function main()
         print(`i18nlint: {finding.file}:{finding.line}: {finding.detail} (R3)`)
     end
 
+    -- **The editor, held to a baseline that only shrinks** (ADR 0145): every
+    -- file's count of raw words may not grow, and a file that lost some must
+    -- say so in the baseline, so the next one cannot spend them.
+    local baseline: { [string]: number } = {}
+    if fs.exists(EditorBaselinePath) then
+        local decoded = json.asObject(json.deserialize(fs.readFileToString(EditorBaselinePath)))
+        if decoded then
+            for key, value in decoded :: json.Object do
+                if typeof(key) == "string" and typeof(value) == "number" then
+                    baseline[key] = value
+                end
+            end
+        end
+    end
+    local editorOver = 0
+    local editorUnder = 0
+    local editorTotal = 0
+    for _, file in collectFiles(EditorRoot, EngineSuffixes) do
+        local key = string.gsub(file, "\\", "/")
+        local literals = editorLiterals(file)
+        editorTotal += #literals
+        local allowed = baseline[key] or 0
+        if #literals > allowed then
+            editorOver += 1
+            print(`i18nlint: {key}: {#literals} raw editor string(s), {allowed} allowed (ADR 0145, R3):`)
+            for _, literal in literals do
+                print(`i18nlint:   {key}:{literal.line}: "{literal.text}"`)
+            end
+        elseif #literals < allowed then
+            editorUnder += 1
+            print(
+                `i18nlint: {key}: {#literals} raw editor string(s) now -- lower its baseline from {allowed} in {EditorBaselinePath}`
+            )
+        end
+    end
+    print(`i18nlint: {editorTotal} raw editor string(s) left to translate (ADR 0145)`)
+
     -- A key on the wire is a reference like any other, so it counts here or the
     -- unreferenced tally would name an entry that something does use.
     local used: { [string]: boolean } = {}
@@ -703,6 +879,12 @@ local function main()
     end
     if #findings > 0 then
         fail(`{#findings} hardcoded user-facing string(s) — every one goes through a catalog (R3)`)
+    end
+    if editorOver > 0 then
+        fail(`{editorOver} file(s) put more raw words in the editor than {EditorBaselinePath} allows (R3)`)
+    end
+    if editorUnder > 0 then
+        fail(`{editorUnder} file(s) have fewer raw words than {EditorBaselinePath} says: lower it, so it only shrinks`)
     end
 end
 

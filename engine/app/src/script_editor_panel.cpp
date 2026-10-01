@@ -30,6 +30,7 @@
 #include "engine/app/script_editor_settings.h"
 #include "engine/app/script_sides.h"
 #include "engine/app/ui_theme.h"
+#include "engine/core/i18n.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
 #include "engine/scene/world.h"
@@ -2172,7 +2173,7 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         if (ImGui::ArrowButton("##replace-toggle", tab.replaceOpen ? ImGuiDir_Down : ImGuiDir_Right))
             tab.replaceOpen = !tab.replaceOpen;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("replace  (Ctrl+H)");
+            ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.find_box.replace_ctrl_h_tip")));
         ImGui::SameLine();
 
         // **Sized to leave everything after the field its room, measured item
@@ -2196,7 +2197,7 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         if (!valid) {
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("not a valid regular expression");
+                ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.find_box.not_a_valid_regular_expression_tip")));
         }
         refreshMatches(tab);
         if (entered)
@@ -2214,22 +2215,28 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
         if (tab.findText.empty())
             ImGui::TextDisabled("        ");
         else if (tab.matches.empty())
-            ImGui::TextColored(ImVec4(p.danger.r, p.danger.g, p.danger.b, 1.0f), "No results");
+            ImGui::TextColored(ImVec4(p.danger.r, p.danger.g, p.danger.b, 1.0f), "%s",
+                               core::tr(ENG_TR("engine.editor.find_box.no_results")));
         else if (current.has_value())
-            ImGui::Text("%zu of %zu", *current + 1, tab.matches.size());
+            ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.script.match_of"),
+                                            {{"index", static_cast<core::i64>(*current + 1)},
+                                             {"count", static_cast<core::i64>(tab.matches.size())}})
+                                       .c_str());
         else
-            ImGui::TextDisabled("%zu found", tab.matches.size());
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.script.found"),
+                                               {{"count", static_cast<core::i64>(tab.matches.size())}})
+                                          .c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(tab.matches.empty());
         if (ImGui::ArrowButton("##find-previous", ImGuiDir_Up))
             stepMatch(tab, false);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("previous  (Shift+Enter)");
+            ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.find_box.previous_shift_enter_tip")));
         ImGui::SameLine();
         if (ImGui::ArrowButton("##find-next", ImGuiDir_Down))
             stepMatch(tab, true);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("next  (Enter)");
+            ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.find_box.next_enter_tip")));
         ImGui::EndDisabled();
         ImGui::SameLine();
         // Square, the size of the two steps beside it, with the cross drawn
@@ -2246,7 +2253,7 @@ void drawFindBox(OpenScript& tab, ScriptEditorCommands& out, std::size_t index, 
             draw->AddLine(ImVec2(hi.x - inset, lo.y + inset), ImVec2(lo.x + inset, hi.y - inset), ink, 1.5f);
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("close  (Escape)");
+            ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.find_box.close_escape_tip")));
 
         if (tab.replaceOpen) {
             ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), rowHeight));
@@ -3195,30 +3202,32 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
     if (scriptAction(actionButton, icons::ActionPlay, "Continue"))
         out.step = DebugStep::Continue;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("let the script run on (F5)");
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.let_the_script_run_on_tip")));
     nextControl("Over");
     if (scriptAction(actionButton, icons::ActionStepOver, "Over"))
         out.step = DebugStep::Over;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Step over: execute the current line without entering calls (F10)");
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_over_execute_the_current_tip")));
     nextControl("Into");
     if (scriptAction(actionButton, icons::ActionStepInto, "Into"))
         out.step = DebugStep::Into;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Step into: enter the next function call (F11)");
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_into_enter_the_next_tip")));
     nextControl("Out");
     if (scriptAction(actionButton, icons::ActionStepOut, "Out"))
         out.step = DebugStep::Out;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Step out: finish the current function (Shift+F11)");
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.debug_panel.step_out_finish_the_current_tip")));
     ImGui::EndDisabled();
 
     if (debug.parked)
-        ImGui::TextColored(ImVec4(p.warning.r, p.warning.g, p.warning.b, 1.0f), "stopped in %s at line %u",
-                           debug.chunk.c_str(), debug.line);
+        ImGui::TextColored(ImVec4(p.warning.r, p.warning.g, p.warning.b, 1.0f), "%s",
+                           core::tr(ENG_TR("engine.editor.script.stopped_at"),
+                                    {{"chunk", debug.chunk}, {"line", static_cast<core::i64>(debug.line)}})
+                               .c_str());
     else {
         nextControl("running");
-        ImGui::TextDisabled("running");
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.debug_panel.running")));
     }
 
     // The keys every debugger uses, so hands already know them. Read HERE and
@@ -3235,9 +3244,9 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Breakpoints");
+    ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.debug_panel.breakpoints")));
     if (editor.breakpoints().empty()) {
-        ImGui::TextDisabled("Click a line number to stop there.");
+        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.debug_panel.click_a_line_number_to")));
     }
     else {
         for (const Breakpoint& bp : editor.breakpoints()) {
@@ -3246,9 +3255,15 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
             // the difference between "not armed yet" and "armed and never
             // fires", which look identical from the outside.
             if (bp.boundLine == 0)
-                ImGui::TextDisabled("%s:%u  (not bound)", bp.chunk.c_str(), bp.line + 1);
+                ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.script.breakpoint_unbound"),
+                                                   {{"chunk", bp.chunk}, {"line", static_cast<core::i64>(bp.line + 1)}})
+                                              .c_str());
             else if (bp.boundLine != bp.line + 1)
-                ImGui::Text("%s:%u  (stops at %u)", bp.chunk.c_str(), bp.line + 1, bp.boundLine);
+                ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.script.breakpoint_moved"),
+                                                {{"chunk", bp.chunk},
+                                                 {"line", static_cast<core::i64>(bp.line + 1)},
+                                                 {"bound", static_cast<core::i64>(bp.boundLine)}})
+                                           .c_str());
             else
                 ImGui::Text("%s:%u", bp.chunk.c_str(), bp.line + 1);
         }
@@ -3260,7 +3275,7 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Call stack");
+    ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.debug_panel.call_stack")));
     for (std::size_t index = 0; index < debug.frames.size(); ++index) {
         const DebugFrameView& frame = debug.frames[index];
         char label[256]{};
@@ -3271,7 +3286,7 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Variables");
+    ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.debug_panel.variables")));
     if (debug.selectedFrame < debug.frames.size()) {
         const DebugFrameView& frame = debug.frames[debug.selectedFrame];
         if (ImGui::BeginTable("##vars", 3,
@@ -3296,7 +3311,7 @@ void drawDebugPanel(ScriptEditor& editor, DebugView& debug, ScriptEditorCommands
             ImGui::EndTable();
         }
         if (frame.locals.empty() && frame.upvalues.empty())
-            ImGui::TextDisabled("Nothing named in this frame.");
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.debug_panel.nothing_named_in_this_frame")));
     }
 
     ImGui::End();
