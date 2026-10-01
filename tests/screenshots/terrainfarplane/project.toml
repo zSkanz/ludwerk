@@ -1,0 +1,15 @@
+# Ground wider than the camera sees (D403): the ground must reach the far
+# plane across the whole picture, and end there in a line. A project rather
+# than a bare scene so the driver and a person run it the same way; the world
+# is built by its script.
+
+[project]
+name = "Ludwerk Terrain Far Plane"
+id = "dev.ludwerk.terrainfarplane"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Far Plane"
+width = 960
+height = 540

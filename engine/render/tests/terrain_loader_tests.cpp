@@ -504,36 +504,43 @@ TEST_CASE("the ground is drawn as far as the camera sees")
     // nodes against the haze -- ludwerk-08's "V-shaped notches". The settings
     // a camera gives carry its far plane.
     LoaderFixture fixture(64.0f);
-    // A second patch of ground six kilometres off.
+    // A second patch of ground nine kilometres off.
     asset::TerrainField& field = fixture.component().field;
-    (void)asset::fillFlat(field, core::DVec3{6000.0, 0.0, 0.0}, 64.0f, 0.0f, 1);
+    (void)asset::fillFlat(field, core::DVec3{9000.0, 0.0, 0.0}, 64.0f, 0.0f, 1);
     fixture.component().fieldRevision += 1;
     fixture.loader.setFocus(core::DVec3{0.0, 40.0, 0.0});
     const core::Mat4 projection = core::perspective(1.0f, 16.0f / 9.0f, 0.1f, 20000.0f);
     const auto farPatchDrawn = [&] {
         for (int frame = 0; frame < 30; ++frame)
             (void)fixture.sync();
-        // Chunk columns are 32 m: the far patch is past the 150th.
+        // Chunk columns are 32 m: the far patch is past the 250th.
         for (const auto& [column, times] : coverage(fixture.atoms, fixture.loader.draws(fixture.world))) {
-            if (column.first > 150 && times > 0)
+            if (column.first > 250 && times > 0)
                 return true;
         }
         return false;
     };
 
-    // The camera of every scene so far: five kilometres.
+    // The camera of every scene so far: five kilometres. **Out to the far
+    // plane's corners**, which through this lens are half as far again -- a
+    // node at the side of the picture is inside the plane and further than
+    // it, and dropped at the plane's distance it left the ground scalloped.
     fixture.loader.setLodSettings(terrainLodFor(TerrainLodSettings{}, projection, 5000.0f, 720, 1.5));
-    CHECK(fixture.loader.lodSettings().viewDistance == doctest::Approx(5000.0));
+    const double halfHeight = std::tan(0.5);
+    const double halfWidth = halfHeight * 16.0 / 9.0;
+    const double reach = std::sqrt(1.0 + halfWidth * halfWidth + halfHeight * halfHeight);
+    CHECK(fixture.loader.lodSettings().viewDistance == doctest::Approx(5000.0 * reach).epsilon(0.001));
+    CHECK(reach > 1.4);
     CHECK_FALSE(farPatchDrawn());
 
     // One that sees twenty.
     fixture.loader.setLodSettings(terrainLodFor(TerrainLodSettings{}, projection, 20000.0f, 720, 1.5));
-    CHECK(fixture.loader.lodSettings().viewDistance == doctest::Approx(20000.0));
     CHECK(farPatchDrawn());
-    // An orthographic view keeps the distance rule, and a far plane of
-    // nothing keeps the distance it had.
+    // An orthographic view keeps the distance rule and sees as far as its
+    // plane, and a far plane of nothing keeps the distance it had.
     core::Mat4 flat = projection;
     flat.m[3][3] = 1.0f;
+    CHECK(terrainLodFor(TerrainLodSettings{}, flat, 300.0f, 720, 1.5).viewDistance == doctest::Approx(300.0));
     const TerrainLodSettings kept = terrainLodFor(TerrainLodSettings{}, flat, 0.0f, 720, 1.5);
     CHECK(kept.pixelScale == 0.0);
     CHECK(kept.viewDistance == doctest::Approx(4096.0));

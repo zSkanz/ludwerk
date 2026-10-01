@@ -1068,6 +1068,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **Ground wider than the camera sees reaches the far plane, and ends there
+    # on a line** (D403): a flat slab 12 km across under a camera that sees
+    # five. See the driver.
+    add_test(NAME terrain_far_plane
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainfarplane
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-far-plane
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_far_plane.cmake)
+    set_tests_properties(terrain_far_plane PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **Paint that became the ground, beside paint that has not** (D396): the
     # ground under the paint must not show through along the line between
     # them. See the driver.
@@ -1483,8 +1497,8 @@ if(ENG_BUILD_TESTS)
         screenshot_gate_sprites ui_appearance_gate views_gate mirrors_gate ortho_gate subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
-        terrain_tiling terrain_far terrain_paint_edge terrain_material_channels foliage_card_shadows
-        terrain_rules_agree block_faces_colours chunk_grid_differential editor_seam replica_seam
+        terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
+        foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential editor_seam replica_seam
         descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)
     option(ENG_TEST_GPU_LOCK "Serialise the tests that draw on a real GPU" ${WIN32})
     if(APPLE)

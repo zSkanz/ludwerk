@@ -803,9 +803,22 @@ TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat
                          : 0.0;
     lod.pixelError = pixelError;
     // Past the far plane nothing is drawn whatever is selected; short of it,
-    // what is not selected is a hole in the ground.
-    if (farPlane > 0.0f && std::isfinite(farPlane))
-        lod.viewDistance = static_cast<f64>(farPlane);
+    // what is not selected is a hole in the ground. **To the far plane's
+    // corners, not its middle**: the plane is flat and a node's distance is
+    // round, so a point on the plane at the side of the picture is further
+    // from the camera than the plane is -- by the frustum's half-widths -- and
+    // a node there dropped at the plane's own distance left the ground
+    // scalloped at the sides. A node is let go only wholly past the plane;
+    // the clip ends the ground on a line.
+    if (farPlane > 0.0f && std::isfinite(farPlane)) {
+        f64 reach = 1.0;
+        if (projection.m[3][3] == 0.0f && projection.m[0][0] != 0.0f && projection.m[1][1] != 0.0f) {
+            const f64 halfWidth = 1.0 / static_cast<f64>(projection.m[0][0]);
+            const f64 halfHeight = 1.0 / static_cast<f64>(projection.m[1][1]);
+            reach = std::sqrt(1.0 + halfWidth * halfWidth + halfHeight * halfHeight);
+        }
+        lod.viewDistance = static_cast<f64>(farPlane) * reach;
+    }
     return lod;
 }
 
