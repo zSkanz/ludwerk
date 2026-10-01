@@ -2207,3 +2207,80 @@ TEST_CASE("a world with no terrain mirrors exactly as it did before")
     CHECK(mirror.backend.heightEdits.empty());
     (void)part;
 }
+
+// --- Fast bodies, and bodies in the ground (D417) ------------------------------
+
+TEST_CASE("the ground a fast body is about to cross is made the tick it is found missing (D417)")
+{
+    // Ground has a collider only near what moves, four chunks a tick -- and a
+    // log thrown from out of reach arrived before its ground had been made.
+    // Where four chunks meet, thirty metres up: nine columns of this ground are
+    // inside a tenth of a second of 600 m/s.
+    Mirror slow;
+    (void)terrainWith(slow, 10.0f);
+    (void)slow.part("Crate", {32.0, 30.0, 32.0});
+    slow.step();
+    // The tick's count, as it was.
+    CHECK(meshesMade(slow) <= 4);
+
+    Mirror fast;
+    (void)terrainWith(fast, 10.0f);
+    const core::InstanceId crate = fast.part("Crate", {32.0, 30.0, 32.0});
+    fast.body(crate).linearVelocity = core::Vec3{0.0f, -600.0f, 0.0f};
+    fast.step();
+    CHECK(meshesMade(fast) >= 9);
+}
+
+TEST_CASE("a loose body new ground has grown round is put on top of it (D417)")
+{
+    // A terrain's collider is a shell: a crate lying where the ground was
+    // raised over its middle had nothing to push it out, and fell out of the
+    // bottom of the world.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    const core::InstanceId crate = mirror.part("Crate", {16.0, 10.5, 16.0});
+    const core::InstanceId post = mirror.part("Post", {20.0, 10.5, 16.0});
+    mirror.body(post).anchored = true;
+    settle(mirror);
+    // At rest on the ground, it is where it was put.
+    CHECK(mirror.fixture.world.parts().find(crate)->cframe.position.y == doctest::Approx(10.5));
+
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillFlat(component->field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 16.0f, 1);
+    component->fieldRevision += 1;
+    mirror.step();
+
+    // On the new ground: its middle half its height over sixteen.
+    const double lifted = mirror.fixture.world.parts().find(crate)->cframe.position.y;
+    CHECK(lifted >= 16.0);
+    CHECK(lifted <= 17.5);
+    // And told to the backend, as a part somebody moved is.
+    REQUIRE_FALSE(mirror.backend.transforms.empty());
+    CHECK(mirror.backend.transforms.back().second.position.y == doctest::Approx(lifted));
+    // What is anchored is where its author put it, ground or no ground.
+    CHECK(mirror.fixture.world.parts().find(post)->cframe.position.y == doctest::Approx(10.5));
+}
+
+TEST_CASE("a moving body whose middle is in the ground is put on top of it, and one merely touching is not (D417)")
+{
+    // A log that strikes end first comes round on that end and puts its other
+    // one through the shell: a sweep is of where a body goes, not of how it
+    // turns. The ground is solid all the same.
+    Mirror mirror;
+    (void)terrainWith(mirror, 10.0f);
+    const core::InstanceId sunk = mirror.part("Sunk", {16.0, 8.0, 16.0});
+    const core::InstanceId resting = mirror.part("Resting", {24.0, 10.4, 16.0});
+    mirror.body(sunk).linearVelocity = core::Vec3{0.0f, -30.0f, 0.0f};
+    mirror.body(resting).linearVelocity = core::Vec3{0.0f, -1.0f, 0.0f};
+    mirror.step();
+
+    const double lifted = mirror.fixture.world.parts().find(sunk)->cframe.position.y;
+    CHECK(lifted >= 10.0);
+    CHECK(lifted <= 11.5);
+    // It is not falling any more.
+    CHECK(mirror.body(sunk).linearVelocity.y >= 0.0f);
+    // A tenth of a metre into the ground with its middle in the air: the
+    // solver's, and left where it is.
+    CHECK(mirror.fixture.world.parts().find(resting)->cframe.position.y == doctest::Approx(10.4));
+}

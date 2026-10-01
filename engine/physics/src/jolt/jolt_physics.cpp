@@ -2344,6 +2344,16 @@ private:
         // edges between its triangles and hopped. Jolt does it per pair of
         // bodies, which is why the chunks' seams need their bands as well.
         settings.mEnhancedInternalEdgeRemoval = motion == MotionType::Dynamic;
+        // **A moving body is swept to where it is going, not put there and
+        // asked what it overlaps** (D417). A log 0.7 m thick at 56 m/s moves
+        // 0.93 m a tick: put there, it was past a terrain's shell of triangles
+        // with nothing behind it, and fell through the world. Jolt sweeps a
+        // body only on a step that moves it more than three quarters of its
+        // own inner radius (`mLinearCastThreshold`), so a body at rest or at a
+        // walk costs what it did; the sweep is against everything, moving or
+        // not, and it is as deterministic as the step it is part of.
+        settings.mMotionQuality =
+            motion == MotionType::Dynamic ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
         settings.mUserData = packHandle(handle);
         // Mass is volume times `BasePart.Density`, and there is no `Mass`
         // property precisely so that the two cannot disagree. `CalculateInertia`

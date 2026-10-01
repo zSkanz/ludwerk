@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <doctest/doctest.h>
+#include <string>
 #include <vector>
 
 #include "engine/core/i18n.h"
@@ -561,4 +562,132 @@ TEST_CASE("a character walks across the seam between two chunks' colliders witho
     CHECK(lastX > 7.0);
     CHECK(slowest > 8.0 * 0.99);
     CHECK(highest - lowest < 0.01);
+}
+
+// --- Fast bodies against what stands still (D417) ------------------------------
+//
+// The owner's report of 2026-10-01: logs launched by ground edited under them
+// fell through the ground they landed on. A body was moved a tick at a time and
+// asked where it overlapped after: at 56 m/s a log 0.7 m thick moves 0.93 m a
+// tick, and a terrain's collider is a shell of triangles with nothing behind it.
+
+namespace {
+
+struct Shell
+{
+    std::vector<core::Vec3> points;
+    std::vector<u32> indices;
+};
+
+// Ground as a terrain chunk is: a grid of triangles a metre across, facing up,
+// `cells` a side and centred on the origin, with nothing under it.
+[[nodiscard]] Shell shellGround(int cells, float height)
+{
+    Shell shell;
+    const float half = static_cast<float>(cells) * 0.5f;
+    for (int z = 0; z <= cells; ++z) {
+        for (int x = 0; x <= cells; ++x)
+            shell.points.push_back(core::Vec3{static_cast<float>(x) - half, height, static_cast<float>(z) - half});
+    }
+    const auto row = static_cast<u32>(cells + 1);
+    for (u32 z = 0; z < static_cast<u32>(cells); ++z) {
+        for (u32 x = 0; x < static_cast<u32>(cells); ++x) {
+            const u32 a = z * row + x;
+            const u32 b = a + 1;
+            const u32 c = a + row;
+            const u32 d = c + 1;
+            // Wound so the normal points up (`a triangle mesh collides as its
+            // triangles` says why that has to be said).
+            shell.indices.insert(shell.indices.end(), {a, d, b, a, c, d});
+        }
+    }
+    return shell;
+}
+
+struct Thrown
+{
+    BodyHandle body;
+    float speed = 0.0f;
+    // The height it must still be above when the run ends.
+    double floor = 0.0;
+    std::string what;
+};
+
+} // namespace
+
+TEST_CASE("a body thrown at the ground, or at a thin plate, stops on it at any speed (D417)")
+{
+    Fixture fixture;
+
+    const Shell shell = shellGround(64, 0.0f);
+    BodyDesc ground;
+    ground.shape.type = ShapeType::TriangleMesh;
+    ground.shape.points = shell.points;
+    ground.shape.indices = shell.indices;
+    ground.motion = MotionType::Static;
+    ground.userData = 1;
+    REQUIRE(fixture.physics->createBody(fixture.world, ground).valid());
+
+    // A plate a fifth of a metre thick, twenty metres up and well clear of the
+    // ground: what goes through it falls for ever.
+    BodyDesc plate;
+    plate.shape.type = ShapeType::Box;
+    plate.shape.size = core::Vec3{72.0f, 0.2f, 16.0f};
+    plate.transform.position = core::DVec3{200.0, 20.0, 0.0};
+    plate.motion = MotionType::Static;
+    plate.userData = 2;
+    REQUIRE(fixture.physics->createBody(fixture.world, plate).valid());
+
+    // The speeds of the report -- 46 m/s was the last that stopped -- and on to
+    // what an explosion or a fall from a kilometre gives.
+    const float speeds[] = {5.0f, 20.0f, 46.0f, 56.0f, 82.0f, 109.0f, 200.0f, 300.0f};
+    std::vector<Thrown> thrown;
+    u64 next = 10;
+    const auto throwDown = [&](ShapeType type, core::Vec3 size, core::DVec3 at, float speed, double floor,
+                               const char* what, bool tilted = false) {
+        BodyDesc desc;
+        desc.shape.type = type;
+        desc.shape.size = size;
+        desc.transform.position = at;
+        // On its side: a log's thickness, not its length, is what it has to
+        // cross the ground by. Or askew, as the report's were: one end strikes
+        // first, and the log comes round on it.
+        if (type == ShapeType::Cylinder)
+            desc.transform.rotation =
+                tilted ? core::fromEulerYxz(core::Vec3{0.4f, 0.3f, 1.1f}) : core::rotationZ(1.5707963f);
+        desc.motion = MotionType::Dynamic;
+        desc.density = 0.5f;
+        desc.userData = next++;
+        const BodyHandle body = fixture.physics->createBody(fixture.world, desc);
+        REQUIRE(body.valid());
+        fixture.physics->setBodyVelocity(fixture.world, body, core::Vec3{0.0f, -speed, 0.0f}, core::Vec3{});
+        thrown.push_back(Thrown{body, speed, floor, what});
+    };
+    for (int index = 0; index < 8; ++index) {
+        const float speed = speeds[index];
+        const double x = -28.0 + static_cast<double>(index) * 8.0;
+        // Example 31's log, and a ball smaller than a tick of its own travel.
+        throwDown(ShapeType::Cylinder, core::Vec3{0.7f, 3.2f, 0.7f}, core::DVec3{x, 12.0, -8.0}, speed, -1.0,
+                  "a log at the ground");
+        throwDown(ShapeType::Sphere, core::Vec3{0.3f, 0.3f, 0.3f}, core::DVec3{x, 12.0, 8.0}, speed, -1.0,
+                  "a ball at the ground");
+        throwDown(ShapeType::Cylinder, core::Vec3{0.7f, 3.2f, 0.7f}, core::DVec3{x, 14.0, 0.0}, speed, -1.0,
+                  "a log askew at the ground", true);
+        throwDown(ShapeType::Cylinder, core::Vec3{0.7f, 3.2f, 0.7f}, core::DVec3{x, 30.0, 18.0}, speed, -1.0,
+                  "a log askew at the ground, from higher", true);
+        throwDown(ShapeType::Cylinder, core::Vec3{0.7f, 3.2f, 0.7f}, core::DVec3{200.0 + x, 32.0, -4.0}, speed, 19.0,
+                  "a log at the plate");
+        throwDown(ShapeType::Sphere, core::Vec3{0.3f, 0.3f, 0.3f}, core::DVec3{200.0 + x, 32.0, 4.0}, speed, 19.0,
+                  "a ball at the plate");
+    }
+
+    // Three seconds: the slowest has landed and every one has come to rest.
+    fixture.run(180);
+
+    for (const Thrown& one : thrown) {
+        const BodyState state = fixture.physics->bodyState(fixture.world, one.body);
+        CAPTURE(one.what);
+        CAPTURE(one.speed);
+        CHECK(state.transform.position.y > one.floor);
+    }
 }

@@ -416,7 +416,11 @@ The three numbers a terrain is decided at:
   rebuilds only the meshes of the chunks it changed.
 - **Collided.** Collision is built near things that move: bodies that are not
   anchored, and characters. Each such chunk gets a mesh of its surface, which
-  a body lands on the moment it arrives.
+  a body lands on the moment it arrives -- however fast it arrives: the
+  ground in a fast body's way is made before it gets there. **The ground is
+  solid**, not a skin: an unanchored body whose middle ends up inside it --
+  because the ground was raised over it, or it was thrown hard enough to turn
+  into it -- is put back on top.
 
 ## Large worlds
 

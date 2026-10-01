@@ -683,6 +683,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A fast body does not pass through the ground** (D417): every dynamic
+  body is swept along its path on a step that moves it far, so a log at
+  100 m/s lands on terrain, a block world or a thin part where it used to go
+  through; the ground a fast body is about to reach is given its collider
+  before it arrives; and a loose body that ends up inside a terrain's ground
+  -- raised over it by an edit, or turned into it -- is put back on top of
+  it. Two recorded determinism traces (`ragdoll`, `terrain`) changed for it.
 - **A game fills a phone's display** (D416): on Android a game is immersive --
   the status bar and the navigation pill hidden until swiped for, the frame
   drawn under the camera cutout -- whatever `[window] fullscreen` says, which

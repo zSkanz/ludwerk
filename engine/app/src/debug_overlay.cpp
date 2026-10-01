@@ -298,6 +298,14 @@ struct UiDragResult
 
 namespace {
 
+// **The Water tool's icons, by name and not from the generated list** (D418).
+// `icons::` holds an id for every picture the icon set HAS, and the set had no
+// picture of water when the tool was written: the two constants compiled on
+// the machine that was drawing them and nowhere else. An id is only a name --
+// a theme that draws these is used, and the atlas falls back where none does.
+constexpr std::string_view WaterIcon = "class.Water";
+constexpr std::string_view WaterPointIcon = "class.WaterPoint";
+
 // **A translated label with an id of its own** (ADR 0145): the words are the
 // catalog's, and the `##id` after them -- never shown -- keeps the widget the
 // same widget whatever language its words are in.
@@ -6940,7 +6948,7 @@ void drawTransport(Editor& editor, EditorCommands& commands, EditorPanels& panel
             panels.tiles = true;
             ImGui::SetWindowFocus("Tiles###Tiles");
         }
-        if (iconMenuItem(icons, icons::ClassWater, core::tr(ENG_TR("engine.editor.transport.water")))) {
+        if (iconMenuItem(icons, WaterIcon, core::tr(ENG_TR("engine.editor.transport.water")))) {
             panels.water = true;
             editor.setTool(Editor::Tool::Water);
             ImGui::SetWindowFocus("###Water");
@@ -9080,8 +9088,7 @@ void drawMenuBar(Editor& editor, EditorPanels& panels, EditorCommands& commands,
         if (iconMenuItem(icons, icons::ClassTilemap2D, core::tr(ENG_TR("engine.editor.menu_bar.tiles")), nullptr,
                          panels.tiles))
             panels.tiles = !panels.tiles;
-        if (iconMenuItem(icons, icons::ClassWater, core::tr(ENG_TR("engine.editor.menu_bar.water")), nullptr,
-                         panels.water))
+        if (iconMenuItem(icons, WaterIcon, core::tr(ENG_TR("engine.editor.menu_bar.water")), nullptr, panels.water))
             panels.water = !panels.water;
         ImGui::Separator();
         panelItem(core::tr(ENG_TR("engine.editor.menu_bar.grid")), panels.showGrid);
@@ -11296,7 +11303,7 @@ void drawTabIcons(ImGuiID dockspace, const IconAtlas* icons, const scene::World*
         else if (name.ends_with("###Tiles"))
             id = std::string(icons::ClassTilemap2D);
         else if (name.ends_with("###Water"))
-            id = std::string(icons::ClassWater);
+            id = std::string(WaterIcon);
         else if (name.ends_with("###Blocks"))
             id = std::string(icons::ClassVoxelService);
         else if (name.ends_with("###Debug"))
@@ -13108,13 +13115,13 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
             ImGui::PopStyleColor();
         ImGui::SetItemTooltip("%s", tip);
     };
-    opButton(Editor::WaterOp::River, icons::ClassWaterPoint, core::tr(ENG_TR("engine.editor.water_panel.river")),
+    opButton(Editor::WaterOp::River, WaterPointIcon, core::tr(ENG_TR("engine.editor.water_panel.river")),
              core::tr(ENG_TR("engine.editor.water_panel.river_tip")));
     ImGui::SameLine();
     opButton(Editor::WaterOp::Lake, icons::ActionShapeBlock, core::tr(ENG_TR("engine.editor.water_panel.lake")),
              core::tr(ENG_TR("engine.editor.water_panel.lake_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Ocean, icons::ClassWater, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
+    opButton(Editor::WaterOp::Ocean, WaterIcon, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
              core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
     ImGui::Separator();
 
@@ -13411,7 +13418,7 @@ void buildPaletteCommands(Editor& editor, EditorCommands& commands, EditorPanels
         },
         "Tool: Tiles");
     add(
-        core::tr(ENG_TR("engine.editor.command.tool_water")), "", icons::ClassWater, true,
+        core::tr(ENG_TR("engine.editor.command.tool_water")), "", WaterIcon, true,
         [&panels, &editor] {
             panels.water = true;
             editor.setTool(Editor::Tool::Water);
@@ -14113,7 +14120,7 @@ constexpr ActivityView ActivityViews[] = {
     {"###Terrain", ENG_TR("engine.editor.panel.terrain"), icons::ClassTerrain, &EditorPanels::terrain, ""},
     {"###Blocks", ENG_TR("engine.editor.panel.blocks"), icons::ClassVoxelService, &EditorPanels::blocks, ""},
     {"###Tiles", ENG_TR("engine.editor.panel.tiles"), icons::ClassTilemap2D, &EditorPanels::tiles, ""},
-    {"###Water", ENG_TR("engine.editor.panel.water"), icons::ClassWater, &EditorPanels::water, ""},
+    {"###Water", ENG_TR("engine.editor.panel.water"), WaterIcon, &EditorPanels::water, ""},
 };
 
 // Shows a panel, brings it to the front of its node and gives it the keyboard.

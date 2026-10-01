@@ -833,6 +833,42 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
 // (ADR 0066, 0067), whose seam was one more place the two encodings met.
 namespace {
 
+// **What a mover can cross before its ground could be made again** (D417).
+//
+// Ground has a collider only near what moves, a few chunks a tick -- which is
+// a bargain struck for things that walk. A log thrown at 100 m/s from thirty
+// metres up crossed the reach in a quarter of a second, arrived before its
+// ground had been made, and fell through the world: the report was "fast
+// bodies pass through terrain", and half of it was that the terrain was not
+// there yet. So the chunks inside this box are made in the tick that finds
+// them missing, whatever the tick's count allows: its own size, a tenth of a
+// second of its travel, and a metre.
+struct Sweep
+{
+    core::InstanceId id;
+    core::DVec3 low;
+    core::DVec3 high;
+    // A body the solver moves, and not a character: what new ground can bury.
+    bool loose = false;
+};
+
+inline constexpr f64 SweepSeconds = 0.1;
+inline constexpr f64 SweepMargin = 1.0;
+
+[[nodiscard]] Sweep sweepOf(core::InstanceId id, const PartComponent& part, const RigidBodyComponent& body,
+                            bool loose) noexcept
+{
+    const f64 reach = static_cast<f64>(core::length(part.size)) * 0.5 +
+                      static_cast<f64>(core::length(body.linearVelocity)) * SweepSeconds + SweepMargin;
+    const core::DVec3 at = part.cframe.position;
+    return Sweep{id, core::DVec3{at.x - reach, at.y - reach, at.z - reach},
+                 core::DVec3{at.x + reach, at.y + reach, at.z + reach}, loose};
+}
+
+// How far up new ground is looked through for the air over a buried body, in
+// metres. Past it the body is under a mountain somebody put there, and stays.
+inline constexpr f64 UnburyReach = 64.0;
+
 // Order-sensitive, which is what a key built from an ordered walk wants.
 [[nodiscard]] u64 combine(u64 seed, u64 value) noexcept
 {
@@ -925,17 +961,23 @@ void PhysicsSync::applyTerrain()
     // Where collision is wanted: near bodies that are not anchored, and
     // characters. Gathered once per tick.
     std::vector<core::DVec3> movers;
+    std::vector<Sweep> sweeps;
+    // The terrains a collider of which was made again this tick.
+    std::vector<core::InstanceId> remade;
     bool moversGathered = false;
     const auto gatherMovers = [&] {
         if (moversGathered)
             return;
         moversGathered = true;
         m_scene.rigidBodies().forEach([&](core::InstanceId id, const RigidBodyComponent& body) {
-            if (body.anchored && m_scene.characterBodies().find(id) == nullptr)
+            const bool character = m_scene.characterBodies().find(id) != nullptr;
+            if (body.anchored && !character)
                 return;
             const PartComponent* part = m_scene.parts().find(id);
-            if (part != nullptr && inWorld(id))
+            if (part != nullptr && inWorld(id)) {
                 movers.push_back(part->cframe.position);
+                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character));
+            }
         });
     };
 
@@ -1013,6 +1055,23 @@ void PhysicsSync::applyTerrain()
                 }
             }
         }
+        // **And the chunks a mover is about to cross** (`Sweep`): wanted
+        // whatever the reach says, and made this tick.
+        std::vector<asset::ChunkKey> urgent;
+        for (const Sweep& sweep : sweeps) {
+            const auto index = [&](f64 value, f64 origin) {
+                return static_cast<i32>(std::floor((value - origin) / chunkMetres));
+            };
+            for (i32 z = index(sweep.low.z, terrain.origin.z); z <= index(sweep.high.z, terrain.origin.z); ++z) {
+                for (i32 y = index(sweep.low.y, terrain.origin.y); y <= index(sweep.high.y, terrain.origin.y); ++y) {
+                    for (i32 x = index(sweep.low.x, terrain.origin.x); x <= index(sweep.high.x, terrain.origin.x); ++x)
+                        urgent.push_back(asset::ChunkKey{x, y, z});
+                }
+            }
+        }
+        std::sort(urgent.begin(), urgent.end());
+        urgent.erase(std::unique(urgent.begin(), urgent.end()), urgent.end());
+        wanted.insert(wanted.end(), urgent.begin(), urgent.end());
         std::sort(wanted.begin(), wanted.end());
         wanted.erase(std::unique(wanted.begin(), wanted.end()), wanted.end());
 
@@ -1023,6 +1082,8 @@ void PhysicsSync::applyTerrain()
             f64 distance = 0.0;
             // The revision its collider was last current at; 0 for none.
             u64 current = 0;
+            // In a mover's way: made this tick, count or no count.
+            bool urgent = false;
         };
         std::vector<Pending> pending;
         for (const asset::ChunkKey key : wanted) {
@@ -1064,25 +1125,31 @@ void PhysicsSync::applyTerrain()
                 const f64 cz = terrain.origin.z + (static_cast<f64>(key.z) + 0.5) * chunkMetres - mover.z;
                 nearest = std::min(nearest, cx * cx + cy * cy + cz * cz);
             }
-            pending.push_back(Pending{key, content, nearest, exists ? at->revision : 0});
+            pending.push_back(Pending{key, content, nearest, exists ? at->revision : 0,
+                                      std::binary_search(urgent.begin(), urgent.end(), key)});
         }
         // **Longest waiting first, then nearest, ties by key** -- a function
         // of the world (R10). Nearest alone rebuilt the same four every tick
         // of a dig across more, and the rest stayed solid where they had been
         // dug for as long as the digging went on (terrain audit P5). A chunk
         // with no collider yet has waited longest of all.
+        // **What is in a mover's way before all of it** (D417): those are not
+        // a matter of whose turn it is.
         std::stable_sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) {
+            if (a.urgent != b.urgent)
+                return a.urgent;
             if (a.current != b.current)
                 return a.current < b.current;
             return a.distance != b.distance ? a.distance < b.distance : a.key < b.key;
         });
+        const usize inTheWay = static_cast<usize>(
+            std::count_if(pending.begin(), pending.end(), [](const Pending& entry) { return entry.urgent; }));
 
         // Settled when every rebuild this pass wanted fits in it; one left for
         // the next tick is a pass that must run again.
         want->boxes = std::move(boxes);
         want->revision = terrain.fieldRevision;
         want->placement = placement;
-        want->settled = rebuilt + pending.size() <= TerrainRebuildsPerTick;
         // **This tick's rebuilds, meshed at once on the pool** (terrain audit
         // TA14's other half): each was meshed in turn on the main thread, a
         // dig's four a tick one after another. What is chosen, and the order
@@ -1092,8 +1159,12 @@ void PhysicsSync::applyTerrain()
         // observable (R10). **Collider meshes** (`asset::meshCollider`):
         // without the sky term and the geomorph, which only drawing reads, so
         // they gather no surfaces; and with their bands (ADR 0143).
+        // The tick's count of them, and every one in a mover's way beyond it:
+        // still a function of the world and of nothing else (R10).
         const usize chosen =
-            std::min<usize>(pending.size(), TerrainRebuildsPerTick - std::min(rebuilt, TerrainRebuildsPerTick));
+            std::min<usize>(pending.size(), std::max<usize>(inTheWay, TerrainRebuildsPerTick -
+                                                                          std::min(rebuilt, TerrainRebuildsPerTick)));
+        want->settled = chosen == pending.size();
         std::vector<asset::TerrainCollider> meshes(chosen);
         jobs::parallelFor("terrain.collider.meshes", jobs::Domain::SimVisible, 0, chosen, 1,
                           [&](usize begin, usize end, u32) noexcept {
@@ -1141,7 +1212,78 @@ void PhysicsSync::applyTerrain()
             }
             rebuilt += 1;
         }
+
+        if (chosen > 0)
+            remade.push_back(id);
     });
+
+    // **The ground is solid, not a skin** (D417). A terrain's collider is a
+    // shell of triangles, and what gets behind it has nothing to push it out:
+    // a log lying where the ground was raised a metre and a half; a log that
+    // struck end first, came round on that end and put its other one through
+    // -- a sweep is of where a body goes, not of how it turns. Both fell out
+    // of the bottom of the world. So a loose body whose own middle is in the
+    // ground is put on top of it, as a height field's ground does in the
+    // engines that have one: the field is asked, which is what the ground is.
+    //
+    // Asked of a body that is moving -- one asleep cannot sink -- and of every
+    // loose body on a tick that remade a collider, which is the tick ground
+    // changed near something. A body a raise merely touches has its middle in
+    // the air, and is the solver's.
+    if (moversGathered) {
+        m_scene.terrains().forEach([&](core::InstanceId id, TerrainComponent& terrain) {
+            if (!inWorld(id) || terrain.field.empty())
+                return;
+            const asset::TerrainField& field = terrain.field;
+            const bool everyBody = std::find(remade.begin(), remade.end(), id) != remade.end();
+            const f64 rise = static_cast<f64>(field.settings().voxelSize) * 0.5;
+            for (const Sweep& sweep : sweeps) {
+                if (!sweep.loose)
+                    continue;
+                RigidBodyComponent* body = m_scene.rigidBodies().find(sweep.id);
+                PartComponent* part = m_scene.parts().find(sweep.id);
+                if (body == nullptr || part == nullptr)
+                    continue;
+                const bool moving = !(body->linearVelocity == core::Vec3{0.0f, 0.0f, 0.0f}) ||
+                                    !(body->angularVelocity == core::Vec3{0.0f, 0.0f, 0.0f});
+                if (!everyBody && !moving)
+                    continue;
+                const core::DVec3 at = part->cframe.position;
+                const core::DVec3 local{at.x - terrain.origin.x, at.y - terrain.origin.y, at.z - terrain.origin.z};
+                if (!(asset::sampleField(field, local).distance < 0.0f))
+                    continue;
+                // The nearest air over it.
+                f64 lifted = 0.0;
+                bool open = false;
+                for (f64 up = rise; up <= UnburyReach; up += rise) {
+                    if (!(asset::sampleField(field, core::DVec3{local.x, local.y + up, local.z}).distance < 0.0f)) {
+                        lifted = up;
+                        open = true;
+                        break;
+                    }
+                }
+                if (!open)
+                    continue;
+                // Resting on it as it lies: half its height as it is turned.
+                const core::Vec3 half{part->size.x * 0.5f, part->size.y * 0.5f, part->size.z * 0.5f};
+                const core::Mat3& turn = part->cframe.rotation;
+                const f64 standing = static_cast<f64>(std::abs((turn * core::Vec3{1.0f, 0.0f, 0.0f}).y) * half.x +
+                                                      std::abs((turn * core::Vec3{0.0f, 1.0f, 0.0f}).y) * half.y +
+                                                      std::abs((turn * core::Vec3{0.0f, 0.0f, 1.0f}).y) * half.z);
+                // Written to the part: the walk after this hands a part
+                // somebody moved to the backend, and this is somebody.
+                part->cframe.position.y = at.y + lifted + standing;
+                // It was falling, or it was not moving: either way it is not
+                // falling now.
+                body->linearVelocity.y = std::max(body->linearVelocity.y, 0.0f);
+                if (sweep.id.index < m_bodies.size()) {
+                    const BodyRecord& record = m_bodies[sweep.id.index];
+                    if (record.live && record.generation == sweep.id.generation)
+                        m_backend.setBodyVelocity(m_world, record.handle, body->linearVelocity, body->angularVelocity);
+                }
+            }
+        });
+    }
 
     retireUnseenTerrain();
 }
@@ -1158,14 +1300,20 @@ void PhysicsSync::applyVoxels()
     });
 
     if (voxels != nullptr && voxels->grid.chunkCount() > 0) {
-        // Where things that move are: bodies not anchored, and characters.
+        // Where things that move are: bodies not anchored, and characters --
+        // and what each can cross before its blocks could be made again
+        // (`Sweep`).
         std::vector<core::DVec3> movers;
+        std::vector<Sweep> sweeps;
         m_scene.rigidBodies().forEach([&](core::InstanceId id, const RigidBodyComponent& body) {
-            if (body.anchored && m_scene.characterBodies().find(id) == nullptr)
+            const bool character = m_scene.characterBodies().find(id) != nullptr;
+            if (body.anchored && !character)
                 return;
             const PartComponent* part = m_scene.parts().find(id);
-            if (part != nullptr && inWorld(id))
+            if (part != nullptr && inWorld(id)) {
                 movers.push_back(part->cframe.position);
+                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character));
+            }
         });
 
         const f64 chunkMetres = static_cast<f64>(asset::VoxelChunkEdge) * static_cast<f64>(voxels->blockSize);
@@ -1227,8 +1375,19 @@ void PhysicsSync::applyVoxels()
                 at->content = content;
                 continue;
             }
-            if (rebuilt >= VoxelRebuildsPerTick)
-                continue; // the old collider, if any, stands until its turn
+            if (rebuilt >= VoxelRebuildsPerTick) {
+                // The old collider, if any, stands until its turn -- unless
+                // the chunk is in a mover's way (D417).
+                const f64 low[3] = {static_cast<f64>(key.x) * chunkMetres, static_cast<f64>(key.y) * chunkMetres,
+                                    static_cast<f64>(key.z) * chunkMetres};
+                const bool inTheWay = std::any_of(sweeps.begin(), sweeps.end(), [&](const Sweep& sweep) {
+                    return sweep.high.x >= low[0] && sweep.low.x <= low[0] + chunkMetres && sweep.high.y >= low[1] &&
+                           sweep.low.y <= low[1] + chunkMetres && sweep.high.z >= low[2] &&
+                           sweep.low.z <= low[2] + chunkMetres;
+                });
+                if (!inTheWay)
+                    continue;
+            }
 
             const asset::VoxelMesh meshed = asset::meshVoxelChunk(voxels->grid, key, looks, voxels->blockSize);
             physics::BodyHandle handle{};

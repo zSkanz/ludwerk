@@ -139,6 +139,16 @@ the next frame start rather than mid-tick — the accumulator, the timer wheel a
 the solver all read it — and a read gives back what was last written, so the
 property round-trips immediately and acts one frame later.
 
+## Fast bodies
+
+A body is swept along its path on any tick that moves it further than about
+a third of its own thickness, so a bullet, a thrown log or a crate falling
+from a kilometre stops on what it hits rather than appearing on the far side
+of it -- ground, parts and other bodies alike, with nothing to turn on. The
+sweep is of where a body *goes*, not of how it turns: a long body spinning
+very fast can still put an end through something thinner than that end
+travels in a tick.
+
 ## What is not here
 
 - **No `Mass`, no `PhysicalProperties`.** `Density`, `Friction` and

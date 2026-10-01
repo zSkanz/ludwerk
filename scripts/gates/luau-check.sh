@@ -83,6 +83,34 @@ if ! diff -q "$icons_before" engine/app/generated/icon_ids.gen.h >/dev/null; the
     exit 1
 fi
 
+# **Every icon the editor names is one the COMMIT will have** (D418). The list
+# above is fresh against the working tree -- and a working tree can hold an
+# icon set nobody has committed yet: a tool was written against two ids that
+# existed on one machine, every local gate passed, and `main` did not compile
+# anywhere else. So the ids the code uses are looked for in the list as git
+# has it STAGED, which is the list a commit of this tree takes with it: stage
+# the regenerated list with the change that uses it, or name the icon as a
+# string, which the atlas falls back from.
+echo "== the icons the editor names are in the list git has =="
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+    git cat-file -e :engine/app/generated/icon_ids.gen.h 2>/dev/null; then
+    icons_staged="$(mktemp)"
+    icons_used="$(mktemp)"
+    git show :engine/app/generated/icon_ids.gen.h |
+        grep -oE 'std::string_view [A-Za-z0-9]+ =' | awk '{print $2}' | LC_ALL=C sort -u >"$icons_staged"
+    grep -rhoE 'icons::[A-Z][A-Za-z0-9]*' engine/app/src engine/app/tests engine/app/include |
+        sed 's/icons:://' | LC_ALL=C sort -u >"$icons_used"
+    icons_missing="$(LC_ALL=C comm -23 "$icons_used" "$icons_staged")"
+    rm -f "$icons_staged" "$icons_used"
+    if [ -n "$icons_missing" ]; then
+        echo "luau-check: the editor names icons that only an uncommitted icon_ids.gen.h has:" >&2
+        echo "$icons_missing" | sed 's/^/  icons::/' >&2
+        echo "  Stage engine/app/generated/icon_ids.gen.h with the change, or name the" >&2
+        echo "  icon by its string id." >&2
+        exit 1
+    fi
+fi
+
 # The C++ reflection tables are checked in for the same reason, and compared the
 # same way round: against copies taken BEFORE the generator runs.
 #
