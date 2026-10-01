@@ -1502,3 +1502,19 @@ The ten slowest ctest entries of the serial run, which is where the shards and
 the slots came from: `render` 87 s, `app` 41 s, `terrain_far` 41 s, `asset`
 27 s, `openworld_soak` 22 s, `terrain_shadow_acne` 16 s, `capture_gate_look`
 15 s, `streaming_soak` 15 s, `example_boot_22-atmosphere` 15 s, `net` 13 s.
+
+**The hosted Windows runner draws on a software rasteriser** (WARP), four
+cores: a picture there is minutes of CPU, and beside three others at `-j 4`
+it is two to four times that. Its normal times, so the 900 s hang guard the
+drawn tests carry does not hide one that has gone wrong -- a time far past
+these is a regression, whether or not the guard is reached:
+
+| ctest, `win-msvc-dev` on CI | One at a time (36823092231) | `-j 4` (36835788369) |
+|---|---|---|
+| `terrain_shadow_acne` | 196 s | 497 s |
+| `terrain_far` | 100 s | 428 s |
+| `terrain_gallery_holes` | 44 s | 162 s |
+| `graphics_settings_differential`, `foliage_card_shadows` | -- | 147 s, 144 s |
+| `render` (one entry) / its three shards | 127 s | 92 s the longest |
+| `app` | 63 s | 95 s |
+| **Total** | **1 163 s** | **869 s** |

@@ -55,6 +55,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   `TerrainDetail`, `FoliageDensity`, `TextureQuality`, `ShadowQuality` as a
   level, window mode, monitor, brightness) included.
 - [ ] Changes that rebuild GPU resources batched and budgeted.
+- [ ] **The far plane's cut is never seen** (from the terrain-editing
+  ledger's P5, with `ViewDistance`): what is drawn fades into what is behind
+  it over the last tenth before the plane -- in the terrain's and the parts'
+  shaders -- so a world wider than the view ends in air, not on a line. A
+  scene has no fog unless it sets `FogEnd` or wears an `Atmosphere`, and
+  clamping either to the plane would move every golden.
+- [ ] **VSync at the display's own rate** (G0's finding): a 240 Hz display
+  shows a frame every second or third refresh in a window. Measured windowed,
+  borderless and exclusive fullscreen -- the owner runs the editor windowed --
+  with the frames SDL allows in flight and what the compositor does to a
+  windowed swapchain.
 
 ## G2 — the script API (§3)
 
