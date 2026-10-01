@@ -50,8 +50,23 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 # launcher, which this leaves alone. MSVC's shared PDB is the one thing sccache
 # cannot cache, so the debug information goes into each object instead
 # (`Embedded`, as CI already builds) and the linker still writes the PDB.
+#
+# **Not through a localised MSVC** (D404). Ninja learns an object's headers
+# from the compiler's `/showIncludes` notes, matched against a prefix CMake
+# reads from the compiler at configure time. sccache compiles in a server of
+# its own, with no console, where a localised `cl` writes that note -- here
+# "Observação: incluindo arquivo:" -- in another codepage than the one the
+# prefix was read in: the two never match, ninja records NO header
+# dependencies, and every build after a header edit reuses objects compiled
+# against the old header (D040, again, by another road). Where the prefix is
+# plain ASCII -- an English compiler, which is CI's -- nothing can differ.
 option(ENG_COMPILER_CACHE "Compile through sccache when it is installed" ON)
-if(ENG_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+set(engine_cache_safe ON)
+if(MSVC AND "${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}" MATCHES "[^ -~]")
+    set(engine_cache_safe OFF)
+    message(STATUS "Not compiling through sccache: this MSVC's /showIncludes note is not ASCII (D404)")
+endif()
+if(ENG_COMPILER_CACHE AND engine_cache_safe AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(ENG_SCCACHE sccache HINTS "$ENV{ENG_BUILD_ROOT}/toolchains/sccache")
     if(ENG_SCCACHE)
         set(CMAKE_C_COMPILER_LAUNCHER "${ENG_SCCACHE}")

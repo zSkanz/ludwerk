@@ -1495,7 +1495,7 @@ shortens, and are the long pole.
 |---|---|---|
 | ctest, `win-msvc-dev`, 97 entries | 362 s, one at a time | **90 s** at 20 jobs |
 | `engine_render_tests` as one entry / as three shards | 87 s | 38, 30 and under 20 s side by side |
-| A clean rebuild of `win-msvc-dev` (`ninja -t clean`, then build) | 576 s | **66 s** through sccache, 892 of 892 objects from the cache |
+| A clean rebuild of `win-msvc-dev` (`ninja -t clean`, then build) | 576 s | **66 s** through sccache, 892 of 892 objects from the cache -- measured before D404 turned the cache off for a localised MSVC, which this machine's is; 270 s without it |
 | The inner loop: `-Only windows -Tests '<regex>'`, nothing to build, two tests | -- | 4 s |
 
 The ten slowest ctest entries of the serial run, which is where the shards and

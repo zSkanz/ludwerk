@@ -6,6 +6,7 @@
 // not ready yet, and an edit rebuilding the node it touched and not the rest.
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <doctest/doctest.h>
 #include <functional>
 #include <map>

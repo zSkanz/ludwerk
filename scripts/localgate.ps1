@@ -349,6 +349,12 @@ Invoke-Stage 'windows' {
     # that stopped registering tests would otherwise report success having run
     # nothing, which is the same shape of lie the skip check below exists for.
     $ctestLog = Join-Path $env:TEMP "engine-localgate-ctest-$PID.txt"
+    # **The build knows which headers its objects read** (D040, D404): asked of
+    # one object after every build. A build that recorded none -- a codepage
+    # that does not match the compiler's note, a launcher that rewrites it --
+    # goes on reusing objects compiled against old headers, and says nothing.
+    $buildDir = Join-Path $env:ENG_BUILD_ROOT 'win-msvc-dev'
+    $depsLog = Join-Path $env:TEMP "engine-localgate-deps-$PID.txt"
     # **Every core** (ADR 0148): the tests that measure time run alone and the
     # ones that draw take three GPU slots (`engine/app/CMakeLists.txt`), and
     # the rest share the machine.
@@ -359,6 +365,7 @@ chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1
 cmake --preset win-msvc-dev || exit /b 1
 cmake --build --preset win-msvc-dev || exit /b 1
+ninja -C "$buildDir" -t deps engine/core/CMakeFiles/engine_core.dir/src/log.cpp.obj > "$depsLog" 2>&1
 ctest --preset win-msvc-dev --output-on-failure --no-tests=error -j $ctestJobs $ctestFilter > "$ctestLog" 2>&1 || (type "$ctestLog" & exit /b 1)
 type "$ctestLog"
 "@
@@ -367,10 +374,15 @@ type "$ctestLog"
     try {
         & cmd.exe /c $temp
         if ($LASTEXITCODE -ne 0) { throw "the Windows build or tests failed" }
+        $deps = if (Test-Path $depsLog) { Get-Content $depsLog -Raw } else { '' }
+        if ($deps -notmatch '#deps [1-9]') {
+            throw ("the build recorded no header dependencies for log.cpp.obj, so a header edit would not rebuild what includes it (D040, D404):`n" + $deps)
+        }
         Assert-NoSkips -Log $ctestLog
     } finally {
         Remove-Item $temp -ErrorAction SilentlyContinue
         Remove-Item $ctestLog -ErrorAction SilentlyContinue
+        Remove-Item $depsLog -ErrorAction SilentlyContinue
     }
     # The inner loop stops at the tests it was asked for.
     if ($Tests) { return }

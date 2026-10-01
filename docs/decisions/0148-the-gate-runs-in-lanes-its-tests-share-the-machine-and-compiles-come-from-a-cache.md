@@ -54,6 +54,17 @@ work ran the whole of it, however small.
    the build trees; the Tier-2 image carries it, with its cache on the build
    volume. Nothing it touches ships.
 
+   **Amended the same day (D404): not through a localised MSVC.** sccache
+   compiles in a server of its own with no console, where a localised `cl`
+   writes its `/showIncludes` note in another codepage than the one CMake read
+   the note's prefix in. Ninja matched nothing, recorded no header
+   dependencies, and the first header edit after the cache went in reused 952
+   objects compiled against the old header -- a virtual added to `rhi::IDevice`
+   and every call through it one slot off. That is D040 by another road. The
+   cache is used where the note is ASCII (an English compiler: CI, and the
+   container's Clang, whose dependencies come from a file and not from a note),
+   and the Windows gate asks one object for its headers after every build.
+
 ## Consequences
 
 - What running tests side by side found, fixed rather than serialised away:
@@ -72,3 +83,5 @@ work ran the whole of it, however small.
   set it).
 - The full gate, warm: 38 minutes to under 7. The numbers, before and after,
   are in `docs/perf-baselines.md`.
+- On a machine whose MSVC is localised and has no English pack -- the
+  owner's -- the Windows build is not cached, and costs what it did.
