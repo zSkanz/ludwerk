@@ -12,6 +12,7 @@
 #include <engine/core/json_writer.h>
 #include <engine/core/text_key.h>
 #include <engine/platform/file.h>
+#include <engine/platform/platform.h>
 #include <engine/render/debug_draw.h>
 #include <engine/render/lighting.h>
 #include <engine/rhi/device.h>
@@ -228,6 +229,11 @@ void Editor::play(scene::World& world)
     // would move the point stop returns to into the middle of a play session.
     if (m_run != RunState::Editing)
         return;
+    // **Not over an import** (ADR 0149 §2): the world is half laid.
+    if (m_import != nullptr) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_running")), true};
+        return;
+    }
 
     // Taken every time play is pressed rather than kept from the first, because
     // stop means "back to where I pressed play", not "back to where I opened
@@ -283,6 +289,11 @@ bool Editor::save(scene::World& world, const std::filesystem::path& path)
     // made every one of those the scene's: duplicated at the next run, or gone.
     if (m_run != RunState::Editing) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.stop_the_game_first_what")), true};
+        return false;
+    }
+    // Nor a world half laid (ADR 0149 §2).
+    if (m_import != nullptr) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_running")), true};
         return false;
     }
 
@@ -1039,7 +1050,7 @@ bool Editor::undo(scene::World& world, Inspector& inspector)
     // **Not in the middle of a stroke** (terrain audit E1): it popped the
     // stroke's own step with the button still down, and the stamps after it
     // belonged to no step at all.
-    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value())
+    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value() || m_import != nullptr)
         return false;
     const std::string label(m_history.undoLabel());
     if (!m_history.undo(world))
@@ -1057,7 +1068,7 @@ bool Editor::undo(scene::World& world, Inspector& inspector)
 
 bool Editor::redo(scene::World& world, Inspector& inspector)
 {
-    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value())
+    if (m_stroke.has_value() || m_blockStroke.has_value() || m_tileStroke.has_value() || m_import != nullptr)
         return false;
     const std::string label(m_history.redoLabel());
     if (!m_history.redo(world))
@@ -5364,11 +5375,23 @@ bool Editor::generateHills(scene::World& world, core::InstanceId rootOrWorkspace
     const core::InstanceId existing = terrainIn(world, rootOrWorkspace);
     const scene::TerrainComponent* before = existing.valid() ? world.terrains().find(existing) : nullptr;
     const f32 voxel = before != nullptr ? before->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
-    constexpr core::u32 MaxColumns = 4096;
     const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
-    if (across > static_cast<double>(MaxColumns)) {
+    if (across > static_cast<double>(MaxImportColumns)) {
         m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.too_many_columns")), true};
         return false;
+    }
+    // **Past one table, a tile at a time** (ADR 0149 §2).
+    if (across > static_cast<double>(MaxTableColumns)) {
+        const auto columns = static_cast<core::u32>(across);
+        return beginTerrainImport(
+            world, rootOrWorkspace, inspector, columns, columns, spec.material,
+            core::tr(ENG_TR("engine.editor.terrain.create.hills")),
+            [spec](const scene::TerrainComponent& terrain, const TerrainImportPlan&, std::string&) {
+                const auto originY = static_cast<f32>(terrain.origin.y);
+                return hillSource(
+                    terrain.field.settings(),
+                    asset::HillSettings{spec.seed, spec.octaves, spec.scale, spec.low - originY, spec.high - originY});
+            });
     }
     // **One step, whether or not the terrain was there** (the terrain audit's
     // editor list): on a new world the terrain's making is the step.
@@ -5918,6 +5941,56 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     }
     const std::string name = spec.source.filename().string();
 
+    // **A folder of tiles, or more columns than one table holds, is laid a
+    // tile at a time** (ADR 0149 §2).
+    {
+        const core::InstanceId present = terrainIn(world, rootOrWorkspace);
+        const scene::TerrainComponent* held = present.valid() ? world.terrains().find(present) : nullptr;
+        const f32 voxelSize = held != nullptr ? held->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
+        const double wide = std::round(static_cast<double>(spec.size) / static_cast<double>(voxelSize)) + 1.0;
+        std::error_code ignored;
+        if (std::filesystem::is_directory(spec.source, ignored) || isHeightmapPiece(spec.source) ||
+            wide > static_cast<double>(MaxTableColumns)) {
+            if (wide > static_cast<double>(MaxImportColumns)) {
+                m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_many_columns")), true};
+                return false;
+            }
+            std::string error;
+            std::shared_ptr<HeightmapSource> opened = openHeightmap(spec.source, error);
+            if (opened == nullptr) {
+                m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.not_a_heightmap"),
+                                                 {{"name", name}, {"reason", error}}),
+                                        true};
+                return false;
+            }
+            const HeightmapSize pixels = opened->size();
+            const auto columns = static_cast<core::u32>(wide);
+            const auto rows = std::clamp<core::u32>(
+                static_cast<core::u32>(std::lround(static_cast<double>(columns) * pixels.height / pixels.width)), 1u,
+                MaxImportColumns);
+            // Handed to the job whole: the opener gives it away once.
+            return beginTerrainImport(
+                world, rootOrWorkspace, inspector, columns, rows, spec.material, name,
+                [opened, spec](const scene::TerrainComponent& terrain, const TerrainImportPlan& plan, std::string&) {
+                    const auto originY = static_cast<f32>(terrain.origin.y);
+                    opened->map(plan, spec.low - originY, spec.high - originY);
+                    // A view of it: the shared pointer keeps the source alive.
+                    struct Shared final : HeightSource
+                    {
+                        std::shared_ptr<HeightmapSource> held;
+                        bool read(core::i32 x, core::i32 z, core::u32 width, core::u32 depth, std::span<float> out,
+                                  std::string& why) override
+                        {
+                            return held->read(x, z, width, depth, out, why);
+                        }
+                    };
+                    auto view = std::make_unique<Shared>();
+                    view->held = opened;
+                    return std::unique_ptr<HeightSource>(std::move(view));
+                });
+        }
+    }
+
     // **Read and decoded before anything is recorded**, so a file that is not a
     // heightmap refuses with the world untouched and no undo step to wade past.
     std::vector<std::byte> bytes;
@@ -5940,12 +6013,8 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
     const core::InstanceId existing = terrainIn(world, rootOrWorkspace);
     const scene::TerrainComponent* before = existing.valid() ? world.terrains().find(existing) : nullptr;
     const f32 voxel = before != nullptr ? before->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
-    constexpr core::u32 MaxColumns = 4096;
+    constexpr core::u32 MaxColumns = MaxTableColumns;
     const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
-    if (across > static_cast<double>(MaxColumns)) {
-        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_many_columns")), true};
-        return false;
-    }
     const auto columns = static_cast<core::u32>(across);
     const auto rows = std::max<core::u32>(
         1u, static_cast<core::u32>(std::lround(static_cast<double>(columns) * image.height / image.width)));
@@ -6009,6 +6078,164 @@ bool Editor::importHeightmap(scene::World& world, core::InstanceId rootOrWorkspa
                                                   args),
                      false};
     return true;
+}
+
+bool Editor::importFunction(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
+                            const FunctionImport& spec)
+{
+    if (spec.source.empty() || !(spec.size > 0.0f) || spec.material == 0 || !m_heightFunctionLoader) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_spec")), true};
+        return false;
+    }
+    const core::InstanceId present = terrainIn(world, rootOrWorkspace);
+    const scene::TerrainComponent* held = present.valid() ? world.terrains().find(present) : nullptr;
+    const f32 voxel = held != nullptr ? held->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
+    const double across = std::round(static_cast<double>(spec.size) / static_cast<double>(voxel)) + 1.0;
+    if (across > static_cast<double>(MaxImportColumns)) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_many_columns")), true};
+        return false;
+    }
+    const auto columns = static_cast<core::u32>(across);
+    const std::string name = spec.source.filename().string();
+    return beginTerrainImport(
+        world, rootOrWorkspace, inspector, columns, columns, spec.material, name,
+        [this, spec](const scene::TerrainComponent& terrain, const TerrainImportPlan&, std::string& error) {
+            return m_heightFunctionLoader(spec.source, terrain.origin, terrain.field.settings().voxelSize, error);
+        });
+}
+
+bool Editor::beginTerrainImport(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
+                                core::u32 columns, core::u32 rows, core::u8 material, std::string name,
+                                const ImportOpener& open)
+{
+    if (m_run != RunState::Editing || m_import != nullptr || m_stroke.has_value() || columns == 0 || rows == 0) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_running")), true};
+        return false;
+    }
+    auto job = std::make_unique<ImportJob>();
+    // The world as it is now, which is what a cancel puts back -- taken before
+    // the terrain is made, so a cancelled import on a new world leaves none.
+    job->before = std::make_unique<scene::WorldSnapshot>(world.snapshot());
+    job->existed = terrainIn(world, rootOrWorkspace).valid();
+    job->terrain = createTerrain(world, rootOrWorkspace, inspector);
+    job->name = std::move(name);
+    job->startedNs = platform::nowNs();
+    const scene::TerrainComponent* terrain = world.terrains().find(job->terrain);
+    if (terrain == nullptr) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nowhere")), true};
+        return false;
+    }
+    // Round the terrain's origin, as the one-table verbs lay it.
+    TerrainImportPlan plan;
+    plan.columns = columns;
+    plan.rows = rows;
+    plan.firstX = static_cast<core::i32>(std::floor(-0.5 * static_cast<double>(columns - 1u)));
+    plan.firstZ = static_cast<core::i32>(std::floor(-0.5 * static_cast<double>(rows - 1u)));
+    plan.material = groundMaterial(*terrain, material);
+    std::string error;
+    std::unique_ptr<HeightSource> source = open(*terrain, plan, error);
+    if (source == nullptr) {
+        const std::string failed = job->name;
+        m_import = std::move(job);
+        endTerrainImport(world, inspector, false);
+        // Nothing was written out: there is no layer of the cache to drop.
+        m_importOutcome = ImportOutcome::None;
+        m_status = EditorStatus{
+            core::tr(ENG_TR("engine.editor.terrain.status.not_a_heightmap"), {{"name", failed}, {"reason", error}}),
+            true};
+        return false;
+    }
+    job->import = std::make_unique<TerrainImport>(std::move(source), plan);
+    m_import = std::move(job);
+    return true;
+}
+
+f32 Editor::terrainImportProgress() const noexcept
+{
+    return m_import != nullptr && m_import->import != nullptr ? m_import->import->progress() : 0.0f;
+}
+
+std::optional<core::DVec3> Editor::terrainImportCursor(const scene::World& world) const
+{
+    if (m_import == nullptr || m_import->import == nullptr)
+        return std::nullopt;
+    const scene::TerrainComponent* terrain = world.terrains().find(m_import->terrain);
+    return terrain != nullptr ? std::optional<core::DVec3>(m_import->import->cursor(*terrain)) : std::nullopt;
+}
+
+void Editor::driveTerrainImport(scene::World& world, Inspector& inspector, double budgetMilliseconds)
+{
+    if (m_import == nullptr || m_import->import == nullptr)
+        return;
+    const core::u64 started = platform::nowNs();
+    for (;;) {
+        scene::TerrainComponent* terrain = world.terrains().find(m_import->terrain);
+        if (terrain == nullptr) {
+            endTerrainImport(world, inspector, false);
+            m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.nowhere")), true};
+            return;
+        }
+        std::string error;
+        const TerrainImport::Step step = m_import->import->step(world, *terrain, error);
+        if (step == TerrainImport::Step::Failed || step == TerrainImport::Step::Refused) {
+            const std::string name = m_import->name;
+            endTerrainImport(world, inspector, false);
+            m_status =
+                step == TerrainImport::Step::Failed
+                    ? EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.not_a_heightmap"),
+                                            {{"name", name}, {"reason", error}}),
+                                   true}
+                    : EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_too_steep"), {{"name", name}}),
+                                   true};
+            return;
+        }
+        if (step == TerrainImport::Step::Done) {
+            const TerrainImportPlan plan = m_import->import->plan();
+            const core::I18nArg args[] = {
+                {"name", m_import->name},
+                {"columns", static_cast<core::i64>(plan.columns)},
+                {"rows", static_cast<core::i64>(plan.rows)},
+                {"seconds", static_cast<core::i64>((platform::nowNs() - m_import->startedNs) / 1000000000ull)}};
+            endTerrainImport(world, inspector, true);
+            m_status = EditorStatus{
+                core::engineCatalog().format(ENG_TR("engine.editor.terrain.status.import_laid"), args), false};
+            return;
+        }
+        if (static_cast<double>(platform::nowNs() - started) / 1.0e6 >= budgetMilliseconds)
+            return;
+    }
+}
+
+void Editor::cancelTerrainImport(scene::World& world, Inspector& inspector)
+{
+    if (m_import == nullptr)
+        return;
+    endTerrainImport(world, inspector, false);
+    m_status = EditorStatus{core::tr(ENG_TR("engine.editor.terrain.status.import_cancelled")), false};
+}
+
+void Editor::endTerrainImport(scene::World& world, Inspector& inspector, bool keep)
+{
+    const std::unique_ptr<ImportJob> job = std::move(m_import);
+    m_import.reset();
+    if (job == nullptr)
+        return;
+    if (keep) {
+        // **Not a step, and nothing before it is one any more**: every
+        // snapshot the history holds is of a world this ground is not in.
+        m_history.clear();
+        m_sceneDirty = true;
+        m_importOutcome = ImportOutcome::Kept;
+        return;
+    }
+    world.restore(*job->before);
+    ++m_worldRestores;
+    // The terrain's making was a step of the history, and is not one now.
+    if (!job->existed)
+        m_history.retract();
+    inspector.pruneDead(world);
+    inspector.onWorldRestored();
+    m_importOutcome = ImportOutcome::Dropped;
 }
 
 bool Editor::driveGizmo(scene::World& world, Inspector& inspector)

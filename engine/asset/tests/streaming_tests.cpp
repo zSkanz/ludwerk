@@ -677,3 +677,41 @@ TEST_CASE("a payload that is not a chunk streams on the same policy and decodes 
         CHECK(manager.stateOf(bad) == ChunkState::Failed);
     }
 }
+
+TEST_CASE("a chunk that arrives after the focus has left is let go, not kept (D405)")
+{
+    // A read takes as long as the disk takes, and a camera moving fast -- a
+    // flight, a generator laying a world -- is somewhere else when it lands.
+    // The bytes were kept in the entry until the chunk was wanted again, which
+    // for a camera that never returns is for ever: every chunk it outran, held.
+    seedRealCatalog();
+    Harness harness(gridIndex(4));
+    StreamingBudget budget;
+    budget.milliseconds = 1000.0;
+    budget.maxInFlight = 64;
+
+    const StreamingFocus here[] = {focusAt(CellCentre, 256.0, 300.0)};
+    harness.manager.setFoci(here);
+    harness.manager.tick(budget);
+    REQUIRE(harness.loadRequests.size() == 9);
+    REQUIRE(harness.manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Loading);
+
+    // The focus goes before the reads come back.
+    const StreamingFocus faraway[] = {focusAt({4000.0, 0.0, 4000.0}, 256.0, 300.0)};
+    harness.manager.setFoci(faraway);
+    harness.manager.tick(budget);
+    harness.deliverAllRequested();
+    harness.manager.tick(budget);
+
+    CHECK(harness.manager.stats().decoded == 0);
+    CHECK(harness.manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Unloaded);
+    // Never materialised, so never evicted either.
+    CHECK(harness.materialized.empty());
+    CHECK(harness.evicted.empty());
+
+    // And it is read again when somebody comes back.
+    harness.manager.setFoci(here);
+    harness.settle(budget);
+    CHECK(harness.manager.stateOf(ChunkId{0, 0, 0}) == ChunkState::Resident);
+    CHECK(harness.materialized.size() == 9);
+}

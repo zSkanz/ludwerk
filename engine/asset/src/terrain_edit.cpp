@@ -480,23 +480,51 @@ EditReport fillFlat(TerrainField& field, DVec3 center, float size, float height,
     return EditReport{static_cast<u32>(std::min<core::u64>(touched, std::numeric_limits<u32>::max()))};
 }
 
+namespace {
+
+EditReport writeHeightsWithin(TerrainField& field, i32 firstX, i32 firstZ, u32 columns, std::span<const float> heights,
+                              std::span<const u8> materials, const HeightWindow* window);
+
+} // namespace
+
 EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns, std::span<const float> heights,
                         u8 material)
 {
     if (material == 0)
         return {};
     const u8 one[1] = {material};
-    return writeHeights(field, firstX, firstZ, columns, heights, std::span<const u8>(one));
+    return writeHeightsWithin(field, firstX, firstZ, columns, heights, std::span<const u8>(one), nullptr);
 }
 
 EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns, std::span<const float> heights,
                         std::span<const u8> materials)
+{
+    return writeHeightsWithin(field, firstX, firstZ, columns, heights, materials, nullptr);
+}
+
+EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns, std::span<const float> heights,
+                        u8 material, HeightWindow window)
+{
+    if (material == 0)
+        return {};
+    const u8 one[1] = {material};
+    return writeHeightsWithin(field, firstX, firstZ, columns, heights, std::span<const u8>(one), &window);
+}
+
+namespace {
+
+EditReport writeHeightsWithin(TerrainField& field, i32 firstX, i32 firstZ, u32 columns, std::span<const float> heights,
+                              std::span<const u8> materials, const HeightWindow* window)
 {
     EditReport report;
     if (columns == 0 || heights.empty() || materials.empty())
         return report;
     const auto rows = static_cast<u32>(heights.size() / columns);
     if (rows == 0)
+        return report;
+    // A window past its table is no window: nothing of it is laid.
+    if (window != nullptr && (window->columns == 0 || window->rows == 0 || window->x + window->columns > columns ||
+                              window->z + window->rows > rows))
         return report;
     constexpr auto edge = static_cast<i32>(ChunkEdge);
     // **Empty columns are laid as a slab** (`LaidDepth`) under the lowest height
@@ -520,6 +548,11 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
     // whole block of heights at once.
     const i32 lastX = firstX + static_cast<i32>(columns) - 1;
     const i32 lastZ = firstZ + static_cast<i32>(rows) - 1;
+    // What is laid: the whole table, or the window of it (`HeightWindow`).
+    const i32 laidFirstX = firstX + (window != nullptr ? static_cast<i32>(window->x) : 0);
+    const i32 laidFirstZ = firstZ + (window != nullptr ? static_cast<i32>(window->z) : 0);
+    const i32 laidLastX = window != nullptr ? laidFirstX + static_cast<i32>(window->columns) - 1 : lastX;
+    const i32 laidLastZ = window != nullptr ? laidFirstZ + static_cast<i32>(window->rows) - 1 : lastZ;
     std::vector<float> blockHeights(ChunkRows);
     std::vector<u8> blockMaterials(ChunkRows);
     const auto materialAt = [&](usize index) {
@@ -567,14 +600,16 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
     // asks for more than `MaxHeightVoxels` is refused whole.
     {
         double estimate = 0.0;
-        for (i32 chunkZ = floorDiv(firstZ, edge); chunkZ <= floorDiv(lastZ, edge); ++chunkZ) {
-            for (i32 chunkX = floorDiv(firstX, edge); chunkX <= floorDiv(lastX, edge); ++chunkX) {
+        for (i32 chunkZ = floorDiv(laidFirstZ, edge); chunkZ <= floorDiv(laidLastZ, edge); ++chunkZ) {
+            for (i32 chunkX = floorDiv(laidFirstX, edge); chunkX <= floorDiv(laidLastX, edge); ++chunkX) {
                 double low = std::numeric_limits<double>::max();
                 double high = std::numeric_limits<double>::lowest();
                 double steepest = 1.0;
                 double count = 0.0;
-                for (i32 z = std::max(firstZ, chunkZ * edge); z <= std::min(lastZ, chunkZ * edge + edge - 1); ++z) {
-                    for (i32 x = std::max(firstX, chunkX * edge); x <= std::min(lastX, chunkX * edge + edge - 1); ++x) {
+                for (i32 z = std::max(laidFirstZ, chunkZ * edge); z <= std::min(laidLastZ, chunkZ * edge + edge - 1);
+                     ++z) {
+                    for (i32 x = std::max(laidFirstX, chunkX * edge);
+                         x <= std::min(laidLastX, chunkX * edge + edge - 1); ++x) {
                         const double height = heightOf(x, z);
                         if (std::isnan(height))
                             continue;
@@ -597,16 +632,16 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
             }
         }
     }
-    for (i32 chunkZ = floorDiv(firstZ, edge); chunkZ <= floorDiv(lastZ, edge); ++chunkZ) {
-        for (i32 chunkX = floorDiv(firstX, edge); chunkX <= floorDiv(lastX, edge); ++chunkX) {
-            // The block's heights, NaN where the table does not reach.
+    for (i32 chunkZ = floorDiv(laidFirstZ, edge); chunkZ <= floorDiv(laidLastZ, edge); ++chunkZ) {
+        for (i32 chunkX = floorDiv(laidFirstX, edge); chunkX <= floorDiv(laidLastX, edge); ++chunkX) {
+            // The block's heights, NaN where what is laid does not reach.
             const bool columnEmpty = field.column(chunkX, chunkZ).empty();
             for (i32 localZ = 0; localZ < edge; ++localZ) {
                 for (i32 localX = 0; localX < edge; ++localX) {
                     const i32 x = chunkX * edge + localX;
                     const i32 z = chunkZ * edge + localZ;
                     const usize slot = static_cast<usize>(localZ) * ChunkEdge + static_cast<usize>(localX);
-                    if (x < firstX || x > lastX || z < firstZ || z > lastZ) {
+                    if (x < laidFirstX || x > laidLastX || z < laidFirstZ || z > laidLastZ) {
                         blockHeights[slot] = std::numeric_limits<float>::quiet_NaN();
                         continue;
                     }
@@ -667,6 +702,8 @@ EditReport writeHeights(TerrainField& field, i32 firstX, i32 firstZ, u32 columns
     }
     return report;
 }
+
+} // namespace
 
 EditReport smoothBall(TerrainField& field, DVec3 center, double radius, float strength)
 {

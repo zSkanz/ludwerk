@@ -781,6 +781,22 @@ EditReport writeHeights(TerrainField& field, core::i32 firstX, core::i32 firstZ,
 EditReport writeHeights(TerrainField& field, core::i32 firstX, core::i32 firstZ, core::u32 columns,
                         std::span<const float> heights, std::span<const core::u8> materials);
 
+// **A table laid in part** (ADR 0149 §2): only the rectangle `window` of it is
+// written -- `x`, `z` from the table's first column, `columns` by `rows` -- and
+// the rest is an apron, read for the slope at the window's edge and not laid.
+// A world laid a tile at a time hands each tile with a column of its
+// neighbours round it, so the ground at a seam is what one table of the whole
+// world would have made it.
+struct HeightWindow
+{
+    core::u32 x = 0;
+    core::u32 z = 0;
+    core::u32 columns = 0;
+    core::u32 rows = 0;
+};
+EditReport writeHeights(TerrainField& field, core::i32 firstX, core::i32 firstZ, core::u32 columns,
+                        std::span<const float> heights, core::u8 material, HeightWindow window);
+
 // Softens the ground in a ball: every voxel moves towards the mean of its
 // twenty-seven neighbours by `strength`, less towards the rim. Clamped to 0..1;
 // a ball of more than `MaxSmoothVoxels` is refused.

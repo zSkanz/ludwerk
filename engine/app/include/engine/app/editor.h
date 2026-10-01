@@ -5,6 +5,7 @@
 #include <engine/app/content_tree.h>
 #include <engine/app/inspector.h>
 #include <engine/app/picking.h>
+#include <engine/app/terrain_import.h>
 #include <engine/asset/material.h>
 #include <engine/asset/terrain.h>
 #include <engine/asset/voxel.h>
@@ -505,6 +506,8 @@ struct EditorCommands
     // it lies rather than copied into `content/`: the ground it makes is saved
     // with the scene, and the image is not needed again.
     bool pickHeightmap = false;
+    // The same for a Luau file that answers heights (ADR 0149 §2).
+    bool pickHeightFunction = false;
 
     // --- What a right-click asked for ----------------------------------------
     //
@@ -2219,6 +2222,63 @@ public:
     };
     bool importHeightmap(scene::World& world, core::InstanceId root, Inspector& inspector, const HeightmapImport& spec);
 
+    // --- A world laid a tile at a time (ADR 0149 §2) -------------------------
+    //
+    // **Past `MaxTableColumns` a side neither verb lays one table.** A
+    // heightmap, hills or a function asked for larger is laid a tile at a
+    // time instead (`TerrainImport`), a few a frame, with the ground behind
+    // it written out to the session cache -- so a world the size of a city is
+    // made in the memory the camera's radius takes. `source` for a heightmap
+    // may be a folder of tiles.
+    //
+    // **It is not an undo step.** The history is the world as it was, and a
+    // world this size is not in it: finishing clears the history, and
+    // `cancelTerrainImport` -- or a tile that is refused -- puts the world
+    // back as it was when the import began. Nothing else may be undone,
+    // played or saved while one runs.
+    static constexpr core::u32 MaxTableColumns = 4096;
+    // The widest a tiled import may be, in columns: 32 km at a metre voxel.
+    static constexpr core::u32 MaxImportColumns = 32768;
+    // **Ground from a Luau function of a place**: `source` is a file that
+    // returns `function(x, z)`, world metres in and a world height out. Laid
+    // a tile at a time whatever its size.
+    struct FunctionImport
+    {
+        std::filesystem::path source;
+        f32 size = 1024.0f;
+        core::u8 material = 1;
+    };
+    bool importFunction(scene::World& world, core::InstanceId root, Inspector& inspector, const FunctionImport& spec);
+    // Who compiles the function: the engine, which has the VM.
+    using HeightFunctionLoader = std::function<std::unique_ptr<HeightSource>(
+        const std::filesystem::path& file, core::DVec3 origin, f32 voxel, std::string& error)>;
+    void setHeightFunctionLoader(HeightFunctionLoader loader) { m_heightFunctionLoader = std::move(loader); }
+    // The file the Create tab's "from a function" lays, as chosen.
+    [[nodiscard]] const std::filesystem::path& heightFunctionSource() const noexcept { return m_heightFunctionSource; }
+    void setHeightFunctionSource(std::filesystem::path source) { m_heightFunctionSource = std::move(source); }
+
+    [[nodiscard]] bool terrainImportRunning() const noexcept { return m_import != nullptr; }
+    [[nodiscard]] f32 terrainImportProgress() const noexcept;
+    // Where the tile being laid is, in the world.
+    [[nodiscard]] std::optional<core::DVec3> terrainImportCursor(const scene::World& world) const;
+    // Lays tiles until `budgetMilliseconds` have gone, one at least. Called
+    // once a frame while an import runs.
+    void driveTerrainImport(scene::World& world, Inspector& inspector, double budgetMilliseconds);
+    void cancelTerrainImport(scene::World& world, Inspector& inspector);
+    // What the import that just ended did with the ground it wrote out: the
+    // session cache's layer is kept or dropped to match
+    // (`FieldStreamer::keepSessionLayer`). Read once.
+    enum class ImportOutcome : core::u8
+    {
+        None,
+        Kept,
+        Dropped,
+    };
+    [[nodiscard]] ImportOutcome takeTerrainImportOutcome() noexcept
+    {
+        return std::exchange(m_importOutcome, ImportOutcome::None);
+    }
+
     // --- The terrain tools (B4) ------------------------------------------------
 
     // **Hills from noise** over a square round the terrain's origin, one undo
@@ -3039,6 +3099,30 @@ private:
     std::optional<f32> m_lastGroundHeight;
     std::filesystem::path m_heightmapSource;
     std::optional<HeightmapHint> m_heightmapHint;
+    // The import that is running: what it lays, the terrain, and the world as
+    // it was before it, which a cancel puts back.
+    struct ImportJob
+    {
+        std::unique_ptr<TerrainImport> import;
+        core::InstanceId terrain;
+        std::unique_ptr<scene::WorldSnapshot> before;
+        // Whether the terrain was there before: its making was a step.
+        bool existed = false;
+        std::string name;
+        core::u64 startedNs = 0;
+    };
+    std::unique_ptr<ImportJob> m_import;
+    ImportOutcome m_importOutcome = ImportOutcome::None;
+    HeightFunctionLoader m_heightFunctionLoader;
+    std::filesystem::path m_heightFunctionSource;
+    // Starts `m_import` over `columns` x `rows` columns round the terrain's
+    // origin, the source opened by `open` once the terrain is known.
+    using ImportOpener = std::function<std::unique_ptr<HeightSource>(
+        const scene::TerrainComponent& terrain, const TerrainImportPlan& plan, std::string& error)>;
+    bool beginTerrainImport(scene::World& world, core::InstanceId rootOrWorkspace, Inspector& inspector,
+                            core::u32 columns, core::u32 rows, core::u8 material, std::string name,
+                            const ImportOpener& open);
+    void endTerrainImport(scene::World& world, Inspector& inspector, bool keep);
     core::u32 m_lastStrokeStamps = 0;
     Brush m_brush;
     std::optional<asset::TerrainHit> m_brushAim;

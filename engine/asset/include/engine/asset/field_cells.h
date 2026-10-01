@@ -92,10 +92,20 @@ public:
 
     TerrainCellSource(core::u32 cellChunks, std::vector<ChunkId> cells, Reader read);
 
+    // **Cells whose file is another now, and cells that are gone** (ADR 0149):
+    // a cell written to the session cache, a cell a save wrote, a cell dug to
+    // nothing. What was kept of each is forgotten -- it is read again when it
+    // is next asked for -- and a cell not known before is one now. Every
+    // other cell keeps its summaries: a source made again for one cell's sake
+    // read the whole far ground again, and with ground written out every
+    // frame that was every frame. From the thread that owns the terrain;
+    // every reader below may run beside it.
+    void update(std::span<const ChunkId> changed, std::span<const ChunkId> gone);
+
     // How many chunk columns a cell is on a side.
     [[nodiscard]] core::u32 cellChunks() const noexcept { return m_cellChunks; }
     // Every cell, by (x, z).
-    [[nodiscard]] std::span<const ChunkId> cells() const noexcept { return m_cells; }
+    [[nodiscard]] std::vector<ChunkId> cells() const;
     // The chunk columns the cells cover, inclusive: x low, x high, z low, z
     // high. Nothing when there are no cells.
     [[nodiscard]] std::optional<std::array<core::i32, 4>> extent() const noexcept;
@@ -117,10 +127,14 @@ public:
     [[nodiscard]] bool summarised(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1) const;
 
 private:
+    // `cellsIn`, by whoever holds the lock.
+    void cellsWithin(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1, std::vector<ChunkId>& out) const;
+
     core::u32 m_cellChunks = 1;
-    std::vector<ChunkId> m_cells;
     Reader m_read;
+    // Guards the cells and what is kept of them.
     mutable std::mutex m_lock;
+    std::vector<ChunkId> m_cells;
     mutable std::map<std::pair<core::i32, core::i32>, std::shared_ptr<const Summaries>> m_summaries;
 };
 

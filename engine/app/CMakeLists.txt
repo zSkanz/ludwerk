@@ -38,6 +38,7 @@ engine_add_module(app
         src/streaming_host.cpp
         src/field_streamer.cpp
         src/terrain_cells.cpp
+        src/terrain_import.cpp
         src/world_ui.cpp
         src/scene_definitions.cpp
         src/debug_overlay.cpp
@@ -328,6 +329,7 @@ engine_add_module_tests(app
         tests/streaming_host_tests.cpp
         tests/field_streamer_tests.cpp
         tests/terrain_cells_tests.cpp
+        tests/terrain_import_tests.cpp
         tests/terrain_seam_tests.cpp
         tests/world_ui_tests.cpp
         tests/scene_definitions_tests.cpp

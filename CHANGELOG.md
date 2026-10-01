@@ -19,6 +19,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **A cell of streamed ground somebody changed is not kept in memory for
+  ever** (ADR 0149): outside the editor and a match it goes to the session
+  cache when no camera, focus or loose body is near, and comes back changed.
+  A game that counted on changed ground far from every camera being there --
+  a raycast into it from a script loads it first, as before; a body that
+  walks onto it from elsewhere does not -- adds a `StreamingService` focus.
 - **A `Script` in `ServerStorage` or `ReplicatedStorage` does not run**
   (ADR 0137 §3, D341). Storage holds templates and modules, and a template
   must not run itself; a scene that has one there says so in the log when it
@@ -82,6 +88,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A world larger than memory** (ADR 0149). Ground a game changes or makes
+  is written to a cache on disk when the camera leaves and streams back from
+  it, so a script that writes a world a tile a frame holds the ground round
+  the camera and no more; a terrain under 256 cells, the ground under a body
+  that can fall, a match and the editor's own brush keep theirs in memory.
+  **`ludwerk terrain import <source> [path] --size=<metres>`** lays a
+  project's terrain from a heightmap, a folder of tiles named
+  `<anything>_x<column>_y<row>`, a `.luau` file that returns `function(x, z)`,
+  or `hills`, and saves the scene. The editor's Create tab lays the same
+  sources at any width up to 32 768 columns -- past 4 096 a tile at a time,
+  with a progress bar and Cancel -- and gains **From a function**.
 - **The terrain's Foliage tab lists the chosen layer's meshes**, each with its
   mesh, share, sizes and wind, and a button to remove it -- no trip to the
   Explorer to change what a layer grows.

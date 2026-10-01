@@ -246,6 +246,23 @@ void StreamingManager::tick(const StreamingBudget& budget)
     // it: `Enabled = false` freezes the streaming set rather than half of it.
     // Evicting while refusing to load would drain the world one ring at a time
     // and leave nothing to come back to.
+    //
+    // **And what arrived for nobody is let go with it** (D405): a chunk whose
+    // read came back after the focus had left sat decoded -- its bytes held --
+    // until it was wanted again, which for a camera that never returns is for
+    // ever. It was never materialised, so there is nothing to evict: the
+    // bytes go, and it is read again if somebody comes back.
+    if (m_enabled) {
+        for (Entry& entry : m_entries) {
+            if (entry.wanted || entry.state != ChunkState::Decoded) {
+                continue;
+            }
+            entry.state = ChunkState::Unloaded;
+            entry.decoded = Chunk{};
+            entry.raw = {};
+            entry.bytes = 0;
+        }
+    }
     if (m_enabled && m_callbacks.evict) {
         for (usize i = 0; i < m_entries.size(); ++i) {
             Entry& entry = m_entries[i];

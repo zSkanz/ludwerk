@@ -129,7 +129,7 @@ void drawTerrainHeightmap(Editor& editor, scene::World& world, core::InstanceId 
         ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.create.size")));
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##heightmap-size", &size, 1.0f, 8.0f, 2048.0f,
+        ImGui::DragFloat("##heightmap-size", &size, 1.0f, 8.0f, 32768.0f,
                          core::tr(ENG_TR("engine.editor.unit.metres_0")));
         ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.size_tip")));
         ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.heightmap.black")));
@@ -161,6 +161,14 @@ void drawTerrainHeightmap(Editor& editor, scene::World& world, core::InstanceId 
                 ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.heightmap.past_range")));
                 ImGui::PopTextWrapPos();
             }
+        }
+
+        // A set of tiles, or more columns than one table: laid a tile at a
+        // time, which is not an undo step (ADR 0149 §2).
+        if (columns > static_cast<int>(Editor::MaxTableColumns) || isHeightmapPiece(source)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.import.tiled_note")));
+            ImGui::PopTextWrapPos();
         }
 
         ImGui::BeginDisabled(source.empty());

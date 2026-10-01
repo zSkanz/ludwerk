@@ -7004,3 +7004,85 @@ TEST_CASE("the first Create Terrain is one undo step, at the world height asked 
     REQUIRE(rig.editor.history().undo(rig.world));
     CHECK_FALSE(rig.editor.terrainIn(rig.world, rig.root).valid());
 }
+
+// --- A world laid a tile at a time (ADR 0149 §2) --------------------------------
+
+TEST_CASE("hills wider than one table are laid a tile at a time, and a cancel puts the world back")
+{
+    BrushRig rig;
+    const core::u64 digest = rig.field().field.digest();
+    const core::usize depth = rig.editor.history().depth();
+    Editor::HillSpec spec;
+    // 6 000 columns at the metre voxel: half as wide again as one table.
+    spec.size = 6000.0f;
+    spec.low = 0.0f;
+    spec.high = 24.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    REQUIRE(rig.editor.terrainImportRunning());
+    // Nothing is laid by the call itself, and nothing is a step.
+    CHECK(rig.field().field.digest() == digest);
+    CHECK(rig.editor.history().depth() == depth);
+    REQUIRE(rig.editor.terrainImportCursor(rig.world).has_value());
+
+    // A tile, and the things that may not happen over one.
+    rig.editor.driveTerrainImport(rig.world, rig.inspector, 0.0);
+    REQUIRE(rig.editor.terrainImportRunning());
+    CHECK(rig.editor.terrainImportProgress() > 0.0f);
+    CHECK(rig.field().field.digest() != digest);
+    CHECK_FALSE(rig.editor.undo(rig.world, rig.inspector));
+    rig.editor.play(rig.world);
+    CHECK(rig.editor.runState() == app::RunState::Editing);
+    CHECK_FALSE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, spec));
+    CHECK(rig.editor.takeTerrainImportOutcome() == Editor::ImportOutcome::None);
+
+    const core::u64 restores = rig.editor.worldRestores();
+    rig.editor.cancelTerrainImport(rig.world, rig.inspector);
+    CHECK_FALSE(rig.editor.terrainImportRunning());
+    CHECK(rig.field().field.digest() == digest);
+    CHECK(rig.editor.worldRestores() == restores + 1);
+    CHECK(rig.editor.history().depth() == depth);
+    CHECK(rig.editor.takeTerrainImportOutcome() == Editor::ImportOutcome::Dropped);
+    CHECK(rig.editor.takeTerrainImportOutcome() == Editor::ImportOutcome::None);
+}
+
+TEST_CASE("a heightmap in a folder of tiles is laid whole, and is not an undo step")
+{
+    BrushRig rig;
+    // Two tiles side by side, sixteen-bit RAW: black, and white.
+    const std::filesystem::path folder = std::filesystem::temp_directory_path() / "engine-editor-import-tiles";
+    std::error_code ignored;
+    std::filesystem::remove_all(folder, ignored);
+    std::filesystem::create_directories(folder, ignored);
+    for (int piece = 0; piece < 2; ++piece) {
+        std::ofstream out(folder / ("world_x" + std::to_string(piece) + "_y0.r16"), std::ios::binary);
+        for (int sample = 0; sample < 16; ++sample) {
+            const unsigned char value[2] = {static_cast<unsigned char>(piece == 0 ? 0x00 : 0xff),
+                                            static_cast<unsigned char>(piece == 0 ? 0x00 : 0xff)};
+            out.write(reinterpret_cast<const char*>(value), sizeof(value));
+        }
+    }
+    Editor::HeightmapImport spec;
+    spec.source = folder;
+    spec.size = 70.0f;
+    spec.low = 2.0f;
+    spec.high = 12.0f;
+    // Something to undo, which the import leaves nothing of.
+    Editor::HillSpec hills;
+    hills.size = 32.0f;
+    REQUIRE(rig.editor.generateHills(rig.world, rig.workspace, rig.inspector, hills));
+    REQUIRE(rig.editor.history().depth() > 0);
+    REQUIRE(rig.editor.importHeightmap(rig.world, rig.root, rig.inspector, spec));
+    REQUIRE(rig.editor.terrainImportRunning());
+    for (int frame = 0; frame < 64 && rig.editor.terrainImportRunning(); ++frame)
+        rig.editor.driveTerrainImport(rig.world, rig.inspector, 0.0);
+    REQUIRE_FALSE(rig.editor.terrainImportRunning());
+    CHECK_FALSE(rig.editor.status().failed);
+    CHECK(rig.editor.takeTerrainImportOutcome() == Editor::ImportOutcome::Kept);
+    CHECK(rig.editor.history().depth() == 0);
+    CHECK(rig.editor.sceneDirty());
+    // 71 columns by 36 rows, the image's two to one: black at the left edge,
+    // white at the right.
+    CHECK(static_cast<double>(*asset::heightAt(rig.field().field, -34.5, 0.5)) == doctest::Approx(2.0).epsilon(0.02));
+    CHECK(static_cast<double>(*asset::heightAt(rig.field().field, 34.5, 0.5)) == doctest::Approx(12.0).epsilon(0.02));
+    std::filesystem::remove_all(folder, ignored);
+}

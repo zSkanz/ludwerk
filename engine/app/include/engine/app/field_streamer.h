@@ -27,7 +27,10 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -85,6 +88,47 @@ public:
     // Cells an eviction left in place because somebody had changed them.
     [[nodiscard]] u64 kept() const noexcept { return m_kept; }
 
+    // --- Changed ground, kept on disk for the session (ADR 0149) -------------
+
+    // **Where a changed cell past the load radius is written before it is let
+    // go**, to stream back from like any saved cell: this run's folder. Empty
+    // -- the default -- and none is written: a changed cell stays in memory,
+    // as it did before. A terrain smaller than what streams when saved (256
+    // cells) is held whole either way.
+    void setSessionFolder(std::filesystem::path folder) { m_sessionFolder = std::move(folder); }
+    // **Only where nothing could want the ground back as it was.** Not in a
+    // match (ADR 0149 §1.8): the ground's replication reads what changed from
+    // memory. Not while editing by hand either (§1.6): the editor's undo is
+    // the world as it was, and the cache is not in it -- a cell changed with
+    // a brush stays in memory until it is saved, as it always did.
+    void setSpillAllowed(bool allowed) noexcept { m_spillAllowed = allowed; }
+
+    // **A layer over the cache, for what may be taken back whole** (§1.6):
+    // Play in the editor, and an import that may be cancelled. Cells written
+    // while one is open go to a folder of its own and leave what they
+    // replaced alone -- the scene's file, or the cache's -- so `drop` puts
+    // every one of them back as it was, and `keep` makes them the cache's
+    // like any other. `drop` is called AFTER the world was put back: it
+    // forgets what the layer's cells brought, and they are read again from
+    // what they were before.
+    void beginSessionLayer();
+    void keepSessionLayer() noexcept { m_layer.reset(); }
+    void dropSessionLayer();
+    [[nodiscard]] bool sessionLayerOpen() const noexcept { return m_layer.has_value(); }
+    // How many cells are in the session cache now, and how many have been
+    // written to it in all.
+    [[nodiscard]] core::usize sessionCells() const noexcept { return m_session.size(); }
+    [[nodiscard]] u64 spilled() const noexcept { return m_spilled; }
+    // What writing them has cost, in all.
+    [[nodiscard]] f64 spillMilliseconds() const noexcept { return static_cast<f64>(m_spillNs) / 1.0e6; }
+    // The cache's files removed and its cells forgotten -- a run ending, or a
+    // world replaced. What it held and nothing saved is gone, as what memory
+    // held is.
+    void clearSession();
+    // The cache dropped and every cell it had taken over given back to the
+    // scene's own file; ground only the cache held is forgotten.
+    void dropSession();
+
     // --- A terrain saved as cells, in the editor (ADR 0087) -------------------
 
     // Streams around this point rather than the world's own foci: the editor's
@@ -96,7 +140,12 @@ public:
     // them. An empty index stops streaming terrain. Called whenever the
     // workspace's terrain names a different index -- a scene opened, a terrain
     // converted to cells on its first large save, a terrain cleared.
-    void adoptTerrain(const asset::ChunkIndex& index, const CellResolver& resolve);
+    //
+    // `keepSession`: the same ground under a new name -- a Save As -- whose
+    // cells in the session cache stay the session's until the save that
+    // follows commits them. Otherwise the cache was another terrain's, and
+    // goes (ADR 0149).
+    void adoptTerrain(const asset::ChunkIndex& index, const CellResolver& resolve, bool keepSession = false);
 
     // **After the world was put back** -- an undo, a redo, a stop: the field is
     // whatever the snapshot held, which lacks every cell loaded since it was
@@ -124,6 +173,13 @@ public:
         std::function<void(const asset::ChunkIndexEntry&)> remove;
         // How a written URN resolves for a later load.
         CellResolver resolve;
+        // **Takes a cell's file as it is** (ADR 0149): the session cache's
+        // file for a cell nobody is near, moved to where `write` would have
+        // put its bytes. Answers the URN, or nothing when it could not -- and
+        // the bytes are then read and written. Optional: a world's worth of
+        // cells committed by reading and writing each is a world's worth of
+        // copying, where a move on one disk is a rename.
+        std::function<std::optional<std::string>(asset::ChunkId, const std::filesystem::path&)> adopt;
     };
 
     struct TerrainSaveReport
@@ -159,10 +215,26 @@ private:
     // **The terrain's cells, for drawing** (ADR 0144): made again when the
     // index changes, and handed to the terrain the streamer fills.
     void shareCells();
+    // Writes out and lets go of the ground the field holds that no loaded
+    // cell accounts for and no focus is near (ADR 0149).
+    void spillFarGround(std::span<const asset::StreamingFocus> foci, f64 budgetMilliseconds);
 
     asset::StreamingManager m_manager;
-    std::shared_ptr<const asset::TerrainCellSource> m_cellSource;
+    // **The terrain's cells, for drawing** (ADR 0144): one source while the
+    // terrain's index stands, told of each cell that changes (ADR 0149) --
+    // and made again only when the index is another (`m_cellSourceStale`).
+    // The files it reads are kept beside it, under a lock of their own: it is
+    // read from the renderer's threads.
+    struct CellFiles
+    {
+        std::mutex lock;
+        std::map<asset::ChunkId, std::filesystem::path> paths;
+    };
+    std::shared_ptr<asset::TerrainCellSource> m_cellSource;
+    std::shared_ptr<CellFiles> m_cellFiles;
     bool m_cellSourceStale = true;
+    // Cells whose file or whose being there changed since the source was told.
+    std::set<asset::ChunkId> m_cellsChanged;
     std::map<asset::ChunkId, std::filesystem::path> m_paths;
     // What each resident cell brought, held for the reason the header gives.
     std::map<asset::ChunkId, asset::TerrainCell> m_terrainCells;
@@ -180,6 +252,51 @@ private:
     std::optional<core::DVec3> m_focusOverride;
     // Where the terrain stood when its cells' bounds were drawn.
     std::optional<core::DVec3> m_boundsOrigin;
+    // The session cache: its folder, the cells whose file is in it, and how
+    // many were ever written there.
+    std::filesystem::path m_sessionFolder;
+    std::set<asset::ChunkId> m_session;
+    // The row and the file a cell had before the cache's took their place --
+    // the scene's own -- for a cache dropped without a save: the world it was
+    // changed in is gone, and what the scene says is the ground again.
+    using SessionRow = std::pair<asset::ChunkIndexEntry, std::filesystem::path>;
+    std::map<asset::ChunkId, SessionRow> m_sessionOver;
+    struct SessionLayer
+    {
+        std::filesystem::path folder;
+        // What each cell first written in this layer was before it: its row
+        // and file (none for ground that was new), whether those were the
+        // cache's already, and what the cache had taken over if so.
+        struct Before
+        {
+            std::optional<SessionRow> row;
+            bool session = false;
+            std::optional<SessionRow> over;
+        };
+        std::map<asset::ChunkId, Before> before;
+    };
+    std::optional<SessionLayer> m_layer;
+    core::u32 m_layers = 0;
+    // **Cells read for an edit** (`loadNow`) and not by the manager, which
+    // therefore never lets them go: each is let go here once no focus is
+    // near, on an eviction's terms. A generator laying a world a tile at a
+    // time reads the cells along every tile's edge, and kept them all.
+    std::set<asset::ChunkId> m_readForEdit;
+    // Cells whose eviction was refused: the field holds all of each, so
+    // writing one out needs nothing of its file. Any other ground in a square
+    // a file describes is a part, and the file is the rest.
+    std::set<asset::ChunkId> m_keptWhole;
+    bool m_spillAllowed = true;
+    u64 m_spilled = 0;
+    u64 m_spillNs = 0;
+    // The cells of ground no loaded cell accounts for, found when the ground
+    // changes rather than every frame: the field's revision, the evictions
+    // refused and the cells held, as they were when it was last worked out.
+    std::set<asset::ChunkId> m_loose;
+    bool m_looseValid = false;
+    u64 m_looseRevision = 0;
+    u64 m_looseKept = 0;
+    core::usize m_looseHeld = 0;
 };
 
 } // namespace engine::app

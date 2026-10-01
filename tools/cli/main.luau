@@ -29,6 +29,7 @@ local new = require("./commands/new")
 local projectlib = require("./project")
 local saves = require("./commands/saves")
 local setup = require("./commands/setup")
+local terrain = require("./commands/terrain")
 local test = require("./commands/test")
 local version = require("./commands/version")
 
@@ -73,13 +74,20 @@ type Parsed = {
 local ValueFlags: { [string]: boolean } = {
     alias = true,
     definitions = true,
+    high = true,
     junit = true,
+    low = true,
+    material = true,
     name = true,
+    octaves = true,
     out = true,
     output = true,
     port = true,
     progress = true,
     report = true,
+    scale = true,
+    seed = true,
+    size = true,
     slot = true,
     target = true,
     template = true,
@@ -302,6 +310,26 @@ local function main(): number
             path = parsed.positional[2] or ".",
             slot = parsed.flags.slot,
             player = parsed.flags.player ~= nil,
+        })
+    end
+
+    -- **A project's terrain from a heightmap, a function or noise** (ADR
+    -- 0149 §2): the engine lays it and saves the scene.
+    if parsed.command == "terrain" then
+        if not rejectUnknownFlags(parsed, { "size", "low", "high", "material", "seed", "scale", "octaves" }) then
+            return 2
+        end
+        return terrain.run({
+            action = parsed.positional[1],
+            source = parsed.positional[2],
+            path = parsed.positional[3] or ".",
+            size = parsed.flags.size,
+            low = parsed.flags.low,
+            high = parsed.flags.high,
+            material = parsed.flags.material,
+            seed = parsed.flags.seed,
+            scale = parsed.flags.scale,
+            octaves = parsed.flags.octaves,
         })
     end
 

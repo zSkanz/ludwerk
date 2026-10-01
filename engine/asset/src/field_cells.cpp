@@ -315,15 +315,48 @@ std::optional<core::EngineError> decodeVoxelCell(std::span<const std::byte> byte
 
 // --- A streamed terrain's cells, for drawing (ADR 0144) -----------------------
 
-TerrainCellSource::TerrainCellSource(u32 cellChunks, std::vector<ChunkId> cells, Reader read)
-    : m_cellChunks(std::max<u32>(cellChunks, 1u)), m_cells(std::move(cells)), m_read(std::move(read))
+namespace {
+
+// The order the cells are kept in: by x, then z.
+[[nodiscard]] bool cellBefore(const ChunkId& a, const ChunkId& b) noexcept
 {
-    std::sort(m_cells.begin(), m_cells.end(),
-              [](const ChunkId& a, const ChunkId& b) { return a.x != b.x ? a.x < b.x : a.z < b.z; });
+    return a.x != b.x ? a.x < b.x : a.z < b.z;
+}
+
+} // namespace
+
+TerrainCellSource::TerrainCellSource(u32 cellChunks, std::vector<ChunkId> cells, Reader read)
+    : m_cellChunks(std::max<u32>(cellChunks, 1u)), m_read(std::move(read)), m_cells(std::move(cells))
+{
+    std::sort(m_cells.begin(), m_cells.end(), cellBefore);
+}
+
+void TerrainCellSource::update(std::span<const ChunkId> changed, std::span<const ChunkId> gone)
+{
+    const std::lock_guard<std::mutex> lock(m_lock);
+    for (const ChunkId& cell : gone) {
+        const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), cell, cellBefore);
+        if (at != m_cells.end() && at->x == cell.x && at->z == cell.z)
+            m_cells.erase(at);
+        m_summaries.erase({cell.x, cell.z});
+    }
+    for (const ChunkId& cell : changed) {
+        const auto at = std::lower_bound(m_cells.begin(), m_cells.end(), cell, cellBefore);
+        if (at == m_cells.end() || at->x != cell.x || at->z != cell.z)
+            m_cells.insert(at, cell);
+        m_summaries.erase({cell.x, cell.z});
+    }
+}
+
+std::vector<ChunkId> TerrainCellSource::cells() const
+{
+    const std::lock_guard<std::mutex> lock(m_lock);
+    return m_cells;
 }
 
 std::optional<std::array<i32, 4>> TerrainCellSource::extent() const noexcept
 {
+    const std::lock_guard<std::mutex> lock(m_lock);
     if (m_cells.empty())
         return std::nullopt;
     const auto n = static_cast<i32>(m_cellChunks);
@@ -337,6 +370,12 @@ std::optional<std::array<i32, 4>> TerrainCellSource::extent() const noexcept
 }
 
 void TerrainCellSource::cellsIn(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<ChunkId>& out) const
+{
+    const std::lock_guard<std::mutex> lock(m_lock);
+    cellsWithin(x0, x1, z0, z1, out);
+}
+
+void TerrainCellSource::cellsWithin(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<ChunkId>& out) const
 {
     const auto n = static_cast<i32>(m_cellChunks);
     const i32 cx0 = floorDivide(x0, n);
@@ -353,6 +392,7 @@ void TerrainCellSource::cellsIn(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<Chun
 
 bool TerrainCellSource::covers(i32 x0, i32 x1, i32 z0, i32 z1) const noexcept
 {
+    const std::lock_guard<std::mutex> lock(m_lock);
     const auto n = static_cast<i32>(m_cellChunks);
     const i32 cx0 = floorDivide(x0, n);
     const i32 cx1 = floorDivide(x1, n);
@@ -398,10 +438,10 @@ void TerrainCellSource::digestsIn(i32 x0, i32 x1, i32 z0, i32 z1,
                                   std::vector<std::pair<ChunkKey, core::u64>>& out) const
 {
     std::vector<ChunkId> cells;
-    cellsIn(x0, x1, z0, z1, cells);
     const usize first = out.size();
     {
         const std::lock_guard<std::mutex> lock(m_lock);
+        cellsWithin(x0, x1, z0, z1, cells);
         for (const ChunkId& cell : cells) {
             const auto found = m_summaries.find({cell.x, cell.z});
             if (found == m_summaries.end())
@@ -419,8 +459,8 @@ void TerrainCellSource::digestsIn(i32 x0, i32 x1, i32 z0, i32 z1,
 bool TerrainCellSource::summarised(i32 x0, i32 x1, i32 z0, i32 z1) const
 {
     std::vector<ChunkId> cells;
-    cellsIn(x0, x1, z0, z1, cells);
     const std::lock_guard<std::mutex> lock(m_lock);
+    cellsWithin(x0, x1, z0, z1, cells);
     for (const ChunkId& cell : cells) {
         if (!m_summaries.contains({cell.x, cell.z}))
             return false;

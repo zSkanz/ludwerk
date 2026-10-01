@@ -1114,6 +1114,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // The same, for the Terrain panel's heightmap: one file, handed to the
     // editor when it arrives rather than copied anywhere.
     std::vector<std::filesystem::path> heightmapPicked;
+    std::vector<std::filesystem::path> heightFunctionPicked;
     bool heightmapPending = false;
     // The instance an Explorer import will parent what it makes under, held
     // across the frames the dialog is open.
@@ -1301,6 +1302,33 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     StreamingHost streaming;
     // Terrain and block worlds, streamed on a grid of their own (ADR 0075).
     FieldStreamer fields;
+    // **Changed ground nobody is near is kept on disk for the session** (ADR
+    // 0149): this run's folder, beside the project or in the machine's
+    // temporary folder, removed when the run ends. Not for a run that exists
+    // to be compared with another -- a replay, a conformance run -- whose
+    // world must be a function of its inputs and nothing a disk did.
+    struct SessionCache
+    {
+        FieldStreamer& fields;
+        ~SessionCache() { fields.clearSession(); }
+    } sessionCache{fields};
+    if (options.replayRoot.empty() && options.conformanceRoot.empty()) {
+        std::error_code sessionError;
+        const bool project = std::filesystem::is_directory(options.scriptPath, sessionError);
+        const std::filesystem::path base = project
+                                               ? options.scriptPath / ".engine" / "session"
+                                               : std::filesystem::temp_directory_path(sessionError) / "engine-session";
+        // A run that died left its folder: a day old, it is nobody's.
+        if (std::filesystem::is_directory(base, sessionError)) {
+            for (const std::filesystem::directory_entry& left :
+                 std::filesystem::directory_iterator(base, sessionError)) {
+                const auto age = std::filesystem::file_time_type::clock::now() - left.last_write_time(sessionError);
+                if (age > std::chrono::hours(24))
+                    std::filesystem::remove_all(left.path(), sessionError);
+            }
+        }
+        fields.setSessionFolder(base / ("terrain-" + std::to_string(platform::nowNs())));
+    }
     std::unique_ptr<render::IRenderer> renderer;
 #if ENG_DEBUG_UI
     // A user's surface shaders, compiled on a worker (ADR 0091). Editor and dev
@@ -1403,7 +1431,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // root the engine mounts -- the SOURCE tree, not the packed archive, which
     // is what a person authors and what `ContentMounts` already resolves over
     // the pack for exactly this reason.
-    if (options.editor)
+    // **And a build step that edits the scene** (`--import-terrain`): the
+    // world as the editor holds it, with no window.
+    const bool authoring = options.editor || options.terrainImport.has_value();
+    if (authoring)
         editor.openContent(contentRoot);
 
     // **Mounted, compiled and mounted again, in one call** (E9 step 14).
@@ -1717,8 +1748,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // back is the scene to apply; the cells go straight into the streaming
         // host, beside whatever a generator already built.
         .partitionScene =
-            [&streaming, &fields, &options, contentRoot](scene::World& registries, const std::filesystem::path& scene) {
-                if (!options.editor && !options.writeTypesOnly) {
+            [&streaming, &fields, &options, contentRoot, authoring](scene::World& registries,
+                                                                       const std::filesystem::path& scene) {
+                if (!authoring && !options.writeTypesOnly) {
                     // Not in the editor, and that is a decision rather than an
                     // omission: the editor holds the whole world because holding it
                     // is what editing it means. Streaming while editing is a scene
@@ -1797,7 +1829,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // of running this binary starts scripts at boot exactly as it always
         // did, and that asymmetry is the whole decision: a tool shows the world
         // it was given, and behaviour begins when somebody presses play.
-        .startScripts = !options.editor && !options.writeTypesOnly,
+        .startScripts = !authoring && !options.writeTypesOnly,
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
         .saveDirectory = options.saveDirectory,
@@ -1933,9 +1965,91 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
     // The editor is told which scene the world holds, so its save writes back
     // to that one rather than refusing for want of an open scene.
-    if (options.editor && host->bootSceneApplied())
+    if (authoring && host->bootSceneApplied())
         editor.adoptOpenScene(sceneRelative);
     editor.setGlobalUnreadable(host->globalUnreadable());
+    // **Ground from a Luau function** (ADR 0149 §2) is compiled here, where
+    // the VM is: the editor is handed heights and never a state.
+    editor.setHeightFunctionLoader([&host](const std::filesystem::path& file, core::DVec3 origin, f32 voxel,
+                                           std::string& error) -> std::unique_ptr<HeightSource> {
+        std::string text;
+        if (!platform::readTextFile(file, text)) {
+            error = file.filename().string();
+            return nullptr;
+        }
+        return functionSource(host->runtime().state(), text, "=" + file.filename().string(), origin, voxel, error);
+    });
+
+    // **`--import-terrain`: the terrain laid, the scene saved, and nothing
+    // else** (ADR 0149 §2). The verbs are the editor's own, so what a project
+    // gets from the command line is what its Create tab would have made; the
+    // loop is the frame's, less the frame -- a tile, then the ground behind it
+    // written out, round the tile rather than a camera.
+    if (options.terrainImport.has_value()) {
+        const EngineOptions::TerrainImport& spec = *options.terrainImport;
+        scene::World& world = host->world();
+        const auto refused = [&editor] {
+            const core::I18nArg args[] = {{"reason", editor.status().message}};
+            return core::makeError(ENG_TR("engine.cli.err.import_refused"), args);
+        };
+        if (!isProject)
+            return core::makeError(ENG_TR("engine.cli.err.import_needs_project"));
+        // The scene the project starts with is the one whose terrain this is:
+        // a project that names none would have its ground saved into a scene
+        // nothing opens.
+        if (options.startupScene.empty())
+            return core::makeError(ENG_TR("engine.cli.err.import_needs_scene"));
+        world.setGroundLoader(
+            [&fields](core::DVec3 low, core::DVec3 high, core::u32 cells) { return fields.loadNow(low, high, cells); });
+        terrainCells.frame(world, host->workspace(), editor.worldRestores(), std::nullopt);
+        bool begun = false;
+        switch (spec.kind) {
+        case EngineOptions::TerrainImport::Kind::Heightmap:
+            begun = editor.importHeightmap(
+                world, host->workspace(), inspector,
+                Editor::HeightmapImport{spec.source, spec.size, spec.low, spec.high, spec.material});
+            break;
+        case EngineOptions::TerrainImport::Kind::Hills:
+            begun = editor.generateHills(
+                world, host->workspace(), inspector,
+                Editor::HillSpec{spec.size, spec.low, spec.high, spec.octaves, spec.scale, spec.seed, spec.material});
+            break;
+        case EngineOptions::TerrainImport::Kind::Function:
+            begun = editor.importFunction(world, host->workspace(), inspector,
+                                          Editor::FunctionImport{spec.source, spec.size, spec.material});
+            break;
+        }
+        if (!begun)
+            return refused();
+        u64 saidNs = platform::nowNs();
+        while (editor.terrainImportRunning()) {
+            const std::optional<core::DVec3> cursor = editor.terrainImportCursor(world);
+            editor.driveTerrainImport(world, inspector, 0.0);
+            terrainCells.frame(world, host->workspace(), editor.worldRestores(), cursor);
+            fields.setSpillAllowed(true);
+            fields.setWorld(&world, host->workspace());
+            fields.pump(8.0);
+            if (platform::nowNs() - saidNs > 5'000'000'000ull && editor.terrainImportRunning()) {
+                saidNs = platform::nowNs();
+                const core::I18nArg args[] = {
+                    {"percent", static_cast<core::i64>(std::lround(editor.terrainImportProgress() * 100.0f))}};
+                core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.import_progress"), args);
+            }
+        }
+        if (editor.takeTerrainImportOutcome() == Editor::ImportOutcome::Dropped || editor.status().failed)
+            return refused();
+        // Saved as the editor saves it: to the scene the world came from, or
+        // to the one the project names when that file is not there yet.
+        const bool saved =
+            host->bootSceneApplied() ? editor.saveOpenScene(world) : editor.saveSceneAs(world, options.startupScene);
+        if (!saved)
+            return refused();
+        const core::I18nArg args[] = {{"what", editor.status().message},
+                                      {"cells", static_cast<core::i64>(fields.spilled())},
+                                      {"ms", static_cast<core::i64>(std::llround(fields.spillMilliseconds()))}};
+        core::log(core::LogLevel::Info, ENG_TR("engine.cli.info.import_saved"), args);
+        return std::nullopt;
+    }
     // **The project's tree as types, from the moment it opens** (ADR 0078), so
     // a script editor pointed at this project types `workspace.Player` before
     // anybody has saved. Every Save rewrites it.
@@ -3003,6 +3117,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     editor.setHeightmapSource(heightmapPicked.front());
                     heightmapPicked.clear();
                 }
+                if (editorCommands.pickHeightFunction && !heightmapPending && window != nullptr) {
+                    heightmapPending = true;
+                    platform::pickFiles(
+                        *window, options.scriptPath.string(), false,
+                        [&heightFunctionPicked, &heightmapPending](std::vector<std::filesystem::path> chosen) {
+                            heightFunctionPicked = std::move(chosen);
+                            heightmapPending = false;
+                        });
+                }
+                if (!heightFunctionPicked.empty()) {
+                    editor.setHeightFunctionSource(heightFunctionPicked.front());
+                    heightFunctionPicked.clear();
+                }
 
                 // **Files that were missing may be there now**: the content
                 // was read again -- an import, a refresh, a folder made.
@@ -3763,15 +3890,42 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // U1): a script's, the editor brush's and a block placed alike.
         host->world().setGroundLoader(
             [&fields](core::DVec3 low, core::DVec3 high, core::u32 cells) { return fields.loadNow(low, high, cells); });
+        // **Changed ground goes to the session cache only where no undo could
+        // want it back** (ADR 0149 §1.6): a cell changed by hand in the editor
+        // stays in memory until it is saved, because the history is the world
+        // as it was and the cache is not in it. Play writes to a layer of its
+        // own, which Stop drops -- after the world was put back, and before
+        // the streamer is told it was, which is the line below.
+        //
+        // **An import is the third** (ADR 0149 §2): laid a few tiles a frame
+        // here, under a layer that is kept when it finishes and dropped when
+        // it is cancelled or refused.
+        if (editor.terrainImportRunning())
+            editor.driveTerrainImport(host->world(), inspector, 30.0);
+        const Editor::ImportOutcome imported = editor.takeTerrainImportOutcome();
+        const bool importing = editor.terrainImportRunning();
+        const bool playing = options.editor && !editing(editor.runState());
+        const bool editingByHand = options.editor && !playing && !importing;
+        if (options.editor && !editingByHand && !fields.sessionLayerOpen())
+            fields.beginSessionLayer();
+        if (editingByHand && fields.sessionLayerOpen()) {
+            if (imported == Editor::ImportOutcome::Kept)
+                fields.keepSessionLayer();
+            else
+                fields.dropSessionLayer();
+        }
         terrainCells.frame(host->world(), host->workspace(), editor.worldRestores(),
                            options.editor && editing(editor.runState())
                                ? std::optional<core::DVec3>(editor.cameraCFrame().position)
                                : std::nullopt);
         const f64 streamBudget = streaming.active() && fields.active() ? 1.0 : 2.0;
-        if (fields.active()) {
-            fields.setWorld(&host->world(), host->workspace());
-            fields.pump(streamBudget);
-        }
+        // In a match the ground's replication reads what changed from memory
+        // (ADR 0149 §1.8). Pumped whether or not anything streams yet: a
+        // world no file describes becomes a streamed one when its far ground
+        // is first written out.
+        fields.setSpillAllowed(!network.active() && !editingByHand);
+        fields.setWorld(&host->world(), host->workspace());
+        fields.pump(streamBudget);
         if (streaming.active()) {
             streaming.setWorld(&host->world(), host->workspace());
             streaming.setPhysics(host->physics());

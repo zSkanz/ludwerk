@@ -46,6 +46,14 @@ class World;
 class PhysicsSync final : public ICharacterReplay
 {
 public:
+    // How close, in metres on every axis, something that moves has to be to a
+    // chunk for the chunk to have a collider. Wide enough that a body arriving
+    // at running speed finds it built before it gets there. A raycast far from
+    // every moving body meets no collider -- which is why `Workspace:Raycast`
+    // also asks the field itself (ADR 0082). Public for the ground's streamer,
+    // which does not let go of ground this reaches (ADR 0149).
+    static constexpr double TerrainCollisionReach = 24.0;
+
     PhysicsSync(World& world, physics::IPhysics3D& backend);
     ~PhysicsSync() override;
 
@@ -457,12 +465,6 @@ private:
     // so how many get rebuilt in a tick has to be a fact about the operation
     // sequence rather than about how fast the machine was that day.
     static constexpr core::u32 TerrainRebuildsPerTick = 4;
-    // How close, in metres on every axis, something that moves has to be to a
-    // chunk for the chunk to have a collider. Wide enough that a body arriving
-    // at running speed finds it built before it gets there. A raycast far from
-    // every moving body meets no collider -- which is why `Workspace:Raycast`
-    // also asks the field itself (ADR 0082).
-    static constexpr double TerrainCollisionReach = 24.0;
 
     void applyTerrain();
     void retireUnseenTerrain();

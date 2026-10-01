@@ -1468,6 +1468,54 @@ smooth drags (`--editor-drive`, `--frame-stats`).
 | `tests/bench/terrain_smooth` (128 m of hills, a smooth a tick at 8 m, every fourth at 16 m) | **2.93 ms** | 5.75 ms | 16 ms |
 | `tests/bench/terrain_paint` (the same hills, a blend a tick at 24 m) | **3.55 ms** | 5.91 ms | 16 ms |
 
+## A world larger than memory (ADR 0149)
+
+The terrain-editing ledger's P5b. A 1 m voxel throughout; this machine, the
+`win-msvc-dev` build, headless, 2026-10-01. Memory is the process's private
+bytes, sampled twice a second from outside.
+
+**Laying it.** `--import-terrain=hills` (what `ludwerk terrain import hills`
+runs), tiles of 256 columns, the ground behind the tile written to the session
+cache and the save moving the cache's files into the scene's folder:
+
+| | Cells | Time | Of it, writing cells out | Peak |
+|---|---|---|---|---|
+| 8 192 m | 16 641 | 106 s | 37 s | 386 MiB |
+| 16 383 m | 65 536 | **411 s** | 148 s | **617 MiB** |
+
+Linear in the world: four times the ground, 3.9 times the seconds. The cells
+are 4.0 GB on disk, some 61 KiB each. Before the save moved the files -- it
+read and wrote each -- the 16 km save alone was past seven minutes.
+
+**A script laying it at run time**, `Terrain:WriteHeights` a tile of 512
+columns a Heartbeat, 8 km, the camera at a corner with the 512 m terrain
+radius. The ground the field holds stays between 2 600 and 2 900 chunks
+throughout -- before the cache it was every chunk of the world:
+
+| | Time | Peak |
+|---|---|---|
+| The camera sees 1 km (`FarPlane = 1000`) | 91 s | 643 MiB, level from the 24th second on |
+| The camera sees the world (`FarPlane = 20000`) | 94 s | 1 120 MiB, rising with the world |
+
+The difference is the far ground, drawn from the cache's cells (ADR 0144): a
+summary of every chunk of every cell the camera can see, and their coarse
+meshes -- 740 000 live blocks of 128 bytes or less at 4 km.
+
+**Flying over it**: the 16 km world as saved, corner to corner at 200 m/s an
+axis and 150 m up, `FarPlane = 1500`, 512 m terrain radius, `--pace=60`, 6 600
+frames. The same on the build before the stage (`6263333f`, the package),
+which could not have made the world:
+
+| | Resident chunks | Median | p95 | p99 | Over 33 ms | Peak |
+|---|---|---|---|---|---|---|
+| This build | 1 970 to 2 340 | 17.0 ms | 129.8 ms | 481 ms | 756 | 2 069 MiB |
+| `6263333f` | 1 950 to 2 910 | 15.6 ms | 109.1 ms | 405 ms | 746 | 2 047 MiB |
+
+Not a frame rate, and not the cache's doing: the ledger's open item, and the
+reason for P5c. The far ground reads level-0 cells to draw coarse nodes and
+re-derives every drawn node's content from all the cells under it whenever one
+comes or goes; 65 536 cells is thirty times the fixture it was measured on.
+
 ## The local gate (ADR 0148)
 
 `scripts/localgate.ps1`, the full run, on the development machine (20 logical

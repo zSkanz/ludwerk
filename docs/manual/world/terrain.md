@@ -353,6 +353,46 @@ back.
 - **Ground under the square.** Each column's top moves to the image's height,
   and a cave under the top stays where it is. Where there was no ground, the
   image is laid as a slab 32 m deep under its lowest point.
+- **A set of tiles.** Terrain tools export a large world in pieces named
+  `<anything>_x<column>_y<row>` -- `island_x0_y0.png`, `island_x1_y0.png` and
+  so on, all one size. Choose any one of them and the whole set is laid, each
+  piece read when the ground reaches it; a piece that is missing is ground
+  that is not laid.
+
+**From a function** lays ground from a Luau file that returns a function of a
+place -- world metres in, the ground's height there out:
+
+```luau
+return function(x: number, z: number): number
+    return 40 * math.sin(x / 600) * math.cos(z / 450) + 20
+end
+```
+
+It is called once for every column of voxels, with no access to the world.
+Return `0 / 0` for a column that has no ground.
+
+**A world wider than 4 096 columns** -- four kilometres at the default voxel
+-- a set of tiles and a function are **laid a tile at a time**: the panel
+shows how far it is, with **Cancel**. The ground behind the tile being laid is
+written to disk as it goes, so a world sixteen kilometres across is made in
+the memory a tile takes. Such an import is not an undo step: cancelling puts
+the world back as it was, and once it finishes the history starts over.
+Nothing can be edited, played or saved while it runs; save the scene after it
+to keep the ground. The widest is 32 768 columns.
+
+**From the command line**, with nothing open:
+
+```
+ludwerk terrain import island.png --size=4096 --low=-20 --high=380
+ludwerk terrain import tiles/     --size=16384 --low=0 --high=900
+ludwerk terrain import world.luau --size=16384
+ludwerk terrain import hills      --size=8192 --high=160 --scale=900 --seed=7
+```
+
+The source is a heightmap, a folder of tiles, a `.luau` file as above, or the
+word `hills`; a second word is the project, when it is not the folder the
+command is run in. It lays the terrain of the project's scene as the Create
+tab would and saves the scene.
 
 ### Setup
 
@@ -389,9 +429,31 @@ lower resolution, chosen by how many pixels its error would cover.
 A terrain saved with a scene streams from disk once it is 256 cells or more,
 each cell 64 m on a side -- a square a kilometre across. The world waits for
 the ground around the player before the first frame, loads cells ahead of the
-camera and evicts them behind it. **A cell somebody changed is never
-evicted**, so a crater stays a crater. See
+camera and evicts them behind it. See
 [Streaming a large world](manual:assets/streaming).
+
+**Ground a game changes or makes is kept, and not in memory**
+([ADR 0149](../../decisions/0149-changed-ground-is-kept-on-disk-for-the-session-and-a-world-larger-than-memory-is-imported-a-tile-at-a-time.md)).
+A cell somebody changed -- a crater, a tunnel, ground a script wrote where
+there was none -- is written to a cache on disk when the camera leaves, and
+comes back from there when somebody returns: a crater stays a crater, and a
+script that writes a world a tile a frame with `WriteHeights` holds the ground
+round the camera and no more. The cache is the run's own, under the project's
+`.engine/session/`, and goes when the run ends: what is to last is saved
+(`SaveService`, or the scene). Three things keep changed ground in memory
+instead:
+
+- a terrain under 256 cells, which does not stream at all;
+- the ground within reach of a body that is not anchored, or of a character,
+  wherever the camera is -- nothing falls through ground that was written
+  out. A body that walks from there onto ground only the cache holds finds
+  none: give it a focus with `StreamingService:AddFocus`;
+- a match: a host and a dedicated server hold what changed, as the ground's
+  replication reads it from there.
+
+In the editor a cell changed with a brush stays in memory until the scene is
+saved, so undo is what it was; Play writes to a cache of its own that Stop
+throws away.
 
 **Everything that reads or writes the ground loads it first**, where it is
 still on disk: every edit, `ReadVoxels`, `HeightAt`, `ApplyRules` and a

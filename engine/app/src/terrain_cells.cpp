@@ -92,7 +92,9 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
     const std::string wanted = folder + "/index.json";
 
     if (terrain->cellIndex.empty()) {
-        if (asset::splitTerrain(terrain->field).size() < InlineTerrainCells)
+        // Counted with what the session cache holds (ADR 0149): a generated
+        // world whose ground is mostly there is not a small one.
+        if (m_fields.sessionCells() == 0 && asset::splitTerrain(terrain->field).size() < InlineTerrainCells)
             return true;
     }
     else if (terrain->cellIndex != wanted) {
@@ -112,7 +114,7 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
             entry.urn = folder + "/" + name;
         }
         m_fields.setWorld(&world, workspace);
-        m_fields.adoptTerrain(copied, resolver());
+        m_fields.adoptTerrain(copied, resolver(), true);
     }
     terrain->cellIndex = wanted;
     m_adopted = wanted;
@@ -139,6 +141,22 @@ bool TerrainCells::save(scene::World& world, core::InstanceId workspace, const s
         std::filesystem::remove(root / std::filesystem::path(entry.urn), ignored);
     };
     writer.resolve = resolver();
+    // The session cache's file for a cell nobody is near is moved into the
+    // scene's folder: beside the project they are on one disk, and a move is
+    // a rename (ADR 0149). Across disks the rename fails, and the streamer
+    // copies the bytes instead.
+    writer.adopt = [&folder, root = m_contentRoot](asset::ChunkId id,
+                                                   const std::filesystem::path& from) -> std::optional<std::string> {
+        const std::string name = "cell_" + std::to_string(id.x) + "_" + std::to_string(id.z) + ".lterrain";
+        const std::filesystem::path to = root / std::filesystem::path(folder) / name;
+        std::error_code failed;
+        if (!platform::createDirectories(to.parent_path()))
+            return std::nullopt;
+        std::filesystem::rename(from, to, failed);
+        if (failed)
+            return std::nullopt;
+        return folder + "/" + name;
+    };
     const FieldStreamer::TerrainSaveReport saved = m_fields.saveTerrain(writer);
     const std::string indexText = asset::writeChunkIndex(saved.index);
     if (!platform::writeFileDurable(

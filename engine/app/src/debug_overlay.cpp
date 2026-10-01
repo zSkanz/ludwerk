@@ -11938,6 +11938,27 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
         ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.panel.no_terrain")));
     }
 
+    // **An import under way is the panel** (ADR 0149 §2): how far it is, and
+    // the way out. Nothing else here is offered while the world is half laid
+    // -- and cancelling puts the world back, so nothing below may go on
+    // reading the terrain it held.
+    if (editor.terrainImportRunning()) {
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.import.laying")));
+        ImGui::PopTextWrapPos();
+        const float done = editor.terrainImportProgress();
+        char percent[16];
+        (void)std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(done * 100.0f));
+        ImGui::ProgressBar(done, ImVec2(-FLT_MIN, 0.0f), percent);
+        const bool cancel =
+            ImGui::Button(core::tr(ENG_TR("engine.editor.terrain.import.cancel")), ImVec2(-FLT_MIN, 0.0f));
+        ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.import.cancel_tip")));
+        if (cancel)
+            editor.cancelTerrainImport(world, inspector);
+        return;
+    }
+
     // The mode bar.
     {
         struct Mode
@@ -12348,8 +12369,17 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
             ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.create.size")));
             ImGui::SameLine(wide);
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::DragFloat("##hills-size", &hills.size, 1.0f, 16.0f, 2048.0f,
+            ImGui::DragFloat("##hills-size", &hills.size, 1.0f, 16.0f, 32768.0f,
                              core::tr(ENG_TR("engine.editor.unit.metres_square")));
+            {
+                const f32 voxelNow =
+                    terrain != nullptr ? terrain->field.settings().voxelSize : asset::FieldSettings{}.voxelSize;
+                if (hills.size / std::max(voxelNow, 0.01f) + 1.0f > static_cast<f32>(Editor::MaxTableColumns)) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.import.tiled_note")));
+                    ImGui::PopTextWrapPos();
+                }
+            }
             ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.terrain.create.heights")));
             ImGui::SameLine(wide);
             ImGui::SetNextItemWidth(-FLT_MIN);
@@ -12414,6 +12444,34 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
             if (ImGui::Button(core::tr(ENG_TR("engine.editor.terrain.create.export")), ImVec2(-FLT_MIN, 0.0f)))
                 (void)editor.exportHeightmap(world, root, exportSize);
             ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.create.export_tip")));
+        }
+
+        ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.terrain.create.function")));
+        {
+            // **Ground from a Luau function of a place** (ADR 0149 §2): a
+            // file that returns `function(x, z)`, laid a tile at a time.
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.terrain.create.function_intro")));
+            ImGui::PopTextWrapPos();
+            const std::filesystem::path& file = editor.heightFunctionSource();
+            const std::string chosen = file.empty()
+                                           ? std::string(core::tr(ENG_TR("engine.editor.terrain.create.function_none")))
+                                           : file.filename().string();
+            ImGui::TextUnformatted(chosen.c_str());
+            if (!file.empty())
+                ImGui::SetItemTooltip("%s", file.string().c_str());
+            if (ImGui::Button(core::tr(ENG_TR("engine.editor.terrain.create.function_choose")), ImVec2(-FLT_MIN, 0.0f)))
+                commands.pickHeightFunction = true;
+            static f32 functionSize = 1024.0f;
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::DragFloat("##function-size", &functionSize, 1.0f, 16.0f, 32768.0f,
+                             core::tr(ENG_TR("engine.editor.unit.metres_square")));
+            ImGui::BeginDisabled(file.empty());
+            if (ImGui::Button(core::tr(ENG_TR("engine.editor.terrain.create.function_lay")), ImVec2(-FLT_MIN, 0.0f)))
+                (void)editor.importFunction(world, root, inspector,
+                                            Editor::FunctionImport{file, functionSize, editor.brush().material});
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.import.tiled_note")));
         }
 
         if (terrain != nullptr) {

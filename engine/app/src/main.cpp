@@ -424,6 +424,62 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.headless = true;
             continue;
         }
+        if (arg.starts_with("--import-terrain=")) {
+            // A build step like `--partition`: headless, and gone once the
+            // scene is saved (ADR 0149 §2). `hills`, a `.luau` file that
+            // returns a function, or a heightmap -- a file or a folder of
+            // tiles.
+            engine::app::EngineOptions::TerrainImport spec =
+                options.terrainImport.value_or(engine::app::EngineOptions::TerrainImport{});
+            const std::string_view source = arg.substr(17);
+            using Kind = engine::app::EngineOptions::TerrainImport::Kind;
+            if (source == "hills") {
+                spec.kind = Kind::Hills;
+            }
+            else {
+                spec.source = std::filesystem::path(source);
+                spec.kind = spec.source.extension() == ".luau" ? Kind::Function : Kind::Heightmap;
+            }
+            options.terrainImport = spec;
+            options.headless = true;
+            continue;
+        }
+        if (arg.starts_with("--import-")) {
+            // The numbers of an import, in any order round `--import-terrain`.
+            engine::app::EngineOptions::TerrainImport spec =
+                options.terrainImport.value_or(engine::app::EngineOptions::TerrainImport{});
+            const std::string_view::size_type equals = arg.find('=');
+            const std::string_view name = arg.substr(0, equals);
+            const std::string_view value =
+                equals == std::string_view::npos ? std::string_view{} : arg.substr(equals + 1);
+            double number = 0.0;
+            const bool parsed = decimalValue(value, number);
+            bool known = true;
+            if (name == "--import-size")
+                spec.size = static_cast<float>(number);
+            else if (name == "--import-low")
+                spec.low = static_cast<float>(number);
+            else if (name == "--import-high")
+                spec.high = static_cast<float>(number);
+            else if (name == "--import-scale")
+                spec.scale = static_cast<float>(number);
+            else if (name == "--import-material")
+                spec.material = static_cast<engine::core::u8>(std::clamp(number, 0.0, 255.0));
+            else if (name == "--import-seed")
+                spec.seed = static_cast<engine::core::u32>(std::max(number, 0.0));
+            else if (name == "--import-octaves")
+                spec.octaves = static_cast<engine::core::u32>(std::clamp(number, 1.0, 10.0));
+            else
+                known = false;
+            if (!known || !parsed) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.terrainImport = spec;
+            options.headless = true;
+            continue;
+        }
         if (arg == "--partition") {
             // Partition the project's scene into the cache and stop. Headless
             // and windowless for the same reason `--save-scene` is: it is a
@@ -603,8 +659,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
     // be a ceiling on a loop that does not run.
     // `--launcher` is the third: it has its own loop, no world and no frame
     // budget, and it ends when somebody chooses a project or closes the window.
+    // An import's numbers with nothing to import: `--import-terrain` names it.
+    if (options.terrainImport.has_value() && options.terrainImport->source.empty() &&
+        options.terrainImport->kind != engine::app::EngineOptions::TerrainImport::Kind::Hills) {
+        const std::array<I18nArg, 1> badValue{I18nArg{"option", "--import-terrain"}};
+        engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+        return kExitUsage;
+    }
     if (!options.replayRoot.empty() || !options.benchRoot.empty() || !options.twoWorldsRoot.empty() ||
-        !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly || options.launcher)
+        !options.replicaGateProject.empty() || options.partitionOnly || options.writeTypesOnly || options.launcher ||
+        options.terrainImport.has_value())
         return kExitOk;
 
     // A conformance run needs a ceiling for the same reason, and a generous one:
@@ -842,7 +906,8 @@ int main(int argc, char** argv)
         // still wins -- the package is also something a person can `--host` --
         // and a build step (`--partition`, which `ludwerk build` runs on the
         // package itself) is not a session and serves nothing.
-        const bool buildStep = options.partitionOnly || options.writeTypesOnly || !options.saveScenePath.empty();
+        const bool buildStep = options.partitionOnly || options.writeTypesOnly || !options.saveScenePath.empty() ||
+                               options.terrainImport.has_value();
         if (config.serverRole && options.network.topology == engine::replication::Topology::Solo && !options.editor &&
             !buildStep) {
             options.network.topology = engine::replication::Topology::Dedicated;

@@ -212,6 +212,37 @@ struct EngineOptions
     // and `ludwerk check` run so a project that never opened the editor is typed.
     bool writeTypesOnly = false;
 
+    // **Lay the scene's terrain from a source, save it and exit** (ADR 0149
+    // §2): what `ludwerk terrain import` runs. The scene as the editor holds
+    // it -- whole, no script run, nothing partitioned -- its terrain laid a
+    // tile at a time with the ground behind it in the session cache, and saved
+    // as the editor saves it: the cells, then the scene that names them.
+    struct TerrainImport
+    {
+        enum class Kind : core::u8
+        {
+            // A sixteen-bit image, or a folder of tiles of one.
+            Heightmap,
+            // Hills from noise (`asset::hillHeights`).
+            Hills,
+            // A Luau file that returns `function(x, z)`.
+            Function,
+        };
+        Kind kind = Kind::Heightmap;
+        std::filesystem::path source;
+        // Metres across.
+        core::f32 size = 1024.0f;
+        // Black and white for a heightmap, the hills' floor and top: world
+        // metres.
+        core::f32 low = 0.0f;
+        core::f32 high = 64.0f;
+        core::u8 material = 1;
+        core::u32 seed = 1;
+        core::u32 octaves = 5;
+        core::f32 scale = 128.0f;
+    };
+    std::optional<TerrainImport> terrainImport;
+
     // **Partition the project's scene and exit** (ADR 0053).
     //
     // The same work a run does on the way to its first frame, done on its own
