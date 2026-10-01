@@ -33,6 +33,7 @@ void FieldStreamer::setIndex(const asset::ChunkIndex& index, const CellResolver&
     m_manager.setIndex(index);
     m_active = !index.chunks.empty();
     m_primed = !m_active;
+    m_cellSourceStale = true;
     installCallbacks();
 }
 
@@ -51,6 +52,11 @@ void FieldStreamer::reset()
     m_manager.setIndex(asset::ChunkIndex{});
     m_active = false;
     m_primed = true;
+    if (scene::TerrainComponent* component = m_world != nullptr ? terrain() : nullptr;
+        component != nullptr && component->cellSource == m_cellSource)
+        component->cellSource.reset();
+    m_cellSource.reset();
+    m_cellSourceStale = true;
 }
 
 void FieldStreamer::adoptTerrain(const asset::ChunkIndex& index, const CellResolver& resolve)
@@ -84,6 +90,45 @@ void FieldStreamer::adoptTerrain(const asset::ChunkIndex& index, const CellResol
     }
     m_active = !merged.chunks.empty();
     m_primed = m_primed || !m_active;
+    m_cellSourceStale = true;
+}
+
+void FieldStreamer::shareCells()
+{
+    scene::TerrainComponent* component = terrain();
+    if (component == nullptr)
+        return;
+    if (m_cellSourceStale) {
+        m_cellSourceStale = false;
+        std::vector<asset::ChunkId> cells;
+        std::map<asset::ChunkId, std::filesystem::path> paths;
+        for (const auto& [id, path] : m_paths) {
+            if (id.layer != asset::FieldLayerTerrain)
+                continue;
+            cells.push_back(id);
+            paths.emplace(id, path);
+        }
+        const asset::FieldSettings settings = component->field.settings();
+        // Read from any thread, by the renderer's builds: a copy of the paths
+        // and the settings a cell must have, and nothing of the streamer's.
+        asset::TerrainCellSource::Reader read = [paths = std::move(paths),
+                                                 settings](asset::ChunkId id) -> std::optional<asset::TerrainCell> {
+            const auto path = paths.find(id);
+            std::vector<std::byte> bytes;
+            if (path == paths.end() || !platform::readFile(path->second, bytes))
+                return std::nullopt;
+            asset::TerrainCell cell;
+            if (asset::decodeTerrainCell(bytes, cell).has_value() || cell.settings.voxelSize != settings.voxelSize ||
+                cell.settings.minHeight != settings.minHeight || cell.settings.maxHeight != settings.maxHeight)
+                return std::nullopt;
+            return cell;
+        };
+        m_cellSource = cells.empty()
+                           ? nullptr
+                           : std::make_shared<const asset::TerrainCellSource>(
+                                 asset::terrainCellChunks(settings.voxelSize), std::move(cells), std::move(read));
+    }
+    component->cellSource = m_cellSource;
 }
 
 void FieldStreamer::reconcile()
@@ -466,6 +511,7 @@ void FieldStreamer::pump(f64 budgetMilliseconds)
     if (!m_active || m_world == nullptr)
         return;
     followTerrainOrigin();
+    shareCells();
     const u64 started = platform::nowNs();
 
     // Finished reads, inside the budget, on `StreamingHost::pump`'s terms

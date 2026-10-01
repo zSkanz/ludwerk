@@ -155,21 +155,11 @@ void gather(const TerrainField& field, i32 x0, i32 y0, i32 z0, i32 sizeX, i32 si
 namespace {
 
 // Whether one face layer of a chunk is ground all the way across: `axis` 0, 1
-// or 2 for x, y or z, and `high` for the layer at 31 rather than 0.
+// or 2 for x, y or z, and `high` for the layer at 31 rather than 0. The
+// chunk's own answer, which a summary keeps (ADR 0144).
 [[nodiscard]] bool faceSolid(const TerrainChunk& chunk, u32 axis, bool high) noexcept
 {
-    if (chunk.uniform())
-        return chunk.value().occupancy >= 128;
-    const u32 at = high ? ChunkEdge - 1 : 0;
-    for (u32 a = 0; a < ChunkEdge; ++a) {
-        for (u32 b = 0; b < ChunkEdge; ++b) {
-            const Voxel voxel =
-                axis == 0 ? chunk.get(at, a, b) : (axis == 1 ? chunk.get(b, at, a) : chunk.get(b, a, at));
-            if (voxel.occupancy < 128)
-                return false;
-        }
-    }
-    return true;
+    return chunk.faceSolid(axis, high);
 }
 
 } // namespace

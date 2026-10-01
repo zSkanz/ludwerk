@@ -1415,3 +1415,32 @@ was rebuilding all the time.
 - **What is left**: frames whose ground goes up (4 to 7 ms of uploads when a
   dozen nodes land in one frame) and frames waiting on the GPU or the display
   for 9 to 12 ms, a few a flight. None is over 33 ms.
+
+### Far ground drawn from cells (ADR 0144)
+
+The fixture `tests/screenshots/terrainfar`: ground 3 km across at a metre
+voxel -- about 2 200 cells -- streamed at 300 m, the camera 2 km off, nothing
+of what it sees resident but the edge. `--pace=60`, 1280 by 720, cold (no
+partition cache, nothing gathered), 2026-09-30.
+
+| | Median | p99 | Worst | Peak resident |
+|---|---|---|---|---|
+| Before: only what is resident is drawn -- from 2 km, nothing | 0.77 ms* | 1.90 ms* | 5.7 ms* | 128 MiB* |
+| The same ground held whole, every chunk in memory | 3.07 ms | 7.23 ms | 33.9 ms | 339 MiB |
+| **Streamed, drawn whole from its cells** | **2.77 to 3.04 ms** | **7.1 to 8.8 ms** | **20 to 27 ms** | **315 to 323 MiB** |
+
+\* The package's optimised build, which is the only build of before at hand
+and draws nothing far: what drawing nothing costs, not a baseline to beat.
+
+**Cold**: the far ground's outline is drawn within 0.3 s of the first frame,
+its finest detail within 20 to 22 s, built off the frame's thread; a second
+lane and reading only the cells round what a node lacks each changed that by
+under a second -- it is the meshing, as much as the same ground held whole
+needs. Memory is bounded by three rows of decoded cells across a node, and the
+cells' summaries: a few hundred bytes a chunk.
+
+**The owner's place**, whose ground is all within the radius: the flight's p95
+and p99 are as they were the same evening (8.3 to 9.2 and 10.2 to 11.2 ms,
+against 8.7 and 11.1 for 391dc046 rebuilt beside it); the median is 0.5 ms
+higher, 3.5 against 3.0, which is the far ground drawn in the first seconds
+before its cells come in.

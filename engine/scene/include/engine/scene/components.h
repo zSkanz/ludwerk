@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -50,6 +51,10 @@
 #include "engine/core/sequence.h"
 #include "engine/core/types.h"
 #include "engine/scene/types.h"
+
+namespace engine::asset {
+class TerrainCellSource;
+}
 
 namespace engine::scene {
 
@@ -848,6 +853,12 @@ struct WorkspaceComponent
 struct TerrainComponent
 {
     asset::TerrainField field;
+    // **The cells the ground is made of, for drawing** (ADR 0144): set by the
+    // streamer for a terrain saved as cells, so the renderer draws the whole of
+    // it, reading from disk what is not resident. Null for a terrain whose
+    // field is the whole ground. Shared by the world's snapshots, as a file on
+    // disk is.
+    std::shared_ptr<const asset::TerrainCellSource> cellSource;
     // **The ground as the package ships it**, as far as it is loaded (ADR
     // 0135): the scene's field when the scene was read, and each streamed
     // cell's as it arrives or leaves. Its chunks are SHARED with `field`'s

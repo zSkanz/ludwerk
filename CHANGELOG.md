@@ -627,6 +627,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   refusal is said; an exported heightmap imports as the same ground and a
   second export never overwrites the first; a rule's bounds stay in order;
   the brush ring and chip go when they should; Foliage's Grow is Restore.
+- **A streamed terrain is drawn to its real edge** (D398, ADR 0144): ground
+  past the load radius is drawn, coarse, from the cells on disk -- the same
+  ground the near terrain shows -- so a world bigger than the radius no longer
+  ends in a staircase of cells, nor vanishes from far off.
 - **Flying high keeps the ground under you** (D397): terrain streams by how
   far a cell is across the ground, not through the air, so a camera far up no
   longer sees the ground vanish or its edge as a sawtooth -- and a flight over

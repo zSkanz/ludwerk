@@ -156,8 +156,13 @@ private:
     // they are in world space, drawn where the terrain stood, and a terrain
     // moved stopped streaming in round the player. Moved by the difference.
     void followTerrainOrigin();
+    // **The terrain's cells, for drawing** (ADR 0144): made again when the
+    // index changes, and handed to the terrain the streamer fills.
+    void shareCells();
 
     asset::StreamingManager m_manager;
+    std::shared_ptr<const asset::TerrainCellSource> m_cellSource;
+    bool m_cellSourceStale = true;
     std::map<asset::ChunkId, std::filesystem::path> m_paths;
     // What each resident cell brought, held for the reason the header gives.
     std::map<asset::ChunkId, asset::TerrainCell> m_terrainCells;

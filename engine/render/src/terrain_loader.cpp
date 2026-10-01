@@ -6,6 +6,7 @@
 #include <limits>
 #include <string>
 
+#include "engine/asset/field_cells.h"
 #include "engine/asset/terrain_layers.h"
 #include "engine/asset/terrain_mesher.h"
 #include "engine/asset/terrain_palette.h"
@@ -36,6 +37,9 @@ constexpr u32 MaxEditBuildsPerSync = 64;
 // upload is the one part of a build the frame pays for, and a batch of sixty
 // at once was a hitch of its own. A count, never a clock.
 constexpr usize UploadsPerSync = 6;
+// **Nodes built from cells on disk, a batch** (ADR 0144): far ground, built
+// beside the near ground on a lane of its own, never ahead of it.
+constexpr u32 MaxFarBuildsPerSync = 32;
 // The eight nodes round a node, in `MeshRegion::sideLevels`' order: the sides,
 // low x, high x, low z, high z, then the corners.
 constexpr std::array<std::array<i32, 2>, 8> TerrainNeighbours{
@@ -130,6 +134,79 @@ struct ChunkSpan
         content = combine(content, entry.second->digest());
     });
     return content;
+}
+
+// **Whether a cell's ground is resident**: any chunk of its columns in the
+// field. A streamed cell comes in whole (terrain audit TA16a).
+[[nodiscard]] bool cellResident(const asset::TerrainField& field, asset::ChunkId cell, i32 cellChunks) noexcept
+{
+    bool found = false;
+    forChunksIn(field, cell.x * cellChunks, cell.x * cellChunks + cellChunks - 1, cell.z * cellChunks,
+                cell.z * cellChunks + cellChunks - 1, [&](const asset::TerrainField::Entry&) { found = true; });
+    return found;
+}
+
+// **What a node reads, wherever its ground is** (ADR 0144): the resident
+// chunks, and for a cell that is not resident the digests its chunks had when
+// it was read -- the same digests, so a node is the same node before its cell
+// comes in, while it is in, and after it is evicted untouched. A cell never
+// read yet makes the content one no build has, so the node is built.
+[[nodiscard]] u64 contentOf(const asset::TerrainField& field, const asset::TerrainCellSource* source,
+                            TerrainNodeKey key)
+{
+    if (source == nullptr)
+        return contentOf(field, key);
+    const ChunkSpan xs = readSpan(field, key, key.x);
+    const ChunkSpan zs = readSpan(field, key, key.z);
+    std::vector<std::pair<asset::ChunkKey, u64>> chunks;
+    forChunksIn(field, xs.low, xs.high, zs.low, zs.high, [&](const asset::TerrainField::Entry& entry) {
+        chunks.emplace_back(entry.first, entry.second->digest());
+    });
+    const auto n = static_cast<i32>(source->cellChunks());
+    std::vector<asset::ChunkId> cells;
+    source->cellsIn(xs.low, xs.high, zs.low, zs.high, cells);
+    bool unread = false;
+    for (const asset::ChunkId& cell : cells) {
+        if (cellResident(field, cell, n))
+            continue;
+        const i32 x0 = std::max(xs.low, cell.x * n);
+        const i32 x1 = std::min(xs.high, cell.x * n + n - 1);
+        const i32 z0 = std::max(zs.low, cell.z * n);
+        const i32 z1 = std::min(zs.high, cell.z * n + n - 1);
+        if (!source->summarised(x0, x1, z0, z1))
+            unread = true;
+        else
+            source->digestsIn(x0, x1, z0, z1, chunks);
+    }
+    std::sort(chunks.begin(), chunks.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    u64 content = combine(combine(key.level, static_cast<u64>(static_cast<u32>(key.x))),
+                          static_cast<u64>(static_cast<u32>(key.z)));
+    for (const auto& [chunk, digest] : chunks) {
+        content = combine(content, static_cast<u64>(static_cast<u32>(chunk.x)));
+        content = combine(content, static_cast<u64>(static_cast<u32>(chunk.y)));
+        content = combine(content, static_cast<u64>(static_cast<u32>(chunk.z)));
+        content = combine(content, digest);
+    }
+    return unread ? combine(content, 0xFA7F1E1Dull) : content;
+}
+
+// **Whether a node's ground is partly not resident** -- what it reads reaches a
+// cell on disk -- so it is built from the cells (ADR 0144).
+[[nodiscard]] bool readsCells(const asset::TerrainField& field, const asset::TerrainCellSource* source,
+                              TerrainNodeKey key)
+{
+    if (source == nullptr)
+        return false;
+    const ChunkSpan xs = readSpan(field, key, key.x);
+    const ChunkSpan zs = readSpan(field, key, key.z);
+    const auto n = static_cast<i32>(source->cellChunks());
+    std::vector<asset::ChunkId> cells;
+    source->cellsIn(xs.low - 1, xs.high + 1, zs.low - 1, zs.high + 1, cells);
+    for (const asset::ChunkId& cell : cells) {
+        if (!cellResident(field, cell, n))
+            return true;
+    }
+    return false;
 }
 
 // Registers a meshed node under its URN, one material per section tinted
@@ -423,6 +500,128 @@ void TerrainLoader::release(rhi::IDevice& device, MeshCache& cache, MeshLibrary&
     }
 }
 
+TerrainNodeBuild buildTerrainNodeFromCells(const asset::TerrainField& resident, const asset::TerrainCellSource& source,
+                                           TerrainNodeKey node, TerrainSides sides)
+{
+    asset::TerrainField field = resident;
+    const auto n = static_cast<i32>(source.cellChunks());
+    const ChunkSpan xs = readSpan(field, node, node.x);
+    const ChunkSpan zs = readSpan(field, node, node.z);
+    std::vector<asset::ChunkId> cells;
+    source.cellsIn(xs.low - 1, xs.high + 1, zs.low - 1, zs.high + 1, cells);
+    std::map<std::pair<i32, i32>, std::shared_ptr<const asset::TerrainCellSource::Summaries>> away;
+    for (const asset::ChunkId& cell : cells) {
+        if (cellResident(field, cell, n))
+            continue;
+        std::shared_ptr<const asset::TerrainCellSource::Summaries> summaries = source.summaries(cell);
+        if (summaries == nullptr)
+            continue;
+        for (const asset::TerrainField::Entry& entry : *summaries)
+            field.setChunk(entry.first, entry.second);
+        away.emplace(std::pair{cell.x, cell.z}, std::move(summaries));
+    }
+
+    // What the node and its seams at every coarser level read and the cache
+    // lacks, by the row of cells each chunk is in.
+    std::vector<asset::SurfaceWant> wants;
+    const auto lacking = [&] {
+        wants.clear();
+        missingTerrainSurfaces(field, node, sides, wants);
+        for (u32 level = node.level + 1; level <= TerrainTopLevel; ++level) {
+            const auto band = static_cast<core::u8>(level);
+            missingTerrainSurfaces(field, node, TerrainSides{band, band, band, band, band, band, band, band}, wants);
+        }
+        std::sort(wants.begin(), wants.end(), [n](const asset::SurfaceWant& a, const asset::SurfaceWant& b) {
+            const i32 rowA = asset::floorDiv(a.key.z, n);
+            const i32 rowB = asset::floorDiv(b.key.z, n);
+            return rowA != rowB ? rowA < rowB : a.key < b.key;
+        });
+        return !wants.empty();
+    };
+
+    // The cells read whole, by row: put in, and later swapped back for
+    // their summaries.
+    std::map<i32, std::vector<std::pair<i32, i32>>> whole;
+    // Only the cells round what is lacking: most of a far node's surfaces are
+    // cached by the nodes built before it.
+    i32 lowCell = 0;
+    i32 highCell = -1;
+    const auto readRow = [&](i32 row) {
+        std::vector<std::pair<i32, i32>>& held = whole[row];
+        for (const auto& [at, summaries] : away) {
+            if (at.second != row || at.first < lowCell || at.first > highCell ||
+                std::find(held.begin(), held.end(), at) != held.end())
+                continue;
+            const std::optional<asset::TerrainCell> cell =
+                source.read(asset::ChunkId{at.first, at.second, asset::FieldLayerTerrain});
+            if (!cell.has_value())
+                continue;
+            for (const asset::TerrainField::Entry& entry : cell->field.chunks())
+                field.setChunk(entry.first, entry.second);
+            held.push_back(at);
+        }
+    };
+    const auto letGo = [&](i32 below) {
+        for (auto row = whole.begin(); row != whole.end() && row->first < below;) {
+            for (const auto& at : row->second) {
+                for (const asset::TerrainField::Entry& entry : *away.at(at))
+                    field.setChunk(entry.first, entry.second);
+            }
+            row = whole.erase(row);
+        }
+    };
+    // **Gathered until nothing is lacking**: a surface no gather here put in
+    // would be gathered by the mesher from a summary, which has no voxels to
+    // gather -- a hole. Another build can put a chunk's surface under other
+    // content between this gather and the mesh (`SurfaceContentsKept`), so
+    // what is lacking is asked again; a second round is rare, a third rarer.
+    for (int round = 0; round < 3 && lacking(); ++round) {
+        // One gather a chunk, with every level asked of it.
+        std::vector<asset::SurfaceWant> merged;
+        for (const asset::SurfaceWant& want : wants) {
+            if (!merged.empty() && merged.back().key == want.key)
+                merged.back().levels |= want.levels;
+            else
+                merged.push_back(want);
+        }
+        for (usize at = 0; at < merged.size();) {
+            const i32 row = asset::floorDiv(merged[at].key.z, n);
+            lowCell = std::numeric_limits<i32>::max();
+            highCell = std::numeric_limits<i32>::min();
+            for (usize next = at; next < merged.size() && asset::floorDiv(merged[next].key.z, n) == row; ++next) {
+                lowCell = std::min(lowCell, asset::floorDiv(merged[next].key.x - 1, n));
+                highCell = std::max(highCell, asset::floorDiv(merged[next].key.x + 1, n));
+            }
+            letGo(row - 1);
+            readRow(row - 1);
+            readRow(row);
+            readRow(row + 1);
+            for (; at < merged.size() && asset::floorDiv(merged[at].key.z, n) == row; ++at) {
+                const asset::SurfaceWant& want = merged[at];
+                const u64 content = asset::surfaceContent(field, want.key);
+                asset::cacheSurfaces(field, want.key, content, asset::buildSurfaces(field, want.key, want.levels));
+            }
+        }
+        letGo(std::numeric_limits<i32>::max());
+    }
+
+    TerrainNodeBuild out;
+    out.mesh = meshTerrainNode(field, node, sides);
+    out.content = contentOf(field, node);
+    return out;
+}
+
+bool terrainNodeReadsCells(const asset::TerrainField& resident, const asset::TerrainCellSource* source,
+                           TerrainNodeKey node)
+{
+    return readsCells(resident, source, node);
+}
+
+u64 terrainNodeContent(const asset::TerrainField& resident, const asset::TerrainCellSource* source, TerrainNodeKey node)
+{
+    return contentOf(resident, source, node);
+}
+
 // **A batch of nodes built off the main thread** (TA14). Each field is a
 // snapshot: its chunks are shared with the live one, which clones a chunk
 // before it writes to one another snapshot holds, so what a worker reads never
@@ -437,6 +636,9 @@ struct TerrainLoader::Batch
         TerrainSides sides{};
         u64 revision = 0;
         std::shared_ptr<const asset::TerrainField> field;
+        // A node whose ground is partly on disk, and where it is (ADR 0144).
+        std::shared_ptr<const asset::TerrainCellSource> source;
+        bool far = false;
         asset::TerrainMesh mesh;
         // The same, in the GPU's layout: made here rather than on the frame.
         asset::Mesh packed;
@@ -457,6 +659,10 @@ struct TerrainLoader::Batch
         std::vector<asset::SurfaceWant> wants;
         for (usize at = lane; at < items.size(); at += laneCount) {
             Item& item = items[at];
+            if (item.far) {
+                buildFar(item);
+                continue;
+            }
             wants.clear();
             missingTerrainSurfaces(*item.field, item.key, item.sides, wants);
             for (const asset::SurfaceWant& want : wants) {
@@ -483,6 +689,22 @@ struct TerrainLoader::Batch
             }
         }
     }
+
+    // **A node built from the cells its ground is in** (ADR 0144), memory held
+    // to three rows of cells whatever the node spans. The field it is meshed
+    // against is the resident one with every cell it reads that is not
+    // resident put in as summaries -- what a coarse mesh reads of a chunk once
+    // its surfaces are gathered. The surfaces are gathered a row of cells at a
+    // time, with the cells round that row read whole and then let go, under
+    // the content they have whether resident or not: the same surfaces, the
+    // same cache. Then the node is meshed as any node is.
+    static void buildFar(Item& item)
+    {
+        TerrainNodeBuild built = buildTerrainNodeFromCells(*item.field, *item.source, item.key, item.sides);
+        item.mesh = std::move(built.mesh);
+        item.packed = packedForGpu(item.mesh);
+        item.content = built.content;
+    }
 };
 
 TerrainLoader::TerrainLoader() = default;
@@ -492,11 +714,11 @@ TerrainLoader::~TerrainLoader()
     waitBatch();
 }
 
-bool TerrainLoader::batchFinished() const noexcept
+bool TerrainLoader::batchFinished(const std::unique_ptr<Batch>& batch) const noexcept
 {
-    if (m_batch == nullptr)
+    if (batch == nullptr)
         return false;
-    for (const jobs::JobHandle lane : m_batch->lanes) {
+    for (const jobs::JobHandle lane : batch->lanes) {
         if (!jobs::finished(lane))
             return false;
     }
@@ -505,23 +727,26 @@ bool TerrainLoader::batchFinished() const noexcept
 
 void TerrainLoader::waitBatch() noexcept
 {
-    if (m_batch != nullptr && !m_batch->lanes.empty())
-        jobs::waitAll(m_batch->lanes);
+    for (const std::unique_ptr<Batch>* batch : {&m_batch, &m_farBatch}) {
+        if (*batch != nullptr && !(*batch)->lanes.empty())
+            jobs::waitAll((*batch)->lanes);
+    }
 }
 
 u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary& library,
-                             usize budget)
+                             usize budget, std::unique_ptr<Batch>& batch)
 {
-    if (m_batch == nullptr)
+    if (batch == nullptr)
         return 0;
-    waitBatch();
+    if (!batch->lanes.empty())
+        jobs::waitAll(batch->lanes);
     u32 count = 0;
     // Uploaded in request order, on this thread: nearest first, as ever -- a
     // few a frame. **None is drawn until all are up**: what is drawn is judged
     // against the ground the batch was built from only once it is all there.
-    const usize last = std::min(m_batch->items.size(), m_batch->next + budget);
-    for (; m_batch->next < last; ++m_batch->next) {
-        Batch::Item& item = m_batch->items[m_batch->next];
+    const usize last = std::min(batch->items.size(), batch->next + budget);
+    for (; batch->next < last; ++batch->next) {
+        Batch::Item& item = batch->items[batch->next];
         Node* node = find(item.world, item.terrain, item.key);
         if (node == nullptr)
             continue;
@@ -550,10 +775,13 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
         node->error = static_cast<f64>(item.mesh.error);
         count += 1;
     }
-    if (m_batch->next < m_batch->items.size())
+    if (batch->next < batch->items.size())
         return count;
-    // All of it up: the ground put up is now this batch's.
-    for (const Batch::Item& item : m_batch->items) {
+    // All of it up: the ground put up is now this batch's -- not a batch of
+    // far ground, built from an older snapshot beside the near ground's.
+    for (const Batch::Item& item : batch->items) {
+        if (item.far)
+            continue;
         auto putUp = std::find_if(m_shown.begin(), m_shown.end(), [&](const Shown& entry) {
             return entry.world == item.world && entry.terrain == item.terrain;
         });
@@ -562,7 +790,7 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
         putUp->field = item.field;
         putUp->revision = item.revision;
     }
-    m_batch.reset();
+    batch.reset();
     return count;
 }
 
@@ -574,8 +802,10 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     m_pending = false;
     // **A batch built off the main thread, done** (TA14): all of it goes up
     // now, before anything is chosen, so it is drawn this frame.
-    if (m_batch != nullptr && batchFinished())
-        m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0});
+    if (m_batch != nullptr && batchFinished(m_batch))
+        m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0}, m_batch);
+    if (m_farBatch != nullptr && batchFinished(m_farBatch))
+        m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0}, m_farBatch);
 
     struct Request
     {
@@ -601,28 +831,72 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
 
         world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
             const asset::TerrainField& field = terrain.field;
+            // **The whole terrain, resident or not** (ADR 0144).
+            const asset::TerrainCellSource* source = terrain.cellSource.get();
+            const std::optional<std::array<i32, 4>> cellExtent =
+                source != nullptr ? source->extent() : std::optional<std::array<i32, 4>>{};
             const f64 voxel = static_cast<f64>(field.settings().voxelSize);
-            if (field.empty() || !(voxel > 0.0) || !m_hasFocus)
+            if ((field.empty() && !cellExtent.has_value()) || !(voxel > 0.0) || !m_hasFocus)
                 return;
             const f64 chunkMetres = voxel * static_cast<f64>(asset::ChunkEdge);
             const core::DVec3 focus{m_focus.x - terrain.origin.x, m_focus.y - terrain.origin.y,
                                     m_focus.z - terrain.origin.z};
 
-            // The field's extent, in chunks: x from the sorted ends, z and y by a
-            // walk. What the roots cover and how tall every node's box is.
+            // The terrain's extent, in chunks: the resident field's -- x from the
+            // sorted ends, z and y by a walk -- and its cells'. What the roots
+            // cover and how tall every node's box is; a node over cells alone
+            // is as tall as the terrain's floor to its ceiling.
             const std::span<const asset::TerrainField::Entry> chunks = field.chunks();
-            i32 minZ = chunks.front().first.z;
-            i32 maxZ = minZ;
-            i32 minY = chunks.front().first.y;
-            i32 maxY = minY;
-            for (const asset::TerrainField::Entry& entry : chunks) {
-                minZ = std::min(minZ, entry.first.z);
-                maxZ = std::max(maxZ, entry.first.z);
-                minY = std::min(minY, entry.first.y);
-                maxY = std::max(maxY, entry.first.y);
+            i32 minX = std::numeric_limits<i32>::max();
+            i32 maxX = std::numeric_limits<i32>::min();
+            i32 minZ = std::numeric_limits<i32>::max();
+            i32 maxZ = std::numeric_limits<i32>::min();
+            f64 lowMetres = static_cast<f64>(field.settings().minHeight);
+            f64 highMetres = static_cast<f64>(field.settings().maxHeight);
+            if (!chunks.empty()) {
+                minX = chunks.front().first.x;
+                maxX = chunks.back().first.x;
+                i32 minY = chunks.front().first.y;
+                i32 maxY = minY;
+                for (const asset::TerrainField::Entry& entry : chunks) {
+                    minZ = std::min(minZ, entry.first.z);
+                    maxZ = std::max(maxZ, entry.first.z);
+                    minY = std::min(minY, entry.first.y);
+                    maxY = std::max(maxY, entry.first.y);
+                }
+                if (!cellExtent.has_value()) {
+                    lowMetres = static_cast<f64>(minY) * chunkMetres;
+                    highMetres = static_cast<f64>(maxY + 1) * chunkMetres;
+                }
             }
-            const f64 lowMetres = static_cast<f64>(minY) * chunkMetres;
-            const f64 highMetres = static_cast<f64>(maxY + 1) * chunkMetres;
+            if (cellExtent.has_value()) {
+                minX = std::min(minX, (*cellExtent)[0]);
+                maxX = std::max(maxX, (*cellExtent)[1]);
+                minZ = std::min(minZ, (*cellExtent)[2]);
+                maxZ = std::max(maxZ, (*cellExtent)[3]);
+            }
+            // A node has ground to draw when a resident chunk is under it, or a
+            // cell is.
+            const auto occupiedHere = [&](TerrainNodeKey key) {
+                if (occupied(field, key))
+                    return true;
+                const i32 n = across(key.level);
+                return source != nullptr && source->covers(key.x * n, key.x * n + n, key.z * n, key.z * n + n);
+            };
+            // **Full detail only over resident ground**: a node at level 0 reads
+            // voxels, and a cell on disk is drawn from its coarse levels.
+            const auto detailHere = [&](TerrainNodeKey key) {
+                if (key.level > 0 || source == nullptr)
+                    return true;
+                Node* node = find(&world, id, key);
+                if (node == nullptr)
+                    return !readsCells(field, source, key);
+                if (node->cellsRevision != terrain.fieldRevision) {
+                    node->cellsRevision = terrain.fieldRevision;
+                    node->readsCells = readsCells(field, source, key);
+                }
+                return !node->readsCells;
+            };
 
             // A node is current when its content matches what it was built from;
             // checked only when the field has been written since.
@@ -645,7 +919,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                     return false;
                 if (variant.revision == terrain.fieldRevision)
                     return true;
-                if (contentOf(field, key) != variant.content)
+                if (contentOf(field, source, key) != variant.content)
                     return false;
                 variant.revision = terrain.fieldRevision;
                 return true;
@@ -663,7 +937,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                     return false;
                 if (variant.shownRevision == shown->revision)
                     return true;
-                if (contentOf(*shown->field, key) != variant.content)
+                if (contentOf(*shown->field, source, key) != variant.content)
                     return false;
                 variant.shownRevision = shown->revision;
                 return true;
@@ -792,7 +1066,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 for (i32 dz = 0; dz < 2; ++dz) {
                     for (i32 dx = 0; dx < 2; ++dx) {
                         const TerrainNodeKey child{key.level - 1, key.x * 2 + dx, key.z * 2 + dz};
-                        if (occupied(field, child))
+                        if (occupiedHere(child))
                             out[count++] = child;
                     }
                 }
@@ -837,7 +1111,7 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 const f64 distance = distanceTo(key);
                 if (distance > m_lod.viewDistance)
                     return;
-                if (!occupied(field, key))
+                if (!occupiedHere(key))
                     return;
                 // Every node the walk passes through is in use, drawn or not: an
                 // ancestor let go is one the next step back has to rebuild first.
@@ -858,8 +1132,13 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 // that is -- so a camera on the line does not flip it every frame.
                 Node& here = nodeFor(key);
                 here.used = m_frame;
+                // Not into full detail over ground that is not resident (ADR
+                // 0144): this node stands for it until its cells come in.
+                bool detailUnder = true;
+                for (usize at = 0; at < childCount; ++at)
+                    detailUnder = detailUnder && detailHere(children[at]);
                 const bool splitting =
-                    key.level > 0 &&
+                    key.level > 0 && detailUnder &&
                     (m_lod.fullDetail || distance < splitDistance(key) * (here.split ? SplitHysteresis : 1.0));
                 here.split = splitting;
                 if (splitting) {
@@ -896,10 +1175,8 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             const auto rootAt = [rootMetres](f64 metres) {
                 return static_cast<i32>(std::clamp(std::floor(metres / rootMetres), -1.0e9, 1.0e9));
             };
-            const i32 firstX =
-                std::max(asset::floorDiv(chunks.front().first.x, top), rootAt(focus.x - m_lod.viewDistance));
-            const i32 lastX =
-                std::min(asset::floorDiv(chunks.back().first.x + 1, top), rootAt(focus.x + m_lod.viewDistance));
+            const i32 firstX = std::max(asset::floorDiv(minX, top), rootAt(focus.x - m_lod.viewDistance));
+            const i32 lastX = std::min(asset::floorDiv(maxX + 1, top), rootAt(focus.x + m_lod.viewDistance));
             const i32 firstZ = std::max(asset::floorDiv(minZ, top), rootAt(focus.z - m_lod.viewDistance));
             const i32 lastZ = std::min(asset::floorDiv(maxZ + 1, top), rootAt(focus.z + m_lod.viewDistance));
             for (i32 rootZ = firstZ; rootZ <= lastZ; ++rootZ) {
@@ -1085,32 +1362,62 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
     // nodes never show two versions of one edit -- the flicker the owner saw
     // while editing. A node never built is loading, and loading keeps the
     // budget, nearest first.
-    if (m_batch == nullptr) {
+    if (m_batch == nullptr || m_farBatch == nullptr) {
         auto batch = std::make_unique<Batch>();
+        // **Far ground, a batch of its own** (ADR 0144): built from cells on
+        // disk, on one lane beside the near ground, so a node near the camera
+        // is never queued behind one far away. Synchronously -- a picture --
+        // it is built with the rest, now.
+        auto farBatch = std::make_unique<Batch>();
         std::map<u64, std::shared_ptr<const asset::TerrainField>> snapshots;
         u32 rebuilds = 0;
         u32 loads = 0;
+        u32 far = 0;
         std::vector<Request> left;
         for (const Request& next : requests) {
             const scene::TerrainComponent* terrain = world.terrains().find(next.terrain);
             Node* node = find(&world, next.terrain, next.key);
             if (terrain == nullptr || node == nullptr)
                 continue;
-            if (next.rebuild ? rebuilds >= MaxEditBuildsPerSync : loads >= m_buildsPerSync) {
+            const bool fromCells = readsCells(terrain->field, terrain->cellSource.get(), next.key);
+            const bool apart = fromCells && m_async;
+            u32& count = apart ? far : (next.rebuild ? rebuilds : loads);
+            const u32 limit = apart ? MaxFarBuildsPerSync : (next.rebuild ? MaxEditBuildsPerSync : m_buildsPerSync);
+            if ((apart ? m_farBatch : m_batch) != nullptr || count >= limit) {
                 left.push_back(next);
                 continue;
             }
-            (next.rebuild ? rebuilds : loads) += 1;
+            count += 1;
             const u64 slot = (static_cast<u64>(next.terrain.index) << 32) | next.terrain.generation;
             std::shared_ptr<const asset::TerrainField>& snapshot = snapshots[slot];
             if (snapshot == nullptr)
                 snapshot = std::make_shared<const asset::TerrainField>(terrain->field);
             node->queued = true;
             node->queuedSides = next.sides;
-            batch->items.push_back(
-                Batch::Item{&world, next.terrain, next.key, next.sides, terrain->fieldRevision, snapshot, {}, {}, 0});
+            Batch::Item item;
+            item.world = &world;
+            item.terrain = next.terrain;
+            item.key = next.key;
+            item.sides = next.sides;
+            item.revision = terrain->fieldRevision;
+            item.field = snapshot;
+            item.source = fromCells ? terrain->cellSource : nullptr;
+            item.far = fromCells;
+            (apart ? *farBatch : *batch).items.push_back(std::move(item));
         }
         requests = std::move(left);
+        if (m_async && !farBatch->items.empty()) {
+            // Two lanes at most, and one on a machine of eight threads or
+            // fewer: far ground is a few seconds' work once, and the near
+            // ground's lanes and the frame's own jobs keep the rest.
+            Batch* running = farBatch.get();
+            running->laneCount =
+                std::min<u32>(jobs::workerCount() > 8u ? 2u : 1u, static_cast<u32>(running->items.size()));
+            for (u32 lane = 0; lane < running->laneCount; ++lane)
+                running->lanes.push_back(jobs::schedule("terrain.build.far", jobs::Domain::Render,
+                                                        [running, lane]() noexcept { running->run(lane); }));
+            m_farBatch = std::move(farBatch);
+        }
         if (!batch->items.empty()) {
             if (m_async) {
                 // **A few lanes**: a quarter of the workers, at least one and
@@ -1126,10 +1433,13 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
             }
             else {
                 // **Here and now, on every worker**: the surfaces first, then
-                // the meshes, each wide; then drawn in this frame.
+                // the meshes, each wide; then drawn in this frame. A node from
+                // cells gathers its own, a row of cells at a time.
                 std::vector<MissingSurface> missing;
                 std::vector<asset::SurfaceWant> wants;
                 for (const Batch::Item& item : batch->items) {
+                    if (item.far)
+                        continue;
                     wants.clear();
                     missingTerrainSurfaces(*item.field, item.key, item.sides, wants);
                     for (const asset::SurfaceWant& want : wants)
@@ -1141,20 +1451,24 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                                   [&built](usize begin, usize end, u32) noexcept {
                                       for (usize at = begin; at < end; ++at) {
                                           Batch::Item& item = built.items[at];
+                                          if (item.far) {
+                                              Batch::buildFar(item);
+                                              continue;
+                                          }
                                           item.mesh = meshTerrainNode(*item.field, item.key, item.sides);
                                           item.packed = packedForGpu(item.mesh);
                                           item.content = contentOf(*item.field, item.key);
                                       }
                                   });
                 m_batch = std::move(batch);
-                m_lastBuilds += integrate(device, cmd, cache, library, ~usize{0});
+                m_lastBuilds += integrate(device, cmd, cache, library, ~usize{0}, m_batch);
                 std::vector<Request> after;
                 choose(after);
                 requests.insert(requests.end(), after.begin(), after.end());
             }
         }
     }
-    m_pending = m_batch != nullptr || !requests.empty();
+    m_pending = m_batch != nullptr || m_farBatch != nullptr || !requests.empty();
 
     // Nodes of this world nobody has drawn or wanted for a while, or whose
     // terrain is gone, let their meshes go.
@@ -1196,7 +1510,7 @@ std::vector<TerrainNodeKey> TerrainLoader::drawnOutOfDate(const scene::World& wo
         const Node* node = find(&world, drawn.draw.terrain, drawn.key);
         const scene::TerrainComponent* terrain = world.terrains().find(drawn.draw.terrain);
         if (node == nullptr || terrain == nullptr ||
-            contentOf(terrain->field, drawn.key) != node->variants[drawn.slot].content)
+            contentOf(terrain->field, terrain->cellSource.get(), drawn.key) != node->variants[drawn.slot].content)
             out.push_back(drawn.key);
     }
     return out;
@@ -1288,6 +1602,7 @@ void TerrainLoader::destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary&
 {
     waitBatch();
     m_batch.reset();
+    m_farBatch.reset();
     m_shown.clear();
     for (auto& [index, node] : m_nodes)
         release(device, cache, library, node);

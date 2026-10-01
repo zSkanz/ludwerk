@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 
 #include "engine/core/i18n.h"
@@ -310,6 +311,121 @@ std::optional<core::EngineError> decodeVoxelCell(std::span<const std::byte> byte
         return malformedVoxels();
     out = std::move(cell);
     return std::nullopt;
+}
+
+// --- A streamed terrain's cells, for drawing (ADR 0144) -----------------------
+
+TerrainCellSource::TerrainCellSource(u32 cellChunks, std::vector<ChunkId> cells, Reader read)
+    : m_cellChunks(std::max<u32>(cellChunks, 1u)), m_cells(std::move(cells)), m_read(std::move(read))
+{
+    std::sort(m_cells.begin(), m_cells.end(),
+              [](const ChunkId& a, const ChunkId& b) { return a.x != b.x ? a.x < b.x : a.z < b.z; });
+}
+
+std::optional<std::array<i32, 4>> TerrainCellSource::extent() const noexcept
+{
+    if (m_cells.empty())
+        return std::nullopt;
+    const auto n = static_cast<i32>(m_cellChunks);
+    i32 lowZ = m_cells.front().z;
+    i32 highZ = lowZ;
+    for (const ChunkId& cell : m_cells) {
+        lowZ = std::min(lowZ, cell.z);
+        highZ = std::max(highZ, cell.z);
+    }
+    return std::array<i32, 4>{m_cells.front().x * n, m_cells.back().x * n + n - 1, lowZ * n, highZ * n + n - 1};
+}
+
+void TerrainCellSource::cellsIn(i32 x0, i32 x1, i32 z0, i32 z1, std::vector<ChunkId>& out) const
+{
+    const auto n = static_cast<i32>(m_cellChunks);
+    const i32 cx0 = floorDivide(x0, n);
+    const i32 cx1 = floorDivide(x1, n);
+    const i32 cz0 = floorDivide(z0, n);
+    const i32 cz1 = floorDivide(z1, n);
+    auto at =
+        std::lower_bound(m_cells.begin(), m_cells.end(), cx0, [](const ChunkId& cell, i32 x) { return cell.x < x; });
+    for (; at != m_cells.end() && at->x <= cx1; ++at) {
+        if (at->z >= cz0 && at->z <= cz1)
+            out.push_back(*at);
+    }
+}
+
+bool TerrainCellSource::covers(i32 x0, i32 x1, i32 z0, i32 z1) const noexcept
+{
+    const auto n = static_cast<i32>(m_cellChunks);
+    const i32 cx0 = floorDivide(x0, n);
+    const i32 cx1 = floorDivide(x1, n);
+    const i32 cz0 = floorDivide(z0, n);
+    const i32 cz1 = floorDivide(z1, n);
+    auto at =
+        std::lower_bound(m_cells.begin(), m_cells.end(), cx0, [](const ChunkId& cell, i32 x) { return cell.x < x; });
+    for (; at != m_cells.end() && at->x <= cx1; ++at) {
+        if (at->z >= cz0 && at->z <= cz1)
+            return true;
+    }
+    return false;
+}
+
+std::optional<TerrainCell> TerrainCellSource::read(ChunkId id) const
+{
+    if (!m_read)
+        return std::nullopt;
+    return m_read(id);
+}
+
+std::shared_ptr<const TerrainCellSource::Summaries> TerrainCellSource::summaries(ChunkId id) const
+{
+    {
+        const std::lock_guard<std::mutex> lock(m_lock);
+        if (const auto found = m_summaries.find({id.x, id.z}); found != m_summaries.end())
+            return found->second;
+    }
+    std::optional<TerrainCell> cell = read(id);
+    if (!cell.has_value())
+        return nullptr;
+    auto made = std::make_shared<Summaries>();
+    made->reserve(cell->field.chunks().size());
+    for (const TerrainField::Entry& entry : cell->field.chunks())
+        made->emplace_back(entry.first, entry.second->summary());
+    const std::lock_guard<std::mutex> lock(m_lock);
+    // Two threads that both read it keep the first: the same cell, the same
+    // summaries.
+    return m_summaries.emplace(std::pair{id.x, id.z}, std::move(made)).first->second;
+}
+
+void TerrainCellSource::digestsIn(i32 x0, i32 x1, i32 z0, i32 z1,
+                                  std::vector<std::pair<ChunkKey, core::u64>>& out) const
+{
+    std::vector<ChunkId> cells;
+    cellsIn(x0, x1, z0, z1, cells);
+    const usize first = out.size();
+    {
+        const std::lock_guard<std::mutex> lock(m_lock);
+        for (const ChunkId& cell : cells) {
+            const auto found = m_summaries.find({cell.x, cell.z});
+            if (found == m_summaries.end())
+                continue;
+            for (const TerrainField::Entry& entry : *found->second) {
+                if (entry.first.x >= x0 && entry.first.x <= x1 && entry.first.z >= z0 && entry.first.z <= z1)
+                    out.emplace_back(entry.first, entry.second->digest());
+            }
+        }
+    }
+    std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+}
+
+bool TerrainCellSource::summarised(i32 x0, i32 x1, i32 z0, i32 z1) const
+{
+    std::vector<ChunkId> cells;
+    cellsIn(x0, x1, z0, z1, cells);
+    const std::lock_guard<std::mutex> lock(m_lock);
+    for (const ChunkId& cell : cells) {
+        if (!m_summaries.contains({cell.x, cell.z}))
+            return false;
+    }
+    return true;
 }
 
 } // namespace engine::asset

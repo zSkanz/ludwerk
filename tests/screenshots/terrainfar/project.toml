@@ -1,0 +1,15 @@
+# A streamed terrain drawn whole (ADR 0144): ground three kilometres across,
+# photographed from a kilometre and from two, built whole by its script and
+# then loaded from the cells a partition cut it into. The driver adds the scene
+# for the second run; see it.
+
+[project]
+name = "Ludwerk Terrain Far"
+id = "dev.ludwerk.terrainfar"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Terrain Far"
+width = 960
+height = 540

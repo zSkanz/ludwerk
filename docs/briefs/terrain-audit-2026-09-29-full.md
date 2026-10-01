@@ -433,6 +433,18 @@ Done (D384-D391). The editor P2 list, item by item:
   it loads). The owner's place: worst 15 to 18 ms, p99 8.5 to 8.8, none over
   33; the gallery's worst 6 ms. What is left is ground going up and the GPU,
   a few frames a flight (`perf-baselines.md`).
+- **The horizon, whatever the radius** (D398, ADR 0144; ludwerk-08's check of
+  T5 on the package: the owner's ground still ended in cell steps from a
+  kilometre, past the radius across the ground). The loader draws the whole
+  terrain: a node whose ground is not resident is built from its cells on disk
+  by the same function as any node, the cells read a row at a time and kept as
+  summaries, the chunks' digests kept so nothing rebuilds as cells come in.
+  The owner's place from his camera at Dist 1000 has a straight far edge.
+  `terrain_far`: 3 km of ground streamed at 300 m, from one and two
+  kilometres, the same picture as the ground held whole, to the pixel.
+  Found on the way: the gathered-surface cache kept one content a chunk, and
+  two builds reading a chunk with different ground round it took each other's
+  away -- holes a chunk wide; it keeps four.
 - **Paint that became the ground, beside paint that has not** (D396, the
   owner, painting sand on grass): a line of grass inside the sand. Fixed in the
   mesher and the shader; `terrain_paint_edge` photographs it.

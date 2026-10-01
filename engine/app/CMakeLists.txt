@@ -1054,6 +1054,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **A streamed terrain drawn whole** (ADR 0144): ground three kilometres
+    # across, streamed round the camera at 300 m, against the same ground held
+    # whole -- one picture, from a kilometre and from two. See the driver.
+    add_test(NAME terrain_far
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/terrainfar
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/terrain-far
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_terrain_far.cmake)
+    set_tests_properties(terrain_far PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **Paint that became the ground, beside paint that has not** (D396): the
     # ground under the paint must not show through along the line between
     # them. See the driver.

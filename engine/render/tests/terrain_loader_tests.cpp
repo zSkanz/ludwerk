@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <doctest/doctest.h>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -492,4 +493,143 @@ TEST_CASE("a node built empty is built again when ground comes back under it")
             }
         }
     }
+}
+
+// --- Ground drawn from cells on disk (ADR 0144) --------------------------------
+
+TEST_CASE("a node of ground on disk is the node the resident ground gives, before and after its cells come in")
+{
+    // Rolling ground over a dozen cells a side, a 2 m slab and a ball across
+    // the cells' borders, at a metre voxel.
+    const asset::FieldSettings settings{.voxelSize = 1.0f, .minHeight = -64.0f, .maxHeight = 64.0f};
+    asset::TerrainField whole(settings);
+    // A slab 2 m thick, floating -- its underside on a chunk's face -- as the
+    // owner's place is; and ground filled from the floor beside it.
+    (void)asset::fillBlock(whole, core::DVec3{0.0, 1.0, 0.0}, core::Vec3{768.0f, 2.0f, 512.0f}, 1);
+    (void)asset::fillFlat(whole, core::DVec3{0.0, 0.0, 512.0}, 512.0f, 0.0f, 1);
+    (void)asset::fillBlock(whole, core::DVec3{-40.0, 3.0, 20.0}, core::Vec3{160.0f, 2.0f, 70.0f}, 2);
+    (void)asset::fillBall(whole, core::DVec3{64.0, 6.0, -64.0}, 24.0, 3);
+    const std::vector<asset::TerrainCell> cells = asset::splitTerrain(whole);
+    REQUIRE(cells.size() > 100);
+
+    std::vector<asset::ChunkId> ids;
+    std::map<std::pair<core::i32, core::i32>, const asset::TerrainCell*> byId;
+    for (const asset::TerrainCell& cell : cells) {
+        ids.push_back(asset::ChunkId{cell.x, cell.z, asset::FieldLayerTerrain});
+        byId[{cell.x, cell.z}] = &cell;
+    }
+    int reads = 0;
+    const asset::TerrainCellSource source(
+        asset::terrainCellChunks(settings.voxelSize), ids, [&](asset::ChunkId id) -> std::optional<asset::TerrainCell> {
+            ++reads;
+            const auto found = byId.find({id.x, id.z});
+            return found == byId.end() ? std::nullopt : std::optional<asset::TerrainCell>(*found->second);
+        });
+
+    // Resident: the cells west of x = 0, as a streamer round a camera there
+    // would hold them; none, the camera far off; or three by three round one.
+    const auto residentWhere = [&](const std::function<bool(const asset::TerrainCell&)>& kept) {
+        asset::TerrainField resident(settings);
+        for (const asset::TerrainCell& cell : cells) {
+            if (kept(cell)) {
+                for (const asset::TerrainField::Entry& entry : cell.field.chunks())
+                    resident.setChunk(entry.first, entry.second);
+            }
+        }
+        return resident;
+    };
+    const std::vector<asset::TerrainField> residents{
+        residentWhere([](const asset::TerrainCell& cell) { return cell.x < 0; }),
+        residentWhere([](const asset::TerrainCell&) { return false; }),
+        residentWhere(
+            [](const asset::TerrainCell& cell) { return std::abs(cell.x - 2) <= 1 && std::abs(cell.z + 1) <= 1; }),
+    };
+
+    int compared = 0;
+    for (const asset::TerrainField& resident : residents) {
+        for (core::u32 level = 1; level <= TerrainTopLevel; ++level) {
+            const core::i32 n = 1 << level;
+            for (core::i32 z = -12 / n - 1; z <= 12 / n; ++z) {
+                for (core::i32 x = -12 / n - 1; x <= 12 / n; ++x) {
+                    const TerrainNodeKey key{level, x, z};
+                    if (!terrainNodeReadsCells(resident, &source, key))
+                        continue;
+                    CAPTURE(level);
+                    CAPTURE(x);
+                    CAPTURE(z);
+                    const asset::TerrainMesh expected = meshTerrainNode(whole, key);
+                    const TerrainNodeBuild built = buildTerrainNodeFromCells(resident, source, key);
+                    REQUIRE(built.mesh.mesh.vertices.size() == expected.mesh.vertices.size());
+                    REQUIRE(built.mesh.mesh.indices == expected.mesh.indices);
+                    bool same = true;
+                    for (std::size_t at = 0; at < expected.mesh.vertices.size(); ++at) {
+                        const asset::Vertex& a = built.mesh.mesh.vertices[at];
+                        const asset::Vertex& b = expected.mesh.vertices[at];
+                        same = same && a.position.x == b.position.x && a.position.y == b.position.y &&
+                               a.position.z == b.position.z && a.normal.x == b.normal.x && a.normal.y == b.normal.y &&
+                               a.normal.z == b.normal.z && a.tangent[0] == b.tangent[0] &&
+                               a.tangent[1] == b.tangent[1] && a.tangent[2] == b.tangent[2] &&
+                               a.tangent[3] == b.tangent[3];
+                    }
+                    CHECK(same);
+                    CHECK(built.mesh.morphs == expected.morphs);
+                    // What it was built from is what the whole ground gives, what
+                    // the ground on disk gives now its cells have been read, and
+                    // what it will give once they are resident.
+                    CHECK(built.content == terrainNodeContent(whole, nullptr, key));
+                    CHECK(terrainNodeContent(resident, &source, key) == built.content);
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared > 10);
+    // The cells were read, and summarised once each: not once a node.
+    CHECK(reads > 0);
+}
+
+TEST_CASE("a streamed terrain is drawn whole, once everywhere, however little of it is resident")
+{
+    LoaderFixture fixture(768.0f);
+    scene::TerrainComponent& component = fixture.component();
+    const asset::FieldSettings settings = component.field.settings();
+    const std::vector<asset::TerrainCell> cells = asset::splitTerrain(component.field);
+    std::vector<asset::ChunkId> ids;
+    std::map<std::pair<core::i32, core::i32>, asset::TerrainCell> byId;
+    for (const asset::TerrainCell& cell : cells) {
+        ids.push_back(asset::ChunkId{cell.x, cell.z, asset::FieldLayerTerrain});
+        byId[{cell.x, cell.z}] = cell;
+    }
+    component.cellSource = std::make_shared<const asset::TerrainCellSource>(
+        asset::terrainCellChunks(settings.voxelSize), ids,
+        [byId](asset::ChunkId id) -> std::optional<asset::TerrainCell> {
+            const auto found = byId.find({id.x, id.z});
+            return found == byId.end() ? std::nullopt : std::optional<asset::TerrainCell>(found->second);
+        });
+    // Resident: three cells by three round the camera.
+    asset::TerrainField resident(settings);
+    for (const asset::TerrainCell& cell : cells) {
+        if (std::abs(cell.x) <= 1 && std::abs(cell.z) <= 1) {
+            for (const asset::TerrainField::Entry& entry : cell.field.chunks())
+                resident.setChunk(entry.first, entry.second);
+        }
+    }
+    component.field = resident;
+    component.fieldRevision += 1;
+
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    const std::vector<TerrainNodeDraw> draws = fixture.settle();
+    const auto covered = coverage(fixture.atoms, draws);
+    // 768 m of 32 m chunk columns is 24 a side, each drawn exactly once.
+    int missing = 0;
+    int twice = 0;
+    for (core::i32 z = -12; z < 12; ++z) {
+        for (core::i32 x = -12; x < 12; ++x) {
+            const auto found = covered.find({x, z});
+            missing += found == covered.end() ? 1 : 0;
+            twice += found != covered.end() && found->second > 1 ? 1 : 0;
+        }
+    }
+    CHECK(missing == 0);
+    CHECK(twice == 0);
 }

@@ -31,6 +31,7 @@
 #include <tuple>
 #include <vector>
 
+#include "engine/asset/field_cells.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_mesher.h"
 #include "engine/render/mesh_cache.h"
@@ -83,6 +84,28 @@ struct MissingSurface
     asset::SurfaceWant want;
 };
 void gatherTerrainSurfaces(std::vector<MissingSurface> missing);
+
+// **A node of ground that is partly on disk** (ADR 0144): built from the
+// resident field and the cells it reads that are not resident -- their
+// surfaces gathered a row of cells at a time, three rows held at once -- by
+// the same function as any node, so it is the node the resident ground would
+// give. `content` is what it was built from, which `terrainNodeContent` gives
+// for the same node whether its cells are resident or not.
+struct TerrainNodeBuild
+{
+    asset::TerrainMesh mesh;
+    core::u64 content = 0;
+};
+[[nodiscard]] TerrainNodeBuild buildTerrainNodeFromCells(const asset::TerrainField& resident,
+                                                         const asset::TerrainCellSource& source, TerrainNodeKey node,
+                                                         TerrainSides sides = {});
+// Whether a node reads a cell that is not resident.
+[[nodiscard]] bool terrainNodeReadsCells(const asset::TerrainField& resident, const asset::TerrainCellSource* source,
+                                         TerrainNodeKey node);
+// What a node is built from: the resident chunks, and the digests of the
+// cells' chunks for the ground that is not resident.
+[[nodiscard]] core::u64 terrainNodeContent(const asset::TerrainField& resident, const asset::TerrainCellSource* source,
+                                           TerrainNodeKey node);
 
 // **The level drawn beside each side of `key` where it is coarser** (ADR
 // 0140), from the nodes drawn -- sorted. What the node is stitched to.
@@ -229,6 +252,11 @@ private:
         // Whether its children were shown last frame: a node splits under the
         // error budget and joins again only past 1.25 times it (hysteresis).
         bool split = false;
+        // Whether what it reads reaches a cell not resident (ADR 0144), as of
+        // the field revision it was asked at: asked every frame of every
+        // node the selection could split into, and the field changes rarely.
+        core::u64 cellsRevision = ~core::u64{0};
+        bool readsCells = false;
         // How far its newest mesh is from the level-0 surface, in metres
         // (`asset::TerrainMesh::error`).
         double error = 0.0;
@@ -242,17 +270,19 @@ private:
     void release(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library, Node& node);
 
     struct Batch;
-    [[nodiscard]] bool batchFinished() const noexcept;
+    [[nodiscard]] bool batchFinished(const std::unique_ptr<Batch>& batch) const noexcept;
     void waitBatch() noexcept;
-    // Puts up at most `budget` of what the finished batch built, and lets the
+    // Puts up at most `budget` of what a finished batch built, and lets the
     // batch go once all of it is up. Answers how many it put up.
     core::u32 integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache& cache, MeshLibrary& library,
-                        core::usize budget);
+                        core::usize budget, std::unique_ptr<Batch>& batch);
 
     core::DVec3 m_focus;
     bool m_hasFocus = false;
     bool m_async = false;
     std::unique_ptr<Batch> m_batch;
+    // Far ground, built from cells on disk (ADR 0144).
+    std::unique_ptr<Batch> m_farBatch;
     TerrainLodSettings m_lod;
     core::u32 m_buildsPerSync = 4;
     core::u32 m_lastBuilds = 0;

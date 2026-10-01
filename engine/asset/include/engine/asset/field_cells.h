@@ -12,8 +12,12 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "engine/asset/chunk.h"
@@ -65,6 +69,60 @@ inline constexpr core::i32 FieldLayerVoxels = 1;
 
 // Takes a cell's chunks back out of `field`.
 void removeTerrainCell(TerrainField& field, const TerrainCell& cell);
+
+// --- A streamed terrain's cells, for drawing (ADR 0144) -----------------------
+
+// **The cells a streamed terrain is made of, readable from any thread**: what
+// the renderer draws the ground from where its cells are not resident. The
+// streamer makes one when it adopts a terrain's index; nothing but drawing
+// reads it.
+//
+// **It remembers the digest of every chunk it has read**, so what a node of the
+// ground is built from does not change as its cells come in and go out: a
+// resident chunk and the one read from its cell are the same chunk, and the
+// node keyed on either is the same node.
+class TerrainCellSource
+{
+public:
+    // Reads one cell from wherever it is kept; nothing when it cannot, or when
+    // it is of other settings than the field's. Called from any thread.
+    using Reader = std::function<std::optional<TerrainCell>(ChunkId id)>;
+    // A cell's chunks as summaries (`TerrainChunk::summary`), by key.
+    using Summaries = std::vector<TerrainField::Entry>;
+
+    TerrainCellSource(core::u32 cellChunks, std::vector<ChunkId> cells, Reader read);
+
+    // How many chunk columns a cell is on a side.
+    [[nodiscard]] core::u32 cellChunks() const noexcept { return m_cellChunks; }
+    // Every cell, by (x, z).
+    [[nodiscard]] std::span<const ChunkId> cells() const noexcept { return m_cells; }
+    // The chunk columns the cells cover, inclusive: x low, x high, z low, z
+    // high. Nothing when there are no cells.
+    [[nodiscard]] std::optional<std::array<core::i32, 4>> extent() const noexcept;
+    // The cells over the chunk columns `[x0, x1] x [z0, z1]`, by (x, z).
+    void cellsIn(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1, std::vector<ChunkId>& out) const;
+    [[nodiscard]] bool covers(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1) const noexcept;
+
+    // One cell, read now, voxels and all: nothing of it is kept here.
+    [[nodiscard]] std::optional<TerrainCell> read(ChunkId id) const;
+    // **A cell's chunks as summaries**, read the first time they are asked for
+    // and kept: a few hundred bytes a chunk, where its voxels are tens of
+    // kilobytes. Null for a cell that cannot be read.
+    [[nodiscard]] std::shared_ptr<const Summaries> summaries(ChunkId id) const;
+    // The digests of the chunks in the columns `[x0, x1] x [z0, z1]` of every
+    // cell summarised so far, in key order.
+    void digestsIn(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1,
+                   std::vector<std::pair<ChunkKey, core::u64>>& out) const;
+    // Whether every cell over those columns has been summarised.
+    [[nodiscard]] bool summarised(core::i32 x0, core::i32 x1, core::i32 z0, core::i32 z1) const;
+
+private:
+    core::u32 m_cellChunks = 1;
+    std::vector<ChunkId> m_cells;
+    Reader m_read;
+    mutable std::mutex m_lock;
+    mutable std::map<std::pair<core::i32, core::i32>, std::shared_ptr<const Summaries>> m_summaries;
+};
 
 // --- Block worlds ------------------------------------------------------------
 

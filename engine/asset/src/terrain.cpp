@@ -248,6 +248,49 @@ usize TerrainChunk::bytes() const noexcept
     return total;
 }
 
+bool TerrainChunk::faceSolid(u32 axis, bool high) const noexcept
+{
+    if (m_summary)
+        return (m_solidFaces & (1u << (axis * 2u + (high ? 1u : 0u)))) != 0;
+    if (uniform())
+        return value().occupancy >= 128;
+    const u32 at = high ? ChunkEdge - 1 : 0;
+    for (u32 a = 0; a < ChunkEdge; ++a) {
+        for (u32 b = 0; b < ChunkEdge; ++b) {
+            const Voxel voxel = axis == 0 ? get(at, a, b) : (axis == 1 ? get(b, at, a) : get(b, a, at));
+            if (voxel.occupancy < 128)
+                return false;
+        }
+    }
+    return true;
+}
+
+std::shared_ptr<TerrainChunk> TerrainChunk::summary() const
+{
+    auto out = std::make_shared<TerrainChunk>();
+    out->m_main.value = m_main.value;
+    out->m_paint.value = m_paint.value;
+    out->m_summaryRows = !uniform();
+    // Every digest a coarse mesh can ask for, worked out while the voxels are
+    // here: the whole one and the two-layer borders at all 27 offsets.
+    (void)digest();
+    for (i32 dz = -1; dz <= 1; ++dz) {
+        for (i32 dy = -1; dy <= 1; ++dy) {
+            for (i32 dx = -1; dx <= 1; ++dx)
+                (void)borderDigest(dx, dy, dz, 2);
+        }
+    }
+    out->m_digests = m_digests;
+    for (u32 axis = 0; axis < 3; ++axis) {
+        for (u32 high = 0; high < 2; ++high) {
+            if (faceSolid(axis, high != 0))
+                out->m_solidFaces = static_cast<u8>(out->m_solidFaces | (1u << (axis * 2u + high)));
+        }
+    }
+    out->m_summary = true;
+    return out;
+}
+
 u64 TerrainChunk::digest() const noexcept
 {
     if (!m_digests.wholeValid.load(std::memory_order_acquire)) {
@@ -394,16 +437,24 @@ std::shared_ptr<const SurfaceLevel> TerrainField::cachedSurface(ChunkKey key, u3
 {
     const std::shared_lock reading(m_surfaces->lock);
     const auto found = m_surfaces->entries.find(std::pair{key, level});
-    if (found == m_surfaces->entries.end() || found->second.content != content)
+    if (found == m_surfaces->entries.end())
         return nullptr;
-    return found->second.surface;
+    for (const SurfaceEntry& entry : found->second) {
+        if (entry.content == content)
+            return entry.surface;
+    }
+    return nullptr;
 }
 
 void TerrainField::cacheSurface(ChunkKey key, u32 level, core::u64 content,
                                 std::shared_ptr<const SurfaceLevel> surface) const
 {
     const std::unique_lock writing(m_surfaces->lock);
-    m_surfaces->entries[std::pair{key, level}] = SurfaceEntry{content, std::move(surface)};
+    std::vector<SurfaceEntry>& kept = m_surfaces->entries[std::pair{key, level}];
+    std::erase_if(kept, [content](const SurfaceEntry& entry) { return entry.content == content; });
+    kept.insert(kept.begin(), SurfaceEntry{content, std::move(surface)});
+    if (kept.size() > SurfaceContentsKept)
+        kept.resize(SurfaceContentsKept);
 }
 
 std::vector<ChunkKey> TerrainField::chunkKeys() const

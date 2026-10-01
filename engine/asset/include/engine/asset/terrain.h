@@ -256,7 +256,10 @@ public:
     // file rely on.
     void normalize();
 
-    [[nodiscard]] bool uniform() const noexcept { return m_main.rows.empty() && m_paint.rows.empty(); }
+    [[nodiscard]] bool uniform() const noexcept
+    {
+        return !m_summaryRows && m_main.rows.empty() && m_paint.rows.empty();
+    }
     // The one value, when `uniform`.
     [[nodiscard]] Voxel value() const noexcept { return withPaint(unpackVoxel(m_main.value), m_paint.value); }
     [[nodiscard]] bool empty() const noexcept { return uniform() && m_main.value == 0; }
@@ -281,6 +284,21 @@ public:
     // `layers` is 2, what a mesh reads, or 4: what a collider with its band
     // reads (`meshCollider`), which is a cell wider.
     [[nodiscard]] core::u64 borderDigest(core::i32 dx, core::i32 dy, core::i32 dz, core::u32 layers = 2) const noexcept;
+
+    // Whether the face layer on `axis` -- 0, 1 or 2 for x, y or z, at 31 when
+    // `high`, at 0 otherwise -- is ground all the way across.
+    [[nodiscard]] bool faceSolid(core::u32 axis, bool high) const noexcept;
+
+    // **What a coarse mesh reads of a chunk, without its voxels** (ADR 0144):
+    // its digest and its two-layer border digests, whether it is one value and
+    // which, and which of its faces are solid ground. Made from a chunk whose
+    // surfaces have been gathered, for ground drawn from cells that are not
+    // resident: a node far off spans more cells than memory should hold at
+    // once. A voxel read of a summary answers its value -- wrong for a chunk
+    // that was not one value, and nothing reads one so -- and so do the
+    // four-layer digests a collider reads, which nothing asks of one either.
+    [[nodiscard]] std::shared_ptr<TerrainChunk> summary() const;
+    [[nodiscard]] bool summarized() const noexcept { return m_summary; }
 
 private:
     [[nodiscard]] static core::u32 rowIndex(core::u32 y, core::u32 z) noexcept { return y * ChunkEdge + z; }
@@ -308,6 +326,11 @@ private:
     };
     Layer m_main;
     Layer m_paint;
+    // A summary (`summary()`), and whether the chunk it summarises was not
+    // one value; its solid faces, bit `axis * 2 + high`.
+    bool m_summary = false;
+    bool m_summaryRows = false;
+    core::u8 m_solidFaces = 0;
 
     // **The lazy digests, safe from any thread** (terrain audit TA14): a chunk
     // two snapshots of a field share is read by the one meshed off the main
@@ -620,10 +643,16 @@ private:
         core::u64 content = 0;
         std::shared_ptr<const SurfaceLevel> surface;
     };
+    // **A few contents a chunk, newest first** (ADR 0144): two builds at once
+    // can read one chunk with different ground round it -- one with a
+    // neighbour on disk summarised, one without -- and with one entry a key
+    // each took the other's away between gathering and meshing. Four, so a
+    // chunk being edited does not keep every revision it went through.
+    static constexpr core::usize SurfaceContentsKept = 4;
     struct SurfaceCache
     {
         mutable std::shared_mutex lock;
-        std::map<std::pair<ChunkKey, core::u32>, SurfaceEntry> entries;
+        std::map<std::pair<ChunkKey, core::u32>, std::vector<SurfaceEntry>> entries;
     };
 
     FieldSettings m_settings;
