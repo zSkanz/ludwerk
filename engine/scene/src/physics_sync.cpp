@@ -850,19 +850,21 @@ struct Sweep
     core::DVec3 high;
     // A body the solver moves, and not a character: what new ground can bury.
     bool loose = false;
+    // A character: buried by the same ground, and put on top of it the same.
+    bool character = false;
 };
 
 inline constexpr f64 SweepSeconds = 0.1;
 inline constexpr f64 SweepMargin = 1.0;
 
 [[nodiscard]] Sweep sweepOf(core::InstanceId id, const PartComponent& part, const RigidBodyComponent& body,
-                            bool loose) noexcept
+                            bool loose, bool character = false) noexcept
 {
     const f64 reach = static_cast<f64>(core::length(part.size)) * 0.5 +
                       static_cast<f64>(core::length(body.linearVelocity)) * SweepSeconds + SweepMargin;
     const core::DVec3 at = part.cframe.position;
     return Sweep{id, core::DVec3{at.x - reach, at.y - reach, at.z - reach},
-                 core::DVec3{at.x + reach, at.y + reach, at.z + reach}, loose};
+                 core::DVec3{at.x + reach, at.y + reach, at.z + reach}, loose, character};
 }
 
 // How far up new ground is looked through for the air over a buried body, in
@@ -976,7 +978,7 @@ void PhysicsSync::applyTerrain()
             const PartComponent* part = m_scene.parts().find(id);
             if (part != nullptr && inWorld(id)) {
                 movers.push_back(part->cframe.position);
-                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character));
+                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character, character));
             }
         });
     };
@@ -1238,15 +1240,17 @@ void PhysicsSync::applyTerrain()
             const bool everyBody = std::find(remade.begin(), remade.end(), id) != remade.end();
             const f64 rise = static_cast<f64>(field.settings().voxelSize) * 0.5;
             for (const Sweep& sweep : sweeps) {
-                if (!sweep.loose)
+                if (!sweep.loose && !sweep.character)
                     continue;
                 RigidBodyComponent* body = m_scene.rigidBodies().find(sweep.id);
                 PartComponent* part = m_scene.parts().find(sweep.id);
                 if (body == nullptr || part == nullptr)
                     continue;
+                // **A character is asked every tick**: it stands still while
+                // the ground is raised round it, and there are few of them.
                 const bool moving = !(body->linearVelocity == core::Vec3{0.0f, 0.0f, 0.0f}) ||
                                     !(body->angularVelocity == core::Vec3{0.0f, 0.0f, 0.0f});
-                if (!everyBody && !moving)
+                if (!everyBody && !moving && !sweep.character)
                     continue;
                 const core::DVec3 at = part->cframe.position;
                 const core::DVec3 local{at.x - terrain.origin.x, at.y - terrain.origin.y, at.z - terrain.origin.z};
@@ -1276,7 +1280,12 @@ void PhysicsSync::applyTerrain()
                 // It was falling, or it was not moving: either way it is not
                 // falling now.
                 body->linearVelocity.y = std::max(body->linearVelocity.y, 0.0f);
-                if (sweep.id.index < m_bodies.size()) {
+                if (sweep.character) {
+                    // A controller owns its own fall.
+                    if (CharacterBodyComponent* walker = m_scene.characterBodies().find(sweep.id); walker != nullptr)
+                        walker->verticalVelocity = std::max(walker->verticalVelocity, 0.0f);
+                }
+                else if (sweep.id.index < m_bodies.size()) {
                     const BodyRecord& record = m_bodies[sweep.id.index];
                     if (record.live && record.generation == sweep.id.generation)
                         m_backend.setBodyVelocity(m_world, record.handle, body->linearVelocity, body->angularVelocity);
@@ -1312,7 +1321,7 @@ void PhysicsSync::applyVoxels()
             const PartComponent* part = m_scene.parts().find(id);
             if (part != nullptr && inWorld(id)) {
                 movers.push_back(part->cframe.position);
-                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character));
+                sweeps.push_back(sweepOf(id, *part, body, !body.anchored && !character, character));
             }
         });
 

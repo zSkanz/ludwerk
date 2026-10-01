@@ -147,7 +147,10 @@ from a kilometre stops on what it hits rather than appearing on the far side
 of it -- ground, parts and other bodies alike, with nothing to turn on. The
 sweep is of where a body *goes*, not of how it turns: a long body spinning
 very fast can still put an end through something thinner than that end
-travels in a tick.
+travels in a tick. Measured: a log 3.2 m long striking a plate 0.2 m thick
+end first went through it at about 320 m/s, and at no speed below that; the
+ground has no such limit, because a body that ends up inside a terrain is put
+back on top of it -- and so is a character the ground is raised round.
 
 ## What is not here
 

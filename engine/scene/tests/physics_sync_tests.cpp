@@ -265,7 +265,11 @@ public:
         moves.push_back(velocity);
     }
 
-    void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
+    void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle,
+                               const core::CFrameD& transform) override
+    {
+        characterTransforms.push_back(transform);
+    }
     void nudgeCharacter(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD&) override {}
 
     [[nodiscard]] physics::CharacterState characterState(physics::WorldHandle, physics::CharacterHandle) const override
@@ -340,6 +344,8 @@ public:
     std::vector<physics::ActiveBody> active;
     std::vector<physics::ContactEvent> contacts;
     physics::CharacterState characterAnswer;
+    // Where a character was put by somebody other than its controller.
+    std::vector<core::CFrameD> characterTransforms;
 };
 
 // The scene fixture's hierarchy predates the physics components, and its own
@@ -2283,4 +2289,36 @@ TEST_CASE("a moving body whose middle is in the ground is put on top of it, and 
     // A tenth of a metre into the ground with its middle in the air: the
     // solver's, and left where it is.
     CHECK(mirror.fixture.world.parts().find(resting)->cframe.position.y == doctest::Approx(10.4));
+}
+
+TEST_CASE("a character ground is raised round ends standing on it (D417)")
+{
+    // The common case of the same defect: a player standing where the ground
+    // is raised -- in Play, or in a match -- was inside it, and walked out of
+    // the bottom of the world.
+    Mirror mirror;
+    const core::InstanceId terrain = terrainWith(mirror, 10.0f);
+    const core::InstanceId walker = mirror.part("Walker", {16.0, 12.5, 16.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{2.0f, 5.0f, 2.0f};
+    mirror.body(walker).anchored = true;
+    mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
+    // The controller says it stands where it was put: on the ground at ten.
+    mirror.backend.characterAnswer.transform.position = core::DVec3{16.0, 12.5, 16.0};
+    settle(mirror);
+    // Standing on its ground, nobody moves it.
+    CHECK(mirror.backend.characterTransforms.empty());
+
+    // Six metres of ground, under it and all round it.
+    TerrainComponent* component = mirror.fixture.world.terrains().find(terrain);
+    REQUIRE(component != nullptr);
+    (void)asset::fillFlat(component->field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 16.0f, 1);
+    component->fieldRevision += 1;
+    mirror.step();
+
+    // Put with its feet on the new ground: its middle half its height over
+    // sixteen.
+    REQUIRE_FALSE(mirror.backend.characterTransforms.empty());
+    const double standing = mirror.backend.characterTransforms.back().position.y;
+    CHECK(standing >= 18.5);
+    CHECK(standing <= 19.5);
 }
