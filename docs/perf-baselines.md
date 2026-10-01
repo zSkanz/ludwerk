@@ -1648,10 +1648,16 @@ hosted runners (four cores, no GPU), 2026-10-01:
 
 | | Before ADR 0148 | After it | With the Windows tests in three jobs |
 |---|---|---|---|
-| The run | 41 to 55 min | 36 to 43 min | to be measured on this push |
-| Linux job | -- | 6 to 7.5 min | |
-| Windows job | -- | 25 to 31 min | |
-| macOS job | -- | 7 to 17 min, after both | |
+| The run | 41 to 55 min | 36 to 43 min | **26 min** (`017dab15`) |
+| Linux job | -- | 6 to 7.5 min | 8 min 46 s |
+| Windows job | -- | 25 to 31 min | 9 min 52 s, 10 min 21 s and 17 min 21 s, side by side |
+| macOS job | -- | 7 to 17 min, after both | 16 min 57 s, after Linux alone |
+
+What a push waits for now is Linux and then macOS, 26 minutes of it; Windows
+is done at 17. The third Windows shard is the long one because every third
+test happens to give it the three that draw longest in software, at once and
+against each other: `terrain_shadow_acne` 658 s, `terrain_far_plane` 582 s,
+`terrain_far_flight` 457 s.
 
 Where the Windows job's 30 m 44 s went on `82b4492a`: configure 40 s, build
 5 min (sccache 868 hits of 898), **tests 22 min** -- 95 tests, 3 581 s of them

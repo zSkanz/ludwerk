@@ -323,8 +323,13 @@ struct EngineOptions
     // `[project] icon`, resolved: a PNG here is what the window wears, over
     // whatever icon the executable carries (ADR 0104, stage 0).
     std::filesystem::path projectIcon;
-    // `[window] fullscreen` and `resizable` (ADR 0104 §1).
+    // `[window] fullscreen` and `resizable` (ADR 0104 §1). A game that names no
+    // project fills a handheld's display all the same (D416).
+#if defined(__ANDROID__)
+    bool fullscreen = true;
+#else
     bool fullscreen = false;
+#endif
     bool resizable = true;
 
     i32 width = 1280;

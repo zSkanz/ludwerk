@@ -14,6 +14,25 @@
 
 namespace engine::script {
 
+#if ENG_LUAU_COMPILER
+namespace {
+
+// **A UTF-8 byte-order mark is not Luau** (D415): the compiler refuses the
+// first line of a script for a character nobody can see, and Notepad and
+// Windows PowerShell's `Set-Content -Encoding utf8` put one there. Skipped at
+// the very start, as the readers of `project.toml` and of JSON skip it
+// (D185); lines keep their numbers, the mark being on the first.
+[[nodiscard]] std::string_view withoutMark(std::string_view source) noexcept
+{
+    constexpr std::string_view kUtf8Bom = "\xEF\xBB\xBF";
+    if (source.starts_with(kUtf8Bom))
+        source.remove_prefix(kUtf8Bom.size());
+    return source;
+}
+
+} // namespace
+#endif
+
 bool isBytecode(std::string_view chunk) noexcept
 {
     if (chunk.empty())
@@ -52,6 +71,7 @@ std::optional<core::EngineError> bytecodeOf(std::string_view chunk, std::string_
     lua_CompileOptions options{};
     configureCompileOptions(options);
     std::size_t size = 0;
+    chunk = withoutMark(chunk);
     char* bytecode = luau_compile(chunk.data(), chunk.size(), &options, &size);
     if (bytecode == nullptr) {
         const core::I18nArg args[] = {{"source", chunkName},
@@ -75,6 +95,7 @@ bool compileForPackage(std::string_view source, std::string& outBytecode, std::s
     configureCompileOptions(options);
     options.debugLevel = 1;
     std::size_t size = 0;
+    source = withoutMark(source);
     char* bytecode = luau_compile(source.data(), source.size(), &options, &size);
     if (bytecode == nullptr) {
         outError = "compilation produced no bytecode";

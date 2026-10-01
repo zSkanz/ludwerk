@@ -234,6 +234,36 @@ name = "Intact"
     CHECK(config.name == "Intact");
 }
 
+TEST_CASE("a game on a handheld fills the display, whatever its window key says (D416)")
+{
+    // On a phone a game was drawn in the strip between the status bar and the
+    // navigation pill. `[window] fullscreen` is a desktop's question -- and the
+    // editor's Project Settings writes it as `false` for every game that never
+    // asked -- so on a handheld it is not read as "leave the bars up".
+    {
+        const ProjectDir project("[project]\nname = \"Silent\"\n");
+        const app::ProjectConfig config = app::loadProjectConfig(project.path, app::GraphicsOverrides{});
+        CHECK(app::startsFullscreen(config, true));
+        // A desktop game starts in a window, as it did.
+        CHECK_FALSE(app::startsFullscreen(config, false));
+    }
+    {
+        const ProjectDir project("[window]\nfullscreen = false\n");
+        const app::ProjectConfig config = app::loadProjectConfig(project.path, app::GraphicsOverrides{});
+        CHECK(app::startsFullscreen(config, true));
+        CHECK_FALSE(app::startsFullscreen(config, false));
+    }
+    {
+        const ProjectDir project("[window]\nfullscreen = true\n");
+        const app::ProjectConfig config = app::loadProjectConfig(project.path, app::GraphicsOverrides{});
+        CHECK(app::startsFullscreen(config, true));
+        CHECK(app::startsFullscreen(config, false));
+    }
+    // No project file at all: the same answer as a file that says nothing.
+    CHECK(app::startsFullscreen(app::ProjectConfig{}, true));
+    CHECK_FALSE(app::startsFullscreen(app::ProjectConfig{}, false));
+}
+
 TEST_CASE("the window size round-trips as two integers")
 {
     const ProjectDir project(R"([window]

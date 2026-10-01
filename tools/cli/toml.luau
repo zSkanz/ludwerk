@@ -232,10 +232,22 @@ end
 --- Parses `text`. Never raises: a malformed file is a result with `ok = false`
 --- and a diagnostic naming the line, because the caller is a CLI that has to
 --- print something useful rather than a stack trace.
+-- What an editor on Windows puts first in a file it saves as UTF-8.
+local Utf8Mark = "\u{FEFF}"
+
 local function parse(text: string): Result
     local root: Table = {}
     local current = root
     local lineNumber = 0
+
+    -- **A UTF-8 byte-order mark is skipped rather than refused** (D415), as
+    -- the engine's own reader does (D185): Notepad and Windows PowerShell's
+    -- `Set-Content -Encoding utf8` write one, and the file was then refused
+    -- at its first line for a character nobody can see. Only at the very
+    -- start, where it is an encoding mark and not somebody's text.
+    if string.sub(text, 1, #Utf8Mark) == Utf8Mark then
+        text = string.sub(text, #Utf8Mark + 1)
+    end
 
     for rawLine in string.gmatch(text .. "\n", "([^\n]*)\n") do
         lineNumber += 1

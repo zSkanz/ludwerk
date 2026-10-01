@@ -104,6 +104,18 @@ some = [1, 2, 3,]
         assert.eq(#result.table.some, 3)
     end)
 
+    suite:case("a file an editor on Windows marked as UTF-8 reads as the same file (D415)", function()
+        -- Notepad and `Set-Content -Encoding utf8` put a byte-order mark first,
+        -- and the first line then was "expected key = value".
+        local result = toml.parse("\u{FEFF}[project]\nname = 'marked'" .. "\n")
+        assert.that(result.ok, result.diagnostic)
+        assert.eq(result.table.project.name, "marked")
+
+        -- Only at the start: anywhere else it is somebody's text.
+        local inside = toml.parse("[project]\n\u{FEFF}name = 'x'" .. "\n")
+        assert.that(not inside.ok or inside.table.project.name == nil, "a mark in the middle of a file is not skipped")
+    end)
+
     suite:case("what it does not support, it refuses by name and line", function()
         local cases = {
             { text = "[[products]]\nname = 'x'\n", contains = "arrays of tables" },

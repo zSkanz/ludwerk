@@ -940,7 +940,7 @@ int main(int argc, char** argv)
         }
         if (!config.icon.empty())
             options.projectIcon = options.scriptPath / std::filesystem::path(config.icon);
-        options.fullscreen = config.fullscreen;
+        options.fullscreen = engine::app::startsFullscreen(config);
         options.resizable = config.resizable;
 
         // Before any window exists, because the shell reads a process's

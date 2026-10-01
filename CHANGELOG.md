@@ -676,6 +676,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A game fills a phone's display** (D416): on Android a game is immersive --
+  the status bar and the navigation pill hidden until swiped for, the frame
+  drawn under the camera cutout -- whatever `[window] fullscreen` says, which
+  is a desktop's key. `UIService.SafeAreaInsets` says where a HUD may go, and
+  a `ScreenGui` lays out inside it by default.
+- **A file saved with a UTF-8 byte-order mark is the same file** (D415):
+  `ludwerk build` refused such a `project.toml` at its first line, and a
+  script saved that way did not compile. Notepad and Windows PowerShell's
+  `Set-Content -Encoding utf8` write one.
 - **An exported game with a large terrain has its ground** (D411). A terrain
   of 256 cells or more is saved as a folder of cells, and `ludwerk build`
   packed them where the engine never reads a cell: the game ran over nothing.

@@ -42,6 +42,29 @@ TEST_CASE("a script compiled for a package runs as its source would")
     CHECK(found);
 }
 
+TEST_CASE("a script an editor on Windows marked as UTF-8 compiles as the same script (D415)")
+{
+    script::testing::Fixture fixture;
+    REQUIRE(fixture.booted);
+
+    // Run from source, as `ludwerk dev` and the editor do.
+    const std::string marked = "\xEF\xBB\xBF"
+                               "local held = 1\nerror('boom')\n";
+    const auto failed = fixture.runtime->runSource(marked, "src/client/init.luau");
+    REQUIRE(failed.has_value());
+    // Its own error, on its own line -- not a syntax error on line 1.
+    CHECK(failed->message.find("src/client/init.luau:2") != std::string::npos);
+    CHECK(failed->message.find("boom") != std::string::npos);
+
+    // And packaged.
+    std::string bytecode;
+    std::string error;
+    CHECK(script::compileForPackage("\xEF\xBB\xBF"
+                                    "print(1)",
+                                    bytecode, error));
+    CHECK(error.empty());
+}
+
 TEST_CASE("an error in a packaged script still names the script and the line")
 {
     script::testing::Fixture fixture;

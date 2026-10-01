@@ -150,12 +150,32 @@ struct ProjectConfig
     // makes it.
     std::string version;
     std::string company;
-    // `[window] fullscreen` and `resizable`: how the player's window starts.
+    // `[window] fullscreen` and `resizable`: how the player's window starts on
+    // a desktop. See `startsFullscreen`.
     bool fullscreen = false;
     bool resizable = true;
 
     render::GraphicsSettings graphics;
 };
+
+// Whether this is a device held in the hand: a phone or a tablet, where a game
+// has the whole display or it has a strip of it.
+#if defined(__ANDROID__)
+inline constexpr bool Handheld = true;
+#else
+inline constexpr bool Handheld = false;
+#endif
+
+// **How a game's window starts** (D416): on a desktop, what `[window]
+// fullscreen` says. On a handheld, the whole display whatever it says --
+// immersive, the system's bars hidden until swiped for, the frame drawn under
+// the camera cutout, and `UIService.SafeAreaInsets` saying where a HUD may go.
+// The key is not read there because it is a desktop's question, and the
+// editor's Project Settings writes `false` for every game that never asked it.
+[[nodiscard]] constexpr bool startsFullscreen(const ProjectConfig& config, bool handheld = Handheld) noexcept
+{
+    return handheld || config.fullscreen;
+}
 
 // Reads `<projectRoot>/project.toml`, resolves the graphics family through its
 // three layers -- preset, then the file, then the overrides -- and clamps the

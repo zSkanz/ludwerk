@@ -59,9 +59,19 @@ behind all of it for the Linux leg's shaders: 42 minutes a push.
 - [x] **`terrain_far_plane` draws 180 frames, not 360**: what its far ground
   needs is frames (256 nodes built a frame, ninety for that world), and the
   360 paced at 60 were from when it needed time.
-- [ ] Measured after: the run of this push, a job at a time, in
-  `docs/perf-baselines.md`. If a shard is still past ten minutes, its
-  longest test is what to shorten -- a fourth shard buys nothing.
+- [x] **Measured after**, on the run of `017dab15`
+  (`docs/perf-baselines.md`): **26 minutes** where it was 36 to 43. Linux
+  8 min 46 s; the Windows shards 9 min 52 s, 10 min 21 s and 17 min 21 s;
+  macOS 16 min 57 s after Linux. Windows is off the path a push waits on.
+- Later, and not before the owner's queue: the three tests that draw longest
+  (`terrain_shadow_acne`, `terrain_far_plane`, `terrain_far_flight`) all fall
+  in the third shard and run against each other -- one to a shard would put
+  every Windows job near twelve minutes; and macOS, 17 minutes, is what is
+  between this and twenty.
+- Later: the local gate's lanes share `examples/10-open-world/.engine`, so
+  the Linux lane's `openworld_soak` can fail to write a pack the Windows
+  lane's has open (seen once, 2026-10-01; the stage alone passes). The gate
+  should build that pack under each lane's build tree.
 
 ## C1 — reads as fast as the disk
 

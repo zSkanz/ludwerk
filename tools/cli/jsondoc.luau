@@ -164,6 +164,11 @@ end
 --- Parses a document, and the layout it was written in: compact, or indented
 --- by the width of its second line.
 function JsonDoc.parse(text: string): (Node, Layout)
+    -- A UTF-8 byte-order mark at the very start is an editor's, not the
+    -- document's (D415): skipped, as the engine's reader skips it.
+    if string.sub(text, 1, 3) == "\u{FEFF}" then
+        text = string.sub(text, 4)
+    end
     local node, after = readValue(text, 1)
     if skipSpace(text, after) <= #text then
         fail(text, after, tr("cli.json.err.trailing_text"))
