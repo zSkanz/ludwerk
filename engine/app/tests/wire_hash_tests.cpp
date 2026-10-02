@@ -149,6 +149,14 @@ TEST_CASE("every replicated field that is not a property is state the world hash
                 }
             }
         }
+        // **An abstract class every concrete one extends on the wire** has no
+        // instance of its own schema: `BasePart`, since `Part` and `MeshPart`
+        // each carry something more. Its fields are theirs by `Extends`, and
+        // are checked there.
+        const scene::ClassDescriptor* declaredClass = classes.find(declared);
+        if (classId == scene::InvalidClass && declaredClass != nullptr &&
+            scene::hasFlag(declaredClass->flags, scene::ClassFlags::Abstract))
+            continue;
         REQUIRE_MESSAGE(classId != scene::InvalidClass, "no class the engine can create carries this schema");
         const core::InstanceId id = world.create(classId);
         REQUIRE(id.valid());

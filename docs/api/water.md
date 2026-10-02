@@ -21,7 +21,7 @@ offers is on the base's page, which is what keeps one added member on
 | `FlowSpeed` | `number` | `0` | read/write | How fast a river flows along its points, first to last, in metres a second -- where it is level. Where it drops it runs faster, by four times its slope: twice as fast down one in four. |
 | `Position` | `vector` | `vector.create(0, 0, 0)` | read/write | The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s. |
 | `Shape` | `Enum.WaterShape` | `Enum.WaterShape.Ocean` | read/write | Everywhere (`Ocean`), a rectangle (`Pool`), along its `WaterPoint` children (`River`), or inside the closed curve through them (`Lake`). |
-| `Size` | `vector` | `vector.create(64, 8, 64)` | read/write | A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y must be greater than zero. |
+| `Size` | `vector` | `vector.create(64, 8, 64)` | read/write | A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y, and its outline is its points -- it has no width or length to give. Y must be greater than zero; X and Z may be zero. |
 | `SurfaceLevel` | `number` | `0` | read/write | The height of the still surface, in metres; the waves rise and fall about it. |
 | `Viscosity` | `number` | `1` | read/write | How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's. |
 

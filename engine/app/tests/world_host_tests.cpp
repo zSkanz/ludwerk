@@ -1453,6 +1453,32 @@ TEST_CASE("a project with a scene AND world-building scripts is told it has two 
     Project project;
     project.write("src/client/init.luau", R"(
         local part = Instance.new("Part")
+        part.Name = "FromTheScene"
+        part.Parent = workspace
+    )");
+    project.write("content/scenes/main.scene.json", kOnePartScene);
+
+    app::WorldHost host;
+    app::WorldHostOptions options = app::testing::bootOptions(project.root);
+    options.bootScene = project.root / "content" / "scenes" / "main.scene.json";
+    REQUIRE_FALSE(host.boot(options).has_value());
+
+    CHECK(bootChildNamed(host, "FromTheScene").valid());
+    CHECK(log.contains("two sources"));
+}
+
+TEST_CASE("a script that adds what the scene does not hold is not two sources for one world")
+{
+    // It fired for a camera a script parented to `Workspace`, and for any part
+    // a game makes as it runs -- which is what scripts are for. The warning is
+    // about a thing that is in the world twice: the same class and name.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local camera = Instance.new("Camera")
+        camera.Name = "Viewer"
+        camera.Parent = workspace
+        local part = Instance.new("Part")
         part.Name = "BuiltByScript"
         part.Parent = workspace
     )");
@@ -1465,7 +1491,8 @@ TEST_CASE("a project with a scene AND world-building scripts is told it has two 
 
     CHECK(bootChildNamed(host, "FromTheScene").valid());
     CHECK(bootChildNamed(host, "BuiltByScript").valid());
-    CHECK(log.contains("two sources"));
+    CHECK(bootChildNamed(host, "Viewer").valid());
+    CHECK_FALSE(log.contains("two sources"));
 }
 
 TEST_CASE("a scene with no world-building scripts says nothing at all")

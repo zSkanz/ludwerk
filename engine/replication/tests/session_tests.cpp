@@ -1229,6 +1229,32 @@ TEST_CASE("a decal placed on the authority is seen on a replica, image and all")
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("D424: a part's shape reaches a replica")
+{
+    // Every ball and cylinder a script made on the authority was a block on a
+    // client: the tree's crown printed `Ball` on the server and `Block` on
+    // the replica, and it collided as a block there too.
+    PlayedMatch match;
+    const core::InstanceId crown = match.part("Crown", core::DVec3{0.0, 4.0, 0.0});
+    const core::InstanceId trunk = match.part("Trunk", core::DVec3{0.0, 1.0, 0.0});
+    match.server.world.parts().find(crown)->shape = 1;
+    match.server.world.parts().find(trunk)->shape = 2;
+
+    match.run(4);
+
+    const scene::PartComponent* seenCrown = match.client.world.parts().find(match.copyOf(crown));
+    const scene::PartComponent* seenTrunk = match.client.world.parts().find(match.copyOf(trunk));
+    REQUIRE(seenCrown != nullptr);
+    REQUIRE(seenTrunk != nullptr);
+    CHECK(seenCrown->shape == 1);
+    CHECK(seenTrunk->shape == 2);
+
+    // A shape changed while it runs follows too.
+    match.server.world.parts().find(crown)->shape = 0;
+    match.run(4);
+    CHECK(match.client.world.parts().find(match.copyOf(crown))->shape == 0);
+}
+
 TEST_CASE("a part's material, its overrides and a runtime copy all reach a replica, which draws them")
 {
     // **The surface the wire never carried** (ADR 0090): a part's `Color` went

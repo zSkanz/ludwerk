@@ -179,6 +179,54 @@ local BasePartFields: { Schema.Field } = {
     },
 }
 
+--- What a `Part` is beyond a base part (protocol 30, D424): its shape. On
+--- `Part` and not on `BasePart`, because `Shape` is `Part`'s property -- a mesh
+--- part's shape is its mesh's and a character's its controller's, and a field
+--- that travels is one the world's hash sees change.
+local PartFields: { Schema.Field } = {
+    {
+        Name = "Shape",
+        Id = 1,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Which primitive solid the part is. **It never travelled**: a ball or a cylinder a script "
+            .. "made on the authority was a block on every replica -- drawn as one, and collided with as "
+            .. "one, so a body predicted on a ball the replica believed was a box was corrected every tick.",
+    },
+}
+
+--- What a `MeshPart` is beyond a part (protocol 30, D424): which mesh, how it
+--- collides, and what the mesh measures -- without which `Size` means nothing.
+local MeshPartFields: { Schema.Field } = {
+    {
+        Name = "MeshContent",
+        Id = 1,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "meshParts",
+        Doc = "The mesh, by URN: the file is content both machines have. It never travelled, so a mesh "
+            .. "part a script made on the authority drew nothing on a replica.",
+    },
+    {
+        Name = "CollisionFidelity",
+        Id = 2,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "meshParts",
+        Doc = "What it collides as: a replica that predicts against a box where the authority has a hull "
+            .. "is corrected whenever the two differ.",
+    },
+    {
+        Name = "MeshSize",
+        Id = 3,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "meshParts",
+        Doc = "What the mesh measures at its own scale, which is what `Size` is a multiple of.",
+    },
+}
+
 --- **Retired**: a part has no colour or transparency of its own since ADR 0090;
 --- the two are its material's parameters and travel in `MaterialParameters`.
 --- The ids stay claimed for ever.
@@ -1562,6 +1610,19 @@ local Classes: { Schema.Class } = {
             .. "replication is affordable at all. `Part` and `MeshPart` inherit it.",
         Fields = BasePartFields,
         Retired = BasePartRetired,
+    },
+    {
+        Name = "Part",
+        Extends = "BasePart",
+        Doc = "The primitive solid. Everything `BasePart` carries, and which solid it is.",
+        Fields = PartFields,
+    },
+    {
+        Name = "MeshPart",
+        Extends = "BasePart",
+        Doc = "A part whose geometry is a file's. Everything `BasePart` carries, and the three things "
+            .. "that say which mesh it is and how large.",
+        Fields = MeshPartFields,
     },
     {
         Name = "CharacterBody",

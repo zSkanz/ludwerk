@@ -92,6 +92,8 @@ The height of the top of the ground here, in metres, or nil where there is none.
 
 **The top, over caves as well**: the highest surface in the column, which is where a tree is planted or a player lands from above. Cast a ray with `Workspace:Raycast` when what you want is the first surface along a direction.
 
+**Nil too where the ground has not streamed in yet**, which in a large world is everywhere at the first line of a script: wait for it with `StreamingService:LoadAreaAsync(position, radius)`.
+
 ### `PaintBall(center: vector, radius: number, material: number, options: { Mode: Enum.TerrainPaintMode?, Strength: number?, Falloff: number? }? = nil): number`
 
 Changes what the ground is MADE OF in a ball, without moving it. Returns how many voxels it changed.

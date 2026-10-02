@@ -393,6 +393,9 @@ struct FrameMaterial
             look.tint = overrides.color;
         if (overrides.has(asset::MaterialField::Transparency))
             look.transparency = overrides.transparency;
+        // The default's third parameter: what a plain part glows with.
+        if (overrides.has(asset::MaterialField::Emissive))
+            look.emissive = overrides.emissive;
         look.color = look.tint;
         return look;
     }
@@ -499,6 +502,16 @@ struct FrameMaterial
     return x.baseColor[3] == y.baseColor[3] && a.baseColor == b.baseColor && a.normal == b.normal &&
            a.metallicRoughness == b.metallicRoughness && a.emissive == b.emissive && a.surface == b.surface &&
            a.surfaceValues == b.surfaceValues && a.readsSceneColor == b.readsSceneColor && a.masked == b.masked;
+}
+
+// The engine default's glow, over whatever the block had: a plain part's is
+// black until its `Emissive` is set, and a mesh wearing nothing adds it to
+// what its own file emits.
+void glowBy(RenderMaterial& material, const Color3& emissive)
+{
+    material.uniforms.emissive[0] += emissive.r;
+    material.uniforms.emissive[1] += emissive.g;
+    material.uniforms.emissive[2] += emissive.b;
 }
 
 void tintBy(RenderMaterial& material, const Color3& color)
@@ -1039,10 +1052,13 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 // every section of it. A mesh wearing none keeps what its own
                 // file described, tinted by the default's `Color` -- which is
                 // what an unimported mesh has always looked like.
-                if (look.builtIn)
+                if (look.builtIn) {
                     tintBy(block, look.tint);
-                else
+                    glowBy(block, look.emissive);
+                }
+                else {
                     block = look.block;
+                }
                 // A mesh keeps the UVs its file gives it; tiling by size is a
                 // primitive's, whose faces have none worth keeping.
                 block.uniforms.emissive[3] = 0.0f;
@@ -1655,6 +1671,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 // The default's `Color`, over its white: this IS the part's
                 // colour, which is what a plain part has always drawn as.
                 tintBy(material, look.tint);
+                glowBy(material, look.emissive);
             }
             else {
                 material = look.block;

@@ -151,8 +151,9 @@ TEST_CASE("the generated schema is what the module was built against")
     // `TeamService` and `Team` (protocol 14), `Tilemap2D` (protocol 15), and
     // `Workspace` for its wind (protocol 19), and `ClickDetector` and
     // `ProximityPrompt` (protocol 21), `DragDetector` (protocol 26), and
-    // `Water`, `WaterWave` and `WaterPoint` (protocol 28).
-    CHECK(std::size(generated::Classes) == 28);
+    // `Water`, `WaterWave` and `WaterPoint` (protocol 28), and `Part` for its
+    // shape and `MeshPart` for its mesh (protocol 30).
+    CHECK(std::size(generated::Classes) == 30);
     CHECK(std::size(generated::Channels) == 4);
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift

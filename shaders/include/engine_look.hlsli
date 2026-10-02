@@ -58,7 +58,8 @@ cbuffer GpuLookRaysUniforms : register(b0, space3)
     // screen's width over its height.
     float4 RaysSun;
     // x how far towards the sun the gather reaches, as a fraction of the way;
-    // y how many taps; z how much each tap fades from the last; w unused.
+    // y how many taps; z how much each tap fades from the last; w how tight
+    // the lobe of sky round the sun that can shine is (the mask's).
     float4 RaysGather;
 };
 #endif

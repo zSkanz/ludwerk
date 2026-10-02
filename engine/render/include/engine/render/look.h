@@ -15,6 +15,7 @@
 // repository rests on it.
 #pragma once
 
+#include <array>
 #include <memory>
 
 #include "engine/core/id.h"
@@ -99,6 +100,35 @@ struct RenderSky
     [[nodiscard]] bool operator==(const RenderSky&) const noexcept = default;
 };
 
+// One `ColorCorrectionEffect`, as the tonemap applies it to exposed linear
+// light (`tonemap_graded.hlsl`, and `applyGrade` below, which is the same
+// arithmetic for a test to hold):
+//   1. `mix`: its tint, then its saturation -- three rows of (r, g, b);
+//   2. nothing below zero;
+//   3. `power`: its contrast, as `pivot * (c / pivot) ^ power`, the pivot being
+//      the brightness the exposure puts the frame's average at -- so what is
+//      at the pivot stays, what is brighter goes further and what is darker
+//      goes darker without ever reaching black, each channel keeping its sign
+//      and so its hue. One is no contrast, and is skipped exactly;
+//   4. `lift`: its brightness, added; nothing below zero.
+struct GradeStage
+{
+    core::f32 mix[3][3]{
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+    };
+    core::f32 power = 1.0f;
+    core::f32 lift = 0.0f;
+
+    [[nodiscard]] bool operator==(const GradeStage&) const noexcept = default;
+};
+
+// How many stages one frame grades by.
+inline constexpr core::usize MaxGradeStages = 8;
+// Where contrast turns: the exposure's key, the frame's own middle.
+inline constexpr core::f32 GradePivot = 0.45f;
+
 struct RenderLook
 {
     // --- Bloom ---------------------------------------------------------------
@@ -118,16 +148,21 @@ struct RenderLook
 
     // --- Colour correction ----------------------------------------------------
     //
-    // Every enabled `ColorCorrectionEffect`, composed in order into ONE affine
-    // map of linear colour: `out = grade * (r, g, b, 1)`. Each effect's four
-    // operations are affine, and so is their composition, so any number of them
-    // costs the tonemap one 3x4 multiply. `graded` false is the identity.
+    // Every enabled `ColorCorrectionEffect` that changes anything, in order,
+    // each as one stage (`GradeStage`): the tonemap applies them one after
+    // another to the exposed light. `graded` false is the identity, and the
+    // plain tonemap: an effect at its defaults is no stage at all.
+    //
+    // **They were one affine map** -- every operation was, contrast included,
+    // as a line through the pivot -- and that line took the dark half of a
+    // picture below zero: at +0.12 every channel under about sRGB 62 was black,
+    // so grass went neon and a navy sky went black (D427). Contrast is a power
+    // about the pivot now, which never leaves the positive, and a power does
+    // not fold into a sum: hence stages. `MaxGradeStages` at once; a ninth
+    // effect that changes something is left out.
     bool graded = false;
-    core::f32 grade[3][4]{
-        {1.0f, 0.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f, 0.0f},
-    };
+    std::array<GradeStage, MaxGradeStages> grades{};
+    core::u32 gradeCount = 0;
 
     // --- Blur -------------------------------------------------------------------
     //
@@ -200,6 +235,23 @@ enum class LookStanding : core::u8
     // kind outranks.
     Outranked,
 };
+
+// **How tight the lobe of sky round the sun that can shine is**, by the
+// effect's `Spread`: the mask weights the sky by `exp(-d * d * lobe)`, `d` the
+// distance from the sun in screen heights. 24 up to the default spread of a
+// half -- the look it always had -- and down to 1.5 at 1, a lobe four times as
+// wide: with the disc itself behind one tree's crown the tight lobe held
+// nothing that could shine, and the rays went out.
+[[nodiscard]] constexpr core::f32 raysLobe(core::f32 spread) noexcept
+{
+    const core::f32 past = spread > 0.5f ? spread - 0.5f : 0.0f;
+    const core::f32 widen = 1.0f + 6.0f * past;
+    return 24.0f / (widen * widen);
+}
+
+// What the graded tonemap makes of one exposed linear colour, before the tone
+// curve: every stage of `look`, in order. The shader's arithmetic, on the CPU.
+[[nodiscard]] core::Color3 applyGrade(const RenderLook& look, core::Color3 exposed) noexcept;
 
 // Resolves every instance under `lightingHost` and under `camera` into `out`,
 // in document order -- `Lighting`'s children first, then the camera's. Either id

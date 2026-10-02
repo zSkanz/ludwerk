@@ -89,8 +89,17 @@ inline constexpr MaterialFieldMask DeclarableParameters =
 
 // **What the engine default material declares**: a grey-box part can still be
 // tinted and faded without anybody authoring a material, and every scene
-// written before ADR 0090 opens looking the same.
+// written before ADR 0090 opens looking the same. **And made to glow**: a
+// game built of plain parts had nothing for bloom to act on -- a campfire's
+// ember, a lamp, a sign -- because `Emissive` raised on the default. It is
+// black until somebody sets it, so nothing that exists moves.
 inline constexpr MaterialFieldMask DefaultMaterialParameters =
+    fieldBit(MaterialField::Color) | fieldBit(MaterialField::Transparency) | fieldBit(MaterialField::Emissive);
+
+// What a streamed cell's record can say of a surface (`asset::ChunkInstance`):
+// a colour and a see-through, and nothing else. A part that overrides more
+// than these stays a whole instance in its scene.
+inline constexpr MaterialFieldMask RecordMaterialParameters =
     fieldBit(MaterialField::Color) | fieldBit(MaterialField::Transparency);
 
 // The field's name as the file, the script and the Properties panel spell it.

@@ -35,7 +35,7 @@ Streams the world around this instance as well. A focus is normally the characte
 
 **Yields.** The calling thread parks until it completes.
 
-Yields until every chunk within `radius` of `position` is resident. What a teleport calls before it moves the character, so the destination exists when they arrive. Returns immediately when the area is already loaded, and raises rather than hanging when the world has no chunks there at all.
+Yields until everything within `radius` of `position` is resident: the parts' cells and the ground's. What a teleport calls before it moves the character, so the destination exists when they arrive -- and what a script calls at the start, before it asks `Terrain:HeightAt` where to put something, since ground that has not streamed in has no height yet. Returns immediately when the area is already loaded, and raises rather than hanging when the world has no chunks there at all.
 
 ### `RemoveFocus(instance: Instance)`
 

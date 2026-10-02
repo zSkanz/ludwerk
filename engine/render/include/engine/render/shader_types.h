@@ -179,7 +179,14 @@ struct GpuMaterialUniforms
     // rgb emissive factor, w unused.
     f32 emissive[4]{0.0f, 0.0f, 0.0f, 0.0f};
     // x metallic, y roughness, z normal-map scale, w alpha cutoff.
-    f32 metallicRoughnessNormalCutoff[4]{1.0f, 1.0f, 1.0f, 0.5f};
+    //
+    // **The cutoff is zero unless the material is `Mask`** (D423): the shader
+    // clips at it whatever the mode, so a block that began at glTF's default
+    // of a half -- which the plain part's block did, being made from nothing
+    // -- was an alpha test at 0.5 on a material nobody had called a mask. A
+    // pane of glass at `Transparency` 0.55 was not drawn at all, and at
+    // exactly 0.5 it was stripes. Whoever means a mask writes its cutoff.
+    f32 metallicRoughnessNormalCutoff[4]{1.0f, 1.0f, 1.0f, 0.0f};
     // x is 1 when the material has a base-colour texture, y normal, z
     // metallic-roughness, w emissive. Floats rather than a bitmask because a
     // shader multiplies by them and a branch per texture per fragment is worse
@@ -311,15 +318,17 @@ static_assert(sizeof(GpuOutlineUniforms) == 48, "GpuOutlineUniforms is a cbuffer
 // `ColorCorrectionEffect` composed into one affine map of exposed linear colour,
 // as three rows -- `out.r = dot(rows[0], (r, g, b, 1))`. At the fragment stage's
 // slot 1, so the plain tonemap's block at slot 0 is left exactly as it was.
+//
+// **Stages, since contrast is a power** (D427): eight of three rows each --
+// a row's xyz the mix of (r, g, b), and its w the stage's power (first row)
+// and its lift (second) -- and how many of them count.
 struct GpuGradeUniforms
 {
-    f32 rows[3][4]{
-        {1.0f, 0.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f, 0.0f},
-    };
+    f32 rows[8][3][4]{};
+    // x how many stages; yzw unused.
+    f32 count[4]{};
 };
-static_assert(sizeof(GpuGradeUniforms) == 48, "GpuGradeUniforms is mirrored by tonemap_graded.hlsl");
+static_assert(sizeof(GpuGradeUniforms) == 400, "GpuGradeUniforms is mirrored by tonemap_graded.hlsl");
 
 // `look_blur.hlsl`'s block (ADR 0096): one direction of `BlurEffect`'s
 // separable Gaussian.

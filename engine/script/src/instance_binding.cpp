@@ -392,6 +392,28 @@ int methodFindFirstAncestorOfClass(lua_State* L)
     return 1;
 }
 
+int methodGetFullName(lua_State* L)
+{
+    const scene::World& authored = world(L);
+    const scene::ClassId dataModel = authored.classes().findId(authored.atoms().lookup("DataModel"));
+    std::vector<std::string_view> names;
+    for (core::InstanceId at = liveInstance(L, 1); at.valid(); at = authored.parentOf(at)) {
+        // Every path starts below the data model, which is not part of one --
+        // unless it is the data model that was asked.
+        if (!names.empty() && !authored.parentOf(at).valid() && authored.classOf(at) == dataModel)
+            break;
+        names.push_back(authored.atoms().text(authored.name(at)));
+    }
+    std::string path;
+    for (auto name = names.rbegin(); name != names.rend(); ++name) {
+        if (!path.empty())
+            path += '.';
+        path += *name;
+    }
+    lua_pushlstring(L, path.data(), path.size());
+    return 1;
+}
+
 int methodGetChildren(lua_State* L)
 {
     std::vector<core::InstanceId> children;
@@ -2424,6 +2446,7 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Instance", "FindFirstChildOfClass", methodFindFirstChildOfClass},
     {"Instance", "FindFirstChildWhichIsA", methodFindFirstChildWhichIsA},
     {"Instance", "FindFirstAncestor", methodFindFirstAncestor},
+    {"Instance", "GetFullName", methodGetFullName},
     {"Instance", "FindFirstAncestorOfClass", methodFindFirstAncestorOfClass},
     {"Instance", "GetChildren", methodGetChildren},
     {"Instance", "GetDescendants", methodGetDescendants},

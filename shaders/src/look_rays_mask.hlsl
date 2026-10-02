@@ -37,7 +37,10 @@ float4 FragmentMain(Interpolants input) : SV_Target0
 
     // Distance from the sun in screen heights, so the falloff is round.
     const float2 away = (input.Uv - RaysSun.xy) * float2(RaysSun.w, 1.0f);
-    const float nearSun = exp(-dot(away, away) * 24.0f);
+    // How tight the lobe is: 24 up to the default `Spread`, and wider past it
+    // (`RaysGather.w`), so the sky around a sun that is itself hidden behind a
+    // tree's crown still streams past the crown's edges.
+    const float nearSun = exp(-dot(away, away) * RaysGather.w);
 
     // Capped, because the sun's disc is many times brighter than white and a
     // shaft that carried all of it would be a second sun smeared across the

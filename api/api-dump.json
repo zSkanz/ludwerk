@@ -1957,6 +1957,11 @@
           "Returns": ["{Instance}"]
         },
         {
+          "Name": "GetFullName",
+          "Parameters": [],
+          "Returns": ["string"]
+        },
+        {
           "Name": "GetPropertyChangedSignal",
           "Parameters": [
             {

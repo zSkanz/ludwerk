@@ -129,6 +129,12 @@ public:
         m_timeoutMs = std::max<u32>(1, config.timeoutMs);
         m_host = enet_host_create(bindTo, config.maxPeers, m_channels, 0, 0);
         if (m_host == nullptr) {
+            // **With no port asked for there is no port to be in use** (D431):
+            // the system refused the socket itself -- which is what Android
+            // does to an app with no INTERNET permission -- and "the port may
+            // already be in use", on port 0, sent the reader the wrong way.
+            if (config.port == 0)
+                return core::makeError(ENG_TR("net.err.transport_socket_failed"));
             const I18nArg args[] = {{"port", static_cast<core::i64>(config.port)}};
             return core::makeError(ENG_TR("net.err.transport_open_failed"), args);
         }

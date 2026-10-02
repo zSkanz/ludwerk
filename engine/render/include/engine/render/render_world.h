@@ -338,6 +338,18 @@ struct DrawItem
     u32 terrainMorph = NoTerrainMorph;
 };
 
+// **What casts into the sun's map**: what is drawn solid. A see-through
+// surface -- a pane of glass, water, a part faded by `Transparency` -- cast a
+// shadow as dark as a wall's, because the shadow pass took every draw; a part
+// hidden at full transparency draws nothing and so casts nothing, and one
+// nearly hidden should not darken the ground like a block either. What blends
+// casts none, which is the default of the engines this follows; a coloured
+// shadow through glass is a feature of its own.
+[[nodiscard]] constexpr bool castsShadow(const DrawItem& draw) noexcept
+{
+    return !draw.transparent;
+}
+
 // One terrain, as the renderer needs it beyond its meshes: the palette its
 // shader reads (ADR 0082). Filled by `TerrainLoader::appendRenderTerrains`.
 struct RenderTerrainLayer

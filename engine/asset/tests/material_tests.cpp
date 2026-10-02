@@ -114,10 +114,11 @@ TEST_CASE("a variant writes only what it overrides, and inherits the rest from i
     CHECK(resolved.instanceParameters == (fieldBit(MaterialField::Color) | fieldBit(MaterialField::Roughness)));
 }
 
-TEST_CASE("an authored material declares only what its file declares; the default declares Color and Transparency")
+TEST_CASE(
+    "an authored material declares only what its file declares; the default declares Color, Transparency and Emissive")
 {
     CHECK(asset::defaultMaterial().instanceParameters ==
-          (fieldBit(MaterialField::Color) | fieldBit(MaterialField::Transparency)));
+          (fieldBit(MaterialField::Color) | fieldBit(MaterialField::Transparency) | fieldBit(MaterialField::Emissive)));
     CHECK(static_cast<double>(asset::defaultMaterial().properties.roughness) == doctest::Approx(0.7));
     CHECK(asset::defaultMaterial().properties.color == core::Color3{1.0f, 1.0f, 1.0f});
 

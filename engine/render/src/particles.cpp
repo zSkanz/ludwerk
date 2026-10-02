@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/render/render_world.h"
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
@@ -181,7 +183,22 @@ void ParticleSystem::update(const scene::World& world, core::InstanceId root, f6
 
         // Then the stream.
         if (config.enabled && config.rate > 0.0f) {
-            emitter.carry += static_cast<f64>(config.rate) * static_cast<f64>(step);
+            const f32 rate = effectiveRate(config.rate, config.lifetime);
+            // Said once for an emitter, where the person who set it will read it.
+            if (rate < config.rate && !emitter.cappedSaid) {
+                emitter.cappedSaid = true;
+                const core::I18nArg args[] = {
+                    {"name", std::string(world.atoms().text(world.name(id)))},
+                    {"rate", static_cast<core::f64>(config.rate)},
+                    {"sustained", static_cast<core::f64>(std::floor(rate))},
+                    {"cap", static_cast<core::i64>(MaxPerEmitter)},
+                };
+                core::log(core::LogLevel::Warn, ENG_TR("render.warn.emitter_capped"), args);
+            }
+            else if (!(rate < config.rate)) {
+                emitter.cappedSaid = false;
+            }
+            emitter.carry += static_cast<f64>(rate) * static_cast<f64>(step);
             const auto whole = static_cast<u64>(emitter.carry);
             emitter.carry -= static_cast<f64>(whole);
             spawn(emitter, frame, extent, whole);

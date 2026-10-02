@@ -39,18 +39,29 @@ struct Rig
 
 } // namespace
 
-TEST_CASE("a Part finds BasePart's schema by walking up")
+TEST_CASE("a Part's schema is its own, and carries BasePart's")
 {
-    // **`Part` has no schema of its own and must not need one.** Requiring a row
-    // per leaf would be requiring the wire schema to repeat the class hierarchy,
-    // which is the second list the whole arrangement exists to prevent -- and it
-    // is the same walk `wirecheck` does to decide a class is decided.
+    // **A leaf needs a row only for what it adds.** `Part` adds its shape
+    // (D424: a ball was a block on every replica), and everything else it
+    // sends is `BasePart`'s, by `Extends` -- the schema does not repeat the
+    // class hierarchy, and a class with nothing of its own to send still finds
+    // its ancestor's by walking up.
     Rig rig;
     const core::InstanceId id = rig.part({1.0, 2.0, 3.0});
 
     const generated::ClassDesc* desc = schemaFor(rig.world(), id);
     REQUIRE(desc != nullptr);
-    CHECK(desc->name == "BasePart");
+    CHECK(desc->name == "Part");
+
+    bool movement = false;
+    bool shape = false;
+    for (core::usize index = 0; fieldAt(*desc, index) != nullptr; ++index) {
+        const generated::FieldDesc* field = fieldAt(*desc, index);
+        movement = movement || field->name == "CFrame";
+        shape = shape || field->name == "Shape";
+    }
+    CHECK(movement);
+    CHECK(shape);
 }
 
 TEST_CASE("an instance with no schema replicates nothing")

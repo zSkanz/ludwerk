@@ -179,3 +179,21 @@ TEST_CASE("an emitter that leaves the world takes its particles, and one under n
     CHECK(fixture.system.liveCount() == 0);
     CHECK(fixture.system.emitterCount() == 0);
 }
+
+TEST_CASE("a stream over its cap is thinned evenly, where it pulsed")
+{
+    // 3000 a second living two seconds is six thousand at once, and an emitter
+    // holds 4096: it filled, stopped, and began again as the first ones died.
+    using render::ParticleSystem;
+    const core::f32 capped = ParticleSystem::effectiveRate(3000.0f, 2.0f);
+    CHECK(capped < 3000.0f);
+    // What it sustains: the longest-lived of them (a tenth over) never past the cap.
+    CHECK(static_cast<double>(capped) * 2.0 * 1.1 <= static_cast<double>(ParticleSystem::MaxPerEmitter) + 1.0);
+    CHECK(static_cast<double>(capped) * 2.0 * 1.1 > static_cast<double>(ParticleSystem::MaxPerEmitter) - 8.0);
+    // A stream under the cap is what was asked for.
+    CHECK(ParticleSystem::effectiveRate(100.0f, 2.0f) == 100.0f);
+    CHECK(ParticleSystem::effectiveRate(1800.0f, 2.0f) == 1800.0f);
+    // And nothing is born of no rate or no life.
+    CHECK(ParticleSystem::effectiveRate(0.0f, 2.0f) == 0.0f);
+    CHECK(ParticleSystem::effectiveRate(100.0f, 0.0f) == 0.0f);
+}

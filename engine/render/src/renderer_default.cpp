@@ -2753,13 +2753,14 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (batch != nullptr && batch->firstDraw != drawIndex)
             continue;
 
-        // The shadow pass takes everything; the forward passes take only what
-        // the camera can see. A caster behind the camera still casts into the
-        // frame -- including a half-transparent one, which still occludes. The
-        // roadmap leaves whether it *should* as a separate question, and this
-        // milestone does not open it.
+        // The shadow pass takes every solid draw; the forward passes take only
+        // what the camera can see. A caster behind the camera still casts into
+        // the frame.
         const bool visible = batch != nullptr ? batch->anyVisible : draw.inCameraFrustum;
         if (selection != Selection::Shadow && !visible)
+            continue;
+        // And what is see-through casts none (`castsShadow`).
+        if (selection == Selection::Shadow && !castsShadow(draw))
             continue;
         if (selection == Selection::Prepass && draw.cutout)
             continue;
@@ -3348,6 +3349,7 @@ void DefaultRenderer::sunRaysOnto(rhi::IDevice& device, rhi::ICmdList& cmd, cons
     rays.gather[0] = 0.25f + 0.75f * world.look.sunRaysSpread;
     rays.gather[1] = static_cast<f32>(kRaysTaps);
     rays.gather[2] = kRaysDecay;
+    rays.gather[3] = raysLobe(world.look.sunRaysSpread);
 
     cmd.pushDebugGroup("sun-rays");
     const std::array<rhi::TextureBinding, 2> mask{rhi::TextureBinding{image, environmentSampler_},
@@ -5003,6 +5005,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         .clearColor = {0.0f, 0.0f, 0.0f, clearBehind ? 0.0f : 1.0f},
     }};
 
+    // Whether the depth of field ran inside the forward pass, before what
+    // blends (D428); the look's own passes below do not run it a second time.
+    bool focusedBeforeBlended = false;
     cmd.pushDebugGroup("forward");
     cmd.beginRenderPass({
         .colorAttachments = hdrAttachment,
@@ -5353,6 +5358,38 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
         }
 
+        // **With a depth of field, the lens first** (D428). What blends writes
+        // no depth -- a pane of glass, a flame, a spark -- so the focus pass
+        // read the depth of what was BEHIND it and blurred it as that: a
+        // window at the focus distance was smeared with the far hills seen
+        // through it, and a fire was sharp over the floor and smeared over the
+        // sky. So the opaque world is focused here, and what blends is drawn
+        // over the focused picture, sharp, as those engines do by default.
+        // The focused image becomes the frame (`hdr_` and `lookColor_` are two
+        // of a kind and change places), and the forward pass resumes on it.
+        if (world.look.depthOfField && settings_.depthOfField && !orthographic) {
+            cmd.endRenderPass();
+            if (focusImage(device, cmd, world, hdr_) != hdr_) {
+                std::swap(hdr_, lookColor_);
+                focusedBeforeBlended = true;
+            }
+            const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
+                .texture = hdr_,
+                .loadOp = rhi::LoadOp::Load,
+                .storeOp = rhi::StoreOp::Store,
+            }};
+            cmd.beginRenderPass({
+                .colorAttachments = resumeTarget,
+                .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                .debugName = "forward-after-focus",
+            });
+            cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+            cmd.setScissor(
+                {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+            cmd.setPipeline(pbrBlendPipeline_);
+            cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
+        }
+
         // Blended, after the opaque pass has filled depth, back to front. The
         // frame uniforms are still bound -- same block, same slot, same values
         // -- so only the pipeline changes.
@@ -5494,7 +5531,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // it stood where the surface behind it does. Not under an orthographic
     // camera, whose depth is not a distance a lens focuses by -- the 2D layer's
     // view -- and not on a machine that has turned it off (ADR 0044).
-    if (look.depthOfField && settings_.depthOfField && world.camera.valid && !orthographic)
+    //
+    // **Already done, on a frame with a camera** (D428): inside the forward
+    // pass, before what blends, so glass and flames are drawn over the focused
+    // picture and not blurred as what is behind them.
+    if (look.depthOfField && settings_.depthOfField && world.camera.valid && !orthographic && !focusedBeforeBlended)
         sceneColor = focusImage(device, cmd, world, sceneColor);
 
     // **Sun rays**, after the focus -- a shaft is light in the air between the
@@ -5636,7 +5677,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     tonemap.exposureBloom[1] = look.bloomGoverned ? kBloomIntensity * look.bloomIntensity : kBloomIntensity;
     tonemap.exposureBloom[2] = world.environment.transparentBackground ? 1.0f : 0.0f;
 
-    // **Every colour correction, as one affine map, in the graded twin of the
+    // **Every colour correction, a stage each, in the graded twin of the
     // tonemap** -- chosen only on a frame that has one, so a world without
     // draws through the plain pipeline with the plain block.
     GpuGradeUniforms grade;
@@ -5651,10 +5692,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const bool graded = look.graded && ensureLookPipeline(device, gradedSlot, "tonemap_graded",
                                                           intoWindow ? target.colorFormat : kLdrFormat);
     if (graded) {
-        for (u32 row = 0; row < 3; ++row) {
-            for (u32 column = 0; column < 4; ++column)
-                grade.rows[row][column] = look.grade[row][column];
+        const u32 stages = std::min<u32>(look.gradeCount, static_cast<u32>(MaxGradeStages));
+        for (u32 stage = 0; stage < stages; ++stage) {
+            for (u32 row = 0; row < 3; ++row) {
+                for (u32 column = 0; column < 3; ++column)
+                    grade.rows[stage][row][column] = look.grades[stage].mix[row][column];
+            }
+            grade.rows[stage][0][3] = look.grades[stage].power;
+            grade.rows[stage][1][3] = look.grades[stage].lift;
         }
+        grade.count[0] = static_cast<f32>(stages);
     }
     const std::array<rhi::TextureBinding, 3> tonemapBindings{
         rhi::TextureBinding{sceneColor, environmentSampler_}, rhi::TextureBinding{bloom_[0], environmentSampler_},

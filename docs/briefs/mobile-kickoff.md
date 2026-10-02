@@ -24,6 +24,11 @@ side hands over an APK and reads the log's frame reports.
 - [ ] Measured on the device: the far flight for two minutes, the reports at
   ten seconds and at a hundred and ten.
 
+## What the owner's first evening on the phone found
+
+- [x] **A tap presses the interface** (D430): buttons, fields, the keyboard.
+- [x] **An exported game can open a socket** (D431): the manifest's permissions.
+
 ## M2 -- what is loaded and how far (after M1's numbers)
 
 - [ ] `ViewDistance` (ADR 0147): a scale on the draw distance, the terrain's

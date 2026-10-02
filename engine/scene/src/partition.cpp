@@ -643,13 +643,13 @@ Leaf Partitioner::readLeaf(std::string_view node)
     }
 
     // **A surface a record cannot carry**, for the same reason (ADR 0090). A
-    // record has a colour and a transparency, which are exactly the two
-    // parameters the engine default material declares -- so a part wearing the
-    // default and overriding nothing else goes through the grid unchanged, and
-    // a part wearing any other material stays a whole instance.
+    // record has a colour and a transparency (`RecordMaterialParameters`) --
+    // so a part wearing the default and overriding nothing else goes through
+    // the grid unchanged, and a part wearing any other material, or glowing,
+    // stays a whole instance.
     if (const PartComponent* part = m_scratch.world().parts().find(id);
         part != nullptr &&
-        (part->material.valid() || (part->materialParameters.set & ~asset::DefaultMaterialParameters) != 0 ||
+        (part->material.valid() || (part->materialParameters.set & ~asset::RecordMaterialParameters) != 0 ||
          m_scratch.world().partShaderParameters(id) != nullptr)) {
         m_scratch.drop(id);
         return leaf;

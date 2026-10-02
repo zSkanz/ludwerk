@@ -90,6 +90,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A plain part can glow**: the engine default material declares `Emissive`
+  beside `Color` and `Transparency`, so `part:SetMaterialParameter("Emissive",
+  ...)` works with no material authored -- an ember, a lamp, a sign for bloom
+  to act on.
+- **`Instance:GetFullName()`**: the path to an instance, `Workspace.Trees.Oak.Trunk`.
+- **A new project checks and formats as the engine does**: the starter carries
+  a `.luaurc` with the `@engine` and `@std` aliases, so `ludwerk check`
+  resolves `require("@engine/camera")`, and a `stylua.toml`, so `ludwerk fmt`
+  writes four spaces.
 - **A phone starts a level lower and renders the world under a cap** (ADR
   0147, the mobile ledger): a project that names no level is `medium` on
   Android, and each level caps the world's shorter side there (720, 900, 1080,
@@ -579,6 +588,23 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **Protocol 30**: a part's `Shape` and a mesh part's mesh travel (D424). A
+  client and a server must be of the same build.
+- **`ColorCorrectionEffect.Contrast` is a power about the frame's average**,
+  where it was a line through it (D427): the same number is gentler on the
+  dark half of a picture, which no longer goes to black. A scene graded with
+  contrast looks different; one at `Contrast = 0` is unchanged.
+- **What is see-through casts no shadow** (D423).
+- **`BlurEffect.Size` has a range**, 0 to 100, and raises outside it like the
+  others; `Water.Size` takes a width of zero, since a lake's outline is its
+  points.
+- **`SunRaysEffect.Spread` past a half widens the sky that can shine**, so the
+  rays do not go out when the sun's disc is behind one tree's crown.
+- **The final picture is dithered by one 8-bit step**, by pixel and never by
+  time, so a glow fading into a dark sky shows no contour rings.
+- **"Two sources for one world" is said only for a thing that is there
+  twice**: something a script made that the scene already holds by class and
+  name -- not for a camera or a bullet a script parents to `Workspace`.
 - **The terrain's level of detail is chosen in rendered pixels**: at
   `render_scale = 0.75` (the `low` preset) or under a cap, distant ground is
   as coarse as that picture can show, where it was refined for the display's
@@ -712,6 +738,23 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A tap presses the interface on a phone** (D430): no button's `Activated`
+  fired and no `TextInput` took focus, so the keyboard never opened -- every
+  tap was pressed at the corner of the screen.
+- **A game on a phone can use the network** (D431): an exported APK declares
+  `INTERNET` and `ACCESS_NETWORK_STATE`. Without them `NetworkService:Join`,
+  hosting and HTTPS all failed, with a message about a port in use.
+- **A plain part faded past a half is drawn** (D423): at `Transparency` 0.5 it
+  was stripes and above it nothing, an alpha test nobody had asked for.
+- **A ball is a ball on a client** (D424): `Part.Shape`, and a `MeshPart`'s
+  mesh, never reached a replica.
+- **`--save-scene` keeps the terrain** (D425): it wrote a large scene without
+  its ground and its streamed parts.
+- **`StreamingService:LoadAreaAsync` waits for the ground too** (D426), which
+  is how a script waits before `Terrain:HeightAt`.
+- **Depth of field leaves glass and particles in focus sharp** (D428).
+- **An emitter over its cap thins evenly** instead of pulsing (D429), and the
+  log says it is capped.
 - **A streamed part comes back under what it was authored under** (D422). In
   a scene large enough to be cut into cells, the parts of every `Model` left
   at the default `StreamingMode` -- and of every `Folder` -- came back under a

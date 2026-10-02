@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 29;
+inline constexpr u32 ProtocolVersion = 30;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -128,6 +128,16 @@ inline constexpr FieldDesc BasePartFields[] = {
     {"MaterialCloneEmissiveMap", 14, Encoding::NameAtom, Source::Component, "parts"},
     {"LinearVelocity", 15, Encoding::Vector3, Source::Component, "rigidBodies"},
     {"AngularVelocity", 16, Encoding::Vector3, Source::Component, "rigidBodies"},
+};
+
+inline constexpr FieldDesc PartFields[] = {
+    {"Shape", 1, Encoding::I32, Source::Component, "parts"},
+};
+
+inline constexpr FieldDesc MeshPartFields[] = {
+    {"MeshContent", 1, Encoding::NameAtom, Source::Component, "meshParts"},
+    {"CollisionFidelity", 2, Encoding::I32, Source::Component, "meshParts"},
+    {"MeshSize", 3, Encoding::Vector3, Source::Component, "meshParts"},
 };
 
 inline constexpr FieldDesc CharacterBodyFields[] = {
@@ -355,6 +365,8 @@ inline constexpr FieldDesc WorkspaceFields[] = {
 // Every replicated class, in schema order.
 inline constexpr ClassDesc Classes[] = {
     {"BasePart", BasePartFields, -1, false, false},
+    {"Part", PartFields, 0, false, false},
+    {"MeshPart", MeshPartFields, 0, false, false},
     {"CharacterBody", CharacterBodyFields, 0, false, false},
     {"Model", ModelFields, -1, false, false},
     {"Lighting", LightingFields, -1, true, true},

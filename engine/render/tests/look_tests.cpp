@@ -243,26 +243,26 @@ TEST_CASE("blurs combine by their squares: two of 8 are one of about 11.3")
     CHECK(fixture.standing(b) == render::LookStanding::Disabled);
 }
 
-TEST_CASE("colour corrections compose in order into one affine map")
+TEST_CASE("colour corrections apply in order, a stage each")
 {
     Fixture fixture;
     // Maps a colour through the resolved grade, as the tonemap will.
     const auto apply = [](const render::RenderLook& look, core::f32 r, core::f32 g, core::f32 b) {
-        core::f32 out[3]{};
-        for (int row = 0; row < 3; ++row)
-            out[row] = look.grade[row][0] * r + look.grade[row][1] * g + look.grade[row][2] * b + look.grade[row][3];
-        return core::Vec3{out[0], out[1], out[2]};
+        const core::Color3 out = render::applyGrade(look, core::Color3{r, g, b});
+        return core::Vec3{out.r, out.g, out.b};
     };
 
-    // One with its defaults is graded and changes nothing.
+    // One with its defaults changes nothing, and is no stage at all: the frame
+    // draws through the plain tonemap, the same to the bit.
     const core::InstanceId neutral = fixture.make(fixture.correctionClass, fixture.lighting);
     {
         const render::RenderLook look = fixture.resolve();
-        CHECK(look.graded);
+        CHECK_FALSE(look.graded);
+        CHECK(look.gradeCount == 0);
         const core::Vec3 same = apply(look, 0.3f, 0.6f, 0.9f);
-        CHECK(nearly(same.x, 0.3f));
-        CHECK(nearly(same.y, 0.6f));
-        CHECK(nearly(same.z, 0.9f));
+        CHECK(same.x == 0.3f);
+        CHECK(same.y == 0.6f);
+        CHECK(same.z == 0.9f);
     }
 
     // A tint, then a brightness: the brightness is added AFTER the tint
@@ -271,7 +271,10 @@ TEST_CASE("colour corrections compose in order into one affine map")
     const core::InstanceId lift = fixture.make(fixture.correctionClass, fixture.camera);
     fixture.world.colorCorrectionEffects().find(lift)->brightness = 0.1f;
     {
-        const core::Vec3 graded = apply(fixture.resolve(), 0.4f, 0.4f, 0.4f);
+        const render::RenderLook look = fixture.resolve();
+        CHECK(look.graded);
+        CHECK(look.gradeCount == 2);
+        const core::Vec3 graded = apply(look, 0.4f, 0.4f, 0.4f);
         CHECK(nearly(graded.x, 0.4f * 0.5f + 0.1f));
         CHECK(nearly(graded.y, 0.5f));
     }
@@ -287,15 +290,74 @@ TEST_CASE("colour corrections compose in order into one affine map")
         CHECK(nearly(grey.z, 0.2126f));
     }
 
-    // Contrast pivots about the exposed average, 0.45: it does not move.
+    // Contrast turns about the exposed average, 0.45: it does not move.
     fixture.world.colorCorrectionEffects().find(neutral)->saturation = 0.0f;
     fixture.world.colorCorrectionEffects().find(neutral)->contrast = 0.5f;
     {
-        const core::Vec3 pivot = apply(fixture.resolve(), 0.45f, 0.45f, 0.45f);
+        const render::RenderLook look = fixture.resolve();
+        const core::Vec3 pivot = apply(look, 0.45f, 0.45f, 0.45f);
         CHECK(nearly(pivot.x, 0.45f));
-        const core::Vec3 bright = apply(fixture.resolve(), 0.65f, 0.65f, 0.65f);
-        CHECK(nearly(bright.x, 0.45f + 0.2f * 1.5f));
+        // Brighter goes further from it, darker goes darker.
+        CHECK(apply(look, 0.65f, 0.65f, 0.65f).x > 0.65f);
+        CHECK(apply(look, 0.2f, 0.2f, 0.2f).x < 0.2f);
     }
+}
+
+TEST_CASE("D427: contrast darkens the dark half without taking it to black")
+{
+    // It was a line through the pivot: at +0.12 every channel under about
+    // sRGB 62 came out below zero and was clamped -- a night sky of
+    // (9, 30, 64) became (1, 1, 41) and at +0.5 (1, 1, 1); grass lost its
+    // blue and went neon. A power about the pivot leaves no channel at zero
+    // that was above it, and keeps the three in the order they were.
+    Fixture fixture;
+    const core::InstanceId correction = fixture.make(fixture.correctionClass, fixture.lighting);
+    // A night sky and night grass, as exposed linear light.
+    const core::Color3 sky{0.003f, 0.013f, 0.051f};
+    const core::Color3 grass{0.127f, 0.216f, 0.037f};
+
+    for (const core::f32 contrast : {0.12f, 0.5f, 1.0f}) {
+        CAPTURE(contrast);
+        fixture.world.colorCorrectionEffects().find(correction)->contrast = contrast;
+        const render::RenderLook look = fixture.resolve();
+        for (const core::Color3 colour : {sky, grass}) {
+            const core::Color3 graded = render::applyGrade(look, colour);
+            CHECK(graded.r > 0.0f);
+            CHECK(graded.g > 0.0f);
+            CHECK(graded.b > 0.0f);
+            // Darker than it was, being under the pivot...
+            CHECK(graded.b < colour.b);
+            // ...and its channels in the order they were: the sky is still
+            // blue, the grass still green.
+            CHECK((graded.r < graded.g) == (colour.r < colour.g));
+            CHECK((graded.g < graded.b) == (colour.g < colour.b));
+        }
+    }
+
+    // Less contrast lifts the dark towards the pivot, and not past it.
+    fixture.world.colorCorrectionEffects().find(correction)->contrast = -0.5f;
+    const core::Color3 lifted = render::applyGrade(fixture.resolve(), sky);
+    CHECK(lifted.b > sky.b);
+    CHECK(lifted.b < render::GradePivot);
+
+    // A brightness below zero stops at black and goes no further.
+    fixture.world.colorCorrectionEffects().find(correction)->contrast = 0.0f;
+    fixture.world.colorCorrectionEffects().find(correction)->brightness = -0.5f;
+    const core::Color3 dark = render::applyGrade(fixture.resolve(), sky);
+    CHECK(dark.r == 0.0f);
+    CHECK(dark.b == 0.0f);
+}
+
+TEST_CASE("the sun's rays reach further round a hidden sun as Spread grows")
+{
+    // The lobe of sky that can shine was fixed, so with the disc behind one
+    // tree's crown nothing in it could. Up to the default spread it is what
+    // it was; past it, wider.
+    CHECK(render::raysLobe(0.0f) == 24.0f);
+    CHECK(render::raysLobe(0.5f) == 24.0f);
+    CHECK(render::raysLobe(0.75f) < 24.0f);
+    CHECK(nearly(render::raysLobe(1.0f), 1.5f));
+    CHECK(render::raysLobe(1.0f) < render::raysLobe(0.75f));
 }
 
 TEST_CASE("where an effect counts: directly under Lighting or the camera, and nowhere else")

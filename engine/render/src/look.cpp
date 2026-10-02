@@ -16,7 +16,6 @@ using core::InstanceId;
 // Where exposure maps a frame's average, and so the brightness a contrast
 // pivots about: pushing pixels away from the average is what contrast means,
 // and after exposure the average IS this number (`tonemap.hlsl`'s key).
-constexpr f32 kContrastPivot = 0.45f;
 
 // Rec. 709's luminance weights, which saturation mixes towards.
 constexpr f32 kLumaR = 0.2126f;
@@ -60,62 +59,36 @@ enum class Kind : core::u8
     return effect != nullptr && effect->enabled;
 }
 
-// An affine map of linear colour, as three rows of four.
-struct Affine
+// One `ColorCorrectionEffect` as a stage: its tint, then its saturation, then
+// its contrast, then its brightness -- the order the class's documentation
+// states.
+[[nodiscard]] GradeStage stageOf(const scene::ColorCorrectionEffectComponent& effect) noexcept
 {
-    f32 m[3][4]{
-        {1.0f, 0.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f, 0.0f},
-    };
-};
-
-// `after` applied to the result of `before`.
-[[nodiscard]] Affine compose(const Affine& after, const Affine& before) noexcept
-{
-    Affine out;
-    for (int row = 0; row < 3; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            f32 sum = column == 3 ? after.m[row][3] : 0.0f;
-            for (int k = 0; k < 3; ++k)
-                sum += after.m[row][k] * before.m[k][column];
-            out.m[row][column] = sum;
-        }
-    }
-    return out;
-}
-
-// One `ColorCorrectionEffect`: its tint, then its saturation, then its
-// contrast, then its brightness -- the order the class's documentation states.
-[[nodiscard]] Affine gradeOf(const scene::ColorCorrectionEffectComponent& effect) noexcept
-{
-    Affine tint;
-    tint.m[0][0] = effect.tintColor.r;
-    tint.m[1][1] = effect.tintColor.g;
-    tint.m[2][2] = effect.tintColor.b;
-
-    // Towards or away from each pixel's own luminance: `s * c + (1 - s) * luma`.
+    GradeStage stage;
+    // Towards or away from each pixel's own luminance, of the tinted colour:
+    // `s * (tint * c) + (1 - s) * luma(tint * c)`.
     const f32 s = 1.0f + effect.saturation;
-    Affine saturation;
     const f32 luma[3]{kLumaR, kLumaG, kLumaB};
+    const f32 tint[3]{effect.tintColor.r, effect.tintColor.g, effect.tintColor.b};
     for (int row = 0; row < 3; ++row) {
         for (int column = 0; column < 3; ++column)
-            saturation.m[row][column] = (row == column ? s : 0.0f) + (1.0f - s) * luma[column];
+            stage.mix[row][column] = ((row == column ? s : 0.0f) + (1.0f - s) * luma[column]) * tint[column];
     }
+    stage.power = 1.0f + effect.contrast;
+    stage.lift = effect.brightness;
+    return stage;
+}
 
-    // Away from the pivot: `k * c + (1 - k) * pivot`.
-    const f32 k = 1.0f + effect.contrast;
-    Affine contrast;
+// Whether a stage changes nothing: an effect at its defaults.
+[[nodiscard]] bool changesNothing(const GradeStage& stage) noexcept
+{
     for (int row = 0; row < 3; ++row) {
-        contrast.m[row][row] = k;
-        contrast.m[row][3] = (1.0f - k) * kContrastPivot;
+        for (int column = 0; column < 3; ++column) {
+            if (stage.mix[row][column] != (row == column ? 1.0f : 0.0f))
+                return false;
+        }
     }
-
-    Affine brightness;
-    for (int row = 0; row < 3; ++row)
-        brightness.m[row][3] = effect.brightness;
-
-    return compose(brightness, compose(contrast, compose(saturation, tint)));
+    return stage.power == 1.0f && stage.lift == 0.0f;
 }
 
 // The state `resolveLook` and `lookStanding` walk the same way.
@@ -202,7 +175,6 @@ void resolveLook(const scene::World& world, InstanceId lightingHost, InstanceId 
 {
     out = RenderLook{};
     Walk walk;
-    Affine grade;
     f32 blurSquared = 0.0f;
     walkLook(world, lightingHost, camera, [&](InstanceId id, Kind kind, bool underLighting) {
         if (judge(world, id, kind, underLighting, walk) != LookStanding::Counts)
@@ -217,8 +189,11 @@ void resolveLook(const scene::World& world, InstanceId lightingHost, InstanceId 
             break;
         case Kind::ColorCorrection:
             if (const auto* correction = world.colorCorrectionEffects().find(id)) {
-                grade = compose(gradeOf(*correction), grade);
-                out.graded = true;
+                const GradeStage stage = stageOf(*correction);
+                if (!changesNothing(stage) && out.gradeCount < MaxGradeStages) {
+                    out.grades[out.gradeCount++] = stage;
+                    out.graded = true;
+                }
             }
             break;
         case Kind::Blur:
@@ -281,12 +256,6 @@ void resolveLook(const scene::World& world, InstanceId lightingHost, InstanceId 
     // A bloom instance anywhere it counts governs bloom, enabled or not.
     out.bloomGoverned = walk.bloomSeen;
     out.bloomEnabled = !walk.bloomSeen || walk.bloomChosen;
-    if (out.graded) {
-        for (int row = 0; row < 3; ++row) {
-            for (int column = 0; column < 4; ++column)
-                out.grade[row][column] = grade.m[row][column];
-        }
-    }
     out.blurSize = std::sqrt(blurSquared);
 }
 
@@ -310,6 +279,24 @@ f32 airOpticalDepth(const AirMedium& air, f32 rise, f32 reach) noexcept
     const f32 squared = horizon * horizon;
     const f32 haze = air.haze * air.extinction * squared * squared * squared * squared;
     return atCamera * reach * along + haze * reach;
+}
+
+core::Color3 applyGrade(const RenderLook& look, core::Color3 exposed) noexcept
+{
+    f32 colour[3]{exposed.r, exposed.g, exposed.b};
+    for (core::u32 index = 0; index < look.gradeCount && index < MaxGradeStages; ++index) {
+        const GradeStage& stage = look.grades[index];
+        f32 mixed[3]{};
+        for (int row = 0; row < 3; ++row) {
+            mixed[row] = std::max(
+                stage.mix[row][0] * colour[0] + stage.mix[row][1] * colour[1] + stage.mix[row][2] * colour[2], 0.0f);
+            if (stage.power != 1.0f)
+                mixed[row] = GradePivot * std::pow(std::max(mixed[row], 1.0e-6f) / GradePivot, stage.power);
+        }
+        for (int row = 0; row < 3; ++row)
+            colour[row] = std::max(mixed[row] + stage.lift, 0.0f);
+    }
+    return core::Color3{colour[0], colour[1], colour[2]};
 }
 
 LookStanding lookStanding(const scene::World& world, InstanceId id, InstanceId lightingHost, InstanceId camera)

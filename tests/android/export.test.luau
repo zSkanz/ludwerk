@@ -169,7 +169,16 @@ test.suite("android export", function(suite)
         assert.eq(build.run({ path = project, output = nil, target = "android", force = false, devHost = false }), 0)
         local apk = projectlib.joined(project, "dist", "android", "androidtest-0.1.0.apk")
         assert.that(fs.exists(apk), `no APK at {apk}`)
-        assert.that(string.find(badging(tools :: android.Tools, apk), "versionCode='1'", 1, true) ~= nil, "not code 1")
+        local badge = badging(tools :: android.Tools, apk)
+        assert.that(string.find(badge, "versionCode='1'", 1, true) ~= nil, "not code 1")
+        -- **A game on a phone can open a socket** (D431): without INTERNET
+        -- Android refuses every one, and no game could join, host or fetch.
+        for _, permission in { "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE" } do
+            assert.that(
+                string.find(badge, `uses-permission: name='{permission}'`, 1, true) ~= nil,
+                `the APK does not declare {permission}`
+            )
+        end
 
         -- A release key, made the way the editor's button makes one.
         local key = projectlib.joined(parent, "keys", "release.keystore")

@@ -76,7 +76,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 22> instanceMethods;
+    static std::array<MethodDesc, 23> instanceMethods;
     instanceMethods = {{
         MethodDesc{
             .name = atoms.intern("FindFirstChild"),
@@ -107,6 +107,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "The nearest ancestor whose ClassName is exactly className, searching upward from Parent; the instance itself is never a candidate.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetFullName"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The path to the instance, as the names of its ancestors and its own joined by dots: `Workspace.Recursos.Tree.Trunk`. It starts below the data model, as a script's own path from `game` does. For reading in a log -- two siblings may share a name, so it does not say which of them this is.",
         },
         MethodDesc{
             .name = atoms.intern("GetChildren"),
@@ -1243,7 +1249,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("HeightAt"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "The height of the top of the ground here, in metres, or nil where there is none.\012\012**The top, over caves as well**: the highest surface in the column, which is where a tree is planted or a player lands from above. Cast a ray with `Workspace:Raycast` when what you want is the first surface along a direction.",
+            .doc = "The height of the top of the ground here, in metres, or nil where there is none.\012\012**The top, over caves as well**: the highest surface in the column, which is where a tree is planted or a player lands from above. Cast a ray with `Workspace:Raycast` when what you want is the first surface along a direction.\012\012**Nil too where the ground has not streamed in yet**, which in a large world is everywhere at the first line of a script: wait for it with `StreamingService:LoadAreaAsync(position, radius)`.",
         },
         MethodDesc{
             .name = atoms.intern("WriteHeights"),
@@ -2570,7 +2576,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y must be greater than zero.",
+            .doc = "A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y, and its outline is its points -- it has no width or length to give. Y must be greater than zero; X and Z may be zero.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.water_size"),
             .get = native::getWaterSize,
             .set = native::setWaterSize,
@@ -4160,7 +4166,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("LoadAreaAsync"),
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Yields until every chunk within `radius` of `position` is resident. What a teleport calls before it moves the character, so the destination exists when they arrive. Returns immediately when the area is already loaded, and raises rather than hanging when the world has no chunks there at all.",
+            .doc = "Yields until everything within `radius` of `position` is resident: the parts' cells and the ground's. What a teleport calls before it moves the character, so the destination exists when they arrive -- and what a script calls at the start, before it asks `Terrain:HeightAt` where to put something, since ground that has not streamed in has no height yet. Returns immediately when the area is already loaded, and raises rather than hanging when the world has no chunks there at all.",
         },
     }};
     static std::array<EventDesc, 2> streamingServiceEvents;

@@ -66,6 +66,7 @@
 #include "engine/app/terrain_overlay.h"
 #include "engine/app/text_input_focus.h"
 #include "engine/app/thumbnails.h"
+#include "engine/app/ui_pointer.h"
 #include "engine/app/ui_text.h"
 #include "engine/app/view_host.h"
 #include "engine/app/world_host.h"
@@ -1374,15 +1375,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::Vec2 lastUiViewport;
     // The pointer and keyboard facts the UI needs, gathered from this frame's
     // events. Edges rather than states: a press is a frame on which the button
-    // went down, and the UI needs the edge to tell a click from a hold.
-    bool uiPointerDown = false;
-    bool lastUiPointerDown = false;
-    // **The pointer's presses and releases this frame, as events** (D362): a
-    // tap whose down and up land between two frames leaves the button's state
-    // where it was, and a click read from the state alone was lost.
-    bool uiPressEvent = false;
-    bool uiReleaseEvent = false;
-    bool uiReleaseFirst = false;
+    // went down, and the UI needs the edge to tell a click from a hold. The
+    // pointer's are `UiPointer`'s, which also says WHERE (D430).
+    UiPointer uiPointer;
     std::string uiTypedText;
     bool uiBackspace = false;
     // The caret's own keys (S6.7). One flag per key rather than a state, because
@@ -1402,8 +1397,6 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     std::string uiComposition;
     i32 uiCompositionCursor = 0;
     bool uiCompositionChanged = false;
-    core::u8 uiClicks = 1;
-    bool uiShiftPress = false;
     // What the platform's text input was last started with, so a change of
     // field or of keyboard restarts it.
     core::InstanceId uiTextInputFor;
@@ -1776,7 +1769,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .partitionScene =
             [&streaming, &fields, &options, contentRoot, authoring](scene::World& registries,
                                                                        const std::filesystem::path& scene) {
-                if (!authoring && !options.writeTypesOnly) {
+                // **Nor for a capture** (`--save-scene`, D425): it writes the
+                // world it holds, and a world whose ground and parts had gone
+                // to cells wrote a scene without them -- ten megabytes of
+                // terrain saved as seven kilobytes, with nothing said.
+                if (!authoring && !options.writeTypesOnly && options.saveScenePath.empty()) {
                     // Not in the editor, and that is a decision rather than an
                     // omission: the editor holds the whole world because holding it
                     // is what editing it means. Streaming while editing is a scene
@@ -4111,8 +4108,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             for (const core::InstanceId husk : replicating->drainStreamedOut())
                 streamedOut.push_back(husk);
         }
-        host->publishStreamingResults(streamedOut, [&streaming](core::DVec3 position, f64 radius) {
-            return streaming.areaResident(position, radius);
+        // **The ground is part of an area** (D426): `LoadAreaAsync` answered
+        // as soon as the parts' cells were in, and a script that then asked
+        // `Terrain:GetHeightAt` got nil for ground still on its way.
+        host->publishStreamingResults(streamedOut, [&streaming, &fields](core::DVec3 position, f64 radius) {
+            return streaming.areaResident(position, radius) && fields.areaResident(position, radius);
         });
 
         // **The editor's own reload** (ADR 0057), which `ludwerk edit` has never
@@ -4801,7 +4801,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 else {
                     // Nothing pressed in the editor is a press in the game's
                     // interface, and nothing it held stays held.
-                    uiPointerDown = false;
+                    uiPointer.letGo();
                 }
                 heard = viewportEvents;
             }
@@ -4827,30 +4827,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiCommands.clear();
             uiCommandTexts.clear();
             uiCompositionChanged = false;
-            uiPressEvent = false;
-            uiReleaseEvent = false;
-            uiReleaseFirst = false;
+            uiPointer.beginFrame();
             for (const platform::Event& event : heard) {
+                // The pointer's own events: where it is, and its presses.
+                uiPointer.feed(event);
                 switch (event.type) {
-                case platform::EventType::MouseButtonDown:
-                    if (event.button == platform::MouseButton::Left) {
-                        uiPointerDown = true;
-                        uiPressEvent = true;
-                        uiClicks = event.clicks > 0 ? event.clicks : 1;
-                        uiShiftPress = (event.modifiers & platform::KeyModifier::Shift) != 0;
-                    }
-                    break;
                 case platform::EventType::TextEditing:
                     uiComposition = event.text;
                     uiCompositionCursor = event.editStart;
                     uiCompositionChanged = true;
-                    break;
-                case platform::EventType::MouseButtonUp:
-                    if (event.button == platform::MouseButton::Left) {
-                        uiPointerDown = false;
-                        uiReleaseFirst = uiReleaseFirst || !uiPressEvent;
-                        uiReleaseEvent = true;
-                    }
                     break;
                 case platform::EventType::TextInput: {
                     uiTypedText.append(event.text);
@@ -5290,10 +5275,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // button used to be.
             const input::DeviceState& devices = host->input().snapshot();
             ui::InteractionInput interaction;
-            interaction.pointer = devices.pointer;
-            interaction.pressed = uiPressEvent || (uiPointerDown && !lastUiPointerDown);
-            interaction.released = uiReleaseEvent || (!uiPointerDown && lastUiPointerDown);
-            interaction.releasedFirst = uiReleaseFirst;
+            // **Where the pointer is, and what it did, from the events that
+            // said so** (D430): a tap's place is the tap's, not the mouse's.
+            uiPointer.fill(interaction, devices.pointer);
             interaction.text = uiTypedText;
             interaction.backspace = uiBackspace;
             interaction.forwardDelete = uiForwardDelete;
@@ -5306,9 +5290,6 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             interaction.composition = uiComposition;
             interaction.compositionCursor = uiCompositionCursor;
             interaction.compositionChanged = uiCompositionChanged;
-            interaction.clicks = uiClicks;
-            interaction.shiftPress = uiShiftPress;
-            interaction.pointerHeld = uiPointerDown;
             interaction.time = static_cast<f64>(platform::nowNs()) / 1.0e9;
             interaction.readClipboard = []() { return platform::clipboardText(); };
             interaction.writeClipboard = [](std::string_view text) { (void)platform::setClipboardText(text); };
@@ -5340,10 +5321,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 };
                 if (const std::optional<app::WorldUiPick> picked =
                         app::pickWorldUi(host->world(), host->workspace(), host->uiService(), uiViewport,
-                                         snapshot.camera, devices.pointer, solidAlong, &framePoses))
+                                         snapshot.camera, interaction.pointer, solidAlong, &framePoses))
                     interaction.worldOver = picked->element;
             }
-            lastUiPointerDown = uiPointerDown;
             const ui::InteractionResult uiResult = ui::updateInteraction(host->world(), host->uiService(), interaction);
             host->input().setPointerCapturedByUi(uiResult.pointerOverUi);
             // The keyboard half of the same claim (ADR 0041): a focused

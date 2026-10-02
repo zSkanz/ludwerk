@@ -183,6 +183,10 @@ using generated::Source;
             setVec3(out, part->size);
             return true;
         }
+        if (field.name == "Shape") {
+            setI32(out, part->shape);
+            return true;
+        }
         // **What the part wears** (ADR 0090): the material by name, the part's
         // overrides, and -- when it wears a runtime copy -- the copy's number,
         // what it changed and the maps it names.
@@ -211,6 +215,27 @@ using generated::Source;
             if (clone != nullptr && (clone->set & asset::fieldBit(map)) != 0)
                 atom = world.atoms().lookup(*mapOf(clone->values, map)).id;
             setU32(out, atom);
+            return true;
+        }
+        return false;
+    }
+
+    // What a `MeshPart` is beyond a part (D424): its mesh, by name.
+    if (field.pool == "meshParts") {
+        const scene::MeshPartComponent* mesh = world.meshParts().find(id);
+        if (mesh == nullptr) {
+            return false;
+        }
+        if (field.name == "MeshContent") {
+            setU32(out, mesh->meshContent.id);
+            return true;
+        }
+        if (field.name == "CollisionFidelity") {
+            setI32(out, mesh->collisionFidelity);
+            return true;
+        }
+        if (field.name == "MeshSize") {
+            setVec3(out, mesh->meshSize);
             return true;
         }
         return false;
@@ -1410,6 +1435,28 @@ using generated::Source;
         return false;
     }
 
+    if (field.pool == "meshParts") {
+        scene::MeshPartComponent* mesh = world.meshParts().find(id);
+        if (mesh == nullptr) {
+            return false;
+        }
+        if (field.name == "MeshContent") {
+            // This machine's own atom, as a material's name arrives.
+            const core::NameAtom atom{asU32(value)};
+            mesh->meshContent = world.atoms().text(atom).empty() ? core::NameAtom{} : atom;
+            return true;
+        }
+        if (field.name == "CollisionFidelity") {
+            mesh->collisionFidelity = asI32(value);
+            return true;
+        }
+        if (field.name == "MeshSize") {
+            mesh->meshSize = asVec3(value);
+            return true;
+        }
+        return false;
+    }
+
     if (field.pool == "parts") {
         scene::PartComponent* part = world.parts().find(id);
         if (part == nullptr) {
@@ -1421,6 +1468,10 @@ using generated::Source;
         }
         if (field.name == "Size") {
             part->size = asVec3(value);
+            return true;
+        }
+        if (field.name == "Shape") {
+            part->shape = asI32(value);
             return true;
         }
         // The name arrives as this machine's own atom (the session translated

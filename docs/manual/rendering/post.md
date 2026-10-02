@@ -89,9 +89,12 @@ exposure, so "bright enough to bloom" means the same at noon and at dusk.
 A grade over the picture: `Brightness`, `Contrast` and `Saturation` from -1 to
 1, and a `TintColor` that multiplies it. It works on the light after exposure
 and before the tone curve, so a highlight it brightens still rolls off rather
-than clipping, and contrast pivots about the frame's average brightness.
-However many there are, they cost the same: they fold into one sum before the
-picture is drawn.
+than clipping. **Contrast is a power about the frame's average brightness**:
+what is at the average stays, what is brighter goes further and what is darker
+goes darker without reaching black, each channel keeping its place among the
+three -- so a night sky stays blue at any contrast. Up to eight take part in a
+frame, each applied to what the one before made; one at its defaults costs
+nothing at all.
 
 ## Blur
 
@@ -100,6 +103,8 @@ tall, so a blur looks the same at any window size; `0` is no blur and costs
 nothing. **The interface is drawn after it and stays sharp.** It works on
 light, before exposure: a lamp blurred stays a bright disc, as through a lens,
 rather than a grey smudge.
+
+`Size` is from 0 to 100.
 
 ## Depth of field
 

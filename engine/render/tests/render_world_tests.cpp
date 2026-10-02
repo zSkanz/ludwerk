@@ -1094,6 +1094,77 @@ TEST_CASE("a Part with no material draws its Color override, exactly as BasePart
     CHECK(nearF(snapshot.materials[0].uniforms.metallicRoughnessNormalCutoff[1], 0.7f));
 }
 
+TEST_CASE("D423: a plain part faded past a half is still drawn -- its block has no alpha cutoff")
+{
+    // Six panes of glass at 0.25 to 0.9: two blended, one was stripes and
+    // three were not drawn. The plain part's block began at a cutoff of a
+    // half, and the shader clips at the cutoff whatever the material's mode.
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+
+    for (const core::f32 transparency : {0.25f, 0.5f, 0.55f, 0.9f}) {
+        const core::InstanceId id = blockAt(fixture, workspace);
+        setTransparencyOverride(fixture.world, id, transparency);
+    }
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+
+    REQUIRE(snapshot.draws.size() == 4);
+    for (const render::DrawItem& draw : snapshot.draws) {
+        CHECK(draw.transparent);
+        REQUIRE(draw.material < snapshot.materials.size());
+        // Nothing of it is clipped: the cutoff is a mask's, and this is none.
+        CHECK(snapshot.materials[draw.material].uniforms.metallicRoughnessNormalCutoff[3] == 0.0f);
+        // And what is see-through casts no shadow.
+        CHECK_FALSE(render::castsShadow(draw));
+    }
+    // A block nobody set anything on has none either.
+    CHECK(render::RenderMaterial{}.uniforms.metallicRoughnessNormalCutoff[3] == 0.0f);
+}
+
+TEST_CASE("a plain part glows: the engine default declares Emissive")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+
+    const core::InstanceId ember = blockAt(fixture, workspace);
+    asset::MaterialProperties values;
+    values.emissive = core::Color3{4.0f, 1.5f, 0.25f};
+    REQUIRE((asset::DefaultMaterialParameters & asset::fieldBit(asset::MaterialField::Emissive)) != 0);
+    REQUIRE(asset::setOverride(fixture.world.parts().find(ember)->materialParameters, asset::MaterialField::Emissive,
+                               values));
+    // One beside it that does not glow is a block of its own.
+    (void)blockAt(fixture, workspace);
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+
+    REQUIRE(snapshot.draws.size() == 2);
+    REQUIRE(snapshot.materials.size() == 2);
+    bool glowing = false;
+    bool dark = false;
+    for (const render::RenderMaterial& material : snapshot.materials) {
+        if (nearF(material.uniforms.emissive[0], 4.0f) && nearF(material.uniforms.emissive[1], 1.5f) &&
+            nearF(material.uniforms.emissive[2], 0.25f))
+            glowing = true;
+        if (material.uniforms.emissive[0] == 0.0f && material.uniforms.emissive[1] == 0.0f)
+            dark = true;
+    }
+    CHECK(glowing);
+    CHECK(dark);
+    // A solid part casts.
+    CHECK(render::castsShadow(snapshot.draws[0]));
+}
+
 TEST_CASE("a part wearing a material draws it as authored, and a declared override replaces one value")
 {
     Fixture fixture;

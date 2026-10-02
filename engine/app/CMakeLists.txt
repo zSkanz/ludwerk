@@ -49,6 +49,7 @@ engine_add_module(app
         src/picking.cpp
         src/preview_renderer.cpp
         src/pointer_ownership.cpp
+        src/ui_pointer.cpp
         src/chunk_overlay.cpp
         src/reference_grid.cpp
         src/brush_overlay.cpp
@@ -301,6 +302,7 @@ add_custom_command(TARGET engine_host POST_BUILD
 engine_add_module_tests(app
     SOURCES
         tests/pointer_ownership_tests.cpp
+        tests/ui_pointer_tests.cpp
         tests/frame_pacing_tests.cpp
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp

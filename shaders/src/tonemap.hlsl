@@ -106,6 +106,19 @@ float3 tonemapPbrNeutral(float3 color)
     return lerp(color, float3(newPeak, newPeak, newPeak), g);
 }
 
+// **One 8-bit step of noise, before the picture is rounded to 8 bits.** A glow
+// fading into a dark sky crosses a handful of the 256 levels over hundreds of
+// pixels, and each crossing is a contour ring the eye finds at once; half a
+// step either way, different at each pixel, turns the ring into grain nobody
+// sees. From the pixel's place and never from time, so a still picture is the
+// same picture every frame -- and a golden is a golden.
+float3 ditherOutput(float3 encoded, float2 pixel)
+{
+    // Interleaved gradient noise (Jimenez, 2014): even over any small block.
+    const float noise = frac(52.9829189f * frac(dot(pixel, float2(0.06711056f, 0.00583715f))));
+    return encoded + (noise - 0.5f) / 255.0f;
+}
+
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
     // SampleLevel because the HDR target has one mip and this pass is a 1:1
@@ -133,5 +146,5 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float exposure = (EngineExposureKey / measured) * exp2(ExposureBloom.x);
     const float3 exposed = max(scene * exposure, float3(0.0f, 0.0f, 0.0f));
 
-    return float4(encodeSrgb(tonemapPbrNeutral(exposed)), alpha);
+    return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);
 }

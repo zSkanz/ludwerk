@@ -1686,7 +1686,9 @@ Value getBlurEffectSize(const scene::World& world, core::InstanceId id)
 
 bool setBlurEffectSize(scene::World& world, core::InstanceId id, const Value& value)
 {
-    return writeNumber(world.blurEffects(), id, value, &scene::BlurEffectComponent::size, 0.0f, kUnbounded);
+    // To a hundred: past it the picture is one flat colour whatever the
+    // number, and a billion was accepted (the others here have a range).
+    return writeNumber(world.blurEffects(), id, value, &scene::BlurEffectComponent::size, 0.0f, 100.0f);
 }
 
 // DepthOfFieldEffect

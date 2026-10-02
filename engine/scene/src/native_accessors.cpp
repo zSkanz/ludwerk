@@ -2257,8 +2257,9 @@ bool setWaterSize(World& world, core::InstanceId id, const Value& value)
 {
     WaterComponent* water = world.waters().find(id);
     core::Vec3 size;
-    // A river's length is its points', so its Z may be zero.
-    if (water == nullptr || !finiteVector(value, size) || !(size.x > 0.0f && size.y > 0.0f && size.z >= 0.0f))
+    // A river's length is its points', so its Z may be zero; a lake's outline
+    // is its points', so its X may be too. A depth it always has.
+    if (water == nullptr || !finiteVector(value, size) || !(size.x >= 0.0f && size.y > 0.0f && size.z >= 0.0f))
         return false;
     water->size = size;
     return true;

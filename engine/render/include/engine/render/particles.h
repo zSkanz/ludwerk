@@ -35,6 +35,19 @@ class ParticleSystem
 public:
     // Particles one emitter may hold at once; past it, new ones are not born.
     static constexpr core::usize MaxPerEmitter = 4096;
+    // **The rate a stream is born at**: what was asked, or -- where that many
+    // living at once would pass the cap -- the most the cap sustains. A stream
+    // of 3000 a second living two seconds filled the emitter, stopped, and
+    // began again as the old ones died: clumps and gaps where a column was
+    // asked for. Thinned evenly it is a column again. The tenth is the spread
+    // a particle's life is given either way (`spawn`).
+    [[nodiscard]] static core::f32 effectiveRate(core::f32 rate, core::f32 lifetime) noexcept
+    {
+        if (!(rate > 0.0f) || !(lifetime > 0.0f))
+            return 0.0f;
+        const core::f32 sustained = static_cast<core::f32>(MaxPerEmitter) / (lifetime * 1.1f);
+        return rate < sustained ? rate : sustained;
+    }
     // Particles drawn in one frame, nearest first when there are more.
     static constexpr core::usize MaxDrawn = 32768;
     // The longest step one update takes. A frame that stalled for a second
@@ -79,6 +92,8 @@ private:
         core::u64 spawnedBursts = 0;
         core::Pcg32 random{1};
         bool seen = false;
+        // Whether the log has been told this emitter's stream is capped.
+        bool cappedSaid = false;
     };
 
     // Where an emitter's parent is, and the box particles are born in: a part's

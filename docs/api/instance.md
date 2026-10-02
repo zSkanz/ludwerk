@@ -73,6 +73,10 @@ A fresh array of the direct children in child order, which is the order they wer
 
 A fresh array of every descendant in document order -- child order taken depth-first, preorder -- which is the order the Find family tie-breaks on.
 
+### `GetFullName(): string`
+
+The path to the instance, as the names of its ancestors and its own joined by dots: `Workspace.Recursos.Tree.Trunk`. It starts below the data model, as a script's own path from `game` does. For reading in a log -- two siblings may share a name, so it does not say which of them this is.
+
 ### `GetPropertyChangedSignal(name: string): Signal<()>`
 
 The signal fired when that property changes -- the same object on every call, carrying no value so its type stays independent of the property's; a name the class does not have raises.

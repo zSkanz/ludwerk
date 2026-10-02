@@ -778,6 +778,24 @@ bool FieldStreamer::loadNow(core::DVec3 low, core::DVec3 high, core::u32 maxCell
     return true;
 }
 
+bool FieldStreamer::areaResident(core::DVec3 position, f64 radius) const
+{
+    if (!m_active)
+        return true;
+    const f64 radiusSquared = radius * radius;
+    for (const asset::ChunkIndexEntry& entry : m_manager.index().chunks) {
+        // Across the ground, not up and down it: a cell is a column of ground
+        // whatever height the caller stands at.
+        const f64 x = std::clamp(position.x, entry.bounds.min.x, entry.bounds.max.x) - position.x;
+        const f64 z = std::clamp(position.z, entry.bounds.min.z, entry.bounds.max.z) - position.z;
+        if (x * x + z * z > radiusSquared)
+            continue;
+        if (m_manager.stateOf(entry.id) != asset::ChunkState::Resident)
+            return false;
+    }
+    return true;
+}
+
 f64 FieldStreamer::materialize(asset::ChunkId id, std::span<const std::byte> bytes)
 {
     const u64 started = platform::nowNs();

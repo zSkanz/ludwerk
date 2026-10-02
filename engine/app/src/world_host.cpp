@@ -573,11 +573,18 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // What the scene put under `Workspace`, counted before a line of script has
     // run -- see the warning after the drain.
     core::u32 authoredByScene = 0;
+    // What each of them is, and which they are: a thing the scripts make that
+    // the scene already holds by class and name is the one worth a warning.
+    std::vector<std::pair<scene::ClassId, core::NameAtom>> heldByScene;
+    std::vector<core::InstanceId> madeByScene;
     if (m_bootSceneApplied) {
         for (core::InstanceId child = m_world->firstChild(m_workspace); child.valid();
              child = m_world->nextSibling(child)) {
-            if (!m_world->generated(child))
+            if (!m_world->generated(child)) {
                 ++authoredByScene;
+                heldByScene.emplace_back(m_world->classOf(child), m_world->name(child));
+                madeByScene.push_back(child);
+            }
         }
     }
 
@@ -649,17 +656,28 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // Not for a sub-world: its scene is what `Load()` names and cannot be
     // absent, so "do not give it a scene" is not advice it can take -- and a
     // small game whose scene is empty and whose code builds it is ordinary.
+    //
+    // **Only where something is there twice.** It fired for anything a script
+    // parented to `Workspace` -- a camera of its own, an effect, a bullet --
+    // which is what scripts are for, and a warning that fires for the ordinary
+    // is one nobody reads the day it is true. What it is about is a thing the
+    // scripts made that the scene already holds: the same class, the same
+    // name.
     if (m_bootSceneApplied && !options.subWorld) {
-        core::u32 authoredNow = 0;
+        core::u32 twice = 0;
         for (core::InstanceId child = m_world->firstChild(m_workspace); child.valid();
              child = m_world->nextSibling(child)) {
-            if (!m_world->generated(child))
-                ++authoredNow;
+            if (m_world->generated(child) ||
+                std::find(madeByScene.begin(), madeByScene.end(), child) != madeByScene.end())
+                continue;
+            const std::pair<scene::ClassId, core::NameAtom> made{m_world->classOf(child), m_world->name(child)};
+            if (std::find(heldByScene.begin(), heldByScene.end(), made) != heldByScene.end())
+                ++twice;
         }
-        if (authoredNow > authoredByScene) {
+        if (twice > 0) {
             const std::array<I18nArg, 2> args{
                 I18nArg{"scene", static_cast<core::i64>(authoredByScene)},
-                I18nArg{"scripts", static_cast<core::i64>(authoredNow - authoredByScene)},
+                I18nArg{"scripts", static_cast<core::i64>(twice)},
             };
             core::log(LogLevel::Warn, ENG_TR("scene.warn.two_sources"), args);
         }

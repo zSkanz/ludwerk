@@ -96,6 +96,10 @@ public:
     // True once the minimum ring around the foci has been resident. Stays true.
     [[nodiscard]] bool primed() const noexcept { return m_primed; }
     [[nodiscard]] bool minimumRingResident() const noexcept { return m_manager.minimumRingResident(); }
+    // Whether every cell of ground within `radius` of `position` is in: what
+    // `StreamingService:LoadAreaAsync` waits for, beside the parts' cells. An
+    // area with no ground in it is loaded -- there is nothing to wait for.
+    [[nodiscard]] bool areaResident(core::DVec3 position, f64 radius) const;
 
     [[nodiscard]] const asset::StreamingStats& stats() const noexcept { return m_manager.stats(); }
     [[nodiscard]] asset::ChunkState stateOf(asset::ChunkId id) const noexcept { return m_manager.stateOf(id); }

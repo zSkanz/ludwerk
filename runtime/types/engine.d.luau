@@ -810,6 +810,11 @@ declare extern type Instance with
     --- The nearest ancestor whose ClassName is exactly className, searching upward from Parent; the
     --- instance itself is never a candidate.
     function FindFirstAncestorOfClass(self, className: string): Instance?
+    --- The path to the instance, as the names of its ancestors and its own joined by dots:
+    --- `Workspace.Recursos.Tree.Trunk`. It starts below the data model, as a script's own path from
+    --- `game` does. For reading in a log -- two siblings may share a name, so it does not say which of
+    --- them this is.
+    function GetFullName(self): string
     --- A fresh array of the direct children in child order, which is the order they were parented; the
     --- caller owns it, so destroying while iterating is safe.
     function GetChildren(self): {Instance}
@@ -1339,7 +1344,9 @@ declare extern type Terrain extends Instance with
     --- The height of the top of the ground here, in metres, or nil where there is none. **The top, over
     --- caves as well**: the highest surface in the column, which is where a tree is planted or a player
     --- lands from above. Cast a ray with `Workspace:Raycast` when what you want is the first surface
-    --- along a direction.
+    --- along a direction. **Nil too where the ground has not streamed in yet**, which in a large world
+    --- is everywhere at the first line of a script: wait for it with
+    --- `StreamingService:LoadAreaAsync(position, radius)`.
     function HeightAt(self, x: number, z: number): number?
     --- Writes a heightmap in one call: one height per column of voxels, `columns` to a row, row after
     --- row along +Z, starting at the column `corner` falls in (its X and Z; Y is not read). Returns how
@@ -1694,7 +1701,7 @@ end
 declare extern type BlurEffect extends PostEffect with
     --- How far a pixel's light is spread, in pixels of a picture 1,080 lines tall -- most of it lands
     --- within this distance. It scales with the window, so a blur looks the same at any size. 0 is no
-    --- blur, and costs nothing.
+    --- blur, and costs nothing; 100 is the most, a picture with no detail left.
     Size: number
 end
 
@@ -2637,8 +2644,8 @@ declare extern type Water extends Instance with
     --- The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s.
     Position: vector
     --- A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth
-    --- its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y must be greater
-    --- than zero.
+    --- its Y, where a point does not say its own; a `Lake`'s depth is its Y, and its outline is its
+    --- points -- it has no width or length to give. Y must be greater than zero; X and Z may be zero.
     Size: vector
     --- Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the water
     --- floats, and one of half its density floats half under.
@@ -3312,9 +3319,11 @@ declare extern type StreamingService extends Instance with
     --- Stops streaming around it. Removing the last focus does not unload the world: it stops anything
     --- being wanted, and what is resident stays until something wants it gone.
     function RemoveFocus(self, instance: Instance): ()
-    --- Yields until every chunk within `radius` of `position` is resident. What a teleport calls before
-    --- it moves the character, so the destination exists when they arrive. Returns immediately when the
-    --- area is already loaded, and raises rather than hanging when the world has no chunks there at
+    --- Yields until everything within `radius` of `position` is resident: the parts' cells and the
+    --- ground's. What a teleport calls before it moves the character, so the destination exists when
+    --- they arrive -- and what a script calls at the start, before it asks `Terrain:HeightAt` where to
+    --- put something, since ground that has not streamed in has no height yet. Returns immediately when
+    --- the area is already loaded, and raises rather than hanging when the world has no chunks there at
     --- all.
     function LoadAreaAsync(self, position: vector, radius: number): ()
 end
