@@ -5858,6 +5858,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     .foliageTiles = foliage.stats().tilesResident,
                     .foliageInstances = foliage.stats().instancesResident,
                     .foliageGrown = foliage.stats().tilesGrownLastSync,
+                    .terrainEdits = terrainLoader.editLatency().edits,
+                    .terrainEditMs = terrainLoader.editLatency().lastMs,
+                    .terrainEditFrames = terrainLoader.editLatency().lastFrames,
+                    .terrainEditWorstMs = terrainLoader.editLatency().worstMs,
+                    .terrainEditWorstFrames = terrainLoader.editLatency().worstFrames,
                 });
                 overlay->render(*cmd, options.editor && present.valid() ? present : target, frame);
             }

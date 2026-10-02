@@ -438,3 +438,32 @@ These five and the first are a ledger of their own after R3 (ludwerk-08,
   and display setting, in the editor and from a script, as Unity's and
   Unreal's are. ADR 0147 decides the whole model; its ledger,
   `settings-kickoff.md`, takes the frame rate first as G0.
+
+## P7 — the brush is seen when it lands
+
+The owner, 2026-10-01: "everything in the terrain editor feels delayed" -- not
+a low frame rate; any small action lags.
+
+- [x] **Measured first** (`TerrainLoader::editLatency`, shown in Stats under
+  Terrain as "Edit to picture"): from the `sync` that finds ground edited to
+  the one that puts up the meshes built from it. A 4 m brush stamp was **three
+  frames** late: built off the main thread, then put up six meshes a frame,
+  and a stamp is the node under it and the eight round it.
+- [x] **A small edit is built in the frame that finds it**: at most 24 nodes
+  and 16 finest nodes' worth of ground, on every worker, put up at once and
+  drawn in that frame -- **no frames late**. Its build does not gather the
+  surfaces a later change of level would read; that stays with the builds off
+  the main thread.
+- [x] **A large edit goes up faster too**: half the workers, up to eight,
+  where it was a quarter up to four, and 24 meshes a frame where it was six.
+- [x] A level-0 mesh asks "ground or air" of every cell with an integer
+  compare where it divided: the same answer, and what is left of a walk that
+  is nearly all wholly ground or wholly air.
+- [x] Test: `terrain_loader_tests.cpp`, "a brush stamp is drawn in the frame
+  that finds it, built off the main thread or not".
+- Later: a level-0 mesh is still some 7 ms in the dev build, 5 of them in the
+  walk of a node's cells from the terrain's floor to its ceiling -- a column's
+  solid runs would skip the uniform ones; the stroke's start and end (undo
+  capture, dirty marking), the foliage, navmesh and collider work a stamp
+  sets off, and paint's uploads, are not measured yet; the starter grass
+  still reads as a grid from ten to forty metres.

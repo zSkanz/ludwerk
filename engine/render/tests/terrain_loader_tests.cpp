@@ -377,6 +377,33 @@ TEST_CASE("built off the main thread, the ground is drawn once it is built, whol
     }
 }
 
+TEST_CASE("a brush stamp is drawn in the frame that finds it, built off the main thread or not")
+{
+    // The owner's "everything in the terrain editor feels delayed": an edit
+    // was handed to workers and put up six meshes a frame, three frames after
+    // the stamp. A small edit is built where it is found.
+    LoaderFixture fixture;
+    fixture.loader.setAsync(true);
+    fixture.loader.setFocus(core::DVec3{8.0, 4.0, 8.0});
+    for (int frame = 0; frame < 400 && (frame < 2 || fixture.loader.pending()); ++frame)
+        (void)fixture.sync();
+    REQUIRE_FALSE(fixture.loader.pending());
+    REQUIRE(fixture.loader.drawnOutOfDate(fixture.world).empty());
+    const core::u64 measured = fixture.loader.editLatency().edits;
+
+    // A brush of four metres, where four chunks meet: the nodes round it.
+    (void)asset::fillBall(fixture.component().field, core::DVec3{0.0, 0.0, 0.0}, 4.0, 1);
+    fixture.component().fieldRevision += 1;
+    (void)fixture.sync();
+
+    // One `sync`, and nothing drawn is of the ground as it was.
+    CHECK(fixture.loader.drawnOutOfDate(fixture.world).empty());
+    CHECK_FALSE(fixture.loader.pending());
+    const TerrainLoader::EditLatency latency = fixture.loader.editLatency();
+    CHECK(latency.edits == measured + 1);
+    CHECK(latency.lastFrames == 0);
+}
+
 TEST_CASE("built off the main thread, every node drawn is built for the seams it is drawn with, every frame")
 {
     // **TA14**: a change of level moves the levels drawn beside a node, and a

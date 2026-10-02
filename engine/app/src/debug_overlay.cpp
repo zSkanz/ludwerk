@@ -595,6 +595,23 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
         endSectionGrid();
     }
 
+    // **How long a terrain edit takes to be seen**: what "the brush feels
+    // late" is, as a number. Shown once there has been an edit to measure.
+    if (counters.terrainEdits > 0 && propertiesSection(core::tr(ENG_TR("engine.editor.stats.terrain"))) &&
+        beginSectionGrid("terrain")) {
+        statRow(core::tr(ENG_TR("engine.editor.stats.edit_to_picture")), "%s",
+                core::tr(ENG_TR("engine.editor.stats.value.edit_to_picture"),
+                         {{"ms", fixed(counters.terrainEditMs, 1)},
+                          {"count", static_cast<core::i64>(counters.terrainEditFrames)}})
+                    .c_str());
+        statRow(core::tr(ENG_TR("engine.editor.stats.edit_to_picture_worst")), "%s",
+                core::tr(ENG_TR("engine.editor.stats.value.edit_to_picture"),
+                         {{"ms", fixed(counters.terrainEditWorstMs, 1)},
+                          {"count", static_cast<core::i64>(counters.terrainEditWorstFrames)}})
+                    .c_str());
+        endSectionGrid();
+    }
+
     // **Foliage** (ADR 0116): what is grown around the camera. The instances
     // DRAWN are the GPU cull's answer and never come back to the CPU; what is
     // here is what the cull reads.

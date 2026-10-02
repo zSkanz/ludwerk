@@ -21,6 +21,7 @@
 // rebuilds only the nodes whose chunks it changed.
 
 #include <array>
+#include <chrono>
 #include <compare>
 #include <cstdint>
 #include <functional>
@@ -230,6 +231,23 @@ public:
     // Whether the last `sync` left anything it wanted unbuilt.
     [[nodiscard]] bool pending() const noexcept { return m_pending; }
 
+    // **How long an edit takes to be seen** (the owner's "everything in the
+    // terrain editor feels delayed"): from the `sync` that first finds ground
+    // edited to the one that puts up the meshes built from it, which is the
+    // frame that draws them. In milliseconds, and in frames drawn meanwhile
+    // with the ground as it was -- none when it is built where it is found.
+    // The last edit seen, and the worst of the last sixty-four.
+    struct EditLatency
+    {
+        double lastMs = 0.0;
+        core::u32 lastFrames = 0;
+        double worstMs = 0.0;
+        core::u32 worstFrames = 0;
+        // How many edits have been measured.
+        core::u64 edits = 0;
+    };
+    [[nodiscard]] EditLatency editLatency() const noexcept;
+
 private:
     // **One mesh of a node** (TA14): built for the ground it was built from
     // and the coarser levels beside it it is stitched to (ADR 0140). A node
@@ -355,6 +373,22 @@ private:
         core::u64 edits = 0;
     };
     std::vector<Shown> m_shown;
+
+    // An edit seen and not yet drawn, a terrain (`editLatency`).
+    struct EditStamp
+    {
+        const scene::World* world = nullptr;
+        core::InstanceId terrain;
+        // The edits the ground had had at the last `sync`, and at the stamp.
+        core::u64 seen = 0;
+        core::u64 edits = 0;
+        std::chrono::steady_clock::time_point at;
+        core::u64 frame = 0;
+        bool pending = false;
+    };
+    std::vector<EditStamp> m_editStamps;
+    std::array<std::pair<double, core::u32>, 64> m_editSamples{};
+    core::u64 m_editCount = 0;
 };
 
 } // namespace engine::render

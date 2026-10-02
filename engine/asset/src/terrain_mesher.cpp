@@ -1262,6 +1262,15 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     const auto occupancy = [&](i32 sx, i32 sy, i32 sz) {
         return static_cast<float>(samples[sampleIndex(sx, sy, sz)] & 0xFF) / static_cast<float>(FullOccupancy);
     };
+    // `occupancy >= 0.5`, exactly, without the division: `FullOccupancy` is
+    // odd, so no byte sits on the half. **What the walks below ask of every
+    // cell and every point of a node**, nearly all of which are wholly ground
+    // or wholly air: a division each was most of a level-0 mesh's time, and a
+    // level-0 mesh is what a brush waits for.
+    static_assert(FullOccupancy % 2 == 1);
+    const auto solidAt = [&](i32 sx, i32 sy, i32 sz) {
+        return 2u * static_cast<u32>(samples[sampleIndex(sx, sy, sz)] & 0xFF) > FullOccupancy;
+    };
     const auto materialAt = [&](i32 sx, i32 sy, i32 sz) {
         return static_cast<u8>(samples[sampleIndex(sx, sy, sz)] >> 8);
     };
@@ -1834,17 +1843,21 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         for (i32 cz = 0; cz < cellsZ; ++cz) {
             for (i32 cy = 0; cy < cellsY; ++cy) {
                 for (i32 cx = 0; cx < cellsX; ++cx) {
-                    std::array<float, 8> corner{};
                     int inside = 0;
                     for (int at = 0; at < 8; ++at) {
                         const auto& offset = CornerOffsets[static_cast<usize>(at)];
-                        corner[static_cast<usize>(at)] =
-                            occupancy(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]);
-                        if (corner[static_cast<usize>(at)] >= 0.5f)
+                        if (solidAt(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]))
                             inside |= 1 << at;
                     }
                     if (inside == 0 || inside == 0xFF)
                         continue;
+                    // Only a cell the surface passes through reads how much.
+                    std::array<float, 8> corner{};
+                    for (int at = 0; at < 8; ++at) {
+                        const auto& offset = CornerOffsets[static_cast<usize>(at)];
+                        corner[static_cast<usize>(at)] =
+                            occupancy(cx + 1 + offset[0], cy + 1 + offset[1], cz + 1 + offset[2]);
+                    }
 
                     // **A vertex a sheet** (`cellSheets`): nearly every cell holds
                     // one, and its vertex is the mean of all its crossings as it
@@ -2180,19 +2193,19 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     for (i32 ox = 0; ox < nx; ++ox) {
                         if (band > 0 && inRing(ox, oy, oz) != (pass == 1))
                             continue;
-                        const bool here = occupancy(ox + 2, oy + 2, oz + 2) >= 0.5f;
+                        const bool here = solidAt(ox + 2, oy + 2, oz + 2);
                         // Each order below faces its edge's positive direction -- the
                         // way the air is when the ground is at the edge's start, `here`.
                         // Along x: cells (x) by (y-1, y) by (z-1, z).
-                        if (here != (occupancy(ox + 3, oy + 2, oz + 2) >= 0.5f))
+                        if (here != solidAt(ox + 3, oy + 2, oz + 2))
                             quad({ox + 1, oy, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox + 1, oy, oz + 1},
                                  !here, 0, {ox, oy, oz});
                         // Along y: (x-1, x) by (y) by (z-1, z); this order faces down.
-                        if (here != (occupancy(ox + 2, oy + 3, oz + 2) >= 0.5f))
+                        if (here != solidAt(ox + 2, oy + 3, oz + 2))
                             quad({ox, oy + 1, oz}, {ox + 1, oy + 1, oz}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
                                  here, 1, {ox, oy, oz});
                         // Along z: (x-1, x) by (y-1, y) by (z).
-                        if (here != (occupancy(ox + 2, oy + 2, oz + 3) >= 0.5f))
+                        if (here != solidAt(ox + 2, oy + 2, oz + 3))
                             quad({ox, oy, oz + 1}, {ox + 1, oy, oz + 1}, {ox + 1, oy + 1, oz + 1}, {ox, oy + 1, oz + 1},
                                  !here, 2, {ox, oy, oz});
                     }
@@ -2533,6 +2546,7 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
     }
     out.morphs = std::move(morphs);
     out.morphTags = std::move(morphTags);
+
     return out;
 }
 

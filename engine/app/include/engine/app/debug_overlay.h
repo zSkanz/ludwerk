@@ -95,6 +95,16 @@ struct RenderCounters
     core::u32 foliageTiles = 0;
     core::u32 foliageInstances = 0;
     core::u32 foliageGrown = 0;
+    // **How long a terrain edit takes to be seen** (`TerrainLoader::
+    // editLatency`): the last one and the worst of the last sixty-four, in
+    // milliseconds and in frames drawn meanwhile with the ground as it was.
+    // `terrainEdits` is how many have been measured: none, and the row is not
+    // shown.
+    core::u64 terrainEdits = 0;
+    double terrainEditMs = 0.0;
+    core::u32 terrainEditFrames = 0;
+    double terrainEditWorstMs = 0.0;
+    core::u32 terrainEditWorstFrames = 0;
 };
 
 enum class Shell

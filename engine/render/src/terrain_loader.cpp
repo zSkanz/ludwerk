@@ -34,6 +34,23 @@ constexpr u64 EvictAfterFrames = 180;
 // that keeps a brush the size of the world from stalling one frame for all of
 // it; the rest follow in the next.
 constexpr u32 MaxEditBuildsPerSync = 64;
+// **An edit of at most this many nodes is built in the frame that finds it**
+// (the owner: "everything in the terrain editor feels delayed"). A brush
+// stamp changes a node and the eight round it, two rows of them on a seam:
+// built off the main thread and put up six a frame, that was three frames
+// before the ground under the brush moved. Built here, on every worker, it is
+// none. More than this -- a brush the size of a hill, a script rewriting a
+// field -- is built off the main thread as before: a frame is not held for it.
+constexpr usize MaxEditBuildsInFrame = 24;
+// **And of at most this much ground**, counted in finest nodes: a node a
+// level coarser is four times the ground to gather and mesh. Sixteen is the
+// nine nodes round a brush close up, or four a level out, or one two levels
+// out. A count, never a clock.
+constexpr u32 MaxEditGroundInFrame = 16;
+// **An edit built off the main thread goes up this many meshes a frame**, not
+// `UploadsPerSync`: none of it is drawn until all of it is up, and at six a
+// frame a brush stamp of ten nodes was a frame late for that alone.
+constexpr usize EditUploadsPerSync = 24;
 // **How many meshes built off the main thread go up in one frame** (TA14): an
 // upload is the one part of a build the frame pays for, and a batch of sixty
 // at once was a hitch of its own. A count, never a clock.
@@ -879,6 +896,12 @@ struct TerrainLoader::Batch
     std::vector<Item> items;
     std::vector<jobs::JobHandle> lanes;
     u32 laneCount = 1;
+    // Whether a node's build also gathers the surfaces its seams would read
+    // at every coarser level. Off the main thread it does, so a later change
+    // of level only meshes; a batch a frame is waiting on does not.
+    bool seamsAhead = true;
+    // Whether it holds a node rebuilt for an edit: somebody is watching it.
+    bool edit = false;
     // The next to put up: a batch goes up over a few frames, a few meshes a
     // frame (`UploadsPerSync`).
     usize next = 0;
@@ -908,7 +931,7 @@ struct TerrainLoader::Batch
             // **And the surfaces its seams would read**, at every coarser
             // level: when the levels beside it change, the rebuild that must
             // happen in that frame then only meshes, and reads no voxel.
-            for (u32 level = item.key.level + 1; level <= TerrainTopLevel; ++level) {
+            for (u32 level = item.key.level + 1; seamsAhead && level <= TerrainTopLevel; ++level) {
                 const auto band = static_cast<core::u8>(level);
                 wants.clear();
                 missingTerrainSurfaces(*item.field, item.key,
@@ -1026,12 +1049,33 @@ u32 TerrainLoader::integrate(rhi::IDevice& device, rhi::ICmdList& cmd, MeshCache
         if (putUp == m_shown.end())
             putUp =
                 m_shown.insert(m_shown.end(), Shown{item.world, item.terrain, item.field, item.revision, item.edits});
+        // **Never back**: a batch built off the main thread from older ground
+        // can finish after an edit built in its own frame has gone up.
+        if (item.revision < putUp->revision)
+            continue;
         putUp->field = item.field;
         putUp->revision = item.revision;
         putUp->edits = item.edits;
     }
     batch.reset();
     return count;
+}
+
+TerrainLoader::EditLatency TerrainLoader::editLatency() const noexcept
+{
+    EditLatency out;
+    out.edits = m_editCount;
+    if (m_editCount == 0)
+        return out;
+    const usize held = static_cast<usize>(std::min<u64>(m_editCount, m_editSamples.size()));
+    const auto& last = m_editSamples[static_cast<usize>((m_editCount - 1) % m_editSamples.size())];
+    out.lastMs = last.first;
+    out.lastFrames = last.second;
+    for (usize at = 0; at < held; ++at) {
+        out.worstMs = std::max(out.worstMs, m_editSamples[at].first);
+        out.worstFrames = std::max(out.worstFrames, m_editSamples[at].second);
+    }
+    return out;
 }
 
 TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat4& projection, core::f32 farPlane,
@@ -1065,13 +1109,16 @@ TerrainLodSettings terrainLodFor(const TerrainLodSettings& base, const core::Mat
 u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world, core::AtomTable& atoms,
                         MeshCache& cache, MeshLibrary& library)
 {
+    // When this `sync` began: an edit built in it has taken this long.
+    const auto syncStarted = std::chrono::steady_clock::now();
     m_frame += 1;
     m_lastBuilds = 0;
     m_pending = false;
     // **A batch built off the main thread, done** (TA14): all of it goes up
     // now, before anything is chosen, so it is drawn this frame.
     if (m_batch != nullptr && batchFinished(m_batch))
-        m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0}, m_batch);
+        m_lastBuilds += integrate(device, cmd, cache, library,
+                                  m_async ? (m_batch->edit ? EditUploadsPerSync : UploadsPerSync) : ~usize{0}, m_batch);
     if (m_farBatch != nullptr && batchFinished(m_farBatch))
         m_lastBuilds += integrate(device, cmd, cache, library, m_async ? UploadsPerSync : ~usize{0}, m_farBatch);
 
@@ -1667,6 +1714,76 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
         std::unique(requests.begin(), requests.end(),
                     [](const Request& a, const Request& b) { return a.terrain == b.terrain && a.key == b.key; }),
         requests.end());
+
+    // **A small edit is built here and now** (`MaxEditBuildsInFrame`), whatever
+    // is being built off the main thread: every node of it, on every worker,
+    // put up at once and drawn in this frame.
+    if (m_async) {
+        std::vector<Request> edits;
+        for (const Request& next : requests) {
+            if (!next.rebuild)
+                continue;
+            const scene::TerrainComponent* terrain = world.terrains().find(next.terrain);
+            if (terrain == nullptr || find(&world, next.terrain, next.key) == nullptr ||
+                readsCells(terrain->field, terrain->cellSource.get(), next.key))
+                continue;
+            edits.push_back(next);
+        }
+        u32 ground = 0;
+        for (const Request& next : edits)
+            ground += 1u << (2u * std::min<u32>(next.key.level, 8u));
+        if (!edits.empty() && edits.size() <= MaxEditBuildsInFrame && ground <= MaxEditGroundInFrame) {
+            auto batch = std::make_unique<Batch>();
+            std::map<u64, std::shared_ptr<const asset::TerrainField>> snapshots;
+            for (const Request& next : edits) {
+                const scene::TerrainComponent* terrain = world.terrains().find(next.terrain);
+                Node* node = find(&world, next.terrain, next.key);
+                const u64 slot = (static_cast<u64>(next.terrain.index) << 32) | next.terrain.generation;
+                std::shared_ptr<const asset::TerrainField>& snapshot = snapshots[slot];
+                if (snapshot == nullptr)
+                    snapshot = std::make_shared<const asset::TerrainField>(terrain->field);
+                node->queued = true;
+                node->queuedSides = next.sides;
+                Batch::Item item;
+                item.world = &world;
+                item.terrain = next.terrain;
+                item.key = next.key;
+                item.sides = next.sides;
+                item.revision = terrain->fieldRevision;
+                item.edits = terrain->fieldRevision - terrain->streamedRevisions;
+                item.cellsRevision = terrain->cellSource != nullptr ? terrain->cellSource->revision() : 0;
+                item.field = snapshot;
+                item.cells = terrain->cellSource;
+                batch->items.push_back(std::move(item));
+            }
+            Batch* running = batch.get();
+            running->seamsAhead = false;
+            running->laneCount = std::clamp<u32>(jobs::workerCount(), 1u, static_cast<u32>(running->items.size()));
+            jobs::parallelFor("terrain.edit", jobs::Domain::Render, 0, running->laneCount, 1,
+                              [running](usize begin, usize end, u32) noexcept {
+                                  for (usize lane = begin; lane < end; ++lane)
+                                      running->run(static_cast<u32>(lane));
+                              });
+            m_lastBuilds += integrate(device, cmd, cache, library, ~usize{0}, batch);
+            // And drawn in this frame: chosen again, with what was built.
+            requests.clear();
+            choose(requests);
+            std::sort(requests.begin(), requests.end(), [](const Request& a, const Request& b) {
+                if (a.distance != b.distance)
+                    return a.distance < b.distance;
+                if (a.key.level != b.key.level)
+                    return a.key.level < b.key.level;
+                if (a.terrain.index != b.terrain.index)
+                    return a.terrain.index < b.terrain.index;
+                return a.key < b.key;
+            });
+            requests.erase(std::unique(requests.begin(), requests.end(),
+                                       [](const Request& a, const Request& b) {
+                                           return a.terrain == b.terrain && a.key == b.key;
+                                       }),
+                           requests.end());
+        }
+    }
     // **Which to build.** A node built before is wanted for ground or seams it
     // has no mesh for, and **every one of those goes in one batch**, up to
     // `MaxEditBuildsPerSync`: a batch goes up in one frame, so neighbouring
@@ -1699,6 +1816,8 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 continue;
             }
             count += 1;
+            if (next.rebuild && !apart)
+                batch->edit = true;
             const u64 slot = (static_cast<u64>(next.terrain.index) << 32) | next.terrain.generation;
             std::shared_ptr<const asset::TerrainField>& snapshot = snapshots[slot];
             if (snapshot == nullptr)
@@ -1739,7 +1858,11 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
                 // **A few lanes**: a quarter of the workers, at least one and
                 // at most four, so the frame's own jobs are never queued behind
                 // the ground.
-                batch->laneCount = std::clamp<u32>(jobs::workerCount() / 4u, 1u, 4u);
+                // **An edit gets half of them**, up to eight: somebody is
+                // watching the ground under a brush, and the frame's jobs are
+                // short beside a mesh.
+                batch->laneCount = batch->edit ? std::clamp<u32>(jobs::workerCount() / 2u, 1u, 8u)
+                                               : std::clamp<u32>(jobs::workerCount() / 4u, 1u, 4u);
                 batch->laneCount = std::min<u32>(batch->laneCount, static_cast<u32>(batch->items.size()));
                 Batch* running = batch.get();
                 for (u32 lane = 0; lane < running->laneCount; ++lane)
@@ -1785,6 +1908,50 @@ u32 TerrainLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::W
         }
     }
     m_pending = m_batch != nullptr || m_farBatch != nullptr || !requests.empty();
+
+    // **How long an edit takes to be seen** (`editLatency`). Stamped by the
+    // `sync` that first finds the ground edited; over when the ground put up
+    // has that edit in it, or when nothing drawn is waiting on a rebuild --
+    // an edit that changed nothing in sight.
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const bool rebuilding =
+            m_batch != nullptr ||
+            std::any_of(requests.begin(), requests.end(), [](const Request& request) { return request.rebuild; });
+        world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
+            const u64 edits = terrain.fieldRevision - terrain.streamedRevisions;
+            auto stamp = std::find_if(m_editStamps.begin(), m_editStamps.end(), [&](const EditStamp& entry) {
+                return entry.world == &world && entry.terrain == id;
+            });
+            if (stamp == m_editStamps.end()) {
+                EditStamp fresh;
+                fresh.world = &world;
+                fresh.terrain = id;
+                fresh.seen = edits;
+                m_editStamps.push_back(fresh);
+                return;
+            }
+            if (edits != stamp->seen && !stamp->pending) {
+                stamp->pending = true;
+                stamp->edits = edits;
+                stamp->at = syncStarted;
+                stamp->frame = m_frame;
+            }
+            stamp->seen = edits;
+            if (!stamp->pending)
+                return;
+            const auto shown = std::find_if(m_shown.begin(), m_shown.end(), [&](const Shown& entry) {
+                return entry.world == &world && entry.terrain == id;
+            });
+            if (!((shown != m_shown.end() && shown->edits >= stamp->edits) || !rebuilding))
+                return;
+            stamp->pending = false;
+            m_editSamples[static_cast<usize>(m_editCount % m_editSamples.size())] =
+                std::pair{std::chrono::duration<double, std::milli>(now - stamp->at).count(),
+                          static_cast<u32>(m_frame - stamp->frame)};
+            m_editCount += 1;
+        });
+    }
 
     // Nodes of this world nobody has drawn or wanted for a while, or whose
     // terrain is gone, let their meshes go.
