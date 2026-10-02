@@ -180,6 +180,14 @@ public:
     // Drops a chunk, whatever it holds.
     void removeChunk(VoxelChunkKey key);
 
+    // **A chunk and the 26 around it, as a grid of their own that shares
+    // them**: what a mesh of that chunk reads, to hand to another thread. The
+    // chunks are the same objects, not copies -- a write to this grid
+    // afterwards clones the one it touches (copy on write), so what the other
+    // thread reads never changes under it. Each chunk's digest is computed
+    // here, on the calling thread, so the reader only ever reads it.
+    [[nodiscard]] VoxelGrid around(VoxelChunkKey key) const;
+
     // Takes every chunk of `from` this grid does not already hold, SHARING it:
     // the load path of a streamed cell, on `TerrainField::shareFrom`'s terms --
     // what is here wins, and the shared reference makes the first edit clone.

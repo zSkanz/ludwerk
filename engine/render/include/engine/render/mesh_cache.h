@@ -50,6 +50,16 @@ enum class MeshUsage : core::u8
     // What geometry rebuilt every frame is -- debug draw today, procedural and
     // voxel meshing later.
     Dynamic,
+    // **Kept, and one of many of its kind**: a slice of a few large buffers
+    // the cache shares between every pooled mesh, given back when the mesh is
+    // released and handed to the next one (D449). What a block world's chunks
+    // are -- hundreds of small meshes, made and remade as the player walks.
+    //
+    // `Static` makes two GPU buffers a mesh, and making a buffer is the
+    // expensive thing here: a third of a millisecond a mesh, against fifteen
+    // microseconds to copy what goes in it. Thirty-two chunks arriving in one
+    // frame were 18 ms of buffers being made.
+    Pooled,
 };
 
 // One drawable range, mirroring `asset::Submesh` but in GPU terms. Kept
@@ -147,8 +157,9 @@ public:
                                            std::span<const asset::SkinVertex> skin,
                                            core::EngineError* outError = nullptr);
 
-    // Releases a static mesh's buffers. A dynamic handle is not released here;
-    // the ring reclaims it at the next `beginFrame`.
+    // Releases a static mesh's buffers, or gives a pooled mesh's slices back
+    // to their pages. A dynamic handle is not released here; the ring reclaims
+    // it at the next `beginFrame`.
     void release(rhi::IDevice& device, MeshHandle handle);
 
     // Retires every dynamic handle issued last frame and rewinds the ring.
@@ -206,6 +217,10 @@ public:
     // reveals nothing about whether it has been destroyed.
     [[nodiscard]] usize pendingRingReleases() const noexcept { return retiring_.size() + retired_.size(); }
 
+    // How many shared buffers the pooled meshes are in: what a test watches to
+    // see that a mesh released and one made after it did not make a buffer.
+    [[nodiscard]] usize poolPageCount() const noexcept { return vertexPages_.size() + indexPages_.size(); }
+
 private:
     struct Entry
     {
@@ -215,7 +230,43 @@ private:
         u32 generation = 0;
         bool dynamic = false;
         bool live = false;
+        // A pooled mesh: which pages its two slices are in and how long they
+        // are, for `release` to hand them back.
+        bool pooled = false;
+        u32 vertexPage = 0;
+        u32 vertexCount = 0;
+        u32 indexPage = 0;
+        u32 indexCount = 0;
     };
+
+    // **One shared buffer, and what of it is free**: ranges in elements,
+    // sorted by where they start, neighbours joined. First fit -- the meshes
+    // are small beside a page and come and go, so the holes one leaves fit
+    // the next.
+    struct PoolPage
+    {
+        rhi::BufferHandle buffer{};
+        u32 capacity = 0;
+        struct Range
+        {
+            u32 offset = 0;
+            u32 count = 0;
+        };
+        std::vector<Range> free;
+    };
+    struct PoolSlice
+    {
+        u32 page = 0;
+        u32 offset = 0;
+        bool valid = false;
+    };
+    [[nodiscard]] PoolSlice takeSlice(rhi::IDevice& device, std::vector<PoolPage>& pages, u32 count, bool vertices);
+    void giveSlice(rhi::IDevice& device, std::vector<PoolPage>& pages, u32 page, u32 offset, u32 count);
+
+    // Never erased from the middle: an entry names its page by index. A page
+    // nothing is in is destroyed and its slot kept for the next one.
+    std::vector<PoolPage> vertexPages_;
+    std::vector<PoolPage> indexPages_;
 
     [[nodiscard]] std::optional<core::EngineError> growRing(rhi::IDevice& device, u32 vertices, u32 indices);
 

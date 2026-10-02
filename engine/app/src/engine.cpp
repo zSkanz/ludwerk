@@ -5011,6 +5011,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // are shared and keyed by content: loading the game's meshes while a
             // stamp is open is what makes closing the stamp instant instead of a
             // frame of missing geometry.
+            // **A picture is of the block world, not of how far the workers
+            // had got with it** (D449): the frame a screenshot or a capture is
+            // taken from waits for every chunk, as it waits for the surface
+            // shaders, and no interactive frame does.
+            const bool pictureFrame =
+                !options.capturePath.empty() ||
+                (!options.screenshotPath.empty() &&
+                 (options.screenshotEvery != 0 || (options.frames != 0 && frame.index + 1 >= options.frames)));
             const auto loadFor = [&](scene::World& world, core::InstanceId workspace) {
                 if (renderer == nullptr || !renderer->valid())
                     return;
@@ -5116,6 +5124,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // The atom table is the world's, because the URN a tile is filed
                 // under has to be the same atom `extract` looks up.
                 (void)terrainLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
+                if (pictureFrame)
+                    voxelLoader.settleNext();
                 (void)voxelLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 (void)waterLoader.sync(*device, *cmd, world, world.atoms(), meshCache, meshLibrary);
                 // Foliage over the terrain (ADR 0116), grown here for the

@@ -781,6 +781,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A block world being built does not stall the frames that draw it**
+  (D449): chunk meshes are made on workers and swapped in together, into
+  buffers the chunks share, and a frame finds what changed without asking
+  every chunk. One column built every four ticks: 1465 of 2389 frames over
+  33 ms, to none.
+
 - **Building a block world with a fluid registered costs what it costs
   without one** (D448): a write is queued for the fluid step only where the
   step would change something, and the step takes its budget without reading

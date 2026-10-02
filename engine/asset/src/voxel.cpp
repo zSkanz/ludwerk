@@ -235,6 +235,25 @@ void VoxelGrid::removeChunk(VoxelChunkKey key)
 }
 
 // One pass, for `TerrainField::shareFrom`'s reason.
+VoxelGrid VoxelGrid::around(VoxelChunkKey key) const
+{
+    VoxelGrid out;
+    out.m_chunks.reserve(27);
+    // In key order, which is the order the list is kept in -- x first, so the
+    // three slabs wanted are one run of it.
+    const VoxelChunkKey first{key.x - 1, key.y - 1, key.z - 1};
+    for (auto entry = std::lower_bound(m_chunks.begin(), m_chunks.end(), first,
+                                       [](const auto& held, const VoxelChunkKey& probe) { return held.first < probe; });
+         entry != m_chunks.end() && entry->first.x <= key.x + 1; ++entry) {
+        const VoxelChunkKey& at = entry->first;
+        if (at.y < key.y - 1 || at.y > key.y + 1 || at.z < key.z - 1 || at.z > key.z + 1)
+            continue;
+        (void)digestOf(*entry->second);
+        out.m_chunks.push_back(*entry);
+    }
+    return out;
+}
+
 void VoxelGrid::shareFrom(const VoxelGrid& from)
 {
     shareFrom(from, VoxelGrid{});

@@ -1617,6 +1617,26 @@ is 330 MiB with the second lap 2% over the first; on lavapipe in the Linux
 container the peak is 560 MiB and the median frame 24 ms, which is why the
 frame is not what it gates.
 
+## A block world being built (the voxel-world ledger, B1)
+
+`tests/perf/blocksprint`: a viewer running at 7 blocks a second over a world
+built round it, one 16 by 16 column every four ticks and one let go behind,
+2 400 frames headless at 1280 by 720, 2026-10-02. The frame is what is
+measured; the simulation's part is the script's own building.
+
+| | Median | p95 | Worst | Over 33 ms | CPU drawing (median, p95) |
+|---|---|---|---|---|---|
+| Before (package `c10cb315`, the shipping build) | 38.9 ms | 56.0 ms | 71.6 ms | **1465 of 2389** | 30.8 ms, 43.5 ms |
+| After (`win-msvc-dev`, the GPU's debug layer on) | 5.5 ms | 11.1 ms | 19.4 ms | **0** | 2.7 ms, 3.5 ms |
+
+The after is the slower build of the two. What a batch of 32 changed chunks
+cost its frame before, measured from inside (`win-msvc-dev`): finding them 5
+to 7 ms, meshing them 1 to 3 ms in parallel, and 18 ms making two GPU buffers
+for each of their 57 meshes -- against 0.8 ms to copy what went in the
+buffers. After: a walk of the chunks' digests, a copy into a slice of a shared
+buffer, and the meshing on workers. The colliders, which were not changed:
+1.4 ms a tick at most, in 55 ticks of 2 400.
+
 ## The local gate (ADR 0148)
 
 `scripts/localgate.ps1`, the full run, on the development machine (20 logical

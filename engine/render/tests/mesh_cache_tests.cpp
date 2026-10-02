@@ -115,6 +115,99 @@ TEST_CASE_FIXTURE(DeviceFixture, "MeshCache: a released handle stops resolving, 
     cache.destroy(*device);
 }
 
+TEST_CASE_FIXTURE(DeviceFixture,
+                  "D449: pooled meshes are slices of shared buffers, and a slice given back is taken again")
+{
+    // A block world's chunks: hundreds of small meshes, made and remade as
+    // the player walks. Two GPU buffers a mesh was the cost of every one --
+    // eighteen milliseconds for a batch of thirty-two -- so they share.
+    MeshCache cache;
+    REQUIRE_FALSE(cache.create(*device).has_value());
+
+    std::vector<MeshHandle> handles;
+    for (u32 at = 0; at < 100; ++at)
+        handles.push_back(cache.create(*device, *cmd, makeMesh(40 + at, 60 + at * 3), MeshUsage::Pooled));
+    // A hundred meshes in one page of vertices and one of indices.
+    CHECK(cache.poolPageCount() == 2u);
+    CHECK(cache.staticMeshCount() == 100u);
+
+    const MeshCache::Resolved* first = cache.resolve(handles[0]);
+    const MeshCache::Resolved* second = cache.resolve(handles[1]);
+    const MeshCache::Resolved* third = cache.resolve(handles[2]);
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    REQUIRE(third != nullptr);
+    // The same buffers, each mesh after the one before.
+    CHECK(first->vertices == second->vertices);
+    CHECK(first->indices == second->indices);
+    CHECK(first->vertexOffset == 0);
+    CHECK(first->firstIndex == 0u);
+    CHECK(second->vertexOffset == 40);
+    CHECK(second->firstIndex == 60u);
+    CHECK(third->vertexOffset == 81);
+    CHECK(third->firstIndex == 123u);
+    REQUIRE(second->sections.size() == 1u);
+    CHECK(second->sections[0].indexCount == 63u);
+
+    // Given back, and the next mesh that fits takes its place: no buffer is
+    // made, and the handle that named the old one names nothing.
+    cache.release(*device, handles[1]);
+    CHECK(cache.resolve(handles[1]) == nullptr);
+    const MeshHandle again = cache.create(*device, *cmd, makeMesh(30, 45), MeshUsage::Pooled);
+    const MeshCache::Resolved* reused = cache.resolve(again);
+    REQUIRE(reused != nullptr);
+    CHECK(reused->vertexOffset == 40);
+    CHECK(reused->firstIndex == 60u);
+    CHECK(cache.poolPageCount() == 2u);
+
+    // Two neighbours given back are one hole, which a mesh the size of both
+    // fits.
+    const int hole = cache.resolve(handles[9])->vertexOffset + 49;
+    cache.release(*device, handles[10]);
+    cache.release(*device, handles[11]);
+    const MeshHandle wide = cache.create(*device, *cmd, makeMesh(50 + 51, 90 + 93), MeshUsage::Pooled);
+    REQUIRE(cache.resolve(wide) != nullptr);
+    CHECK(cache.resolve(wide)->vertexOffset == hole);
+
+    // An empty mesh is a handle that draws nothing and takes nothing.
+    const MeshHandle empty = cache.create(*device, *cmd, makeMesh(0, 0), MeshUsage::Pooled);
+    CHECK(empty.valid());
+    cache.release(*device, empty);
+
+    cache.destroy(*device);
+    CHECK(cache.poolPageCount() == 0u);
+}
+
+TEST_CASE_FIXTURE(DeviceFixture, "D449: a mesh larger than a page has one of its own, and one empty page is kept")
+{
+    MeshCache cache;
+    REQUIRE_FALSE(cache.create(*device).has_value());
+
+    const MeshHandle small = cache.create(*device, *cmd, makeMesh(100, 150), MeshUsage::Pooled);
+    CHECK(cache.poolPageCount() == 2u);
+    // Past a page of either kind: a page each, the size of the mesh.
+    const MeshHandle huge = cache.create(*device, *cmd, makeMesh(70000, 300000), MeshUsage::Pooled);
+    REQUIRE(cache.resolve(huge) != nullptr);
+    CHECK(cache.poolPageCount() == 4u);
+    CHECK(cache.resolve(huge)->vertexOffset == 0);
+    CHECK_FALSE(cache.resolve(huge)->vertices == cache.resolve(small)->vertices);
+
+    // Emptied, the big pages are the only empty ones, and are kept for the
+    // next mesh. The small ones emptied after them go: one empty page of each
+    // kind is enough.
+    cache.release(*device, huge);
+    CHECK(cache.poolPageCount() == 4u);
+    cache.release(*device, small);
+    // Still four slots, two of them holding nothing: a slot is never moved,
+    // since a mesh names its page by it.
+    CHECK(cache.poolPageCount() == 4u);
+    const MeshHandle next = cache.create(*device, *cmd, makeMesh(100, 150), MeshUsage::Pooled);
+    REQUIRE(cache.resolve(next) != nullptr);
+    CHECK(cache.poolPageCount() == 4u);
+
+    cache.destroy(*device);
+}
+
 TEST_CASE_FIXTURE(DeviceFixture, "MeshCache: dynamic meshes share one ring and are packed in order")
 {
     MeshCache cache;

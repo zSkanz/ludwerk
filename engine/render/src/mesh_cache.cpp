@@ -17,6 +17,12 @@ using core::i32;
 constexpr usize kVertexSize = sizeof(asset::Vertex);
 constexpr usize kIndexSize = sizeof(u32);
 
+// A pooled page, in elements: about three megabytes of vertices and one of
+// indices, a few hundred block chunks' worth. A mesh larger than a page gets
+// a page of its own size.
+constexpr u32 kPoolVertexPage = 65536;
+constexpr u32 kPoolIndexPage = 262144;
+
 [[nodiscard]] std::span<const std::byte> asBytes(const asset::Mesh& mesh) noexcept
 {
     return std::span<const std::byte>(reinterpret_cast<const std::byte*>(mesh.vertices.data()),
@@ -110,10 +116,99 @@ std::optional<core::EngineError> MeshCache::growRing(rhi::IDevice& device, u32 v
     return std::nullopt;
 }
 
+MeshCache::PoolSlice MeshCache::takeSlice(rhi::IDevice& device, std::vector<PoolPage>& pages, u32 count, bool vertices)
+{
+    for (u32 at = 0; at < pages.size(); ++at) {
+        PoolPage& page = pages[at];
+        if (!page.buffer.valid())
+            continue;
+        for (usize range = 0; range < page.free.size(); ++range) {
+            if (page.free[range].count < count)
+                continue;
+            const u32 offset = page.free[range].offset;
+            page.free[range].offset += count;
+            page.free[range].count -= count;
+            if (page.free[range].count == 0)
+                page.free.erase(page.free.begin() + static_cast<std::ptrdiff_t>(range));
+            return PoolSlice{at, offset, true};
+        }
+    }
+
+    // No page has the room: one more, in the first slot a destroyed page left.
+    const u32 capacity = std::max(count, vertices ? kPoolVertexPage : kPoolIndexPage);
+    const rhi::BufferHandle buffer = device.createBuffer({
+        .usage = vertices ? rhi::BufferUsage::Vertex : rhi::BufferUsage::Index,
+        .sizeBytes = static_cast<u32>(capacity * (vertices ? kVertexSize : kIndexSize)),
+        .debugName = vertices ? "mesh-pool-vertices" : "mesh-pool-indices",
+    });
+    if (!buffer.valid())
+        return {};
+    u32 slot = static_cast<u32>(pages.size());
+    for (u32 at = 0; at < pages.size(); ++at) {
+        if (!pages[at].buffer.valid()) {
+            slot = at;
+            break;
+        }
+    }
+    if (slot == pages.size())
+        pages.emplace_back();
+    PoolPage& page = pages[slot];
+    page.buffer = buffer;
+    page.capacity = capacity;
+    page.free.clear();
+    if (capacity > count)
+        page.free.push_back({count, capacity - count});
+    return PoolSlice{slot, 0, true};
+}
+
+void MeshCache::giveSlice(rhi::IDevice& device, std::vector<PoolPage>& pages, u32 pageIndex, u32 offset, u32 count)
+{
+    if (pageIndex >= pages.size() || count == 0)
+        return;
+    PoolPage& page = pages[pageIndex];
+    const auto after = std::lower_bound(page.free.begin(), page.free.end(), offset,
+                                        [](const PoolPage::Range& range, u32 at) { return range.offset < at; });
+    const auto placed = page.free.insert(after, PoolPage::Range{offset, count});
+    // Joined with the free range after it, then with the one before.
+    if (const auto next = placed + 1; next != page.free.end() && placed->offset + placed->count == next->offset) {
+        placed->count += next->count;
+        page.free.erase(next);
+    }
+    if (placed != page.free.begin()) {
+        const auto before = placed - 1;
+        if (before->offset + before->count == placed->offset) {
+            before->count += placed->count;
+            page.free.erase(placed);
+        }
+    }
+
+    // **A page nothing is in goes back, unless it is the last one empty**: a
+    // world left behind gives its memory up, and a player walking does not
+    // make and destroy a page at every chunk border.
+    if (page.free.size() != 1 || page.free.front().count != page.capacity)
+        return;
+    const bool another = std::any_of(pages.begin(), pages.end(), [&](const PoolPage& other) {
+        return &other != &page && other.buffer.valid() && other.free.size() == 1 &&
+               other.free.front().count == other.capacity;
+    });
+    if (!another)
+        return;
+    device.destroy(page.buffer);
+    page = PoolPage{};
+}
+
 void MeshCache::destroy(rhi::IDevice& device)
 {
+    for (std::vector<PoolPage>* pages : {&vertexPages_, &indexPages_}) {
+        for (PoolPage& page : *pages) {
+            if (page.buffer.valid())
+                device.destroy(page.buffer);
+        }
+        pages->clear();
+    }
     for (Entry& entry : entries_) {
-        if (entry.live && !entry.dynamic) {
+        // A pooled mesh's buffers are the pages', gone above.
+        if (entry.live && !entry.dynamic && !entry.pooled) {
             device.destroy(entry.resolved.vertices);
             device.destroy(entry.resolved.indices);
             if (entry.resolved.skin.valid())
@@ -219,8 +314,33 @@ MeshHandle MeshCache::create(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
 
     Resolved resolved;
     resolved.bounds = mesh.bounds;
+    PoolSlice vertexSlice;
+    PoolSlice indexSlice;
 
-    if (usage == MeshUsage::Static) {
+    if (usage == MeshUsage::Pooled) {
+        // A slice of a shared page each, and a copy into it: no buffer is made
+        // unless every page is full. An empty mesh takes nothing.
+        if (vertexCount > 0) {
+            vertexSlice = takeSlice(device, vertexPages_, vertexCount, true);
+            indexSlice =
+                vertexSlice.valid ? takeSlice(device, indexPages_, std::max(indexCount, 1u), false) : PoolSlice{};
+            if (!vertexSlice.valid || !indexSlice.valid) {
+                if (vertexSlice.valid)
+                    giveSlice(device, vertexPages_, vertexSlice.page, vertexSlice.offset, vertexCount);
+                if (outError != nullptr)
+                    *outError = core::makeError(ENG_TR("render.err.mesh_buffer_failed"), {}, "pooled mesh");
+                return {};
+            }
+            resolved.vertices = vertexPages_[vertexSlice.page].buffer;
+            resolved.indices = indexPages_[indexSlice.page].buffer;
+            resolved.vertexOffset = static_cast<i32>(vertexSlice.offset);
+            resolved.firstIndex = indexSlice.offset;
+            cmd.upload(resolved.vertices, asBytes(mesh), static_cast<u32>(vertexSlice.offset * kVertexSize));
+            if (indexCount > 0)
+                cmd.upload(resolved.indices, indexBytes(mesh), static_cast<u32>(indexSlice.offset * kIndexSize));
+        }
+    }
+    else if (usage == MeshUsage::Static) {
         // An empty mesh still gets a handle: a generator that produced nothing
         // this frame is not an error, and the alternative is every caller
         // branching on emptiness before it can draw.
@@ -292,6 +412,11 @@ MeshHandle MeshCache::create(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
     ++entry.generation;
     entry.dynamic = usage == MeshUsage::Dynamic;
     entry.live = true;
+    entry.pooled = usage == MeshUsage::Pooled;
+    entry.vertexPage = vertexSlice.page;
+    entry.vertexCount = vertexSlice.valid ? vertexCount : 0;
+    entry.indexPage = indexSlice.page;
+    entry.indexCount = indexSlice.valid ? std::max(indexCount, 1u) : 0;
 
     entry.sections.clear();
     entry.sections.reserve(mesh.submeshes.size());
@@ -331,12 +456,25 @@ void MeshCache::release(rhi::IDevice& device, MeshHandle handle)
     if (!entry.live || entry.generation != handle.generation || entry.dynamic)
         return;
 
-    if (entry.resolved.vertices.valid())
-        device.destroy(entry.resolved.vertices);
-    if (entry.resolved.indices.valid())
-        device.destroy(entry.resolved.indices);
-    if (entry.resolved.skin.valid())
-        device.destroy(entry.resolved.skin);
+    if (entry.pooled) {
+        // Its slices go back to their pages, for the next mesh.
+        if (entry.vertexCount > 0)
+            giveSlice(device, vertexPages_, entry.vertexPage, static_cast<u32>(entry.resolved.vertexOffset),
+                      entry.vertexCount);
+        if (entry.indexCount > 0)
+            giveSlice(device, indexPages_, entry.indexPage, entry.resolved.firstIndex, entry.indexCount);
+        entry.pooled = false;
+        entry.vertexCount = 0;
+        entry.indexCount = 0;
+    }
+    else {
+        if (entry.resolved.vertices.valid())
+            device.destroy(entry.resolved.vertices);
+        if (entry.resolved.indices.valid())
+            device.destroy(entry.resolved.indices);
+        if (entry.resolved.skin.valid())
+            device.destroy(entry.resolved.skin);
+    }
 
     entry.live = false;
     entry.sections.clear();
