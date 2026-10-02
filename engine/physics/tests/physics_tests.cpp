@@ -149,6 +149,46 @@ TEST_CASE("density decides mass, and mass decides which way a seesaw tips")
     CHECK(lightSpeed > heavySpeed * 2.0f);
 }
 
+// D472: a part says what it weighs before it has a body, from this formula --
+// so the formula and the solver must be the same number for every shape a part
+// can be, at sizes where the backend's floors bite and where they do not.
+TEST_CASE("what a solid weighs by its description is what the solver says it weighs")
+{
+    Fixture fixture;
+    const ShapeType shapes[] = {ShapeType::Box, ShapeType::Sphere, ShapeType::Capsule, ShapeType::Cylinder};
+    const core::Vec3 sizes[] = {
+        core::Vec3{2.0f, 2.0f, 2.0f}, core::Vec3{1.0f, 4.0f, 1.0f},   core::Vec3{4.0f, 1.0f, 2.0f},
+        core::Vec3{0.4f, 0.4f, 0.4f}, core::Vec3{0.001f, 3.0f, 0.5f}, core::Vec3{12.0f, 0.25f, 7.0f},
+    };
+    const f32 densities[] = {1.0f, 0.00001f, 1000.0f};
+    u64 next = 10;
+    for (const ShapeType shape : shapes) {
+        for (const core::Vec3 size : sizes) {
+            for (const f32 density : densities) {
+                BodyDesc desc;
+                desc.shape.type = shape;
+                desc.shape.size = size;
+                desc.density = density;
+                desc.motion = MotionType::Dynamic;
+                desc.transform.position = core::DVec3{static_cast<f64>(next) * 20.0, 50.0, 0.0};
+                desc.userData = next++;
+                const BodyHandle body = fixture.physics->createBody(fixture.world, desc);
+                REQUIRE(body.valid());
+                const f64 solved = static_cast<f64>(fixture.physics->bodyMassProperties(fixture.world, body).mass);
+                const f64 said = static_cast<f64>(solidMass(shape, size, density));
+                CAPTURE(static_cast<int>(shape));
+                CAPTURE(size.x);
+                CAPTURE(size.y);
+                CAPTURE(size.z);
+                CAPTURE(density);
+                CHECK(said == doctest::Approx(solved).epsilon(1.0e-4));
+            }
+        }
+    }
+    // And nothing for a shape whose volume only the solver has.
+    CHECK(solidMass(ShapeType::ConvexHull, core::Vec3{1.0f, 1.0f, 1.0f}, 1.0f) == 0.0f);
+}
+
 TEST_CASE("a ray hits the nearest queryable body and reports where")
 {
     Fixture fixture;

@@ -17,7 +17,7 @@ offers is on the base's page, which is what keeps one added member on
 |---|---|---|---|---|
 | `LineDirection` | `vector` | `vector.create(1, 0, 0)` | read/write | Line mode: the line. Its length does not matter. |
 | `LineVelocity` | `number` | `0` | read/write | Line mode: the speed held along the line, in metres a second. |
-| `MaxForce` | `number` | `10000` | read/write | The most force it may use, in newtons. |
+| `MaxForce` | `number` | `10000` | read/write | The most force it may use, in newtons, along each axis it holds a speed on: the line, the plane's two, or the three of the frame the velocity is written in. |
 | `PlaneVelocity` | `Vector2` | `Vector2.zero` | read/write | Plane mode: the speed held along each of the two, in metres a second. |
 | `PrimaryTangentAxis` | `vector` | `vector.create(1, 0, 0)` | read/write | Plane mode: one direction in the plane. |
 | `RelativeTo` | `Enum.ActuatorRelativeTo` | `Enum.ActuatorRelativeTo.World` | read/write | The frame the velocities are written in: the world's, or an attachment's -- so "forwards" follows the part as it turns. |

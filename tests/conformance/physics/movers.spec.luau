@@ -762,6 +762,29 @@ end)
 describe("What a part weighs and how it moves", function()
     afterEach(cleanUp)
 
+    for _, shape in { "Block", "Ball", "Cylinder", "Capsule", "Wedge" } do
+        it(`a {shape} says what it weighs the moment it is in the world (D472)`, function()
+            local created = Instance.new("Part")
+            created.Shape = (Enum.PartShape :: any)[shape]
+            created.Size = vector.create(1, 3, 2)
+            created.Density = 7
+            created.Position = vector.create(0, 50, 0)
+            created.Anchored = true
+            created.Parent = workspace
+            table.insert(spawned, created)
+            local atOnce = created.Mass
+            expect(atOnce > 0):ToBe(true)
+            expect(created.AssemblyMass):ToBeCloseTo(atOnce, atOnce * 1e-6)
+            task.wait(10 / 60)
+            expect(created.Mass):ToBeCloseTo(atOnce, atOnce * 1e-6)
+            -- And what it is now, not what the simulation last measured.
+            created.Density = 14
+            expect(created.Mass):ToBeCloseTo(atOnce * 2, atOnce * 1e-5)
+            created.Size = vector.create(2, 6, 4)
+            expect(created.Mass > atOnce * 4):ToBe(true)
+        end)
+    end
+
     it("has the mass its size and density say, anchored or not", function()
         local crate = part("Crate", vector.create(0, 20, 0))
         local wall = anchoredPart("Wall", vector.create(10, 20, 0))

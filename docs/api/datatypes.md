@@ -352,14 +352,18 @@ The shared, read-only handle for a material asset: `Material.load("asset://mater
 | `DoubleSided` | `boolean` | — | read/write | Whether the back faces are drawn. Leaves and cloth want this; anything solid does not. |
 | `Emissive` | `Color3` | — | read/write | Light the surface gives off on its own. It lights nothing else -- that is a `PointLight` -- it only makes this surface bright. |
 | `EmissiveMap` | `Content` | — | read/write | What the surface glows with, multiplied by `Emissive`. Colour data. |
+| `FootstepSound` | `Content` | — | read/write | The sound a foot makes on this surface: a sound's content, or empty. The engine does not play it. A game does, from `CharacterBody.FloorMaterial`, at the pace its character walks. |
+| `Friction` | `number` | — | read/write | How much a body touching this surface resists sliding. A part wearing the material collides with it unless the part's own `Friction` says otherwise, and so does the ground where a terrain draws the material. 0.3 by default -- what everything collided with before a material said anything -- and ice is slippery by being ice. |
 | `HeightMap` | `string` | — | read/write | A height image for a terrain layer, white high: where two layers meet, the higher one shows through. Read only by a terrain. |
 | `HexTiling` | `boolean` | — | read/write | Whether a terrain layer's textures are laid on a hexagonal grid of cells, each offset and turned at random with their borders blended -- for a photograph, whose repeat shows most. Three reads of each texture instead of one; off by default; read only by a terrain. |
 | `MetallicRoughnessMap` | `Content` | — | read/write | Occlusion, roughness and metalness in one image's R, G and B -- glTF's packing, and one property because they are one file. Linear data, not colour. |
 | `Metalness` | `number` | — | read/write | 0 is a dielectric -- plastic, stone, wood -- and 1 is bare metal. |
 | `NormalMap` | `Content` | — | read/write | A tangent-space normal map. Linear data, not colour. |
 | `NormalScale` | `number` | — | read/write | Scales the sampled normal's XY. One is the map as authored; zero is a flat surface. |
+| `Restitution` | `number` | — | read/write | How much of its speed a body keeps when it bounces off this surface, from 0 (it lands dead) to 1. 0 by default. |
 | `Roughness` | `number` | — | read/write | 0 is a mirror and 1 is chalk. The default is 0.7, what an untextured building block looks like. |
 | `Source` | `Content` | — | read-only | The material asset this handle is, or the asset a clone was copied from -- a clone of a clone included. Always an asset's `Content`: a clone has nothing else to be named by. |
+| `Tags` | `{ string }` | — | read/write | Words a game reads off a surface -- "slippery", "metal", "lava" -- in the order the material wrote them. A fresh table each time it is read. |
 | `TileSize` | `number` | — | read/write | How big one repeat of the textures is on a part's faces, in metres: a face shows as many repeats as it is long, so a long, thin slab has the texture at one scale on its top and its edges. 0 stretches each texture over the whole face. A `MeshPart` keeps its file's own UVs. A terrain layer repeats at this size too. |
 | `TilingFarScale` | `number` | — | read/write | How many times larger the second sample of a terrain layer's textures is, blended in with distance, from 1 (none) to 32. 6 by default; read only by a terrain. |
 | `TilingVariation` | `number` | — | read/write | How much a pattern tens of metres across varies a terrain layer's colour, from 0 (none) to 1, so its repeat does not read as a grid. 0.5 by default; read only by a terrain. |
@@ -620,6 +624,7 @@ What a cast hit. Returned by `Workspace:Raycast` and `:Spherecast`, and nil when
 |---|---|---|---|---|
 | `Distance` | `number` | — | read-only | How far along the cast the hit is, in metres. The direction passed to a cast is not normalised -- its length is the range -- so this is a distance rather than a fraction. |
 | `Instance` | `BasePart` | — | read-only | The part that was hit. |
+| `Material` | `Material?` | — | read-only | What the surface is made of there: the material the part wears, or -- on a `Terrain` -- the layer the ground is DRAWN as at that point, its paint and its rules included, so snow a rule lays over rock above a height is snow. Nil for a part wearing nothing. Its `Friction`, `FootstepSound` and `Tags` are what a footstep, a skid or a bullet mark asks. |
 | `Normal` | `vector` | — | read-only | The surface normal there, pointing out of the surface. |
 | `Position` | `vector` | — | read-only | Where on it, in world space. |
 

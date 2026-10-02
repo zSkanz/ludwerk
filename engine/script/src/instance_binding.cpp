@@ -1032,6 +1032,23 @@ int methodConstraintGetTorque(lua_State* L)
     return 1;
 }
 
+// And what its own motor used, which is not what it bore.
+int methodConstraintGetMotorForce(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::ConstraintComponent* constraint = world(L).constraints().find(id);
+    lua_pushnumber(L, constraint != nullptr ? static_cast<double>(constraint->lastMotorForce) : 0.0);
+    return 1;
+}
+
+int methodConstraintGetMotorTorque(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::ConstraintComponent* constraint = world(L).constraints().find(id);
+    lua_pushnumber(L, constraint != nullptr ? static_cast<double>(constraint->lastMotorTorque) : 0.0);
+    return 1;
+}
+
 // --- Where it is drawn (ADR 0136) ------------------------------------------------
 
 // **This frame's drawn place in a render phase; the simulated one anywhere
@@ -2561,6 +2578,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
     {"Constraint", "GetForce", methodConstraintGetForce},
     {"Constraint", "GetTorque", methodConstraintGetTorque},
+    {"Constraint", "GetMotorForce", methodConstraintGetMotorForce},
+    {"Constraint", "GetMotorTorque", methodConstraintGetMotorTorque},
     {"Water", "GetHeightAt", methodWaterGetHeightAt},
     {"Water", "GetNormalAt", methodWaterGetNormalAt},
     {"Water", "Carve", methodWaterCarve},

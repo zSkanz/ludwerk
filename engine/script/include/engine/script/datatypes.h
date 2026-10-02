@@ -78,7 +78,7 @@ struct RaycastQuery
 // Built here rather than in the caller so that `RaycastResult`'s payload stays
 // private to this file, the way every other datatype's does.
 void pushRaycastResult(lua_State* L, core::InstanceId instance, core::DVec3 position, core::Vec3 normal,
-                       core::f32 distance);
+                       core::f32 distance, core::NameAtom material = {}, core::u32 materialClone = 0);
 void pushRaycastResult2D(lua_State* L, core::InstanceId instance, core::Vec2 position, core::Vec2 normal,
                          core::f64 distance);
 

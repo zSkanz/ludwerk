@@ -1497,6 +1497,11 @@ struct RaycastResultData
     core::DVec3 position;
     Vec3 normal{0.0f, 1.0f, 0.0f};
     float distance = 0.0f;
+    // What the surface is (ADR 0117): the material's name as an atom and the
+    // runtime copy's id, so the payload stays one a tag needs no destructor
+    // for. Invalid is nothing.
+    core::NameAtom material;
+    core::u32 materialClone = 0;
 };
 
 struct RaycastResult2DData
@@ -1609,6 +1614,17 @@ int raycastResultGetDistance(lua_State* L)
     return 1;
 }
 
+int raycastResultGetMaterial(lua_State* L)
+{
+    const RaycastResultData& self = checkTagged<RaycastResultData>(L, 1, UserdataTag::RaycastResult);
+    if (!self.material.valid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    pushMaterial(L, scene::MaterialRef{std::string(context(L).world->atoms().text(self.material)), self.materialClone});
+    return 1;
+}
+
 int raycastResult2DGetInstance(lua_State* L)
 {
     pushInstance(L, checkTagged<RaycastResult2DData>(L, 1, UserdataTag::RaycastResult2D).instance);
@@ -1649,6 +1665,7 @@ void registerQueryTypes(lua_State* L, VmContext& ctx, core::AtomTable& atoms)
     addMember(resultGetters, atoms, "Position", raycastResultGetPosition);
     addMember(resultGetters, atoms, "Normal", raycastResultGetNormal);
     addMember(resultGetters, atoms, "Distance", raycastResultGetDistance);
+    addMember(resultGetters, atoms, "Material", raycastResultGetMaterial);
     installTagMetatable(L, UserdataTag::RaycastResult, nullptr, nullptr);
 
     MemberTable& result2DGetters = ctx.getters[static_cast<usize>(UserdataTag::RaycastResult2D)];
@@ -1750,11 +1767,12 @@ RaycastQuery checkRaycastParams(lua_State* L, int index)
     return RaycastQuery{self.filter, self.mode, self.collisionGroup};
 }
 
-void pushRaycastResult(lua_State* L, core::InstanceId instance, core::DVec3 position, Vec3 normal, float distance)
+void pushRaycastResult(lua_State* L, core::InstanceId instance, core::DVec3 position, Vec3 normal, float distance,
+                       core::NameAtom material, core::u32 materialClone)
 {
     void* memory =
         lua_newuserdatataggedwithmetatable(L, sizeof(RaycastResultData), static_cast<int>(UserdataTag::RaycastResult));
-    new (memory) RaycastResultData{instance, position, normal, distance};
+    new (memory) RaycastResultData{instance, position, normal, distance, material, materialClone};
 }
 
 void pushRaycastResult2D(lua_State* L, core::InstanceId instance, core::Vec2 position, core::Vec2 normal,

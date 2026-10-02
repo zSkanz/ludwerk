@@ -321,6 +321,17 @@ local jumpSound = oneShot("Jump", 0.18, 1.7)
 local landSound = oneShot("Land", 0.16, 0.55)
 local recoverSound = oneShot("Recover", 0.3, 0.8)
 
+-- **Footsteps** (ADR 0117): what the ground is, heard. Every stride the
+-- character asks what it is standing on -- `FloorMaterial`, which on terrain
+-- is the layer the ground is DRAWN as there, the rules' snow and rock
+-- included -- and plays the sound that material names. The eight ground
+-- materials under `content/materials/terrain` each name one of three: soft
+-- for grass, sand, mud and snow, hard for the rock, and ice.
+local stepSound = oneShot("Step", 0.22, 1)
+-- Metres of ground to a step, and how much of one has been walked.
+local StrideLength = 2.4
+local stride = 0
+
 -- --- Input -------------------------------------------------------------------
 --
 -- Movement and jump on the SimClock, where a replay can see them; the camera on
@@ -579,6 +590,23 @@ RunService.Heartbeat:Connect(function(dt: number)
     if JumpAction:GetState() :: boolean and character.Grounded then
         jumpSound:Play()
         character:Jump()
+    end
+
+    -- A step for every stride of ground covered, in the sound of what is
+    -- under it. Standing still puts the next one half a stride away, so the
+    -- first step of a walk is not a whole stride late.
+    if character.Grounded and vector.magnitude(move) > 0.001 then
+        stride += character.WalkSpeed * dt
+        if stride >= StrideLength then
+            stride -= StrideLength
+            local floor = character.FloorMaterial
+            if floor ~= nil and floor.FootstepSound ~= "" then
+                stepSound.Content = floor.FootstepSound
+                stepSound:Play()
+            end
+        end
+    else
+        stride = StrideLength * 0.5
     end
 
     if not character.Grounded then

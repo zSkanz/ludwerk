@@ -1049,6 +1049,46 @@ TEST_CASE("a restore moves a terrain's revisions on, and its package is what the
     CHECK(terrain->shipped.findChunk(ChunkKey{3, 0, 0}) == nullptr);
 }
 
+// ADR 0117: what the ground is made of decides what slides on it, what a ray
+// reports and what a foot stands on -- so it is world state, where there is
+// any. A terrain with no layers and no rules hashes as it did before either
+// could be observed.
+TEST_CASE("a terrain's layers and rules are in the world hash, and their absence is not")
+{
+    Fixture fixture;
+    const InstanceId ground = fixture.folder("Terrain");
+    engine::scene::TerrainComponent component;
+    component.field = engine::asset::TerrainField(engine::asset::FieldSettings{});
+    (void)fixture.world.terrains().add(ground, std::move(component));
+    const auto bare = fixture.world.worldHash();
+
+    engine::scene::TerrainComponent* terrain = fixture.world.terrains().find(ground);
+    terrain->layers = {"engine://terrain/grass", "engine://terrain/ice"};
+    const auto layered = fixture.world.worldHash();
+    CHECK(layered != bare);
+
+    terrain->layers[1] = "engine://terrain/snow";
+    CHECK(fixture.world.worldHash() != layered);
+    terrain->layers[1] = "engine://terrain/ice";
+    CHECK(fixture.world.worldHash() == layered);
+
+    engine::asset::TerrainRule rule;
+    rule.material = 2;
+    rule.heightMin = 20.0f;
+    terrain->rules.push_back(rule);
+    const auto ruled = fixture.world.worldHash();
+    CHECK(ruled != layered);
+    terrain->rules[0].heightMin = 21.0f;
+    CHECK(fixture.world.worldHash() != ruled);
+    terrain->rules[0].heightMin = 20.0f;
+    terrain->rules[0].appliesTo = {1};
+    CHECK(fixture.world.worldHash() != ruled);
+
+    terrain->rules.clear();
+    terrain->layers.clear();
+    CHECK(fixture.world.worldHash() == bare);
+}
+
 TEST_CASE("the world hash reads a player's intents by action name, not by atom number (D304)")
 {
     // The same intent in two worlds whose atom tables were filled in another

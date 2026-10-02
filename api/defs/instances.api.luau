@@ -1003,8 +1003,8 @@ local Classes: { Schema.Class } = {
                 Parameters = {},
                 Returns = { "number" },
                 Doc = "The force the joint carried over the last simulation tick to hold its two parts "
-                    .. "together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a "
-                    .. "joint that held nothing.",
+                    .. "together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover -- what it does is its "
+                    .. "motor's, and `GetMotorForce` says it -- and for a joint that held nothing.",
             },
             {
                 Name = "GetTorque",
@@ -1012,6 +1012,24 @@ local Classes: { Schema.Class } = {
                 Returns = { "number" },
                 Doc = "The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to "
                     .. "resist a turn with -- a ball joint, a rope.",
+            },
+            {
+                Name = "GetMotorForce",
+                Parameters = {},
+                Returns = { "number" },
+                Doc = "The force its own motor used over the last simulation tick, in newtons: a "
+                    .. "`PrismaticConstraint`'s actuator, an `AlignPosition`, a `LinearVelocity`. Apart from "
+                    .. "`GetForce` on purpose -- that is what the joint bore, which is what breaks it; this is how "
+                    .. "hard it worked. Zero for anything with no motor along a line.",
+            },
+            {
+                Name = "GetMotorTorque",
+                Parameters = {},
+                Returns = { "number" },
+                Doc = "The torque its own motor used over the last simulation tick, in newton-metres: a "
+                    .. "`HingeConstraint`'s or a `BallSocketConstraint`'s actuator, an `AlignOrientation`, an "
+                    .. "`AngularVelocity`. A servo holding a weight level reads the weight times its arm here, and "
+                    .. "at its `ServoMaxTorque` it is doing all it can. Zero for anything with no motor about an axis.",
             },
         } :: { Schema.Method },
         Events = {
@@ -1069,39 +1087,47 @@ local Classes: { Schema.Class } = {
                 Type = "CFrame",
                 Default = "CFrame.identity",
                 Doc = "Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. "
-                    .. "Only the rotation is read. The identity is the pose the two were joined in.",
+                    .. "Only the rotation is read. The identity is the pose the two were joined in. With the joint's "
+                    .. "X along a limb, a turn about X twists the limb and a turn about Y or Z swings it: about Y by "
+                    .. "a positive angle swings its far end towards the frame's -Z, about Z towards its +Y.",
             },
             {
                 Name = "ServoMaxTorque",
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm "
-                    .. "is pulled harder than this.",
+                Doc = "Servo: the most torque it may use, in newton-metres, about each of the joint's axes. A "
+                    .. "shoulder that holds an arm out, and gives when the arm is pulled harder than this.",
             },
             {
                 Name = "AngularResponsiveness",
                 Type = "number",
                 Default = "45",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing.",
+                Doc = "Servo: how eagerly it pulls when `Stiffness` is zero, as the natural frequency of the spring "
+                    .. "it is, in radians a second. Critically damped, so it settles without ringing, and sized for "
+                    .. "the two parts the joint holds -- about the socket, arm and all -- so the same number settles "
+                    .. "a finger and a crane alike. What hangs further down a chain is not counted: a joint that "
+                    .. "carries more than its own part takes a `Stiffness`.",
             },
             {
                 Name = "Stiffness",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
-                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
-                    .. "say both how firm and how bouncy.",
+                Doc = "The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. "
+                    .. "Zero leaves the pull to `AngularResponsiveness`; above zero this and `Damping` decide it, "
+                    .. "and one number no longer has to say both how firm and how bouncy. For what it turns weighing "
+                    .. "`I` kilogram metres squared about it, `w * w * I` settles at `w` radians a second.",
             },
             {
                 Name = "Damping",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
-                    .. "it arrives late and stays.",
+                Doc = "What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical "
+                    .. "damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia "
+                    .. "of `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.",
             },
         },
     },
@@ -1169,46 +1195,55 @@ local Classes: { Schema.Class } = {
                 Name = "TargetAngle",
                 Type = "number",
                 Default = "0",
-                Doc = "Servo: the angle it goes to, in degrees, measured as the limits are.",
+                Doc = "Servo: the angle it goes to, in DEGREES, measured as the limits are. (Speeds are in radians "
+                    .. "a second: `AngularVelocity`, `AngularSpeed`.)",
             },
             {
                 Name = "AngularSpeed",
                 Type = "number",
                 Default = "100000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Servo: the fastest it turns on the way, in radians a second.",
+                Doc = "Servo: the fastest it turns on the way, in radians a second. Far from its angle it turns at "
+                    .. "this speed; near, it is the spring.",
             },
             {
                 Name = "ServoMaxTorque",
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Servo: the most torque it may use to get there and to stay.",
+                Doc = "Servo: the most torque it may use to get there and to stay, in newton-metres. A load that "
+                    .. "asks more sags to where its weight is this much, and -- a servo at its cap being a constant "
+                    .. "torque -- swings about there until something else takes its speed away.",
             },
             {
                 Name = "AngularResponsiveness",
                 Type = "number",
                 Default = "45",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops "
-                    .. "harder.",
+                Doc = "Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the "
+                    .. "natural frequency of the spring it is, in radians a second. Critically damped: it arrives "
+                    .. "without crossing, sooner the higher this is. Sized for the two parts the hinge holds, about "
+                    .. "the hinge -- an arm a metre long counts as a metre long -- and not for what hangs further "
+                    .. "down a chain: a joint that carries more than its own part takes a `Stiffness`.",
             },
             {
                 Name = "Stiffness",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
-                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
-                    .. "say both how firm and how bouncy.",
+                Doc = "The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. "
+                    .. "Zero leaves the pull to `AngularResponsiveness`; above zero this and `Damping` decide it, "
+                    .. "and one number no longer has to say both how firm and how bouncy. For what it turns weighing "
+                    .. "`I` kilogram metres squared about it, `w * w * I` settles at `w` radians a second.",
             },
             {
                 Name = "Damping",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
-                    .. "it arrives late and stays.",
+                Doc = "What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical "
+                    .. "damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia "
+                    .. "of `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.",
             },
         },
     },
@@ -1295,39 +1330,44 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "100000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Servo: the fastest it moves on the way, in metres a second.",
+                Doc = "Servo: the fastest it moves on the way, in metres a second. Far from its place it moves at "
+                    .. "this speed; near, it is the spring.",
             },
             {
                 Name = "ServoMaxForce",
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "Servo: the most force it may use to get there and to stay. A lift that cannot raise more "
-                    .. "than this does not.",
+                Doc = "Servo: the most force it may use to get there and to stay, in newtons. A lift that cannot "
+                    .. "raise more than this does not.",
             },
             {
                 Name = "LinearResponsiveness",
                 Type = "number",
                 Default = "45",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "Servo: how eagerly it closes the last of the distance.",
+                Doc = "Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the "
+                    .. "natural frequency of the spring it is, in radians a second. Critically damped, and sized for "
+                    .. "the two parts on the rail.",
             },
             {
                 Name = "Stiffness",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
-                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
-                    .. "say both how firm and how bouncy.",
+                Doc = "The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero "
+                    .. "leaves the pull to `LinearResponsiveness`; above zero this and `Damping` decide it, and one "
+                    .. "number no longer has to say both how firm and how bouncy. For what it moves weighing `m` "
+                    .. "kilograms, `w * w * m` settles at `w` radians a second.",
             },
             {
                 Name = "Damping",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
-                    .. "it arrives late and stays.",
+                Doc = "What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping "
+                    .. "-- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` "
+                    .. "kilograms; less overshoots and rings, more arrives late and stays.",
             },
         },
     },
@@ -1544,7 +1584,8 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most force it may use, in newtons.",
+                Doc = "The most force it may use, in newtons, along each axis it holds a speed on: the line, the "
+                    .. "plane's two, or the three of the frame the velocity is written in.",
             },
             {
                 Name = "RelativeTo",
@@ -1561,8 +1602,9 @@ local Classes: { Schema.Class } = {
         Module = "scene",
         Storage = "AngularVelocity",
         Doc = "Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: "
-            .. "a fan, a coin that turns, a planet. For a wheel on an axle a `HingeConstraint` with a motor "
-            .. "is the better tool: this spins a free part.",
+            .. "a fan, a coin that turns, a planet. It is a motor the simulation solves with the joints the "
+            .. "part is in, so a hinged door it spins turns about its hinge. For a wheel on an axle a "
+            .. "`HingeConstraint` with a motor is still the better tool.",
         Properties = {
             {
                 Name = "AngularVelocity",
@@ -1575,7 +1617,7 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most torque it may use, in newton-metres.",
+                Doc = "The most torque it may use, in newton-metres, about each axis of the part.",
             },
             {
                 Name = "RelativeTo",
@@ -1588,7 +1630,7 @@ local Classes: { Schema.Class } = {
                 Type = "boolean",
                 Default = "false",
                 Doc = "Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists "
-                    .. "what it is mounted on.",
+                    .. "what it is mounted on. On, the spin held is the one part's against the other's.",
             },
         },
     },
@@ -1620,27 +1662,33 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most force it may use, in newtons.",
+                Doc = "The most force it may use, in newtons, along each axis of the world (or of `Attachment1`, "
+                    .. "with `ReactionForceEnabled`).",
             },
             {
                 Name = "MaxVelocity",
                 Type = "number",
                 Default = "100000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The fastest it may bring the attachment in, in metres a second.",
+                Doc = "The fastest it may bring the attachment in, in metres a second, when `Stiffness` is zero. "
+                    .. "Far from its place it travels at this speed; near, it is the spring.",
             },
             {
                 Name = "Responsiveness",
                 Type = "number",
                 Default = "10",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "How eagerly it closes the distance. Low drifts in; high snaps.",
+                Doc = "How eagerly it closes the distance when `Stiffness` is zero, as the natural frequency of the "
+                    .. "spring it is, in radians a second: low drifts in, high snaps. Critically damped, and sized "
+                    .. "for the one part it pulls: a part with others jointed to it takes a `Stiffness` sized for "
+                    .. "all of them.",
             },
             {
                 Name = "RigidityEnabled",
                 Type = "boolean",
                 Default = "false",
-                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on force or speed.",
+                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on force or speed: "
+                    .. "a spring as stiff as a tick can show.",
             },
             {
                 Name = "ApplyAtCenterOfMass",
@@ -1662,17 +1710,19 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
-                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
-                    .. "say both how firm and how bouncy.",
+                Doc = "The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero "
+                    .. "leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number "
+                    .. "no longer has to say both how firm and how bouncy. For what it moves weighing `m` kilograms, "
+                    .. "`w * w * m` settles at `w` radians a second.",
             },
             {
                 Name = "Damping",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
-                    .. "it arrives late and stays.",
+                Doc = "What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping "
+                    .. "-- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` "
+                    .. "kilograms; less overshoots and rings, more arrives late and stays.",
             },
         },
     },
@@ -1703,27 +1753,32 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "10000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The most torque it may use, in newton-metres.",
+                Doc = "The most torque it may use, in newton-metres, about each axis of the part.",
             },
             {
                 Name = "MaxAngularVelocity",
                 Type = "number",
                 Default = "100000",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "The fastest it may turn the part, in radians a second.",
+                Doc = "The fastest it may turn the part, in radians a second, when `Stiffness` is zero. Far from "
+                    .. "its facing it turns at this speed; near, it is the spring.",
             },
             {
                 Name = "Responsiveness",
                 Type = "number",
                 Default = "10",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "How eagerly it closes the angle.",
+                Doc = "How eagerly it closes the angle when `Stiffness` is zero, as the natural frequency of the "
+                    .. "spring it is, in radians a second. Critically damped, and sized for the one part it turns "
+                    .. "about where that part balances: a part with others jointed to it -- the hips of a body -- "
+                    .. "takes a `Stiffness` sized for all of them.",
             },
             {
                 Name = "RigidityEnabled",
                 Type = "boolean",
                 Default = "false",
-                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on torque or speed.",
+                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on torque or speed: "
+                    .. "a spring as stiff as a tick can show.",
             },
             {
                 Name = "ReactionTorqueEnabled",
@@ -1737,17 +1792,19 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
-                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
-                    .. "say both how firm and how bouncy.",
+                Doc = "The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. "
+                    .. "Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one "
+                    .. "number no longer has to say both how firm and how bouncy. For what it turns weighing `I` "
+                    .. "kilogram metres squared about it, `w * w * I` settles at `w` radians a second.",
             },
             {
                 Name = "Damping",
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
-                    .. "it arrives late and stays.",
+                Doc = "What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical "
+                    .. "damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia "
+                    .. "of `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.",
             },
         },
     },
@@ -2490,6 +2547,15 @@ local Classes: { Schema.Class } = {
                 ReadOnly = true,
                 Doc = "Whether the character is standing on something walkable as of the last simulation tick. "
                     .. "The same fact `State` reports, as the boolean a jump check actually wants.",
+            },
+            {
+                Name = "FloorMaterial",
+                Type = "Material?",
+                ReadOnly = true,
+                Doc = "What it is standing on: the material of the part under it, or the layer the terrain is "
+                    .. "drawn as under its feet -- what `RaycastResult.Material` would say of a ray straight "
+                    .. "down. Nil in the air, in water, and on a part wearing nothing. A footstep reads its "
+                    .. "`FootstepSound`; ice and mud are its `Friction` or its `Tags`.",
             },
             {
                 Name = "State",

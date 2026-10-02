@@ -153,6 +153,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A material is what a thing is made of** (ADR 0117): `Friction`,
+  `Restitution`, `FootstepSound` and `Tags` on a material. A part collides
+  with what it wears and a terrain with what each piece of ground is drawn as;
+  `RaycastResult.Material` says what a ray met and
+  `CharacterBody.FloorMaterial` what a character stands on. The engine's
+  ground materials are loadable (`Material.load("engine://terrain/ice")`) and
+  a part may wear one; ice and snow slide, mud grips.
+- **`Constraint:GetMotorForce()` and `GetMotorTorque()`**: what a joint's or a
+  mover's own motor used over the last tick, apart from what the joint bore.
 - **Movers and powered joints** (ADR 0127): a part turns, moves and is held in
   place by instances, with no script running each tick. `LinearVelocity`,
   `AngularVelocity`, `AlignPosition`, `AlignOrientation`, `VectorForce`,
@@ -859,6 +868,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A servo settles** (D470): a hinge's and a ball socket's servo is a
+  critically damped spring at its responsiveness, in radians a second, whatever
+  the arm it turns -- it swung round its target for seconds. Far from the
+  target it travels at its speed.
+- **A mover is solved with the joints its body is in** (D471):
+  `AlignPosition`, `AlignOrientation`, `LinearVelocity` and `AngularVelocity`
+  are motors in the solver, so an upright on the hips of a jointed body turns
+  the body. `Stiffness` and `Damping` have units, and every property says
+  them. A cap is now along each axis.
+- **`BasePart.Mass` answers at once** (D472): from the part's shape, size and
+  density, the moment it is in the world and the moment either changes. It was
+  zero until the simulation had stepped.
+- **A joint locked by equal limits reports no error** (D473).
 - **A block world being built does not stall the frames that draw it**
   (D449): chunk meshes are made on workers and swapped in together, into
   buffers the chunks share, and a frame finds what changed without asking

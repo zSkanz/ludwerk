@@ -63,6 +63,13 @@ enum class MaterialField : core::u8
     TilingVariation,
     TilingFarScale,
     HexTiling,
+    // **How the surface behaves, not how it looks** (ADR 0117): what a body
+    // touching it slides and bounces by, the sound a foot makes on it, and
+    // words a game reads.
+    Friction,
+    Restitution,
+    FootstepSound,
+    Tags,
     Count,
 };
 
@@ -188,6 +195,16 @@ struct MaterialProperties
     core::f32 tilingVariation = 0.5f;
     core::f32 tilingFarScale = 6.0f;
     bool hexTiling = false;
+
+    // **What it is to touch** (ADR 0117). A part wearing the material collides
+    // with these, and so does a terrain's triangle of the layer; the defaults
+    // are what everything collided with before a material said anything.
+    core::f32 friction = 0.3f;
+    core::f32 restitution = 0.0f;
+    // A sound's URN, or empty: a game plays it; the engine does not.
+    std::string footstepSound;
+    // Words a game reads -- "slippery", "metal" -- in the order written.
+    std::vector<std::string> tags;
 
     // **The surface shader** (ADR 0091): a URN, or empty for the built-in
     // surface. `readsSceneColor` asks the renderer for what is behind.

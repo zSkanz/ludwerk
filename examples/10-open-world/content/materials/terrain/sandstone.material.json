@@ -3,5 +3,7 @@
   "version": 1,
   "parent": "engine://terrain/sandstone",
   "instanceParameters": [],
-  "properties": {}
+  "properties": {
+    "FootstepSound": "asset://sounds/step_hard.wav"
+  }
 }

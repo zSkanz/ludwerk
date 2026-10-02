@@ -13,6 +13,7 @@
 #include "engine/core/finite.h"
 #include "engine/physics/types.h"
 #include "engine/scene/components.h"
+#include "engine/scene/physics_sync.h"
 #include "engine/scene/world.h"
 
 namespace engine::scene::native {
@@ -1815,12 +1816,20 @@ bool setCharacterBodyFlying(World& world, core::InstanceId id, const Value& valu
     return true;
 }
 
+Value getCharacterBodyFloorMaterial(const World& world, core::InstanceId id)
+{
+    const MaterialRef floor = floorMaterial(world, id);
+    return floor.source.empty() ? Value{} : Value{floor};
+}
+
 // --- BasePart ------------------------------------------------------------------
 
 Value getBasePartMass(const World& world, core::InstanceId id)
 {
-    const RigidBodyComponent* body = world.rigidBodies().find(id);
-    return body == nullptr ? Value{} : Value{static_cast<f64>(body->mass)};
+    // From what the part is, not from what the simulation last measured: a
+    // part made this instant weighs what it will weigh, and one just resized
+    // weighs what it does now (D472).
+    return world.rigidBodies().find(id) == nullptr ? Value{} : Value{static_cast<f64>(partMass(world, id))};
 }
 
 // **Everything rigidly joined, added up**: a walk over the welds and the fixed
@@ -1860,8 +1869,7 @@ Value getBasePartAssemblyMass(const World& world, core::InstanceId id)
     }
     f64 total = 0.0;
     for (const core::InstanceId part : joined) {
-        if (const RigidBodyComponent* body = world.rigidBodies().find(part); body != nullptr)
-            total += static_cast<f64>(body->mass);
+        total += static_cast<f64>(partMass(world, part));
     }
     return Value{total};
 }

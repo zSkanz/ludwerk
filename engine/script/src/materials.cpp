@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "class_descriptors.gen.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/core/i18n.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
@@ -76,8 +77,12 @@ int materialLoad(lua_State* L)
     const std::string content(text, length);
     // **Raises for a `Content` that names no material**, because a typo that
     // quietly drew the default would be found by looking at the screen.
+    //
+    // The engine's own terrain materials are materials too (ADR 0117): what a
+    // ray says the ground is can be compared with one loaded by its name.
     asset::MaterialLibrary* library = world(L).materialLibrary();
-    if (!asset::isMaterialPath(content) || library == nullptr || !library->exists(content)) {
+    if (!asset::isEngineMaterial(content) &&
+        (!asset::isMaterialPath(content) || library == nullptr || !library->exists(content))) {
         const core::I18nArg args[] = {{"content", std::string_view{content}}};
         raise(L, ENG_TR("script.err.material_not_found"), args);
     }
@@ -345,7 +350,12 @@ void registerMaterialTypes(lua_State* L)
     addField<MaterialField::TilingVariation>(getters, setters, atoms);
     addField<MaterialField::TilingFarScale>(getters, setters, atoms);
     addField<MaterialField::HexTiling>(getters, setters, atoms);
-    static_assert(asset::MaterialFieldCount == 20, "a new material field is bound here too");
+    // What the surface is to touch (ADR 0117).
+    addField<MaterialField::Friction>(getters, setters, atoms);
+    addField<MaterialField::Restitution>(getters, setters, atoms);
+    addField<MaterialField::FootstepSound>(getters, setters, atoms);
+    addField<MaterialField::Tags>(getters, setters, atoms);
+    static_assert(asset::MaterialFieldCount == 24, "a new material field is bound here too");
 
     MemberTable& methods = ctx.methods[static_cast<usize>(UserdataTag::Material)];
     addMember(methods, atoms, "Clone", materialClone);
@@ -437,6 +447,25 @@ void pushMaterialField(lua_State* L, MaterialField field, const asset::MaterialP
     case MaterialField::HexTiling:
         lua_pushboolean(L, values.hexTiling);
         return;
+    case MaterialField::Friction:
+        lua_pushnumber(L, static_cast<double>(values.friction));
+        return;
+    case MaterialField::Restitution:
+        lua_pushnumber(L, static_cast<double>(values.restitution));
+        return;
+    case MaterialField::FootstepSound:
+        lua_pushlstring(L, values.footstepSound.data(), values.footstepSound.size());
+        return;
+    case MaterialField::Tags: {
+        // A fresh table each read: what a script does to it is the script's.
+        lua_createtable(L, static_cast<int>(values.tags.size()), 0);
+        int position = 1;
+        for (const std::string& word : values.tags) {
+            lua_pushlstring(L, word.data(), word.size());
+            lua_rawseti(L, -2, position++);
+        }
+        return;
+    }
     case MaterialField::Count:
         break;
     }
@@ -532,6 +561,33 @@ bool readMaterialParameter(lua_State* L, int index, MaterialField field, asset::
             return false;
         into.hexTiling = lua_toboolean(L, index) != 0;
         return true;
+    case MaterialField::Friction:
+        return number(into.friction) && into.friction >= 0.0f;
+    case MaterialField::Restitution:
+        return number(into.restitution) && into.restitution >= 0.0f && into.restitution <= 1.0f;
+    case MaterialField::FootstepSound:
+        return map(into.footstepSound);
+    case MaterialField::Tags: {
+        if (!lua_istable(L, index))
+            return false;
+        std::vector<std::string> words;
+        const int count = lua_objlen(L, index);
+        if (count > 256)
+            return false;
+        for (int at = 1; at <= count; ++at) {
+            lua_rawgeti(L, index, at);
+            if (lua_type(L, -1) != LUA_TSTRING) {
+                lua_pop(L, 1);
+                return false;
+            }
+            size_t length = 0;
+            const char* text = lua_tolstring(L, -1, &length);
+            words.emplace_back(text, length);
+            lua_pop(L, 1);
+        }
+        into.tags = std::move(words);
+        return true;
+    }
     case MaterialField::Count:
         break;
     }

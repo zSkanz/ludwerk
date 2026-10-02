@@ -32,7 +32,15 @@ offers is on the base's page, which is what keeps one added member on
 
 ### `GetForce(): number`
 
-The force the joint carried over the last simulation tick to hold its two parts together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a joint that held nothing.
+The force the joint carried over the last simulation tick to hold its two parts together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover -- what it does is its motor's, and `GetMotorForce` says it -- and for a joint that held nothing.
+
+### `GetMotorForce(): number`
+
+The force its own motor used over the last simulation tick, in newtons: a `PrismaticConstraint`'s actuator, an `AlignPosition`, a `LinearVelocity`. Apart from `GetForce` on purpose -- that is what the joint bore, which is what breaks it; this is how hard it worked. Zero for anything with no motor along a line.
+
+### `GetMotorTorque(): number`
+
+The torque its own motor used over the last simulation tick, in newton-metres: a `HingeConstraint`'s or a `BallSocketConstraint`'s actuator, an `AlignOrientation`, an `AngularVelocity`. A servo holding a weight level reads the weight times its arm here, and at its `ServoMaxTorque` it is doing all it can. Zero for anything with no motor about an axis.
 
 ### `GetTorque(): number`
 

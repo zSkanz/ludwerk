@@ -96,6 +96,7 @@ what a game tunes, rather than tuning a height.
 |---|---|---|
 | `CharacterBody.Grounded` | `boolean`, read-only | Standing on something walkable as of the last tick. |
 | `CharacterBody.State` | `Enum.CharacterState`, read-only | `Grounded` or `Airborne` on foot; `Swimming`; `Flying`. |
+| `CharacterBody.FloorMaterial` | `Material?`, read-only | What it stands on: the part's material, or the layer the terrain is drawn as under its feet. Nil in the air and on a part wearing nothing. |
 | `CharacterBody.Landed` | `Signal<BasePart?>` | Fired on becoming grounded after being airborne. |
 
 On foot `Enum.CharacterState` has two answers and not three: ground too steep

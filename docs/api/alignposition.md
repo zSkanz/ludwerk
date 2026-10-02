@@ -18,12 +18,12 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `ApplyAtCenterOfMass` | `boolean` | `false` | read/write | Whether the pull is at where the part balances rather than at the attachment. Off, a pull at a corner also turns the part. |
-| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
-| `MaxForce` | `number` | `10000` | read/write | The most force it may use, in newtons. |
-| `MaxVelocity` | `number` | `100000` | read/write | The fastest it may bring the attachment in, in metres a second. |
+| `Damping` | `number` | `0` | read/write | What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` kilograms; less overshoots and rings, more arrives late and stays. |
+| `MaxForce` | `number` | `10000` | read/write | The most force it may use, in newtons, along each axis of the world (or of `Attachment1`, with `ReactionForceEnabled`). |
+| `MaxVelocity` | `number` | `100000` | read/write | The fastest it may bring the attachment in, in metres a second, when `Stiffness` is zero. Far from its place it travels at this speed; near, it is the spring. |
 | `Mode` | `Enum.PositionAlignmentMode` | `Enum.PositionAlignmentMode.OneAttachment` | read/write | Whether the target is `Position` or `Attachment1`. |
 | `Position` | `vector` | `vector.create(0, 0, 0)` | read/write | OneAttachment: the place in the world it pulls to. |
 | `ReactionForceEnabled` | `boolean` | `false` | read/write | TwoAttachment: whether the part `Attachment1` is on is pulled back by as much. Off, the target is not disturbed by what follows it; on, a hand pulling a crate is pulled by the crate. |
-| `Responsiveness` | `number` | `10` | read/write | How eagerly it closes the distance. Low drifts in; high snaps. |
-| `RigidityEnabled` | `boolean` | `false` | read/write | Whether it gets there as fast as the simulation can take it, with no cap on force or speed. |
-| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
+| `Responsiveness` | `number` | `10` | read/write | How eagerly it closes the distance when `Stiffness` is zero, as the natural frequency of the spring it is, in radians a second: low drifts in, high snaps. Critically damped, and sized for the one part it pulls: a part with others jointed to it takes a `Stiffness` sized for all of them. |
+| `RigidityEnabled` | `boolean` | `false` | read/write | Whether it gets there as fast as the simulation can take it, with no cap on force or speed: a spring as stiff as a tick can show. |
+| `Stiffness` | `number` | `0` | read/write | The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. For what it moves weighing `m` kilograms, `w * w * m` settles at `w` radians a second. |

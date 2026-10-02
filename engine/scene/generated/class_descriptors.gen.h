@@ -528,6 +528,7 @@ bool setCharacterBodyMaxSlopeAngle(World& world, core::InstanceId id, const Valu
 Value getCharacterBodyAutoStepHeight(const World& world, core::InstanceId id);
 bool setCharacterBodyAutoStepHeight(World& world, core::InstanceId id, const Value& value);
 Value getCharacterBodyGrounded(const World& world, core::InstanceId id);
+Value getCharacterBodyFloorMaterial(const World& world, core::InstanceId id);
 Value getCharacterBodyState(const World& world, core::InstanceId id);
 void attachCharacterBodyComponents(World& world, core::InstanceId id);
 void detachCharacterBodyComponents(World& world, core::InstanceId id);

@@ -16,15 +16,15 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `ActuatorType` | `Enum.ActuatorType` | `Enum.ActuatorType.None` | read/write | What the hinge does of itself: nothing, turn at a speed (`Motor`), or go to an angle and hold it (`Servo`). |
-| `AngularResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops harder. |
-| `AngularSpeed` | `number` | `100000` | read/write | Servo: the fastest it turns on the way, in radians a second. |
+| `AngularResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the natural frequency of the spring it is, in radians a second. Critically damped: it arrives without crossing, sooner the higher this is. Sized for the two parts the hinge holds, about the hinge -- an arm a metre long counts as a metre long -- and not for what hangs further down a chain: a joint that carries more than its own part takes a `Stiffness`. |
+| `AngularSpeed` | `number` | `100000` | read/write | Servo: the fastest it turns on the way, in radians a second. Far from its angle it turns at this speed; near, it is the spring. |
 | `AngularVelocity` | `number` | `0` | read/write | Motor: the speed it turns at, in radians a second, about the hinge's own X. Negative turns the other way. |
-| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
+| `Damping` | `number` | `0` | read/write | What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia of `I` kilogram metres squared; less overshoots and rings, more arrives late and stays. |
 | `LimitsEnabled` | `boolean` | `false` | read/write | Whether the range below applies. Off is a hinge that spins freely. |
 | `LowerAngle` | `number` | `-180` | read/write | How far it may turn one way, in degrees. |
 | `MotorMaxAcceleration` | `number` | `100000` | read/write | Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds up. |
 | `MotorMaxTorque` | `number` | `10000` | read/write | Motor: the most torque it may use, in newton-metres. A load heavier than this stalls it. |
-| `ServoMaxTorque` | `number` | `10000` | read/write | Servo: the most torque it may use to get there and to stay. |
-| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
-| `TargetAngle` | `number` | `0` | read/write | Servo: the angle it goes to, in degrees, measured as the limits are. |
+| `ServoMaxTorque` | `number` | `10000` | read/write | Servo: the most torque it may use to get there and to stay, in newton-metres. A load that asks more sags to where its weight is this much, and -- a servo at its cap being a constant torque -- swings about there until something else takes its speed away. |
+| `Stiffness` | `number` | `0` | read/write | The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. Zero leaves the pull to `AngularResponsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. For what it turns weighing `I` kilogram metres squared about it, `w * w * I` settles at `w` radians a second. |
+| `TargetAngle` | `number` | `0` | read/write | Servo: the angle it goes to, in DEGREES, measured as the limits are. (Speeds are in radians a second: `AngularVelocity`, `AngularSpeed`.) |
 | `UpperAngle` | `number` | `180` | read/write | How far it may turn the other, in degrees. A lower above the upper is unlimited. |

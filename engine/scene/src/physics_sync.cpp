@@ -36,24 +36,6 @@ namespace {
     return core::InstanceId{static_cast<u32>(packed & 0xffffffffu), static_cast<u32>(packed >> 32)};
 }
 
-[[nodiscard]] physics::ShapeType shapeForPartShape(i32 shape) noexcept
-{
-    // `Enum.PartShape`: Block, Ball, Cylinder, Capsule, Wedge. A wedge collides
-    // as its bounding box in this release -- the renderer has no wedge either,
-    // so nothing yet disagrees about what one looks like.
-    switch (shape) {
-    case 1:
-        return physics::ShapeType::Sphere;
-    case 2:
-        return physics::ShapeType::Cylinder;
-    case 3:
-        return physics::ShapeType::Capsule;
-    default:
-        break;
-    }
-    return physics::ShapeType::Box;
-}
-
 // Whether two descriptions ask for the same body.
 //
 // **`pointsRevision` is here because the geometry can change underneath a hull
@@ -171,6 +153,87 @@ enum class CollisionFidelity : i32
     Box = 2,
     Precise = 3,
 };
+
+physics::ShapeType shapeForPartShape(i32 shape) noexcept
+{
+    // `Enum.PartShape`: Block, Ball, Cylinder, Capsule, Wedge. A wedge collides
+    // as its bounding box in this release -- the renderer has no wedge either,
+    // so nothing yet disagrees about what one looks like.
+    switch (shape) {
+    case 1:
+        return physics::ShapeType::Sphere;
+    case 2:
+        return physics::ShapeType::Cylinder;
+    case 3:
+        return physics::ShapeType::Capsule;
+    default:
+        break;
+    }
+    return physics::ShapeType::Box;
+}
+
+f32 partMass(const World& world, core::InstanceId id) noexcept
+{
+    const RigidBodyComponent* body = world.rigidBodies().find(id);
+    const PartComponent* part = world.parts().find(id);
+    if (body == nullptr || part == nullptr)
+        return 0.0f;
+    if (world.characterBodies().find(id) != nullptr)
+        return body->mass > 0.0f ? body->mass : physics::CharacterDesc{}.mass;
+    if (const MeshPartComponent* mesh = world.meshParts().find(id);
+        mesh != nullptr && mesh->collisionFidelity != static_cast<i32>(CollisionFidelity::Box)) {
+        // A hull's volume is the solver's to say; until it has, the box.
+        return body->mass > 0.0f ? body->mass : physics::solidMass(physics::ShapeType::Box, part->size, body->density);
+    }
+    const physics::ShapeType shape =
+        world.meshParts().find(id) != nullptr ? physics::ShapeType::Box : shapeForPartShape(part->shape);
+    return physics::solidMass(shape, part->size, body->density);
+}
+
+std::string_view terrainLayerAt(const TerrainComponent& terrain, const asset::TerrainHit& hit) noexcept
+{
+    const core::Vec3 ground{static_cast<f32>(hit.position.x), static_cast<f32>(hit.position.y),
+                            static_cast<f32>(hit.position.z)};
+    const u8 layer = asset::drawnMaterial(terrain.rules, asset::Voxel{255, hit.material, hit.top, hit.cover},
+                                          hit.normal, ground, static_cast<f32>(hit.position.y + terrain.origin.y));
+    if (layer == 0 || layer > terrain.layers.size())
+        return {};
+    return terrain.layers[layer - 1];
+}
+
+MaterialRef floorMaterial(const World& world, core::InstanceId character)
+{
+    const CharacterBodyComponent* body = world.characterBodies().find(character);
+    const PartComponent* self = world.parts().find(character);
+    if (body == nullptr || self == nullptr || !body->grounded)
+        return {};
+    if (const PartComponent* ground = world.parts().find(body->groundPart); ground != nullptr) {
+        if (!ground->material.valid())
+            return {};
+        return MaterialRef{std::string(world.atoms().text(ground->material)), ground->materialClone};
+    }
+    // **Standing on no part is standing on ground**: a terrain's colliders
+    // name no instance, so the ground is asked directly -- straight down from
+    // its middle, a little past its feet, in whichever terrain is nearest
+    // under it. What it is drawn as there is what it is.
+    const f64 reach = static_cast<f64>(self->size.y) * 0.5 + 1.0;
+    MaterialRef found;
+    f64 nearest = reach;
+    world.terrains().forEach([&](core::InstanceId, const TerrainComponent& terrain) {
+        if (terrain.field.empty())
+            return;
+        const core::DVec3 from{self->cframe.position.x - terrain.origin.x, self->cframe.position.y - terrain.origin.y,
+                               self->cframe.position.z - terrain.origin.z};
+        const std::optional<asset::TerrainHit> hit =
+            asset::raycastField(terrain.field, from, core::Vec3{0.0f, -static_cast<f32>(reach), 0.0f}, reach);
+        if (!hit.has_value() || hit->distance > nearest)
+            return;
+        nearest = hit->distance;
+        const std::string_view layer = terrainLayerAt(terrain, *hit);
+        found = layer.empty() ? MaterialRef{} : MaterialRef{std::string(layer), 0};
+    });
+    return found;
+}
 
 physics::ShapeDesc PhysicsSync::shapeOf(core::InstanceId id, const PartComponent& part) const
 {
@@ -320,7 +383,39 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     if (written)
         record.movingUntilTick = tick + kAnchoredMovingTicks;
 
-    const physics::BodyDesc desc = descOf(id, part, body, record.movingUntilTick > tick);
+    physics::BodyDesc desc = descOf(id, part, body, record.movingUntilTick > tick);
+
+    // **A part collides with what it wears** (ADR 0117): its material's
+    // friction and bounce, where the part's own are the defaults -- a part
+    // that says a number of its own keeps it. A part wearing nothing is not
+    // asked at all.
+    if (part.material.valid()) {
+        const RigidBodyComponent fresh;
+        if (body.friction == fresh.friction || body.restitution == fresh.restitution) {
+            if (part.materialClone != 0) {
+                // A runtime copy is a script's to change at any moment.
+                const asset::ResolvedMaterial worn = m_scene.resolveMaterial(part.material, part.materialClone);
+                record.wornFriction = worn.properties.friction;
+                record.wornRestitution = worn.properties.restitution;
+                record.wornMaterial = core::NameAtom{};
+            }
+            else {
+                const asset::MaterialLibrary* library = m_scene.materialLibrary();
+                const u64 revision = library != nullptr ? library->revision() : 0;
+                if (!(record.wornMaterial == part.material) || record.wornLibrary != revision) {
+                    const asset::MaterialProperties& worn = m_scene.resolveMaterialAsset(part.material).properties;
+                    record.wornFriction = worn.friction;
+                    record.wornRestitution = worn.restitution;
+                    record.wornMaterial = part.material;
+                    record.wornLibrary = revision;
+                }
+            }
+            if (body.friction == fresh.friction)
+                desc.friction = record.wornFriction;
+            if (body.restitution == fresh.restitution)
+                desc.restitution = record.wornRestitution;
+        }
+    }
 
     // Everything the record keeps about a description, minus the span it may not
     // keep. One place, because a field written in one branch and forgotten in
@@ -1105,6 +1200,54 @@ inline constexpr f64 UnburyReach = 64.0;
 
 } // namespace
 
+const PhysicsSync::TerrainSurfaces& PhysicsSync::terrainSurfacesOf(core::InstanceId id, const TerrainComponent& terrain)
+{
+    auto found = std::find_if(m_terrainSurfaces.begin(), m_terrainSurfaces.end(),
+                              [&](const TerrainSurfaces& entry) { return entry.terrain == id; });
+    if (found == m_terrainSurfaces.end()) {
+        m_terrainSurfaces.push_back(TerrainSurfaces{});
+        found = m_terrainSurfaces.end() - 1;
+        found->terrain = id;
+    }
+
+    // The rules decide which layer the ground is drawn as, so they are part
+    // of what a collider was built from. A handful of numbers, folded.
+    u64 rules = terrain.rules.size();
+    for (const asset::TerrainRule& rule : terrain.rules) {
+        rules = combine(rules, (rule.enabled ? 1u : 0u) | (static_cast<u64>(rule.material) << 8));
+        for (const f32 value : {rule.slopeMin, rule.slopeMax, rule.heightMin, rule.heightMax, rule.blend, rule.noise})
+            rules = combine(rules, std::bit_cast<u32>(value));
+        for (const u8 layer : rule.appliesTo)
+            rules = combine(rules, layer);
+    }
+
+    const asset::MaterialLibrary* library = m_scene.materialLibrary();
+    const u64 libraryRevision = library != nullptr ? library->revision() : 0;
+    if (found->layersRevision == terrain.layersRevision && found->libraryRevision == libraryRevision &&
+        found->rules == rules)
+        return *found;
+    found->layersRevision = terrain.layersRevision;
+    found->libraryRevision = libraryRevision;
+    found->rules = rules;
+
+    // By layer id: voxel byte `n` is `layers[n - 1]`, and 0 is nothing.
+    const physics::SurfaceMaterial standard;
+    found->table.assign(terrain.layers.size() + 1, standard);
+    bool any = false;
+    u64 key = combine(rules, terrain.layers.size());
+    for (usize index = 0; index < terrain.layers.size(); ++index) {
+        const asset::MaterialProperties& layer =
+            m_scene.resolveMaterialAsset(m_scene.atoms().intern(terrain.layers[index])).properties;
+        found->table[index + 1] = physics::SurfaceMaterial{layer.friction, layer.restitution};
+        any = any || layer.friction != standard.friction || layer.restitution != standard.restitution;
+        key = combine(combine(key, std::bit_cast<u32>(layer.friction)), std::bit_cast<u32>(layer.restitution));
+    }
+    // Zero says "every layer is the default": nothing is handed to the solver
+    // and nothing about a collider's key changes.
+    found->key = any ? (key == 0 ? 1 : key) : 0;
+    return *found;
+}
+
 void PhysicsSync::applyTerrain()
 {
     for (auto& collider : m_terrainColliders)
@@ -1176,9 +1319,14 @@ void PhysicsSync::applyTerrain()
 
         const asset::TerrainField& field = terrain.field;
         const f64 chunkMetres = static_cast<f64>(asset::ChunkEdge) * static_cast<f64>(field.settings().voxelSize);
-        const u64 placement =
-            combine(combine(std::bit_cast<u64>(terrain.origin.x), std::bit_cast<u64>(terrain.origin.y)),
-                    std::bit_cast<u64>(terrain.origin.z));
+        // What each layer is to touch (ADR 0117), and a key that is zero when
+        // every one of them is the default surface.
+        const TerrainSurfaces& surfaces = terrainSurfacesOf(id, terrain);
+        const u64 placed = combine(combine(std::bit_cast<u64>(terrain.origin.x), std::bit_cast<u64>(terrain.origin.y)),
+                                   std::bit_cast<u64>(terrain.origin.z));
+        // Folded into both keys, so a layer's friction changing remakes the
+        // colliders it is in; with nothing to say, both are what they were.
+        const u64 placement = surfaces.key == 0 ? placed : combine(placed, surfaces.key);
 
         // The chunks within reach of any mover, sorted and unique: a box of
         // `TerrainCollisionReach` round each, in the field's own space. **The
@@ -1267,7 +1415,8 @@ void PhysicsSync::applyTerrain()
                 at->seen = true;
                 continue;
             }
-            const u64 content = chunkContent(field, key);
+            const u64 content =
+                surfaces.key == 0 ? chunkContent(field, key) : combine(chunkContent(field, key), surfaces.key);
             if (exists) {
                 // Kept, and seen, until its rebuild comes round: retiring a
                 // stale collider would drop somebody standing on it.
@@ -1347,12 +1496,50 @@ void PhysicsSync::applyTerrain()
             const Pending& next = pending[index];
             const asset::TerrainCollider& meshed = meshes[index];
 
+            // **What the ground is, triangle by triangle** (ADR 0117): the
+            // layer each is DRAWN as -- its paint and the rules included, as
+            // a raycast reports it -- so ice painted over rock is ice to
+            // stand on. Only for a chunk that has a triangle of a surface
+            // that is not the default: the rest are handed nothing, and
+            // collide exactly as they did.
+            std::vector<u8> drawn;
+            if (surfaces.key != 0 && meshed.surfaces.size() == meshed.indices.size()) {
+                const usize triangles = meshed.indices.size() / 3;
+                drawn.resize(triangles, 0);
+                bool any = false;
+                const physics::SurfaceMaterial standard;
+                for (usize triangle = 0; triangle < triangles; ++triangle) {
+                    const core::Vec3& a = meshed.points[meshed.indices[triangle * 3]];
+                    const core::Vec3& b = meshed.points[meshed.indices[triangle * 3 + 1]];
+                    const core::Vec3& c = meshed.points[meshed.indices[triangle * 3 + 2]];
+                    const core::Vec3 face = core::cross(b - a, c - a);
+                    const f32 area = std::sqrt(core::dot(face, face));
+                    const core::Vec3 normal = area > 1.0e-12f ? face * (1.0f / area) : core::Vec3{0.0f, 1.0f, 0.0f};
+                    const core::Vec3 middle = (a + b + c) * (1.0f / 3.0f);
+                    const u8 layer = asset::drawnMaterial(
+                        terrain.rules,
+                        asset::Voxel{255, meshed.surfaces[triangle * 3], meshed.surfaces[triangle * 3 + 1],
+                                     meshed.surfaces[triangle * 3 + 2]},
+                        normal, middle, middle.y + static_cast<f32>(terrain.origin.y));
+                    if (layer >= surfaces.table.size())
+                        continue;
+                    drawn[triangle] = layer;
+                    any = any || surfaces.table[layer].friction != standard.friction ||
+                          surfaces.table[layer].restitution != standard.restitution;
+                }
+                if (!any)
+                    drawn.clear();
+            }
+
             physics::BodyHandle handle{};
             if (meshed.indices.size() >= 3) {
                 physics::BodyDesc desc;
                 desc.shape.type = physics::ShapeType::TriangleMesh;
                 desc.shape.points = meshed.points;
                 desc.shape.indices = meshed.indices;
+                desc.shape.triangleSurfaces = drawn;
+                if (!drawn.empty())
+                    desc.surfaces = surfaces.table;
                 // The band of its neighbours' triangles, which only lends its
                 // edges: the seam is inside the mesh (ADR 0143).
                 desc.shape.bandFirst = meshed.bandFirst;
@@ -2015,12 +2202,18 @@ physics::BodyHandle PhysicsSync::bodyHandleOf(core::InstanceId id) const
 
 void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& constraint)
 {
-    // **A mover is not a joint** (ADR 0127): it is forces, applied before the
-    // step, and the solver is never handed anything for it. Neither is a
-    // spring without its stops.
+    // **A mover that holds something is a motor in the solver** (ADR 0127,
+    // D471): a place, a facing, a speed, a spin -- solved with the joints the
+    // body is in, or it fights them. One that only pushes -- a force, a
+    // torque, a spring without its stops -- is an impulse before the step, and
+    // the solver is never handed anything for it.
     const auto distance = static_cast<i32>(physics::ConstraintType::Distance);
     if (constraint.kind == distance && constraint.flavor == 2)
         m_anySpring = true;
+    if (constraint.kind >= MoverKind::LinearVelocity && constraint.kind <= MoverKind::AlignOrientation) {
+        applyDrive(id, constraint);
+        return;
+    }
     if (constraint.kind >= MoverKind::LinearVelocity ||
         (constraint.kind == distance && constraint.flavor == 2 && !constraint.limitsEnabled))
         return;

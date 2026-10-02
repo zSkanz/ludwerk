@@ -826,6 +826,11 @@
           "Default": "0.5"
         },
         {
+          "Name": "FloorMaterial",
+          "Type": "Material?",
+          "ReadOnly": true
+        },
+        {
           "Name": "FlySpeed",
           "Type": "number",
           "Default": "16"
@@ -1038,6 +1043,16 @@
       "Methods": [
         {
           "Name": "GetForce",
+          "Parameters": [],
+          "Returns": ["number"]
+        },
+        {
+          "Name": "GetMotorForce",
+          "Parameters": [],
+          "Returns": ["number"]
+        },
+        {
+          "Name": "GetMotorTorque",
           "Parameters": [],
           "Returns": ["number"]
         },
@@ -7935,6 +7950,16 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "FootstepSound",
+          "Type": "Content",
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Friction",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "HeightMap",
           "Type": "string",
           "ThreadSafety": "Safe"
@@ -7965,6 +7990,11 @@
           "ThreadSafety": "Safe"
         },
         {
+          "Name": "Restitution",
+          "Type": "number",
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "Roughness",
           "Type": "number",
           "ThreadSafety": "Safe"
@@ -7973,6 +8003,11 @@
           "Name": "Source",
           "Type": "Content",
           "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Tags",
+          "Type": "{ string }",
           "ThreadSafety": "Safe"
         },
         {
@@ -8632,6 +8667,11 @@
         {
           "Name": "Instance",
           "Type": "BasePart",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Material",
+          "Type": "Material?",
           "ReadOnly": true
         },
         {

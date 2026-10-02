@@ -3451,6 +3451,10 @@ void moveToCellEnd()
         ENG_TR("engine.editor.material.field.tiling_variation"),
         ENG_TR("engine.editor.material.field.tiling_far_scale"),
         ENG_TR("engine.editor.material.field.hex_tiling"),
+        ENG_TR("engine.editor.material.field.friction"),
+        ENG_TR("engine.editor.material.field.restitution"),
+        ENG_TR("engine.editor.material.field.footstep_sound"),
+        ENG_TR("engine.editor.material.field.tags"),
     };
     return core::tr(Labels[static_cast<std::size_t>(field)]);
 }
@@ -4182,6 +4186,65 @@ void drawMaterialPanel(Editor& editor, const IconAtlas* icons, EditorCommands& c
                     const bool edited = ImGui::Checkbox("##value", &p.hexTiling);
                     ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.hex_tiling_tip")));
                     row.end(F::HexTiling, edited);
+                }
+                endSectionGrid();
+            }
+            // **What it is to touch** (ADR 0117): what slides on it and bounces
+            // off it, the sound a foot makes, and words a game reads.
+            if (section(core::tr(ENG_TR("engine.editor.material_panel.physics")), "physics")) {
+                {
+                    asset::MaterialProperties& p = row.begin(F::Friction);
+                    const bool edited = dragNumber("##value", ImGuiDataType_Float, &p.friction, 1, 0.01f, "%.2f");
+                    p.friction = std::max(p.friction, 0.0f);
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.friction_tip")));
+                    row.end(F::Friction, edited);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::Restitution);
+                    const bool edited = ImGui::SliderFloat("##value", &p.restitution, 0.0f, 1.0f, "%.2f");
+                    ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.material.restitution_tip")));
+                    row.end(F::Restitution, edited);
+                }
+                {
+                    asset::MaterialProperties& p = row.begin(F::FootstepSound);
+                    char buffer[256]{};
+                    if (p.footstepSound.size() + 1 <= sizeof(buffer))
+                        std::snprintf(buffer, sizeof(buffer), "%s", p.footstepSound.c_str());
+                    const bool edited =
+                        ImGui::InputTextWithHint("##value", core::tr(ENG_TR("engine.editor.material.footstep_hint")),
+                                                 buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if (edited)
+                        p.footstepSound = buffer;
+                    row.end(F::FootstepSound, edited);
+                }
+                {
+                    // Words, with commas between them.
+                    asset::MaterialProperties& p = row.begin(F::Tags);
+                    std::string joined;
+                    for (const std::string& word : p.tags)
+                        joined += (joined.empty() ? "" : ", ") + word;
+                    char buffer[256]{};
+                    if (joined.size() + 1 <= sizeof(buffer))
+                        std::snprintf(buffer, sizeof(buffer), "%s", joined.c_str());
+                    const bool edited =
+                        ImGui::InputTextWithHint("##value", core::tr(ENG_TR("engine.editor.material.tags_hint")),
+                                                 buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+                    if (edited) {
+                        p.tags.clear();
+                        const std::string_view text{buffer};
+                        for (std::size_t at = 0; at <= text.size();) {
+                            const std::size_t comma = std::min(text.find(',', at), text.size());
+                            std::string_view word = text.substr(at, comma - at);
+                            while (!word.empty() && word.front() == ' ')
+                                word.remove_prefix(1);
+                            while (!word.empty() && word.back() == ' ')
+                                word.remove_suffix(1);
+                            if (!word.empty())
+                                p.tags.emplace_back(word);
+                            at = comma + 1;
+                        }
+                    }
+                    row.end(F::Tags, edited);
                 }
                 endSectionGrid();
             }

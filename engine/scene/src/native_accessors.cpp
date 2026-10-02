@@ -16,6 +16,7 @@
 
 #include "../generated/class_descriptors.gen.h"
 #include "engine/asset/terrain.h"
+#include "engine/asset/terrain_layers.h"
 #include "engine/core/finite.h"
 #include "engine/core/host_platform.h"
 #include "engine/physics/types.h"
@@ -1315,8 +1316,10 @@ bool setBasePartMaterial(World& world, core::InstanceId id, const Value& value)
     if (const auto* material = std::get_if<MaterialRef>(&value); material != nullptr) {
         // **A material file and nothing else**, by its compound suffix -- the
         // rule a stamp is known by (ADR 0049). A part pointed at a texture
-        // would draw the default with nothing saying why.
-        if (!asset::isMaterialPath(material->source))
+        // would draw the default with nothing saying why. The engine's own
+        // terrain materials are materials with no file (ADR 0117): a part may
+        // be made of the same ice the ground is.
+        if (!asset::isMaterialPath(material->source) && !asset::isEngineMaterial(material->source))
             return false;
         // A clone of THIS world, and of the asset the handle says: an id means
         // something only where it was made.

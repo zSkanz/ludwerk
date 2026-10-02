@@ -48,7 +48,11 @@ plain part has always looked like.
     "BlendSharpness": 0.5,
     "TilingVariation": 0.5,
     "TilingFarScale": 6,
-    "HexTiling": false
+    "HexTiling": false,
+    "Friction": 0.3,
+    "Restitution": 0,
+    "FootstepSound": "",
+    "Tags": []
   }
 }
 ```
@@ -71,9 +75,51 @@ plain part has always looked like.
 | `TilingVariation` | How much a pattern tens of metres across varies a terrain layer's colour, 0 (none) to 1, so its repeat does not read as a grid. 0.5 by default; read only by a terrain. |
 | `TilingFarScale` | How many times larger the second sample of a terrain layer's textures is, blended in with distance and from patch to patch, 1 (none) to 32. 6 by default; read only by a terrain. |
 | `HexTiling` | Lays a terrain layer's textures on a hexagonal grid of cells, each moved and turned at random, so not even a close view repeats -- for a photograph, or a texture with a bold motif. Three reads of each texture instead of one; off by default; read only by a terrain. |
+| `Friction` | How the surface grips, 0 to 1 and beyond: 0.3 by default, which is what everything has always collided with. See *What a surface is to touch*. |
+| `Restitution` | How much of an impact it gives back, 0 a dead stop and 1 a perfect bounce. |
+| `FootstepSound` | An audio `Content`: the sound of a step on it. The engine plays nothing by itself -- a script reads it from what a character stands on. |
+| `Tags` | A list of words of your own -- `"wood"`, `"wet"`, `"lava"` -- for a script to ask about. The engine reads none of them. |
 
 The editor writes the file for you: right-click in the content browser and
 choose **New Material**, then edit it in the **Material** panel.
+
+## What a surface is to touch
+
+A material is also what a thing is made of, to a body and to a script.
+
+- **A part collides with what it wears.** Its material's `Friction` and
+  `Restitution` are the part's, wherever the part's own `Friction` and
+  `Restitution` are still the defaults (0.3 and 0); a part given a number of
+  its own keeps it. A part wearing nothing collides as it always did.
+- **A terrain collides with what each piece of ground is drawn as** -- the
+  layer there, its paint and its rules included -- so ice painted over rock is
+  ice to slide on, and snow a rule lays above a height is snow.
+- **`RaycastResult.Material`** says what a ray met, and
+  **`CharacterBody.FloorMaterial`** what a character stands on: a `Material`
+  whose `Friction`, `FootstepSound` and `Tags` can be read, or nil for a part
+  wearing nothing and for ground with no layer.
+
+The engine's own ground materials say so already: `engine://terrain/ice` grips
+a tenth of what the rest do, `snow` half, `mud` twice; each is tagged with its
+name. `Material.load` answers them, and a part may wear one.
+
+```luau
+--!strict
+-- A footstep for every stride, in the sound of what is underfoot.
+local function step(character: CharacterBody, sound: Sound)
+    local floor = character.FloorMaterial
+    if floor ~= nil and floor.FootstepSound ~= "" then
+        sound.Content = floor.FootstepSound
+        sound:Play()
+    end
+end
+
+-- Whether a shot hit something that should spark.
+local function sparks(hit: RaycastResult): boolean
+    local material = hit.Material
+    return material ~= nil and table.find(material.Tags, "metal") ~= nil
+end
+```
 
 ## Variants
 

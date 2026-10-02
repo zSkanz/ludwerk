@@ -22,6 +22,7 @@ constexpr std::array<std::string_view, MaterialFieldCount> FieldNames{
     "Emissive",  "EmissiveMap",    "Metalness",       "Roughness",      "NormalScale",
     "AlphaMode", "AlphaCutoff",    "DoubleSided",     "TileSize",       "HeightMap",
     "Triplanar", "BlendSharpness", "TilingVariation", "TilingFarScale", "HexTiling",
+    "Friction",  "Restitution",    "FootstepSound",   "Tags",
 };
 
 constexpr std::array<std::string_view, 3> AlphaModeNames{"Opaque", "Mask", "Blend"};
@@ -33,6 +34,8 @@ enum class FieldShape : core::u8
     Map,
     AlphaMode,
     Flag,
+    // A list of words: `Tags`.
+    List,
 };
 
 [[nodiscard]] FieldShape shapeOf(MaterialField field) noexcept
@@ -46,7 +49,11 @@ enum class FieldShape : core::u8
     case MaterialField::MetallicRoughnessMap:
     case MaterialField::EmissiveMap:
     case MaterialField::HeightMap:
+    // A URN, as a map is, though what it names is heard.
+    case MaterialField::FootstepSound:
         return FieldShape::Map;
+    case MaterialField::Tags:
+        return FieldShape::List;
     case MaterialField::AlphaMode:
         return FieldShape::AlphaMode;
     case MaterialField::DoubleSided:
@@ -88,6 +95,10 @@ template <class Properties>
         return &p.tilingVariation;
     case MaterialField::TilingFarScale:
         return &p.tilingFarScale;
+    case MaterialField::Friction:
+        return &p.friction;
+    case MaterialField::Restitution:
+        return &p.restitution;
     default:
         return static_cast<decltype(&p.transparency)>(nullptr);
     }
@@ -115,6 +126,8 @@ template <class Properties>
         return &p.emissiveMap;
     case MaterialField::HeightMap:
         return &p.heightMap;
+    case MaterialField::FootstepSound:
+        return &p.footstepSound;
     default:
         return static_cast<decltype(&p.colorMap)>(nullptr);
     }
@@ -169,6 +182,18 @@ template <class Properties>
             return false;
         *flagField(field, into) = json.asBool();
         return true;
+    case FieldShape::List: {
+        if (json.type() != core::JsonType::Array)
+            return false;
+        std::vector<std::string> words;
+        for (core::usize index = 0; index < json.size(); ++index) {
+            if (json.at(index).type() != core::JsonType::String)
+                return false;
+            words.emplace_back(json.at(index).asString());
+        }
+        into.tags = std::move(words);
+        return true;
+    }
     }
     return false;
 }
@@ -199,6 +224,12 @@ void writeField(core::JsonWriter& out, MaterialField field, const MaterialProper
     }
     case FieldShape::Flag:
         out.value(*flagField(field, from));
+        return;
+    case FieldShape::List:
+        out.beginInlineArray();
+        for (const std::string& word : from.tags)
+            out.value(word);
+        out.endArray();
         return;
     }
 }
@@ -331,6 +362,9 @@ void copyMaterialField(MaterialField field, const MaterialProperties& from, Mate
     case FieldShape::Flag:
         *flagField(field, into) = *flagField(field, from);
         return;
+    case FieldShape::List:
+        into.tags = from.tags;
+        return;
     }
 }
 
@@ -347,6 +381,8 @@ bool sameMaterialField(MaterialField field, const MaterialProperties& a, const M
         return a.alphaMode == b.alphaMode;
     case FieldShape::Flag:
         return *flagField(field, a) == *flagField(field, b);
+    case FieldShape::List:
+        return a.tags == b.tags;
     }
     return false;
 }
@@ -750,7 +786,7 @@ constexpr std::array<char, 4> CompiledMagic{'L', 'M', 'A', 'T'};
 // 4 carries `tileSize`, at the end so a 3 reads as it did; 5 the height map,
 // `triplanar` and `blendSharpness` a terrain reads (ADR 0113); 6 how a layer's
 // repeat is broken up (ADR 0113's amendment).
-constexpr core::u32 CompiledVersion = 6;
+constexpr core::u32 CompiledVersion = 7;
 
 class ByteWriter
 {
@@ -898,6 +934,13 @@ std::vector<std::byte> encodeMaterial(const CompiledMaterial& material)
     out.real(p.tilingVariation);
     out.real(p.tilingFarScale);
     out.word(p.hexTiling ? 1u : 0u);
+    // Version 7: what the surface is to touch (ADR 0117).
+    out.real(p.friction);
+    out.real(p.restitution);
+    out.text(p.footstepSound);
+    out.word(static_cast<core::u32>(p.tags.size()));
+    for (const std::string& word : p.tags)
+        out.text(word);
     return out.take();
 }
 
@@ -984,6 +1027,18 @@ std::optional<CompiledMaterial> decodeMaterial(std::span<const std::byte> bytes)
         if (!in.real(p.tilingVariation) || !in.real(p.tilingFarScale) || !in.word(hex))
             return std::nullopt;
         p.hexTiling = hex != 0;
+    }
+    if (version >= 7) {
+        core::u32 words = 0;
+        if (!in.real(p.friction) || !in.real(p.restitution) || !in.text(p.footstepSound) || !in.word(words) ||
+            words > 256)
+            return std::nullopt;
+        for (core::u32 index = 0; index < words; ++index) {
+            std::string word;
+            if (!in.text(word))
+                return std::nullopt;
+            p.tags.push_back(std::move(word));
+        }
     }
     if (!in.done())
         return std::nullopt;

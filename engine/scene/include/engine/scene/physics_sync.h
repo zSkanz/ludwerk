@@ -27,6 +27,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -38,10 +39,30 @@
 #include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
 #include "engine/scene/skeleton_host.h"
+#include "engine/scene/value.h"
 
 namespace engine::scene {
 
 class World;
+
+// The solver shape an `Enum.PartShape` collides as.
+[[nodiscard]] physics::ShapeType shapeForPartShape(i32 shape) noexcept;
+
+// **What a part weighs, from what it is** (D472): its shape, its size and its
+// density, whether or not the simulation has made it a body yet. A `MeshPart`
+// that collides as its hull weighs what the solver says once it has one, and
+// its box until then; a character weighs what its controller does.
+[[nodiscard]] f32 partMass(const World& world, core::InstanceId id) noexcept;
+
+// **The layer a terrain is drawn as where a ray met it** (ADR 0117): the
+// voxel's own, its paint, or the one a rule lays over it -- by name, which is
+// the material's `Content`. Empty where there is none. `hit` is in the
+// terrain's own space, as `asset::raycastField` returns it.
+[[nodiscard]] std::string_view terrainLayerAt(const TerrainComponent& terrain, const asset::TerrainHit& hit) noexcept;
+
+// What a character is standing on, as the material it is: the part's, or the
+// terrain's under its feet. Nothing in the air.
+[[nodiscard]] MaterialRef floorMaterial(const World& world, core::InstanceId character);
 
 class PhysicsSync final : public ICharacterReplay
 {
@@ -277,6 +298,13 @@ private:
         f32 density = 1.0f;
         f32 linearDamping = 0.05f;
         f32 angularDamping = 0.05f;
+        // **What the worn material is to touch** (ADR 0117), remembered so a
+        // part wearing one costs a lookup when the material or the library
+        // changes and not once a tick.
+        core::NameAtom wornMaterial;
+        u64 wornLibrary = ~u64{0};
+        f32 wornFriction = 0.3f;
+        f32 wornRestitution = 0.0f;
         // The transform this mirror last wrote INTO the component. A component
         // that differs from it now is a script's write.
         core::CFrameD written;
@@ -411,14 +439,26 @@ private:
         // A distance joint's range, as it was last built or driven with.
         f32 minDistance = 0.0f;
         f32 maxDistance = 0.0f;
+        // A drive (ADR 0127, D471): the two frames it was built with, and the
+        // solver bodies. A frame is what the drive IS -- its axes are the
+        // axes its motors push along -- so one that changed is another drive.
+        core::CFrameD frame0;
+        core::CFrameD frame1;
+        physics::BodyHandle handle0;
+        physics::BodyHandle handle1;
+        bool atCenter = false;
     };
 
     std::vector<ConstraintRecord> m_constraints;
 
     // --- ADR 0127 (physics_movers.cpp) ---------------------------------------
     //
-    // The six movers and the springs, as impulses, before the step.
+    // `VectorForce`, `Torque` and the springs, as impulses, before the step.
     void applyMovers(f32 fixedDt);
+    // `AlignPosition`, `AlignOrientation`, `LinearVelocity` and
+    // `AngularVelocity`: a motor in the solver, between the body and the world
+    // or between two bodies, built and driven as a joint's is.
+    void applyDrive(core::InstanceId id, const ConstraintComponent& constraint);
     // A joint's actuator, into the description it is built or driven with.
     void motorOf(const ConstraintComponent& constraint, const ConstraintRecord& record, f32 fixedDt,
                  physics::ConstraintDesc& desc) const;
@@ -508,6 +548,23 @@ private:
         bool settled = false;
     };
     std::vector<TerrainWant> m_terrainWants;
+
+    // **What each of a terrain's layers is to touch** (ADR 0117): the friction
+    // and the bounce of the material each layer names, by layer id, worked out
+    // again only when the layers, the material library or the rules change.
+    // `key` is zero when every layer is the default surface -- a terrain that
+    // says nothing collides exactly as it did before a material could.
+    struct TerrainSurfaces
+    {
+        core::InstanceId terrain;
+        u64 layersRevision = ~u64{0};
+        u64 libraryRevision = ~u64{0};
+        u64 rules = 0;
+        std::vector<physics::SurfaceMaterial> table;
+        u64 key = 0;
+    };
+    std::vector<TerrainSurfaces> m_terrainSurfaces;
+    [[nodiscard]] const TerrainSurfaces& terrainSurfacesOf(core::InstanceId id, const TerrainComponent& terrain);
 
     // **A count, never a millisecond budget.** A collider is part of the world,
     // so how many get rebuilt in a tick has to be a fact about the operation

@@ -45,6 +45,9 @@
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
+#include <Jolt/Physics/StateRecorder.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -257,6 +260,10 @@ struct BodyRecord
     MotionType motion = MotionType::Dynamic;
     CollisionGroup group = kDefaultCollisionGroup;
     u64 userData = 0;
+    // The surfaces a mesh's triangles name (ADR 0117). Written when the body
+    // is made, between steps; read by the contact listener on worker threads
+    // during one, when nothing writes.
+    std::vector<SurfaceMaterial> surfaces;
     // Volume times density, kept because a body the solver does not move has
     // no mass of its own to be asked for.
     f32 mass = 0.0f;
@@ -264,9 +271,334 @@ struct BodyRecord
 
 // A live joint, plus everything needed to rebuild it: `updateBody` destroys and
 // recreates the Jolt body underneath, which would dangle every constraint on it.
+// **The motor of a joint that turns about a point** (D470): a hinge's, about
+// its axis, and a ball socket's, about all three.
+//
+// The solver's own joint motors are a row about each body's centre of mass,
+// beside the rows that hold the pivot together -- and a solver that goes round
+// its rows in turn settles two rows quickly only when they have little to do
+// with each other. These have everything to do with each other the moment a
+// body swings from a pivot away from where it balances: the motor turns the
+// body, the pivot rows take most of that back, the motor turns it again, and
+// what a tick's ten rounds arrive at is a fraction of what was asked. A ball a
+// metre out on an arm got a spring a seventh as stiff as it was told and none
+// of its damping, and rang for ever; that was the servo that never settled.
+//
+// So the motor is a row of its own, and the row is **the turn with the pivot
+// already held**: a twist about the axis on both bodies, plus the push at the
+// pivot that keeps the two points together while they take it. Written that
+// way it asks nothing of the pivot's rows -- the two are at right angles in
+// the measure that matters, the bodies' own masses -- and one round solves it.
+// What the row feels as its mass is then what the pair really is to turn about
+// that pivot, parallel axes and all, which is also what makes "critically
+// damped at this many radians a second" mean the same on a finger and on a
+// crane.
+//
+// The joint itself -- the point, the axis, the limits -- stays the solver's.
+class PivotMotorSettings final : public JPH::TwoBodyConstraintSettings
+{
+public:
+    JPH::TwoBodyConstraint* Create(JPH::Body& first, JPH::Body& second) const override;
+
+    // World space: the pivot on each body, and each body's joint frame.
+    JPH::RVec3 point1 = JPH::RVec3::sZero();
+    JPH::RVec3 point2 = JPH::RVec3::sZero();
+    JPH::Quat frame1 = JPH::Quat::sIdentity();
+    JPH::Quat frame2 = JPH::Quat::sIdentity();
+    // One axis, the frame's X, or all three.
+    bool ball = false;
+};
+
+class PivotMotor final : public JPH::TwoBodyConstraint
+{
+public:
+    PivotMotor(JPH::Body& first, JPH::Body& second, const PivotMotorSettings& settings)
+        : JPH::TwoBodyConstraint(first, second, settings), m_rows(settings.ball ? 3 : 1)
+    {
+        m_point1 = JPH::Vec3(first.GetInverseCenterOfMassTransform() * settings.point1);
+        m_point2 = JPH::Vec3(second.GetInverseCenterOfMassTransform() * settings.point2);
+        m_frame1 = first.GetRotation().Conjugated() * settings.frame1;
+        m_frame2 = second.GetRotation().Conjugated() * settings.frame2;
+    }
+
+    // What it is told, every tick it is driven in.
+    MotorMode mode = MotorMode::Off;
+    // A hinge: radians, and radians a second.
+    float targetAngle = 0.0f;
+    float targetVelocity = 0.0f;
+    // A ball: the second frame's orientation in the first.
+    JPH::Quat targetOrientation = JPH::Quat::sIdentity();
+    float maxTorque = 0.0f;
+    // The spring a position is held with: a stiffness above zero with its
+    // damping, or a frequency in radians a second and a ratio.
+    float stiffness = 0.0f;
+    float damping = 0.0f;
+    float natural = 12.0f;
+    float ratio = 1.0f;
+
+    // What the motor did over the last step, in newton-metre-seconds.
+    [[nodiscard]] float totalImpulse() const
+    {
+        float squared = 0.0f;
+        for (int index = 0; index < m_rows; ++index) {
+            squared += m_row[index].total * m_row[index].total;
+        }
+        return std::sqrt(squared);
+    }
+
+    JPH::EConstraintSubType GetSubType() const override { return JPH::EConstraintSubType::User1; }
+
+    void NotifyShapeChanged(const JPH::BodyID& body, JPH::Vec3Arg deltaCentre) override
+    {
+        if (mBody1->GetID() == body) {
+            m_point1 -= deltaCentre;
+        }
+        else if (mBody2->GetID() == body) {
+            m_point2 -= deltaCentre;
+        }
+    }
+
+    void SetupVelocityConstraint(float deltaTime) override
+    {
+        for (Row& row : m_row) {
+            row.active = false;
+        }
+        if (mode == MotorMode::Off || deltaTime <= 0.0f) {
+            ResetWarmStart();
+            return;
+        }
+        const bool moves1 = mBody1->IsDynamic();
+        const bool moves2 = mBody2->IsDynamic();
+        const float give1 = moves1 ? mBody1->GetMotionProperties()->GetInverseMass() : 0.0f;
+        const float give2 = moves2 ? mBody2->GetMotionProperties()->GetInverseMass() : 0.0f;
+        if (give1 + give2 <= 0.0f) {
+            ResetWarmStart();
+            return;
+        }
+        const JPH::Mat44 turn1 = moves1 ? mBody1->GetInverseInertia() : JPH::Mat44::sZero();
+        const JPH::Mat44 turn2 = moves2 ? mBody2->GetInverseInertia() : JPH::Mat44::sZero();
+        const JPH::Vec3 arm1 = mBody1->GetRotation() * m_point1;
+        const JPH::Vec3 arm2 = mBody2->GetRotation() * m_point2;
+
+        // What holding the pivot costs: the two bodies' give at that point.
+        const JPH::Mat44 cross1 = JPH::Mat44::sCrossProduct(arm1);
+        const JPH::Mat44 cross2 = JPH::Mat44::sCrossProduct(arm2);
+        const JPH::Mat44 held = JPH::Mat44::sScale(give1 + give2) - cross1.Multiply3x3(turn1).Multiply3x3(cross1) -
+                                cross2.Multiply3x3(turn2).Multiply3x3(cross2);
+        JPH::Mat44 holds;
+        if (!holds.SetInversed3x3(held)) {
+            ResetWarmStart();
+            return;
+        }
+
+        const JPH::Quat world1 = mBody1->GetRotation() * m_frame1;
+        const JPH::Quat world2 = mBody2->GetRotation() * m_frame2;
+        // How far past where it should be, along the first frame's axes.
+        JPH::Vec3 past = JPH::Vec3::sZero();
+        if (mode == MotorMode::Position) {
+            const JPH::Quat turned = world1.Conjugated() * world2;
+            if (m_rows == 1) {
+                const JPH::Quat twist = turned.GetTwist(JPH::Vec3::sAxisX());
+                float error = 2.0f * std::atan2(twist.GetX(), twist.GetW()) - targetAngle;
+                error = std::remainder(error, 2.0f * JPH::JPH_PI);
+                past = JPH::Vec3(error, 0.0f, 0.0f);
+            }
+            else {
+                JPH::Quat over = turned * targetOrientation.Conjugated();
+                if (over.GetW() < 0.0f) {
+                    over = -over;
+                }
+                JPH::Vec3 axis;
+                float angle = 0.0f;
+                over.GetAxisAngle(axis, angle);
+                past = axis * angle;
+            }
+        }
+
+        const JPH::Mat44 axes = JPH::Mat44::sRotation(world1);
+        for (int index = 0; index < m_rows; ++index) {
+            Row& row = m_row[index];
+            const JPH::Vec3 axis = axes.GetColumn3(static_cast<JPH::uint>(index));
+            const JPH::Vec3 spin1 = turn1.Multiply3x3(axis);
+            const JPH::Vec3 spin2 = turn2.Multiply3x3(axis);
+            // How fast the pivot would come apart for a unit of twist, and the
+            // push there that stops it.
+            const JPH::Vec3 apart = spin2.Cross(arm2) + spin1.Cross(arm1);
+            const JPH::Vec3 push = -holds.Multiply3x3(apart);
+            const float yields = axis.Dot(spin1 + spin2) + apart.Dot(push);
+            if (yields <= 1.0e-12f) {
+                row.total = 0.0f;
+                continue;
+            }
+            row.active = true;
+            row.linear = push;
+            row.angular1 = axis + arm1.Cross(push);
+            row.angular2 = axis + arm2.Cross(push);
+            row.linearStep1 = push * -give1;
+            row.angularStep1 = -turn1.Multiply3x3(row.angular1);
+            row.linearStep2 = push * give2;
+            row.angularStep2 = turn2.Multiply3x3(row.angular2);
+            row.most = maxTorque * deltaTime;
+
+            if (mode == MotorMode::Velocity) {
+                row.softness = 0.0f;
+                row.bias = index == 0 ? -targetVelocity : 0.0f;
+                row.effective = 1.0f / yields;
+                continue;
+            }
+            // A spring, stepped for where it will be at the end of the tick:
+            // any stiffness is stable, and none gains energy.
+            const float inertia = 1.0f / yields;
+            const float firm = stiffness > 0.0f ? stiffness : inertia * natural * natural;
+            const float damp = stiffness > 0.0f ? std::max(damping, 0.0f) : 2.0f * ratio * inertia * natural;
+            const float both = deltaTime * (damp + deltaTime * firm);
+            if (both <= 0.0f) {
+                row.active = false;
+                row.total = 0.0f;
+                continue;
+            }
+            row.softness = 1.0f / both;
+            row.bias = deltaTime * firm * row.softness * past[static_cast<JPH::uint>(index)];
+            row.effective = 1.0f / (yields + row.softness);
+        }
+    }
+
+    void ResetWarmStart() override
+    {
+        for (Row& row : m_row) {
+            row.total = 0.0f;
+        }
+    }
+
+    void WarmStartVelocityConstraint(float warmStartRatio) override
+    {
+        for (int index = 0; index < m_rows; ++index) {
+            Row& row = m_row[index];
+            if (!row.active) {
+                continue;
+            }
+            row.total *= warmStartRatio;
+            apply(row, row.total);
+        }
+    }
+
+    bool SolveVelocityConstraint(float) override
+    {
+        bool any = false;
+        for (int index = 0; index < m_rows; ++index) {
+            Row& row = m_row[index];
+            if (!row.active) {
+                continue;
+            }
+            const float speed = row.linear.Dot(mBody2->GetLinearVelocity() - mBody1->GetLinearVelocity()) +
+                                row.angular2.Dot(mBody2->GetAngularVelocity()) -
+                                row.angular1.Dot(mBody1->GetAngularVelocity());
+            const float wanted = -row.effective * (speed + row.bias + row.softness * row.total);
+            const float next = std::clamp(row.total + wanted, -row.most, row.most);
+            const float change = next - row.total;
+            row.total = next;
+            if (change != 0.0f) {
+                apply(row, change);
+                any = true;
+            }
+        }
+        return any;
+    }
+
+    bool SolvePositionConstraint(float, float) override { return false; }
+
+#ifdef JPH_DEBUG_RENDERER
+    void DrawConstraint(JPH::DebugRenderer*) const override {}
+#endif
+
+    void SaveState(JPH::StateRecorder& stream) const override
+    {
+        JPH::TwoBodyConstraint::SaveState(stream);
+        for (const Row& row : m_row) {
+            stream.Write(row.total);
+        }
+    }
+
+    void RestoreState(JPH::StateRecorder& stream) override
+    {
+        JPH::TwoBodyConstraint::RestoreState(stream);
+        for (Row& row : m_row) {
+            stream.Read(row.total);
+        }
+    }
+
+    JPH::Ref<JPH::ConstraintSettings> GetConstraintSettings() const override
+    {
+        JPH::Ref<PivotMotorSettings> settings = new PivotMotorSettings;
+        settings->ball = m_rows == 3;
+        return settings.GetPtr();
+    }
+
+    JPH::Mat44 GetConstraintToBody1Matrix() const override
+    {
+        return JPH::Mat44::sRotationTranslation(m_frame1, m_point1);
+    }
+
+    JPH::Mat44 GetConstraintToBody2Matrix() const override
+    {
+        return JPH::Mat44::sRotationTranslation(m_frame2, m_point2);
+    }
+
+private:
+    struct Row
+    {
+        bool active = false;
+        // The row: a push at the pivot (on the second body, reversed on the
+        // first) and a twist on each.
+        JPH::Vec3 linear = JPH::Vec3::sZero();
+        JPH::Vec3 angular1 = JPH::Vec3::sZero();
+        JPH::Vec3 angular2 = JPH::Vec3::sZero();
+        // What a unit of it does to each body's velocities.
+        JPH::Vec3 linearStep1 = JPH::Vec3::sZero();
+        JPH::Vec3 angularStep1 = JPH::Vec3::sZero();
+        JPH::Vec3 linearStep2 = JPH::Vec3::sZero();
+        JPH::Vec3 angularStep2 = JPH::Vec3::sZero();
+        float effective = 0.0f;
+        float softness = 0.0f;
+        float bias = 0.0f;
+        float most = 0.0f;
+        float total = 0.0f;
+    };
+
+    void apply(const Row& row, float impulse)
+    {
+        if (mBody1->IsDynamic()) {
+            JPH::MotionProperties* motion = mBody1->GetMotionProperties();
+            motion->AddLinearVelocityStep(row.linearStep1 * impulse);
+            motion->AddAngularVelocityStep(row.angularStep1 * impulse);
+        }
+        if (mBody2->IsDynamic()) {
+            JPH::MotionProperties* motion = mBody2->GetMotionProperties();
+            motion->AddLinearVelocityStep(row.linearStep2 * impulse);
+            motion->AddAngularVelocityStep(row.angularStep2 * impulse);
+        }
+    }
+
+    // In each body's own space, about where it balances.
+    JPH::Vec3 m_point1;
+    JPH::Vec3 m_point2;
+    JPH::Quat m_frame1;
+    JPH::Quat m_frame2;
+    int m_rows = 1;
+    Row m_row[3];
+};
+
+JPH::TwoBodyConstraint* PivotMotorSettings::Create(JPH::Body& first, JPH::Body& second) const
+{
+    return new PivotMotor(first, second, *this);
+}
+
 struct ConstraintRecord
 {
     JPH::Ref<JPH::TwoBodyConstraint> constraint;
+    // A hinge's and a ball socket's motor, once one has been asked for: a
+    // constraint of its own beside the joint, added after it and gone with it.
+    JPH::Ref<PivotMotor> motor;
     u32 generation = 0;
     bool alive = false;
     // Kept because a rebuild needs them and because retiring a body has to find
@@ -593,14 +925,17 @@ struct CharacterPair
             // **The band is marked** (ADR 0143): 1 in the triangle's user
             // data, which the contact listeners refuse.
             const bool band = at / 3 >= desc.bandFirst;
-            triangles.push_back(JPH::IndexedTriangle(a, b, c, 0, band ? kBandTriangle : 0u));
+            // And what it is made of (ADR 0117), above the band's bit: the
+            // surface a contact on this triangle slides and bounces by.
+            const u32 surface = at / 3 < desc.triangleSurfaces.size() ? desc.triangleSurfaces[at / 3] : 0u;
+            triangles.push_back(JPH::IndexedTriangle(a, b, c, 0, (band ? kBandTriangle : 0u) | (surface << 8)));
         }
 
         // `Sanitize` runs inside this constructor -- duplicate and degenerate
         // triangles are removed for us, which a mesher's output at a cell
         // boundary produces routinely.
         JPH::MeshShapeSettings settings(std::move(vertices), std::move(triangles));
-        settings.mPerTriangleUserData = desc.bandFirst < desc.indices.size() / 3;
+        settings.mPerTriangleUserData = desc.bandFirst < desc.indices.size() / 3 || !desc.triangleSurfaces.empty();
         settings.SetEmbedded();
         const JPH::ShapeSettings::ShapeResult result = settings.Create();
         if (result.HasError()) {
@@ -676,19 +1011,52 @@ class JoltWorld;
         return false;
     const JPH::Shape* shape = body.GetShape();
     return shape->GetSubType() == JPH::EShapeSubType::Mesh &&
-           static_cast<const JPH::MeshShape*>(shape)->GetTriangleUserData(subShape) == kBandTriangle;
+           (static_cast<const JPH::MeshShape*>(shape)->GetTriangleUserData(subShape) & kBandTriangle) != 0;
 }
 
 // Appends to the world's per-step pair buffer and does nothing else. Runs
 // inside `PhysicsSystem::Update`, and from M7 on a worker thread -- so it may
 // not touch the scene, allocate a script value, or decide an order.
+// How the listener asks what a triangle is made of: the world's records are
+// the world's, and the listener is told how to read them.
+class SurfaceSource
+{
+public:
+    virtual ~SurfaceSource() = default;
+    // False for a body with no surfaces of its own, or a triangle of none.
+    [[nodiscard]] virtual bool surfaceOf(const JPH::Body& body, const JPH::SubShapeID& subShape,
+                                         SurfaceMaterial& out) const = 0;
+};
+
 class ContactRecorder final : public JPH::ContactListener
 {
 public:
+    void setSurfaces(const SurfaceSource* source) noexcept { m_surfaces = source; }
+
+    // **A triangle's own friction and bounce, in place of its body's** (ADR
+    // 0117): combined with the other body's the way the solver combines two
+    // bodies' -- the geometric mean, and the larger bounce -- so a triangle of
+    // the default surface gives exactly the numbers it always did.
+    void applySurface(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
+                      JPH::ContactSettings& settings) const
+    {
+        if (m_surfaces == nullptr)
+            return;
+        SurfaceMaterial one{first.GetFriction(), first.GetRestitution()};
+        SurfaceMaterial two{second.GetFriction(), second.GetRestitution()};
+        const bool firstHas = m_surfaces->surfaceOf(first, manifold.mSubShapeID1, one);
+        const bool secondHas = m_surfaces->surfaceOf(second, manifold.mSubShapeID2, two);
+        if (!firstHas && !secondHas)
+            return;
+        settings.mCombinedFriction = std::sqrt(one.friction * two.friction);
+        settings.mCombinedRestitution = std::max(one.restitution, two.restitution);
+    }
+
     void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
-                        JPH::ContactSettings&) override
+                        JPH::ContactSettings& settings) override
     {
         record(first, second);
+        applySurface(first, second, manifold, settings);
         // **How the two met**, read here because here is the only place it
         // exists: the bodies' velocities are still the ones they arrived with.
         // The first contact point, the normal from the first body to the
@@ -710,10 +1078,11 @@ public:
         m_details.push_back(detail);
     }
 
-    void OnContactPersisted(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold&,
-                            JPH::ContactSettings&) override
+    void OnContactPersisted(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
+                            JPH::ContactSettings& settings) override
     {
         record(first, second);
+        applySurface(first, second, manifold, settings);
     }
 
     // **The one place `collideConnected = false` can be implemented.**
@@ -806,6 +1175,7 @@ private:
         m_pairs.push_back(pair);
     }
 
+    const SurfaceSource* m_surfaces = nullptr;
     std::mutex m_mutex;
     std::vector<ContactPair> m_pairs;
     std::vector<ContactDetail> m_details;
@@ -904,9 +1274,30 @@ inline constexpr int kPhysicsThreads = 4;
     return 8u * 1024u * 1024u + contactBudget(desc) * 64u + contactBudget(desc) * 512u;
 }
 
-class JoltWorld
+class JoltWorld final : public SurfaceSource
 {
 public:
+    // What a triangle of a mesh is made of (ADR 0117), for the contact
+    // listener: the body's own table, by the triangle's user data. Read on the
+    // solver's worker threads during a step, when no record is written.
+    [[nodiscard]] bool surfaceOf(const JPH::Body& body, const JPH::SubShapeID& subShape,
+                                 SurfaceMaterial& out) const override
+    {
+        if (!body.IsStatic())
+            return false;
+        const JPH::Shape* shape = body.GetShape();
+        if (shape->GetSubType() != JPH::EShapeSubType::Mesh)
+            return false;
+        const u32 surface = static_cast<const JPH::MeshShape*>(shape)->GetTriangleUserData(subShape) >> 8;
+        if (surface == 0)
+            return false;
+        const BodyRecord* record = resolve(unpackHandle(body.GetUserData()));
+        if (record == nullptr || surface >= record->surfaces.size())
+            return false;
+        out = record->surfaces[surface];
+        return true;
+    }
+
     explicit JoltWorld(const WorldDesc& desc)
         : m_pairFilter(m_matrix), m_temp(tempBytes(desc)),
           m_jobs(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, kPhysicsThreads), m_gravity(desc.gravity),
@@ -916,6 +1307,7 @@ public:
                       m_objectVsBroadPhase, m_pairFilter);
         m_system.SetGravity(toJolt(desc.gravity));
         m_system.SetContactListener(&m_contacts);
+        m_contacts.setSurfaces(this);
     }
 
     ~JoltWorld()
@@ -2037,8 +2429,11 @@ public:
     [[nodiscard]] ConstraintHandle createConstraint(const ConstraintDesc& desc)
     {
         // Two bodies, and not the same one twice: Jolt asserts on a self-joint
-        // in a debug build and solves nonsense in a release one.
-        if (resolve(desc.first) == nullptr || resolve(desc.second) == nullptr || desc.first == desc.second) {
+        // in a debug build and solves nonsense in a release one. A drive is
+        // the one type whose first body may be none, which is the world.
+        const bool againstWorld = desc.type == ConstraintType::Drive && !desc.first.valid();
+        if ((!againstWorld && resolve(desc.first) == nullptr) || resolve(desc.second) == nullptr ||
+            desc.first == desc.second) {
             return {};
         }
 
@@ -2065,6 +2460,7 @@ public:
         record.desc = desc;
         record.constraint = built;
         m_system.AddConstraint(built);
+        attachMotor(record);
         applyExclusion(desc);
         return ConstraintHandle{slot, record.generation};
     }
@@ -2102,6 +2498,9 @@ public:
             // move it to the end of the solve order, and a ragdoll that toggled
             // itself off and on would simulate differently afterwards.
             record->constraint->SetEnabled(enabled);
+            if (record->motor != nullptr) {
+                record->motor->SetEnabled(enabled);
+            }
             wakeBoth(*record);
         }
     }
@@ -2126,11 +2525,13 @@ public:
         }
         const bool wasEnabled = record->constraint->GetEnabled();
         m_system.RemoveConstraint(record->constraint);
+        detachMotor(*record);
         dropExclusion(record->desc);
         record->constraint = built;
         record->desc = next;
         built->SetEnabled(wasEnabled);
         m_system.AddConstraint(built);
+        attachMotor(*record);
         applyExclusion(next);
         wakeBoth(*record);
     }
@@ -2145,6 +2546,20 @@ public:
             return;
         }
         ConstraintDesc& kept = record->desc;
+        if (kept.type == ConstraintType::Drive) {
+            // **Set every time, and woken only by a change.** A position
+            // target is said in the world and kept in the solver's own space,
+            // so a rebase moves it; and a restored snapshot brings back the
+            // targets of the tick it was taken in. Neither is a change of
+            // what was asked, so neither may be skipped as one.
+            const bool changed = !(kept.drive == desc.drive);
+            kept.drive = desc.drive;
+            driveSixAxis(static_cast<JPH::SixDOFConstraint*>(record->constraint.GetPtr()), kept);
+            if (changed) {
+                wakeBoth(*record);
+            }
+            return;
+        }
         const bool moved = kept.motor != desc.motor || kept.motorTarget != desc.motorTarget ||
                            kept.motorMaxForce != desc.motorMaxForce || kept.motorStiffness != desc.motorStiffness ||
                            kept.motorDamping != desc.motorDamping || kept.motorFrequency != desc.motorFrequency ||
@@ -2167,21 +2582,16 @@ public:
 
         JPH::TwoBodyConstraint* constraint = record->constraint.GetPtr();
         switch (kept.type) {
-        case ConstraintType::Hinge: {
-            auto* hinge = static_cast<JPH::HingeConstraint*>(constraint);
-            applyMotor(hinge->GetMotorSettings(), kept);
-            driveMotor(hinge, kept);
+        case ConstraintType::Hinge:
+        case ConstraintType::SwingTwist:
+            attachMotor(*record);
             break;
-        }
         case ConstraintType::Slider: {
             auto* slider = static_cast<JPH::SliderConstraint*>(constraint);
-            applyMotor(slider->GetMotorSettings(), kept);
+            applyMotor(slider->GetMotorSettings(), kept, massOf(slider));
             driveMotor(slider, kept);
             break;
         }
-        case ConstraintType::SwingTwist:
-            driveSwingTwist(static_cast<JPH::SwingTwistConstraint*>(constraint), kept);
-            break;
         case ConstraintType::Distance:
             static_cast<JPH::DistanceConstraint*>(constraint)
                 ->SetDistance(std::min(kept.minDistance, kept.maxDistance),
@@ -2189,6 +2599,7 @@ public:
             break;
         case ConstraintType::Fixed:
         case ConstraintType::Point:
+        case ConstraintType::Drive:
             break;
         }
         wakeBoth(*record);
@@ -2204,6 +2615,7 @@ public:
         state.enabled = record->constraint->GetEnabled();
         state.appliedImpulse = appliedImpulseOf(*record);
         state.appliedAngularImpulse = appliedAngularImpulseOf(*record);
+        motorImpulseOf(*record, state);
         measure(*record, state);
         return state;
     }
@@ -2237,6 +2649,7 @@ public:
                 continue;
             }
             m_system.RemoveConstraint(record.constraint);
+            detachMotor(record);
             JPH::Ref<JPH::TwoBodyConstraint> built = buildConstraint(record.desc);
             if (built == nullptr) {
                 // The body could not be re-joined. Dropped rather than left
@@ -2249,10 +2662,70 @@ public:
             }
             record.constraint = built;
             m_system.AddConstraint(built);
+            attachMotor(record);
         }
     }
 
 private:
+    // **A hinge's or a ball socket's motor, made the first time one is asked
+    // for** and told what it is asked every time after (see `PivotMotor`). A
+    // joint nobody drives has none, so a world of passive joints is solved
+    // exactly as it was.
+    void attachMotor(ConstraintRecord& record)
+    {
+        const ConstraintDesc& desc = record.desc;
+        if (desc.type != ConstraintType::Hinge && desc.type != ConstraintType::SwingTwist) {
+            return;
+        }
+        if (record.motor == nullptr) {
+            if (desc.motor == MotorMode::Off) {
+                return;
+            }
+            const BodyRecord* firstRecord = resolve(desc.first);
+            const BodyRecord* secondRecord = resolve(desc.second);
+            if (firstRecord == nullptr || secondRecord == nullptr) {
+                return;
+            }
+            // Frames before locks, for `buildConstraint`'s reason.
+            const JPH::RMat44 frameOne = jointFrame(desc.first, desc.firstFrame);
+            const JPH::RMat44 frameTwo = jointFrame(desc.second, desc.secondFrame);
+            PivotMotorSettings settings;
+            settings.point1 = frameOne.GetTranslation();
+            settings.point2 = frameTwo.GetTranslation();
+            settings.frame1 = frameOne.GetQuaternion();
+            settings.frame2 = frameTwo.GetQuaternion();
+            settings.ball = desc.type == ConstraintType::SwingTwist;
+            const JPH::BodyID ids[2] = {firstRecord->id, secondRecord->id};
+            const JPH::BodyLockMultiWrite lock(m_system.GetBodyLockInterface(), ids, 2);
+            JPH::Body* first = lock.GetBody(0);
+            JPH::Body* second = lock.GetBody(1);
+            if (first == nullptr || second == nullptr) {
+                return;
+            }
+            record.motor = new PivotMotor(*first, *second, settings);
+            record.motor->SetEnabled(record.constraint->GetEnabled());
+            m_system.AddConstraint(record.motor);
+        }
+        PivotMotor& motor = *record.motor;
+        motor.mode = desc.motor;
+        motor.maxTorque = desc.motorMaxForce;
+        motor.targetAngle = desc.motorTarget;
+        motor.targetVelocity = desc.motorTarget;
+        motor.targetOrientation = toJolt(desc.motorOrientation).Normalized();
+        motor.stiffness = desc.motorStiffness;
+        motor.damping = desc.motorDamping;
+        motor.natural = 2.0f * JPH::JPH_PI * std::max(desc.motorFrequency, 0.01f);
+        motor.ratio = std::max(desc.motorDampingRatio, 0.0f);
+    }
+
+    void detachMotor(ConstraintRecord& record)
+    {
+        if (record.motor != nullptr) {
+            m_system.RemoveConstraint(record.motor);
+            record.motor = nullptr;
+        }
+    }
+
     // The joint frame in WORLD space, from the body's current transform and the
     // frame the caller gave in that body's own space.
     //
@@ -2268,8 +2741,156 @@ private:
         return JPH::RMat44::sRotationTranslation(toJolt(world.rotation), toLocal(world.position));
     }
 
+    // **A drive**: six free axes and their motors, between two bodies or
+    // between one and the world (see `DriveDesc`).
+    [[nodiscard]] JPH::Ref<JPH::TwoBodyConstraint> buildDrive(const ConstraintDesc& desc)
+    {
+        const BodyRecord* firstRecord = resolve(desc.first);
+        const BodyRecord* secondRecord = resolve(desc.second);
+        if (secondRecord == nullptr || (desc.first.valid() && firstRecord == nullptr)) {
+            return nullptr;
+        }
+        // Both frames before either lock, for `buildConstraint`'s reason.
+        JPH::RMat44 frameTwo = jointFrame(desc.second, desc.secondFrame);
+        if (desc.drive.atCenterOfMass) {
+            frameTwo.SetTranslation(m_system.GetBodyInterface().GetCenterOfMassPosition(secondRecord->id));
+        }
+        // The world's frame sits at the solver's own origin: every target is
+        // handed over relative to it, so where it is does not matter and a
+        // rebase has nothing to move.
+        const JPH::RMat44 frameOne =
+            firstRecord != nullptr
+                ? jointFrame(desc.first, desc.firstFrame)
+                : JPH::RMat44::sRotationTranslation(toJolt(desc.firstFrame.rotation), JPH::RVec3::sZero());
+
+        JPH::SixDOFConstraintSettings settings;
+        settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+        settings.mPosition1 = frameOne.GetTranslation();
+        settings.mAxisX1 = frameOne.GetAxisX();
+        settings.mAxisY1 = frameOne.GetAxisY();
+        settings.mPosition2 = frameTwo.GetTranslation();
+        settings.mAxisX2 = frameTwo.GetAxisX();
+        settings.mAxisY2 = frameTwo.GetAxisY();
+        for (int axis = 0; axis < JPH::SixDOFConstraintSettings::EAxis::Num; ++axis) {
+            settings.MakeFreeAxis(static_cast<JPH::SixDOFConstraintSettings::EAxis>(axis));
+        }
+
+        JPH::Ref<JPH::TwoBodyConstraint> made;
+        if (firstRecord != nullptr) {
+            const JPH::BodyID ids[2] = {firstRecord->id, secondRecord->id};
+            const JPH::BodyLockMultiWrite lock(m_system.GetBodyLockInterface(), ids, 2);
+            JPH::Body* first = lock.GetBody(0);
+            JPH::Body* second = lock.GetBody(1);
+            if (first == nullptr || second == nullptr) {
+                return nullptr;
+            }
+            made = settings.Create(*first, *second);
+        }
+        else {
+            const JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), secondRecord->id);
+            if (!lock.Succeeded()) {
+                return nullptr;
+            }
+            made = settings.Create(JPH::Body::sFixedToWorld, lock.GetBody());
+        }
+        driveSixAxis(static_cast<JPH::SixDOFConstraint*>(made.GetPtr()), desc);
+        return made;
+    }
+
+    static void springOf(JPH::SpringSettings& spring, f32 stiffness, f32 damping, f32 frequency, f32 ratio)
+    {
+        if (stiffness > 0.0f) {
+            spring.mMode = JPH::ESpringMode::StiffnessAndDamping;
+            spring.mStiffness = stiffness;
+            spring.mDamping = std::max(damping, 0.0f);
+        }
+        else {
+            spring.mMode = JPH::ESpringMode::FrequencyAndDamping;
+            spring.mFrequency = std::max(frequency, 0.01f);
+            spring.mDamping = std::max(ratio, 0.0f);
+        }
+    }
+
+    // What a drive's motors are told, every tick it is driven in.
+    void driveSixAxis(JPH::SixDOFConstraint* constraint, const ConstraintDesc& desc) const
+    {
+        if (constraint == nullptr) {
+            return;
+        }
+        using Axis = JPH::SixDOFConstraintSettings::EAxis;
+        const DriveDesc& drive = desc.drive;
+
+        // A spring whose target is itself moving follows it at that speed.
+        const bool following = !(drive.linearVelocity == core::Vec3{0.0f, 0.0f, 0.0f});
+        for (int index = 0; index < 3; ++index) {
+            const Axis axis = static_cast<Axis>(Axis::TranslationX + index);
+            JPH::MotorSettings& motor = constraint->GetMotorSettings(axis);
+            motor.SetForceLimit(drive.linearMaxForce);
+            springOf(motor.mSpringSettings, drive.linearStiffness, drive.linearDamping, drive.linearFrequency,
+                     drive.linearDampingRatio);
+            const MotorMode mode = drive.linear[index];
+            constraint->SetMotorState(axis, mode == MotorMode::Off        ? JPH::EMotorState::Off
+                                            : mode == MotorMode::Velocity ? JPH::EMotorState::Velocity
+                                            : following                   ? JPH::EMotorState::PositionAndVelocity
+                                                                          : JPH::EMotorState::Position);
+        }
+        constraint->SetTargetVelocityCS(toJolt(drive.linearVelocity));
+        // Against the world the first frame is at the solver's origin, so the
+        // target is where the world's place is in the solver's space, read
+        // along that frame's axes.
+        const core::Vec3 place = desc.first.valid() ? core::toVec3(drive.linearTarget)
+                                                    : core::transpose(desc.firstFrame.rotation) *
+                                                          core::toVec3(drive.linearTarget - m_origin);
+        constraint->SetTargetPositionCS(toJolt(place));
+
+        const bool turning = !(drive.angularVelocity == core::Vec3{0.0f, 0.0f, 0.0f});
+        for (int index = 0; index < 3; ++index) {
+            const Axis axis = static_cast<Axis>(Axis::RotationX + index);
+            JPH::MotorSettings& motor = constraint->GetMotorSettings(axis);
+            motor.SetTorqueLimit(drive.angularMaxTorque);
+            springOf(motor.mSpringSettings, drive.angularStiffness, drive.angularDamping, drive.angularFrequency,
+                     drive.angularDampingRatio);
+            constraint->SetMotorState(axis, drive.angular == MotorMode::Off        ? JPH::EMotorState::Off
+                                            : drive.angular == MotorMode::Velocity ? JPH::EMotorState::Velocity
+                                            : turning ? JPH::EMotorState::PositionAndVelocity
+                                                      : JPH::EMotorState::Position);
+        }
+        if (drive.angular != MotorMode::Off) {
+            // The solver reads a spin along the SECOND body's frame as it
+            // stands now; what was asked is said in the world's axes.
+            const JPH::Quat frame =
+                constraint->GetBody2()->GetRotation() * constraint->GetConstraintToBody2Matrix().GetQuaternion();
+            constraint->SetTargetAngularVelocityCS(frame.Conjugated() * toJolt(drive.angularVelocity));
+        }
+        if (drive.angular == MotorMode::Position) {
+            JPH::Quat target = toJolt(drive.angularTarget).Normalized();
+            // **The solver reads how far there is to turn as twice the sine of
+            // half of it**, which is the angle only while the angle is small:
+            // a spring asked to turn a right angle would pull as if it were
+            // eighty degrees, and one said in newton-metres a radian would not
+            // be. So the target handed over is the one whose reading IS the
+            // angle -- exact up to two radians, and all the way round past it.
+            const JPH::Quat now = constraint->GetRotationInConstraintSpace();
+            JPH::Quat turn = now.Conjugated() * target;
+            if (turn.GetW() < 0.0f) {
+                turn = -turn;
+            }
+            JPH::Vec3 axis;
+            float angle = 0.0f;
+            turn.GetAxisAngle(axis, angle);
+            if (angle > 1.0e-3f) {
+                const float asked = angle < 2.0f ? 2.0f * std::asin(angle * 0.5f) : JPH::JPH_PI;
+                target = (now * JPH::Quat::sRotation(axis, asked)).Normalized();
+            }
+            constraint->SetTargetOrientationCS(target);
+        }
+    }
+
     [[nodiscard]] JPH::Ref<JPH::TwoBodyConstraint> buildConstraint(const ConstraintDesc& desc)
     {
+        if (desc.type == ConstraintType::Drive) {
+            return buildDrive(desc);
+        }
         const BodyRecord* firstRecord = resolve(desc.first);
         const BodyRecord* secondRecord = resolve(desc.second);
         if (firstRecord == nullptr || secondRecord == nullptr) {
@@ -2334,13 +2955,22 @@ private:
             settings.mPoint2 = frameTwo.GetTranslation();
             settings.mHingeAxis2 = frameTwo.GetAxisX();
             settings.mNormalAxis2 = frameTwo.GetAxisY();
+            // **A range of nothing is still a range** (D473): the solver holds
+            // a joint whose two limits are one value exactly there, and is
+            // happy to -- but making one that way trips an assumption of its
+            // own, reported as an error on every joint a script locks by
+            // giving both limits the same number. So it is made a hair wide
+            // and then told the range it was asked for.
+            const bool locked = desc.limitLow == desc.limitHigh;
             if (desc.limitLow <= desc.limitHigh) {
-                settings.mLimitsMin = desc.limitLow;
-                settings.mLimitsMax = desc.limitHigh;
+                settings.mLimitsMin = desc.limitLow - (locked ? 1.0e-4f : 0.0f);
+                settings.mLimitsMax = desc.limitHigh + (locked ? 1.0e-4f : 0.0f);
             }
-            applyMotor(settings.mMotorSettings, desc);
+            // Its motor is a constraint of its own (see `PivotMotor`).
             JPH::Ref<JPH::TwoBodyConstraint> made = settings.Create(*first, *second);
-            driveMotor(static_cast<JPH::HingeConstraint*>(made.GetPtr()), desc);
+            if (locked) {
+                static_cast<JPH::HingeConstraint*>(made.GetPtr())->SetLimits(desc.limitLow, desc.limitHigh);
+            }
             return made;
         }
         case ConstraintType::SwingTwist: {
@@ -2359,9 +2989,7 @@ private:
             settings.mPlaneHalfConeAngle = desc.swingLimit;
             settings.mTwistMinAngle = -desc.twistLimit;
             settings.mTwistMaxAngle = desc.twistLimit;
-            JPH::Ref<JPH::TwoBodyConstraint> made = settings.Create(*first, *second);
-            driveSwingTwist(static_cast<JPH::SwingTwistConstraint*>(made.GetPtr()), desc);
-            return made;
+            return settings.Create(*first, *second);
         }
         case ConstraintType::Slider: {
             JPH::SliderConstraintSettings settings;
@@ -2373,13 +3001,24 @@ private:
             settings.mPoint2 = frameTwo.GetTranslation();
             settings.mSliderAxis2 = frameTwo.GetAxisX();
             settings.mNormalAxis2 = frameTwo.GetAxisY();
+            // **A range of nothing is still a range** (D473): the solver holds
+            // a joint whose two limits are one value exactly there, and is
+            // happy to -- but making one that way trips an assumption of its
+            // own, reported as an error on every joint a script locks by
+            // giving both limits the same number. So it is made a hair wide
+            // and then told the range it was asked for.
+            const bool locked = desc.limitLow == desc.limitHigh;
             if (desc.limitLow <= desc.limitHigh) {
-                settings.mLimitsMin = desc.limitLow;
-                settings.mLimitsMax = desc.limitHigh;
+                settings.mLimitsMin = desc.limitLow - (locked ? 1.0e-4f : 0.0f);
+                settings.mLimitsMax = desc.limitHigh + (locked ? 1.0e-4f : 0.0f);
             }
-            applyMotor(settings.mMotorSettings, desc);
             JPH::Ref<JPH::TwoBodyConstraint> made = settings.Create(*first, *second);
-            driveMotor(static_cast<JPH::SliderConstraint*>(made.GetPtr()), desc);
+            auto* slider = static_cast<JPH::SliderConstraint*>(made.GetPtr());
+            if (locked) {
+                slider->SetLimits(desc.limitLow, desc.limitHigh);
+            }
+            applyMotor(slider->GetMotorSettings(), desc, massOf(slider));
+            driveMotor(slider, desc);
             return made;
         }
         case ConstraintType::Distance: {
@@ -2391,13 +3030,30 @@ private:
             settings.mMaxDistance = desc.maxDistance;
             return settings.Create(*first, *second);
         }
+        case ConstraintType::Drive:
+            break;
         }
         return nullptr;
     }
 
-    // Honoured by Hinge and Slider, which are the two with something to drive.
-    // Ignored by the rest, and the field's own doc says which types read it.
-    static void applyMotor(JPH::MotorSettings& settings, const ConstraintDesc& desc)
+    // Along a rail neither body turns, so what moves is the two masses against
+    // each other.
+    [[nodiscard]] static f32 massOf(const JPH::SliderConstraint* slider)
+    {
+        const JPH::Body& first = *slider->GetBody1();
+        const JPH::Body& second = *slider->GetBody2();
+        const f32 give = (first.IsDynamic() ? first.GetMotionProperties()->GetInverseMass() : 0.0f) +
+                         (second.IsDynamic() ? second.GetMotionProperties()->GetInverseMass() : 0.0f);
+        return give > 0.0f ? 1.0f / give : 0.0f;
+    }
+
+    // A rail's motor, which is the solver's own: along a line there is no arm
+    // for a row to be wrong by.
+    //
+    // `inertia` is what the motor moves, in kilograms, and is what makes the
+    // frequency form mean what it says: zero leaves the solver to its own
+    // reading.
+    static void applyMotor(JPH::MotorSettings& settings, const ConstraintDesc& desc, f32 inertia)
     {
         if (desc.motor == MotorMode::Off) {
             return;
@@ -2410,6 +3066,12 @@ private:
             settings.mSpringSettings.mStiffness = desc.motorStiffness;
             settings.mSpringSettings.mDamping = std::max(desc.motorDamping, 0.0f);
         }
+        else if (inertia > 0.0f) {
+            const f32 natural = 2.0f * JPH::JPH_PI * std::max(desc.motorFrequency, 0.01f);
+            settings.mSpringSettings.mMode = JPH::ESpringMode::StiffnessAndDamping;
+            settings.mSpringSettings.mStiffness = inertia * natural * natural;
+            settings.mSpringSettings.mDamping = 2.0f * std::max(desc.motorDampingRatio, 0.0f) * inertia * natural;
+        }
         else {
             settings.mSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
             settings.mSpringSettings.mFrequency = std::max(desc.motorFrequency, 0.01f);
@@ -2417,39 +3079,7 @@ private:
         }
     }
 
-    // **A ball joint that holds a pose** (amendment A1): both of the
-    // swing-twist's motors pulling to one orientation of the second frame in
-    // the first's, as a spring under a torque cap.
-    static void driveSwingTwist(JPH::SwingTwistConstraint* constraint, const ConstraintDesc& desc)
-    {
-        if (constraint == nullptr) {
-            return;
-        }
-        if (desc.motor != MotorMode::Position) {
-            constraint->SetSwingMotorState(JPH::EMotorState::Off);
-            constraint->SetTwistMotorState(JPH::EMotorState::Off);
-            return;
-        }
-        applyMotor(constraint->GetSwingMotorSettings(), desc);
-        applyMotor(constraint->GetTwistMotorSettings(), desc);
-        constraint->SetSwingMotorState(JPH::EMotorState::Position);
-        constraint->SetTwistMotorState(JPH::EMotorState::Position);
-        // **The solver's constraint space is not the joint frame.** Its X is
-        // the twist axis -- the frame's X -- but its Z is the PLANE axis, which
-        // is the frame's Y, and its Y is what is left: the frame's -Z. A pose
-        // written in the frame and handed over as it is raises an arm when it
-        // was told to swing it forwards. So: the same turn, said in the
-        // solver's axes.
-        core::Mat3 axes;
-        axes.m[0][0] = 1.0f, axes.m[0][1] = 0.0f, axes.m[0][2] = 0.0f;
-        axes.m[1][0] = 0.0f, axes.m[1][1] = 0.0f, axes.m[1][2] = -1.0f;
-        axes.m[2][0] = 0.0f, axes.m[2][1] = 1.0f, axes.m[2][2] = 0.0f;
-        constraint->SetTargetOrientationCS(toJolt(core::transpose(axes) * desc.motorOrientation * axes));
-    }
-
-    static void setMotorVelocity(JPH::HingeConstraint* c, f32 target) { c->SetTargetAngularVelocity(target); }
     static void setMotorVelocity(JPH::SliderConstraint* c, f32 target) { c->SetTargetVelocity(target); }
-    static void setMotorPosition(JPH::HingeConstraint* c, f32 target) { c->SetTargetAngle(target); }
     static void setMotorPosition(JPH::SliderConstraint* c, f32 target) { c->SetTargetPosition(target); }
 
     template <typename T>
@@ -2493,8 +3123,40 @@ private:
             return static_cast<const JPH::SliderConstraint*>(constraint)->GetTotalLambdaPosition().Length();
         case ConstraintType::Distance:
             return std::fabs(static_cast<const JPH::DistanceConstraint*>(constraint)->GetTotalLambdaPosition());
+        case ConstraintType::Drive:
+            // Holds nothing: all of it is motor.
+            return 0.0f;
         }
         return 0.0f;
+    }
+
+    // What the joint's own motor did last step (see `ConstraintState`).
+    static void motorImpulseOf(const ConstraintRecord& record, ConstraintState& state)
+    {
+        const JPH::TwoBodyConstraint* constraint = record.constraint.GetPtr();
+        if (constraint == nullptr) {
+            return;
+        }
+        switch (record.desc.type) {
+        case ConstraintType::Hinge:
+        case ConstraintType::SwingTwist:
+            state.motorAngularImpulse = record.motor != nullptr ? record.motor->totalImpulse() : 0.0f;
+            break;
+        case ConstraintType::Slider:
+            state.motorImpulse =
+                std::fabs(static_cast<const JPH::SliderConstraint*>(constraint)->GetTotalLambdaMotor());
+            break;
+        case ConstraintType::Drive: {
+            const auto* drive = static_cast<const JPH::SixDOFConstraint*>(constraint);
+            state.motorImpulse = drive->GetTotalLambdaMotorTranslation().Length();
+            state.motorAngularImpulse = drive->GetTotalLambdaMotorRotation().Length();
+            break;
+        }
+        case ConstraintType::Fixed:
+        case ConstraintType::Point:
+        case ConstraintType::Distance:
+            break;
+        }
     }
 
     // What resists a TURN, as a magnitude in newton-metre-seconds: the parts of
@@ -2524,6 +3186,7 @@ private:
             return static_cast<const JPH::SliderConstraint*>(constraint)->GetTotalLambdaRotation().Length();
         case ConstraintType::Point:
         case ConstraintType::Distance:
+        case ConstraintType::Drive:
             return 0.0f;
         }
         return 0.0f;
@@ -2565,6 +3228,7 @@ private:
         case ConstraintType::Fixed:
         case ConstraintType::Point:
         case ConstraintType::SwingTwist:
+        case ConstraintType::Drive:
             break;
         }
     }
@@ -2577,6 +3241,7 @@ private:
         if (record.constraint != nullptr) {
             m_system.RemoveConstraint(record.constraint);
         }
+        detachMotor(record);
         dropExclusion(record.desc);
         record.constraint = nullptr;
     }
@@ -2642,6 +3307,7 @@ private:
         record.passableForCharacters = desc.passableForCharacters;
         record.group = desc.group;
         record.userData = desc.userData;
+        record.surfaces.assign(desc.surfaces.begin(), desc.surfaces.end());
 
         // **A shape that can only be static IS static, whatever was asked for**
         // (ADR 0066). Both `HeightFieldShape` and `MeshShape` report

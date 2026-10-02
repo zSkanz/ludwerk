@@ -89,9 +89,10 @@ combined across a contact pair rather than taken from one side, so one slippery
 surface is enough to make a pair slide and one bouncy surface is enough to make
 a pair bounce.
 
-Neither is a material. There is no `BasePart.Material` in this release — a
-surface look is a different thing from rigid-body state, and a property nothing
-reads would look more like a working API than a missing one does.
+A part's material says both too. A part whose own `Friction` and `Restitution`
+are still the defaults collides with its material's, and a terrain collides,
+triangle by triangle, with what the ground is drawn as there
+([Materials](manual:world/materials)).
 
 ## Collision groups
 

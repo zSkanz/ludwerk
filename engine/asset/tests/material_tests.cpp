@@ -27,6 +27,11 @@ MaterialAsset brick()
     out.properties.tilingVariation = 0.25f;
     out.properties.tilingFarScale = 8.0f;
     out.properties.hexTiling = true;
+    // What it is to touch (ADR 0117).
+    out.properties.friction = 0.7f;
+    out.properties.restitution = 0.25f;
+    out.properties.footstepSound = "asset://sounds/step_brick.wav";
+    out.properties.tags = {"masonry", "loud"};
     out.written = asset::AllMaterialFields;
     return out;
 }
@@ -61,7 +66,11 @@ TEST_CASE("a base material writes every field, in a fixed order, and reads back 
     "BlendSharpness": 0.5,
     "TilingVariation": 0.25,
     "TilingFarScale": 8,
-    "HexTiling": true
+    "HexTiling": true,
+    "Friction": 0.7,
+    "Restitution": 0.25,
+    "FootstepSound": "asset://sounds/step_brick.wav",
+    "Tags": ["masonry", "loud"]
   }
 }
 )");
@@ -75,7 +84,8 @@ TEST_CASE("a base material writes every field, in a fixed order, and reads back 
     CHECK(asset::writeMaterialAsset(*read) == text);
 
     // And through the compiled form a pack carries: the repeat's fields
-    // (ADR 0113's amendment) are version 6's.
+    // (ADR 0113's amendment) are version 6's, and what a surface is to touch
+    // (ADR 0117) is version 7's.
     asset::CompiledMaterial compiled;
     compiled.asset = brick();
     const std::optional<asset::CompiledMaterial> decoded = asset::decodeMaterial(asset::encodeMaterial(compiled));

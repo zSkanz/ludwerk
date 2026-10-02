@@ -102,7 +102,12 @@ by default, zero for something that should coast for ever.
 
 `BasePart.Friction` defaults to 0.3 and `BasePart.Restitution` to 0. Both
 combine across a contact pair, so one slippery surface is enough to make a pair
-slide.
+slide. A part still at those defaults takes its material's instead
+([Materials](manual:world/materials)).
+
+`BasePart.Mass` is the part's density times the volume of its shape, and it
+answers at once: the moment a part is in the world, and the moment its size or
+density changes.
 
 ## Moving a body
 

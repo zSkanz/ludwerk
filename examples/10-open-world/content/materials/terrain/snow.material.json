@@ -3,5 +3,7 @@
   "version": 1,
   "parent": "engine://terrain/snow",
   "instanceParameters": [],
-  "properties": {}
+  "properties": {
+    "FootstepSound": "asset://sounds/step_soft.wav"
+  }
 }

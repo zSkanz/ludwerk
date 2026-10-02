@@ -42,9 +42,12 @@ A cast that hits nothing returns `nil`. There is no "empty result" object to
 check a field on, because a result that exists and means nothing is the shape of
 every nil-check somebody forgets.
 
-`RaycastResult` carries exactly four things — `RaycastResult.Instance`,
-`RaycastResult.Position`, `RaycastResult.Normal` and `RaycastResult.Distance`,
-all read-only. There is no material and no face index.
+`RaycastResult` carries five things — `RaycastResult.Instance`,
+`RaycastResult.Position`, `RaycastResult.Normal`, `RaycastResult.Distance` and
+`RaycastResult.Material`, all read-only. The material is the one the part
+wears, or on a terrain the layer the ground is drawn as at that point; nil for
+a part wearing nothing ([Materials](manual:world/materials)). There is no face
+index.
 
 A tie between two surfaces at the same distance resolves the same way on every
 run: a query whose answer depended on traversal order would be a replay

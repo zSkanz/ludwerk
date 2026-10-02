@@ -205,6 +205,20 @@ void hashMaterialFields(Hasher& hasher, asset::MaterialFieldMask set, const asse
         case asset::MaterialField::HexTiling:
             hasher.flag(values.hexTiling);
             break;
+        case asset::MaterialField::Friction:
+            hasher.number(values.friction);
+            break;
+        case asset::MaterialField::Restitution:
+            hasher.number(values.restitution);
+            break;
+        case asset::MaterialField::FootstepSound:
+            hasher.text(values.footstepSound);
+            break;
+        case asset::MaterialField::Tags:
+            hasher.pod(static_cast<u64>(values.tags.size()));
+            for (const std::string& word : values.tags)
+                hasher.text(word);
+            break;
         case asset::MaterialField::Count:
             break;
         }
@@ -480,6 +494,28 @@ u64 World::worldHash() const
                 hasher.pod(entry.first.z);
                 hasher.pod(entry.second->digest());
             }
+            // **What the ground is made of, and what is laid over it** (ADR
+            // 0117): the layers and the rules decide what a body slides on, what
+            // a ray reports and what a foot stands on, so two worlds that
+            // differ in them are two worlds. Only where there are any -- a
+            // terrain with neither hashes as it did before either was
+            // observable.
+            if (!terrain->layers.empty() || !terrain->rules.empty()) {
+                hasher.pod(static_cast<u32>(terrain->layers.size()));
+                for (const std::string& layer : terrain->layers)
+                    hasher.text(layer);
+                hasher.pod(static_cast<u32>(terrain->rules.size()));
+                for (const asset::TerrainRule& rule : terrain->rules) {
+                    hasher.pod(static_cast<u8>(rule.enabled ? 1 : 0));
+                    hasher.pod(rule.material);
+                    for (const f32 value :
+                         {rule.slopeMin, rule.slopeMax, rule.heightMin, rule.heightMax, rule.blend, rule.noise})
+                        hasher.number(static_cast<f64>(value));
+                    hasher.pod(static_cast<u32>(rule.appliesTo.size()));
+                    for (const u8 layer : rule.appliesTo)
+                        hasher.pod(layer);
+                }
+            }
         }
 
         // **The block world (V1)**, on the terrain's rules: the block size and
@@ -609,6 +645,10 @@ bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc&
     // part's mass is never said at all: it is its size and its density again.
     if (name == "Mass" || name == "AssemblyMass")
         return world.rigidBodies().find(id) != nullptr;
+    // What a character stands on (ADR 0117) is the ground under it, asked when
+    // it is read: nothing of its own to say, in a hash or in a file.
+    if (name == "FloorMaterial")
+        return world.characterBodies().find(id) != nullptr;
     // A character's ways of moving that are not walking (D466), the same.
     if (const CharacterBodyComponent* character = world.characterBodies().find(id); character != nullptr) {
         const CharacterBodyComponent fresh;

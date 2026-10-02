@@ -153,6 +153,48 @@ What building it settled:
   debug overlay; a rope, a rod and a spring are also a thin lit cylinder in the
   game.
 
+## Amendments, 2026-10-02 (second): what the brawler found in them
+
+Section 1 said every mover is "impulses worked out before each step". That was
+built, and it is wrong for a body anything else holds. Decided by ludwerk-08
+for the owner (D470, D471), with what building it found:
+
+- **A mover that holds something is a motor in the solver.** `AlignPosition`,
+  `AlignOrientation`, `LinearVelocity` and `AngularVelocity` are a six-axis
+  joint with every axis free and a motor on the ones they hold, against the
+  world or -- with `Reaction*Enabled` -- between the two bodies. `VectorForce`,
+  `Torque` and a spring without stops stay forces. Still nothing remembered
+  between ticks: what is asked of the solver is a function of the world as the
+  step finds it.
+- **A servo is a critically damped spring to its target**, its
+  `Responsiveness` the spring's natural frequency in radians a second. Far
+  from the target it travels at its speed (`AngularSpeed`, `Speed`,
+  `MaxVelocity`, `MaxAngularVelocity`); nearer than two speeds over its
+  frequency -- from where such a spring arrives without crossing -- it is the
+  spring.
+- **A hinge's and a ball socket's motor is the engine's own constraint**
+  beside the solver's joint: one row that is the turn with the pivot already
+  held. The solver's own joint motors are rows about each body's centre of
+  mass, and an iterative solver does not settle them against the pivot's rows
+  when a body swings from a pivot away from where it balances.
+- **Units, everywhere**: `Stiffness` in newton-metres a radian or newtons a
+  metre, `Damping` in newton-metre-seconds a radian or newton-seconds a metre,
+  angles in degrees, speeds in radians a second. Critical damping is
+  `2 * sqrt(Stiffness * inertia)`.
+- **The frequency form is sized for what the joint or the mover is on** -- the
+  two parts of a joint about the joint, the one part of a mover -- and not for
+  what hangs beyond. A loaded joint and the hips of a body take `Stiffness`.
+- **A cap is along each axis**, not a magnitude: the solver's motors are rows.
+- **`GetMotorForce()` and `GetMotorTorque()`** say what a motor used, apart
+  from `GetForce()` and `GetTorque()`: those are what a joint bore, and
+  `BreakForce` is a threshold on what it bore.
+- **`BasePart.Mass` answers from the part's properties** (D472), at once.
+- **What an iterative solver cannot do stays undone**: a torque travels a
+  joint a round, so a rigid chain turned from its middle lags at its ends --
+  three pieces follow their spring, five want four times a tick's rounds, and
+  eleven is out of reach. The solver's rounds are not raised for it: every
+  island would pay. A `Workspace` setting for them is a box in the ledger.
+
 ## Not decided here
 
 - The 2D equivalents beyond the existing 2D joints.

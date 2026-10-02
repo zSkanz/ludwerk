@@ -225,14 +225,16 @@ Built 2026-09-29, protocol 28; what changed from the ADR is its amendment.
 
 ## Stage B7 — friction and footsteps (ADR 0117)
 
-- [ ] Material fields `Friction`, `Restitution`, `FootstepSound`, `Tags`.
-- [ ] A part collides with its material's friction and restitution; terrain
+- [x] Material fields `Friction`, `Restitution`, `FootstepSound`, `Tags`.
+- [x] A part collides with its material's friction and restitution; terrain
   triangles carry their layer's (per-triangle material in the Jolt shape).
-- [ ] `RaycastResult.Material`; `Humanoid.FloorMaterial`.
-- [ ] Footsteps in `examples/10-open-world`.
-- [ ] Traces re-recorded once where friction changes a result, with the reason.
-- [ ] Tests: ice slides farther than grass; the raycast reports a rule-drawn
-  material.
+- [x] `RaycastResult.Material`; `CharacterBody.FloorMaterial` (the ADR's
+  `Humanoid` is this engine's `CharacterBody`).
+- [x] Footsteps in `examples/10-open-world`.
+- [x] Traces re-recorded once where friction changes a result, with the reason:
+  none moved -- every default is what a body met before.
+- [x] Tests: ice slides farther than grass; the raycast reports a rule-drawn
+  material (`tests/conformance/physics/surfaces.spec.luau`).
 
 ## Findings
 
@@ -264,9 +266,17 @@ Built 2026-09-29, protocol 28; what changed from the ADR is its amendment.
   is not the same bits on every GPU, and the CPU has to agree with it. The
   default rule's edge is therefore ragged in a different pattern than before
   rules, at the same scale.
-- **Rules are not in the world hash yet.** They decide what a raycast reports
-  only once `RaycastResult.Material` exists (B7); B7 adds them to the hash with
-  the field that makes them observable.
+- **Rules are in the world hash since B7**, with the layers, where a terrain
+  has any: they decide what a raycast reports and what a body slides on.
+- **B7: "the part wrote its friction" is not a fact a scene file keeps** -- it
+  writes every property -- so a part takes its material's friction where its
+  own is the default, and keeps any other value.
+- **B7: a new terrain has no layers**, so the brief's "ice slides further than
+  grass" is true of a terrain that was given them; ground with no layer is
+  made of nothing, to a body, a ray and a foot.
+- **B7: a terrain's colliders name no instance.** A character's `groundPart`
+  is nothing on terrain, so `FloorMaterial` asks the ground directly; `Landed`
+  on terrain still hands over nil.
 - **The workspace never replicated a property before the wind**, not even
   `Gravity`. It travels now as a service of properties, last in the class list
   so no earlier service's fixed id moved.

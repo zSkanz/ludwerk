@@ -779,7 +779,7 @@ struct TerrainRayHit
     f64 distance = std::numeric_limits<f64>::max();
     // **What is drawn there** (ADR 0113 §2): the voxel's layer, or the one a
     // rule paints over it -- what `RaycastResult.Material` reports (ADR 0117).
-    core::u8 material = 0;
+    core::NameAtom material;
 };
 
 [[nodiscard]] TerrainRayHit raycastTerrains(lua_State* L, core::InstanceId workspace, core::Vec3 origin,
@@ -811,10 +811,8 @@ struct TerrainRayHit
                                     hit->position.z + terrain.origin.z};
         best.normal = hit->normal;
         best.distance = hit->distance;
-        const core::Vec3 ground{static_cast<core::f32>(hit->position.x), static_cast<core::f32>(hit->position.y),
-                                static_cast<core::f32>(hit->position.z)};
-        best.material = asset::drawnMaterial(terrain.rules, asset::Voxel{255, hit->material, hit->top, hit->cover},
-                                             hit->normal, ground, static_cast<core::f32>(best.position.y));
+        const std::string_view layer = scene::terrainLayerAt(terrain, *hit);
+        best.material = layer.empty() ? core::NameAtom{} : w.atoms().intern(layer);
     });
     return best;
 }
@@ -927,14 +925,28 @@ int workspaceRaycast(lua_State* L)
     // the field agree to within the mesh; the body wins a tie so a part lying
     // on the ground is what a ray at it meets.
     if (ground.terrain.valid() && (!bodyHit || ground.distance < static_cast<f64>(hit.distance))) {
-        pushRaycastResult(L, ground.terrain, ground.position, ground.normal, static_cast<f32>(ground.distance));
+        pushRaycastResult(L, ground.terrain, ground.position, ground.normal, static_cast<f32>(ground.distance),
+                          ground.material);
         return 1;
     }
     if (!bodyHit) {
         lua_pushnil(L);
         return 1;
     }
-    pushRaycastResult(L, sync->instanceOf(hit.userData), hit.position, hit.normal, hit.distance);
+    // **What it is made of** (ADR 0117): a part's material, and -- where the
+    // body met was the terrain's own collider -- what the field says is drawn
+    // on the ground the same ray met.
+    const core::InstanceId met = sync->instanceOf(hit.userData);
+    core::NameAtom material;
+    core::u32 clone = 0;
+    if (const scene::PartComponent* part = world(L).parts().find(met); part != nullptr) {
+        material = part->material;
+        clone = part->materialClone;
+    }
+    else if (met == ground.terrain) {
+        material = ground.material;
+    }
+    pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
     return 1;
 }
 
@@ -1161,7 +1173,14 @@ int workspaceSpherecast(lua_State* L)
         lua_pushnil(L);
         return 1;
     }
-    pushRaycastResult(L, sync->instanceOf(hit.userData), hit.position, hit.normal, hit.distance);
+    const core::InstanceId met = sync->instanceOf(hit.userData);
+    core::NameAtom material;
+    core::u32 clone = 0;
+    if (const scene::PartComponent* part = world(L).parts().find(met); part != nullptr) {
+        material = part->material;
+        clone = part->materialClone;
+    }
+    pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
     return 1;
 }
 

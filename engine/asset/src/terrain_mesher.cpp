@@ -417,6 +417,8 @@ void appendMesh(TerrainMesh& into, const TerrainMesh& from)
     into.colliderPoints.insert(into.colliderPoints.end(), from.colliderPoints.begin(), from.colliderPoints.end());
     for (const u32 index : from.colliderIndices)
         into.colliderIndices.push_back(index + colliderOffset);
+    into.colliderSurfaces.insert(into.colliderSurfaces.end(), from.colliderSurfaces.begin(),
+                                 from.colliderSurfaces.end());
     into.mesh.bounds.min.x = std::min(into.mesh.bounds.min.x, from.mesh.bounds.min.x);
     into.mesh.bounds.min.y = std::min(into.mesh.bounds.min.y, from.mesh.bounds.min.y);
     into.mesh.bounds.min.z = std::min(into.mesh.bounds.min.z, from.mesh.bounds.min.z);
@@ -2123,6 +2125,10 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             out.colliderIndices.push_back(a);
             out.colliderIndices.push_back(second);
             out.colliderIndices.push_back(third);
+            // What the triangle is made of (ADR 0117): the corner the majority
+            // is, with what is painted over it.
+            const u32 of = vertexMaterial[a] == material ? a : vertexMaterial[second] == material ? second : third;
+            out.colliderSurfaces.insert(out.colliderSurfaces.end(), {material, vertexTop[of], vertexCover[of]});
         };
         // The four cells in the order that faces the edge's positive direction;
         // `reverse` faces it the other way.
@@ -2235,9 +2241,17 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                     out.colliderIndices[kept] = a;
                     out.colliderIndices[kept + 1] = b;
                     out.colliderIndices[kept + 2] = c;
+                    // Three bytes a triangle, kept in step.
+                    if (at + 2 < out.colliderSurfaces.size()) {
+                        out.colliderSurfaces[kept] = out.colliderSurfaces[at];
+                        out.colliderSurfaces[kept + 1] = out.colliderSurfaces[at + 1];
+                        out.colliderSurfaces[kept + 2] = out.colliderSurfaces[at + 2];
+                    }
                     kept += 3;
                 }
                 out.colliderIndices.resize(kept);
+                if (out.colliderSurfaces.size() > kept)
+                    out.colliderSurfaces.resize(kept);
             }
         }
         // **A vertex with no gradient takes its faces' normal** (the mesh P2): on
@@ -2372,6 +2386,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             std::vector<u32>& bucket = buckets[material];
             bucket.insert(bucket.end(), {a, b, c});
             out.colliderIndices.insert(out.colliderIndices.end(), {a, b, c});
+            const u32 of = vertexMaterial[a] == material ? a : vertexMaterial[b] == material ? b : c;
+            out.colliderSurfaces.insert(out.colliderSurfaces.end(), {material, vertexTop[of], vertexCover[of]});
             const Vec3& pa = out.mesh.vertices[a].position;
             const Vec3& pb = out.mesh.vertices[b].position;
             const Vec3& pc = out.mesh.vertices[c].position;
@@ -2583,6 +2599,10 @@ TerrainCollider meshCollider(const TerrainField& field, ChunkKey key)
     out.points = std::move(meshed.colliderPoints);
     out.indices = std::move(meshed.colliderIndices);
     out.bandFirst = meshed.colliderBandFirst;
+    // Only when it still says one thing a triangle: a mesh that lost that
+    // somewhere says nothing, and the ground is then the default.
+    if (meshed.colliderSurfaces.size() == out.indices.size())
+        out.surfaces = std::move(meshed.colliderSurfaces);
     return out;
 }
 

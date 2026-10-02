@@ -9,8 +9,12 @@ There are two families.
 - **A powered joint** is a constraint that does work: a hinge with a motor, a
   rail with a servo, a ball socket that holds a pose. The solver holds the
   joint and drives it in the same step.
-- **A mover** is a force on one part: hold this velocity, go to that place, push
-  this hard. It acts on the part its `Attachment0` is on.
+- **A mover** acts on one part, the one its `Attachment0` is on: hold this
+  velocity, go to that place, push this hard. The four that *hold* something --
+  a place, a facing, a speed, a spin -- are motors the simulation solves
+  together with the joints the part is in, so a limb pulled to a pose and the
+  joints that hold the limb agree in the same tick. The two that only *push*,
+  `VectorForce` and `Torque`, are forces.
 
 Both act on **unanchored** parts -- an anchored part is not moved by physics --
 and both are placed with [attachments](manual:physics/joints), as every
@@ -33,6 +37,12 @@ starting at full speed.
 
 Angles are in degrees and are measured as the hinge's limits are; speeds are in
 radians a second about the attachment's X, and metres a second along it.
+
+`GetMotorTorque()` and `GetMotorForce()` say what the joint's own motor used
+over the last tick, in newton-metres and newtons: a servo holding a weight
+level reads the weight times its arm, and one reading its cap is doing all it
+can. They are apart from `GetForce()` and `GetTorque()` on purpose -- those
+are what the joint *bore*, which is what breaks it.
 
 ### A spinner
 
@@ -110,13 +120,48 @@ the pose the two were joined in -- with no more than `ServoMaxTorque`. That is
 a shoulder that holds an arm out and gives when the arm is pulled harder: what
 a character that stands by its own joints is made of.
 
-### Springs in a servo
+Which way a turn swings a limb, with the joint's X along the limb: about X it
+twists; about Y by a positive angle its far end swings towards the frame's -Z;
+about Z, towards its +Y.
 
-`AngularResponsiveness` and `LinearResponsiveness` say how eagerly a servo
-closes the last of the distance, and it settles without ringing. To say how
-*firm* and how *bouncy* separately, set `Stiffness` and `Damping`: above zero,
-the servo is a spring to its target with those two terms, under the same cap. A
-limp arm, a firm spine and a punch differ in both.
+### A servo is a spring
+
+A servo is a **critically damped spring to its target**: it arrives without
+crossing and without ringing. `AngularResponsiveness` and
+`LinearResponsiveness` are that spring's natural frequency, in radians a
+second -- higher arrives sooner -- and it is sized for the two parts the joint
+holds, about the joint itself: a ball a metre out on an arm counts as a metre
+out. So the same number settles a finger and a crane the same way.
+
+`AngularSpeed` and `Speed` cap how fast it travels: far from its target a
+servo moves at that speed, and near it is the spring.
+
+**What hangs further down a chain is not counted.** A shoulder knows the upper
+arm, not the forearm and the hand beyond the elbow. A joint that carries more
+than its own part takes the spring's two numbers directly -- `Stiffness` and
+`Damping` -- and so does one that should be soft, or bouncy:
+
+| | About an axis | Along a line |
+|---|---|---|
+| `Stiffness` | newton-metres a radian | newtons a metre |
+| `Damping` | newton-metre-seconds a radian | newton-seconds a metre |
+| what is moved | its inertia `I`, kg m^2 about the joint | its mass `m`, kg |
+| settles at `w` rad/s | `Stiffness = w * w * I` | `Stiffness = w * w * m` |
+| critical damping | `Damping = 2 * math.sqrt(Stiffness * I)` | `Damping = 2 * math.sqrt(Stiffness * m)` |
+
+Less than critical overshoots and rings; more arrives late and stays. A limp
+arm, a firm spine and a punch differ in both.
+
+**A servo at its cap is a constant torque.** One too weak for its load sags to
+where the load's pull is the cap -- half the torque a level arm asks, and it
+hangs at thirty degrees -- and, having nothing left to brake with, swings
+about there until something else takes its speed: the part's `LinearDamping`,
+friction, a second joint.
+
+`BasePart.Mass` says what a part weighs the moment it is in the world, and
+again the moment its size or density changes -- it does not wait for the
+simulation to step -- so a spring can be sized in the line after the part is
+made.
 
 ## Ropes, rods and springs
 
@@ -200,7 +245,13 @@ end
 
 - **A cap is a cap.** An `AlignPosition` holds a weight its `MaxForce` is
   enough for and sags under one it is not; a `LinearVelocity` with half the
-  force a part weighs lets it fall at half of gravity.
+  force a part weighs lets it fall at half of gravity. A cap is along each
+  axis the mover acts on, and `GetMotorForce()` and `GetMotorTorque()` say how
+  much of it was used.
+- **`Responsiveness`** is the natural frequency, in radians a second, of the
+  critically damped spring an align is; `MaxVelocity` and `MaxAngularVelocity`
+  are the speed it travels at while it is far. It is sized for the **one part**
+  the mover is on.
 - **`RelativeTo`** says whose axes a vector is written in. `World` is the
   world's; `Attachment0` follows the part, so a thruster pushes where the part
   points.
@@ -213,7 +264,16 @@ end
   much: a hand pulling a crate is pulled by the crate, and an arm aligned to a
   chest turns the chest.
 - **`Stiffness` and `Damping`**, above zero, make an align a spring in place
-  of its `Responsiveness`: soft and damped, or stiff and bouncy.
+  of its `Responsiveness`, in the units of the table above: soft and damped, or
+  stiff and bouncy. **A part with others jointed to it takes these**, sized for
+  all that has to move -- the hips of a body are turned by a spring sized for
+  the body. Any stiffness is safe: a spring a hundred times stiffer than a
+  tick can show holds still and does not explode.
+- **A long row of rigid joints lags.** A mover's pull travels a joint a round
+  of the solver. A body and its limbs -- two or three joints from the part
+  that is held -- follow the spring they were given; a rigid chain of five
+  turned from its middle swings at its ends, and eleven is out of reach. Hold
+  a long chain by more than one of its pieces.
 
 ### A hovering pet
 

@@ -1368,6 +1368,15 @@ local Datatypes: { Schema.Datatype } = {
                 Doc = "How far along the cast the hit is, in metres. The direction passed to a cast is not "
                     .. "normalised -- its length is the range -- so this is a distance rather than a fraction.",
             },
+            {
+                Name = "Material",
+                Type = "Material?",
+                ReadOnly = true,
+                Doc = "What the surface is made of there: the material the part wears, or -- on a `Terrain` -- "
+                    .. "the layer the ground is DRAWN as at that point, its paint and its rules included, so "
+                    .. "snow a rule lays over rock above a height is snow. Nil for a part wearing nothing. Its "
+                    .. "`Friction`, `FootstepSound` and `Tags` are what a footstep, a skid or a bullet mark asks.",
+            },
         } :: { Schema.Property },
     },
     {
@@ -2578,6 +2587,37 @@ local Datatypes: { Schema.Datatype } = {
                     .. "and turned at random with their borders blended -- for a photograph, whose repeat "
                     .. "shows most. Three reads of each texture instead of one; off by default; read only by "
                     .. "a terrain.",
+            },
+            {
+                Name = "Friction",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How much a body touching this surface resists sliding. A part wearing the material "
+                    .. "collides with it unless the part's own `Friction` says otherwise, and so does the ground "
+                    .. "where a terrain draws the material. 0.3 by default -- what everything collided with before "
+                    .. "a material said anything -- and ice is slippery by being ice.",
+            },
+            {
+                Name = "Restitution",
+                Type = "number",
+                ThreadSafety = "Safe",
+                Doc = "How much of its speed a body keeps when it bounces off this surface, from 0 (it lands "
+                    .. "dead) to 1. 0 by default.",
+            },
+            {
+                Name = "FootstepSound",
+                Type = "Content",
+                ThreadSafety = "Safe",
+                Doc = "The sound a foot makes on this surface: a sound's content, or empty. The engine does "
+                    .. "not play it. A game does, from `CharacterBody.FloorMaterial`, at the pace its character "
+                    .. "walks.",
+            },
+            {
+                Name = "Tags",
+                Type = "{ string }",
+                ThreadSafety = "Safe",
+                Doc = 'Words a game reads off a surface -- "slippery", "metal", "lava" -- in the order '
+                    .. "the material wrote them. A fresh table each time it is read.",
             },
         } :: { Schema.Property },
         Methods = {

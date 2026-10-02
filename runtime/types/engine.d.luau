@@ -452,6 +452,11 @@ declare extern type RaycastResult with
     --- How far along the cast the hit is, in metres. The direction passed to a cast is not normalised
     --- -- its length is the range -- so this is a distance rather than a fraction.
     read Distance: number
+    --- What the surface is made of there: the material the part wears, or -- on a `Terrain` -- the
+    --- layer the ground is DRAWN as at that point, its paint and its rules included, so snow a rule
+    --- lays over rock above a height is snow. Nil for a part wearing nothing. Its `Friction`,
+    --- `FootstepSound` and `Tags` are what a footstep, a skid or a bullet mark asks.
+    read Material: Material?
 end
 
 declare extern type RaycastResult2D with
@@ -773,6 +778,20 @@ declare extern type Material with
     --- at random with their borders blended -- for a photograph, whose repeat shows most. Three reads
     --- of each texture instead of one; off by default; read only by a terrain.
     HexTiling: boolean
+    --- How much a body touching this surface resists sliding. A part wearing the material collides with
+    --- it unless the part's own `Friction` says otherwise, and so does the ground where a terrain draws
+    --- the material. 0.3 by default -- what everything collided with before a material said anything --
+    --- and ice is slippery by being ice.
+    Friction: number
+    --- How much of its speed a body keeps when it bounces off this surface, from 0 (it lands dead) to
+    --- 1. 0 by default.
+    Restitution: number
+    --- The sound a foot makes on this surface: a sound's content, or empty. The engine does not play
+    --- it. A game does, from `CharacterBody.FloorMaterial`, at the pace its character walks.
+    FootstepSound: Content
+    --- Words a game reads off a surface -- "slippery", "metal", "lava" -- in the order the material
+    --- wrote them. A fresh table each time it is read.
+    Tags: { string }
     --- A writable runtime copy: the same properties, the same `Source`, owned by nobody and never
     --- saved. Put it on a part with `part.Material = copy`, then change it -- every part wearing this
     --- copy changes with it, and nothing else does.
@@ -1213,12 +1232,22 @@ declare extern type Constraint extends Instance with
     --- disabled, not destroyed: enabling it again mends it.
     read Broken: Signal<()>
     --- The force the joint carried over the last simulation tick to hold its two parts together, in
-    --- newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a joint that held
-    --- nothing.
+    --- newtons: what a `BreakForce` is a threshold on. Zero for a mover -- what it does is its motor's,
+    --- and `GetMotorForce` says it -- and for a joint that held nothing.
     function GetForce(self): number
     --- The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to resist
     --- a turn with -- a ball joint, a rope.
     function GetTorque(self): number
+    --- The force its own motor used over the last simulation tick, in newtons: a
+    --- `PrismaticConstraint`'s actuator, an `AlignPosition`, a `LinearVelocity`. Apart from `GetForce`
+    --- on purpose -- that is what the joint bore, which is what breaks it; this is how hard it worked.
+    --- Zero for anything with no motor along a line.
+    function GetMotorForce(self): number
+    --- The torque its own motor used over the last simulation tick, in newton-metres: a
+    --- `HingeConstraint`'s or a `BallSocketConstraint`'s actuator, an `AlignOrientation`, an
+    --- `AngularVelocity`. A servo holding a weight level reads the weight times its arm here, and at
+    --- its `ServoMaxTorque` it is doing all it can. Zero for anything with no motor about an axis.
+    function GetMotorTorque(self): number
 end
 
 declare extern type BallSocketConstraint extends Constraint with
@@ -1232,19 +1261,27 @@ declare extern type BallSocketConstraint extends Constraint with
     --- spin about, so `Motor` is read as `None`.
     ActuatorType: EnumActuatorType
     --- Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. Only
-    --- the rotation is read. The identity is the pose the two were joined in.
+    --- the rotation is read. The identity is the pose the two were joined in. With the joint's X along
+    --- a limb, a turn about X twists the limb and a turn about Y or Z swings it: about Y by a positive
+    --- angle swings its far end towards the frame's -Z, about Z towards its +Y.
     TargetOrientation: CFrame
-    --- Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm is
-    --- pulled harder than this.
+    --- Servo: the most torque it may use, in newton-metres, about each of the joint's axes. A shoulder
+    --- that holds an arm out, and gives when the arm is pulled harder than this.
     ServoMaxTorque: number
-    --- Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing.
+    --- Servo: how eagerly it pulls when `Stiffness` is zero, as the natural frequency of the spring it
+    --- is, in radians a second. Critically damped, so it settles without ringing, and sized for the two
+    --- parts the joint holds -- about the socket, arm and all -- so the same number settles a finger
+    --- and a crane alike. What hangs further down a chain is not counted: a joint that carries more
+    --- than its own part takes a `Stiffness`.
     AngularResponsiveness: number
-    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
-    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
-    --- both how firm and how bouncy.
+    --- The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. Zero
+    --- leaves the pull to `AngularResponsiveness`; above zero this and `Damping` decide it, and one
+    --- number no longer has to say both how firm and how bouncy. For what it turns weighing `I`
+    --- kilogram metres squared about it, `w * w * I` settles at `w` radians a second.
     Stiffness: number
-    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
-    --- arrives late and stays.
+    --- What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical
+    --- damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia of
+    --- `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.
     Damping: number
 end
 
@@ -1265,20 +1302,30 @@ declare extern type HingeConstraint extends Constraint with
     MotorMaxTorque: number
     --- Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds up.
     MotorMaxAcceleration: number
-    --- Servo: the angle it goes to, in degrees, measured as the limits are.
+    --- Servo: the angle it goes to, in DEGREES, measured as the limits are. (Speeds are in radians a
+    --- second: `AngularVelocity`, `AngularSpeed`.)
     TargetAngle: number
-    --- Servo: the fastest it turns on the way, in radians a second.
+    --- Servo: the fastest it turns on the way, in radians a second. Far from its angle it turns at this
+    --- speed; near, it is the spring.
     AngularSpeed: number
-    --- Servo: the most torque it may use to get there and to stay.
+    --- Servo: the most torque it may use to get there and to stay, in newton-metres. A load that asks
+    --- more sags to where its weight is this much, and -- a servo at its cap being a constant torque --
+    --- swings about there until something else takes its speed away.
     ServoMaxTorque: number
-    --- Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops harder.
+    --- Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the natural
+    --- frequency of the spring it is, in radians a second. Critically damped: it arrives without
+    --- crossing, sooner the higher this is. Sized for the two parts the hinge holds, about the hinge --
+    --- an arm a metre long counts as a metre long -- and not for what hangs further down a chain: a
+    --- joint that carries more than its own part takes a `Stiffness`.
     AngularResponsiveness: number
-    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
-    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
-    --- both how firm and how bouncy.
+    --- The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. Zero
+    --- leaves the pull to `AngularResponsiveness`; above zero this and `Damping` decide it, and one
+    --- number no longer has to say both how firm and how bouncy. For what it turns weighing `I`
+    --- kilogram metres squared about it, `w * w * I` settles at `w` radians a second.
     Stiffness: number
-    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
-    --- arrives late and stays.
+    --- What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical
+    --- damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia of
+    --- `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.
     Damping: number
 end
 
@@ -1303,19 +1350,24 @@ declare extern type PrismaticConstraint extends Constraint with
     MotorMaxAcceleration: number
     --- Servo: where it goes to, in metres along the rail from where it was joined.
     TargetPosition: number
-    --- Servo: the fastest it moves on the way, in metres a second.
+    --- Servo: the fastest it moves on the way, in metres a second. Far from its place it moves at this
+    --- speed; near, it is the spring.
     Speed: number
-    --- Servo: the most force it may use to get there and to stay. A lift that cannot raise more than
-    --- this does not.
+    --- Servo: the most force it may use to get there and to stay, in newtons. A lift that cannot raise
+    --- more than this does not.
     ServoMaxForce: number
-    --- Servo: how eagerly it closes the last of the distance.
+    --- Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the natural
+    --- frequency of the spring it is, in radians a second. Critically damped, and sized for the two
+    --- parts on the rail.
     LinearResponsiveness: number
-    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
-    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
-    --- both how firm and how bouncy.
+    --- The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero leaves
+    --- the pull to `LinearResponsiveness`; above zero this and `Damping` decide it, and one number no
+    --- longer has to say both how firm and how bouncy. For what it moves weighing `m` kilograms, `w * w
+    --- * m` settles at `w` radians a second.
     Stiffness: number
-    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
-    --- arrives late and stays.
+    --- What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping --
+    --- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` kilograms;
+    --- less overshoots and rings, more arrives late and stays.
     Damping: number
 end
 
@@ -1381,7 +1433,8 @@ declare extern type LinearVelocity extends Constraint with
     SecondaryTangentAxis: vector
     --- Plane mode: the speed held along each of the two, in metres a second.
     PlaneVelocity: Vector2
-    --- The most force it may use, in newtons.
+    --- The most force it may use, in newtons, along each axis it holds a speed on: the line, the
+    --- plane's two, or the three of the frame the velocity is written in.
     MaxForce: number
     --- The frame the velocities are written in: the world's, or an attachment's -- so "forwards"
     --- follows the part as it turns.
@@ -1391,12 +1444,12 @@ end
 declare extern type AngularVelocity extends Constraint with
     --- The spin held, in radians a second about each axis of the frame `RelativeTo` names.
     AngularVelocity: vector
-    --- The most torque it may use, in newton-metres.
+    --- The most torque it may use, in newton-metres, about each axis of the part.
     MaxTorque: number
     --- The frame the spin is written in.
     RelativeTo: EnumActuatorRelativeTo
     --- Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists
-    --- what it is mounted on.
+    --- what it is mounted on. On, the spin held is the one part's against the other's.
     ReactionTorqueEnabled: boolean
 end
 
@@ -1405,13 +1458,19 @@ declare extern type AlignPosition extends Constraint with
     Mode: EnumPositionAlignmentMode
     --- OneAttachment: the place in the world it pulls to.
     Position: vector
-    --- The most force it may use, in newtons.
+    --- The most force it may use, in newtons, along each axis of the world (or of `Attachment1`, with
+    --- `ReactionForceEnabled`).
     MaxForce: number
-    --- The fastest it may bring the attachment in, in metres a second.
+    --- The fastest it may bring the attachment in, in metres a second, when `Stiffness` is zero. Far
+    --- from its place it travels at this speed; near, it is the spring.
     MaxVelocity: number
-    --- How eagerly it closes the distance. Low drifts in; high snaps.
+    --- How eagerly it closes the distance when `Stiffness` is zero, as the natural frequency of the
+    --- spring it is, in radians a second: low drifts in, high snaps. Critically damped, and sized for
+    --- the one part it pulls: a part with others jointed to it takes a `Stiffness` sized for all of
+    --- them.
     Responsiveness: number
-    --- Whether it gets there as fast as the simulation can take it, with no cap on force or speed.
+    --- Whether it gets there as fast as the simulation can take it, with no cap on force or speed: a
+    --- spring as stiff as a tick can show.
     RigidityEnabled: boolean
     --- Whether the pull is at where the part balances rather than at the attachment. Off, a pull at a
     --- corner also turns the part.
@@ -1419,12 +1478,14 @@ declare extern type AlignPosition extends Constraint with
     --- TwoAttachment: whether the part `Attachment1` is on is pulled back by as much. Off, the target
     --- is not disturbed by what follows it; on, a hand pulling a crate is pulled by the crate.
     ReactionForceEnabled: boolean
-    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
-    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
-    --- both how firm and how bouncy.
+    --- The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero leaves
+    --- the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer
+    --- has to say both how firm and how bouncy. For what it moves weighing `m` kilograms, `w * w * m`
+    --- settles at `w` radians a second.
     Stiffness: number
-    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
-    --- arrives late and stays.
+    --- What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping --
+    --- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` kilograms;
+    --- less overshoots and rings, more arrives late and stays.
     Damping: number
 end
 
@@ -1433,23 +1494,30 @@ declare extern type AlignOrientation extends Constraint with
     Mode: EnumOrientationAlignmentMode
     --- OneAttachment: the orientation in the world it turns to. Only the rotation is read.
     CFrame: CFrame
-    --- The most torque it may use, in newton-metres.
+    --- The most torque it may use, in newton-metres, about each axis of the part.
     MaxTorque: number
-    --- The fastest it may turn the part, in radians a second.
+    --- The fastest it may turn the part, in radians a second, when `Stiffness` is zero. Far from its
+    --- facing it turns at this speed; near, it is the spring.
     MaxAngularVelocity: number
-    --- How eagerly it closes the angle.
+    --- How eagerly it closes the angle when `Stiffness` is zero, as the natural frequency of the spring
+    --- it is, in radians a second. Critically damped, and sized for the one part it turns about where
+    --- that part balances: a part with others jointed to it -- the hips of a body -- takes a
+    --- `Stiffness` sized for all of them.
     Responsiveness: number
-    --- Whether it gets there as fast as the simulation can take it, with no cap on torque or speed.
+    --- Whether it gets there as fast as the simulation can take it, with no cap on torque or speed: a
+    --- spring as stiff as a tick can show.
     RigidityEnabled: boolean
     --- TwoAttachment: whether the part `Attachment1` is on is turned back by as much. An arm aligned to
     --- a chest then turns the chest, as a real one does.
     ReactionTorqueEnabled: boolean
-    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
-    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
-    --- both how firm and how bouncy.
+    --- The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. Zero
+    --- leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no
+    --- longer has to say both how firm and how bouncy. For what it turns weighing `I` kilogram metres
+    --- squared about it, `w * w * I` settles at `w` radians a second.
     Stiffness: number
-    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
-    --- arrives late and stays.
+    --- What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical
+    --- damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia of
+    --- `I` kilogram metres squared; less overshoots and rings, more arrives late and stays.
     Damping: number
 end
 
@@ -1729,6 +1797,11 @@ declare extern type CharacterBody extends BasePart with
     --- Whether the character is standing on something walkable as of the last simulation tick. The same
     --- fact `State` reports, as the boolean a jump check actually wants.
     read Grounded: boolean
+    --- What it is standing on: the material of the part under it, or the layer the terrain is drawn as
+    --- under its feet -- what `RaycastResult.Material` would say of a ray straight down. Nil in the
+    --- air, in water, and on a part wearing nothing. A footstep reads its `FootstepSound`; ice and mud
+    --- are its `Friction` or its `Tags`.
+    read FloorMaterial: Material?
     --- What the character is doing: `Grounded` or `Airborne` on foot -- ground too steep to walk on
     --- reads as Airborne, because the question is whether it is supported -- `Swimming` with its middle
     --- under a `Water`'s surface or inside a fluid block, which it enters and leaves by itself, and

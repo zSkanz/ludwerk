@@ -1,6 +1,6 @@
 # 0117 — A material carries friction and a footstep sound
 
-- Status: accepted (to be built; see `docs/briefs/world-kickoff.md`, B7)
+- Status: accepted and built (2026-10-02; `docs/briefs/world-kickoff.md`, B7)
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, approving the plan in
   `docs/briefs/game-ready-plan.md`.
@@ -39,7 +39,36 @@ without tagging every part by hand.
 - Ice is slippery by being ice. Footsteps follow the ground.
 - The terrain's collision shape grows by a byte per triangle.
 
+## As built, 2026-10-02
+
+- **A part's own number wins by being unlike the default.** A scene file
+  writes every property, so "the part wrote its friction" is not a fact a file
+  keeps; a part whose `Friction` is 0.3 or whose `Restitution` is 0 takes its
+  material's, and any other value is the part's own.
+- **The floor is `CharacterBody.FloorMaterial`**, the class a character is
+  (section 3 said `Humanoid`, which this engine does not have). It is worked
+  out when it is read, not on the tick: nothing stored, nothing to hash,
+  nothing to send.
+- **A terrain's colliders say what the ground is DRAWN as**: per triangle, the
+  layer after its paint and its rules, which is the answer a ray gives. Only
+  a chunk with a triangle of a surface that is not the default carries the
+  byte; a terrain of grass, sand and rock collides exactly as it did.
+- **A new terrain has no layers** (the owner, 2026-09-29), and ground with no
+  layer is made of nothing: default friction, nil to a ray and to a foot.
+- **The engine's own ground materials are loadable and wearable**:
+  `Material.load("engine://terrain/ice")` answers, and a part may wear it.
+  Ice is 0.03, snow 0.15, mud 0.6; the rest are 0.3, so a world on grass, sand
+  and rock simulates as it did. Each is tagged with its name.
+- **A terrain's layers and rules are in the world hash** where there are any,
+  as ADR 0113's ledger promised for the day they became observable.
+- **`FootstepSound` is a `Content` and the engine plays nothing**: the example
+  generates three short sounds from seeded noise and names one in each of its
+  eight ground materials.
+
 ## Not decided here
 
 - Surface-dependent tyre or vehicle models; a game builds them from `Friction`
   and `Tags`.
+- A terrain's colliders name no instance, so a character's `Landed` on terrain
+  hands over nil and a part touching the ground fires no `Touched` for it.
+  `FloorMaterial` asks the ground directly instead.

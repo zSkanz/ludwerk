@@ -18,11 +18,11 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `CFrame` | `CFrame` | `CFrame.identity` | read/write | OneAttachment: the orientation in the world it turns to. Only the rotation is read. |
-| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
-| `MaxAngularVelocity` | `number` | `100000` | read/write | The fastest it may turn the part, in radians a second. |
-| `MaxTorque` | `number` | `10000` | read/write | The most torque it may use, in newton-metres. |
+| `Damping` | `number` | `0` | read/write | What resists its turning, in newton-metre-seconds a radian, read with `Stiffness`. Critical damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * I)` for an inertia of `I` kilogram metres squared; less overshoots and rings, more arrives late and stays. |
+| `MaxAngularVelocity` | `number` | `100000` | read/write | The fastest it may turn the part, in radians a second, when `Stiffness` is zero. Far from its facing it turns at this speed; near, it is the spring. |
+| `MaxTorque` | `number` | `10000` | read/write | The most torque it may use, in newton-metres, about each axis of the part. |
 | `Mode` | `Enum.OrientationAlignmentMode` | `Enum.OrientationAlignmentMode.OneAttachment` | read/write | Whether the target is `CFrame` or `Attachment1`. |
 | `ReactionTorqueEnabled` | `boolean` | `false` | read/write | TwoAttachment: whether the part `Attachment1` is on is turned back by as much. An arm aligned to a chest then turns the chest, as a real one does. |
-| `Responsiveness` | `number` | `10` | read/write | How eagerly it closes the angle. |
-| `RigidityEnabled` | `boolean` | `false` | read/write | Whether it gets there as fast as the simulation can take it, with no cap on torque or speed. |
-| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
+| `Responsiveness` | `number` | `10` | read/write | How eagerly it closes the angle when `Stiffness` is zero, as the natural frequency of the spring it is, in radians a second. Critically damped, and sized for the one part it turns about where that part balances: a part with others jointed to it -- the hips of a body -- takes a `Stiffness` sized for all of them. |
+| `RigidityEnabled` | `boolean` | `false` | read/write | Whether it gets there as fast as the simulation can take it, with no cap on torque or speed: a spring as stiff as a tick can show. |
+| `Stiffness` | `number` | `0` | read/write | The spring it pulls with, in newton-metres a radian: the torque for each radian it is away. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. For what it turns weighing `I` kilogram metres squared about it, `w * w * I` settles at `w` radians a second. |

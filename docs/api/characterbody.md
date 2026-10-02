@@ -16,6 +16,7 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `AutoStepHeight` | `number` | `0.5` | read/write | The tallest ledge, in metres, the character walks over rather than into. This is the single number that separates a character from a capsule: at zero, a kerb stops it. |
+| `FloorMaterial` | `Material?` | — | read-only | What it is standing on: the material of the part under it, or the layer the terrain is drawn as under its feet -- what `RaycastResult.Material` would say of a ray straight down. Nil in the air, in water, and on a part wearing nothing. A footstep reads its `FootstepSound`; ice and mud are its `Friction` or its `Tags`. |
 | `FlySpeed` | `number` | `16` | read/write | How fast `Move` takes it while `Flying`, in metres per second. |
 | `Flying` | `boolean` | `false` | read/write | Whether the character flies: no weight, and `Move` in three dimensions at `FlySpeed`. A creative mode, a ghost, a jetpack held on. |
 | `GravityScale` | `number` | `1` | read/write | How much of `Workspace.Gravity` the character feels: 1 all of it, 0.5 a floaty jump, 0 none. Negative falls upwards. |

@@ -406,6 +406,18 @@ std::optional<MaterialAsset> engineMaterial(std::string_view urn)
     p.tileSize = layer.tileSize;
     p.triplanar = true;
     p.blendSharpness = 0.5f;
+    // **What each is to touch** (ADR 0117). Only what is unlike the ground a
+    // body has always met says so: ice and snow slide, mud grips. The rest is
+    // the 0.3 everything collided with before a material said anything, so a
+    // world on grass, sand and rock simulates as it did.
+    const std::string_view name = urn.substr(EngineTerrainPrefix.size());
+    if (name == "ice")
+        p.friction = 0.03f;
+    else if (name == "snow")
+        p.friction = 0.15f;
+    else if (name == "mud")
+        p.friction = 0.6f;
+    p.tags = {std::string(name)};
     return out;
 }
 

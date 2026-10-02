@@ -5,7 +5,7 @@
 - Inherits [`Constraint`](constraint.md)
 - Created with `Instance.new("AngularVelocity")`
 
-Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: a fan, a coin that turns, a planet. For a wheel on an axle a `HingeConstraint` with a motor is the better tool: this spins a free part.
+Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: a fan, a coin that turns, a planet. It is a motor the simulation solves with the joints the part is in, so a hinged door it spins turns about its hinge. For a wheel on an axle a `HingeConstraint` with a motor is still the better tool.
 
 **Members below are the ones this class DECLARES.** Everything its base
 offers is on the base's page, which is what keeps one added member on
@@ -16,6 +16,6 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `AngularVelocity` | `vector` | `vector.create(0, 0, 0)` | read/write | The spin held, in radians a second about each axis of the frame `RelativeTo` names. |
-| `MaxTorque` | `number` | `10000` | read/write | The most torque it may use, in newton-metres. |
-| `ReactionTorqueEnabled` | `boolean` | `false` | read/write | Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists what it is mounted on. |
+| `MaxTorque` | `number` | `10000` | read/write | The most torque it may use, in newton-metres, about each axis of the part. |
+| `ReactionTorqueEnabled` | `boolean` | `false` | read/write | Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists what it is mounted on. On, the spin held is the one part's against the other's. |
 | `RelativeTo` | `Enum.ActuatorRelativeTo` | `Enum.ActuatorRelativeTo.World` | read/write | The frame the spin is written in. |

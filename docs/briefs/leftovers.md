@@ -21,6 +21,20 @@ clean-up).
   the general reshape case is tested (D151); a terrain collider is now
   destroyed and made again, which is exactly what could fire one.
   (`phase-2-4-plan.md`, F1's gate)
+- [ ] **A terrain's colliders name the terrain.** They carry no instance, so a
+  character's `Landed` on terrain hands over nil, a part touching the ground
+  fires no `Touched` for it, and a ray that meets the collider before the field
+  has no `Instance`. `FloorMaterial` asks the ground directly meanwhile. Giving
+  them the instance changes which contacts are published, which is why it is a
+  piece of work and not a line. (ADR 0117's B7)
+- [ ] **The solver's rounds are a `Workspace` setting.** A mover's pull travels
+  a joint a round: a rigid chain of five turned from its middle wants forty,
+  where a tick has ten (D471, measured). Every island would pay for a higher
+  default, so it is a number a world sets -- as other engines' solver
+  iterations are. (ADR 0127's second amendments)
+- [ ] **A mover's cap is a magnitude.** `MaxForce` and `MaxTorque` are along
+  each axis the solver's motor has, so a pull along a diagonal may use up to
+  the square root of three times the number. (ADR 0127's second amendments)
 - [ ] **`worldHash` is O(objects), not O(bytes)**, asserted as a timing ratio.
   The per-chunk digest is there; the test that would notice it going is not.
   (`phase-2-4-plan.md`)

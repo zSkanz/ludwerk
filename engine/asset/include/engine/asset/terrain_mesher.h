@@ -117,6 +117,10 @@ struct TerrainMesh
     std::vector<core::u32> colliderIndices;
     // The first band triangle when the region has one (`MeshRegion::band`).
     core::u32 colliderBandFirst = ~core::u32{0};
+    // **What each collider triangle is made of** (ADR 0117): three bytes a
+    // triangle -- the voxel's layer, what is painted over it, and how much --
+    // which is what `drawnMaterial` needs to say what the ground is there.
+    std::vector<core::u8> colliderSurfaces;
 };
 
 // **A column's solid runs, as the sky term sees them** (ADR 0140): from the
@@ -202,6 +206,8 @@ struct TerrainCollider
     std::vector<core::u32> indices;
     // The first band triangle (a triangle's index, not an index's).
     core::u32 bandFirst = 0;
+    // Three bytes a triangle: layer, paint, cover (`TerrainMesh::colliderSurfaces`).
+    std::vector<core::u8> surfaces;
 };
 [[nodiscard]] TerrainCollider meshCollider(const TerrainField& field, ChunkKey key);
 

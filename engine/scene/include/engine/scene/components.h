@@ -398,6 +398,11 @@ struct ConstraintComponent
     // Written by the mirror, read by `GetForce` and `GetTorque`.
     f32 lastForce = 0.0f;
     f32 lastTorque = 0.0f;
+    // What its own motor used over the last tick, apart from what it bore:
+    // `GetMotorForce` and `GetMotorTorque`. A mover that is a motor in the
+    // solver has these and nothing above.
+    f32 lastMotorForce = 0.0f;
+    f32 lastMotorTorque = 0.0f;
 
     bool visible = false;
     core::Color3 color{0.6f, 0.6f, 0.6f};

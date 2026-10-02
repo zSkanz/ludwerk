@@ -18,15 +18,15 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `ActuatorType` | `Enum.ActuatorType` | `Enum.ActuatorType.None` | read/write | What the rail does of itself: nothing, move at a speed (`Motor`), or go to a position and hold it (`Servo`). |
-| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
+| `Damping` | `number` | `0` | read/write | What resists its moving, in newton-seconds a metre, read with `Stiffness`. Critical damping -- it arrives without crossing -- is `2 * math.sqrt(Stiffness * m)` for a mass of `m` kilograms; less overshoots and rings, more arrives late and stays. |
 | `LimitsEnabled` | `boolean` | `false` | read/write | Whether the range below applies. Off, it slides as far as it is pushed. |
-| `LinearResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it closes the last of the distance. |
+| `LinearResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it closes the last of the distance when `Stiffness` is zero, as the natural frequency of the spring it is, in radians a second. Critically damped, and sized for the two parts on the rail. |
 | `LowerLimit` | `number` | `0` | read/write | How far it may slide one way, in metres from where it was joined. |
 | `MotorMaxAcceleration` | `number` | `100000` | read/write | Motor: how fast its speed may change, in metres a second squared. |
 | `MotorMaxForce` | `number` | `10000` | read/write | Motor: the most force it may use, in newtons. |
-| `ServoMaxForce` | `number` | `10000` | read/write | Servo: the most force it may use to get there and to stay. A lift that cannot raise more than this does not. |
-| `Speed` | `number` | `100000` | read/write | Servo: the fastest it moves on the way, in metres a second. |
-| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
+| `ServoMaxForce` | `number` | `10000` | read/write | Servo: the most force it may use to get there and to stay, in newtons. A lift that cannot raise more than this does not. |
+| `Speed` | `number` | `100000` | read/write | Servo: the fastest it moves on the way, in metres a second. Far from its place it moves at this speed; near, it is the spring. |
+| `Stiffness` | `number` | `0` | read/write | The spring it pulls with, in newtons a metre: the force for each metre it is away. Zero leaves the pull to `LinearResponsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. For what it moves weighing `m` kilograms, `w * w * m` settles at `w` radians a second. |
 | `TargetPosition` | `number` | `0` | read/write | Servo: where it goes to, in metres along the rail from where it was joined. |
 | `UpperLimit` | `number` | `5` | read/write | How far it may slide the other. A lower above the upper is unlimited. |
 | `Velocity` | `number` | `0` | read/write | Motor: the speed it moves at, in metres a second along the rail. |

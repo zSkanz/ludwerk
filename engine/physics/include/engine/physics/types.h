@@ -166,6 +166,11 @@ struct ShapeDesc
     // edge there; the band itself is never collided with. Past the last
     // triangle -- the default -- is no band.
     core::u32 bandFirst = ~core::u32{0};
+    // **What each triangle is made of** (ADR 0117): one byte a triangle, an
+    // index into the body's `BodyDesc::surfaces`. Empty for a mesh that is one
+    // thing all over, which collides by the body's own friction as it always
+    // did. Like every span here, it outlives the call and no longer.
+    std::span<const core::u8> triangleSurfaces{};
 
     // `HeightField` only: `heightSampleCount * heightSampleCount` samples in row
     // order, each the height in the part's local space.
@@ -255,6 +260,13 @@ enum class ConstraintType : u8
     Slider,
     // The two frames' origins held at a distance, or within a range of them.
     Distance,
+    // **Nothing held, everything driven** (ADR 0127, D471): six free axes, and
+    // a motor on any of them -- what "go to that place", "face that way" and
+    // "hold this speed" are when the solver is the one doing them, so they
+    // are solved WITH the joints a body is in rather than before them. See
+    // `DriveDesc`. The one type whose first body may be nothing at all, which
+    // is the world.
+    Drive,
 };
 
 // The motor a constraint may drive itself with. Off is the default and is what
@@ -268,6 +280,56 @@ enum class MotorMode : u8
     Velocity,
     // Drive towards a target position or angle.
     Position,
+};
+
+// What a `ConstraintType::Drive` pulls with: a motor along each of the first
+// frame's three axes, and one about all three.
+//
+// **The first body may be invalid, and then it is the world**: the first frame
+// is at the world's origin with the rotation it was given, a position target
+// is a place in the world and a velocity is against the ground. That is how a
+// floating-origin rebase costs nothing here either -- the target is said in
+// the world's own numbers every time, and the backend puts it where its own
+// space has the world.
+struct DriveDesc
+{
+    // Along the first frame's X, Y and Z. `Position` pulls the second frame's
+    // origin to `linearTarget` as a spring; `Velocity` holds `linearVelocity`.
+    MotorMode linear[3] = {MotorMode::Off, MotorMode::Off, MotorMode::Off};
+    // In the first frame; in the world when the first body is.
+    core::DVec3 linearTarget;
+    // In the first frame's axes: the speed to hold, or -- under `Position` --
+    // the speed the target is itself moving at, so a spring following
+    // something does not trail it by its own damping.
+    core::Vec3 linearVelocity{0.0f, 0.0f, 0.0f};
+    // The most force the motor may use, **along each axis**.
+    f32 linearMaxForce = 3.4e38f;
+    // The spring a position motor is, in the terms `ConstraintDesc` says them
+    // in: a stiffness above zero with its damping, or a frequency and a ratio.
+    f32 linearStiffness = 0.0f;
+    f32 linearDamping = 0.0f;
+    f32 linearFrequency = 2.0f;
+    f32 linearDampingRatio = 1.0f;
+
+    // About all three axes at once: a turn is not three independent numbers.
+    MotorMode angular = MotorMode::Off;
+    // `Position`: the second frame's orientation in the first.
+    core::Mat3 angularTarget;
+    // `Velocity`: the second body's spin against the first's, in WORLD axes.
+    // Under `Position`, the spin the target itself has.
+    core::Vec3 angularVelocity{0.0f, 0.0f, 0.0f};
+    f32 angularMaxTorque = 3.4e38f;
+    f32 angularStiffness = 0.0f;
+    f32 angularDamping = 0.0f;
+    f32 angularFrequency = 2.0f;
+    f32 angularDampingRatio = 1.0f;
+
+    // The second frame's origin is wherever the second body balances, not
+    // where the frame says: a push there moves the body without turning it,
+    // and it stays there when the body's shape changes.
+    bool atCenterOfMass = false;
+
+    [[nodiscard]] bool operator==(const DriveDesc&) const noexcept = default;
 };
 
 // Where a joint sits, what it may still do, and what drives it.
@@ -327,6 +389,9 @@ struct ConstraintDesc
     f32 motorFrequency = 2.0f;
     f32 motorDampingRatio = 1.0f;
 
+    // `ConstraintType::Drive` only.
+    DriveDesc drive;
+
     // Whether the two bodies still collide with each other.
     //
     // **False is the case a ragdoll needs and the one that is not free.** An
@@ -359,7 +424,65 @@ struct ConstraintState
     f32 position = 0.0f;
     // How fast that is changing: the second body against the first.
     f32 velocity = 0.0f;
+    // What the joint's own MOTOR did last step, as a magnitude: newton-seconds
+    // along a slider, newton-metre-seconds about a hinge or a ball. Apart from
+    // the two above on purpose -- those are what the joint bore, and a
+    // breakable joint is a threshold on what it bore, not on how hard its own
+    // motor worked. A `Drive` is all motor: its linear part is here and its
+    // angular part in `motorAngularImpulse`.
+    f32 motorImpulse = 0.0f;
+    f32 motorAngularImpulse = 0.0f;
 };
+
+// **What a body of one of the solid shapes weighs**, from its description
+// alone: the volume the backend builds for it, times the density, with the
+// backend's own floors. Zero for a shape whose volume only the solver has -- a
+// hull -- and for the two that are never moved.
+//
+// Here so that a part can say what it weighs before it has a body (D472): the
+// first thing a script does with a part it just made is size a force for it,
+// and "zero until the simulation has stepped" sized every one of them wrong.
+// `physics_tests.cpp` holds this to what the solver says, shape by shape.
+[[nodiscard]] inline f32 solidMass(ShapeType type, core::Vec3 size, f32 density) noexcept
+{
+    constexpr f32 pi = 3.14159265358979f;
+    const auto half = [](f32 full) {
+        const f32 value = full * 0.5f;
+        return value == value && value - value == 0.0f ? (value < 0.005f   ? 0.005f
+                                                          : value > 5.0e5f ? 5.0e5f
+                                                                           : value)
+                                                       : 0.005f;
+    };
+    const f32 hx = half(size.x);
+    const f32 hy = half(size.y);
+    const f32 hz = half(size.z);
+    f32 volume = 0.0f;
+    switch (type) {
+    case ShapeType::Box:
+        volume = 8.0f * hx * hy * hz;
+        break;
+    case ShapeType::Sphere: {
+        const f32 radius = hx > hy ? (hx > hz ? hx : hz) : (hy > hz ? hy : hz);
+        volume = 4.0f / 3.0f * pi * radius * radius * radius;
+        break;
+    }
+    case ShapeType::Capsule: {
+        const f32 radius = hx > hz ? hx : hz;
+        const f32 halfCylinder = hy - radius > 0.005f ? hy - radius : 0.005f;
+        volume = 4.0f / 3.0f * pi * radius * radius * radius + 2.0f * pi * halfCylinder * radius * radius;
+        break;
+    }
+    case ShapeType::Cylinder: {
+        const f32 radius = hx > hz ? hx : hz;
+        volume = 2.0f * pi * hy * radius * radius;
+        break;
+    }
+    default:
+        return 0.0f;
+    }
+    const f32 mass = volume * (density > 0.0001f ? density : 0.0001f);
+    return mass > 0.001f ? mass : 0.001f;
+}
 
 // What a mover needs to turn "this much faster" into an impulse (ADR 0127):
 // a body's mass, how hard it is to turn about each axis as it stands now, and
@@ -387,6 +510,14 @@ inline constexpr CollisionGroup kDefaultCollisionGroup = 0;
 // leaves room for the moving/non-moving split the broad phase needs.
 inline constexpr u32 kMaxCollisionGroups = 1024;
 
+// What a surface is to touch: what a `TriangleMesh`'s triangle slides and
+// bounces by, in place of its body's.
+struct SurfaceMaterial
+{
+    f32 friction = 0.3f;
+    f32 restitution = 0.0f;
+};
+
 struct BodyDesc
 {
     ShapeDesc shape;
@@ -400,6 +531,11 @@ struct BodyDesc
     f32 friction = 0.3f;
     f32 restitution = 0.0f;
     f32 density = 1.0f;
+
+    // **The surfaces a mesh's triangles name** (`ShapeDesc::triangleSurfaces`):
+    // copied by the backend, read on its worker threads while it steps. Entry
+    // 0 is not looked up: a triangle of surface 0 is the body's own.
+    std::span<const SurfaceMaterial> surfaces{};
 
     // `BasePart.LinearDamping` and `.AngularDamping`: the share of a speed
     // lost in a second with nothing touching it. The solver's own defaults.
