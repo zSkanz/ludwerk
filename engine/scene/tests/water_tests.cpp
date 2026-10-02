@@ -208,3 +208,136 @@ TEST_CASE("where a river runs out into a lake at its level, the river carries wh
     scene::applyWaterForces(pool.fixture.world, pool.workspace, 0.1);
     CHECK(pool.fixture.world.rigidBodies().find(drift)->pendingImpulse.x == doctest::Approx(0.0));
 }
+
+// --- Curves, rivers that descend, lakes of any outline (ADR 0146) ------------
+
+namespace {
+
+// The pool's water made a shape along these points.
+void along(Pool& pool, core::i32 shape, std::initializer_list<scene::WaterPointComponent> points)
+{
+    pool.fixture.world.waters().find(pool.water)->shape = shape;
+    for (const scene::WaterPointComponent& point : points) {
+        const core::InstanceId id = pool.fixture.folder("Point");
+        (void)pool.fixture.world.waterPoints().add(id, point);
+        REQUIRE_FALSE(pool.fixture.world.setParent(id, pool.water).has_value());
+    }
+}
+
+} // namespace
+
+TEST_CASE("a river's curve passes through its points and bends smoothly between them (ADR 0146)")
+{
+    Pool pool;
+    pool.fixture.world.waters().find(pool.water)->size = core::Vec3{4.0f, 2.0f, 1.0f};
+    along(pool, scene::water_shape::River,
+          {{core::Vec3{0.0f, 10.0f, 0.0f}},
+           {core::Vec3{20.0f, 8.0f, 0.0f}},
+           {core::Vec3{20.0f, 6.0f, 20.0f}},
+           {core::Vec3{40.0f, 4.0f, 20.0f}}});
+    const scene::WaterCourse course = scene::courseOf(pool.fixture.world, pool.water);
+    REQUIRE(course.points.size() == 4);
+    const core::Vec3 points[4] = {core::Vec3{0.0f, 10.0f, 0.0f}, core::Vec3{20.0f, 8.0f, 0.0f},
+                                  core::Vec3{20.0f, 6.0f, 20.0f}, core::Vec3{40.0f, 4.0f, 20.0f}};
+    for (int at = 0; at < 4; ++at) {
+        const scene::WaterCourseSample& sample = course.samples[course.points[static_cast<core::usize>(at)]];
+        CHECK(sample.position.x == doctest::Approx(static_cast<double>(points[at].x)));
+        CHECK(sample.position.y == doctest::Approx(static_cast<double>(points[at].y)));
+        CHECK(sample.position.z == doctest::Approx(static_cast<double>(points[at].z)));
+    }
+    // No corner anywhere: from one stretch of samples to the next it turns by
+    // well under what the two right angles of its points are.
+    double sharpest = 1.0;
+    for (core::usize at = 0; at + 2 < course.samples.size(); ++at) {
+        const core::DVec3 a = course.samples[at + 1].position - course.samples[at].position;
+        const core::DVec3 b = course.samples[at + 2].position - course.samples[at + 1].position;
+        const double la = std::sqrt(a.x * a.x + a.z * a.z);
+        const double lb = std::sqrt(b.x * b.x + b.z * b.z);
+        REQUIRE(la > 1e-6);
+        REQUIRE(lb > 1e-6);
+        sharpest = std::min(sharpest, (a.x * b.x + a.z * b.z) / (la * lb));
+    }
+    // The cosine of forty degrees.
+    CHECK(sharpest > 0.76);
+    // And it never climbs between two points that descend.
+    for (core::usize at = 0; at + 1 < course.samples.size(); ++at)
+        CHECK(course.samples[at + 1].position.y <= course.samples[at].position.y + 1e-9);
+}
+
+TEST_CASE("a river's surface is as high as its course is, and it runs faster where it drops (ADR 0146)")
+{
+    Pool pool;
+    scene::WaterComponent& water = *pool.fixture.world.waters().find(pool.water);
+    water.size = core::Vec3{6.0f, 3.0f, 1.0f};
+    // Level for forty metres, then down ten in forty.
+    along(pool, scene::water_shape::River,
+          {{core::Vec3{0.0f, 20.0f, 0.0f}},
+           {core::Vec3{40.0f, 20.0f, 0.0f}, 0.0, 0.0, true},
+           {core::Vec3{80.0f, 10.0f, 0.0f}}});
+
+    const scene::WaterHere level = scene::waterHere(pool.fixture.world, pool.water, 20.0, 1.0);
+    REQUIRE(level.covered);
+    CHECK(level.level == doctest::Approx(20.0));
+    CHECK(level.depth == doctest::Approx(3.0));
+    CHECK(static_cast<double>(level.flow.x) == doctest::Approx(1.0));
+
+    const scene::WaterHere dropping = scene::waterHere(pool.fixture.world, pool.water, 60.0, -1.0);
+    REQUIRE(dropping.covered);
+    CHECK(dropping.level == doctest::Approx(15.0).epsilon(0.01));
+    // A slope of one in four: twice as fast.
+    CHECK(static_cast<double>(dropping.flow.x) == doctest::Approx(2.0).epsilon(0.01));
+
+    // Past its width, and past its end: no river.
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 20.0, 4.0).covered);
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 90.0, 0.0).covered);
+
+    // **What floats is held up at the river's height there**, not at the
+    // water's `SurfaceLevel`: a box under the surface at twenty metres up.
+    const core::InstanceId log = pool.box(core::DVec3{20.0, 19.0, 0.0}, core::Vec3{1.0f, 1.0f, 1.0f}, 0.5f);
+    const core::InstanceId dry = pool.box(core::DVec3{60.0, 19.0, 0.0}, core::Vec3{1.0f, 1.0f, 1.0f}, 0.5f);
+    scene::applyWaterForces(pool.fixture.world, pool.workspace, 0.1);
+    CHECK(pool.fixture.world.rigidBodies().find(log)->pendingImpulse.y > 0.5f);
+    // Over where the river has dropped to fifteen: in the air.
+    CHECK(pool.fixture.world.rigidBodies().find(dry)->pendingImpulse.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("a river is as wide and as deep as its points say (ADR 0146)")
+{
+    Pool pool;
+    pool.fixture.world.waters().find(pool.water)->size = core::Vec3{4.0f, 2.0f, 1.0f};
+    along(pool, scene::water_shape::River,
+          {{core::Vec3{0.0f, 0.0f, 0.0f}}, {core::Vec3{40.0f, 0.0f, 0.0f}, 12.0, 6.0, false}});
+    // The water's own width at the first point, the point's at the second.
+    CHECK(scene::waterHere(pool.fixture.world, pool.water, 2.0, 1.5).covered);
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 2.0, 3.0).covered);
+    const scene::WaterHere wide = scene::waterHere(pool.fixture.world, pool.water, 38.0, 5.0);
+    CHECK(wide.covered);
+    CHECK(wide.depth > 5.0);
+}
+
+TEST_CASE("a lake is the inside of the curve through its points, level at its surface (ADR 0146)")
+{
+    Pool pool;
+    scene::WaterComponent& water = *pool.fixture.world.waters().find(pool.water);
+    water.surfaceLevel = 7.0;
+    water.size = core::Vec3{1.0f, 5.0f, 1.0f};
+    // Two points: not an outline yet.
+    along(pool, scene::water_shape::Lake, {{core::Vec3{-10.0f, 0.0f, -10.0f}}, {core::Vec3{10.0f, 0.0f, -10.0f}}});
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 0.0, -10.0).covered);
+    along(pool, scene::water_shape::Lake, {{core::Vec3{10.0f, 99.0f, 10.0f}}, {core::Vec3{-10.0f, 0.0f, 10.0f}}});
+
+    const scene::WaterHere middle = scene::waterHere(pool.fixture.world, pool.water, 0.0, 0.0);
+    REQUIRE(middle.covered);
+    // Level, whatever its points' own heights.
+    CHECK(middle.level == doctest::Approx(7.0));
+    CHECK(middle.depth == doctest::Approx(5.0));
+    // Rounded: the curve bows out past the straight side, and cuts no corner
+    // sharper than its points.
+    CHECK(scene::waterHere(pool.fixture.world, pool.water, 0.0, 11.0).covered);
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 0.0, 16.0).covered);
+    CHECK_FALSE(scene::waterHere(pool.fixture.world, pool.water, 30.0, 0.0).covered);
+
+    const core::InstanceId log = pool.box(core::DVec3{0.0, 6.5, 0.0}, core::Vec3{1.0f, 1.0f, 1.0f}, 0.5f);
+    scene::applyWaterForces(pool.fixture.world, pool.workspace, 0.1);
+    CHECK(pool.fixture.world.rigidBodies().find(log)->pendingImpulse.y > 0.5f);
+}

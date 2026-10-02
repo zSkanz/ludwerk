@@ -1207,12 +1207,27 @@ local Definition: Schema.Definition = {
             Doc = "Where a `Water` is (ADR 0118).",
             Items = {
                 { Name = "Ocean", Value = 0, Doc = "Everywhere, without end: the sea." },
-                { Name = "Box", Value = 1, Doc = "A lake or a pool: `Size` across, centred on `Position`." },
+                { Name = "Box", Value = 1, Doc = "The older name of `Pool`: the same rectangle." },
                 {
                     Name = "Spline",
                     Value = 2,
-                    Doc = "A river along its `WaterPoint` children, `Size.X` wide, flowing at `FlowSpeed`.",
+                    Doc = "The older river: straight from one `WaterPoint` child to the next, and level -- every "
+                        .. "point at the water's `SurfaceLevel`, whatever its own height.",
                 },
+                {
+                    Name = "Lake",
+                    Value = 3,
+                    Doc = "The area inside the closed curve through its `WaterPoint` children, level at "
+                        .. "`SurfaceLevel` (ADR 0146). It needs three points.",
+                },
+                {
+                    Name = "River",
+                    Value = 4,
+                    Doc = "A ribbon along the curve through its `WaterPoint` children, first to last (ADR 0146). "
+                        .. "Each point's height is the surface's there, so a river descends; its `Width` and "
+                        .. "`Depth` are the river's there.",
+                },
+                { Name = "Pool", Value = 5, Doc = "A rectangle: `Size` across, centred on `Position`." },
             } :: { Schema.EnumItem },
         },
         {

@@ -16,6 +16,7 @@
 #include "engine/render/mesh_cache.h"
 #include "engine/render/render_world.h"
 #include "engine/rhi/device.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 
 namespace engine::render {
@@ -31,13 +32,21 @@ inline constexpr core::u32 WaterGridQuads = 256;
 [[nodiscard]] asset::Mesh waterGrid(core::u32 quads);
 // A ribbon `width` wide along `points`' columns, at height zero, in world
 // coordinates, a row every `step` metres or so.
-[[nodiscard]] asset::Mesh riverRibbon(const std::vector<core::Vec3>& points, float width, float step);
+// **A river's ribbon** (ADR 0146): a row of vertices across each sample of its
+// course, as wide as the river is there and as high, square to the way it
+// runs -- in the world's own coordinates. `step` is how far apart the
+// vertices of a row are, at most.
+[[nodiscard]] asset::Mesh riverRibbon(const scene::WaterCourse& course, float step);
+// **A lake's surface**: a grid over its outline's bounds at `level`, the cells
+// outside the outline left out and the vertices just outside it brought onto
+// it, so the edge is the curve and the middle has vertices for the waves.
+[[nodiscard]] asset::Mesh lakeSurface(const scene::WaterCourse& course, double level);
 
 class WaterLoader
 {
 public:
-    // The grid, once, and each river's ribbon when its points change. Answers
-    // how many meshes it built.
+    // The grid, once, and each river's ribbon and each lake's surface when its
+    // points change. Answers how many meshes it built.
     core::u32 sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::World& world, core::AtomTable& atoms,
                    MeshCache& cache, MeshLibrary& library);
     void destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library);

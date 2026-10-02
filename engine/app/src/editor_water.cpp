@@ -1,10 +1,11 @@
-// The Water tool (ADR 0146 §7; the water ledger's W5, its first slice).
+// The Water tool (ADR 0146 section 7; the water ledger's W5 and W1).
 //
-// **Water is drawn where it goes.** A river is clicked along its course, a
-// lake is dragged across the hollow it fills, a sea is clicked at the height
-// it comes up to. Until this a river was a `Water` and a child a point, made
-// in the Explorer and typed into Properties a coordinate at a time -- which is
-// how nobody finds out what a river looks like.
+// **Water is drawn where it goes.** A river is clicked along its course and
+// runs down the ground it was clicked on, a lake is clicked round its shore,
+// a pool is dragged as a rectangle, a sea is clicked at the height it comes up
+// to. Until this a river was a `Water` and a child a point, made in the
+// Explorer and typed into Properties a coordinate at a time -- which is how
+// nobody finds out what a river looks like.
 //
 // It is `driveTiles`' shape: the tool has the pointer while its panel is open,
 // a gesture is one undo step, and what it is aiming at is published for the
@@ -20,6 +21,7 @@
 #include <engine/core/text_key.h>
 #include <engine/render/debug_draw.h>
 #include <engine/scene/class_registry.h>
+#include <engine/scene/water.h>
 #include <engine/scene/world.h>
 #include <optional>
 #include <string_view>
@@ -29,22 +31,18 @@ namespace engine::app {
 
 namespace {
 
-// `Enum.WaterShape`, as `WaterComponent::shape` holds it.
-constexpr core::i32 ShapeOcean = 0;
-constexpr core::i32 ShapeBox = 1;
-constexpr core::i32 ShapeSpline = 2;
+namespace shape = scene::water_shape;
 
 // How near the pointer has to be to a handle to have it, in pixels.
 constexpr core::f32 HandleReachPixels = 12.0f;
 // How far the pointer moves before a press on a handle is a drag: under it the
 // press was a click, and a click on a point selects the point.
 constexpr core::f32 DragStartPixels = 3.0f;
-// The smallest lake a drag makes, a side, in metres: under it the drag was a
+// The smallest pool a drag makes, a side, in metres: under it the drag was a
 // click.
-constexpr core::f64 SmallestLake = 1.0;
-// How far above the ground it was clicked on a new river's surface lies. A
-// river is level until its points have heights of their own (W1), and one
-// laid exactly on the ground would be under it wherever the ground rose.
+constexpr core::f64 SmallestPool = 1.0;
+// How far above the ground it was clicked on a river's surface lies there: on
+// the ground exactly it would be under it wherever the ground is not flat.
 constexpr core::f64 RiverRise = 0.25;
 // With nothing solid under the pointer and the world's zero not ahead of it,
 // water is drawn on a level this far under the eye, in metres.
@@ -97,6 +95,13 @@ void write(scene::World& world, core::InstanceId id, std::string_view property, 
     (void)world.setProperty(id, world.atoms().intern(property), value);
 }
 
+void place(scene::World& world, core::InstanceId point, const core::DVec3& at)
+{
+    write(world, point, "Position",
+          scene::Value{
+              core::Vec3{static_cast<core::f32>(at.x), static_cast<core::f32>(at.y), static_cast<core::f32>(at.z)}});
+}
+
 // A new instance of `className` under `parent`, named for what it is; invalid
 // when the class is not there or the parent refuses it.
 [[nodiscard]] core::InstanceId make(scene::World& world, std::string_view className, std::string_view name,
@@ -116,34 +121,34 @@ void write(scene::World& world, core::InstanceId id, std::string_view property, 
     return id;
 }
 
-[[nodiscard]] scene::Value shapeValue(const scene::World& world, core::i32 shape)
+[[nodiscard]] scene::Value shapeValue(const scene::World& world, core::i32 value)
 {
-    return scene::Value{scene::EnumValue{world.enums().findId(world.atoms().lookup("WaterShape")), shape}};
+    return scene::Value{scene::EnumValue{world.enums().findId(world.atoms().lookup("WaterShape")), value}};
 }
 
 [[nodiscard]] core::InstanceId seaIn(const scene::World& world, core::InstanceId root)
 {
     core::InstanceId found;
     world.waters().forEach([&](core::InstanceId id, const scene::WaterComponent& water) {
-        if (!found.valid() && water.shape == ShapeOcean && world.isAncestorOf(root, id))
+        if (!found.valid() && water.shape == shape::Ocean && world.isAncestorOf(root, id))
             found = id;
     });
     return found;
 }
 
-// A lake's `Position` and `Size` from two opposite corners of it.
-void layRectangle(scene::World& world, core::InstanceId lake, const core::DVec3& from, const core::DVec3& to)
+// A pool's `Position` and `Size` from two opposite corners of it.
+void layRectangle(scene::World& world, core::InstanceId pool, const core::DVec3& from, const core::DVec3& to)
 {
-    const scene::WaterComponent* water = world.waters().find(lake);
+    const scene::WaterComponent* water = world.waters().find(pool);
     if (water == nullptr)
         return;
-    const core::f64 width = std::max(std::abs(to.x - from.x), SmallestLake);
-    const core::f64 length = std::max(std::abs(to.z - from.z), SmallestLake);
+    const core::f64 width = std::max(std::abs(to.x - from.x), SmallestPool);
+    const core::f64 length = std::max(std::abs(to.z - from.z), SmallestPool);
     const core::Vec3 position{static_cast<core::f32>((from.x + to.x) * 0.5), water->position.y,
                               static_cast<core::f32>((from.z + to.z) * 0.5)};
     const core::Vec3 size{static_cast<core::f32>(width), water->size.y, static_cast<core::f32>(length)};
-    write(world, lake, "Position", scene::Value{position});
-    write(world, lake, "Size", scene::Value{size});
+    write(world, pool, "Position", scene::Value{position});
+    write(world, pool, "Size", scene::Value{size});
 }
 
 } // namespace
@@ -205,24 +210,31 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
 
     const core::InstanceId inHand = waterInHand(world, inspector);
     const scene::WaterComponent* held = inHand.valid() ? world.waters().find(inHand) : nullptr;
-    const bool river = m_waterOp == WaterOp::River && held != nullptr && held->shape == ShapeSpline;
-    const bool lake = m_waterOp == WaterOp::Lake && held != nullptr && held->shape == ShapeBox;
+    const core::i32 heldShape = held != nullptr ? held->shape : -1;
+    const bool river = m_waterOp == WaterOp::River && scene::waterIsRiver(heldShape);
+    const bool lake = m_waterOp == WaterOp::Lake && heldShape == shape::Lake;
+    const bool pool = m_waterOp == WaterOp::Pool && scene::waterIsPool(heldShape);
+    // Whether its points have heights of their own: a `River`'s do.
+    const bool rises = river && heldShape == shape::River;
     const core::f64 heldLevel = held != nullptr ? held->surfaceLevel : 0.0;
 
     // **The handles**, pointer or no pointer: they are what says which water
-    // is in hand. A river's points in their order; a lake's four corners. On
-    // the surface, which is where the water is seen.
+    // is in hand. A river's points in their order, a lake's round its shore,
+    // a pool's four corners. On the surface, which is where the water is seen.
     std::vector<core::InstanceId> points;
-    if (river) {
+    if (river || lake) {
         points = pointsOf(world, inHand);
         for (const core::InstanceId point : points) {
             const core::Vec3 at = world.waterPoints().find(point)->position;
-            m_waterGuide.handles.push_back(
-                core::DVec3{static_cast<core::f64>(at.x), heldLevel, static_cast<core::f64>(at.z)});
+            m_waterGuide.handles.push_back(core::DVec3{static_cast<core::f64>(at.x),
+                                                       rises ? static_cast<core::f64>(at.y) : heldLevel,
+                                                       static_cast<core::f64>(at.z)});
         }
-        m_waterGuide.width = held->size.x;
+        m_waterGuide.closed = lake && points.size() >= 3;
+        if (river)
+            m_waterGuide.width = held->size.x;
     }
-    else if (lake) {
+    else if (pool) {
         const auto x = static_cast<core::f64>(held->position.x);
         const auto z = static_cast<core::f64>(held->position.z);
         const core::f64 halfX = static_cast<core::f64>(held->size.x) * 0.5;
@@ -245,12 +257,12 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
             m_pending.reset();
             if (ended.kind == WaterGesture::Kind::Rectangle) {
                 const std::optional<core::DVec3> to = onPlane(ray, ended.level);
-                if (to.has_value() && std::abs(to->x - ended.anchor.x) >= SmallestLake &&
-                    std::abs(to->z - ended.anchor.z) >= SmallestLake) {
-                    m_history.record(world, core::tr(ENG_TR("engine.editor.history.draw_lake")));
-                    const core::InstanceId made = make(world, "Water", "Lake", root);
+                if (to.has_value() && std::abs(to->x - ended.anchor.x) >= SmallestPool &&
+                    std::abs(to->z - ended.anchor.z) >= SmallestPool) {
+                    m_history.record(world, core::tr(ENG_TR("engine.editor.history.draw_pool")));
+                    const core::InstanceId made = make(world, "Water", "Pool", root);
                     if (made.valid()) {
-                        write(world, made, "Shape", shapeValue(world, ShapeBox));
+                        write(world, made, "Shape", shapeValue(world, shape::Pool));
                         write(world, made, "SurfaceLevel", scene::Value{ended.level});
                         write(world, made, "Size", scene::Value{core::Vec3{1.0f, m_waterDepth, 1.0f}});
                         layRectangle(world, made, ended.anchor, *to);
@@ -267,7 +279,7 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
                 }
             }
             // **A click on a point selects it**: Delete then removes it, and
-            // the next click still adds to its river (`waterInHand`).
+            // the next click still adds to its water (`waterInHand`).
             else if (ended.kind == WaterGesture::Kind::Point && !ended.moved && world.alive(ended.point)) {
                 inspector.select(ended.point);
                 inspector.reveal(ended.point);
@@ -290,25 +302,29 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
             m_waterGuide.hot = gesture.index;
             if (!dragging || !world.alive(gesture.point))
                 break;
-            // Across the ground where there is ground under the pointer, and
-            // across the river's own level where there is none.
-            std::optional<core::DVec3> to = onSolid(world, root, ray);
-            if (!to.has_value())
-                to = onPlane(ray, gesture.level);
-            if (!to.has_value())
+            // Across the ground where there is ground under the pointer -- and
+            // a river's point takes the ground's height there -- and across
+            // the point's own level where there is none.
+            core::DVec3 to;
+            if (const std::optional<core::DVec3> solid = onSolid(world, root, ray); solid.has_value()) {
+                to = core::DVec3{solid->x, gesture.rises ? solid->y + RiverRise : gesture.level, solid->z};
+            }
+            else if (const std::optional<core::DVec3> level = onPlane(ray, gesture.level); level.has_value()) {
+                to = *level;
+            }
+            else {
                 break;
+            }
             if (!gesture.moved) {
                 // Recorded with the first movement and not with the press: a
                 // press that was a click leaves nothing to undo.
-                m_history.record(world, core::tr(ENG_TR("engine.editor.history.move_river_point")));
+                m_history.record(world, core::tr(gesture.outline ? ENG_TR("engine.editor.history.move_lake_point")
+                                                                 : ENG_TR("engine.editor.history.move_river_point")));
                 gesture.moved = true;
             }
-            write(world, gesture.point, "Position",
-                  scene::Value{core::Vec3{static_cast<core::f32>(to->x), static_cast<core::f32>(gesture.level),
-                                          static_cast<core::f32>(to->z)}});
+            place(world, gesture.point, to);
             if (gesture.index >= 0 && static_cast<core::usize>(gesture.index) < m_waterGuide.handles.size())
-                m_waterGuide.handles[static_cast<core::usize>(gesture.index)] =
-                    core::DVec3{to->x, gesture.level, to->z};
+                m_waterGuide.handles[static_cast<core::usize>(gesture.index)] = to;
             m_sceneDirty = true;
             break;
         }
@@ -320,7 +336,7 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
             if (!to.has_value())
                 break;
             if (!gesture.moved) {
-                m_history.record(world, core::tr(ENG_TR("engine.editor.history.resize_lake")));
+                m_history.record(world, core::tr(ENG_TR("engine.editor.history.resize_pool")));
                 gesture.moved = true;
             }
             layRectangle(world, gesture.water, gesture.anchor, *to);
@@ -354,19 +370,38 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
     // --- Where a click would land -------------------------------------------
     //
     // On something solid; where there is nothing solid, on the level of the
-    // water in hand, or the world's zero with none -- an empty scene has to be
-    // somewhere a first river can go. **And where zero is not ahead**, a
-    // level under the eye: a new project's camera stands AT zero, looking at
-    // the horizon, and the first click of a first river landed nowhere.
+    // water in hand -- a river's last point's -- or the world's zero with
+    // none: an empty scene has to be somewhere a first river can go. **And
+    // where zero is not ahead**, a level under the eye: a new project's camera
+    // stands AT zero, looking at the horizon, and the first click of a first
+    // river landed nowhere.
+    const core::f64 lastLevel =
+        rises && !m_waterGuide.handles.empty() ? m_waterGuide.handles.back().y : (held != nullptr ? heldLevel : 0.0);
     std::optional<core::DVec3> aim = onSolid(world, root, ray);
+    const bool onGround = aim.has_value();
     if (!aim.has_value())
-        aim = onPlane(ray, held != nullptr ? heldLevel : 0.0);
+        aim = onPlane(ray, lastLevel);
     if (!aim.has_value() && held == nullptr)
         aim = onPlane(ray, std::floor(ray.origin.y) - EyeDrop);
-    if (m_waterGuide.hot < 0) {
-        m_waterGuide.aim = aim;
-        if (river && aim.has_value() && !m_waterGuide.handles.empty())
+    // Where the point a click lays would be: a river's a little over the
+    // ground it was clicked on, a lake's on its level.
+    const auto pointFor = [&](const core::DVec3& at) {
+        // A lake's first point is where it was clicked: that is its level.
+        if (m_waterOp == WaterOp::Lake)
+            return core::DVec3{at.x, lake ? heldLevel : at.y, at.z};
+        if (river && !rises)
+            return core::DVec3{at.x, heldLevel, at.z};
+        return core::DVec3{at.x, onGround ? at.y + RiverRise : at.y, at.z};
+    };
+    if (m_waterGuide.hot < 0 && aim.has_value()) {
+        const bool lays = (m_waterOp == WaterOp::River) || (m_waterOp == WaterOp::Lake);
+        m_waterGuide.aim = lays ? pointFor(*aim) : *aim;
+        if ((river || lake) && !m_waterGuide.handles.empty()) {
             m_waterGuide.from = m_waterGuide.handles.back();
+            // A lake's outline comes back round to where it began.
+            if (lake && m_waterGuide.handles.size() >= 2)
+                m_waterGuide.closing = m_waterGuide.handles.front();
+        }
     }
 
     if (!m_pointerPressed)
@@ -379,10 +414,12 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
         gesture.water = inHand;
         gesture.index = m_waterGuide.hot;
         gesture.pressedAt = m_pointer;
-        gesture.level = heldLevel;
-        if (river) {
+        gesture.level = m_waterGuide.handles[index].y;
+        if (river || lake) {
             gesture.kind = WaterGesture::Kind::Point;
             gesture.point = points[index];
+            gesture.rises = rises;
+            gesture.outline = lake;
         }
         else {
             gesture.kind = WaterGesture::Kind::Corner;
@@ -403,15 +440,28 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
     gesture.kind = WaterGesture::Kind::Click;
     gesture.pressedAt = m_pointer;
 
+    // No water of the kind in hand, and the click is on one: that one is
+    // picked up, and the next click adds to it. Starting a second river in
+    // the first one's bed is what nobody means.
+    const auto pickedUp = [&](bool wanted(core::i32)) {
+        const std::optional<PickHit> hit = pickWater(world, root, ray);
+        if (!hit.has_value())
+            return false;
+        const scene::WaterComponent* under = world.waters().find(hit->instance);
+        if (under == nullptr || !wanted(under->shape))
+            return false;
+        inspector.select(hit->instance);
+        inspector.reveal(hit->instance);
+        return true;
+    };
+
     switch (m_waterOp) {
     case WaterOp::River: {
         if (river) {
             m_history.record(world, core::tr(ENG_TR("engine.editor.history.add_river_point")));
             const core::InstanceId point = make(world, "WaterPoint", "WaterPoint", inHand);
             if (point.valid()) {
-                write(world, point, "Position",
-                      scene::Value{core::Vec3{static_cast<core::f32>(aim->x), static_cast<core::f32>(heldLevel),
-                                              static_cast<core::f32>(aim->z)}});
+                place(world, point, pointFor(*aim));
                 // The river stays in hand: with a point selected a second
                 // Delete would take the point just laid.
                 inspector.select(inHand);
@@ -419,38 +469,55 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
             }
             break;
         }
-        // **No river in hand, and the click is on one**: that one is picked
-        // up, and the next click adds to it. Starting a second river in the
-        // first one's bed is what nobody means.
-        if (const std::optional<PickHit> hit = pickWater(world, root, ray); hit.has_value()) {
-            if (const scene::WaterComponent* under = world.waters().find(hit->instance);
-                under != nullptr && under->shape == ShapeSpline) {
-                inspector.select(hit->instance);
-                inspector.reveal(hit->instance);
-                break;
-            }
-        }
+        if (pickedUp(scene::waterIsRiver))
+            break;
         m_history.record(world, core::tr(ENG_TR("engine.editor.history.draw_river")));
         const core::InstanceId made = make(world, "Water", "River", root);
         if (!made.valid())
             break;
-        const core::f64 level = aim->y + RiverRise;
-        write(world, made, "Shape", shapeValue(world, ShapeSpline));
-        write(world, made, "SurfaceLevel", scene::Value{level});
+        const core::DVec3 first = pointFor(*aim);
+        write(world, made, "Shape", shapeValue(world, shape::River));
+        write(world, made, "SurfaceLevel", scene::Value{first.y});
         write(world, made, "Size", scene::Value{core::Vec3{m_waterWidth, m_waterDepth, m_waterWidth}});
-        if (const core::InstanceId point = make(world, "WaterPoint", "WaterPoint", made); point.valid()) {
-            write(world, point, "Position",
-                  scene::Value{core::Vec3{static_cast<core::f32>(aim->x), static_cast<core::f32>(level),
-                                          static_cast<core::f32>(aim->z)}});
-        }
+        if (const core::InstanceId point = make(world, "WaterPoint", "WaterPoint", made); point.valid())
+            place(world, point, first);
         inspector.select(made);
         inspector.reveal(made);
         m_sceneDirty = true;
         break;
     }
-    case WaterOp::Lake:
-        // Level at the height the drag began at: press on the shore, at the
-        // height the water should come to, and drag across the hollow.
+    case WaterOp::Lake: {
+        if (lake) {
+            m_history.record(world, core::tr(ENG_TR("engine.editor.history.add_lake_point")));
+            const core::InstanceId point = make(world, "WaterPoint", "WaterPoint", inHand);
+            if (point.valid()) {
+                place(world, point, pointFor(*aim));
+                inspector.select(inHand);
+                m_sceneDirty = true;
+            }
+            break;
+        }
+        if (pickedUp([](core::i32 found) { return found == scene::water_shape::Lake; }))
+            break;
+        // Level at the height of its first click: click the shore, at the
+        // height the water should come to, and on round it.
+        m_history.record(world, core::tr(ENG_TR("engine.editor.history.draw_lake")));
+        const core::InstanceId made = make(world, "Water", "Lake", root);
+        if (!made.valid())
+            break;
+        write(world, made, "Shape", shapeValue(world, shape::Lake));
+        write(world, made, "SurfaceLevel", scene::Value{aim->y});
+        write(world, made, "Size", scene::Value{core::Vec3{1.0f, m_waterDepth, 1.0f}});
+        if (const core::InstanceId point = make(world, "WaterPoint", "WaterPoint", made); point.valid())
+            place(world, point, *aim);
+        inspector.select(made);
+        inspector.reveal(made);
+        m_sceneDirty = true;
+        break;
+    }
+    case WaterOp::Pool:
+        // Level at the height the drag began at: press on the edge, at the
+        // height the water should come to, and drag across.
         gesture.kind = WaterGesture::Kind::Rectangle;
         gesture.anchor = *aim;
         gesture.level = aim->y;
@@ -470,7 +537,7 @@ bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& i
         const core::InstanceId made = make(world, "Water", "Ocean", root);
         if (!made.valid())
             break;
-        write(world, made, "Shape", shapeValue(world, ShapeOcean));
+        write(world, made, "Shape", shapeValue(world, shape::Ocean));
         write(world, made, "SurfaceLevel", scene::Value{aim->y});
         inspector.select(made);
         inspector.reveal(made);
@@ -516,7 +583,7 @@ void submitWaterGuide(const Editor::WaterGuide& guide, core::DVec3 cameraOrigin,
         if (guide.from.has_value()) {
             // The stretch a click would add, as wide as the river is.
             const core::Vec3 from = local(*guide.from);
-            const core::Vec3 to = local(core::DVec3{guide.aim->x, guide.from->y, guide.aim->z});
+            const core::Vec3 to = local(*guide.aim);
             draw.line(from, to, hot);
             const core::Vec3 along{to.x - from.x, 0.0f, to.z - from.z};
             const core::f32 span = std::sqrt(along.x * along.x + along.z * along.z);
@@ -529,6 +596,9 @@ void submitWaterGuide(const Editor::WaterGuide& guide, core::DVec3 cameraOrigin,
                           core::Vec3{to.x - side.x, to.y, to.z - side.z}, hot);
             }
         }
+        // A lake's outline back to where it began.
+        if (guide.closing.has_value())
+            draw.line(local(*guide.aim), local(*guide.closing), hot);
         handle(*guide.aim, hot);
     }
 

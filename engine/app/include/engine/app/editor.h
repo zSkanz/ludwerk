@@ -2629,13 +2629,17 @@ public:
     enum class WaterOp : core::u8
     {
         // A click adds a point to the end of the river in hand; with none in
-        // hand it starts one. A drag on a point moves it.
+        // hand it starts one. A drag on a point moves it. Each point is a
+        // little over the ground it was clicked on, so the river runs down it.
         River,
-        // A drag lays a rectangle of water, level at the height it began at.
-        // A drag on a corner of the lake in hand resizes it.
+        // A click adds a point to the outline of the lake in hand; with none
+        // in hand it starts one, level at the height of that first click.
         Lake,
         // A click brings the sea up to the height clicked.
         Ocean,
+        // A drag lays a rectangle of water, level at the height it began at.
+        // A drag on a corner of the pool in hand resizes it.
+        Pool,
     };
     [[nodiscard]] WaterOp waterOp() const noexcept { return m_waterOp; }
     void setWaterOp(WaterOp op) noexcept;
@@ -2674,7 +2678,9 @@ public:
         // wide that stretch is.
         std::optional<core::DVec3> from;
         f32 width = 0.0f;
-        // A lake being dragged out: where it began and where the pointer is.
+        // A lake's first point, which its outline comes back round to.
+        std::optional<core::DVec3> closing;
+        // A pool being dragged out: where it began and where the pointer is.
         std::optional<std::array<core::DVec3, 2>> rectangle;
     };
     [[nodiscard]] const WaterGuide& waterGuide() const noexcept { return m_waterGuide; }
@@ -3163,11 +3169,11 @@ private:
             // A press that has already done its work: a point laid, a sea
             // made. Held so that the release is the tool's too.
             Click,
-            // A river's point under the pointer.
+            // A river's point, or a lake's, under the pointer.
             Point,
-            // A lake's corner under the pointer.
+            // A pool's corner under the pointer.
             Corner,
-            // A lake being dragged out.
+            // A pool being dragged out.
             Rectangle,
         };
         Kind kind = Kind::Click;
@@ -3181,6 +3187,10 @@ private:
         core::Vec2 pressedAt;
         // Whether it has changed anything, which is when its undo step is.
         bool moved = false;
+        // A point of a `River`: it takes the height of the ground it is
+        // dragged over. And a point of a lake's outline, for the undo's name.
+        bool rises = false;
+        bool outline = false;
     };
     WaterOp m_waterOp = WaterOp::River;
     f32 m_waterWidth = 8.0f;

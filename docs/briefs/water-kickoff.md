@@ -35,13 +35,24 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## W1 — shapes and the curve (ADR 0146 §1–3)
 
-- [ ] `Enum.WaterShape`: `Ocean`, `Lake`, `River`, `Pool`; `Spline`/`Box` read as
+- [x] **As built** (2026-10-01): `Lake` 3, `River` 4, `Pool` 5 are new items;
+  `Box` and `Spline` stay as they were -- `Box` is `Pool`, and `Spline` is a
+  river straight from point to point and level at `SurfaceLevel` -- so
+  nothing made before changes shape. The curve is `scene::courseOf`, read by
+  the simulation (`waterHere`), `GetHeightAt`, the picking and the picture.
+  A river's height runs straight between two points' (it never climbs
+  between points that descend); it runs at `FlowSpeed` where level and
+  faster by four times its slope. Lakes: point-in-outline, and a surface that
+  is a grid clipped to the outline. The editor draws all four.
+- [ ] Later in W1: cascades; the mouth blended with no seam (W3 has the
+  look); replication of `Width`, `Depth`, `Sharp` (W6).
+- [x] `Enum.WaterShape`: `Ocean`, `Lake`, `River`, `Pool`; `Spline`/`Box` read as
   aliases and written under the new names.
-- [ ] `WaterPoint.Position` full 3D, `Width`, `Depth`, `Sharp`.
-- [ ] Centripetal Catmull-Rom through the points; the renderer's ribbon and the
+- [x] `WaterPoint.Position` full 3D, `Width`, `Depth`, `Sharp`.
+- [x] Centripetal Catmull-Rom through the points; the renderer's ribbon and the
   physics' flow and height read the same curve (one function, tested to agree).
-- [ ] Rivers descend; flow by slope and tangent; cascades.
-- [ ] Lakes: a closed curve, triangulated, level at `SurfaceLevel`; inside test
+- [x] Rivers descend; flow by slope and tangent. (Cascades: later, above.)
+- [x] Lakes: a closed curve, triangulated, level at `SurfaceLevel`; inside test
   for buoyancy and `GetHeightAt`.
 - [ ] The mouth: river into lake and ocean, blended with no seam.
 
@@ -80,8 +91,9 @@ today -- a level river through its points, a rectangle, a sea.
   handles are the water's own.
 - [x] An editor test driven by clicks and drags builds a river and a lake
   (`editor_tests.cpp`, eight cases), and both were drawn in the editor itself.
-- [ ] With W1: Pool and the lake's outline; a click on the ribbon inserts a
-  point; width handles; height by Ctrl-drag.
+- [x] With W1: Pool and the lake's outline (clicks round a shore).
+- [ ] Later: a click on the ribbon inserts a point; width handles; height by
+  Ctrl-drag.
 - Later, found while doing it: a point laid where the ground is higher than
   the river's level is under the ground (W1's descending rivers and W2's
   carving are the answer, not the tool); **Create Hills** leaves the editor's

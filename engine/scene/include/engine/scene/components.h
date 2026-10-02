@@ -702,7 +702,9 @@ struct ClickDetectorComponent
 // `WaterWave` children, read by the simulation and the picture alike.
 struct WaterComponent
 {
-    // `Enum.WaterShape`: 0 Ocean, 1 Box, 2 Spline.
+    // `Enum.WaterShape`: 0 Ocean, 1 Box, 2 Spline, 3 Lake, 4 River, 5 Pool
+    // (`scene::water_shape`). Box is Pool's older name; Spline is a river
+    // level at `surfaceLevel`.
     i32 shape = 0;
     f64 surfaceLevel = 0.0;
     core::Vec3 position{};
@@ -725,10 +727,15 @@ struct WaterWaveComponent
     f64 phase = 0.0;
 };
 
-// A point a river runs through.
+// A point a river runs through, or a lake's outline passes (ADR 0146).
 struct WaterPointComponent
 {
     core::Vec3 position{};
+    // A river's width and depth here; zero is the water's own.
+    f64 width = 0.0;
+    f64 depth = 0.0;
+    // A corner here, where the curve would round it.
+    bool sharp = false;
 };
 
 // ADR 0126: what makes a part or a model something a player drags. Who is

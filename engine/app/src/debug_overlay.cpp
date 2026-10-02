@@ -76,6 +76,7 @@
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/skeleton_host.h"
 #include "engine/scene/value.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 #include "engine/script/modules.h"
 #include "engine/script/save_store.h"
@@ -304,7 +305,6 @@ namespace {
 // the machine that was drawing them and nowhere else. An id is only a name --
 // a theme that draws these is used, and the atlas falls back where none does.
 constexpr std::string_view WaterIcon = "class.Water";
-constexpr std::string_view WaterPointIcon = "class.WaterPoint";
 
 // **A translated label with an id of its own** (ADR 0145): the words are the
 // catalog's, and the `##id` after them -- never shown -- keeps the widget the
@@ -7135,6 +7135,8 @@ void reportLookInput(Editor& editor, bool overViewport)
             return core::tr(ENG_TR("engine.editor.water_panel.river"));
         case Editor::WaterOp::Lake:
             return core::tr(ENG_TR("engine.editor.water_panel.lake"));
+        case Editor::WaterOp::Pool:
+            return core::tr(ENG_TR("engine.editor.water_panel.pool"));
         case Editor::WaterOp::Ocean:
             return core::tr(ENG_TR("engine.editor.water_panel.ocean"));
         }
@@ -13132,13 +13134,16 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
             ImGui::PopStyleColor();
         ImGui::SetItemTooltip("%s", tip);
     };
-    opButton(Editor::WaterOp::River, WaterPointIcon, core::tr(ENG_TR("engine.editor.water_panel.river")),
+    opButton(Editor::WaterOp::River, icons::ActionWaterRiver, core::tr(ENG_TR("engine.editor.water_panel.river")),
              core::tr(ENG_TR("engine.editor.water_panel.river_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Lake, icons::ActionShapeBlock, core::tr(ENG_TR("engine.editor.water_panel.lake")),
+    opButton(Editor::WaterOp::Lake, icons::ActionWaterLake, core::tr(ENG_TR("engine.editor.water_panel.lake")),
              core::tr(ENG_TR("engine.editor.water_panel.lake_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Ocean, WaterIcon, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
+    opButton(Editor::WaterOp::Pool, icons::ActionWaterPool, core::tr(ENG_TR("engine.editor.water_panel.pool")),
+             core::tr(ENG_TR("engine.editor.water_panel.pool_tip")));
+    ImGui::SameLine();
+    opButton(Editor::WaterOp::Ocean, icons::ActionWaterOcean, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
              core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
     ImGui::Separator();
 
@@ -13148,9 +13153,21 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
     }
 
     const Editor::WaterOp op = editor.waterOp();
-    ImGui::TextWrapped("%s", op == Editor::WaterOp::River  ? core::tr(ENG_TR("engine.editor.water_panel.river_hint"))
-                             : op == Editor::WaterOp::Lake ? core::tr(ENG_TR("engine.editor.water_panel.lake_hint"))
-                                                           : core::tr(ENG_TR("engine.editor.water_panel.ocean_hint")));
+    const char* hint = core::tr(ENG_TR("engine.editor.water_panel.ocean_hint"));
+    switch (op) {
+    case Editor::WaterOp::River:
+        hint = core::tr(ENG_TR("engine.editor.water_panel.river_hint"));
+        break;
+    case Editor::WaterOp::Lake:
+        hint = core::tr(ENG_TR("engine.editor.water_panel.lake_hint"));
+        break;
+    case Editor::WaterOp::Pool:
+        hint = core::tr(ENG_TR("engine.editor.water_panel.pool_hint"));
+        break;
+    case Editor::WaterOp::Ocean:
+        break;
+    }
+    ImGui::TextWrapped("%s", hint);
     ImGui::Spacing();
 
     // A number dragged is one undo step, however many frames the drag lasts:
@@ -13169,38 +13186,41 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
         return changed ? std::optional<float>(edited) : std::nullopt;
     };
 
-    // `Enum.WaterShape`, as the component holds it.
-    constexpr core::i32 ShapeOcean = 0;
-    constexpr core::i32 ShapeBox = 1;
-    constexpr core::i32 ShapeSpline = 2;
     const core::InstanceId inHand = Editor::waterInHand(world, inspector);
     const scene::WaterComponent* water = inHand.valid() ? world.waters().find(inHand) : nullptr;
-    const core::i32 wanted = op == Editor::WaterOp::River  ? ShapeSpline
-                             : op == Editor::WaterOp::Lake ? ShapeBox
-                                                           : ShapeOcean;
+    const core::i32 held = water != nullptr ? water->shape : -1;
+    const bool river = op == Editor::WaterOp::River && scene::waterIsRiver(held);
+    const bool lake = op == Editor::WaterOp::Lake && held == scene::water_shape::Lake;
+    const bool pool = op == Editor::WaterOp::Pool && scene::waterIsPool(held);
+    const bool sea = op == Editor::WaterOp::Ocean && held == scene::water_shape::Ocean;
 
-    if (water != nullptr && water->shape == wanted) {
+    if (river || lake || pool || sea) {
         // **The water in hand**, and its own numbers.
         const std::string_view name = world.atoms().text(world.name(inHand));
-        if (op == Editor::WaterOp::River) {
+        if (river || lake) {
             core::i64 count = 0;
             for (core::InstanceId child = world.firstChild(inHand); child.valid(); child = world.nextSibling(child))
                 count += world.waterPoints().find(child) != nullptr ? 1 : 0;
             ImGui::TextDisabled(
                 "%s",
                 core::tr(ENG_TR("engine.editor.water_panel.drawing"), {{"name", name}, {"count", count}}).c_str());
+            if (lake && count < 3)
+                ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.water_panel.lake_needs_three")));
         }
         else {
             ImGui::TextDisabled("%s", std::string(name).c_str());
         }
         const core::Vec3 size = water->size;
-        if (const std::optional<float> level =
-                number(ENG_TR("engine.editor.water_panel.surface"), "###water-surface",
-                       static_cast<float>(water->surfaceLevel), 0.05f, -100000.0f, 100000.0f)) {
-            inspector.enqueue(inHand, world.atoms().intern("SurfaceLevel"),
-                              scene::Value{static_cast<core::f64>(*level)});
+        // A river that descends has no one height: its points have theirs.
+        if (held != scene::water_shape::River) {
+            if (const std::optional<float> level =
+                    number(ENG_TR("engine.editor.water_panel.surface"), "###water-surface",
+                           static_cast<float>(water->surfaceLevel), 0.05f, -100000.0f, 100000.0f)) {
+                inspector.enqueue(inHand, world.atoms().intern("SurfaceLevel"),
+                                  scene::Value{static_cast<core::f64>(*level)});
+            }
         }
-        if (op == Editor::WaterOp::River) {
+        if (river) {
             if (const std::optional<float> width =
                     number(ENG_TR("engine.editor.water_panel.width"), "###water-width", size.x, 0.1f, 0.5f, 512.0f)) {
                 inspector.enqueue(inHand, world.atoms().intern("Size"),
@@ -13208,7 +13228,7 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
                 editor.setWaterWidth(*width);
             }
         }
-        if (op != Editor::WaterOp::Ocean) {
+        if (!sea) {
             if (const std::optional<float> depth =
                     number(ENG_TR("engine.editor.water_panel.depth"), "###water-depth", size.y, 0.1f, 0.25f, 512.0f)) {
                 inspector.enqueue(inHand, world.atoms().intern("Size"),
@@ -13216,14 +13236,18 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
                 editor.setWaterDepth(*depth);
             }
         }
-        if (op == Editor::WaterOp::River) {
+        if (river) {
             if (const std::optional<float> flow = number(ENG_TR("engine.editor.water_panel.flow"), "###water-flow",
                                                          static_cast<float>(water->flowSpeed), 0.05f, -64.0f, 64.0f)) {
                 inspector.enqueue(inHand, world.atoms().intern("FlowSpeed"),
                                   scene::Value{static_cast<core::f64>(*flow)});
             }
+        }
+        if (river || lake) {
             ImGui::Spacing();
-            if (labeledIconButton(icons, icons::ActionAdd, core::tr(ENG_TR("engine.editor.water_panel.new_river"))))
+            if (labeledIconButton(icons, icons::ActionAdd,
+                                  core::tr(river ? ENG_TR("engine.editor.water_panel.new_river")
+                                                 : ENG_TR("engine.editor.water_panel.new_lake"))))
                 editor.finishRiver(inspector);
             ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.water_panel.new_river_tip")));
         }
@@ -13233,8 +13257,10 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
     // **Nothing in hand**: what the next one is made with.
     if (op == Editor::WaterOp::Ocean)
         return;
-    if (op == Editor::WaterOp::River)
-        ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.water_panel.nothing_in_hand")));
+    if (op == Editor::WaterOp::River || op == Editor::WaterOp::Lake)
+        ImGui::TextDisabled("%s", core::tr(op == Editor::WaterOp::River
+                                               ? ENG_TR("engine.editor.water_panel.nothing_in_hand")
+                                               : ENG_TR("engine.editor.water_panel.no_lake_in_hand")));
     ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.water_panel.new_water")));
     if (op == Editor::WaterOp::River) {
         if (const std::optional<float> width = number(ENG_TR("engine.editor.water_panel.width"), "###water-width",

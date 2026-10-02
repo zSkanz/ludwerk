@@ -20,6 +20,7 @@
 #include <engine/scene/pivot.h>
 #include <engine/scene/scene_file.h>
 #include <engine/scene/voxel_fluid.h>
+#include <engine/scene/water.h>
 #include <engine/scene/world.h>
 #include <engine/script/modules.h>
 #include <engine/ui/ui.h>
@@ -822,7 +823,10 @@ void Editor::rememberState(const std::filesystem::path& stateDirectory) const
     writer.endObject();
     writer.key("water");
     writer.beginObject();
-    writer.field("op", m_waterOp == WaterOp::Lake ? "lake" : m_waterOp == WaterOp::Ocean ? "ocean" : "river");
+    writer.field("op", m_waterOp == WaterOp::Lake    ? "lake"
+                       : m_waterOp == WaterOp::Ocean ? "ocean"
+                       : m_waterOp == WaterOp::Pool  ? "pool"
+                                                     : "river");
     writer.field("width", static_cast<core::f64>(m_waterWidth));
     writer.field("depth", static_cast<core::f64>(m_waterDepth));
     writer.endObject();
@@ -930,7 +934,10 @@ void Editor::recallState(const std::filesystem::path& stateDirectory)
         }
         if (const core::JsonValue water = tools["water"]; water.type() == core::JsonType::Object) {
             const std::string_view op = water["op"].asString();
-            m_waterOp = op == "lake" ? WaterOp::Lake : op == "ocean" ? WaterOp::Ocean : WaterOp::River;
+            m_waterOp = op == "lake"    ? WaterOp::Lake
+                        : op == "ocean" ? WaterOp::Ocean
+                        : op == "pool"  ? WaterOp::Pool
+                                        : WaterOp::River;
             if (const core::JsonValue width = water["width"]; width.type() == core::JsonType::Number)
                 setWaterWidth(static_cast<f32>(width.asNumber()));
             if (const core::JsonValue depth = water["depth"]; depth.type() == core::JsonType::Number)
@@ -4064,21 +4071,27 @@ namespace {
     core::CFrameD frame;
     frame.position = core::DVec3{static_cast<core::f64>(water.position.x), water.surfaceLevel,
                                  static_cast<core::f64>(water.position.z)};
-    if (water.shape != 2)
+    if (!scene::waterIsRiver(water.shape) && water.shape != scene::water_shape::Lake)
         return frame;
+    // Over the middle of its points -- and at the middle of their heights,
+    // for a river that descends.
     core::f64 x = 0.0;
+    core::f64 y = 0.0;
     core::f64 z = 0.0;
     core::usize count = 0;
     for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
         if (const scene::WaterPointComponent* point = world.waterPoints().find(child); point != nullptr) {
             x += static_cast<core::f64>(point->position.x);
+            y += static_cast<core::f64>(point->position.y);
             z += static_cast<core::f64>(point->position.z);
             ++count;
         }
     }
-    if (count > 0)
+    if (count > 0) {
+        const auto n = static_cast<core::f64>(count);
         frame.position =
-            core::DVec3{x / static_cast<core::f64>(count), water.surfaceLevel, z / static_cast<core::f64>(count)};
+            core::DVec3{x / n, water.shape == scene::water_shape::River ? y / n : water.surfaceLevel, z / n};
+    }
     return frame;
 }
 
@@ -6452,7 +6465,8 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
                         inside.emplace_back(descendant, held->cframe);
                 }
             }
-            else if (kind == DragKind::Water && water->shape == 2) {
+            else if (kind == DragKind::Water &&
+                     (scene::waterIsRiver(water->shape) || water->shape == scene::water_shape::Lake)) {
                 for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
                     if (const scene::WaterPointComponent* point = world.waterPoints().find(child); point != nullptr)
                         inside.emplace_back(child, placedAt(core::toDVec3(point->position)));

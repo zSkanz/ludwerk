@@ -2374,6 +2374,44 @@ bool setWaterPointPosition(World& world, core::InstanceId id, const Value& value
     return point != nullptr && finiteVector(value, point->position);
 }
 
+Value getWaterPointWidth(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterPointComponent, &WaterPointComponent::width>(world.waterPoints(), id);
+}
+
+bool setWaterPointWidth(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterPointComponent, &WaterPointComponent::width>(world.waterPoints(), id, value,
+                                                                            WaterRule::AtLeastZero);
+}
+
+Value getWaterPointDepth(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterPointComponent, &WaterPointComponent::depth>(world.waterPoints(), id);
+}
+
+bool setWaterPointDepth(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterPointComponent, &WaterPointComponent::depth>(world.waterPoints(), id, value,
+                                                                            WaterRule::AtLeastZero);
+}
+
+Value getWaterPointSharp(const World& world, core::InstanceId id)
+{
+    const WaterPointComponent* point = world.waterPoints().find(id);
+    return point == nullptr ? Value{} : Value{point->sharp};
+}
+
+bool setWaterPointSharp(World& world, core::InstanceId id, const Value& value)
+{
+    WaterPointComponent* point = world.waterPoints().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (point == nullptr || flag == nullptr)
+        return false;
+    point->sharp = *flag;
+    return true;
+}
+
 Value getBasePartBuoyant(const World& world, core::InstanceId id)
 {
     const RigidBodyComponent* body = readBody(world, id);

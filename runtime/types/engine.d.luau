@@ -2629,24 +2629,27 @@ declare extern type ClickDetector extends Instance with
 end
 
 declare extern type Water extends Instance with
-    --- Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).
+    --- Everywhere (`Ocean`), a rectangle (`Pool`), along its `WaterPoint` children (`River`), or inside
+    --- the closed curve through them (`Lake`).
     Shape: EnumWaterShape
     --- The height of the still surface, in metres; the waves rise and fall about it.
     SurfaceLevel: number
     --- The middle of a `Box`, across the ground; its height is `SurfaceLevel`'s.
     Position: vector
-    --- A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and its depth
-    --- its Y, and its Z is not used. X and Y must be greater than zero.
+    --- A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth
+    --- its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y must be greater
+    --- than zero.
     Size: vector
     --- Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the water
     --- floats, and one of half its density floats half under.
     Density: number
     --- How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's.
     Viscosity: number
-    --- Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` along
+    --- Metres a second the water flows, carrying what floats in it. A `River` adds `FlowSpeed` along
     --- its course.
     Current: vector
-    --- How fast a river flows along its points, first to last, in metres a second.
+    --- How fast a river flows along its points, first to last, in metres a second -- where it is level.
+    --- Where it drops it runs faster, by four times its slope: twice as fast down one in four.
     FlowSpeed: number
     --- The height of the surface above the position's column now, waves and all -- the height the
     --- picture draws there -- or nil where this water is not.
@@ -2669,8 +2672,17 @@ declare extern type WaterWave extends Instance with
 end
 
 declare extern type WaterPoint extends Instance with
-    --- Where the river passes, across the ground; its height is the water's `SurfaceLevel`.
+    --- Where the water passes. For a `River` its height is the surface's height there, so a river whose
+    --- points descend runs downhill; a `Lake` and a `Spline` are level at the water's `SurfaceLevel`
+    --- and read only where the point is across the ground.
     Position: vector
+    --- How wide a river is here, in metres, changing smoothly to the next point's. Zero is the water's
+    --- `Size.X`.
+    Width: number
+    --- How deep a river is here, in metres. Zero is the water's `Size.Y`.
+    Depth: number
+    --- A corner here, where the curve would round it.
+    Sharp: boolean
 end
 
 declare extern type DragDetector extends Instance with
@@ -4102,6 +4114,9 @@ declare Enum: {
         Ocean: EnumWaterShape,
         Box: EnumWaterShape,
         Spline: EnumWaterShape,
+        Lake: EnumWaterShape,
+        River: EnumWaterShape,
+        Pool: EnumWaterShape,
         GetEnumItems: (self: any) -> { EnumWaterShape },
     },
     RenderPriority: {

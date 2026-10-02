@@ -1238,10 +1238,13 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             // surface -- or the river's ribbon, in its own world coordinates.
             const auto tile = [&](const MeshLibrary::Entry& entry, core::DVec3 at, Vec3 scale) {
                 const Mat4 transform = core::toRenderMatrixScaled(core::CFrameD{at, core::Mat3{}}, origin, scale);
+                // A river that descends is as tall as its drop; the grid is flat.
                 const Vec3 lo =
-                    core::toVec3(at - origin) + Vec3{entry.bounds.min.x * scale.x, -2.0f, entry.bounds.min.z * scale.z};
+                    core::toVec3(at - origin) +
+                    Vec3{entry.bounds.min.x * scale.x, entry.bounds.min.y - 2.0f, entry.bounds.min.z * scale.z};
                 const Vec3 hi =
-                    core::toVec3(at - origin) + Vec3{entry.bounds.max.x * scale.x, 2.0f, entry.bounds.max.z * scale.z};
+                    core::toVec3(at - origin) +
+                    Vec3{entry.bounds.max.x * scale.x, entry.bounds.max.y + 2.0f, entry.bounds.max.z * scale.z};
                 const core::AABB bounds{lo, hi};
                 const Vec3 centre = core::center(bounds);
                 const f32 depth = core::length(centre);
@@ -1267,16 +1270,18 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 });
             };
             const double level = water.surfaceLevel;
-            if (water.shape == 1) {
+            if (scene::waterIsPool(water.shape)) {
                 tile(*grid,
                      core::DVec3{static_cast<double>(water.position.x), level, static_cast<double>(water.position.z)},
                      Vec3{water.size.x, 1.0f, water.size.z});
                 return;
             }
-            if (water.shape == 2) {
+            if (scene::waterIsRiver(water.shape) || water.shape == scene::water_shape::Lake) {
+                // A mesh of its own, in the world's coordinates: a river's
+                // ribbon along its course, a lake's surface inside its outline.
                 const core::NameAtom urn = world.atoms().lookup(waterRiverUrn(id));
                 if (const MeshLibrary::Entry* ribbon = urn.id != 0 ? meshes.find(urn) : nullptr; ribbon != nullptr)
-                    tile(*ribbon, core::DVec3{0.0, level, 0.0}, Vec3{1.0f, 1.0f, 1.0f});
+                    tile(*ribbon, core::DVec3{0.0, 0.0, 0.0}, Vec3{1.0f, 1.0f, 1.0f});
                 return;
             }
             // **The sea**: three rings, each three times the last across and

@@ -5847,9 +5847,24 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "Depth",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "Position",
           "Type": "vector",
           "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "Sharp",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Width",
+          "Type": "number",
+          "Default": "0"
         }
       ],
       "Methods": [],
@@ -10481,8 +10496,20 @@
           "Value": 1
         },
         {
+          "Name": "Lake",
+          "Value": 3
+        },
+        {
           "Name": "Ocean",
           "Value": 0
+        },
+        {
+          "Name": "Pool",
+          "Value": 5
+        },
+        {
+          "Name": "River",
+          "Value": 4
         },
         {
           "Name": "Spline",

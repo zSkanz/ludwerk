@@ -34,6 +34,7 @@
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/scene_file.h"
+#include "engine/scene/water.h"
 #include "engine/scene/world.h"
 #include "engine/ui/ui.h"
 #include "inspector_fixture.h"
@@ -7198,8 +7199,9 @@ TEST_CASE("clicks with the River tool lay a river's course, a point and an undo 
     const scene::WaterComponent* river = rig.world.waters().find(waters[0]);
     REQUIRE(river != nullptr);
     // A course, on the ground it was clicked on.
-    CHECK(river->shape == 2);
-    CHECK(river->surfaceLevel == doctest::Approx(0.25).epsilon(0.5));
+    // A `River`: its points have heights of their own, a little over the
+    // ground each was clicked on.
+    CHECK(river->shape == scene::water_shape::River);
     CHECK(static_cast<double>(river->size.x) == doctest::Approx(static_cast<double>(rig.editor.waterWidth())));
 
     const std::vector<core::Vec3> points = rig.pointsOf(waters[0]);
@@ -7210,6 +7212,8 @@ TEST_CASE("clicks with the River tool lay a river's course, a point and an undo 
     CHECK(near(points[1].z, 5.0));
     CHECK(near(points[2].x, 10.0));
     CHECK(near(points[2].z, 0.0));
+    for (const core::Vec3& point : points)
+        CHECK(near(point.y, 0.25));
 
     // The river stays in hand, which is what makes the next click its next
     // point -- and the tool's clicks select nothing else.
@@ -7307,10 +7311,10 @@ TEST_CASE("a drag on a river's point moves it as one undo step, and a click on i
     CHECK(rig.pointsOf(rig.waters()[0]).size() == 3);
 }
 
-TEST_CASE("a drag with the Lake tool lays a rectangle of water, and a corner of it resizes it")
+TEST_CASE("a drag with the Pool tool lays a rectangle of water, and a corner of it resizes it")
 {
     WaterRig rig;
-    rig.editor.setWaterOp(Editor::WaterOp::Lake);
+    rig.editor.setWaterOp(Editor::WaterOp::Pool);
 
     CHECK(rig.waterFrame({-8.0, 0.0, -6.0}, true, true));
     CHECK(rig.waterFrame({2.0, 0.0, 1.0}, false, true));
@@ -7325,7 +7329,7 @@ TEST_CASE("a drag with the Lake tool lays a rectangle of water, and a corner of 
     {
         const scene::WaterComponent* water = rig.world.waters().find(lake);
         REQUIRE(water != nullptr);
-        CHECK(water->shape == 1);
+        CHECK(water->shape == scene::water_shape::Pool);
         CHECK(near(water->position.x, 0.0));
         CHECK(near(water->position.z, 0.0));
         CHECK(near(water->size.x, 16.0, 0.6));
@@ -7358,10 +7362,10 @@ TEST_CASE("a drag with the Lake tool lays a rectangle of water, and a corner of 
     CHECK(rig.waters().empty());
 }
 
-TEST_CASE("a Lake click that goes nowhere makes no lake")
+TEST_CASE("a Pool click that goes nowhere makes no pool")
 {
     WaterRig rig;
-    rig.editor.setWaterOp(Editor::WaterOp::Lake);
+    rig.editor.setWaterOp(Editor::WaterOp::Pool);
     rig.click({3.0, 0.0, 3.0});
     CHECK(rig.waters().empty());
     CHECK_FALSE(rig.editor.history().canUndo());
@@ -7396,4 +7400,67 @@ TEST_CASE("the Water tool acts only while its panel is open, and hides the manip
     (void)rig.waterFrame({0.0, 0.0, 5.0}, false, false);
     CHECK(rig.pointsOf(rig.waters().at(0)).size() == 1);
     CHECK(rig.editor.waterGuide().handles.empty());
+}
+
+TEST_CASE("a river drawn down a hill runs down it: each point at the height of the ground it was clicked on")
+{
+    // Ground that falls from four metres to none across the rig, in steps.
+    WaterRig rig;
+    asset::fillBlock(rig.field().field, core::DVec3{-16.0, 2.0, 0.0}, core::Vec3{16.0f, 4.0f, 64.0f}, 1);
+    asset::fillBlock(rig.field().field, core::DVec3{0.0, 1.0, 0.0}, core::Vec3{16.0f, 2.0f, 64.0f}, 1);
+    rig.field().fieldRevision += 1;
+
+    rig.click({-16.0, 4.0, 0.0});
+    rig.click({0.0, 2.0, 4.0});
+    rig.click({16.0, 0.0, 0.0});
+    REQUIRE(rig.waters().size() == 1);
+    const std::vector<core::Vec3> points = rig.pointsOf(rig.waters()[0]);
+    REQUIRE(points.size() == 3);
+    CHECK(near(points[0].y, 4.25));
+    CHECK(near(points[1].y, 2.25));
+    CHECK(near(points[2].y, 0.25));
+    // And the water is that high there: what a boat on it floats at.
+    const scene::WaterHere top = scene::waterHere(rig.world, rig.waters()[0], -16.0, 0.0);
+    const scene::WaterHere foot = scene::waterHere(rig.world, rig.waters()[0], 16.0, 0.0);
+    REQUIRE(top.covered);
+    REQUIRE(foot.covered);
+    CHECK(top.level > foot.level + 3.0);
+}
+
+TEST_CASE("clicks with the Lake tool lay a lake's outline, level at the first, a point and an undo step each")
+{
+    WaterRig rig;
+    rig.editor.setWaterOp(Editor::WaterOp::Lake);
+    rig.click({-10.0, 0.0, -8.0});
+    rig.click({10.0, 0.0, -8.0});
+    REQUIRE(rig.waters().size() == 1);
+    const core::InstanceId lake = rig.waters()[0];
+    // Two points are not an outline: no water yet.
+    CHECK_FALSE(scene::waterHere(rig.world, lake, 0.0, 0.0).covered);
+    rig.click({10.0, 0.0, 8.0});
+    rig.click({-10.0, 0.0, 8.0});
+
+    const scene::WaterComponent* water = rig.world.waters().find(lake);
+    REQUIRE(water != nullptr);
+    CHECK(water->shape == scene::water_shape::Lake);
+    CHECK(water->surfaceLevel == doctest::Approx(0.0).epsilon(0.5));
+    CHECK(rig.pointsOf(lake).size() == 4);
+    CHECK(rig.inspector.selection() == lake);
+    // Water inside the curve through them, and none far outside it.
+    CHECK(scene::waterHere(rig.world, lake, 0.0, 0.0).covered);
+    CHECK_FALSE(scene::waterHere(rig.world, lake, 24.0, 0.0).covered);
+    CHECK(rig.editor.history().depth() == 4);
+
+    // The outline's points are handles, and the tool shows it closing.
+    CHECK_FALSE(rig.waterFrame({0.0, 0.0, 14.0}, false, false));
+    CHECK(rig.editor.waterGuide().handles.size() == 4);
+    CHECK(rig.editor.waterGuide().closed);
+    CHECK(rig.editor.waterGuide().closing.has_value());
+
+    // A point dragged out takes the shore with it.
+    rig.drag({10.0, water->surfaceLevel, 8.0}, {18.0, 0.0, 14.0});
+    CHECK(scene::waterHere(rig.world, lake, 14.0, 10.0).covered);
+    CHECK(rig.editor.history().depth() == 5);
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK_FALSE(scene::waterHere(rig.world, rig.waters().at(0), 14.0, 10.0).covered);
 }

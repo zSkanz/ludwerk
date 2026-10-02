@@ -30,31 +30,52 @@ a click in the viewport draws water; Escape puts the tool down.
 
 | | |
 |---|---|
-| **River** | Click the ground: each click adds a point to the end of the river, and the first one starts it. The stretch the next click would add is shown before you click. Drag a point to move it. Click a point and press Delete to remove it. Enter, Escape or **New river** puts the river down, and the next click starts another; a click on a river with none in hand picks that one up. |
-| **Lake** | Press on the shore, at the height the water should come to, and drag across the hollow: a rectangle of water, level at the height the drag began at. Click a lake to pick it up, and drag a corner to resize it. |
+| **River** | Click the ground: each click adds a point to the end of the river, and the first one starts it. The river follows a smooth curve through its points, and each point lies a little over the ground it was clicked on, so a river clicked down a hillside runs down it. The stretch the next click would add is shown before you click. Drag a point to move it. Click a point and press Delete to remove it. Enter, Escape or **New river** puts the river down, and the next click starts another; a click on a river with none in hand picks that one up. |
+| **Lake** | Click on the shore, at the height the water should come to, then on round it: the lake is the inside of the smooth curve through the points, level at the first click's height. It needs three points. Drag a point to move it; Delete removes the selected one. |
+| **Pool** | Press on the edge, at the height the water should come to, and drag across: a rectangle of water, level at the height the drag began at. Click a pool to pick it up, and drag a corner to resize it. |
 | **Ocean** | Click anywhere: the sea comes up to the height clicked. A world has one sea, and another click moves it. |
 
 The panel has the numbers you change between two clicks -- the surface's
 height, a river's width, the depth, how fast a river flows -- and everything
-else is in Properties, because the tool selects what it draws. Every click and
-every drag is one step of Undo.
+else is in Properties, because the tool selects what it draws: a river's point
+has a `Width` and a `Depth` of its own there, and `Sharp` for a corner. Every
+click and every drag is one step of Undo.
 
-A river drawn today is level: it lies at the height of its first click, a
-little above the ground there, and where the ground rises along its course the
-ground covers it. Rivers that descend, banks that are cut into the ground and
-lakes of any outline are the next stages of ADR 0146.
+A river lies over the ground and does not cut into it yet: where the ground
+rises between two of its points, the ground covers it. Banks cut into the
+ground are the next stage of ADR 0146.
 
 ## Shapes
 
 | `Shape` | Where it is |
 |---|---|
 | `Ocean` | everywhere, drawn out to the horizon round the camera |
-| `Box` | a rectangle `Size.X` by `Size.Z` centred on `Position`, `Size.Y` deep under its level -- a lake or a pool |
-| `Spline` | a ribbon `Size.X` wide and `Size.Y` deep along the `WaterPoint` children, in their order -- a river |
+| `Pool` | a rectangle `Size.X` by `Size.Z` centred on `Position`, `Size.Y` deep under `SurfaceLevel` |
+| `River` | a ribbon along the smooth curve through its `WaterPoint` children, in their order. Each point's height is the surface's there, so a river descends; its `Width` and `Depth` are the river's there, and where they are zero the water's `Size.X` and `Size.Y` |
+| `Lake` | the inside of the closed curve through its `WaterPoint` children, level at `SurfaceLevel`, `Size.Y` deep. It needs three points |
+| `Box`, `Spline` | the older names: `Box` is `Pool`; `Spline` is a river straight from point to point and level at `SurfaceLevel`, as rivers were |
 
-The surface is at `SurfaceLevel`. A lake or a river is drawn only where it is:
-carve the ground out under it, and the ground hides whatever the rectangle or
-the ribbon covers that is not the basin (`examples/31-lake-and-river`).
+```luau
+--!strict
+local river = Instance.new("Water")
+river.Shape = Enum.WaterShape.River
+river.Size = vector.create(6, 2, 6) -- six metres wide, two deep
+river.FlowSpeed = 2
+river.Parent = workspace
+for _, at in { vector.create(0, 12, 0), vector.create(30, 8, 10), vector.create(60, 2, 0) } do
+    local point = Instance.new("WaterPoint")
+    point.Position = at -- its height is the river's there
+    point.Parent = river
+end
+```
+
+The curve passes through every point and makes no loop; a point with
+`Sharp = true` is a corner. A river runs at `FlowSpeed` where it is level and
+faster where it drops -- twice as fast down a slope of one in four -- and what
+floats in it is held up at the river's height there. A pool or a lake is at
+`SurfaceLevel`. Water is drawn only where it is: carve the ground out under
+it, and the ground hides whatever of it is not the basin
+(`examples/31-lake-and-river`).
 
 ## Waves
 

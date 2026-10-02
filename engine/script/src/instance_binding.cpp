@@ -992,11 +992,16 @@ int methodWaterGetHeightAt(lua_State* L)
     const scene::World& w = world(L);
     const auto x = static_cast<double>(at.x);
     const auto z = static_cast<double>(at.z);
-    if (!std::isfinite(x) || !std::isfinite(z) || !scene::waterCovers(w, id, x, z)) {
+    const scene::WaterHere here =
+        std::isfinite(x) && std::isfinite(z) ? scene::waterHere(w, id, x, z) : scene::WaterHere{};
+    if (!here.covered) {
         lua_pushnil(L);
         return 1;
     }
-    lua_pushnumber(L, scene::surfaceOf(w, id).heightAt(x, z, w.engineState().simTime));
+    // The waves about the still surface there -- a river's, where it descends,
+    // is as high as its course is.
+    const scene::WaterSurface surface = scene::surfaceOf(w, id);
+    lua_pushnumber(L, surface.heightAt(x, z, w.engineState().simTime) - surface.level + here.level);
     return 1;
 }
 

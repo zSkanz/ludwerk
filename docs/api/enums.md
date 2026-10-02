@@ -698,5 +698,8 @@ Where a `Water` is (ADR 0118).
 | Item | Value | Description |
 |---|---|---|
 | `Ocean` | 0 | Everywhere, without end: the sea. |
-| `Box` | 1 | A lake or a pool: `Size` across, centred on `Position`. |
-| `Spline` | 2 | A river along its `WaterPoint` children, `Size.X` wide, flowing at `FlowSpeed`. |
+| `Box` | 1 | The older name of `Pool`: the same rectangle. |
+| `Spline` | 2 | The older river: straight from one `WaterPoint` child to the next, and level -- every point at the water's `SurfaceLevel`, whatever its own height. |
+| `Lake` | 3 | The area inside the closed curve through its `WaterPoint` children, level at `SurfaceLevel` (ADR 0146). It needs three points. |
+| `River` | 4 | A ribbon along the curve through its `WaterPoint` children, first to last (ADR 0146). Each point's height is the surface's there, so a river descends; its `Width` and `Depth` are the river's there. |
+| `Pool` | 5 | A rectangle: `Size` across, centred on `Position`. |

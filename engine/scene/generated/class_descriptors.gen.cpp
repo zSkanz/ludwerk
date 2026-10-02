@@ -2537,7 +2537,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).",
+            .doc = "Everywhere (`Ocean`), a rectangle (`Pool`), along its `WaterPoint` children (`River`), or inside the closed curve through them (`Lake`).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getWaterShape,
             .set = native::setWaterShape,
@@ -2570,7 +2570,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and its depth its Y, and its Z is not used. X and Y must be greater than zero.",
+            .doc = "A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y must be greater than zero.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.water_size"),
             .get = native::getWaterSize,
             .set = native::setWaterSize,
@@ -2603,7 +2603,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` along its course.",
+            .doc = "Metres a second the water flows, carrying what floats in it. A `River` adds `FlowSpeed` along its course.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getWaterCurrent,
             .set = native::setWaterCurrent,
@@ -2614,7 +2614,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "How fast a river flows along its points, first to last, in metres a second.",
+            .doc = "How fast a river flows along its points, first to last, in metres a second -- where it is level. Where it drops it runs faster, by four times its slope: twice as fast down one in four.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
             .get = native::getWaterFlowSpeed,
             .set = native::setWaterFlowSpeed,
@@ -2722,7 +2722,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(waterWaveDesc);
 
     // --- WaterPoint ---
-    static std::array<PropertyDesc, 1> waterPointProperties;
+    static std::array<PropertyDesc, 4> waterPointProperties;
     waterPointProperties = {{
         PropertyDesc{
             .name = atoms.intern("Position"),
@@ -2730,10 +2730,43 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Where the river passes, across the ground; its height is the water's `SurfaceLevel`.",
+            .doc = "Where the water passes. For a `River` its height is the surface's height there, so a river whose points descend runs downhill; a `Lake` and a `Spline` are level at the water's `SurfaceLevel` and read only where the point is across the ground.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getWaterPointPosition,
             .set = native::setWaterPointPosition,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Width"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How wide a river is here, in metres, changing smoothly to the next point's. Zero is the water's `Size.X`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getWaterPointWidth,
+            .set = native::setWaterPointWidth,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Depth"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How deep a river is here, in metres. Zero is the water's `Size.Y`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getWaterPointDepth,
+            .set = native::setWaterPointDepth,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Sharp"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A corner here, where the curve would round it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getWaterPointSharp,
+            .set = native::setWaterPointSharp,
         },
     }};
     ClassDescriptor waterPointDesc;
@@ -2741,7 +2774,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     waterPointDesc.super = instanceClass;
     waterPointDesc.flags = ClassFlags::None;
     waterPointDesc.defaultName = atoms.intern("WaterPoint");
-    waterPointDesc.doc = "A point a `Spline` water runs through (ADR 0118), in order: a river's course.";
+    waterPointDesc.doc = "A point a `River` runs through, or a `Lake`'s outline passes (ADR 0146), in order. The water follows a smooth curve through its points -- a centripetal Catmull-Rom spline, which passes through every one and makes no loop.";
     static constexpr std::array<std::string_view, 3> waterPointParents{{"Water", "ReplicatedStorage", "ServerStorage"}};
     waterPointDesc.parents = waterPointParents;
     waterPointDesc.properties = waterPointProperties;
@@ -6644,7 +6677,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(terrainPaintModeDesc);
 
     // --- WaterShape ---
-    static std::array<EnumItemDesc, 3> waterShapeItems;
+    static std::array<EnumItemDesc, 6> waterShapeItems;
     waterShapeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Ocean"),
@@ -6659,6 +6692,21 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Spline"),
             .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Lake"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("River"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Pool"),
+            .value = 5,
             .docKey = {},
         },
     }};

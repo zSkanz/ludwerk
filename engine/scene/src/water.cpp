@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -97,57 +98,216 @@ WaterSurface surfaceOf(const World& world, InstanceId water)
     return surface;
 }
 
-bool waterCovers(const World& world, InstanceId water, f64 x, f64 z, Vec3* flow)
+namespace {
+
+// How far apart a course's samples are, along a stretch.
+constexpr f64 CourseStep = 2.0;
+
+[[nodiscard]] f64 flatDistance(const DVec3& a, const DVec3& b) noexcept
 {
-    if (flow != nullptr)
-        *flow = Vec3{};
+    const f64 dx = b.x - a.x;
+    const f64 dz = b.z - a.z;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+// A point of the centripetal Catmull-Rom curve from `p1` to `p2`, `u` of the
+// way, across the ground: the knots a square root of each chord apart, which
+// is what keeps it from looping or overshooting where points crowd.
+[[nodiscard]] DVec3 curvePoint(const DVec3& p0, const DVec3& p1, const DVec3& p2, const DVec3& p3, f64 u) noexcept
+{
+    const auto knot = [](const DVec3& a, const DVec3& b) { return std::max(std::sqrt(flatDistance(a, b)), 1e-4); };
+    const f64 t0 = 0.0;
+    const f64 t1 = t0 + knot(p0, p1);
+    const f64 t2 = t1 + knot(p1, p2);
+    const f64 t3 = t2 + knot(p2, p3);
+    const f64 t = t1 + (t2 - t1) * u;
+    const auto mix = [](const DVec3& a, const DVec3& b, f64 ta, f64 tb, f64 at) {
+        const f64 w = (at - ta) / (tb - ta);
+        return DVec3{a.x + (b.x - a.x) * w, 0.0, a.z + (b.z - a.z) * w};
+    };
+    const DVec3 a1 = mix(p0, p1, t0, t1, t);
+    const DVec3 a2 = mix(p1, p2, t1, t2, t);
+    const DVec3 a3 = mix(p2, p3, t2, t3, t);
+    const DVec3 b1 = mix(a1, a2, t0, t2, t);
+    const DVec3 b2 = mix(a2, a3, t1, t3, t);
+    return mix(b1, b2, t1, t2, t);
+}
+
+} // namespace
+
+WaterCourse courseOf(const World& world, InstanceId water)
+{
+    WaterCourse course;
+    const WaterComponent* component = world.waters().find(water);
+    if (component == nullptr || !(waterIsRiver(component->shape) || component->shape == water_shape::Lake))
+        return course;
+
+    struct Knot
+    {
+        DVec3 at;
+        f64 width = 0.0;
+        f64 depth = 0.0;
+        bool sharp = false;
+    };
+    // Only a `River` reads its points' heights.
+    const bool descends = component->shape == water_shape::River;
+    std::vector<Knot> knots;
+    for (InstanceId child = world.firstChild(water); child.valid(); child = world.nextSibling(child)) {
+        const WaterPointComponent* point = world.waterPoints().find(child);
+        if (point == nullptr || world.destroyed(child))
+            continue;
+        Knot knot;
+        knot.at = DVec3{static_cast<f64>(point->position.x),
+                        descends ? static_cast<f64>(point->position.y) : component->surfaceLevel,
+                        static_cast<f64>(point->position.z)};
+        knot.width = point->width > 0.0 ? point->width : static_cast<f64>(component->size.x);
+        knot.depth = point->depth > 0.0 ? point->depth : static_cast<f64>(component->size.y);
+        // **A `Spline` is as it always was**: straight from point to point,
+        // which is every point a corner. What was made before the curve does
+        // not change shape under whoever made it.
+        knot.sharp = point->sharp || component->shape == water_shape::Spline;
+        knots.push_back(knot);
+    }
+    const usize count = knots.size();
+    course.closed = component->shape == water_shape::Lake && count >= 3;
+    const auto put = [&course](const DVec3& at, f64 width, f64 depth) {
+        course.samples.push_back(WaterCourseSample{at, width, depth});
+    };
+    if (count == 1) {
+        course.points.push_back(0);
+        put(knots[0].at, knots[0].width, knots[0].depth);
+    }
+    const usize stretches = count < 2 ? 0 : (course.closed ? count : count - 1);
+    for (usize stretch = 0; stretch < stretches; ++stretch) {
+        const Knot& from = knots[stretch];
+        const Knot& to = knots[(stretch + 1) % count];
+        // The points either side of the stretch shape its bend; at an end, and
+        // at a point that is a corner, the stretch is mirrored instead -- so
+        // it leaves a corner straight.
+        const bool firstEnd = !course.closed && stretch == 0;
+        const bool lastEnd = !course.closed && stretch + 2 == count;
+        const DVec3 mirroredBefore{2.0 * from.at.x - to.at.x, from.at.y, 2.0 * from.at.z - to.at.z};
+        const DVec3 mirroredAfter{2.0 * to.at.x - from.at.x, to.at.y, 2.0 * to.at.z - from.at.z};
+        const DVec3 before = from.sharp || firstEnd ? mirroredBefore : knots[(stretch + count - 1) % count].at;
+        const DVec3 after = to.sharp || lastEnd ? mirroredAfter : knots[(stretch + 2) % count].at;
+        const f64 chord = flatDistance(from.at, to.at);
+        const auto cuts = static_cast<core::u32>(std::clamp(std::ceil(chord / CourseStep), 4.0, 256.0));
+        course.points.push_back(static_cast<core::u32>(course.samples.size()));
+        for (core::u32 cut = 0; cut < cuts; ++cut) {
+            const f64 u = static_cast<f64>(cut) / static_cast<f64>(cuts);
+            DVec3 at = cut == 0 ? from.at : curvePoint(before, from.at, to.at, after, u);
+            at.y = from.at.y + (to.at.y - from.at.y) * u;
+            put(at, from.width + (to.width - from.width) * u, from.depth + (to.depth - from.depth) * u);
+        }
+    }
+    if (stretches > 0 && !course.closed) {
+        course.points.push_back(static_cast<core::u32>(course.samples.size()));
+        put(knots[count - 1].at, knots[count - 1].width, knots[count - 1].depth);
+    }
+    if (!course.samples.empty()) {
+        const WaterCourseSample& first = course.samples.front();
+        course.minX = course.maxX = first.position.x;
+        course.minZ = course.maxZ = first.position.z;
+        course.top = first.position.y;
+        f64 widest = 0.0;
+        for (const WaterCourseSample& sample : course.samples) {
+            course.minX = std::min(course.minX, sample.position.x);
+            course.maxX = std::max(course.maxX, sample.position.x);
+            course.minZ = std::min(course.minZ, sample.position.z);
+            course.maxZ = std::max(course.maxZ, sample.position.z);
+            course.top = std::max(course.top, sample.position.y);
+            widest = std::max(widest, sample.width);
+        }
+        const f64 margin = course.closed ? 0.0 : 0.5 * widest;
+        course.minX -= margin;
+        course.maxX += margin;
+        course.minZ -= margin;
+        course.maxZ += margin;
+    }
+    return course;
+}
+
+WaterHere waterHere(const World& world, InstanceId water, f64 x, f64 z, const WaterCourse* course)
+{
+    WaterHere here;
     const WaterComponent* component = world.waters().find(water);
     if (component == nullptr)
-        return false;
-    switch (component->shape) {
-    case 1:
-        return std::abs(x - static_cast<f64>(component->position.x)) <= 0.5 * static_cast<f64>(component->size.x) &&
-               std::abs(z - static_cast<f64>(component->position.z)) <= 0.5 * static_cast<f64>(component->size.z);
-    case 2: {
-        // Along its points, in order: within half its width of the nearest
-        // stretch, flowing along that stretch.
-        const f64 reach = 0.5 * static_cast<f64>(component->size.x);
-        bool have = false;
-        Vec3 last{};
-        f64 nearest = reach;
+        return here;
+    here.level = component->surfaceLevel;
+    here.depth = static_cast<f64>(component->size.y);
+    if (component->shape == water_shape::Ocean) {
+        // A sea covers every column, has no floor and flows nowhere.
+        here.covered = true;
+        here.depth = std::numeric_limits<f64>::max();
+        return here;
+    }
+    if (waterIsPool(component->shape)) {
+        here.covered =
+            std::abs(x - static_cast<f64>(component->position.x)) <= 0.5 * static_cast<f64>(component->size.x) &&
+            std::abs(z - static_cast<f64>(component->position.z)) <= 0.5 * static_cast<f64>(component->size.z);
+        return here;
+    }
+    WaterCourse made;
+    if (course == nullptr) {
+        made = courseOf(world, water);
+        course = &made;
+    }
+    const std::vector<WaterCourseSample>& samples = course->samples;
+    if (samples.size() < 2 || x < course->minX || x > course->maxX || z < course->minZ || z > course->maxZ)
+        return here;
+
+    if (component->shape == water_shape::Lake) {
+        // Inside the outline: a ray along +x crosses it an odd number of times.
+        if (!course->closed)
+            return here;
         bool inside = false;
-        for (InstanceId child = world.firstChild(water); child.valid(); child = world.nextSibling(child)) {
-            const WaterPointComponent* point = world.waterPoints().find(child);
-            if (point == nullptr || world.destroyed(child))
-                continue;
-            if (have) {
-                const f64 ax = static_cast<f64>(last.x);
-                const f64 az = static_cast<f64>(last.z);
-                const f64 dx = static_cast<f64>(point->position.x) - ax;
-                const f64 dz = static_cast<f64>(point->position.z) - az;
-                const f64 length = std::sqrt(dx * dx + dz * dz);
-                if (length > 1e-6) {
-                    const f64 along = std::clamp(((x - ax) * dx + (z - az) * dz) / (length * length), 0.0, 1.0);
-                    const f64 ox = x - (ax + dx * along);
-                    const f64 oz = z - (az + dz * along);
-                    const f64 away = std::sqrt(ox * ox + oz * oz);
-                    if (away <= nearest) {
-                        nearest = away;
-                        inside = true;
-                        if (flow != nullptr)
-                            *flow =
-                                Vec3{static_cast<core::f32>(dx / length), 0.0f, static_cast<core::f32>(dz / length)};
-                    }
-                }
-            }
-            last = point->position;
-            have = true;
+        for (usize at = 0, last = samples.size() - 1; at < samples.size(); last = at++) {
+            const DVec3& a = samples[at].position;
+            const DVec3& b = samples[last].position;
+            if ((a.z > z) != (b.z > z) && x < (b.x - a.x) * (z - a.z) / (b.z - a.z) + a.x)
+                inside = !inside;
         }
-        return inside;
+        here.covered = inside;
+        return here;
     }
-    default:
-        return true;
+
+    // A river: within half its width of the nearest stretch of its course,
+    // at that stretch's height, flowing along it.
+    f64 nearest = std::numeric_limits<f64>::max();
+    for (usize at = 0; at + 1 < samples.size(); ++at) {
+        const WaterCourseSample& a = samples[at];
+        const WaterCourseSample& b = samples[at + 1];
+        const f64 dx = b.position.x - a.position.x;
+        const f64 dz = b.position.z - a.position.z;
+        const f64 length = std::sqrt(dx * dx + dz * dz);
+        if (length <= 1e-6)
+            continue;
+        const f64 along = std::clamp(((x - a.position.x) * dx + (z - a.position.z) * dz) / (length * length), 0.0, 1.0);
+        const f64 ox = x - (a.position.x + dx * along);
+        const f64 oz = z - (a.position.z + dz * along);
+        const f64 away = std::sqrt(ox * ox + oz * oz);
+        const f64 reach = 0.5 * (a.width + (b.width - a.width) * along);
+        if (away > reach || away > nearest)
+            continue;
+        nearest = away;
+        here.covered = true;
+        here.level = a.position.y + (b.position.y - a.position.y) * along;
+        here.depth = a.depth + (b.depth - a.depth) * along;
+        // Faster where it drops, never slower where it climbs.
+        const f64 slope = std::max(0.0, (a.position.y - b.position.y) / length);
+        const f64 speed = 1.0 + RiverSlopeSpeed * slope;
+        here.flow =
+            Vec3{static_cast<core::f32>(dx / length * speed), 0.0f, static_cast<core::f32>(dz / length * speed)};
     }
+    return here;
+}
+
+bool waterCovers(const World& world, InstanceId water, f64 x, f64 z, Vec3* flow)
+{
+    const WaterHere here = waterHere(world, water, x, z);
+    if (flow != nullptr)
+        *flow = here.flow;
+    return here.covered;
 }
 
 namespace {
@@ -181,6 +341,8 @@ struct Pool
     WaterSurface surface;
     // The highest the surface ever reaches: nothing above it is in the water.
     f64 crest = 0.0;
+    // A river's course or a lake's outline, made once a tick.
+    WaterCourse course;
 };
 
 // A sine and a cosine of one angle.
@@ -271,8 +433,10 @@ void applyWaterForces(World& world, InstanceId workspace, f64 dt)
     world.waters().forEach([&](InstanceId id, const WaterComponent& water) {
         if (world.destroyed(id) || !world.isAncestorOf(workspace, id))
             return;
-        Pool pool{id, &water, surfaceOf(world, id), 0.0};
-        pool.crest = pool.surface.level;
+        Pool pool{id, &water, surfaceOf(world, id), 0.0, courseOf(world, id)};
+        // A river that descends is highest at its highest point.
+        pool.crest =
+            water.shape == water_shape::River && !pool.course.samples.empty() ? pool.course.top : pool.surface.level;
         for (usize at = 0; at < pool.surface.count; ++at)
             pool.crest += pool.surface.terms[at].amplitude * (1.0 + 0.5 * pool.surface.terms[at].steepness);
         pools.push_back(pool);
@@ -316,7 +480,8 @@ void applyWaterForces(World& world, InstanceId workspace, f64 dt)
         const f64 bottom = centre.y - reachY;
         bool near = false;
         for (const Pool& pool : pools)
-            near = near || (bottom <= pool.crest && waterCovers(world, pool.id, centre.x, centre.z));
+            near =
+                near || (bottom <= pool.crest && waterHere(world, pool.id, centre.x, centre.z, &pool.course).covered);
         if (!near)
             return;
 
@@ -384,13 +549,15 @@ void applyWaterForces(World& world, InstanceId workspace, f64 dt)
                         const Pool& pool = *lattice.pool;
                         if (at.y - 0.5 * cellHeight > pool.crest)
                             continue;
-                        // A sea covers every column and flows nowhere.
-                        Vec3 along{};
-                        if (pool.water->shape != 0 && !waterCovers(world, pool.id, at.x, at.z, &along))
+                        // A sea covers every column and flows nowhere; a
+                        // river's surface is as high as its course is there.
+                        const WaterHere here = waterHere(world, pool.id, at.x, at.z, &pool.course);
+                        if (!here.covered)
                             continue;
-                        if (pool.water->shape != 0 && at.y < pool.surface.level - static_cast<f64>(pool.water->size.y))
+                        const Vec3 along = here.flow;
+                        if (at.y < here.level - here.depth)
                             continue;
-                        const f64 height = lattice.heightAt(cell, pool.surface);
+                        const f64 height = lattice.heightAt(cell, pool.surface) - pool.surface.level + here.level;
                         const bool moves = pool.water->flowSpeed != 0.0;
                         if (holder != nullptr &&
                             (height < surface ||

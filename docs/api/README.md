@@ -128,7 +128,7 @@ guided tour.
 | [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
 | [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. |
 | [`Water`](water.md) | [`Instance`](instance.md) | Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU for the picture. |
-| [`WaterPoint`](waterpoint.md) | [`Instance`](instance.md) | A point a `Spline` water runs through (ADR 0118), in order: a river's course. |
+| [`WaterPoint`](waterpoint.md) | [`Instance`](instance.md) | A point a `River` runs through, or a `Lake`'s outline passes (ADR 0146), in order. |
 | [`WaterWave`](waterwave.md) | [`Instance`](instance.md) | One wave of the `Water` it is in (ADR 0118): the first eight, in order, make the surface. |
 | [`Weld`](weld.md) | [`Instance`](instance.md) | Holds one part at a fixed offset from another. |
 | [`WeldConstraint`](weldconstraint.md) | [`Instance`](instance.md) | The same joint, with the offset CAPTURED rather than authored. |

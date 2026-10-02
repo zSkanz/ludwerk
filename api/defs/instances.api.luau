@@ -5008,7 +5008,8 @@ local Classes: { Schema.Class } = {
                 Name = "Shape",
                 Type = "Enum.WaterShape",
                 Default = "Enum.WaterShape.Ocean",
-                Doc = "Everywhere (`Ocean`), a box (`Box`), or along its `WaterPoint` children (`Spline`).",
+                Doc = "Everywhere (`Ocean`), a rectangle (`Pool`), along its `WaterPoint` children (`River`), or "
+                    .. "inside the closed curve through them (`Lake`).",
             },
             {
                 Name = "SurfaceLevel",
@@ -5028,8 +5029,9 @@ local Classes: { Schema.Class } = {
                 Type = "vector",
                 Default = "vector.create(64, 8, 64)",
                 ErrorKey = "scene.err.water_size",
-                Doc = "A `Box`'s width, depth under the surface, and length; a `Spline`'s width is its X and "
-                    .. "its depth its Y, and its Z is not used. X and Y must be greater than zero.",
+                Doc = "A `Pool`'s width, depth under the surface, and length. A `River`'s width is its X and "
+                    .. "its depth its Y, where a point does not say its own; a `Lake`'s depth is its Y. X and Y "
+                    .. "must be greater than zero.",
             },
             {
                 Name = "Density",
@@ -5050,7 +5052,7 @@ local Classes: { Schema.Class } = {
                 Name = "Current",
                 Type = "vector",
                 Default = "vector.create(0, 0, 0)",
-                Doc = "Metres a second the water flows, carrying what floats in it. A `Spline` adds `FlowSpeed` "
+                Doc = "Metres a second the water flows, carrying what floats in it. A `River` adds `FlowSpeed` "
                     .. "along its course.",
             },
             {
@@ -5058,7 +5060,9 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "0",
                 ErrorKey = "scene.err.number_finite",
-                Doc = "How fast a river flows along its points, first to last, in metres a second.",
+                Doc = "How fast a river flows along its points, first to last, in metres a second -- where it "
+                    .. "is level. Where it drops it runs faster, by four times its slope: twice as fast down "
+                    .. "one in four.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -5132,13 +5136,38 @@ local Classes: { Schema.Class } = {
         Module = "scene",
         Parents = under("Water"),
         Storage = "WaterPoint",
-        Doc = "A point a `Spline` water runs through (ADR 0118), in order: a river's course.",
+        Doc = "A point a `River` runs through, or a `Lake`'s outline passes (ADR 0146), in order. The water "
+            .. "follows a smooth curve through its points -- a centripetal Catmull-Rom spline, which passes "
+            .. "through every one and makes no loop.",
         Properties = {
             {
                 Name = "Position",
                 Type = "vector",
                 Default = "vector.create(0, 0, 0)",
-                Doc = "Where the river passes, across the ground; its height is the water's `SurfaceLevel`.",
+                Doc = "Where the water passes. For a `River` its height is the surface's height there, so a "
+                    .. "river whose points descend runs downhill; a `Lake` and a `Spline` are level at the "
+                    .. "water's `SurfaceLevel` and read only where the point is across the ground.",
+            },
+            {
+                Name = "Width",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How wide a river is here, in metres, changing smoothly to the next point's. Zero is the "
+                    .. "water's `Size.X`.",
+            },
+            {
+                Name = "Depth",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How deep a river is here, in metres. Zero is the water's `Size.Y`.",
+            },
+            {
+                Name = "Sharp",
+                Type = "boolean",
+                Default = "false",
+                Doc = "A corner here, where the curve would round it.",
             },
         } :: { Schema.Property },
     },

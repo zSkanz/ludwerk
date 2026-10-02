@@ -13,6 +13,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 #include "engine/core/id.h"
 #include "engine/core/math.h"
@@ -68,9 +69,87 @@ struct WaterSurface
 
 [[nodiscard]] WaterSurface surfaceOf(const World& world, core::InstanceId water);
 
+// `Enum.WaterShape`, as `WaterComponent::shape` holds it (ADR 0146). `Box` is
+// `Pool`'s older name, and `Spline` the older river: level at the water's
+// `SurfaceLevel`, where a `River` takes each point's own height.
+namespace water_shape {
+inline constexpr core::i32 Ocean = 0;
+inline constexpr core::i32 Box = 1;
+inline constexpr core::i32 Spline = 2;
+inline constexpr core::i32 Lake = 3;
+inline constexpr core::i32 River = 4;
+inline constexpr core::i32 Pool = 5;
+} // namespace water_shape
+
+[[nodiscard]] constexpr bool waterIsRiver(core::i32 shape) noexcept
+{
+    return shape == water_shape::Spline || shape == water_shape::River;
+}
+[[nodiscard]] constexpr bool waterIsPool(core::i32 shape) noexcept
+{
+    return shape == water_shape::Box || shape == water_shape::Pool;
+}
+
+// **A river's course, or a lake's outline, as everything reads it** (ADR 0146
+// section 2): the curve through the water's points -- a centripetal
+// Catmull-Rom spline, which passes through every point and makes no loop, a
+// corner at a point that says `Sharp` -- cut into samples a couple of metres
+// apart. The simulation, a query and the picture all walk these, so a boat
+// floats on the ribbon that is drawn.
+//
+// Across the ground the curve is the spline; a river's HEIGHT runs straight
+// from one point's to the next's, so it never climbs between two points that
+// descend. Its width and depth run the same way.
+struct WaterCourseSample
+{
+    core::DVec3 position;
+    core::f64 width = 0.0;
+    core::f64 depth = 0.0;
+};
+
+struct WaterCourse
+{
+    // A river's, first to last; a lake's outline, the first not said again.
+    std::vector<WaterCourseSample> samples;
+    // Which sample each of the water's points is, in child order.
+    std::vector<core::u32> points;
+    // A lake: the last sample joins the first.
+    bool closed = false;
+    // What it covers across the ground, half the widest width included.
+    core::f64 minX = 0.0;
+    core::f64 maxX = 0.0;
+    core::f64 minZ = 0.0;
+    core::f64 maxZ = 0.0;
+    // The highest its still surface is.
+    core::f64 top = 0.0;
+};
+
+// Empty for a water that is not along its points.
+[[nodiscard]] WaterCourse courseOf(const World& world, core::InstanceId water);
+
+// **A water at a column**: whether it is there, how high its still surface is
+// -- a river's, where it descends, is its curve's -- how deep, and how it
+// flows: along a river's course, by one where it is level and faster by four
+// times its slope where it drops.
+struct WaterHere
+{
+    bool covered = false;
+    core::f64 level = 0.0;
+    core::f64 depth = 0.0;
+    core::Vec3 flow{};
+};
+
+// `course` is the water's, when the caller holds it; made here when it does
+// not.
+[[nodiscard]] WaterHere waterHere(const World& world, core::InstanceId water, core::f64 x, core::f64 z,
+                                  const WaterCourse* course = nullptr);
+
+// How much faster a river runs where it drops: by this times its slope.
+inline constexpr core::f64 RiverSlopeSpeed = 4.0;
+
 // Whether a column is inside a water's extent -- everywhere for an ocean, a
-// box's rectangle, a river's width along its points -- and, for a river, the
-// way it flows there (unit length, or zero where it does not).
+// pool's rectangle, a river's width along its course, a lake's outline -- and,
+// for a river, the way it flows there (`WaterHere::flow`).
 [[nodiscard]] bool waterCovers(const World& world, core::InstanceId water, core::f64 x, core::f64 z,
                                core::Vec3* flow = nullptr);
 

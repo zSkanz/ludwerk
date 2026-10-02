@@ -5,7 +5,7 @@
 - Inherits [`Instance`](instance.md)
 - Created with `Instance.new("WaterPoint")`
 
-A point a `Spline` water runs through (ADR 0118), in order: a river's course.
+A point a `River` runs through, or a `Lake`'s outline passes (ADR 0146), in order. The water follows a smooth curve through its points -- a centripetal Catmull-Rom spline, which passes through every one and makes no loop.
 
 **Members below are the ones this class DECLARES.** Everything its base
 offers is on the base's page, which is what keeps one added member on
@@ -15,4 +15,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `Position` | `vector` | `vector.create(0, 0, 0)` | read/write | Where the river passes, across the ground; its height is the water's `SurfaceLevel`. |
+| `Depth` | `number` | `0` | read/write | How deep a river is here, in metres. Zero is the water's `Size.Y`. |
+| `Position` | `vector` | `vector.create(0, 0, 0)` | read/write | Where the water passes. For a `River` its height is the surface's height there, so a river whose points descend runs downhill; a `Lake` and a `Spline` are level at the water's `SurfaceLevel` and read only where the point is across the ground. |
+| `Sharp` | `boolean` | `false` | read/write | A corner here, where the curve would round it. |
+| `Width` | `number` | `0` | read/write | How wide a river is here, in metres, changing smoothly to the next point's. Zero is the water's `Size.X`. |

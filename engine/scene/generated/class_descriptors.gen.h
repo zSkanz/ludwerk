@@ -505,6 +505,12 @@ void detachWaterWaveComponents(World& world, core::InstanceId id);
 // WaterPoint
 Value getWaterPointPosition(const World& world, core::InstanceId id);
 bool setWaterPointPosition(World& world, core::InstanceId id, const Value& value);
+Value getWaterPointWidth(const World& world, core::InstanceId id);
+bool setWaterPointWidth(World& world, core::InstanceId id, const Value& value);
+Value getWaterPointDepth(const World& world, core::InstanceId id);
+bool setWaterPointDepth(World& world, core::InstanceId id, const Value& value);
+Value getWaterPointSharp(const World& world, core::InstanceId id);
+bool setWaterPointSharp(World& world, core::InstanceId id, const Value& value);
 void attachWaterPointComponents(World& world, core::InstanceId id);
 void detachWaterPointComponents(World& world, core::InstanceId id);
 

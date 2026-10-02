@@ -329,7 +329,42 @@ std::optional<PickHit> pickWater(const scene::World& world, core::InstanceId roo
             return;
         // At its surface's rest height: the waves are a few tenths of a metre
         // either side of it, and a click is not that precise.
-        const double along = (water.surfaceLevel - ray.origin.y) / static_cast<double>(ray.direction.y);
+        double along = (water.surfaceLevel - ray.origin.y) / static_cast<double>(ray.direction.y);
+        if (water.shape == scene::water_shape::River) {
+            // **A river that descends has no one height**: the ray is walked
+            // down to the height the river is under it, a few steps -- each
+            // takes the level where the last one landed.
+            const scene::WaterCourse course = scene::courseOf(world, id);
+            if (course.samples.empty())
+                return;
+            double level = course.top;
+            bool met = false;
+            for (int step = 0; step < 8; ++step) {
+                along = (level - ray.origin.y) / static_cast<double>(ray.direction.y);
+                if (!(along > 0.0))
+                    return;
+                const scene::WaterHere here =
+                    scene::waterHere(world, id, ray.origin.x + static_cast<double>(ray.direction.x) * along,
+                                     ray.origin.z + static_cast<double>(ray.direction.z) * along, &course);
+                if (!here.covered) {
+                    // Over the bank at this height: try the river's lowest,
+                    // once, and give up after it.
+                    if (step > 0)
+                        return;
+                    double lowest = course.top;
+                    for (const scene::WaterCourseSample& sample : course.samples)
+                        lowest = std::min(lowest, sample.position.y);
+                    level = lowest;
+                    continue;
+                }
+                met = std::abs(here.level - level) < 0.05;
+                level = here.level;
+                if (met)
+                    break;
+            }
+            if (!met)
+                return;
+        }
         if (!(along > 0.0))
             return;
         const double x = ray.origin.x + static_cast<double>(ray.direction.x) * along;

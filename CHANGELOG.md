@@ -90,6 +90,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **Rivers that descend along a curve, and lakes of any outline** (ADR 0146):
+  `Enum.WaterShape` gains `River` -- a ribbon along the smooth curve through
+  its `WaterPoint` children, each point's height the surface's there --
+  `Lake` -- the inside of the closed curve through them, level at
+  `SurfaceLevel` -- and `Pool`, the new name of `Box`. `WaterPoint` gains
+  `Width`, `Depth` and `Sharp`. A river runs faster where it drops, and what
+  floats in it is held up at its height there; `Water:GetHeightAt` answers
+  that height. `Box` and `Spline` are as they were. In the editor the Water
+  tool draws all of them: River, Lake (click round a shore), Pool, Ocean.
 - **The Water tool** (ADR 0146, its first stage): **Tools > Water** in the
   editor. A river is drawn a click a point, with the next stretch shown
   before the click; a lake is dragged as a rectangle, level at the height the
