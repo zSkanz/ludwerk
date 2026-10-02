@@ -97,6 +97,11 @@ inline constexpr u32 IntentDelayRelaxTicks = 600;
 // replica that stalled and then sent a burst is not replayed a second late.
 inline constexpr u32 IntentCatchUp = 8;
 inline constexpr usize MaxQueuedIntents = 64;
+// **How long the last intent stands in for one that has not come** (D480): a
+// quarter of a second. A lost packet or two is a tick the last one covers, and
+// nothing is corrected; a peer that has said nothing for longer is a player
+// nobody is holding a key for, and its character stops.
+inline constexpr u32 StandInLifetimeTicks = 15;
 
 // The visual slide of a correction: what is left of it after each tick, and
 // the distance past which a correction is a teleport and drawn as one.
@@ -263,6 +268,19 @@ private:
         std::vector<core::NameAtom> carriedPresses;
         // The newest tick queued when the delay last held a tick to grow.
         u64 pausedAtNewest = 0;
+        // **A peer whose clock moved against this one's** (D480). How many
+        // ticks in a row brought intents that were all after their ticks, and
+        // whether this tick is counted; how many ticks in a row the last
+        // intent has stood in; and the delay as it was before that run began,
+        // which is put back when the run turns out to have been the peer's
+        // clock and not its packets.
+        u32 lateIntentTicks = 0;
+        bool lateIntentCounted = false;
+        // The newest tick this peer has sent: a late tick past it is one the
+        // authority has never seen, and a press in it has never been applied.
+        u64 newestIntentSeen = 0;
+        u32 standInRun = 0;
+        u32 delayBeforeRun = InitialIntentDelay;
         // The roster this peer was last sent, so it is sent again only when it
         // changes.
         std::vector<u32> roster;

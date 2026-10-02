@@ -180,6 +180,9 @@ struct Stats
     // ran dry, summed; on a replica, its own, as the authority's snapshots say.
     u32 intentDepth = 0;
     u64 intentStarvations = 0;
+    // How many times a peer's intent stream was anchored again because the
+    // peer's clock had moved against this one's (D480).
+    u64 intentReanchors = 0;
     // **What a replica simulates itself, and what stepping it again costs**
     // (ADR 0133): the loose parts it predicts now; the replays that stepped
     // its island again, and how many ticks they stepped in all; and the time

@@ -1257,6 +1257,7 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             continue;
         peer.messagesThisTick = 0;
         peer.intentsThisTick = 0;
+        peer.lateIntentCounted = false;
         peer.ownedThisTick = 0;
         peer.remoteBytesThisTick = 0;
         if (!peer.welcomed && ++peer.unwelcomedReceives > MaxUnwelcomedReceives)
@@ -1355,26 +1356,90 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     m_stats.messagesDropped += 1;
                     break;
                 }
+                // **Intents that are late whole, tick after tick, are a clock
+                // that moved and not a packet that was slow** (D480). A replica
+                // that dropped simulated time after a long frame numbers its
+                // ticks that much behind where this authority has got to, and
+                // so does one whose packets now take longer than the queue has
+                // room for: every intent it sends from then on is "too late
+                // for its tick", for the rest of the session, and the last one
+                // applied -- whatever was held at that moment -- stood in for
+                // ever. There was a catch-up for a peer that got AHEAD and
+                // none for one that fell BEHIND.
+                //
+                // So the stream is anchored again on the newest tick the peer
+                // has sent, exactly as it was on its first: applied
+                // `intentDelay` ticks from now, the ticks before it forgotten.
+                // What that newest intent holds stands in until then -- it is
+                // the newest thing the player is known to be doing.
+                //
+                // Counted by tick and not by message: a burst that a slow
+                // route delivers at once is one late tick, and the packets
+                // sent after it are on time again.
+                u64 newestCarried = 0;
+                for (const auto& [tick, intents] : carried)
+                    newestCarried = std::max(newestCarried, tick);
+                if (!peer->intentStarted || newestCarried > peer->appliedTick) {
+                    peer->lateIntentTicks = 0;
+                }
+                else if (!peer->lateIntentCounted) {
+                    peer->lateIntentCounted = true;
+                    peer->lateIntentTicks += 1;
+                }
+                if (peer->lateIntentTicks >= IntentRedundancy) {
+                    peer->lateIntentTicks = 0;
+                    peer->intentQueue.clear();
+                    peer->standIns.clear();
+                    for (auto& [tick, intents] : carried) {
+                        if (tick != newestCarried)
+                            continue;
+                        peer->lastIntents = intents;
+                        peer->intentQueue.emplace(tick, std::move(intents));
+                        break;
+                    }
+                    peer->intentStarted = false;
+                    // The ticks that ran dry were the clock moving: they say
+                    // nothing of how unevenly this peer's packets arrive.
+                    if (peer->standInRun > 0)
+                        peer->intentDelay = peer->delayBeforeRun;
+                    peer->standInRun = 0;
+                    peer->ticksSinceStarved = 0;
+                    peer->newestIntentSeen = newestCarried;
+                    m_stats.intentReanchors += 1;
+                    break;
+                }
+                const u64 seenBefore = peer->newestIntentSeen;
+                peer->newestIntentSeen = std::max(peer->newestIntentSeen, newestCarried);
                 for (auto& [tick, intents] : carried) {
                     if (peer->intentStarted && tick <= peer->appliedTick) {
                         // Too late for its tick. If that tick was stood in
                         // for, a press it held that the stand-in did not is
                         // carried into the next tick rather than lost.
+                        //
+                        // **And a tick this authority has never seen is one it
+                        // never applied** (D480), whether or not it remembers
+                        // what stood in for it: after a long frame the tick a
+                        // replica is on is older than any stand-in kept, and a
+                        // press made in the ticks before the stream is
+                        // anchored again was the jump that did not come out.
                         const auto stood = peer->standIns.find(tick);
-                        if (stood == peer->standIns.end())
+                        const bool unseen = stood == peer->standIns.end() && tick > seenBefore;
+                        if (stood == peer->standIns.end() && !unseen)
                             continue;
                         for (const scene::PlayerIntent& intent : intents) {
                             if (intent.type != 0 || !intent.pressed)
                                 continue;
-                            const bool had = std::any_of(stood->second.begin(), stood->second.end(),
-                                                         [&](const scene::PlayerIntent& other) {
-                                                             return other.action == intent.action && other.pressed;
-                                                         });
+                            const bool had =
+                                !unseen && std::any_of(stood->second.begin(), stood->second.end(),
+                                                       [&](const scene::PlayerIntent& other) {
+                                                           return other.action == intent.action && other.pressed;
+                                                       });
                             if (!had && std::find(peer->carriedPresses.begin(), peer->carriedPresses.end(),
                                                   intent.action) == peer->carriedPresses.end())
                                 peer->carriedPresses.push_back(intent.action);
                         }
-                        peer->standIns.erase(stood);
+                        if (!unseen)
+                            peer->standIns.erase(stood);
                         continue;
                     }
                     if (peer->intentQueue.contains(tick))
@@ -1675,6 +1740,14 @@ void AuthoritySession::applyIntents(scene::World& world)
             peer.intentStarted = true;
             peer.firstIntentTick = peer.intentQueue.begin()->first;
             peer.appliedTick = peer.firstIntentTick - std::min<u64>(peer.firstIntentTick, 1u + peer.intentDelay);
+            // **Anchored again, the answer is in the peer's own ticks again**
+            // (D480): while the last intent stood in, the tick a snapshot
+            // answered ran ahead of anything the replica had predicted. From
+            // here it names the tick the replica was on when the world it is
+            // shown was stepped, so the replica corrects from there once and
+            // steps its own input again on top.
+            if (peer.intentTick != 0)
+                peer.intentTick = peer.appliedTick;
         }
         const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
         const u64 depth = newest > peer.appliedTick ? newest - peer.appliedTick : 0;
@@ -1703,6 +1776,7 @@ void AuthoritySession::applyIntents(scene::World& world)
             found = &at->second;
         if (found != nullptr) {
             peer.lastIntents = std::move(*found);
+            peer.standInRun = 0;
             peer.ticksSinceStarved += 1;
             if (peer.ticksSinceStarved > IntentDelayRelaxTicks && peer.intentDelay > 1) {
                 peer.intentDelay -= 1;
@@ -1716,14 +1790,33 @@ void AuthoritySession::applyIntents(scene::World& world)
             peer.starvations += 1;
             m_stats.intentStarvations += 1;
             peer.ticksSinceStarved = 0;
+            if (peer.standInRun == 0)
+                peer.delayBeforeRun = peer.intentDelay;
+            peer.standInRun += 1;
             peer.intentDelay = std::min(peer.intentDelay + 1, MaxIntentDelay);
+            // **A stand-in has a lifetime** (D480): past it, nobody is known
+            // to be holding anything. A player whose connection is up and
+            // silent -- a window being dragged, a phone in a pocket -- stops,
+            // rather than running on what it held when it went quiet.
+            if (peer.standInRun > StandInLifetimeTicks) {
+                for (scene::PlayerIntent& intent : peer.lastIntents) {
+                    intent.pressed = false;
+                    // `Enum.InputActionType.ViewportPosition`: where the
+                    // pointer is, which stays where it was.
+                    if (intent.type != 4)
+                        intent.axis = core::Vec3{};
+                }
+            }
             peer.standIns.emplace(next, peer.lastIntents);
             while (peer.standIns.size() > IntentRedundancy * 4u)
                 peer.standIns.erase(peer.standIns.begin());
         }
         player->intents = withCarried(peer);
         peer.appliedTick = next;
-        if (next >= peer.firstIntentTick)
+        // Before the first intent's own tick nothing of the peer's has been
+        // applied, and the answer stays "none" -- but a stream anchored AGAIN
+        // has been answered before, and its answer keeps step with it.
+        if (next >= peer.firstIntentTick || peer.intentTick != 0)
             peer.intentTick = next;
         peer.intentQueue.erase(peer.intentQueue.begin(), peer.intentQueue.upper_bound(next));
     }

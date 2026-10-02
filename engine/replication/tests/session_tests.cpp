@@ -2625,6 +2625,350 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
     CHECK(jumped == 1);
 }
 
+// --- A peer whose clock moved (D480) ---------------------------------------------
+
+namespace {
+
+// A replica's intent stream, sent by hand: one message, one tick, one `Move`
+// direction -- so a test says exactly which tick number carries what.
+struct MoveStream
+{
+    PlayedMatch& match;
+    const scene::PlayerComponent* player = nullptr;
+
+    explicit MoveStream(PlayedMatch& played) : match(played)
+    {
+        (void)match.server.atoms.intern("Move");
+        player = match.server.world.players().find(match.remote());
+        REQUIRE(player != nullptr);
+    }
+
+    void send(core::u64 tick, float x)
+    {
+        Bytes intent;
+        intent.u8v(7).u8v(1).u64v(tick);
+        intent.u16v(1).text("Move").u8v(2).f32v(x).f32v(0.0f).f32v(0.0f).u8v(0);
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    }
+
+    // One tick of the authority.
+    void tick() { match.authority->receive(match.server.world, match.server.workspace); }
+
+    // The direction the authority's player is held to move in this tick.
+    [[nodiscard]] float moving() const
+    {
+        for (const scene::PlayerIntent& intent : player->intents) {
+            if (intent.axis.x != 0.0f)
+                return intent.axis.x;
+        }
+        return 0.0f;
+    }
+};
+
+} // namespace
+
+TEST_CASE("D480: a replica that dropped simulated time is heard again, a few ticks on")
+{
+    PlayedMatch match;
+    match.run(10);
+    MoveStream stream(match);
+
+    // A stream in step with the authority, the player standing still.
+    core::u64 sent = match.tick;
+    for (int at = 0; at < 20; ++at) {
+        stream.send(++sent, 0.0f);
+        stream.tick();
+    }
+    CHECK(stream.moving() == 0.0f);
+
+    // **A long frame**: for eight of the authority's ticks nothing arrives, and
+    // the replica -- which dropped that time rather than stepping it -- carries
+    // on from the tick it was on. Every tick it sends from here is numbered
+    // eight behind where the authority has got to.
+    for (int at = 0; at < 8; ++at)
+        stream.tick();
+    // The player walks. It is seen walking within the room late packets are
+    // given and the delay the queue is kept at -- and not never.
+    int heardAfter = -1;
+    for (int at = 0; at < 60; ++at) {
+        stream.send(++sent, 1.0f);
+        stream.tick();
+        if (heardAfter < 0 && stream.moving() == 1.0f)
+            heardAfter = at;
+    }
+    CHECK(heardAfter >= 0);
+    CHECK(heardAfter <= static_cast<int>(IntentRedundancy + MaxIntentDelay + 2));
+    CHECK(stream.moving() == 1.0f);
+    CHECK(match.authority->stats().intentReanchors == 1);
+
+    // And stops when the key is let go: what it held is not held for it.
+    int stoppedAfter = -1;
+    for (int at = 0; at < 30; ++at) {
+        stream.send(++sent, 0.0f);
+        stream.tick();
+        if (stoppedAfter < 0 && stream.moving() == 0.0f)
+            stoppedAfter = at;
+    }
+    CHECK(stoppedAfter >= 0);
+    CHECK(stoppedAfter <= static_cast<int>(MaxIntentDelay + 2));
+    // The stream is in step again: nothing more was anchored.
+    CHECK(match.authority->stats().intentReanchors == 1);
+}
+
+TEST_CASE("D480: a key held when a replica's clock fell behind is let go when the replica lets it go")
+{
+    PlayedMatch match;
+    match.run(10);
+    MoveStream stream(match);
+
+    core::u64 sent = match.tick;
+    for (int at = 0; at < 20; ++at) {
+        stream.send(++sent, 1.0f);
+        stream.tick();
+    }
+    CHECK(stream.moving() == 1.0f);
+    // The long frame, and the key released during it.
+    for (int at = 0; at < 8; ++at)
+        stream.tick();
+    int stoppedAfter = -1;
+    for (int at = 0; at < 60; ++at) {
+        stream.send(++sent, 0.0f);
+        stream.tick();
+        if (stoppedAfter < 0 && stream.moving() == 0.0f)
+            stoppedAfter = at;
+    }
+    CHECK(stoppedAfter >= 0);
+    CHECK(stoppedAfter <= static_cast<int>(IntentRedundancy + MaxIntentDelay + 2));
+    CHECK(stream.moving() == 0.0f);
+}
+
+TEST_CASE("D480: a press made in the ticks before the stream is anchored again is applied once, not lost")
+{
+    // The case a player feels as "my jump did not come out": the long frame
+    // ends, the key goes down for one tick, and that tick is one of the four
+    // the authority still takes for late. Half a second of frame, so the tick
+    // it is numbered as is older than anything the authority remembers
+    // standing in for.
+    PlayedMatch match;
+    match.run(10);
+    (void)match.server.atoms.intern("Jump");
+    const scene::PlayerComponent* player = match.server.world.players().find(match.remote());
+    REQUIRE(player != nullptr);
+    const auto send = [&](core::u64 tick, bool jump) {
+        Bytes intent;
+        intent.u8v(7).u8v(1).u64v(tick);
+        if (jump)
+            intent.u16v(1).text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(1);
+        else
+            intent.u16v(0);
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    };
+    const auto jumping = [&] {
+        return std::any_of(player->intents.begin(), player->intents.end(),
+                           [&](const scene::PlayerIntent& intent) { return intent.pressed; });
+    };
+    core::u64 sent = match.tick;
+    for (int at = 0; at < 20; ++at) {
+        send(++sent, false);
+        match.authority->receive(match.server.world, match.server.workspace);
+    }
+    for (int at = 0; at < 30; ++at)
+        match.authority->receive(match.server.world, match.server.workspace);
+    REQUIRE_FALSE(jumping());
+
+    for (int press = 0; press < 3; ++press) {
+        CAPTURE(press);
+        // The press is the first, second or third tick after the frame; the
+        // stream is anchored again on the fourth.
+        int jumped = 0;
+        for (int at = 0; at < 20; ++at) {
+            send(++sent, at == press);
+            match.authority->receive(match.server.world, match.server.workspace);
+            jumped += jumping() ? 1 : 0;
+        }
+        CHECK(jumped == 1);
+        // And the next long frame, for the next press.
+        for (int at = 0; at < 30; ++at)
+            match.authority->receive(match.server.world, match.server.workspace);
+    }
+}
+
+TEST_CASE("D480: what stands in for a silent replica is let go after a quarter of a second")
+{
+    PlayedMatch match;
+    match.run(10);
+    MoveStream stream(match);
+
+    core::u64 sent = match.tick;
+    for (int at = 0; at < 20; ++at) {
+        stream.send(++sent, 1.0f);
+        stream.tick();
+    }
+    CHECK(stream.moving() == 1.0f);
+    // Connected, and saying nothing: the last thing it said stands in for a
+    // few ticks -- a lost packet is not a stumble -- and then no longer.
+    for (int at = 0; at < 4; ++at)
+        stream.tick();
+    CHECK(stream.moving() == 1.0f);
+    for (int at = 0; at < static_cast<int>(StandInLifetimeTicks) + 4; ++at)
+        stream.tick();
+    CHECK(stream.moving() == 0.0f);
+    // It speaks again, in step: heard at once.
+    for (int at = 0; at < static_cast<int>(StandInLifetimeTicks) + 8; ++at)
+        ++sent;
+    for (int at = 0; at < 12; ++at) {
+        stream.send(++sent, 1.0f);
+        stream.tick();
+    }
+    CHECK(stream.moving() == 1.0f);
+}
+
+TEST_CASE("D480: a replica that runs five ticks to the authority's six is followed all the way")
+{
+    PlayedMatch match;
+    match.run(10);
+    MoveStream stream(match);
+
+    // Five seconds of the authority, and a replica that steps 50 times a
+    // second -- a weak phone dropping time every frame. It turns round every
+    // half second; each turn must be seen on the authority soon after it is
+    // sent, for the whole run and not only until the replica has fallen a
+    // queue's depth behind.
+    core::u64 sent = match.tick;
+    int produced = 0;
+    float wanted = 1.0f;
+    int turnedAt = 0;
+    bool seen = true;
+    int worst = 0;
+    int turns = 0;
+    for (int at = 0; at < 300; ++at) {
+        if (at % 6 != 5) {
+            if (produced % 25 == 0 && produced != 0) {
+                REQUIRE(seen);
+                wanted = -wanted;
+                turnedAt = at;
+                seen = false;
+                turns += 1;
+            }
+            stream.send(++sent, wanted);
+            produced += 1;
+        }
+        stream.tick();
+        if (!seen && stream.moving() == wanted) {
+            seen = true;
+            worst = std::max(worst, at - turnedAt);
+        }
+    }
+    CHECK(seen);
+    CHECK(turns >= 9);
+    CHECK(worst <= static_cast<int>(IntentRedundancy + MaxIntentDelay + 4));
+}
+
+TEST_CASE("D480: a replica that had a long frame while walking is corrected for it once, and not again")
+{
+    // The whole path, both sessions real: the replica predicts its own
+    // character, the authority steps it from the replica's intents, and each
+    // snapshot answers the intent its step came from.
+    PlayedMatch match;
+    const core::InstanceId racer =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(racer.valid());
+    match.server.world.setName(racer, match.server.atoms.intern("Racer"));
+    match.server.world.parts().find(racer)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(racer, match.server.workspace).has_value());
+    match.server.world.characterBodies().find(racer)->walkSpeed = 8.0f;
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(10);
+    core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, true}};
+    // The replica counts its own ticks, as a machine does: a tick it did not
+    // step is a tick it did not number.
+    core::u64 replicaTick = match.tick;
+    int uneven = 0;
+    double last = 0.0;
+    const auto authorityTick = [&](bool measure) {
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents) {
+            if (intent.pressed)
+                walk(match.server.world, racer);
+        }
+        const double x = match.server.world.parts().find(racer)->cframe.position.x;
+        if (measure && std::abs((x - last) - 8.0 / 60.0) > 1e-6)
+            ++uneven;
+        last = x;
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+    };
+    bool held = true;
+    const auto replicaStep = [&] {
+        match.replica->receive(match.client.world, match.client.workspace);
+        if (held)
+            walk(match.client.world, mine);
+        replicaTick += 1;
+        match.replica->sendIntent(match.client.world, replicaTick);
+    };
+
+    for (int frame = 0; frame < 120; ++frame) {
+        authorityTick(false);
+        replicaStep();
+    }
+    CHECK(match.replica->stats().corrections == 0);
+    CHECK(match.authority->stats().intentReanchors == 0);
+
+    // The long frame: eight of the authority's ticks the replica neither
+    // steps nor numbers.
+    for (int frame = 0; frame < 8; ++frame)
+        authorityTick(false);
+    // A second for the two to agree again...
+    for (int frame = 0; frame < 60; ++frame) {
+        authorityTick(false);
+        replicaStep();
+    }
+    CHECK(match.authority->stats().intentReanchors == 1);
+    const core::u64 settled = match.replica->stats().corrections;
+    // ...and four more in which nothing is corrected, the authority steps one
+    // tick of walk a tick, and the replica is where its own input puts it: the
+    // authority's place, and the ticks it is ahead by.
+    for (int frame = 0; frame < 240; ++frame) {
+        authorityTick(true);
+        replicaStep();
+    }
+    CHECK(uneven == 0);
+    CHECK(match.replica->stats().corrections == settled);
+    CHECK(match.authority->stats().intentReanchors == 1);
+    const double ahead = match.client.world.parts().find(mine)->cframe.position.x -
+                         match.server.world.parts().find(racer)->cframe.position.x;
+    CHECK(ahead >= 0.0);
+    CHECK(ahead <= static_cast<double>(MaxIntentDelay + 2) * 8.0 / 60.0);
+
+    // **The key is let go, and the authority's character stops** -- where the
+    // replica's did, having walked every tick the replica walked. Before the
+    // fix the authority never heard the release: what was held at the long
+    // frame was held for the rest of the session.
+    held = false;
+    match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, false}};
+    for (int frame = 0; frame < 30; ++frame) {
+        authorityTick(false);
+        replicaStep();
+    }
+    const double stoppedAt = match.server.world.parts().find(racer)->cframe.position.x;
+    for (int frame = 0; frame < 30; ++frame) {
+        authorityTick(false);
+        replicaStep();
+    }
+    CHECK(match.server.world.parts().find(racer)->cframe.position.x == stoppedAt);
+    CHECK(std::abs(match.client.world.parts().find(mine)->cframe.position.x - stoppedAt) < 1e-6);
+    CHECK(match.replica->stats().corrections == settled);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 // --- The ground (ADR 0135) ------------------------------------------------------
 
 namespace {
