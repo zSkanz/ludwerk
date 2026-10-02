@@ -240,6 +240,9 @@ void Editor::play(scene::World& world)
     // stop means "back to where I pressed play", not "back to where I opened
     // the editor".
     m_playSnapshot = std::make_unique<scene::WorldSnapshot>(world.snapshot());
+    // The steps from before Play are kept, and held still while it runs.
+    m_history.setFrozen(true);
+    m_dirtyBeforePlay = m_sceneDirty;
     m_run = RunState::Playing;
     // **Attached, every time play is pressed** (S5.8). Detaching is a thing
     // somebody does DURING a run to look at something; carrying it into the next
@@ -263,15 +266,20 @@ void Editor::stop(scene::World& world, Inspector& inspector)
 {
     m_run = RunState::Editing;
     m_cameraDetached = false;
-    if (m_playSnapshot == nullptr)
+    if (m_playSnapshot == nullptr) {
+        m_history.setFrozen(false);
         return;
+    }
 
     world.restore(*m_playSnapshot);
     m_playSnapshot.reset();
     ++m_worldRestores;
-    // A play session's changes were never edits, and the edits before it belong
-    // to a world this restore has just replaced.
-    m_history.clear();
+    // **The world is the one Play was pressed in, and so is its history**: a
+    // play session's changes were never edits, none was recorded, and the
+    // steps before it lead back from exactly this world. Clearing them made
+    // pressing Play the end of every undo. The unsaved mark is what it was.
+    m_history.setFrozen(false);
+    m_sceneDirty = m_dirtyBeforePlay;
 
     // A selection made DURING play can name something the restore removed. The
     // id would resolve to whatever the slot holds now, which is either nothing
@@ -1025,8 +1033,120 @@ void UndoStack::record(const scene::World& world, std::string label, core::u64 c
     record(world.snapshot(), std::move(label), coalesceKey);
 }
 
+bool EditorCommands::refuseAuthoring() noexcept
+{
+    const EditorCommands none;
+    bool refused = false;
+    // A field at rest is not a refusal; one that asked for something is.
+    const auto drop = [&refused](auto& field, const auto& rest) {
+        if (!(field == rest)) {
+            field = rest;
+            refused = true;
+        }
+    };
+    // Terrain made from a picture or a function.
+    drop(pickHeightmap, none.pickHeightmap);
+    drop(pickHeightFunction, none.pickHeightFunction);
+    // The tree: made, removed, copied, gathered, moved, named.
+    drop(createClass, none.createClass);
+    drop(createParent, none.createParent);
+    drop(createRunContext, none.createRunContext);
+    drop(insertClassName, none.insertClassName);
+    drop(deleteSelection, none.deleteSelection);
+    drop(duplicateSelection, none.duplicateSelection);
+    drop(groupSelection, none.groupSelection);
+    drop(groupAsFolder, none.groupAsFolder);
+    drop(ungroupSelection, none.ungroupSelection);
+    drop(renameInstance, none.renameInstance);
+    drop(renameInstanceTo, none.renameInstanceTo);
+    drop(reparentTo, none.reparentTo);
+    drop(reparentIndex, none.reparentIndex);
+    drop(reorderChild, none.reorderChild);
+    drop(reorderIndex, none.reorderIndex);
+    drop(cutSelection, none.cutSelection);
+    drop(paste, none.paste);
+    drop(pasteInto, none.pasteInto);
+    drop(importParent, none.importParent);
+    // Stamps: made from the scene, placed in it, broken, pushed up, opened.
+    drop(stampSubject, none.stampSubject);
+    drop(stampName, none.stampName);
+    drop(stampFolder, none.stampFolder);
+    drop(placeStamp, none.placeStamp);
+    drop(placeStampLinked, none.placeStampLinked);
+    drop(placeStampParent, none.placeStampParent);
+    drop(breakStamp, none.breakStamp);
+    drop(overrideSubject, none.overrideSubject);
+    drop(overrideProperty, none.overrideProperty);
+    drop(overrideApply, none.overrideApply);
+    drop(openStamp, none.openStamp);
+    drop(newStampClass, none.newStampClass);
+    drop(newStampName, none.newStampName);
+    // What is dropped on the world or on a property.
+    drop(placeMesh, none.placeMesh);
+    drop(placeMeshPixel, none.placeMeshPixel);
+    drop(placeMeshParent, none.placeMeshParent);
+    drop(assignStampPath, none.assignStampPath);
+    drop(assignStampProperty, none.assignStampProperty);
+    drop(assignMaterialPath, none.assignMaterialPath);
+    drop(assignMaterialTarget, none.assignMaterialTarget);
+    drop(assignMaterialPixel, none.assignMaterialPixel);
+    drop(assignSkyboxPath, none.assignSkyboxPath);
+    drop(assignSkyboxTarget, none.assignSkyboxTarget);
+    // A file the scene points at, removed or moved from under it.
+    drop(deleteContent, none.deleteContent);
+    drop(renameContent, none.renameContent);
+    drop(renameContentTo, none.renameContentTo);
+    drop(moveContent, none.moveContent);
+    drop(moveContentInto, none.moveContentInto);
+    // The history: a step back would put an editing world into a running one.
+    drop(undo, none.undo);
+    drop(redo, none.redo);
+    return refused;
+}
+
+std::span<const std::string_view> EditorCommands::keptInPlay() noexcept
+{
+    static constexpr std::string_view Kept[] = {
+        "play",
+        "pause",
+        "match",
+        "save",
+        "newScene",
+        "saveAs",
+        "openScene",
+        "openScript",
+        "createFolder",
+        "wantSaveAs",
+        "quit",
+        "saveAll",
+        "newProject",
+        "openProject",
+        "importAssets",
+        "colorAsked",
+        "colorTarget",
+        "colorContentPath",
+        "color",
+        "copySelection",
+        "saveStamp",
+        "closeStamp",
+        "closeStampSaving",
+        "duplicateContent",
+        "openMaterial",
+        "newMaterial",
+        "newMaterialVariantOf",
+        "newMaterialVariantName",
+        "newShader",
+        "openFile",
+        "clearSelection",
+        "resetLayout",
+    };
+    return Kept;
+}
+
 void UndoStack::record(scene::WorldSnapshot state, std::string label, core::u64 coalesceKey)
 {
+    if (m_frozen)
+        return;
     if (coalesceKey != 0 && !m_undo.empty() && m_undo.back().key == coalesceKey)
         return;
 
@@ -1043,6 +1163,8 @@ void UndoStack::record(scene::WorldSnapshot state, std::string label, core::u64 
 
 bool UndoStack::undo(scene::World& world)
 {
+    if (m_frozen)
+        return false;
     if (m_undo.empty())
         return false;
 
@@ -1058,6 +1180,8 @@ bool UndoStack::undo(scene::World& world)
 
 bool UndoStack::redo(scene::World& world)
 {
+    if (m_frozen)
+        return false;
     if (m_redo.empty())
         return false;
 
@@ -4266,7 +4390,7 @@ std::optional<GizmoFrame> Editor::gizmoFrame(const scene::World& world, const In
     // **The Water tool's handles are the water's own**: its points, its
     // corners. The manipulator over the river in hand would be a second set
     // of handles in the middle of it, taking the clicks that lay its course.
-    if (m_tool == Tool::Water && m_waterPanelShown)
+    if (tool() == Tool::Water)
         return std::nullopt;
 
     const core::InstanceId primary = inspector.selection();
@@ -4410,7 +4534,7 @@ bool Editor::driveTiles(scene::World& world, core::InstanceId root, Inspector& i
         m_tileStroke.has_value() ? m_tileStroke->tilemap : tilemapFor(world, inspector, root);
     scene::Tilemap2DComponent* tilemap = target.valid() ? world.tilemaps2d().find(target) : nullptr;
 
-    if (m_tool != Tool::Tiles || !m_tilesPanelShown || tilemap == nullptr || !(tilemap->cellSize > 0.0f)) {
+    if (tool() != Tool::Tiles || tilemap == nullptr || !(tilemap->cellSize > 0.0f)) {
         if (m_tileStroke.has_value()) {
             m_lastTileEdits = m_tileStroke->edits;
             m_tileStroke.reset();
@@ -4633,8 +4757,11 @@ bool Editor::driveSculpt(scene::World& world, core::InstanceId root, Inspector& 
     // brush, whatever tool was last chosen (`setTerrainPanelShown`). Only the
     // three terrain tools stroke: the block and tile tools have brushes of
     // their own, and a click with either used to sculpt the ground under it.
-    const bool terrainTool = m_tool == Tool::Sculpt || m_tool == Tool::Paint || m_tool == Tool::Foliage;
-    if (!terrainTool || !m_terrainPanelShown) {
+    // In hand (`tool`): the Terrain panel on screen, and the scene being
+    // edited -- a brush left chosen before Play does nothing to the game.
+    const Tool inHand = tool();
+    const bool terrainTool = inHand == Tool::Sculpt || inHand == Tool::Paint || inHand == Tool::Foliage;
+    if (!terrainTool) {
         endStroke();
         return false;
     }
@@ -5255,7 +5382,7 @@ bool Editor::driveBlocks(scene::World& world, Inspector& inspector)
     m_hasVoxels = voxels != nullptr;
     m_voxelBlockSize = voxels != nullptr ? voxels->blockSize : 1.0f;
 
-    if (m_tool != Tool::Blocks || voxels == nullptr) {
+    if (tool() != Tool::Blocks || voxels == nullptr) {
         m_blockStroke.reset();
         // A tool with nothing to act on does not eat the click, for the
         // reason `driveSculpt` gives.
@@ -6756,6 +6883,10 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
 
     const PickRequest request = *m_pending;
     m_pending.reset();
+    // Asked for before the game took the viewport, and answered after: the
+    // game's now (`viewportIsGames`).
+    if (viewportIsGames())
+        return std::nullopt;
 
     // No camera means nothing has been rendered yet, so there is no image the
     // click could have been aimed at. Clearing the selection would be a guess;

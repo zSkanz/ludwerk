@@ -47,8 +47,23 @@ struct ViewportRect
 // pointer in WINDOW pixels lands wherever the panel's offset puts it, off the
 // button it was aimed at. Every pointer event is moved by the panel's origin;
 // everything else passes as it was.
+//
+// **And only what is the game's** (the Play rule). The editor is a window
+// around the game: a key typed into its Console moved the character, and a
+// click on its Explorer was a click the game's scripts saw.
+// - A key going down, and text, reach the game only while it has the keyboard:
+//   the viewport focused, and no text field of the editor's being typed in.
+// - A button going down, the wheel and a finger landing reach it only while
+//   the pointer is over the game's picture, or the game holds it.
+// - Whatever goes UP always arrives, so nothing held when the focus left
+//   stays held; so does motion, and a gamepad, which the editor never reads.
+struct GameInput
+{
+    bool keyboard = true;
+    bool pointer = true;
+};
 void toViewportEvents(std::span<const platform::Event> events, const ViewportRect& viewport,
-                      std::vector<platform::Event>& out);
+                      std::vector<platform::Event>& out, GameInput heard = {});
 
 struct PickRay
 {

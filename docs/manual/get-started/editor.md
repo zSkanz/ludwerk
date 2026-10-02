@@ -84,6 +84,23 @@ play button a toggle between things that are not opposites.
 **Play, pause, step, stop.** Step advances exactly one simulation tick, which is
 the tool for a bug that only happens on one frame.
 
+**While the game plays, the viewport is the game's.** It wears a border in the
+accent colour, and everything over it goes to the game: a click presses the
+game's button and selects nothing, the wheel and every key are the game's --
+Escape included -- and the editor draws none of its markers, grid or guides.
+No tool works on a running world and nothing can be created, deleted, moved in
+the tree, pasted or undone; the menus that would are grey. A key reaches the
+game only while the viewport has the keyboard: typing in the Console, a script
+or a search box types there and nowhere else.
+
+**Shift+P ejects** (the eye on the toolbar): the border turns to the warning
+colour, the editor's camera flies, a click selects so you can look at what the
+game made of something, and a pointer the game had locked is yours again.
+Properties can still be changed, to see what a value does; nothing changed
+while the game runs is kept, recorded for undo or marks the scene unsaved.
+**Shift+F5 stops**, as the toolbar's button does: the scene is back as it was
+when Play was pressed, with its undo history.
+
 ## Selecting and editing
 
 Clicking in the viewport casts a ray and selects what it hits. The selection is
@@ -120,7 +137,7 @@ Ctrl or Alt is held, so a shortcut never moves the camera.
 | Alt+click | Select the part itself, not the model it is in |
 | Double-click | Open a model, to select what is inside it |
 | F | Frame the selection |
-| Escape | Leave a terrain or block brush, then close a model, then deselect; in play, stop |
+| Escape | Leave a terrain or block brush, then close a model, then deselect; in play it is the game's key |
 | Ctrl+D, Delete, F2 | Duplicate, delete, rename |
 | Ctrl+G / Ctrl+Alt+G | Group into a Model / into a Folder |
 | Ctrl+Shift+G or Ctrl+U | Ungroup |

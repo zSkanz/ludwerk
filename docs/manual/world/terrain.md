@@ -255,6 +255,9 @@ terrain) has five modes along its top, in the order the work goes:
 Choosing a mode puts no brush in your hand; choosing a tool does. While a
 brush is in hand the viewport says so in its corner -- the tool, the size,
 and that **Esc** puts it down -- and clicking anything else also puts it down.
+A brush is in hand only while the Terrain panel is the one on screen: bring
+another tab forward, or press Play, and it rests -- no ring, and a click
+selects -- until you come back. The Blocks, Tiles and Water tools do the same.
 Every stroke is one undo step, and a stroke that changed nothing leaves none.
 A click on a part in front of the ground is the part's: it is selected, and
 the ground behind it is not touched. The first tool in hand is Raise.

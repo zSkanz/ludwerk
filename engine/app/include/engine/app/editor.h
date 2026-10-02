@@ -22,6 +22,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -709,6 +710,23 @@ struct EditorCommands
     bool resetLayout = false;
 
     void clear() noexcept { *this = EditorCommands{}; }
+
+    // **What a running game refuses** (the Play rule): every command that
+    // makes, removes, moves or replaces something in the scene -- create,
+    // delete, duplicate, group, reparent, paste, place, stamp, undo, redo --
+    // is taken off the list, here and nowhere else, before the loop acts on
+    // any of them. A menu that greys the same thing is a courtesy; this is the
+    // rule. Answers whether anything was refused, so the person is told once.
+    //
+    // **Every field is in one of two lists**: taken off here, or named in
+    // `keptInPlay`. `tools/repo/playlint.luau` reads this struct and fails the
+    // gate for a field in neither, so a command added next year cannot be one
+    // nobody decided about.
+    bool refuseAuthoring() noexcept;
+    // What a running game still answers: the transport, saving and opening
+    // (which stop the game first, or refuse by themselves), looking at things,
+    // and files that are not the scene.
+    [[nodiscard]] static std::span<const std::string_view> keptInPlay() noexcept;
     // **Which of these actually change the world.** A narrower question than
     // `any()`, and it exists because the answer decides whether closing the
     // editor asks about unsaved work: `any()` is true for clearing a selection
@@ -797,8 +815,8 @@ public:
             m_undo.pop_back();
     }
 
-    [[nodiscard]] bool canUndo() const noexcept { return !m_undo.empty(); }
-    [[nodiscard]] bool canRedo() const noexcept { return !m_redo.empty(); }
+    [[nodiscard]] bool canUndo() const noexcept { return !m_frozen && !m_undo.empty(); }
+    [[nodiscard]] bool canRedo() const noexcept { return !m_frozen && !m_redo.empty(); }
     // How many steps are on the stack. For a test asserting that a verb which
     // refused left nothing behind -- a step that undoes nothing eats a press of
     // ctrl-Z, and `canUndo` cannot tell one step from two.
@@ -808,9 +826,17 @@ public:
     [[nodiscard]] std::string_view undoLabel() const noexcept;
     [[nodiscard]] std::string_view redoLabel() const noexcept;
 
-    // After a scene load, a new scene, or a stop. Undoing into a world that no
-    // longer exists is not undoing.
+    // After a scene load or a new scene. Undoing into a world that no longer
+    // exists is not undoing.
     void clear() noexcept;
+
+    // **Held still while the game runs** (the Play rule): nothing is recorded
+    // and nothing is taken back. What a running game does was never an edit,
+    // and a step back to an editing snapshot put into a running world is the
+    // world of ten minutes ago with this minute's scripts in it. The steps
+    // from before Play are there again when it stops.
+    void setFrozen(bool frozen) noexcept { m_frozen = frozen; }
+    [[nodiscard]] bool frozen() const noexcept { return m_frozen; }
 
     static constexpr core::usize Depth = 64;
 
@@ -824,6 +850,7 @@ private:
 
     std::deque<Step> m_undo;
     std::deque<Step> m_redo;
+    bool m_frozen = false;
 };
 
 // What the last save or load did, kept so the shell can say it. A save that
@@ -890,8 +917,43 @@ public:
     void requestPick(core::Vec2 pixelInViewport, bool additive = false, bool opening = false,
                      bool direct = false) noexcept
     {
+        // **A click in the game's view is the game's** (`viewportIsGames`):
+        // it selects nothing, reveals nothing and opens no panel.
+        if (viewportIsGames())
+            return;
         m_pending = PickRequest{pixelInViewport, additive, opening, direct};
     }
+
+    // --- Who the viewport belongs to (the Play rule) --------------------------
+    //
+    // **One rule, asked everywhere**, where there were checks of the run state
+    // at eight call sites and none at the rest: a click during Play selected
+    // what was behind the game's own button and opened it in the Explorer, a
+    // brush left in hand kept sculpting the running world, and Ctrl+Z put an
+    // editing snapshot into it.
+    //
+    // - **Playing, attached**: the viewport and what is typed over it are the
+    //   game's. No pick, no tool, no drop, no handle, no overlay of the
+    //   editor's in the picture.
+    // - **Playing, ejected** (Shift+P), or **paused**: the editor's camera and
+    //   its pointer. A click selects, to look at something -- and nothing
+    //   more: no tool and no change to the scene's structure.
+    // - **Editing**: the editor's, all of it.
+    [[nodiscard]] bool viewportIsGames() const noexcept { return m_run == RunState::Playing && !m_cameraDetached; }
+    // Whether the scene is being authored: every command that makes, removes
+    // or moves something asks this, at the drain (`refuseAuthoringInPlay`).
+    [[nodiscard]] bool authoring() const noexcept { return m_run == RunState::Editing; }
+
+    // **What the shell saw of the keyboard last frame**: whether the viewport
+    // has it, and whether a text field of the editor's is being typed in. The
+    // game gets a key only when the first is so and the second is not.
+    void setKeyboardHolder(bool viewportFocused, bool typing) noexcept
+    {
+        m_viewportFocused = viewportFocused;
+        m_typing = typing;
+    }
+    [[nodiscard]] bool gameHasKeyboard() const noexcept { return viewportIsGames() && m_viewportFocused && !m_typing; }
+    [[nodiscard]] bool gameHasPointer() const noexcept { return viewportIsGames() && m_pointerOverViewport; }
     [[nodiscard]] bool pickPending() const noexcept { return m_pending.has_value(); }
 
     [[nodiscard]] RunState runState() const noexcept { return m_run; }
@@ -1987,7 +2049,40 @@ public:
         // point, a lake a drag, a sea a click at the height it comes to.
         Water,
     };
-    [[nodiscard]] Tool tool() const noexcept { return m_tool; }
+    // **The tool in hand**: the one chosen, while its panel is the one on
+    // screen and the scene is being edited -- and `Select` otherwise. A tool
+    // whose panel somebody left is at rest, not a ring following the pointer
+    // over every hill; a tool left in hand before Play does nothing to the
+    // running world. One answer, which the brush, the block and tile tools,
+    // the water tool, the viewport's chip and the status bar all ask.
+    [[nodiscard]] Tool tool() const noexcept { return toolLive() ? m_tool : Tool::Select; }
+    // The tool chosen, in hand or not: what is in hand again when its panel
+    // comes back, or the game stops. Escape puts it down for good.
+    [[nodiscard]] Tool heldTool() const noexcept { return m_tool; }
+    [[nodiscard]] bool toolLive() const noexcept
+    {
+        if (m_run != RunState::Editing)
+            return false;
+        switch (m_tool) {
+        case Tool::Sculpt:
+        case Tool::Paint:
+        case Tool::Foliage:
+            return m_terrainPanelShown;
+        case Tool::Blocks:
+            return m_blocksPanelShown;
+        case Tool::Tiles:
+            return m_tilesPanelShown;
+        case Tool::Water:
+            return m_waterPanelShown;
+        case Tool::Select:
+            break;
+        }
+        return true;
+    }
+    // The Blocks panel, on the terms of the others: its tool is in hand only
+    // while it is on screen.
+    void setBlocksPanelShown(bool shown) noexcept { m_blocksPanelShown = shown; }
+    [[nodiscard]] bool blocksPanelShown() const noexcept { return m_blocksPanelShown; }
     // Refused mid-stroke, for the reason `setGizmoMode` is refused mid-drag:
     // changing what a gesture means half way through it is not something a
     // person can have meant.
@@ -2832,6 +2927,9 @@ public:
     // open by the time the frame gets round to marking it.
     void touchAs(bool stamped) noexcept
     {
+        // Nothing done while the game runs is a change to the document.
+        if (m_run != RunState::Editing)
+            return;
         if (stamped)
             m_stamp.dirty = true;
         else
@@ -3164,6 +3262,7 @@ private:
     std::optional<TileStroke> m_tileStroke;
     core::u32 m_lastTileEdits = 0;
     bool m_tilesPanelShown = true;
+    bool m_blocksPanelShown = true;
     TilesetPreview m_tilesetPreview;
 
     // A Water gesture, from a press to its release.
@@ -3285,6 +3384,11 @@ private:
     // Held by pointer because a `WorldSnapshot` is thirty component pools and
     // an editor that is not playing should not be carrying an empty one.
     std::unique_ptr<scene::WorldSnapshot> m_playSnapshot;
+    // Whether the scene had unsaved changes when Play was pressed: what it has
+    // again when the game stops, whatever was touched while it ran.
+    bool m_dirtyBeforePlay = false;
+    bool m_viewportFocused = true;
+    bool m_typing = false;
     StatusSlot m_status;
     ContentTree m_content;
     std::string m_openScene;

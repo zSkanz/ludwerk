@@ -29,6 +29,9 @@ struct PointerRequest
     bool editorProfile = false;
     // The transport is not playing -- the world is paused and being edited.
     bool editing = false;
+    // The game is paused: nothing in it is running to answer a pointer it
+    // holds, so the editor has it, to inspect what the game stopped on.
+    bool paused = false;
     // The view has been detached from the game camera, which is a fly camera
     // somebody drives with a right-drag.
     bool cameraDetached = false;

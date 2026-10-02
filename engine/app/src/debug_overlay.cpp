@@ -1160,6 +1160,14 @@ core::u32 g_addOpenRow = 0;
 // run in -- panels draw, then shortcuts. See both ends for why the popup being
 // open is not a question that can be asked afterwards.
 bool g_escapeTaken = false;
+// Whether the scene is being authored this frame (`Editor::authoring`), for
+// the panels that are drawn with no editor in hand. What they would ask for
+// is refused at the drain whatever this says; this is what greys the asking.
+bool g_authoring = true;
+// Whether the game had the keyboard when the viewport was last drawn
+// (`Editor::gameHasKeyboard`): the keys that open the editor's views are the
+// game's then.
+bool g_gameHasKeyboard = false;
 // Last frame's tool and selection, so the shell can tell a brush being picked
 // up from one already in hand, and a new selection from the same one.
 Editor::Tool g_lastTool = Editor::Tool::Select;
@@ -2002,7 +2010,7 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
             // that IS held it opens a tooltip window, and a target asked
             // afterwards would be reading that window's last item rather than
             // the row's.
-            if (commands != nullptr && ImGui::BeginDragDropTarget()) {
+            if (commands != nullptr && g_authoring && ImGui::BeginDragDropTarget()) {
                 // **Two drops, told apart by what is being dragged.**
                 //
                 // A row of this tree is a reparent, and the row lights only
@@ -2165,7 +2173,8 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 ImGui::EndDragDropTarget();
             }
 
-            if (commands != nullptr && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+            if (commands != nullptr && g_authoring &&
+                ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
                 // The same rule the right-click follows, and for the same
                 // reason: a drag that started on a row nobody had selected acts
                 // on that row, and one that started on a member of the
@@ -2197,7 +2206,15 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
             // right-clicked without looking -- and one that replaced the
             // selection would throw away the four things they had just picked
             // in order to act on one of them.
-            if (commands != nullptr && dialogs != nullptr && ImGui::BeginPopupContextItem("row-menu")) {
+            // **While the game runs the menu says why it is empty**: every
+            // item in it changes the scene, which a running game refuses.
+            if (commands != nullptr && dialogs != nullptr && !g_authoring) {
+                if (ImGui::BeginPopupContextItem("row-menu")) {
+                    ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.explorer.stop_the_game_to_change")));
+                    ImGui::EndPopup();
+                }
+            }
+            else if (commands != nullptr && dialogs != nullptr && ImGui::BeginPopupContextItem("row-menu")) {
                 // **The row's spacing is the ROW's, not this menu's.** Style
                 // vars are a global stack, so the zero the rows are drawn with
                 // reaches every window opened while they are -- and a menu whose
@@ -2533,10 +2550,12 @@ void drawExplorer(scene::World& world, core::InstanceId root, Inspector& inspect
                 const bool lit = rowHovered || addOpen;
                 if (!lit)
                     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.0f);
+                ImGui::BeginDisabled(!g_authoring);
                 const bool add =
                     haveIcon ? iconButton(icons, icons::ActionAdd, iconSize, "add", "+",
                                           core::tr(ENG_TR("engine.editor.explorer.add_a_child_instance_tip")), true)
                              : ImGui::SmallButton("+");
+                ImGui::EndDisabled();
                 if (!lit)
                     ImGui::PopStyleVar();
                 if (add)
@@ -7027,7 +7046,9 @@ void reportLookInput(Editor& editor, bool overViewport)
     //
     // **In the 2D view it zooms instead**, about the pointer: there is no
     // flying to be fast at, and a wheel that zooms is what a 2D editor is.
-    if (overViewport && io.MouseWheel != 0.0f) {
+    // **Not over the game's own view** (`Editor::viewportIsGames`): the wheel
+    // there is the game's, and it was also changing the editor's speed.
+    if (overViewport && io.MouseWheel != 0.0f && !editor.viewportIsGames()) {
         if (editor.view2D()) {
             const ViewportRect& rect = editor.viewport();
             editor.zoom2D(io.MouseWheel, core::Vec2{io.MousePos.x - rect.x, io.MousePos.y - rect.y});
@@ -7457,7 +7478,8 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
                                (isMaterialDrag(*static_cast<const ContentDrag*>(offered->Data)) ||
                                 isStampDrag(*static_cast<const ContentDrag*>(offered->Data)) ||
                                 isMeshDrag(*static_cast<const ContentDrag*>(offered->Data)));
-        if (placeable && ImGui::BeginDragDropTarget()) {
+        // Nothing is dropped into a running game.
+        if (placeable && editor.authoring() && ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* dropped = ImGui::AcceptDragDropPayload(kContentDragPayload); dropped != nullptr) {
                 const auto* drag = static_cast<const ContentDrag*>(dropped->Data);
                 if (isMaterialDrag(*drag)) {
@@ -7511,13 +7533,40 @@ void drawViewportBody(Editor& editor, rhi::TextureHandle texture, EditorCommands
         // way to one wheel of a car without opening the car first.
         // A press on the selected interface element's box is the box's, not
         // a pick of whatever is behind it in the world.
-        const bool onInterface = drawInterfaceHandles(world, inspector, origin, overImage);
+        // **No handles over a running game**: its interface is the game's to
+        // press, not the editor's to drag about.
+        if (!editor.authoring())
+            g_uiDrag = UiDrag{};
+        const bool onInterface = editor.authoring() && drawInterfaceHandles(world, inspector, origin, overImage);
         if (overImage && !onInterface && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             editor.requestPick(inViewport, ImGui::GetIO().KeyCtrl, ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left),
                                ImGui::GetIO().KeyAlt);
         }
 
         reportLookInput(editor, overImage);
+
+        // **Who has the keyboard** (the Play rule): the game, only while this
+        // window does and no text field of the editor's is being typed in. A
+        // window with nothing focused at all is the viewport's -- the picture
+        // alone, with the furniture put away.
+        const ImGuiContext* const context = ImGui::GetCurrentContext();
+        editor.setKeyboardHolder(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+                                     context->NavWindow == nullptr,
+                                 ImGui::GetIO().WantTextInput);
+        g_gameHasKeyboard = editor.gameHasKeyboard();
+
+        // **A border that says whose view this is**: the accent while the game
+        // has it, the warning colour while it runs or waits and the editor is
+        // the one looking (ejected, or paused).
+        if (editor.inPlayMode()) {
+            const ThemePalette& p = palette();
+            const float thickness = std::round(2.0f * ImGui::GetStyle().FontScaleMain);
+            const ImVec4 tint = themeColor(editor.viewportIsGames() ? p.accentFill : p.warning);
+            const float inset = thickness * 0.5f;
+            ImGui::GetWindowDrawList()->AddRect(ImVec2(origin.x + inset, origin.y + inset),
+                                                ImVec2(origin.x + size.x - inset, origin.y + size.y - inset),
+                                                ImGui::GetColorU32(tint), 0.0f, 0, thickness);
+        }
     }
 }
 
@@ -7621,6 +7670,14 @@ void selectDockTab(const char* name)
     window->DockNode->SelectedTabId = window->TabId;
     if (window->DockNode->TabBar != nullptr)
         window->DockNode->TabBar->NextSelectedTabId = window->TabId;
+}
+
+// Whether a panel is open and behind another tab of its dock: on screen for
+// nobody, which is not the same as put away.
+[[nodiscard]] bool dockTabBehind(const char* name)
+{
+    const ImGuiWindow* window = ImGui::FindWindowByName(name);
+    return window != nullptr && window->DockNode != nullptr && window->DockNode->SelectedTabId != window->TabId;
 }
 
 // **A workbench key, pressed from anywhere -- the code included.** The code
@@ -12174,7 +12231,7 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
 {
     const core::InstanceId terrainId = editor.terrainIn(world, root);
     const scene::TerrainComponent* terrain = terrainId.valid() ? world.terrains().find(terrainId) : nullptr;
-    const Editor::Tool tool = editor.tool();
+    const Editor::Tool tool = editor.heldTool();
     const bool brushInHand =
         tool == Editor::Tool::Sculpt || tool == Editor::Tool::Paint || tool == Editor::Tool::Foliage;
 
@@ -12293,7 +12350,7 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                         editor.setTool(Editor::Tool::Foliage);
                     else
                         editor.setTool(Editor::Tool::Select);
-                    g_terrainLastTool = editor.tool();
+                    g_terrainLastTool = editor.heldTool();
                 }
             }
             ImGui::SetItemTooltip("%s", core::tr(entry.tip));
@@ -12402,7 +12459,7 @@ void drawTerrainPanel(Editor& editor, scene::World& world, core::InstanceId root
                                : core::tr(ENG_TR("engine.editor.terrain.mode.paint")),
                             on, false, -FLT_MIN)) {
                 editor.setTool(on ? Editor::Tool::Select : Editor::Tool::Paint);
-                g_terrainLastTool = editor.tool();
+                g_terrainLastTool = editor.heldTool();
             }
             ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.terrain.paint.tip")));
             brushDown(core::tr(ENG_TR("engine.editor.terrain.paint.brush_down")));
@@ -12875,7 +12932,7 @@ void drawBlocksPanel(Editor& editor, scene::World& world, Inspector& inspector, 
     // --- What a click does -------------------------------------------
     {
         const auto opButton = [&](Editor::BlockOp op, std::string_view icon, const char* word, const char* tip) {
-            const bool on = editor.blockOp() == op && editor.tool() == Editor::Tool::Blocks;
+            const bool on = editor.blockOp() == op && editor.heldTool() == Editor::Tool::Blocks;
             if (on)
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             const float width = std::max(76.0f * ImGui::GetStyle().FontScaleMain,
@@ -13035,7 +13092,7 @@ void drawTilesPanel(Editor& editor, scene::World& world, core::InstanceId root, 
     ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.tiles_panel.painting"), {{"name", name}}).c_str());
 
     const auto opButton = [&](Editor::TileOp op, std::string_view icon, const char* word, const char* tip) {
-        const bool on = editor.tileOp() == op && editor.tool() == Editor::Tool::Tiles;
+        const bool on = editor.tileOp() == op && editor.heldTool() == Editor::Tool::Tiles;
         if (on)
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         const float width = ImGui::CalcTextSize(word).x + ImGui::CalcTextSize(tabIconPad().c_str()).x +
@@ -13126,7 +13183,7 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
                     core::InstanceId root)
 {
     const auto opButton = [&](Editor::WaterOp op, std::string_view icon, const char* word, const char* tip) {
-        const bool on = editor.waterOp() == op && editor.tool() == Editor::Tool::Water;
+        const bool on = editor.waterOp() == op && editor.heldTool() == Editor::Tool::Water;
         if (on)
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         const float width = ImGui::CalcTextSize(word).x + ImGui::CalcTextSize(tabIconPad().c_str()).x +
@@ -13154,7 +13211,7 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
              core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
     ImGui::Separator();
 
-    if (editor.tool() != Editor::Tool::Water) {
+    if (editor.heldTool() != Editor::Tool::Water) {
         ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.water_panel.pick_one")));
         return;
     }
@@ -13813,22 +13870,28 @@ void handleWorkbenchKeys(Editor& editor, EditorCommands& commands, EditorPanels&
                          const DebugView& debug)
 {
     const auto global = workbenchKey;
-    if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P) || global(ImGuiKey_F1))
-        g_palette.open(CommandPalette::Mode::Commands);
-    else if (global(ImGuiMod_Ctrl | ImGuiKey_P))
-        g_palette.open(CommandPalette::Mode::Files);
-    if (global(ImGuiMod_Ctrl | ImGuiKey_B))
-        toggleSideBar(panels);
-    if (global(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_B))
-        panels.properties = !panels.properties;
-    if (global(ImGuiMod_Ctrl | ImGuiKey_J))
-        panels.console = !panels.console;
-    if (global(ImGuiMod_Ctrl | ImGuiKey_GraveAccent)) {
-        panels.console = true;
-        ImGui::SetWindowFocus("Console");
+    // **While the game has the keyboard, the keys are the game's** (the Play
+    // rule): F1, Ctrl+P, Ctrl+B and Ctrl+J opened the editor's furniture over
+    // a game that uses them. Only what controls the play itself still fires --
+    // stop below, the eye, pause, and the debugger's keys.
+    if (!editor.gameHasKeyboard()) {
+        if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P) || global(ImGuiKey_F1))
+            g_palette.open(CommandPalette::Mode::Commands);
+        else if (global(ImGuiMod_Ctrl | ImGuiKey_P))
+            g_palette.open(CommandPalette::Mode::Files);
+        if (global(ImGuiMod_Ctrl | ImGuiKey_B))
+            toggleSideBar(panels);
+        if (global(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_B))
+            panels.properties = !panels.properties;
+        if (global(ImGuiMod_Ctrl | ImGuiKey_J))
+            panels.console = !panels.console;
+        if (global(ImGuiMod_Ctrl | ImGuiKey_GraveAccent)) {
+            panels.console = true;
+            ImGui::SetWindowFocus("Console");
+        }
+        if (global(ImGuiMod_Ctrl | ImGuiKey_Comma))
+            dialogs.preferences = true;
     }
-    if (global(ImGuiMod_Ctrl | ImGuiKey_Comma))
-        dialogs.preferences = true;
     // F5 is the debugger's Continue while a script is stopped, so it starts the
     // game only when nothing is.
     if (!debug.parked && !editor.inPlayMode() && !editor.matchRunning() && !editor.stampSession().open() &&
@@ -14266,7 +14329,11 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
             if (view.shortcut[0] != '\0')
                 tip += std::string(" (") + view.shortcut + ")";
             if (button(view.window, view.icon, open, tip)) {
-                if (open)
+                // **Behind another tab, the icon brings it forward**: it
+                // closed it, which with a tool that rests while its panel is
+                // not the one on screen made the way back to the tool a press
+                // that put the panel away, and a second to get it again.
+                if (open && !dockTabBehind(view.window))
                     collapseSideBar(panels, view.window);
                 else
                     revealPanel(panels, view.window, open);
@@ -14307,7 +14374,8 @@ void drawActivityBar(EditorPanels& panels, EditorDialogs& dialogs, const IconAtl
 
     // The keys the editor this follows opens its views with -- from anywhere,
     // the code included (`workbenchKey`).
-    const auto global = workbenchKey;
+    // Not while the game has the keyboard (`g_gameHasKeyboard`).
+    const auto global = [](ImGuiKeyChord keys) { return !g_gameHasKeyboard && workbenchKey(keys); };
     if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_E))
         revealPanel(panels, "###Explorer", panels.explorer);
     if (global(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_A))
@@ -14670,6 +14738,16 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     if (scripts != nullptr)
         releaseScriptPaneFocus();
 
+    // **The Play rule's facts for this frame.** Whether the scene is being
+    // authored, for the panels drawn with no editor in hand; and the keyboard
+    // is nobody's until the viewport, drawn below, says it has it -- a
+    // viewport behind a script's tab is not drawn, and must not go on
+    // answering that it is focused.
+    g_authoring = editor == nullptr || editor->authoring();
+    g_gameHasKeyboard = false;
+    if (editor != nullptr)
+        editor->setKeyboardHolder(false, ImGui::GetIO().WantTextInput);
+
     // **F3 down: the world and nothing else.** Returning before the dockspace
     // rather than hiding each panel, because a dockspace with no windows in it
     // is still a dockspace and would draw its own background over the picture.
@@ -14936,13 +15014,14 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
         }
     }
 
-    // **The brush follows the panel** (`Editor::setTerrainPanelShown`): only
-    // while the Terrain panel is open. **Open, not in front**: the panel shares
-    // its dock with Properties, and a brush that died whenever Properties came
-    // forward -- which selecting anything does -- was the owner's "I managed
-    // to break it and do not know how". What keeps a brush from lingering is
-    // the viewport saying it is in hand, Escape, and any click on something
-    // else putting it down.
+    // **A tool is in hand while its panel is the one on screen** (the owner,
+    // 2026-10-01; `Editor::tool`): the Terrain brush, the Blocks, Tiles and
+    // Water tools, by one rule. A panel behind another tab, or closed, puts
+    // its tool at rest -- no ring, no chip, no handles, and a click selects --
+    // and coming back to it puts the tool in hand again. "Open, not in front"
+    // had been the rule, so that Properties coming forward did not kill a
+    // brush; nothing is killed now, only rested, and the brush that followed
+    // the pointer over every other panel's work is what the rule was costing.
     bool terrainShown = false;
     if (panels.terrain) {
         // `FirstUseEver`, so this decides only where a panel with no remembered
@@ -14961,26 +15040,37 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
                 ImGui::End();
                 goto terrainPanelDone;
             }
+            // **Greyed while the game runs** (the Play rule): Create, Clear,
+            // a new layer and the rest are calls, not commands, so the drain
+            // cannot refuse them -- the panel does, whole.
+            ImGui::BeginDisabled(!editor->authoring());
             drawTerrainPanel(*editor, *world, treeRoot, *inspector, icons, commands);
+            ImGui::EndDisabled();
         }
         ImGui::End();
     }
 terrainPanelDone:;
-    (void)terrainShown;
     if (editor != nullptr)
-        editor->setTerrainPanelShown(panels.terrain);
+        editor->setTerrainPanelShown(terrainShown && panels.terrain);
+    bool blocksShown = false;
     if (panels.blocks) {
         if (rightColumn != 0)
             ImGui::SetNextWindowDockID(rightColumn, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.blocks")) + "###Blocks").c_str(),
-                         &panels.blocks)) {
+        blocksShown = ImGui::Begin(
+            (tabIconPad() + core::tr(ENG_TR("engine.editor.panel.blocks")) + "###Blocks").c_str(), &panels.blocks);
+        if (blocksShown) {
             if (editor == nullptr || world == nullptr || inspector == nullptr)
                 ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_shell.no_world")));
-            else
+            else {
+                ImGui::BeginDisabled(!editor->authoring());
                 drawBlocksPanel(*editor, *world, *inspector, icons);
+                ImGui::EndDisabled();
+            }
         }
         ImGui::End();
     }
+    if (editor != nullptr)
+        editor->setBlocksPanelShown(blocksShown && panels.blocks);
     // **The Tiles tool follows its panel**, as the brush does.
     bool tilesShown = false;
     if (panels.tiles) {
@@ -14991,30 +15081,36 @@ terrainPanelDone:;
         if (tilesShown) {
             if (editor == nullptr || world == nullptr || inspector == nullptr)
                 ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_shell.no_world")));
-            else
+            else {
+                ImGui::BeginDisabled(!editor->authoring());
                 drawTilesPanel(*editor, *world, treeRoot, *inspector, icons);
+                ImGui::EndDisabled();
+            }
         }
         ImGui::End();
     }
     if (editor != nullptr)
         editor->setTilesPanelShown(tilesShown && panels.tiles);
-    // **The Water tool follows its panel** -- open, not in front, for the
-    // reason the terrain brush gives: the panel shares its dock with
-    // Properties, which selecting the river just drawn brings forward.
+    // **The Water tool follows its panel**, as the others do.
+    bool waterShown = false;
     if (panels.water) {
         if (rightColumn != 0)
             ImGui::SetNextWindowDockID(rightColumn, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.water")) + "###Water").c_str(),
-                         &panels.water)) {
+        waterShown = ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.water")) + "###Water").c_str(),
+                                  &panels.water);
+        if (waterShown) {
             if (editor == nullptr || world == nullptr || inspector == nullptr)
                 ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_shell.no_world")));
-            else
+            else {
+                ImGui::BeginDisabled(!editor->authoring());
                 drawWaterPanel(*editor, *world, *inspector, icons, treeRoot);
+                ImGui::EndDisabled();
+            }
         }
         ImGui::End();
     }
     if (editor != nullptr)
-        editor->setWaterPanelShown(panels.water);
+        editor->setWaterPanelShown(waterShown && panels.water);
     if (panels.stats) {
         if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.stats")) + "###Stats").c_str(),
                          &panels.stats)) {
@@ -15078,29 +15174,26 @@ terrainPanelDone:;
     // in `drawExplorer`.
     const bool escapeTaken = std::exchange(g_escapeTaken, false);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive() && !popupOpen && !escapeTaken) {
-        // **In play mode Escape stops**, which is what Unreal does and what
-        // this editor now needs rather than merely wants. A running game holds
-        // the pointer, and while it does the panels do not see the mouse at all
-        // (D069) -- so a project that never hands the cursor back would have no
-        // way to reach the stop button. The keyboard still arrives, and a
-        // transport somebody cannot reach is not a transport.
-        //
-        // The game sees the key too. That is the same arrangement Unreal ships
-        // and the honest one: while you are testing, the tool keeps one key.
-        if (editor != nullptr && editor->inPlayMode())
-            commands.play = false;
+        // **In the game's view Escape is the game's** (the Play rule): it
+        // closes the game's own menu, and it used to stop the game as well --
+        // one key doing two things, and the second one threw the session away.
+        // Stop is Shift+F5 and the transport. A game that holds the pointer
+        // and never gives it back (D069) is left with Shift+P, which hands the
+        // pointer to the editor, and Shift+F5: both are keys, and both arrive.
+        if (editor != nullptr && editor->viewportIsGames()) {
+        }
         else if (editor != nullptr && world != nullptr && inspector != nullptr &&
-                 editor->tool() == Editor::Tool::Water && editor->waterPanelShown() &&
-                 Editor::waterInHand(*world, *inspector).valid()) {
+                 editor->tool() == Editor::Tool::Water && Editor::waterInHand(*world, *inspector).valid()) {
             // **The river first, then the tool**: Escape with a river in hand
             // puts the river down, so the next click starts another; a second
             // Escape puts the tool down.
             editor->finishRiver(*inspector);
         }
-        else if (editor != nullptr && editor->tool() != Editor::Tool::Select) {
+        else if (editor != nullptr && editor->authoring() && editor->heldTool() != Editor::Tool::Select) {
             // **Out of a brush before letting go of anything.** Q did this
             // until it became a fly key, and a brush somebody cannot put down
             // with the key they reach for first is a brush they are stuck in.
+            // The tool held, in hand or at rest: Escape puts it down for good.
             editor->setTool(Editor::Tool::Select);
         }
         else if (editor != nullptr && editor->drilled().valid()) {
@@ -15289,7 +15382,9 @@ terrainPanelDone:;
     // Ctrl+Z and Ctrl+Y, under the same rule Escape is: not while a field has
     // the keyboard, because Ctrl+Z inside a text box is the box's own undo and
     // taking it would make typing a name unrecoverable.
-    if (!ImGui::IsAnyItemActive() && !popupOpen && ImGui::GetIO().KeyCtrl) {
+    // Nor while the game has the keyboard: Ctrl+Z there is the game's.
+    if (!ImGui::IsAnyItemActive() && !popupOpen && ImGui::GetIO().KeyCtrl &&
+        !(editor != nullptr && editor->gameHasKeyboard())) {
         if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
             // Ctrl+Shift+Z is redo everywhere except Windows, and on Windows it
             // is redo as well as Ctrl+Y -- so both work and nobody has to learn
@@ -16386,7 +16481,12 @@ void DebugOverlay::handleEvents(std::span<const platform::Event> events)
 
     for (const platform::Event& event : events) {
         // Repeats excluded: holding F3 down should not strobe the panel.
-        if (event.type == platform::EventType::KeyDown && event.key == platform::Key::F3 && !event.repeat)
+        // **The game's while it has the keyboard** (the Play rule) -- except
+        // to bring the furniture BACK: with it put away the viewport is all
+        // there is, and a key that only worked one way would leave no way
+        // out of the picture but stopping the game.
+        if (event.type == platform::EventType::KeyDown && event.key == platform::Key::F3 && !event.repeat &&
+            (!g_gameHasKeyboard || !visible_))
             visible_ = !visible_;
     }
 }

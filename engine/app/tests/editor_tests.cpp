@@ -41,6 +41,7 @@
 
 using namespace engine;
 using engine::app::Editor;
+using engine::app::EditorCommands;
 using engine::app::EditorPanels;
 using engine::app::GizmoFrame;
 using engine::app::GizmoHandle;
@@ -598,8 +599,11 @@ TEST_CASE("the stack has a floor and drops the oldest rather than growing")
     CHECK(steps == engine::app::UndoStack::Depth);
 }
 
-TEST_CASE("stopping a play session clears the history")
+TEST_CASE("D421: stopping a play session gives back the history it was pressed with")
 {
+    // It cleared it: pressing Play was the end of every undo. The world a
+    // stop restores is the one Play was pressed in, and the steps before it
+    // lead back from exactly that world.
     app::testing::Fixture fixture;
     scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
     Editor editor;
@@ -608,12 +612,92 @@ TEST_CASE("stopping a play session clears the history")
     const core::InstanceId part = fixture.widget(world, "Part");
     REQUIRE(editor.deleteInstance(world, part, {}, inspector));
     REQUIRE(editor.history().canUndo());
+    const core::usize steps = editor.history().depth();
 
     editor.play(world);
+    // Held still while the game runs: Ctrl+Z takes nothing back -- it would
+    // put an editing world into the running one -- and nothing is recorded.
+    CHECK_FALSE(editor.history().canUndo());
+    CHECK_FALSE(editor.undo(world, inspector));
+    CHECK_FALSE(editor.redo(world, inspector));
+    editor.history().record(world, "what a game did");
     editor.stop(world, inspector);
 
-    // The edits before it belong to a world the restore has just replaced.
-    CHECK_FALSE(editor.history().canUndo());
+    CHECK(editor.history().depth() == steps);
+    REQUIRE(editor.undo(world, inspector));
+    CHECK(world.alive(part));
+}
+
+TEST_CASE("D421: nothing done while the game runs marks the scene unsaved")
+{
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    Editor editor;
+    Inspector inspector;
+    REQUIRE_FALSE(editor.sceneDirty());
+
+    editor.play(world);
+    // A property typed into a running game: a look at what it would do,
+    // thrown away at stop, and never the document's.
+    editor.touch();
+    CHECK_FALSE(editor.sceneDirty());
+    editor.stop(world, inspector);
+    CHECK_FALSE(editor.sceneDirty());
+
+    // And unsaved work from before Play is still unsaved after it.
+    editor.touch();
+    REQUIRE(editor.sceneDirty());
+    editor.play(world);
+    editor.stop(world, inspector);
+    CHECK(editor.sceneDirty());
+}
+
+TEST_CASE("D421: a running game refuses every authoring command and keeps the transport")
+{
+    EditorCommands commands;
+    commands.undo = true;
+    commands.redo = true;
+    commands.deleteSelection = true;
+    commands.duplicateSelection = true;
+    commands.groupSelection = true;
+    commands.paste = true;
+    commands.cutSelection = true;
+    commands.insertClassName = "Part";
+    commands.placeStamp = "props/lamp.stamp";
+    commands.placeMesh = "props/lamp.glb";
+    commands.assignMaterialPath = "materials/brick.material";
+    commands.reparentTo = core::InstanceId{4, 1};
+    commands.reorderChild = core::InstanceId{5, 1};
+    commands.renameInstance = core::InstanceId{6, 1};
+    commands.stampSubject = core::InstanceId{7, 1};
+    // What a running game still answers.
+    commands.play = false;
+    commands.pause = true;
+    commands.clearSelection = true;
+    commands.copySelection = true;
+    commands.openScript = core::InstanceId{8, 1};
+
+    CHECK(commands.refuseAuthoring());
+    CHECK_FALSE(commands.mutatesWorld());
+    CHECK_FALSE(commands.undo);
+    CHECK_FALSE(commands.redo);
+    CHECK_FALSE(commands.paste);
+    CHECK(commands.placeStamp.empty());
+    CHECK(commands.placeMesh.empty());
+    CHECK(commands.insertClassName.empty());
+    REQUIRE(commands.play.has_value());
+    CHECK_FALSE(*commands.play);
+    CHECK(commands.pause.has_value());
+    CHECK(commands.clearSelection);
+    CHECK(commands.copySelection);
+    CHECK(commands.openScript.valid());
+    // Nothing left to refuse, and saying so is how the loop reports it once.
+    CHECK_FALSE(commands.refuseAuthoring());
+
+    // A list at rest refuses nothing.
+    EditorCommands none;
+    CHECK_FALSE(none.refuseAuthoring());
+    CHECK_FALSE(EditorCommands::keptInPlay().empty());
 }
 
 TEST_CASE("the engine's own instances cannot be deleted or duplicated")
@@ -7496,4 +7580,245 @@ TEST_CASE("the bed of the river in hand is carved into the ground as one undo st
     REQUIRE(rig.editor.undo(rig.world, rig.inspector));
     CHECK(top(0, 0) == doctest::Approx(0.0).epsilon(0.05));
     CHECK(rig.world.alive(river));
+}
+
+// --- The Play rule (D421) -----------------------------------------------------
+//
+// **While the game runs attached, the viewport and what is typed over it are
+// the game's**, by one answer (`Editor::viewportIsGames`) asked at the pick,
+// the tools, the drain of commands and the event pump -- where there had been
+// a check at each site somebody remembered.
+
+TEST_CASE("D421: in Play a click in the viewport is the game's, and selects nothing")
+{
+    // The owner: "I press play and click an instance by accident, and it is
+    // selected and opened in the workspace".
+    BrushRig rig;
+    rig.lookDown(60.0);
+    const core::InstanceId subject = rig.part({0.0, 0.0, 0.0});
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+
+    rig.editor.play(rig.world);
+    REQUIRE(rig.editor.viewportIsGames());
+    rig.frame(pixel, true, true);
+    CHECK_FALSE(rig.editor.pickPending());
+    rig.frame(pixel, false, false);
+    CHECK_FALSE(rig.inspector.selection().valid());
+    CHECK(rig.inspector.selectionCount() == 0);
+
+    // A pick asked for the frame before Play is the game's by the time it
+    // would be answered.
+    rig.editor.stop(rig.world, rig.inspector);
+    rig.editor.requestPick(pixel);
+    REQUIRE(rig.editor.pickPending());
+    rig.editor.play(rig.world);
+    CHECK_FALSE(rig.editor.resolvePick(rig.world, rig.workspace, rig.inspector).has_value());
+    CHECK_FALSE(rig.inspector.selection().valid());
+
+    // **Ejected, the view is the editor's**: a click selects, to look at
+    // what the game made of something.
+    rig.editor.setCameraDetached(true);
+    REQUIRE_FALSE(rig.editor.viewportIsGames());
+    rig.frame(pixel, true, true);
+    rig.frame(pixel, false, false);
+    CHECK(rig.inspector.selection() == subject);
+    // And still no authoring.
+    CHECK_FALSE(rig.editor.authoring());
+
+    rig.editor.stop(rig.world, rig.inspector);
+    CHECK(rig.editor.authoring());
+    CHECK_FALSE(rig.editor.viewportIsGames());
+}
+
+TEST_CASE("D421: a brush in hand before Play does nothing to the running world")
+{
+    BrushRig rig;
+    rig.lookDown(60.0);
+    rig.editor.setTool(Editor::Tool::Sculpt);
+    rig.editor.setBrushOp(Editor::BrushOp::Subtract);
+    rig.editor.setBrushRadius(4.0f);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.0, 0.0, 0.0});
+
+    rig.editor.play(rig.world);
+    const core::u64 revisionBefore = rig.field().fieldRevision;
+    // At rest, not put down: it is in hand again when the game stops.
+    CHECK(rig.editor.tool() == Editor::Tool::Select);
+    CHECK(rig.editor.heldTool() == Editor::Tool::Sculpt);
+    CHECK_FALSE(rig.frame(pixel, true, true));
+    CHECK_FALSE(rig.editor.sculpting());
+    CHECK_FALSE(rig.editor.brushAim().has_value());
+    rig.frame(pixel, false, false);
+    CHECK(rig.field().fieldRevision == revisionBefore);
+    // Ejected too: looking is not sculpting.
+    rig.editor.setCameraDetached(true);
+    CHECK_FALSE(rig.frame(pixel, true, true));
+    rig.frame(pixel, false, false);
+    CHECK(rig.field().fieldRevision == revisionBefore);
+
+    rig.editor.stop(rig.world, rig.inspector);
+    CHECK(rig.editor.tool() == Editor::Tool::Sculpt);
+    const core::u64 revisionStopped = rig.field().fieldRevision;
+    CHECK(rig.frame(pixel, true, true));
+    rig.frame(pixel, false, false);
+    CHECK(rig.field().fieldRevision > revisionStopped);
+}
+
+TEST_CASE("D421: the game has the keyboard only with the viewport focused and no editor field typed in")
+{
+    app::testing::Fixture fixture;
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    Editor editor;
+    Inspector inspector;
+
+    // Editing: nothing is the game's.
+    editor.setKeyboardHolder(true, false);
+    editor.setPointerOverViewport(true);
+    CHECK_FALSE(editor.gameHasKeyboard());
+    CHECK_FALSE(editor.gameHasPointer());
+
+    editor.play(world);
+    CHECK(editor.gameHasKeyboard());
+    CHECK(editor.gameHasPointer());
+    // Typing in the Console does not move a character.
+    editor.setKeyboardHolder(true, true);
+    CHECK_FALSE(editor.gameHasKeyboard());
+    // The Explorer has the focus: a key there is the Explorer's.
+    editor.setKeyboardHolder(false, false);
+    CHECK_FALSE(editor.gameHasKeyboard());
+    // A click on the Explorer is not seen by the game.
+    editor.setPointerOverViewport(false);
+    CHECK_FALSE(editor.gameHasPointer());
+
+    // Ejected, and paused: the editor's, both.
+    editor.setKeyboardHolder(true, false);
+    editor.setPointerOverViewport(true);
+    editor.setCameraDetached(true);
+    CHECK_FALSE(editor.gameHasKeyboard());
+    CHECK_FALSE(editor.gameHasPointer());
+    editor.setCameraDetached(false);
+    editor.setPaused(true);
+    CHECK_FALSE(editor.viewportIsGames());
+    CHECK_FALSE(editor.gameHasKeyboard());
+    editor.setPaused(false);
+    CHECK(editor.gameHasKeyboard());
+
+    editor.stop(world, inspector);
+    CHECK_FALSE(editor.gameHasKeyboard());
+}
+
+TEST_CASE("D421: the game hears a key only with the keyboard, and a press only over its picture")
+{
+    std::vector<platform::Event> window(8);
+    window[0].type = platform::EventType::KeyDown;
+    window[0].key = platform::Key::Escape;
+    window[1].type = platform::EventType::TextInput;
+    window[2].type = platform::EventType::MouseButtonDown;
+    window[3].type = platform::EventType::MouseWheel;
+    window[4].type = platform::EventType::KeyUp;
+    window[5].type = platform::EventType::MouseButtonUp;
+    window[6].type = platform::EventType::MouseMoved;
+    window[7].type = platform::EventType::GamepadButtonDown;
+    const ViewportRect rect{320.0f, 48.0f, 800.0f, 600.0f};
+    const auto count = [](const std::vector<platform::Event>& events, platform::EventType type) {
+        return std::count_if(events.begin(), events.end(),
+                             [type](const platform::Event& event) { return event.type == type; });
+    };
+
+    // The keyboard is in the Console and the pointer on the Explorer: what
+    // goes DOWN is not the game's, and what comes up always arrives, so
+    // nothing held when the focus left stays held.
+    std::vector<platform::Event> game;
+    app::toViewportEvents(window, rect, game, app::GameInput{.keyboard = false, .pointer = false});
+    CHECK(count(game, platform::EventType::KeyDown) == 0);
+    CHECK(count(game, platform::EventType::TextInput) == 0);
+    CHECK(count(game, platform::EventType::MouseButtonDown) == 0);
+    CHECK(count(game, platform::EventType::MouseWheel) == 0);
+    CHECK(count(game, platform::EventType::KeyUp) == 1);
+    CHECK(count(game, platform::EventType::MouseButtonUp) == 1);
+    CHECK(count(game, platform::EventType::MouseMoved) == 1);
+    CHECK(count(game, platform::EventType::GamepadButtonDown) == 1);
+
+    // The game's: Escape reaches it, and a press on its button is one press.
+    app::toViewportEvents(window, rect, game, app::GameInput{.keyboard = true, .pointer = true});
+    REQUIRE(game.size() == window.size());
+    CHECK(game[0].key == platform::Key::Escape);
+    CHECK(count(game, platform::EventType::MouseButtonDown) == 1);
+
+    // One without the other.
+    app::toViewportEvents(window, rect, game, app::GameInput{.keyboard = true, .pointer = false});
+    CHECK(count(game, platform::EventType::KeyDown) == 1);
+    CHECK(count(game, platform::EventType::MouseButtonDown) == 0);
+}
+
+TEST_CASE("D421: a tool is in hand only while its panel is the one on screen")
+{
+    // The owner: the brush's ring followed the pointer over every other
+    // panel's work. One rule for every tool that has a panel; a tool added to
+    // `Editor::Tool` has to be in `Editor::toolLive`'s switch to compile, and
+    // in this list to pass.
+    struct Panelled
+    {
+        Editor::Tool tool;
+        void (*show)(Editor&, bool);
+    };
+    const std::array<Panelled, 6> Tools{{
+        {Editor::Tool::Sculpt, [](Editor& editor, bool shown) { editor.setTerrainPanelShown(shown); }},
+        {Editor::Tool::Paint, [](Editor& editor, bool shown) { editor.setTerrainPanelShown(shown); }},
+        {Editor::Tool::Foliage, [](Editor& editor, bool shown) { editor.setTerrainPanelShown(shown); }},
+        {Editor::Tool::Blocks, [](Editor& editor, bool shown) { editor.setBlocksPanelShown(shown); }},
+        {Editor::Tool::Tiles, [](Editor& editor, bool shown) { editor.setTilesPanelShown(shown); }},
+        {Editor::Tool::Water, [](Editor& editor, bool shown) { editor.setWaterPanelShown(shown); }},
+    }};
+    for (int value = 0; value <= static_cast<int>(Editor::Tool::Water); ++value) {
+        const auto tool = static_cast<Editor::Tool>(value);
+        if (tool == Editor::Tool::Select)
+            continue;
+        CAPTURE(value);
+        const auto entry =
+            std::find_if(Tools.begin(), Tools.end(), [tool](const Panelled& one) { return one.tool == tool; });
+        REQUIRE((entry != Tools.end()));
+
+        app::testing::Fixture fixture;
+        scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+        Editor editor;
+        Inspector inspector;
+        for (const Panelled& each : Tools)
+            each.show(editor, true);
+        editor.setTool(tool);
+        REQUIRE(editor.tool() == tool);
+
+        // Another panel comes forward: at rest, and not put down.
+        entry->show(editor, false);
+        CHECK(editor.tool() == Editor::Tool::Select);
+        CHECK(editor.heldTool() == tool);
+        // Back to its panel: in hand again.
+        entry->show(editor, true);
+        CHECK(editor.tool() == tool);
+
+        // Play rests it, whatever panel is on screen; Stop gives it back.
+        editor.play(world);
+        CHECK(editor.tool() == Editor::Tool::Select);
+        CHECK(editor.heldTool() == tool);
+        editor.stop(world, inspector);
+        CHECK(editor.tool() == tool);
+    }
+}
+
+TEST_CASE("D421: the Blocks tool at rest places nothing and outlines nothing")
+{
+    // The terrain brush, the Tiles and the Water tools each have this case
+    // beside their own; Blocks had no panel rule at all.
+    BlockRig rig;
+    rig.lookDown(40.0);
+    const core::Vec2 pixel = rig.pixelOf(core::DVec3{0.5, 0.0, 0.5});
+
+    rig.editor.setBlocksPanelShown(false);
+    CHECK_FALSE(rig.blockFrame(pixel, true, true));
+    CHECK_FALSE(rig.blockFrame(pixel, false, false));
+    CHECK_FALSE(rig.editor.blockTarget().has_value());
+    CHECK(rig.grid().get(0, 0, 0) == asset::AirBlock);
+
+    rig.editor.setBlocksPanelShown(true);
+    rig.click(core::DVec3{0.5, 0.0, 0.5});
+    CHECK(rig.grid().get(0, 0, 0) == rig.stone);
 }

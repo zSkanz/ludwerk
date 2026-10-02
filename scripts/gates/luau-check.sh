@@ -217,6 +217,13 @@ lute tools/repo/inertcheck.luau
 echo "== visual code reads drawn positions =="
 lute tools/repo/drawcheck.luau
 
+# **Every editor command says what a running game does with it** (the Play
+# rule): refused at the drain, or named as kept. A click during Play selected
+# what was behind the game's button and Ctrl+Z put an editing world into the
+# running one, at sites that had no check because nobody had thought of them.
+echo "== every editor command decides about Play =="
+lute tools/repo/playlint.luau
+
 # **Every concrete class is a replication decision, and absence is not one.**
 # A class nobody thought about and a class deliberately left off the wire look
 # identical in a schema; this is what makes the difference visible. It also holds

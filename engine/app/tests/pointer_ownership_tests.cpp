@@ -154,3 +154,27 @@ TEST_CASE("a look that is not the editor's own is not a look at all")
     CHECK_FALSE(owned.locked);
     CHECK(owned.visible);
 }
+
+TEST_CASE("D421: a paused game holds no pointer")
+{
+    // A game that locks its pointer, paused: nothing in it is running to give
+    // the cursor back, and the editor's panels could not be reached to look at
+    // what it stopped on.
+    PointerRequest request;
+    request.editorProfile = true;
+    request.editing = false;
+    request.paused = true;
+    request.gameWantsLocked = true;
+    request.gameWantsVisible = false;
+
+    const PointerOwnership owned = decidePointer(request);
+    CHECK_FALSE(owned.locked);
+    CHECK(owned.visible);
+    CHECK_FALSE(owned.gameHoldsPointer);
+
+    // Running again, it is the game's again.
+    request.paused = false;
+    const PointerOwnership running = decidePointer(request);
+    CHECK(running.locked);
+    CHECK(running.gameHoldsPointer);
+}

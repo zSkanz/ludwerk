@@ -697,6 +697,22 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **While the game plays in the editor, the viewport is the game's** (D421).
+  A click selects nothing and opens nothing; no brush, tool, drop or handle
+  works on the running world; Ctrl+Z does nothing; a key typed into the
+  Console or a script, and a click on a panel, do not reach the game; the
+  editor draws none of its markers, grid or guides over it. **Escape is the
+  game's and no longer stops it**: Stop is **Shift+F5** and the toolbar.
+  **Shift+P** ejects -- the editor's camera, a click selects to inspect, and a
+  pointer the game had locked is handed back -- and nothing structural can be
+  changed until Stop. Stop gives back the undo history from before Play, where
+  it cleared it, and leaves the unsaved mark as it was. The viewport wears a
+  border while the game has it.
+- **A tool is in hand only while its panel is the one on screen** (D421): the
+  terrain brush, Blocks, Tiles and Water rest when another tab comes forward
+  or the game plays -- no ring, no chip, and a click selects -- and are in
+  hand again on coming back. An activity-bar icon brings a panel that is
+  behind another tab forward, where it closed it.
 - **A round brush paints a round edge** (D419): a hard `PaintBall` left a
   polygon with teeth a voxel across, and a stroke could leave an unpainted
   speck inside it. The rim of a stamp is now a ramp a voxel wide, so the edge

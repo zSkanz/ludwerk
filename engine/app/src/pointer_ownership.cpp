@@ -12,7 +12,10 @@ PointerOwnership decidePointer(const PointerRequest& request) noexcept
     // fly camera is driven by a right-drag, and a game holding the pointer
     // (D069) means the drag never reaches the editor -- so detaching without
     // this is a camera nobody can turn.
-    const bool editorOwns = request.editorProfile && (request.editing || request.cameraDetached);
+    //
+    // **And a paused game holds nothing**: a pointer locked by a game that is
+    // not running is a cursor nobody can get back without stopping.
+    const bool editorOwns = request.editorProfile && (request.editing || request.paused || request.cameraDetached);
 
     // **While turning, the pointer is hidden and HELD.** That is SDL's relative
     // mode, and holding is what puts the cursor back where the button went down

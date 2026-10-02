@@ -144,9 +144,29 @@ namespace {
 } // namespace
 
 void toViewportEvents(std::span<const platform::Event> events, const ViewportRect& viewport,
-                      std::vector<platform::Event>& out)
+                      std::vector<platform::Event>& out, GameInput heard)
 {
-    out.assign(events.begin(), events.end());
+    out.clear();
+    out.reserve(events.size());
+    for (const platform::Event& event : events) {
+        switch (event.type) {
+        case platform::EventType::KeyDown:
+        case platform::EventType::TextInput:
+        case platform::EventType::TextEditing:
+            if (!heard.keyboard)
+                continue;
+            break;
+        case platform::EventType::MouseButtonDown:
+        case platform::EventType::MouseWheel:
+        case platform::EventType::FingerDown:
+            if (!heard.pointer)
+                continue;
+            break;
+        default:
+            break;
+        }
+        out.push_back(event);
+    }
     for (platform::Event& event : out) {
         if (event.type == platform::EventType::MouseMoved || event.type == platform::EventType::MouseButtonDown ||
             event.type == platform::EventType::MouseButtonUp || event.type == platform::EventType::MouseWheel ||

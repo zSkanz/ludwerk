@@ -226,7 +226,7 @@ core::u64 Editor::carveWater(scene::World& world, core::InstanceId root, Inspect
 bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& inspector)
 {
     m_waterGuide = WaterGuide{};
-    if (m_tool != Tool::Water || !m_waterPanelShown || !root.valid() || !world.alive(root)) {
+    if (tool() != Tool::Water || !root.valid() || !world.alive(root)) {
         m_waterGesture.reset();
         return false;
     }

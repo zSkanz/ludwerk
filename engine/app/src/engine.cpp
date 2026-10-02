@@ -2474,6 +2474,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // Not const: a Save the unsaved-changes dialog asked for is taken off it once
                 // done, before the scene change it guarded (see below).
                 EditorCommands editorCommands = overlay->takeCommands();
+                // **A running game takes no authoring** (the Play rule), and it
+                // is refused here, once, for every panel, key and menu that
+                // could have asked (`EditorCommands::refuseAuthoring`).
+                if (!editor.authoring() && editorCommands.refuseAuthoring())
+                    editor.report(core::tr(ENG_TR("engine.editor.status.stop_the_game_to_change")), true);
                 if (editorCommands.play.has_value()) {
                     if (*editorCommands.play) {
                         const bool wasEditing = editing(editor.runState());
@@ -4345,6 +4350,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             const PointerOwnership pointer = decidePointer({
                 .editorProfile = options.editor,
                 .editing = editing(editor.runState()),
+                .paused = editor.runState() == RunState::Paused,
                 .cameraDetached = editor.cameraDetached(),
                 .lookActive = editor.lookInput().active,
                 .gameWantsLocked = engineState.pointerLocked,
@@ -4569,8 +4575,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         //
         // A wire sphere at the marker's own pick radius, so what is drawn is
         // exactly what is clickable. Editor only: a running game draws its own
-        // world and has no business showing the author's furniture.
-        if (options.editor) {
+        // world and has no business showing the author's furniture -- and not
+        // over the game's own view either (`Editor::viewportIsGames`).
+        if (options.editor && !editor.viewportIsGames()) {
             static std::vector<PickMarker> markers;
             collectPickMarkers(host->world(), authoredRoot(), markers, &framePoses);
             for (const PickMarker& marker : markers) {
@@ -4613,7 +4620,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // you can see and a snap you cannot are two grids, and the one that
         // catches is the invisible one. On the y = 0 plane, which is where a
         // world's floor is until somebody decides otherwise.
-        if (overlay.has_value() && overlay->panels().showGrid) {
+        if (overlay.has_value() && overlay->panels().showGrid && !editor.viewportIsGames()) {
             drawReferenceGrid(editor.cameraCFrame().position, 0.0, editor.snapStep(GizmoMode::Translate), debugDraw);
         }
 
@@ -4723,23 +4730,39 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // **Not while the view is detached**: the fly keys are the editor's
             // then, and a character walking off on the same WASD that flies
             // the camera is two things answering one key.
-            const bool gameTakesInput = !options.editor || (editor.inPlayMode() && !editor.cameraDetached());
-            if (gameTakesInput) {
-                // In the editor, the game's pointer is the viewport's (see
-                // `toViewportEvents`): scripts, the UI and the canvases in the
-                // world all read it after this.
-                if (options.editor) {
-                    static std::vector<platform::Event> viewportEvents;
-                    toViewportEvents(events, editor.viewport(), viewportEvents);
+            //
+            // **One answer** (`Editor::viewportIsGames`), which a paused game
+            // is not either: nothing in it is running to hear a key.
+            const bool gameTakesInput = !options.editor || editor.viewportIsGames();
+            // What the game hears this frame: everything in a player, and in
+            // the editor only what is the game's -- its InputService and its
+            // own interface read the same list, below.
+            std::span<const platform::Event> heard = events;
+            if (options.editor) {
+                static std::vector<platform::Event> viewportEvents;
+                viewportEvents.clear();
+                if (gameTakesInput) {
+                    // In the editor, the game's pointer is the viewport's (see
+                    // `toViewportEvents`): scripts, the UI and the canvases in
+                    // the world all read it after this. A pointer the game
+                    // holds is the game's wherever the cursor was left.
+                    toViewportEvents(events, editor.viewport(), viewportEvents,
+                                     GameInput{.keyboard = editor.gameHasKeyboard(),
+                                               .pointer = editor.gameHasPointer() || pointerLocked});
                     host->pumpInput(viewportEvents);
                 }
                 else {
-                    host->pumpInput(events);
+                    // Nothing pressed in the editor is a press in the game's
+                    // interface, and nothing it held stays held.
+                    uiPointerDown = false;
                 }
+                heard = viewportEvents;
             }
-            else if (gameHadInput) {
+            else {
+                host->pumpInput(events);
+            }
+            if (!gameTakesInput && gameHadInput)
                 host->input().releaseAll(host->world());
-            }
             gameHadInput = gameTakesInput;
 
             // The UI's own reading of the same events. Gathered here rather
@@ -4760,7 +4783,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiPressEvent = false;
             uiReleaseEvent = false;
             uiReleaseFirst = false;
-            for (const platform::Event& event : events) {
+            for (const platform::Event& event : heard) {
                 switch (event.type) {
                 case platform::EventType::MouseButtonDown:
                     if (event.button == platform::MouseButton::Left) {
@@ -5383,8 +5406,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
             // After the rebase and not before it, because these are already in
             // the space it converts to -- see `submitSelection`. Everything the
-            // editor draws over the world goes here for the same reason.
-            if (options.editor) {
+            // editor draws over the world goes here for the same reason -- and
+            // none of it over the game's own view (`Editor::viewportIsGames`):
+            // no box, no ring, no guide.
+            if (options.editor && !editor.viewportIsGames()) {
                 // **The wire box only when nothing else marks the selection.**
                 // The renderer outlines a selected part along its own
                 // silhouette; a box drawn over that, with a margin of 1% of the
