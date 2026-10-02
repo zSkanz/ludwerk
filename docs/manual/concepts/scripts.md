@@ -97,6 +97,17 @@ which is what a new script is.
   when the package was made.
 - **In the editor, Play is solo**, so every script runs, once.
 
+**A scene's client code starts with the world it is in.** The scripts in
+`ClientScriptService` start fresh every time this machine's world is replaced:
+when a join succeeds and the server's scene is now the world, and when a match
+ends and the machine is solo again. While a join is being asked for they are
+not running at all -- `NetworkService.State` is `Connecting` -- so a client
+script never sees a `LocalPlayer` that has no `UserId` yet, and never has to
+wait for `Connected` to find out who it is. Code that has to live ACROSS a
+join -- a connect screen, a "reconnecting" banner, the thing that calls `Join`
+again -- belongs in `GlobalScriptService.Client`, which keeps its variables and
+its connections and hears `Connected`, `JoinFailed` and `Disconnected`.
+
 **A stamp can carry both halves.** A door stamp holds a `Server` script -- does
 it open, does the player hold the key -- and a `Client` script -- the creak,
 the "press E" -- side by side. Each package carries only its own half's code:

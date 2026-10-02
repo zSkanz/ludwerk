@@ -45,7 +45,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     const scene::ClassId instanceClass = classes.findId(atoms.intern("Instance"));
 
     // --- ScreenGui ---
-    static std::array<scene::PropertyDesc, 4> screenGuiProperties;
+    static std::array<scene::PropertyDesc, 5> screenGuiProperties;
     screenGuiProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -68,6 +68,17 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getScreenGuiDisplayOrder,
             .set = native::setScreenGuiDisplayOrder,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ReferenceHeight"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The height of the window this tree was laid out for, or 0 for pixels. With one set, every offset, text size, corner and stroke under it is in units of a window that tall, and the engine scales the whole tree to the window it has -- so a layout drawn for a 720-line monitor takes the same share of a phone with twice the lines, where in pixels it would be half its size. The width follows: the window is as many units wide as its shape gives that height, so anchor to edges with `Scale` and size with `Offset`. `AbsolutePosition` and `AbsoluteSize` stay in window pixels. 720 suits a layout drawn on a desktop.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getScreenGuiReferenceHeight,
+            .set = native::setScreenGuiReferenceHeight,
         },
         scene::PropertyDesc{
             .name = atoms.intern("ScreenInsets"),
@@ -122,11 +133,10 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
         scene::PropertyDesc{
             .name = atoms.intern("Adornee"),
             .type = scene::ValueType::Instance,
-            .instanceClass = atoms.intern("BasePart"),
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "The part it hangs over. Empty means its parent, when its parent is a part; a billboard with neither is not drawn.",
+            .doc = "The part it hangs over: a part in the world, or a `Part2D` on the plane -- a name over a sprite, a health bar over a monster. Empty means its parent, when its parent is one of those; a billboard with neither is not drawn.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
             .get = native::getBillboardGuiAdornee,
             .set = native::setBillboardGuiAdornee,
@@ -193,7 +203,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     billboardGuiDesc.flags = scene::ClassFlags::None;
     billboardGuiDesc.defaultName = atoms.intern("BillboardGui");
     billboardGuiDesc.doc = "A UI tree hung in the world and turned to face the camera (F3): a name over a head, a health bar over a crate, a marker on an objective. Its children are laid out exactly as a `ScreenGui`'s are, against a canvas of `Size`, and drawn IN the world -- behind what is in front of it, in the same light as the picture around it -- rather than over it.\012\012It hangs over `Adornee`, or over its parent when that is a part and `Adornee` is empty. Its buttons are pressed like the screen's: the pointer's ray finds them in the world, and something solid in front hides them unless `AlwaysOnTop` is set. A screen element over the same pixel wins.";
-    static constexpr std::array<std::string_view, 4> billboardGuiParents{{"BasePart", "Attachment", "ReplicatedStorage", "ServerStorage"}};
+    static constexpr std::array<std::string_view, 5> billboardGuiParents{{"BasePart", "Attachment", "Part2D", "ReplicatedStorage", "ServerStorage"}};
     billboardGuiDesc.parents = billboardGuiParents;
     billboardGuiDesc.properties = billboardGuiProperties;
     billboardGuiDesc.attachComponents = native::attachBillboardGuiComponents;
@@ -1451,7 +1461,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(uIStrokeDesc);
 
     // --- UIService ---
-    static std::array<scene::PropertyDesc, 3> uIServiceProperties;
+    static std::array<scene::PropertyDesc, 4> uIServiceProperties;
     uIServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("SafeAreaInsets"),
@@ -1464,6 +1474,19 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "How far in from each window edge it is safe to draw, in pixels -- what a notch, a rounded corner or a system gesture bar takes away. Zero on a desktop window, which is why a HUD that ignores it looks fine until it does not.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_rect"),
             .get = native::getUIServiceSafeAreaInsets,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ViewportSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The size of what the interface is drawn into, in pixels: the window in a game, the Viewport panel in the editor. What `AbsolutePosition` and the pointer are measured in, and what a `ScreenGui.ReferenceHeight` is scaled to.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUIServiceViewportSize,
             .set = nullptr,
         },
         scene::PropertyDesc{

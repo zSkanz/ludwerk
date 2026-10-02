@@ -1488,6 +1488,21 @@ declare extern type Camera extends PVInstance with
     --- window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend
     --- on when a frame happened. A camera that follows this reads it.
     function GetRenderCFrame(self): CFrame
+    --- Where a point in the world is in the picture: its place in pixels from the top-left of what the
+    --- world is drawn into -- the unit `UIObject.AbsolutePosition` and
+    --- `InputService:GetPointerPosition` use -- then how far in front of the camera it is, in metres,
+    --- then whether it is on the screen. The place is meaningful past the edges, so an arrow at the
+    --- border can point at it; with a depth of zero or less the point is beside or behind a perspective
+    --- camera and the place means nothing. For either projection. A `ScreenGui` that places things by
+    --- it wants `ScreenInsets = false`, or they are off by the notch.
+    function WorldToViewportPoint(self, position: vector): (Vector2, number, boolean)
+    --- The ray a pixel looks along, as an origin and a direction of length one: what to give
+    --- `Workspace:Raycast` to find what is under the pointer. From the camera through the pixel for a
+    --- perspective camera; straight ahead from the pixel's own place for an orthographic one.
+    function ViewportPointToRay(self, point: Vector2): (vector, vector)
+    --- Where a pixel is on the 2D plane: the place a tap or a click points at in a 2D game, to compare
+    --- with a `Part2D.Position`. Nil when the camera looks along the plane or away from it.
+    function ViewportPointToWorld2D(self, point: Vector2): Vector2?
 end
 
 declare extern type PointLight extends Instance with
@@ -1890,6 +1905,14 @@ declare extern type ScreenGui extends Instance with
     --- Which ScreenGui draws on top when two overlap, highest last. `ZIndex` orders WITHIN a tree and
     --- this orders BETWEEN trees, so a HUD and a modal never have to agree on a shared numbering.
     DisplayOrder: number
+    --- The height of the window this tree was laid out for, or 0 for pixels. With one set, every
+    --- offset, text size, corner and stroke under it is in units of a window that tall, and the engine
+    --- scales the whole tree to the window it has -- so a layout drawn for a 720-line monitor takes the
+    --- same share of a phone with twice the lines, where in pixels it would be half its size. The width
+    --- follows: the window is as many units wide as its shape gives that height, so anchor to edges
+    --- with `Scale` and size with `Offset`. `AbsolutePosition` and `AbsoluteSize` stay in window
+    --- pixels. 720 suits a layout drawn on a desktop.
+    ReferenceHeight: number
     --- Whether this tree lays out inside `UIService.SafeAreaInsets` rather than against the whole
     --- window. On by default: a full-bleed background is the exception and a HUD clipped by a notch is
     --- the failure.
@@ -1903,9 +1926,10 @@ end
 declare extern type BillboardGui extends Instance with
     --- Whether it is laid out and drawn at all.
     Enabled: boolean
-    --- The part it hangs over. Empty means its parent, when its parent is a part; a billboard with
-    --- neither is not drawn.
-    Adornee: BasePart?
+    --- The part it hangs over: a part in the world, or a `Part2D` on the plane -- a name over a sprite,
+    --- a health bar over a monster. Empty means its parent, when its parent is one of those; a
+    --- billboard with neither is not drawn.
+    Adornee: (BasePart | Part2D)?
     --- How big it is. **The scale is in metres and the offset in pixels**, and the two mean different
     --- things: a scale keeps its size in the world, so it shrinks with distance like anything else
     --- there; an offset keeps its size on the screen, so a name tag is as readable across the map as up
@@ -2805,6 +2829,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
+    function GetService(self, name: "CryptoService"): CryptoService
     function GetService(self, name: "TeamService"): TeamService
     function GetService(self, name: "ContentProvider"): ContentProvider
     function GetService(self, name: "ProximityPromptService"): ProximityPromptService
@@ -2991,6 +3016,43 @@ declare extern type SaveService extends Instance with
     function DeleteSlot(self, name: string): ()
 end
 
+declare extern type CryptoService extends Instance with
+    --- A buffer of `count` bytes from the operating system's generator -- a key, a salt, a token. A
+    --- whole number from 0 to 1048576.
+    function RandomBytes(self, count: number): buffer
+    --- A whole number from `min` to `max`, both included, every one as likely as the next, that nobody
+    --- can predict: a room code, a seed for a `Random` that must differ each run. Both are whole
+    --- numbers and `min` is no more than `max`.
+    function RandomInteger(self, min: number, max: number): number
+    --- A new identifier no other call will ever return, here or on any machine: a version-4 UUID in
+    --- lower case, `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`. 122 random bits, so it serves as a session
+    --- token as well as a name.
+    function UniqueId(self): string
+    --- The SHA-256 of `data`'s bytes, as 64 lower-case hexadecimal characters. A fingerprint: the same
+    --- bytes give the same answer everywhere. **Not for a password** -- it is fast, and a fast hash of
+    --- a password is guessed at billions of tries a second; that is what `HashPasswordAsync` is for.
+    function Sha256(self, data: string | buffer): string
+    --- The HMAC-SHA-256 of `data` under `key`, as 64 lower-case hexadecimal characters: a signature
+    --- only a holder of the key can make or check. What a server signs a token with, and what most web
+    --- services sign a request with. Compare one with `SecureEquals`.
+    function HmacSha256(self, key: string | buffer, data: string | buffer): string
+    --- Whether `a` and `b` are the same bytes, taking the same time whether they differ at the first
+    --- byte or the last. What a token or a signature from outside is compared with: `==` stops at the
+    --- first difference, and how long it took tells a guesser how much of the guess was right.
+    function SecureEquals(self, a: string | buffer, b: string | buffer): boolean
+    --- A hash of `password` to store in its place -- yields while it is made, on a thread of its own,
+    --- so a server's tick does not wait for it. Argon2id, salted with bytes of its own choosing and
+    --- slow on purpose (tens of milliseconds, 64 MiB), so a stolen table cannot be guessed quickly. The
+    --- same password hashed twice gives two different strings; check one with `VerifyPasswordAsync`,
+    --- never with `==`. The answer is a line of text that carries its own salt and cost
+    --- (`$argon2id$v=19$m=65536,t=2,p=1$...`, under 128 characters): store it whole. A password is at
+    --- most 1024 bytes. Requests are hashed one at a time, in the order they came.
+    function HashPasswordAsync(self, password: string): string
+    --- Whether `password` is the one `hash` was made from by `HashPasswordAsync` -- yields while it is
+    --- checked, as that does. False for a `hash` that is not one of its.
+    function VerifyPasswordAsync(self, password: string, hash: string): boolean
+end
+
 declare extern type TeamService extends Instance with
     --- Every team under this service, in child order.
     function GetTeams(self): { Team }
@@ -3173,14 +3235,24 @@ declare extern type Player extends Instance with
     --- the fewest players -- ties to the first -- or on none when there is no such team.
     Team: Team?
     --- The part that is this player in the world -- a `CharacterBody`, a racer, whatever the game moves
-    --- for them. **The authority's game sets it**, and every replica learns it: each machine's `Player`
-    --- for someone points at that machine's copy of their part. It is what the engine knows about
-    --- ownership, and it decides three things. A replica PREDICTS its own player's character -- the
-    --- local scripts move it at once, and the authority's snapshots correct it rather than overwrite it
-    --- -- and draws everyone else's between snapshots. And the authority sends each replica only what
-    --- is near that replica's character, out to `StreamingService.LoadRadius`; a player with no
-    --- character is sent everything.
+    --- for them; a hero on the 2D plane is `Character2D`. **The authority's game sets it**, and every
+    --- replica learns it: each machine's `Player` for someone points at that machine's copy of their
+    --- part. It is what the engine knows about ownership, and it decides three things. A replica
+    --- PREDICTS its own player's character -- the local scripts move it at once, and the authority's
+    --- snapshots correct it rather than overwrite it -- and draws everyone else's between snapshots.
+    --- And the authority sends each replica only what is near that replica's character, out to
+    --- `StreamingService.LoadRadius`; a player with no character is sent everything.
     Character: BasePart?
+    --- The `Part2D` that is this player on the plane: `Character` for a 2D game, and the same one thing
+    --- -- a player has one character, so setting either replaces the other, and each reads nil while
+    --- the other kind is set. Two properties so that each is typed as what it holds: a 3D game reads a
+    --- `BasePart` and a 2D game a `Part2D`, and neither has to say which. It decides the same things.
+    --- The authority sends each replica what is near its character. And its own player's machine does
+    --- not draw it from the past: whatever that machine's scripts did to the sprite is kept, the
+    --- authority's snapshots correct it by the difference, and a client that steps it with the code the
+    --- server steps it with is never corrected at all (the multiplayer guide shows the pattern). A
+    --- client that moves nothing has it at the newest snapshot.
+    Character2D: Part2D?
     --- What this player's input action of that name reads this tick, in the currency
     --- `InputAction:GetState` uses: a boolean, a number, a `Vector2` or a `vector`. For the player at
     --- this machine it is this machine's own action; for a remote one it is what their machine sent. An
@@ -3526,6 +3598,10 @@ declare extern type UIService extends Instance with
     --- or a system gesture bar takes away. Zero on a desktop window, which is why a HUD that ignores it
     --- looks fine until it does not.
     read SafeAreaInsets: Rect
+    --- The size of what the interface is drawn into, in pixels: the window in a game, the Viewport
+    --- panel in the editor. What `AbsolutePosition` and the pointer are measured in, and what a
+    --- `ScreenGui.ReferenceHeight` is scaled to.
+    read ViewportSize: Vector2
     --- The window's pixel density relative to its logical size: 2 on a doubled display. UI coordinates
     --- are in PIXELS, so this is what a game multiplies by when it wants a measurement to mean the same
     --- physical size on two screens.
@@ -3871,6 +3947,18 @@ declare Enum: {
         KeypadPlus: EnumKeyCode,
         KeypadEnter: EnumKeyCode,
         KeypadEquals: EnumKeyCode,
+        Virtual5: EnumKeyCode,
+        Virtual6: EnumKeyCode,
+        Virtual7: EnumKeyCode,
+        Virtual8: EnumKeyCode,
+        Virtual9: EnumKeyCode,
+        Virtual10: EnumKeyCode,
+        Virtual11: EnumKeyCode,
+        Virtual12: EnumKeyCode,
+        Virtual13: EnumKeyCode,
+        Virtual14: EnumKeyCode,
+        Virtual15: EnumKeyCode,
+        Virtual16: EnumKeyCode,
         GetEnumItems: (self: any) -> { EnumKeyCode },
     },
     InputActionType: {

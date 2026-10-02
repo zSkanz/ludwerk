@@ -407,9 +407,11 @@ local Definition: Schema.Definition = {
                         .. "be a second input model, and the recorded stream would not contain it.\n\n**It "
                         .. "carries a VALUE and not a press.** A button writes 1 and 0; a slider writes anything "
                         .. "between. Bound to a `Bool` action it counts as pressed past half deflection, which "
-                        .. "is the rule every analogue source here follows.\n\nFour of them, because a touch "
-                        .. "scheme is a thumbstick and two or three buttons and four is one more than that. They "
-                        .. "are numbered rather than named for a purpose, because the purpose is the game's.",
+                        .. "is the rule every analogue source here follows.\n\nSixteen of them, `Virtual1` to "
+                        .. "`Virtual16`: the first four are also the halves of the two virtual sticks, and the "
+                        .. "rest are for the buttons a phone's HUD grows -- an action game's skill bar ran out "
+                        .. "of four on its first screen (D443). They are numbered rather than named for a "
+                        .. "purpose, because the purpose is the game's.",
                 },
                 { Name = "Virtual2", Value = 98 },
                 { Name = "Virtual3", Value = 99 },
@@ -467,6 +469,24 @@ local Definition: Schema.Definition = {
                 { Name = "KeypadPlus", Value = 133 },
                 { Name = "KeypadEnter", Value = 134 },
                 { Name = "KeypadEquals", Value = 135 },
+                {
+                    Name = "Virtual5",
+                    Value = 136,
+                    Doc = "**The rest of the virtual keys, appended** (D443): `Virtual5` to `Virtual16`, at "
+                        .. "the END of the enum so that no item a game already compares by value moves. Each is "
+                        .. "what `Virtual1` is; none is half of a stick.",
+                },
+                { Name = "Virtual6", Value = 137 },
+                { Name = "Virtual7", Value = 138 },
+                { Name = "Virtual8", Value = 139 },
+                { Name = "Virtual9", Value = 140 },
+                { Name = "Virtual10", Value = 141 },
+                { Name = "Virtual11", Value = 142 },
+                { Name = "Virtual12", Value = 143 },
+                { Name = "Virtual13", Value = 144 },
+                { Name = "Virtual14", Value = 145 },
+                { Name = "Virtual15", Value = 146 },
+                { Name = "Virtual16", Value = 147 },
             } :: { Schema.EnumItem },
         },
         {

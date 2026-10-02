@@ -21,6 +21,7 @@ engine_add_module(scene
         src/world.cpp
         src/world_hash.cpp
         src/wind.cpp
+        src/camera_view.cpp
         src/world_snapshot.cpp
         src/scene_file.cpp
         src/json_slice.cpp
@@ -75,6 +76,7 @@ engine_add_module_tests(scene
         tests/class_registry_tests.cpp
         tests/enum_registry_tests.cpp
         tests/world_tests.cpp
+        tests/camera_view_tests.cpp
         tests/world_snapshot_tests.cpp
         tests/material_world_tests.cpp
         tests/scene_file_tests.cpp

@@ -800,6 +800,54 @@ TEST_CASE("losing focus clears a virtual press")
     CHECK_FALSE(fixture.system.isKeyDown(fixture.keyCode("Virtual1")));
 }
 
+TEST_CASE("D443: there are sixteen virtual keys, and the twelve after the fourth are keys like the first")
+{
+    // An action game's HUD on a phone: a stick, a jump, and a skill bar. Four
+    // channels were the stick and two buttons, and the fifth button had
+    // nothing to write to.
+    Fixture fixture;
+    const InstanceId context = fixture.context();
+    const InstanceId skill = fixture.action(context, input::ActionType::Bool);
+    fixture.world->inputBindings().find(fixture.binding(skill))->keyCode = fixture.keyCode("Virtual16");
+    const InstanceId dodge = fixture.action(context, input::ActionType::Bool);
+    fixture.world->inputBindings().find(fixture.binding(dodge))->keyCode = fixture.keyCode("Virtual5");
+
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    CHECK_FALSE(fixture.state(skill).pressed);
+
+    fixture.system.setVirtualState(fixture.keyCode("Virtual16"), 1.0f);
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    CHECK(fixture.state(skill).pressed);
+    // Its own key: the one beside it is not down.
+    CHECK_FALSE(fixture.state(dodge).pressed);
+
+    fixture.system.setVirtualState(fixture.keyCode("Virtual16"), 0.0f);
+    fixture.system.setVirtualState(fixture.keyCode("Virtual5"), 1.0f);
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    CHECK_FALSE(fixture.state(skill).pressed);
+    CHECK(fixture.state(dodge).pressed);
+
+    // Named, so a recorded stream carries them; virtual, so a script may
+    // write them and they report the touch family; and where a game that
+    // compares codes by value left the old ones.
+    int count = 0;
+    for (int number = 1; number <= 16; ++number) {
+        const std::string name = "Virtual" + std::to_string(number);
+        CAPTURE(name);
+        const core::i32 code = fixture.keyCode(name.c_str());
+        CHECK(input::keyCodeFromName(name) == code);
+        CHECK(input::keyCodeName(code) == name);
+        CHECK(input::isVirtual(code));
+        CHECK(input::deviceOf(code) == input::DeviceType::Touch);
+        ++count;
+    }
+    CHECK(count == 16);
+    CHECK(fixture.keyCode("Virtual1") == 97);
+    CHECK(fixture.keyCode("Virtual4") == 100);
+    CHECK(fixture.keyCode("Minus") == 103);
+    CHECK(fixture.keyCode("Virtual5") == 136);
+}
+
 TEST_CASE("the virtual codes round-trip through their names")
 {
     // The recorded stream is written in names, so a code with no name is a code
@@ -864,6 +912,72 @@ TEST_CASE("two fingers begin, move and end on their own, each with its TouchId")
     REQUIRE(ended.size() == 1);
     CHECK(ended[0].phase == input::RawInputEvent::Phase::Ended);
     CHECK(ended[0].touchId == 2);
+}
+
+TEST_CASE("D444: a finger that came down on the interface says so, from its Began to its Ended")
+{
+    // A game that aims by tapping the world and has buttons on the screen:
+    // a click on a button said `processed`, and a tap on the same button did
+    // not -- so every tap on the HUD also fired at whatever was behind it.
+    Fixture fixture;
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    (void)rawOf(fixture);
+
+    // Two fingers; the host says the first landed on the interface.
+    const platform::Event down[] = {finger(platform::EventType::FingerDown, 70, 100.0f, 900.0f),
+                                    finger(platform::EventType::FingerDown, 71, 2000.0f, 900.0f)};
+    fixture.system.pumpFrame(down);
+    fixture.system.setFingerTakenByUi(70);
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    std::vector<input::RawInputEvent> began = rawOf(fixture);
+    REQUIRE(began.size() == 2);
+    CHECK(began[0].touchId == 1);
+    CHECK(began[0].uiConsumed);
+    CHECK_FALSE(began[1].uiConsumed);
+
+    // Its drag is the interface's too -- a slider under a thumb.
+    const platform::Event slide[] = {finger(platform::EventType::FingerMoved, 70, 160.0f, 900.0f),
+                                     finger(platform::EventType::FingerMoved, 71, 2010.0f, 900.0f)};
+    fixture.system.pumpFrame(slide);
+    fixture.system.dispatchSimTick(*fixture.world, 3);
+    std::vector<input::RawInputEvent> moved = rawOf(fixture);
+    REQUIRE(moved.size() == 2);
+    CHECK(moved[0].uiConsumed);
+    CHECK_FALSE(moved[1].uiConsumed);
+
+    const platform::Event lift[] = {finger(platform::EventType::FingerUp, 70, 160.0f, 900.0f)};
+    fixture.system.pumpFrame(lift);
+    fixture.system.dispatchSimTick(*fixture.world, 4);
+    std::vector<input::RawInputEvent> ended = rawOf(fixture);
+    REQUIRE(ended.size() == 1);
+    CHECK(ended[0].phase == input::RawInputEvent::Phase::Ended);
+    CHECK(ended[0].uiConsumed);
+
+    // **The claim was the press's, not the finger's**: the same finger down
+    // again, on the world this time, is the game's.
+    const platform::Event again[] = {finger(platform::EventType::FingerDown, 70, 500.0f, 500.0f)};
+    fixture.system.pumpFrame(again);
+    fixture.system.dispatchSimTick(*fixture.world, 5);
+    std::vector<input::RawInputEvent> second = rawOf(fixture);
+    REQUIRE(second.size() == 1);
+    CHECK(second[0].phase == input::RawInputEvent::Phase::Began);
+    CHECK_FALSE(second[0].uiConsumed);
+
+    // A tap shorter than a frame, on a button: both of its events say so.
+    const platform::Event tap[] = {finger(platform::EventType::FingerDown, 9, 50.0f, 50.0f),
+                                   finger(platform::EventType::FingerUp, 9, 50.0f, 50.0f)};
+    fixture.system.pumpFrame(tap);
+    fixture.system.setFingerTakenByUi(9);
+    fixture.system.dispatchSimTick(*fixture.world, 6);
+    std::vector<input::RawInputEvent> tapBegan = rawOf(fixture);
+    REQUIRE(tapBegan.size() == 1);
+    CHECK(tapBegan[0].uiConsumed);
+    fixture.system.pumpFrame({});
+    fixture.system.dispatchSimTick(*fixture.world, 7);
+    std::vector<input::RawInputEvent> tapEnded = rawOf(fixture);
+    REQUIRE(tapEnded.size() == 1);
+    CHECK(tapEnded[0].phase == input::RawInputEvent::Phase::Ended);
+    CHECK(tapEnded[0].uiConsumed);
 }
 
 TEST_CASE("a tap shorter than a frame still begins and ends")

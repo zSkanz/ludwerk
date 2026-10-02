@@ -344,7 +344,7 @@ Items are analogue or digital, and mixing them is the one mistake this enum make
 | `RightTrigger` | 94 | The right trigger, 0 released to 1 fully pulled. |
 | `LeftThumbstick` | 95 | The left stick as a Vector2, both axes at once -- the source a Direction2D action binds for movement. The individual axes are LeftStickX and LeftStickY. |
 | `RightThumbstick` | 96 | The right stick as a Vector2. |
-| `Virtual1` | 97 | A source that is not hardware, written by `InputService:SetVirtualState` (§2.4). It is a KeyCode like any other, so it binds, sinks, resolves and REPLAYS like any other -- which is the whole point: a HUD button that fed an action through a side door would be a second input model, and the recorded stream would not contain it.<br><br>**It carries a VALUE and not a press.** A button writes 1 and 0; a slider writes anything between. Bound to a `Bool` action it counts as pressed past half deflection, which is the rule every analogue source here follows.<br><br>Four of them, because a touch scheme is a thumbstick and two or three buttons and four is one more than that. They are numbered rather than named for a purpose, because the purpose is the game's. |
+| `Virtual1` | 97 | A source that is not hardware, written by `InputService:SetVirtualState` (§2.4). It is a KeyCode like any other, so it binds, sinks, resolves and REPLAYS like any other -- which is the whole point: a HUD button that fed an action through a side door would be a second input model, and the recorded stream would not contain it.<br><br>**It carries a VALUE and not a press.** A button writes 1 and 0; a slider writes anything between. Bound to a `Bool` action it counts as pressed past half deflection, which is the rule every analogue source here follows.<br><br>Sixteen of them, `Virtual1` to `Virtual16`: the first four are also the halves of the two virtual sticks, and the rest are for the buttons a phone's HUD grows -- an action game's skill bar ran out of four on its first screen (D443). They are numbered rather than named for a purpose, because the purpose is the game's. |
 | `Virtual2` | 98 |  |
 | `Virtual3` | 99 |  |
 | `Virtual4` | 100 |  |
@@ -383,6 +383,18 @@ Items are analogue or digital, and mixing them is the one mistake this enum make
 | `KeypadPlus` | 133 |  |
 | `KeypadEnter` | 134 |  |
 | `KeypadEquals` | 135 |  |
+| `Virtual5` | 136 | **The rest of the virtual keys, appended** (D443): `Virtual5` to `Virtual16`, at the END of the enum so that no item a game already compares by value moves. Each is what `Virtual1` is; none is half of a stick. |
+| `Virtual6` | 137 |  |
+| `Virtual7` | 138 |  |
+| `Virtual8` | 139 |  |
+| `Virtual9` | 140 |  |
+| `Virtual10` | 141 |  |
+| `Virtual11` | 142 |  |
+| `Virtual12` | 143 |  |
+| `Virtual13` | 144 |  |
+| `Virtual14` | 145 |  |
+| `Virtual15` | 146 |  |
+| `Virtual16` | 147 |  |
 
 ## Enum.LineJoinMode
 

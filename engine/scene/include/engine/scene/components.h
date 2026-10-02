@@ -1252,21 +1252,29 @@ public:
         m_byDue.emplace(due, at);
     }
 
-    // Removes and returns what is due by `tick`, in position order, at most
-    // `budget` of them; the rest stay due.
+    // Removes and returns what is due by `tick`, at most `budget` of them --
+    // the ones that have waited longest, and among those the lowest positions
+    // -- in position order; the rest stay due.
+    //
+    // **It costs the budget, not the queue** (D448). It copied everything due
+    // into a vector, sorted that, kept the first `budget` and threw the rest
+    // away, every tick: with two million positions waiting that was the whole
+    // of a 50 to 170 ms tick, for as long as the backlog took to drain at
+    // 8192 a tick. The index is already in the order wanted -- due tick, then
+    // position, the same on every machine (R10) -- so the first `budget` of
+    // it are simply taken. Oldest first is also the fairer rule: by position
+    // alone, water beside the player waited behind every block of the
+    // backlog at lower coordinates.
     [[nodiscard]] std::vector<Position> takeDue(core::u64 tick, std::size_t budget)
     {
         std::vector<Position> due;
-        for (auto entry = m_byDue.begin(); entry != m_byDue.end() && entry->first <= tick; ++entry)
+        auto entry = m_byDue.begin();
+        while (entry != m_byDue.end() && entry->first <= tick && due.size() < budget) {
             due.push_back(entry->second);
-        std::sort(due.begin(), due.end());
-        if (due.size() > budget)
-            due.resize(budget);
-        for (const Position& at : due) {
-            const auto found = m_byPosition.find(at);
-            m_byDue.erase({found->second, at});
-            m_byPosition.erase(found);
+            m_byPosition.erase(entry->second);
+            entry = m_byDue.erase(entry);
         }
+        std::sort(due.begin(), due.end());
         return due;
     }
 
@@ -1448,6 +1456,11 @@ struct ScreenGuiComponent
     f32 displayOrder = 0.0f;
     bool enabled = true;
     bool screenInsets = true;
+    // **The height this tree was drawn for** (D437), or zero for pixels. With
+    // one set, every offset and text size under it is in units of a window
+    // that tall, and the engine scales the tree to the window it has: a
+    // layout made for a 720-line monitor is the same share of a phone's 1440.
+    f32 referenceHeight = 0.0f;
     // Goes with the game to the next scene rather than with this one (ADR
     // 0106): a loading screen that stays up while the scene changes.
     bool keepOnSceneLoad = false;
@@ -1499,6 +1512,12 @@ struct UIObjectComponent
     core::Color3 backgroundColor{1.0f, 1.0f, 1.0f};
     core::Vec2 absolutePosition;
     core::Vec2 absoluteSize;
+    // **How many pixels one of this element's units is** (D437): its
+    // `ScreenGui`'s scale, written by the layout that placed it, and one
+    // everywhere else. What is measured in units and read at drawing time --
+    // a text size, a corner's radius, a stroke -- is multiplied by it. Not a
+    // property.
+    f32 unitScale = 1.0f;
     f32 rotation = 0.0f;
     f32 backgroundTransparency = 0.0f;
     f32 zIndex = 0.0f;

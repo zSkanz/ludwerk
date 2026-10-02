@@ -151,6 +151,11 @@ struct Status
     // A replica: the player the authority welcomed it as, to present again on
     // the next join to the same server (D207). Invalid until a welcome.
     PlayerToken token;
+    // A replica: how many welcomes made this machine SOMEBODY NEW -- the first,
+    // and every one from an authority that did not know the token it was shown
+    // (D432). A server that restarted knows nobody: its welcome is a fresh
+    // join into a world that is not the one this machine held.
+    u32 freshJoins = 0;
 };
 
 // One tick's worth of what the module did, for the overlay and for a test that

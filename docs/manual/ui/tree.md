@@ -34,6 +34,7 @@ benchmark asserts zero solver invocations on an idle frame.
 | `ScreenGui.Enabled` | `true` | Whether this tree is laid out and drawn. A disabled one costs a boolean read, not a layout. |
 | `ScreenGui.DisplayOrder` | 0 | Which tree draws on top when two overlap. Highest last. |
 | `ScreenGui.ScreenInsets` | `true` | Whether it lays out inside the safe area rather than against the whole window. |
+| `ScreenGui.ReferenceHeight` | 0 | The height of the window the tree was drawn for, or 0 for pixels. See below. |
 
 `DisplayOrder` orders *between* trees; `UIObject.ZIndex` orders *within* one. So
 a HUD and a modal never have to agree on a shared numbering — give the modal a
@@ -41,6 +42,16 @@ higher `DisplayOrder` and it is simply on top.
 
 `ScreenInsets` is on by default because a full-bleed background is the exception
 and a HUD clipped by a notch is the failure.
+
+**`ReferenceHeight` is the interface's scale.** In pixels, a button 48 tall is
+a fifteenth of a 720-line monitor and a thirtieth of a phone with twice the
+lines -- half the size under a thumb that is the same size. Set
+`ReferenceHeight = 720` and every offset, text size, corner and stroke in the
+tree is in units of a window 720 tall, and the engine scales the whole tree to
+the window it has. The width follows the window's shape, so anchor to the
+edges with `Scale` and size with `Offset`. `AbsolutePosition` and
+`AbsoluteSize` stay in window pixels, which is what the pointer and the camera's
+calls use.
 
 ## UIObject is the base
 
@@ -89,15 +100,21 @@ is ignored.
 
 ## The screen itself
 
-`UIService` publishes two read-only numbers, both rewritten by the engine every
-frame:
+`UIService` publishes three read-only numbers, all rewritten by the engine
+every frame:
 
 - `UIService.DisplayScale` — the window's pixel density relative to its logical
   size; 2 on a doubled display. **UI coordinates are in pixels**, so this is
   what a game multiplies by when it wants a measurement to mean the same
   physical size on two screens.
 - `UIService.SafeAreaInsets` — how far in from each window edge it is safe to
-  draw. Zero on a desktop window.
+  draw. Zero on a desktop window. On a phone it is the camera's cutout and
+  whichever of the system's bars are showing -- and not the strips along the
+  edges where a swipe belongs to the system, which are glass like the rest.
+  So a phone held upright with its bars hidden has a top inset and usually
+  nothing at the sides.
+- `UIService.ViewportSize` — the size of what the interface is drawn into, in
+  pixels: the window in a game, the Viewport panel in the editor.
 
 `SafeAreaInsets` is a `Rect`, and it is **not two corners**: it is four inset
 distances. `Min` is (left, top) and `Max` is (right, bottom), so

@@ -1717,6 +1717,117 @@ TEST_CASE("a sprite on the authority is a sprite on the replica, frame and facin
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("D434: a hero on the plane is a player's character -- at the authority's newest word, not in the past")
+{
+    // A 2D game got neither thing a character buys: `Player.Character` took a
+    // 3D part only, so its own hero was drawn like everybody else's -- a few
+    // ticks behind, 130 ms on loopback before any network -- and nothing was
+    // the centre of what it was sent.
+    PlayedMatch match;
+    const auto sprite = [&](std::string_view name, core::Vec2 at) {
+        const core::InstanceId id =
+            match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Part2D")));
+        match.server.world.setName(id, match.server.atoms.intern(name));
+        match.server.world.parts2d().find(id)->position = at;
+        REQUIRE_FALSE(match.server.world.setParent(id, match.server.workspace).has_value());
+        return id;
+    };
+    const core::InstanceId hero = sprite("Hero", core::Vec2{0.0f, 0.0f});
+    const core::InstanceId other = sprite("Other", core::Vec2{0.0f, 5.0f});
+
+    // **One character, two properties, each typed as what it holds**: the
+    // sprite is `Character2D`, and `Character` -- a `BasePart?` -- reads
+    // nothing while it is. Neither takes the other's kind.
+    scene::World& authority = match.server.world;
+    const core::NameAtom character = match.server.atoms.intern("Character");
+    const core::NameAtom character2d = match.server.atoms.intern("Character2D");
+    const auto held = [&](core::NameAtom property) {
+        const std::optional<scene::Value> value = authority.getProperty(match.remote(), property);
+        REQUIRE(value.has_value());
+        const auto* id = std::get_if<core::InstanceId>(&*value);
+        REQUIRE(id != nullptr);
+        return *id;
+    };
+    const core::InstanceId crate = match.part("Crate", core::DVec3{50.0, 1.0, 0.0});
+    using Set = scene::World::SetResult;
+    CHECK(authority.setProperty(match.remote(), character, scene::Value{hero}) == Set::InvalidValue);
+    CHECK(authority.setProperty(match.remote(), character2d, scene::Value{crate}) == Set::InvalidValue);
+    CHECK(authority.setProperty(match.remote(), character, scene::Value{crate}) == Set::Changed);
+    CHECK(held(character) == crate);
+    CHECK_FALSE(held(character2d).valid());
+    // Setting the other replaces it; and nil written to the kind that is not
+    // set takes nothing away.
+    CHECK(authority.setProperty(match.remote(), character2d, scene::Value{hero}) == Set::Changed);
+    CHECK(held(character2d) == hero);
+    CHECK_FALSE(held(character).valid());
+    CHECK(authority.setProperty(match.remote(), character, scene::Value{core::InstanceId{}}) != Set::InvalidValue);
+    CHECK(held(character2d) == hero);
+    CHECK(authority.players().find(match.remote())->character == hero);
+
+    match.run(4);
+    const core::InstanceId mine = match.copyOf(hero);
+    const core::InstanceId theirs = match.copyOf(other);
+    REQUIRE(mine.valid());
+    REQUIRE(theirs.valid());
+    CHECK(match.client.world.players().find(match.me)->character == mine);
+
+    // **The server moves both, a unit a tick; this machine moves nothing.**
+    // Its own hero is where the newest snapshot put it; the other sprite is
+    // where it was a few ticks ago.
+    const auto walk = [&](int ticks, bool predict) {
+        for (int at = 0; at < ticks; ++at) {
+            match.tick += 1;
+            match.authority->receive(match.server.world, match.server.workspace);
+            match.server.world.parts2d().find(hero)->position.x += 1.0f;
+            match.server.world.parts2d().find(other)->position.x += 1.0f;
+            match.authority->send(match.server.world, match.server.workspace, match.tick);
+            match.replica->receive(match.client.world, match.client.workspace);
+            // The same step, on this machine, by the same code.
+            if (predict)
+                match.client.world.parts2d().find(mine)->position.x += 1.0f;
+            match.replica->sendIntent(match.client.world, match.tick);
+        }
+    };
+    walk(30, false);
+    const float server = match.server.world.parts2d().find(hero)->position.x;
+    const float own = match.client.world.parts2d().find(mine)->position.x;
+    const float remote = match.client.world.parts2d().find(theirs)->position.x;
+    CHECK(own == doctest::Approx(static_cast<double>(server)));
+    CHECK(remote < own - 1.5f);
+
+    // **And predicted by the same code, it is never corrected**: after the
+    // one answer that finds where the two clocks stand, the authority agrees
+    // with every tick -- and the hero is AHEAD of the authority's last word
+    // by the ticks its answer takes to come back, which is the delay gone.
+    walk(12, true);
+    const core::u64 settled = match.replica->stats().corrections;
+    std::vector<float> xs;
+    for (int at = 0; at < 30; ++at) {
+        walk(1, true);
+        xs.push_back(match.client.world.parts2d().find(mine)->position.x);
+    }
+    CHECK(match.replica->stats().corrections == settled);
+    for (std::size_t at = 1; at < xs.size(); ++at)
+        CHECK(std::fabs(xs[at] - xs[at - 1] - 1.0f) < 1.0e-4f);
+    CHECK(xs.back() >= match.server.world.parts2d().find(hero)->position.x);
+
+    // The authority stops it against something this machine walked through:
+    // the same place tick after tick is an answer too, and the hero comes
+    // back to it.
+    for (int at = 0; at < 20; ++at) {
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+        match.replica->receive(match.client.world, match.client.workspace);
+        if (at < 6)
+            match.client.world.parts2d().find(mine)->position.x += 1.0f;
+        match.replica->sendIntent(match.client.world, match.tick);
+    }
+    CHECK(match.client.world.parts2d().find(mine)->position.x ==
+          doctest::Approx(static_cast<double>(match.server.world.parts2d().find(hero)->position.x)));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
 TEST_CASE("a remote sprite is drawn between snapshots, and turns through 180 the short way")
 {
     PlayedMatch match;

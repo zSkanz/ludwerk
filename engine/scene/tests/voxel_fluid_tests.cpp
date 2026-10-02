@@ -1,4 +1,5 @@
 // Fluids in the block world (V1): the rules, and that they are deterministic.
+#include <chrono>
 #include <doctest/doctest.h>
 #include <utility>
 
@@ -219,4 +220,110 @@ TEST_CASE("lava that reaches water sets as stone where they meet, and the water 
     // Removed, it is gone.
     scene::setFluidReaction(pond.voxels, Lava, Water, asset::AirBlock);
     CHECK(pond.voxels.fluidReactions.empty());
+}
+
+TEST_CASE("D448: building dry land beside a registered fluid costs no fluid work")
+{
+    // A block game's world, built a column at a time with water registered:
+    // every stone block of every column's surface was queued -- seventy
+    // thousand a column, twenty times the cost of the build -- and the step
+    // then read each of them to find nothing to do.
+    Pond pond;
+    for (core::i32 column = 0; column < 100; ++column) {
+        const core::i32 x = (column % 10) * 16;
+        const core::i32 z = (column / 10) * 16;
+        (void)pond.voxels.grid.fill(x, 0, z, x + 15, 39, z + 15, Stone);
+        scene::wakeFluidsInBox(pond.voxels, x, 0, z, x + 15, 39, z + 15);
+    }
+    CHECK(pond.voxels.fluidWakes.size() == 0);
+    // One block at a time is the same.
+    pond.place(3, 40, 3, Stone);
+    pond.place(3, 40, 3, asset::AirBlock);
+    CHECK(pond.voxels.fluidWakes.size() == 0);
+    CHECK(scene::stepFluids(pond.voxels, ++pond.tick) == 0);
+}
+
+TEST_CASE("D448: a sea filled into a closed basin is still, and one with an open side flows")
+{
+    Pond pond;
+    // Stone, twelve deep, and a basin cut into it: walls all round, open to
+    // the sky.
+    (void)pond.voxels.grid.fill(-20, 0, -20, 20, 11, 20, Stone);
+    (void)pond.voxels.grid.fill(-10, 2, -10, 10, 11, 10, asset::AirBlock);
+    scene::wakeFluidsInBox(pond.voxels, -10, 2, -10, 10, 11, 10);
+    CHECK(pond.voxels.fluidWakes.size() == 0);
+
+    // The sea: sources to the brim. Nothing is beside it but stone, more sea
+    // and the air over it, where water does not climb.
+    (void)pond.voxels.grid.fill(-10, 2, -10, 10, 11, 10, Water);
+    scene::wakeFluidsInBox(pond.voxels, -10, 2, -10, 10, 11, 10);
+    CHECK(pond.voxels.fluidWakes.size() == 0);
+    CHECK(scene::stepFluids(pond.voxels, ++pond.tick) == 0);
+    CHECK(pond.voxels.fluidWakes.empty());
+
+    // **And it still flows**: break the wall beside it, and the water comes
+    // through.
+    pond.place(11, 11, 0, asset::AirBlock);
+    pond.place(12, 11, 0, asset::AirBlock);
+    CHECK_FALSE(pond.voxels.fluidWakes.empty());
+    pond.run(12);
+    CHECK(pond.at(11, 11, 0) == asset::blockWithState(Water, 1));
+    CHECK(pond.at(12, 11, 0) == asset::blockWithState(Water, 2));
+    // And is still again, with nothing left to look at.
+    CHECK(pond.voxels.fluidWakes.empty());
+}
+
+TEST_CASE("D448: a floor put under a pouring source makes it spread")
+{
+    // A block's decision reads what is under each of its sides -- a fluid
+    // standing on something spreads, one pouring past does not -- and the
+    // write that changed that woke nobody who read it.
+    Pond pond;
+    pond.place(0, 6, 0, Water);
+    pond.run(20);
+    // Pouring: a column under it, and nothing beside the source.
+    REQUIRE(asset::blockTypeOf(pond.at(0, 5, 0)) == Water);
+    REQUIRE(pond.at(1, 6, 0) == asset::AirBlock);
+
+    pond.place(0, 5, 0, Stone);
+    pond.run(20);
+    CHECK(asset::blockTypeOf(pond.at(1, 6, 0)) == Water);
+    CHECK(asset::blockTypeOf(pond.at(-1, 6, 0)) == Water);
+    CHECK(pond.voxels.fluidWakes.empty());
+}
+
+TEST_CASE("D448: taking what is due costs the budget, not the queue")
+{
+    // Two hundred thousand positions waiting, and the step takes 8192 a tick:
+    // each take copied and sorted all of them.
+    scene::FluidWakes wakes;
+    constexpr core::i32 Side = 450;
+    for (core::i32 z = 0; z < Side; ++z) {
+        for (core::i32 x = 0; x < Side; ++x)
+            wakes.schedule(scene::FluidWakes::Position{x, 0, z}, (x + z) % 3 == 0 ? 5u : 0u);
+    }
+    const std::size_t total = wakes.size();
+    REQUIRE(total == static_cast<std::size_t>(Side) * Side);
+
+    // The oldest first, in position order among themselves, and no more than
+    // asked for; what was not taken is still waiting.
+    const std::vector<scene::FluidWakes::Position> first = wakes.takeDue(1, 1000);
+    REQUIRE(first.size() == 1000);
+    CHECK(std::is_sorted(first.begin(), first.end()));
+    CHECK(wakes.size() == total - 1000);
+    // Nothing due at 5 comes out at tick 1.
+    for (const scene::FluidWakes::Position& at : first)
+        CHECK((at[0] + at[2]) % 3 != 0);
+
+    const auto began = std::chrono::steady_clock::now();
+    std::size_t taken = first.size();
+    for (int tick = 0; tick < 20; ++tick)
+        taken += wakes.takeDue(10, scene::MaxFluidUpdatesPerTick).size();
+    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+    CHECK(taken == 1000 + 20u * scene::MaxFluidUpdatesPerTick);
+    CHECK(wakes.size() == total - taken);
+    // Twenty ticks' worth. Copying and sorting the backlog each time was half
+    // a second of this; taking the budget is a few milliseconds, and the
+    // bound is loose enough for a machine doing everything else at once.
+    CHECK(took.count() < 250);
 }

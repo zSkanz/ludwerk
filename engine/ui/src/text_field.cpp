@@ -23,7 +23,7 @@ FieldView fieldView(const scene::World& world, core::InstanceId id)
 
     view.box = core::Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize};
     view.font = label->font;
-    view.size = label->textSize;
+    view.size = label->textSize * self->unitScale;
     view.lineHeight = textLineHeight(view.font, view.size);
     view.horizontalAlignment = label->horizontalAlignment;
     view.multiLine = field->multiLine;

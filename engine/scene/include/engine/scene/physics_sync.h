@@ -310,8 +310,9 @@ private:
 
     // One step of the movement model: gravity, a jump, the walk, and the sweep.
     // Answers the vertical velocity the step leaves.
+    // `groundNormal` is the ground's, where `grounded`.
     [[nodiscard]] f32 stepController(const CharacterRecord& record, const CharacterCommand& command,
-                                     f32 verticalVelocity, bool grounded);
+                                     f32 verticalVelocity, bool grounded, core::Vec3 groundNormal);
 
     void syncCollisionGroups();
     void applyScene();

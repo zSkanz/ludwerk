@@ -46,14 +46,26 @@ tick**, in world space. Four things about it:
 
 - **Only the horizontal part is used.** Vertical movement is gravity's and
   `Jump`'s.
-- **The vector is scaled by `WalkSpeed`, not normalised** — so a shorter one
-  walks slower, which is exactly what a half-deflected thumbstick should do.
+- **The vector is a direction and a throttle, and never more than all of it.**
+  Its length is clamped to 1: `Move(1, 0, 1)` walks at `WalkSpeed`, not at 1.41
+  times it, and a vector five long is no faster than one. Shorter than 1 walks
+  slower, which is exactly what a half-deflected thumbstick should do -- so
+  there is nothing to normalise, and a server can hand a client's vector
+  straight over without it being a speed hack.
+- **`WalkSpeed` is the speed across the ground, up a slope and down it
+  alike.** On ground the character can walk, the horizontal speed is
+  `WalkSpeed` whatever the slope; the climb or the descent comes on top.
 - **Call it every tick while moving.** A character told nothing stops.
 - It is intent, not a teleport: the controller still sweeps, still collides, and
   still refuses to walk through a wall.
 
 **Gravity is applied for you**, from `Workspace.Gravity`, integrated into the
 character's own vertical velocity every tick. You do not add it to `Move`.
+
+**`LinearVelocity` is what the character did, not what it was asked.** It is
+the distance the last tick moved it, over the tick: a character walking into a
+wall reads zero, and one sliding along it reads the slide. Pick the walk or the
+idle animation from it.
 
 ## Jumping
 

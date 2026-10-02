@@ -207,13 +207,20 @@ void AnimationSystem::play(scene::TrackId id, f32 fadeTime, f32 weight, f32 spee
     Track& track = tracks_[id];
     // From the beginning, every time. The opposite of `Tween:Play`, and
     // deliberately: a jump animation triggered twice should play twice.
+    // **From where the fade is, not from nothing** (D438): a `Play` that
+    // lands while a `Stop` is still fading out carries on from that weight,
+    // and the fade-out is over. A track that was not playing fades in from
+    // zero.
+    const f32 from = track.playing ? track.weight : 0.0f;
     track.time = 0.0;
     track.speed = speed;
+    track.ownWeight = weight;
     track.targetWeight = weight;
     track.playing = true;
     track.holding = false;
+    track.stopping = false;
     if (fadeTime > 0.0f) {
-        track.weight = 0.0f;
+        track.weight = from;
         track.fadeRemaining = static_cast<f64>(fadeTime);
     }
     else {
@@ -227,15 +234,18 @@ void AnimationSystem::stop(scene::TrackId id, f32 fadeTime)
     if (id == 0 || id >= tracks_.size())
         return;
     Track& track = tracks_[id];
+    // The fade goes to nothing; what the script set stays what it set.
     track.targetWeight = 0.0f;
     if (fadeTime > 0.0f && track.playing) {
         track.fadeRemaining = static_cast<f64>(fadeTime);
+        track.stopping = true;
         return;
     }
     track.weight = 0.0f;
     track.fadeRemaining = 0.0;
     track.playing = false;
     track.holding = false;
+    track.stopping = false;
 }
 
 void AnimationSystem::adjustWeight(scene::TrackId id, f32 weight, f32 fadeTime)
@@ -243,6 +253,11 @@ void AnimationSystem::adjustWeight(scene::TrackId id, f32 weight, f32 fadeTime)
     if (id == 0 || id >= tracks_.size())
         return;
     Track& track = tracks_[id];
+    track.ownWeight = weight;
+    // A track that is not playing, or is on its way out, keeps the number for
+    // its next `Play` and is not brought back by it.
+    if (track.stopping || (!track.playing && !track.holding))
+        return;
     track.targetWeight = weight;
     if (fadeTime > 0.0f) {
         track.fadeRemaining = static_cast<f64>(fadeTime);
@@ -275,7 +290,8 @@ scene::TrackState AnimationSystem::state(scene::TrackId id) const
     out.timePosition = track.time;
     out.length = track.length;
     out.speed = track.speed;
-    out.weight = track.weight;
+    out.weight = track.ownWeight;
+    out.blend = track.playing || track.holding ? track.weight : 0.0f;
     out.looped = track.looped;
     out.playing = track.playing;
     return out;
@@ -313,6 +329,7 @@ void AnimationSystem::sample(f64 fixedDt)
                 if (track.targetWeight <= 0.0f) {
                     track.playing = false;
                     track.holding = false;
+                    track.stopping = false;
                     note(track.meshPart);
                     continue;
                 }

@@ -1052,3 +1052,66 @@ TEST_CASE("an empty field shows its placeholder until it has focus, and then onl
     fixture.world->textInputs().find(field)->placeholderText.clear();
     CHECK(drawn().second == 1);
 }
+
+TEST_CASE("D437: a ScreenGui with a reference height is laid out in its units and scaled to the window")
+{
+    // Interface coordinates were pixels and nothing scaled them: a layout
+    // drawn for a monitor was half its size on a phone with twice the lines,
+    // and every game multiplied every offset and text size by hand.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    scene::ScreenGuiComponent* gui = fixture.world->screenGuis().find(screen);
+    REQUIRE(gui != nullptr);
+    gui->screenInsets = false;
+
+    // A button 200 by 80 units, 24 in from the left and from the bottom.
+    const InstanceId button = fixture.child("Frame", screen);
+    fixture.object(button).size = core::UDim2{core::UDim{0.0f, 200.0f}, core::UDim{0.0f, 80.0f}};
+    fixture.object(button).position = core::UDim2{core::UDim{0.0f, 24.0f}, core::UDim{1.0f, -104.0f}};
+    // And a child that fills half of it, by scale, with an inset in units.
+    const InstanceId fill = fixture.child("Frame", button);
+    fixture.object(fill).size = core::UDim2{core::UDim{0.5f, -10.0f}, core::UDim{1.0f, 0.0f}};
+
+    const auto laid = [&](core::Vec2 window) {
+        gui->layoutDirty = true;
+        ui::layout(*fixture.world, fixture.service, window);
+    };
+
+    // In pixels, as it always was: the same 200 by 80 on any window.
+    laid(core::Vec2{2560.0f, 1440.0f});
+    CHECK(fixture.object(button).absoluteSize.x == doctest::Approx(200.0));
+    CHECK(fixture.object(button).unitScale == doctest::Approx(1.0));
+
+    // Drawn for 720 lines. On a 720-line window nothing moves...
+    gui->referenceHeight = 720.0f;
+    laid(core::Vec2{1280.0f, 720.0f});
+    CHECK(fixture.object(button).absoluteSize.x == doctest::Approx(200.0));
+    CHECK(fixture.object(button).absoluteSize.y == doctest::Approx(80.0));
+    CHECK(fixture.object(button).absolutePosition.x == doctest::Approx(24.0));
+    CHECK(fixture.object(button).absolutePosition.y == doctest::Approx(720.0 - 104.0));
+    CHECK(fixture.object(fill).absoluteSize.x == doctest::Approx(90.0));
+
+    // ...and on a phone with twice the lines everything is twice the pixels:
+    // the same share of the screen, the same distance from its edges.
+    laid(core::Vec2{3120.0f, 1440.0f});
+    CHECK(fixture.object(button).absoluteSize.x == doctest::Approx(400.0));
+    CHECK(fixture.object(button).absoluteSize.y == doctest::Approx(160.0));
+    CHECK(fixture.object(button).absolutePosition.x == doctest::Approx(48.0));
+    CHECK(fixture.object(button).absolutePosition.y == doctest::Approx(1440.0 - 208.0));
+    CHECK(fixture.object(fill).absoluteSize.x == doctest::Approx(180.0));
+    // What is read at drawing time -- a text size, a corner, a stroke -- is
+    // told the scale.
+    CHECK(fixture.object(button).unitScale == doctest::Approx(2.0));
+    CHECK(fixture.object(fill).unitScale == doctest::Approx(2.0));
+    CHECK(ui::screenScale(*gui, core::Vec2{3120.0f, 1440.0f}) == doctest::Approx(2.0));
+
+    // The pointer finds it where it is drawn: in window pixels.
+    CHECK(ui::hitTest(*fixture.world, fixture.service, core::Vec2{100.0f, 1300.0f}) == fill);
+    CHECK(ui::hitTest(*fixture.world, fixture.service, core::Vec2{300.0f, 1300.0f}) == button);
+    CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, core::Vec2{600.0f, 1300.0f}).valid());
+
+    // A smaller window scales it down the same way.
+    laid(core::Vec2{640.0f, 360.0f});
+    CHECK(fixture.object(button).absoluteSize.x == doctest::Approx(100.0));
+    CHECK(fixture.object(button).unitScale == doctest::Approx(0.5));
+}

@@ -424,6 +424,202 @@ TEST_CASE("a server naming stamps a client does not have costs the client a boun
     CHECK(reads <= 64);
 }
 
+namespace {
+
+// Enum.NetworkState.Connecting.
+constexpr core::i32 Connecting = 1;
+
+// A scene with one part, so a machine has a scene and its scene's scripts.
+const char* const kSceneOfOne = R"json({"format":"scene","version":2,"root":{"children":[)json"
+                                R"json({"class":"Part","name":"Floor","properties":{"Anchored":true}}]}})json";
+
+// A dedicated server on `port` whose code makes one part a join can see.
+void serve(Machine& server, const std::shared_ptr<net::MemoryNetwork>& wire, core::u16 port, std::string_view made)
+{
+    server.project.write("content/scenes/main.scene.json", kSceneOfOne);
+    server.project.write("src/server/world.luau", "local part = Instance.new('Part')\npart.Name = '" +
+                                                      std::string(made) +
+                                                      "'\npart.Anchored = true\npart.Parent = workspace\n");
+    server.boot(wire, scene::NetworkTopology::Dedicated, "scenes/main.scene.json");
+    REQUIRE_FALSE(server.network->start(replication::Topology::Dedicated, {}, port).has_value());
+}
+
+// A client started to join `port`, as `--join` starts one: a script that lives
+// across worlds, and one that is the scene's.
+void joining(Machine& client, const std::shared_ptr<net::MemoryNetwork>& wire, core::u16 port)
+{
+    client.project.write("content/scenes/main.scene.json", kSceneOfOne);
+    client.project.write("src/client/across.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        print(`across-boot state:{NetworkService.State.Name}`)
+        NetworkService.Connected:Connect(function()
+            print(`across-connected state:{NetworkService.State.Name}`)
+        end)
+        NetworkService.Disconnected:Connect(function()
+            print(`across-disconnected state:{NetworkService.State.Name} authority:{NetworkService.Authority}`)
+        end)
+    )");
+    client.project.write("src/scenes/main/client/hud.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        local player = NetworkService.LocalPlayer
+        local names = {}
+        for _, child in workspace:GetChildren() do
+            table.insert(names, child.Name)
+        end
+        table.sort(names)
+        print(`scene-start state:{NetworkService.State.Name} user:{if player then player.UserId else -1} world:{table.concat(names, ",")}`)
+    )");
+    client.boot(wire, scene::NetworkTopology::Replica, "scenes/main.scene.json");
+    REQUIRE_FALSE(client.network->start(replication::Topology::Replica, "memory", port).has_value());
+}
+
+} // namespace
+
+TEST_CASE("D433: started to join, a scene's client code starts once, in the server's world")
+{
+    // It started BEFORE the connection: `State` read `Offline`, `UserId` was 0
+    // and later the real number, `Workspace` was empty, and what it parented
+    // there was destroyed at connect. Alone and "about to join" looked the same.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    serve(server, wire, 47310, "MadeByTheServer");
+    Machine client;
+    joining(client, wire, 47310);
+
+    // The server has not answered yet. What lives across worlds runs, and
+    // says so; the scene's code waits.
+    for (int at = 0; at < 20; ++at)
+        client.frame();
+    CHECK(client.state() == Connecting);
+    CHECK(log.contains("across-boot state:Connecting"));
+    CHECK(occurrences(log, "scene-start") == 0);
+
+    run(server, client, 80);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(client.state() == Connected);
+    // Once, joined, as the player the server made it, with the server's world
+    // under it.
+    CHECK(occurrences(log, "scene-start") == 1);
+    CHECK(log.contains("scene-start state:Connected user:2"));
+    CHECK(log.contains("across-connected state:Connected"));
+}
+
+TEST_CASE("D432: a server that goes is Connecting, then Disconnected and solo after the timeout")
+{
+    // `State` stayed `Connected` for ever, no signal fired, and the world
+    // stood still: a game could tell its player nothing.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    auto server = std::make_unique<Machine>();
+    serve(*server, wire, 47311, "MadeByTheServer");
+    Machine client;
+    joining(client, wire, 47311);
+    core::u64 now = 1;
+    client.network->setClock([&now] { return now; });
+    client.network->setJoinTimeout(10.0);
+    run(*server, client, 80);
+    REQUIRE(client.state() == Connected);
+    REQUIRE(occurrences(log, "scene-start") == 1);
+
+    // The server is gone.
+    server.reset();
+    for (int at = 0; at < 200 && client.state() == Connected; ++at)
+        client.frame();
+    CHECK(client.state() == Connecting);
+    CHECK(client.topology() == scene::NetworkTopology::Replica);
+    CHECK(occurrences(log, "across-disconnected") == 0);
+
+    // Inside the timeout it goes on dialling.
+    now += 5'000'000'000ull;
+    for (int at = 0; at < 30; ++at)
+        client.frame();
+    CHECK(client.state() == Connecting);
+
+    // Past it: given up. `Disconnected`, and this machine decides its own
+    // world again -- with its scene's client code started in it.
+    now += 6'000'000'000ull;
+    for (int at = 0; at < 30; ++at)
+        client.frame();
+    CHECK(client.state() == Offline);
+    CHECK(client.topology() == scene::NetworkTopology::Solo);
+    CHECK(log.contains("across-disconnected state:Offline authority:true"));
+    CHECK(occurrences(log, "scene-start") == 2);
+    CHECK(log.contains("scene-start state:Offline"));
+}
+
+TEST_CASE("D432: a server that restarts is a fresh join -- a new world, and Connected again")
+{
+    // The replica kept the world of the session that died, and stayed frozen.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    auto first = std::make_unique<Machine>();
+    serve(*first, wire, 47312, "FromTheFirst");
+    Machine client;
+    joining(client, wire, 47312);
+    core::u64 now = 1;
+    client.network->setClock([&now] { return now; });
+    client.network->setJoinTimeout(60.0);
+    run(*first, client, 80);
+    REQUIRE(client.state() == Connected);
+    REQUIRE(log.contains("world:Floor,FromTheFirst"));
+
+    first.reset();
+    for (int at = 0; at < 200 && client.state() == Connected; ++at)
+        client.frame();
+    REQUIRE(client.state() == Connecting);
+
+    // Another server on the same port, which has never heard of this player.
+    Machine second;
+    serve(second, wire, 47312, "FromTheSecond");
+    for (int at = 0; at < 600 && client.state() != Connected; ++at) {
+        now += 100'000'000ull;
+        second.frame();
+        client.frame();
+    }
+    run(second, client, 40);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(client.state() == Connected);
+    CHECK(occurrences(log, "across-connected") == 2);
+    // The scene's code started again, in the second server's world: nothing
+    // of the first is left under it.
+    CHECK(occurrences(log, "scene-start") == 2);
+    CHECK(log.contains("world:Floor,FromTheSecond"));
+    const scene::World& world = client.host->world();
+    CHECK_FALSE(world.findFirstChild(client.host->workspace(), world.atoms().lookup("FromTheFirst")).valid());
+    CHECK(world.findFirstChild(client.host->workspace(), world.atoms().lookup("FromTheSecond")).valid());
+}
+
+TEST_CASE("D433: a script's own join starts the scene's client code again, in the server's world")
+{
+    // The manual said a scene's scripts start after the change. They did not:
+    // a line at the top of one printed once, and every reference it held was
+    // to the world the join threw away.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    serve(server, wire, 47313, "MadeByTheServer");
+
+    Machine client;
+    client.project.write("content/scenes/main.scene.json", kSceneOfOne);
+    client.project.write("src/client/menu.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService:Join("memory:47313")
+    )");
+    client.project.write("src/scenes/main/client/hud.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        print(`scene-start state:{NetworkService.State.Name} made:{workspace:FindFirstChild("MadeByTheServer") ~= nil}`)
+    )");
+    client.boot(wire, scene::NetworkTopology::Solo, "scenes/main.scene.json");
+    run(server, client, 80);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(client.state() == Connected);
+    // Once alone, at boot; once more, joined.
+    CHECK(log.contains("scene-start state:Offline made:false"));
+    CHECK(log.contains("scene-start state:Connected"));
+    CHECK(occurrences(log, "scene-start") == 2);
+}
+
 TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")
 {
     Captured log;

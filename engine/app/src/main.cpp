@@ -901,11 +901,12 @@ int main(int argc, char** argv)
         options.maxSubWorlds = config.maxSubWorlds;
 
         // **Where a game's saves go** (ADR 0111): a player's own folder, named
-        // by the game's company and name, for a game; the project's
-        // `.engine/saves/` for the editor's Play, `ludwerk dev` and a match's
-        // windows -- one folder each, so four players do not share one -- so a
-        // test run never touches a real player's saves; and a folder of its
-        // own for a conformance run.
+        // by the game's company and name, for the PACKAGED game; the project's
+        // `.engine/saves/` for every run of a project that is being made --
+        // the editor's Play, `ludwerk dev`, a match's windows (one folder
+        // each, so four players do not share one) and a project handed to the
+        // host by hand (D445) -- so a test run never touches a real player's
+        // saves; and a folder of its own for a conformance run.
         options.saveMaxSlotBytes = config.saveMaxSlotBytes;
         options.saveMaxSlots = config.saveMaxSlots;
         options.sceneCloseGrace = config.sceneCloseGrace;
@@ -920,7 +921,12 @@ int main(int argc, char** argv)
             options.saveDirectory = std::filesystem::temp_directory_path(tempError) /
                                     ("engine-conformance-saves-" + std::to_string(engine::platform::nowNs()));
         }
-        else if (isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty())) {
+        else if (std::error_code sameError;
+                 isProject &&
+                 engine::app::saveHomeFor(
+                     hasPackagedProject && std::filesystem::equivalent(options.scriptPath, packagedProject, sameError),
+                     options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty()) ==
+                     engine::app::SaveHome::Project) {
             options.saveDirectory = options.scriptPath / ".engine" / "saves";
             if (!options.windowLabel.empty()) {
                 std::string folder = options.windowLabel;

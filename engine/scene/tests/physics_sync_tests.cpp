@@ -2321,3 +2321,71 @@ TEST_CASE("a character ground is raised round ends standing on it (D417)")
     CHECK(standing >= 18.5);
     CHECK(standing <= 19.5);
 }
+
+TEST_CASE("D439, D440: a walk is WalkSpeed across the ground, up a slope and down it, and never more")
+{
+    // "Downhill I run very fast, uphill very slow": at thirty degrees a
+    // character walked at 4.4 of its 6 uphill and 6.9 along the slope down.
+    // And `Move(1, 0, 1)` walked at 8.49, `Move(5, 0, 0)` at thirty.
+    Mirror mirror;
+    const core::InstanceId walker = mirror.part("Walker", {0.0, 3.0, 0.0});
+    mirror.fixture.world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    mirror.body(walker).anchored = true;
+    mirror.fixture.world.characterBodies().add(walker, CharacterBodyComponent{});
+    mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    mirror.backend.characterAnswer.ground = physics::CharacterGround::Grounded;
+    mirror.backend.characterAnswer.groundNormal = core::Vec3{0.0f, 1.0f, 0.0f};
+    settle(mirror);
+
+    // What the controller hands the sweep for one command.
+    const auto walk = [&](core::Vec3 move, core::Vec3 groundNormal, bool grounded = true) {
+        CharacterBodyComponent* body = mirror.fixture.world.characterBodies().find(walker);
+        REQUIRE(body != nullptr);
+        body->walkSpeed = 6.0f;
+        body->moveDirection = move;
+        mirror.backend.characterAnswer.groundNormal = groundNormal;
+        mirror.backend.characterAnswer.ground =
+            grounded ? physics::CharacterGround::Grounded : physics::CharacterGround::Airborne;
+        mirror.backend.moves.clear();
+        mirror.step();
+        REQUIRE_FALSE(mirror.backend.moves.empty());
+        return mirror.backend.moves.back();
+    };
+    const auto flat = [](core::Vec3 velocity) {
+        return static_cast<double>(std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z));
+    };
+
+    // Flat ground: six across it, and nothing up or down.
+    const core::Vec3 level = walk(core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f});
+    CHECK(flat(level) == doctest::Approx(6.0));
+    CHECK(static_cast<double>(level.y) == doctest::Approx(0.0));
+
+    // A slope rising towards -Z: its normal leans towards +Z.
+    for (const double degrees : {10.0, 20.0, 30.0}) {
+        CAPTURE(degrees);
+        const double radians = degrees * 3.14159265358979 / 180.0;
+        const core::Vec3 normal{0.0f, static_cast<f32>(std::cos(radians)), static_cast<f32>(std::sin(radians))};
+
+        const core::Vec3 up = walk(core::Vec3{0.0f, 0.0f, -1.0f}, normal);
+        // Six across the ground, and the rise that keeps it on the slope:
+        // along the ground, so the sweep has nothing to take away.
+        CHECK(flat(up) == doctest::Approx(6.0));
+        CHECK(static_cast<double>(up.y) == doctest::Approx(6.0 * std::tan(radians)));
+        CHECK(static_cast<double>(up.x * normal.x + up.y * normal.y + up.z * normal.z) == doctest::Approx(0.0));
+
+        const core::Vec3 down = walk(core::Vec3{0.0f, 0.0f, 1.0f}, normal);
+        CHECK(flat(down) == doctest::Approx(6.0));
+        CHECK(static_cast<double>(down.y) == doctest::Approx(-6.0 * std::tan(radians)));
+    }
+
+    // In the air the walk is flat and the fall is gravity's, as it was.
+    const core::Vec3 falling = walk(core::Vec3{0.0f, 0.0f, -1.0f}, core::Vec3{0.0f, 1.0f, 0.0f}, false);
+    CHECK(flat(falling) == doctest::Approx(6.0));
+    CHECK(falling.y < 0.0f);
+
+    // **A direction and a throttle**: never more than all of it.
+    CHECK(flat(walk(core::Vec3{1.0f, 0.0f, 1.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(6.0));
+    CHECK(flat(walk(core::Vec3{5.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(6.0));
+    // Less than all of it walks slower: an analog stick pushed a little.
+    CHECK(flat(walk(core::Vec3{0.3f, 0.0f, 0.0f}, core::Vec3{0.0f, 1.0f, 0.0f})) == doctest::Approx(1.8));
+}

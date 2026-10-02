@@ -1062,6 +1062,15 @@ bool scriptLive(lua_State* L, core::InstanceId instance)
     }
     if (!scriptSideRunsHere(w, scriptSideOf(w, instance)))
         return false;
+    // **A scene's client code waits for its world** (D433): while a join is
+    // under way, what is under `ClientScriptService` does not run.
+    if (w.engineState().sceneClientHeld) {
+        const scene::ClassId clientScripts = w.classes().findId(w.atoms().lookup("ClientScriptService"));
+        for (core::InstanceId walk = w.parentOf(instance); walk.valid(); walk = w.parentOf(walk)) {
+            if (w.classOf(walk) == clientScripts)
+                return false;
+        }
+    }
     // A Script whose `Enabled` is false never starts -- it is still in the tree,
     // but no coroutine is created for it (api-design.md 3).
     const std::optional<scene::Value> enabled = w.getProperty(instance, w.atoms().intern("Enabled"));

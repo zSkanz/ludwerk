@@ -235,6 +235,24 @@ end
 --- `nil` for a type this generator cannot express, which is reported and
 --- refused rather than defaulted to `Nil` -- a property silently typed as
 --- nothing accepts nothing, and does it at runtime.
+--- Whether a type is one of several classes, `(BasePart | Part2D)`: a
+--- reference whose setter says which it takes, as `Player.Character` does.
+local function isClassUnion(bare: string): boolean
+    local inner = string.match(bare, "^%((.+)%)$")
+    if inner == nil then
+        return false
+    end
+    local any = false
+    for part in string.gmatch(inner, "[^|]+") do
+        local name = string.match(part, "^%s*(.-)%s*$") :: string
+        if not ClassNames[name] then
+            return false
+        end
+        any = true
+    end
+    return any
+end
+
 local function valueTypeOf(typeName: string): string?
     local bare = string.match(typeName, "^(.-)%?$") or typeName
     local scalar = ScalarValueTypes[bare]
@@ -244,7 +262,7 @@ local function valueTypeOf(typeName: string): string?
     if string.match(bare, "^Enum%.[%w_]+$") ~= nil then
         return "EnumItem"
     end
-    if bare == "Instance" or ClassNames[bare] then
+    if bare == "Instance" or ClassNames[bare] or isClassUnion(bare) then
         return "Instance"
     end
     return nil

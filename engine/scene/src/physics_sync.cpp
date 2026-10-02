@@ -546,7 +546,8 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
     command.jumpSpeed = character.jumpSpeed;
     command.dt = fixedDt;
     record.last = command;
-    character.verticalVelocity = stepController(record, command, character.verticalVelocity, grounded);
+    character.verticalVelocity =
+        stepController(record, command, character.verticalVelocity, grounded, state.groundNormal);
     character.jumpRequested = false;
 
     // Cleared once consumed: a character told nothing stops, which is what
@@ -555,7 +556,7 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
 }
 
 f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCommand& command, f32 verticalVelocity,
-                                bool grounded)
+                                bool grounded, core::Vec3 groundNormal)
 {
     // The movement model is the caller's and the sweeping is the backend's.
     // Gravity integrates here rather than in the solver because a character
@@ -590,9 +591,31 @@ f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCo
 
     // Horizontal only -- vertical movement is gravity's and Jump's -- and
     // scaled rather than normalised, so a shorter direction walks slower.
-    const core::Vec3 horizontal{command.moveDirection.x * command.walkSpeed, 0.0f,
-                                command.moveDirection.z * command.walkSpeed};
-    const core::Vec3 velocity{horizontal.x, verticalVelocity, horizontal.z};
+    //
+    // **A direction and a throttle, never more than all of it** (D440): the
+    // vector's length is clamped to one. `Move(1, 0, 1)` walked at 1.41 times
+    // `WalkSpeed` and `Move(5, 0, 0)` at five -- the diagonal-is-faster bug
+    // handed to every game, and a speed hack to any server that forwards a
+    // client's vector. Shorter than one still walks slower, which is what an
+    // analog stick wants.
+    core::Vec3 move{command.moveDirection.x, 0.0f, command.moveDirection.z};
+    if (const f32 length = std::sqrt(move.x * move.x + move.z * move.z); length > 1.0f)
+        move = move * (1.0f / length);
+    const core::Vec3 horizontal = move * command.walkSpeed;
+    core::Vec3 velocity{horizontal.x, verticalVelocity, horizontal.z};
+
+    // **On ground it can walk, `WalkSpeed` is the HORIZONTAL speed, up a slope
+    // and down it alike** (D439). The walk was handed over flat and the sweep
+    // laid it along the slope: uphill the horizontal speed came out as the
+    // speed times the square of the slope's cosine -- 4.4 of 6 at thirty
+    // degrees -- and downhill it was kept whole with the fall added, so a
+    // player ran down hills and crawled up them. So the walk is given ALONG
+    // the ground, the rise or the fall that keeps its horizontal part whole;
+    // gravity has nothing to add to a foot that is on the ground, and a jump
+    // or a fall is as it was.
+    constexpr f32 Level = 1.0e-3f;
+    if (grounded && !command.jump && groundNormal.y > Level)
+        velocity.y = -(horizontal.x * groundNormal.x + horizontal.z * groundNormal.z) / groundNormal.y;
     m_backend.moveCharacter(m_world, record.handle, velocity, command.dt);
     return verticalVelocity;
 }
@@ -806,11 +829,14 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
     m_backend.setCharacterTransform(m_world, record.handle, start.transform);
     f32 verticalVelocity = start.verticalVelocity;
     bool grounded = start.grounded;
+    // What it stands on now, as the simulation's own first step asks it.
+    core::Vec3 groundNormal = m_backend.characterState(m_world, record.handle).groundNormal;
     frames.reserve(commands.size());
     for (const CharacterCommand& command : commands) {
-        verticalVelocity = stepController(record, command, verticalVelocity, grounded);
+        verticalVelocity = stepController(record, command, verticalVelocity, grounded, groundNormal);
         const physics::CharacterState state = m_backend.characterState(m_world, record.handle);
         grounded = state.ground == physics::CharacterGround::Grounded;
+        groundNormal = state.groundNormal;
         frames.push_back(state.transform);
     }
     part->cframe = frames.empty() ? start.transform : frames.back();

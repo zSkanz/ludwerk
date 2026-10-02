@@ -336,6 +336,82 @@ TEST_CASE("a weight of zero contributes nothing rather than dragging a joint to 
     CHECK(close(pose->palette[1].m[3][1], 2.0f));
 }
 
+TEST_CASE("D438: a track played, stopped and played again plays -- at the weight it had")
+{
+    // "The idle only runs once, the walk only runs once." `Stop` left the
+    // track's own weight at zero and `Play` faded in to it: the second time a
+    // clip was played nothing showed, and with a fade it stopped itself again.
+    Fixture fixture;
+    render::SkeletonLibrary::Entry entry = twoJointSkeleton();
+    entry.clips.push_back(slideClip("Slide"));
+    const core::InstanceId player = fixture.rig(std::move(entry));
+
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId track = animation.createTrack(player, {}, "Slide");
+    animation.setLooped(track, true);
+    const auto ticks = [&](int count) {
+        for (int tick = 0; tick < count; ++tick)
+            animation.sample(1.0 / 60.0);
+    };
+    // As the script's `Play` does it: to the track's own weight.
+    const auto play = [&](core::f32 fade) {
+        const scene::TrackState state = animation.state(track);
+        animation.play(track, fade, state.weight, state.speed);
+    };
+
+    play(0.15f);
+    ticks(30);
+    REQUIRE(animation.state(track).playing);
+    REQUIRE(close(animation.state(track).blend, 1.0f));
+
+    animation.stop(track, 0.15f);
+    ticks(30);
+    REQUIRE_FALSE(animation.state(track).playing);
+    // Stopped, and still the weight it was given.
+    CHECK(close(animation.state(track).weight, 1.0f));
+
+    // **Again.** It fades in, and is still playing three loops later.
+    play(0.15f);
+    ticks(6);
+    CHECK(animation.state(track).playing);
+    CHECK(animation.state(track).blend > 0.0f);
+    const int loop = static_cast<int>(animation.state(track).length * 60.0f) + 1;
+    ticks(loop * 3);
+    CHECK(animation.state(track).playing);
+    CHECK(close(animation.state(track).blend, 1.0f));
+    const render::Pose* pose = animation.pose(fixture.mesh);
+    REQUIRE(pose != nullptr);
+
+    // With no fade either way.
+    animation.stop(track, 0.0f);
+    play(0.0f);
+    CHECK(animation.state(track).playing);
+    CHECK(close(animation.state(track).blend, 1.0f));
+
+    // **A `Play` that lands while the stop is still fading out**: the
+    // fade-out is over, and the track carries on from where the fade was.
+    animation.stop(track, 0.5f);
+    ticks(15);
+    const core::f32 during = animation.state(track).blend;
+    CHECK(during > 0.2f);
+    CHECK(during < 0.8f);
+    play(0.5f);
+    CHECK(close(animation.state(track).blend, during));
+    ticks(60);
+    CHECK(animation.state(track).playing);
+    CHECK(close(animation.state(track).blend, 1.0f));
+
+    // A weight written while it is stopped is the weight it plays at next,
+    // and does not start it.
+    animation.stop(track, 0.0f);
+    animation.adjustWeight(track, 0.5f, 0.0f);
+    CHECK_FALSE(animation.state(track).playing);
+    CHECK(close(animation.state(track).blend, 0.0f));
+    play(0.0f);
+    CHECK(close(animation.state(track).blend, 0.5f));
+    CHECK(close(animation.state(track).weight, 0.5f));
+}
+
 TEST_CASE("a fade reaches its target and a fade to zero is a stop")
 {
     Fixture fixture;
@@ -346,21 +422,24 @@ TEST_CASE("a fade reaches its target and a fade to zero is a stop")
     render::AnimationSystem animation{fixture.world, fixture.skeletons};
     const scene::TrackId track = animation.createTrack(player, {}, "Slide");
     animation.play(track, 0.5f, 1.0f, 1.0f);
-    CHECK(close(animation.state(track).weight, 0.0f));
-
-    for (int tick = 0; tick < 15; ++tick)
-        animation.sample(1.0 / 60.0);
-    CHECK(close(animation.state(track).weight, 0.5f));
-
-    for (int tick = 0; tick < 15; ++tick)
-        animation.sample(1.0 / 60.0);
+    CHECK(close(animation.state(track).blend, 0.0f));
+    // What the script set is not the fade's to change.
     CHECK(close(animation.state(track).weight, 1.0f));
+
+    for (int tick = 0; tick < 15; ++tick)
+        animation.sample(1.0 / 60.0);
+    CHECK(close(animation.state(track).blend, 0.5f));
+
+    for (int tick = 0; tick < 15; ++tick)
+        animation.sample(1.0 / 60.0);
+    CHECK(close(animation.state(track).blend, 1.0f));
 
     animation.stop(track, 0.25f);
     CHECK(animation.state(track).playing);
     for (int tick = 0; tick < 15; ++tick)
         animation.sample(1.0 / 60.0);
-    CHECK(close(animation.state(track).weight, 0.0f));
+    CHECK(close(animation.state(track).blend, 0.0f));
+    CHECK(close(animation.state(track).weight, 1.0f));
     CHECK_FALSE(animation.state(track).playing);
     // A stop is not an end: `Ended` fires for a clip that finished, and this one
     // was cut short.

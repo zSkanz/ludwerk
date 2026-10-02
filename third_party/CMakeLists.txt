@@ -603,6 +603,89 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/blake3/c/blake3.c")
 endif()
 
 # ---------------------------------------------------------------------------
+# libsodium 1.0.22 (ADR 0120, ADR 0151): what `CryptoService` is made of, and
+# what the sealed transport will be.
+#
+# Its sources directly, and not its build: upstream configures with autotools,
+# which three of the four tiers do not have, and what that script decides is
+# which instruction sets the BUILD MACHINE can compile. Every optimised path in
+# the tree is fenced by a `HAVE_*` macro that script would have defined
+# (`HAVE_AVX2INTRIN_H`, `HAVE_ARMCRYPTO`, `HAVE_TI_MODE`, ...), so compiling
+# every file with none of them defined builds each primitive's reference
+# implementation -- the same code on every tier, no per-file compiler flags, no
+# assembler. The BLAKE3 reasoning, and cheaper here: nothing this is used for
+# is per-frame.
+#
+# What that gives up, said so nobody goes looking: AES-256-GCM and AEGIS have
+# no portable implementation, so `crypto_aead_aes256gcm_is_available()` is
+# false. ADR 0120 seals packets with ChaCha20-Poly1305, which does.
+#
+# The random source is the operating system's on every tier with nothing
+# defined: `RtlGenRandom` on Windows, `/dev/urandom` elsewhere.
+#
+# `version.h` is the one generated header. It is written into the BUILD tree
+# from upstream's own template, with the numbers read out of upstream's
+# `configure.ac` -- a vendored tree is never edited in place (R13), and a number
+# copied here by hand would be a second pin.
+# ---------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/sodium/core.c")
+    file(GLOB_RECURSE ENG_SODIUM_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/*.c")
+    add_library(sodium STATIC ${ENG_SODIUM_SOURCES})
+
+    # No escapes in these: the three lines are found by how they begin, and the
+    # number is the first one on each.
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/configure.ac" ENG_SODIUM_INIT
+        REGEX "^AC_INIT.+libsodium")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/configure.ac" ENG_SODIUM_MAJOR
+        REGEX "^SODIUM_LIBRARY_VERSION_MAJOR=[0-9]+")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/configure.ac" ENG_SODIUM_MINOR
+        REGEX "^SODIUM_LIBRARY_VERSION_MINOR=[0-9]+")
+    string(REGEX MATCH "[0-9]+[.][0-9]+[.][0-9]+" VERSION "${ENG_SODIUM_INIT}")
+    string(REGEX MATCH "[0-9]+" SODIUM_LIBRARY_VERSION_MAJOR "${ENG_SODIUM_MAJOR}")
+    string(REGEX MATCH "[0-9]+" SODIUM_LIBRARY_VERSION_MINOR "${ENG_SODIUM_MINOR}")
+    if(NOT VERSION MATCHES "^[0-9.]+$" OR NOT SODIUM_LIBRARY_VERSION_MAJOR MATCHES "^[0-9]+$"
+            OR NOT SODIUM_LIBRARY_VERSION_MINOR MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "libsodium: could not read its version out of configure.ac")
+    endif()
+    set(SODIUM_LIBRARY_MINIMAL_DEF "")
+    set(ENG_SODIUM_GENERATED "${CMAKE_BINARY_DIR}/third_party/sodium-generated")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/include/sodium/version.h.in"
+        "${ENG_SODIUM_GENERATED}/sodium/version.h" @ONLY)
+    unset(VERSION)
+
+    # The `sodium/` folder itself is on the path too, and for callers as well:
+    # the generated `version.h` sits in the build tree and includes
+    # `"export.h"`, which is beside it only in upstream's layout. Its own
+    # sources name their headers that way as well.
+    target_include_directories(sodium SYSTEM PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/include/sodium"
+        "${ENG_SODIUM_GENERATED}")
+    target_include_directories(sodium PRIVATE "${ENG_SODIUM_GENERATED}/sodium")
+    # `SODIUM_STATIC` is PUBLIC: without it a caller on Windows declares every
+    # function `dllimport` and the link fails on a library that has no DLL.
+    # `CONFIGURED` is what `configure` would have said, and without it the tree
+    # warns on every file that it was not run. Every tier is little-endian.
+    target_compile_definitions(sodium
+        PUBLIC SODIUM_STATIC
+        PRIVATE CONFIGURED=1 NATIVE_LITTLE_ENDIAN=1)
+    set_target_properties(sodium PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS YES)
+    # Upstream's warnings are upstream's (the Jolt rule): ours are not applied.
+    if(MSVC)
+        target_compile_options(sodium PRIVATE /W0)
+        target_compile_definitions(sodium PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(sodium PRIVATE -w)
+    endif()
+    if(WIN32)
+        # `RtlGenRandom` lives in advapi32.
+        target_link_libraries(sodium PUBLIC advapi32)
+    endif()
+    add_library(sodium::sodium ALIAS sodium)
+endif()
+
+# ---------------------------------------------------------------------------
 # basis_universal (ADR 0010: one transcodable texture per platform, in a KTX2
 # container). Vendored narrowed -- ADR 0042 and the manifest row say why.
 #

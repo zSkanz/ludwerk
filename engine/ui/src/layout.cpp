@@ -219,6 +219,8 @@ void place(scene::World& world, Pass& pass, core::InstanceId id, Vec2 parentOrig
 
     self->absolutePosition = topLeft;
     self->absoluteSize = size;
+    // In pixels until a scaled `ScreenGui` says otherwise (`scaleTree`).
+    self->unitScale = 1.0f;
     ++g_stats.elementsLaidOut;
 
     const Modifiers mods = modifiersOf(world, id);
@@ -328,7 +330,27 @@ void place(scene::World& world, Pass& pass, core::InstanceId id, Vec2 parentOrig
     }
 }
 
+// **A tree laid out in its own units, turned into pixels** (D437): every
+// rectangle under `root` multiplied by `scale`, and each element told its
+// scale, for what is measured in units and read when it is drawn.
+void scaleTree(scene::World& world, core::InstanceId root, f32 scale)
+{
+    for (core::InstanceId child = world.firstChild(root); child.valid(); child = world.nextSibling(child)) {
+        if (scene::UIObjectComponent* object = world.uiObjects().find(child); object != nullptr) {
+            object->absolutePosition = object->absolutePosition * scale;
+            object->absoluteSize = object->absoluteSize * scale;
+            object->unitScale = scale;
+        }
+        scaleTree(world, child, scale);
+    }
+}
+
 } // namespace
+
+f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) noexcept
+{
+    return screen.referenceHeight > 0.0f && windowSize.y > 0.0f ? windowSize.y / screen.referenceHeight : 1.0f;
+}
 
 void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSize)
 {
@@ -360,10 +382,22 @@ void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSi
             available = Vec2{windowSize.x - insets.min.x - insets.max.x, windowSize.y - insets.min.y - insets.max.y};
         }
 
+        // **In the tree's own units** (D437): a window `ReferenceHeight`
+        // tall, as wide as this one is for that height. Laid out there, and
+        // scaled to the pixels afterwards -- so `AbsolutePosition` and a hit
+        // test are in window pixels, as they always were.
+        const f32 scale = screenScale(*screen, windowSize);
+        if (scale != 1.0f) {
+            origin = origin * (1.0f / scale);
+            available = available * (1.0f / scale);
+        }
+
         for (core::InstanceId element = world.firstChild(child); element.valid();
              element = world.nextSibling(element)) {
             place(world, pass, element, origin, available, Vec2{}, false);
         }
+        if (scale != 1.0f)
+            scaleTree(world, child, scale);
     }
 }
 

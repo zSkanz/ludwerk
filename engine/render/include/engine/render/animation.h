@@ -169,7 +169,16 @@ private:
         f64 time = 0.0;
         f32 length = 0.0f;
         f32 speed = 1.0f;
+        // What the track is blended with now -- the fade's own number.
         f32 weight = 1.0f;
+        // **What the script set**, which a fade never writes (D438): `Stop`
+        // faded `weight` to zero and `Play` then faded in "to the track's own
+        // weight" -- zero -- so an idle played, stopped and played again showed
+        // nothing the second time.
+        f32 ownWeight = 1.0f;
+        // A `Stop` fading out. `Play` ends it; a `Weight` written meanwhile
+        // is kept for the next `Play` and does not bring the track back.
+        bool stopping = false;
         // Where the weight is going and how long is left to get there. A target
         // and a REMAINING time rather than a start/end pair, because
         // `AdjustWeight` may retarget one mid-fade and a pair would then have to

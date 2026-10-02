@@ -80,6 +80,19 @@ struct FaceFrame
     return world.parts().find(parent) != nullptr ? parent : core::InstanceId{};
 }
 
+// What a billboard floats over: a part, or a part on the 2D plane (D435) --
+// its adornee, or its parent when that is one.
+[[nodiscard]] core::InstanceId anchorFor(const scene::World& world, core::InstanceId gui, core::InstanceId adornee)
+{
+    const auto placed = [&world](core::InstanceId id) {
+        return world.parts().find(id) != nullptr || world.parts2d().find(id) != nullptr;
+    };
+    if (adornee.valid() && world.alive(adornee) && placed(adornee))
+        return adornee;
+    const core::InstanceId parent = world.parentOf(gui);
+    return placed(parent) ? parent : core::InstanceId{};
+}
+
 [[nodiscard]] core::u8 toByte(f32 value) noexcept
 {
     return static_cast<core::u8>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -346,11 +359,12 @@ struct Tree
     world.billboardGuis().forEach([&](core::InstanceId id, const scene::BillboardGuiComponent& gui) {
         if (!gui.enabled || !reachable(id))
             return;
-        const core::InstanceId part = partFor(world, id, gui.adornee);
-        const scene::PartComponent* component = part.valid() ? world.parts().find(part) : nullptr;
-        if (component == nullptr)
+        const core::InstanceId part = anchorFor(world, id, gui.adornee);
+        if (!part.valid())
             return;
-        const core::DVec3 at = posed.part(part).position;
+        // Where it is DRAWN, a sprite as a part (ADR 0134).
+        const core::DVec3 at =
+            world.parts().find(part) != nullptr ? posed.part(part).position : posed.part2d(part).position;
         const core::DVec3 anchor{at.x + static_cast<f64>(gui.worldOffset.x), at.y + static_cast<f64>(gui.worldOffset.y),
                                  at.z + static_cast<f64>(gui.worldOffset.z)};
         if (const std::optional<CanvasPlacement> placement = placeBillboard(gui, anchor, camera, viewport))

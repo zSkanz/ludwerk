@@ -199,6 +199,11 @@ struct WorldHostOptions
     bool subWorld = false;
     // `[render] max_sub_worlds`: how many sub-worlds this world may run at once.
     core::u32 maxSubWorlds = 2;
+    // **The size of what the world will be drawn into**, known before the
+    // first frame: `UIService.ViewportSize`, `Camera.ViewportSize` and the
+    // camera's conversions read it from a script's first line, where they
+    // read zero until a frame had been drawn. Zero when nothing is drawn.
+    core::Vec2 viewportSize{};
 
     // **Where `SaveService` writes** (ADR 0111), decided by the host: the
     // player's own folder for a game, `.engine/saves/` in the project for the
@@ -380,6 +385,11 @@ public:
     // Solo again after a join (ADR 0137 §5): the current scene loaded again,
     // the server code restarted, every script checked against "live".
     void returnToSolo();
+    // **The scene's client code, held and let go** (D433). Held: a join is
+    // under way and what is under `ClientScriptService` stops. Let go: the
+    // world it runs in is here -- the server's, or this machine's own again
+    // -- and it starts, fresh.
+    void holdSceneClientCode(bool held);
     // **A replica's own scripts, kept while the authority's instances come**
     // (ADR 0138 §6): what a join's clear takes out of this machine's scene and
     // puts back under what the authority sends. Null in a build without

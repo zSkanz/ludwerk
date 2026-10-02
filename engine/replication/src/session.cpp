@@ -2261,6 +2261,10 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             }
             if (m_joinedBefore)
                 resetForRejoin(world);
+            // The token shown was not known: this authority is not the one
+            // that gave it, and this is a new player in a new world (D432).
+            if (!m_joinedBefore || !(token == m_token))
+                ++m_freshJoins;
             m_joinedBefore = true;
             m_welcomed = true;
             m_playerId = player;
@@ -2665,6 +2669,8 @@ void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
             if (owned != m_owned) {
                 m_ownedSynced = false;
                 m_predicted.clear();
+                m_predicted2d.clear();
+                m_predicted2d.clear();
             }
             m_owned = owned;
             // What was buffered for it before this machine knew it was its
@@ -2675,6 +2681,16 @@ void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
                     part != nullptr && !buffered->second.empty())
                     part->cframe = buffered->second.back().cframe;
                 m_samples.erase(buffered);
+            }
+            // A character on the plane, the same (D434).
+            if (const auto buffered = m_owned != 0 ? m_samples2d.find(m_owned) : m_samples2d.end();
+                buffered != m_samples2d.end()) {
+                if (scene::Part2DComponent* sprite = world.parts2d().find(local->second);
+                    sprite != nullptr && !buffered->second.empty()) {
+                    sprite->position = buffered->second.back().position;
+                    sprite->rotation = buffered->second.back().rotation;
+                }
+                m_samples2d.erase(buffered);
             }
         }
     }
@@ -3270,6 +3286,15 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
             if (m_replay != nullptr)
                 m_replay->remember(tick);
         }
+        // A character on the plane (D434): where its scripts left it.
+        else if (const scene::Part2DComponent* sprite = local != m_locals.end() && world.alive(local->second)
+                                                            ? world.parts2d().find(local->second)
+                                                            : nullptr;
+                 sprite != nullptr) {
+            m_predicted2d.push_back(Sample2D{tick, sprite->position, sprite->rotation});
+            while (m_predicted2d.size() > PredictionHistory)
+                m_predicted2d.pop_front();
+        }
     }
     const InstanceId local = scene::localPlayerOf(world);
     const scene::PlayerComponent* player = local.valid() ? world.players().find(local) : nullptr;
@@ -3480,6 +3505,7 @@ void ReplicaSession::resetForRejoin(scene::World& world)
     m_teams.clear();
     m_ownedParts.clear();
     m_predicted.clear();
+    m_predicted2d.clear();
     m_sentIntents.clear();
     m_predictedParts.clear();
     m_owned = 0;
@@ -3671,6 +3697,7 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
         // and the prediction starts from it.
         part->cframe = authority;
         m_predicted.clear();
+        m_predicted2d.clear();
         return;
     }
     // **Taken, not compared** -- a character that has just become this
@@ -3817,11 +3844,70 @@ void ReplicaSession::reconcile(scene::World& world, InstanceId character,
     }
 }
 
+void ReplicaSession::reconcile2d(scene::World& world, InstanceId character, core::Vec2 position, core::f32 rotation)
+{
+    scene::Part2DComponent* sprite = world.parts2d().find(character);
+    if (sprite == nullptr)
+        return;
+    // **The rule a 3D character a script moves is corrected by, on the
+    // plane** (D434). The sprite is this machine's to move: whatever its
+    // scripts did to it each tick is kept, by tick, and the authority's place
+    // for it at the intent it last applied is compared with what this machine
+    // had THEN. The difference is carried forward to now.
+    //
+    // So a game whose client steps its hero with the code the server steps it
+    // with sees no correction at all and no delay; and a game whose client
+    // does nothing -- the server moves the hero from `GetIntent` -- has
+    // "what it had then" standing still, so the difference is the whole of
+    // the authority's motion and the hero is where the authority's newest
+    // word puts it. Either way it is not drawn a few ticks in the past, which
+    // is what every other sprite is.
+    const Sample2D* predicted = nullptr;
+    for (const Sample2D& sample : m_predicted2d) {
+        if (sample.tick == m_ackedIntent)
+            predicted = &sample;
+    }
+    // None of this machine's intents applied yet, a sprite that has only now
+    // become its own, or an answer to a tick no longer remembered: the
+    // authority is right.
+    const bool comparing = m_ackedIntent != 0 && m_ownedSynced && predicted != nullptr;
+    m_ownedSynced = true;
+    if (!comparing) {
+        sprite->position = position;
+        sprite->rotation = rotation;
+        std::erase_if(m_predicted2d, [this](const Sample2D& sample) { return sample.tick <= m_ackedIntent; });
+        return;
+    }
+    const core::Vec2 error = position - predicted->position;
+    // The short way round, as the interpolation turns.
+    core::f32 turn = std::fmod(rotation - predicted->rotation, 360.0f);
+    if (turn > 180.0f)
+        turn -= 360.0f;
+    else if (turn < -180.0f)
+        turn += 360.0f;
+    const f64 distance = std::sqrt(static_cast<f64>(error.x) * static_cast<f64>(error.x) +
+                                   static_cast<f64>(error.y) * static_cast<f64>(error.y));
+    std::erase_if(m_predicted2d, [this](const Sample2D& sample) { return sample.tick < m_ackedIntent; });
+    // Agreed is agreed.
+    if (distance < ResyncMetres && std::abs(turn) < 1.0e-3f)
+        return;
+    m_stats.corrections += 1;
+    m_stats.lastCorrectionMetres = distance;
+    sprite->position = sprite->position + error;
+    sprite->rotation = sprite->rotation + turn;
+    for (Sample2D& sample : m_predicted2d) {
+        sample.position = sample.position + error;
+        sample.rotation = sample.rotation + turn;
+    }
+}
+
 void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const WorldState& state)
 {
     // The own character's answer, kept until every entity is read (ADR 0133).
     std::optional<scene::CharacterReplayStart> answer;
     InstanceId answeredCharacter;
+    // The same for a character on the plane (D434).
+    std::optional<Sample2D> answer2d;
     const usize nameField = commonIndex("Name");
     const usize parentField = commonIndex("Parent");
     // **This world's own copy of each service, by its class name, first.**
@@ -3934,6 +4020,13 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                     continue;
                 if (cframe)
                     continue;
+                // **A character on the plane, the same** (D434): where the
+                // authority has it is an answer to compare, read whole below,
+                // and neither written over what the local scripts did nor
+                // kept to be drawn from the past.
+                if (field != nullptr && field->pool == "parts2d" &&
+                    (field->name == "Position" || field->name == "Rotation"))
+                    continue;
             }
             else if (cframe && m_ownedParts.contains(entity.id.value)) {
                 // **Its own part is simulated here** (ADR 0099): the authority's
@@ -3982,8 +4075,35 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
             (void)applyField(world, local->second, desc, FieldDelta{wireIdAt(desc, at), value});
         }
         m_written[entity.id.value] = std::move(next);
+
+        // The own sprite's place in this state, changed or not: an authority
+        // that stopped it sends the same place tick after tick, and that is
+        // an answer too.
+        if (entity.id.value == m_owned && m_owned != 0 && world.parts2d().find(local->second) != nullptr) {
+            Sample2D place{state.tick, {}, 0.0f};
+            for (usize at = 0; at < entity.fields.size(); ++at) {
+                const generated::FieldDesc* half = fieldAt(desc, at);
+                if (half == nullptr || half->pool != "parts2d")
+                    continue;
+                if (half->name == "Position") {
+                    const core::Vec3 at2 = asVec3(entity.fields[at]);
+                    place.position = core::Vec2{at2.x, at2.y};
+                }
+                else if (half->name == "Rotation") {
+                    place.rotation = asF32(entity.fields[at]);
+                }
+            }
+            answer2d = place;
+            answeredCharacter = local->second;
+        }
     }
 
+    if (answer2d.has_value() && !answer.has_value()) {
+        if (m_ackedIntent != m_reconciledAck || !m_ownedSynced)
+            reconcile2d(world, answeredCharacter, answer2d->position, answer2d->rotation);
+        m_reconciledAck = m_ackedIntent;
+        return;
+    }
     if (!answer.has_value())
         return;
     // The predicted parts at the answered tick, from this whole state.

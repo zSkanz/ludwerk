@@ -1,5 +1,6 @@
 #include "engine/platform/window.h"
 
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_rect.h>
@@ -111,6 +112,24 @@ WindowPtr createWindow(const WindowDesc& desc, core::EngineError* outError)
     // context comes from elsewhere, which is exactly true: the GPU device's.
     if (const char* driver = SDL_GetCurrentVideoDriver(); driver != nullptr && std::string_view(driver) == "offscreen")
         SDL_SetBooleanProperty(properties, SDL_PROP_WINDOW_CREATE_EXTERNAL_GRAPHICS_CONTEXT_BOOLEAN, true);
+#endif
+#if defined(SDL_PLATFORM_ANDROID)
+    // **The window is made the way up the package was started** (D446). The
+    // manifest holds the activity at the start scene's orientation, and making
+    // a window undid it: SDL hands the activity a requested orientation at
+    // every window's creation, and for a resizable window with no hint that is
+    // "any way the user holds it". So a landscape game started on a phone held
+    // upright turned upright -- 1080 by 2340 for its first frames -- until the
+    // first frame applied `UIService.ScreenOrientation` and turned it back,
+    // and whatever a script measured at start was measured sideways.
+    //
+    // The display is the shape the manifest gave the activity, so the hint is
+    // that shape until the world says which of the five it wants.
+    if (const char* hint = SDL_GetHint(SDL_HINT_ORIENTATIONS); hint == nullptr || hint[0] == '\0') {
+        if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+            mode != nullptr && mode->w > 0 && mode->h > 0)
+            SDL_SetHint(SDL_HINT_ORIENTATIONS, mode->w >= mode->h ? "LandscapeLeft LandscapeRight" : "Portrait");
+    }
 #endif
     SDL_Window* handle = SDL_CreateWindowWithProperties(properties);
     SDL_DestroyProperties(properties);

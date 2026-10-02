@@ -28,8 +28,17 @@ size = [1280, 720]
 [graphics]
 # The quality preset (ADR 0044): "low", "medium", "high" or "ultra". A key
 # below overrides the preset, and `ludwerk run --quality=...` overrides both.
-quality = "high"
+# Left unset, it is "high" on a desktop and "medium" on a phone, which runs a
+# level lower (ADR 0147); naming one here names it for every platform, and
+# `[graphics.android]` below names one for phones alone.
+# quality = "high"
 # render_scale = 1.0        # 0.5 to 1.0; the world renders at this fraction, the UI does not
 # shadow_distance = 120.0   # metres
 # bloom = true
 # ambient_occlusion = true
+
+# What a phone runs at, over `[graphics]` (ADR 0147). Unset, a phone is "medium"
+# and renders the world under a cap; the manual's quality page has the keys.
+# [graphics.android]
+# quality = "medium"
+# render_cap = 900

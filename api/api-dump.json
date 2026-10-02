@@ -376,7 +376,7 @@
       "Properties": [
         {
           "Name": "Adornee",
-          "Type": "BasePart?"
+          "Type": "(BasePart | Part2D)?"
         },
         {
           "Name": "AlwaysOnTop",
@@ -524,6 +524,39 @@
           "Name": "GetRenderCFrame",
           "Parameters": [],
           "Returns": ["CFrame"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "ViewportPointToRay",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["vector", "vector"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "ViewportPointToWorld2D",
+          "Parameters": [
+            {
+              "Name": "point",
+              "Type": "Vector2"
+            }
+          ],
+          "Returns": ["Vector2?"],
+          "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "WorldToViewportPoint",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            }
+          ],
+          "Returns": ["Vector2", "number", "boolean"],
           "ThreadSafety": "ReadParallel"
         }
       ],
@@ -817,6 +850,116 @@
             }
           ],
           "Returns": [],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "CryptoService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "HashPasswordAsync",
+          "Parameters": [
+            {
+              "Name": "password",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["string"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "HmacSha256",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string | buffer"
+            },
+            {
+              "Name": "data",
+              "Type": "string | buffer"
+            }
+          ],
+          "Returns": ["string"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "RandomBytes",
+          "Parameters": [
+            {
+              "Name": "count",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["buffer"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "RandomInteger",
+          "Parameters": [
+            {
+              "Name": "min",
+              "Type": "number"
+            },
+            {
+              "Name": "max",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["number"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "SecureEquals",
+          "Parameters": [
+            {
+              "Name": "a",
+              "Type": "string | buffer"
+            },
+            {
+              "Name": "b",
+              "Type": "string | buffer"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "Sha256",
+          "Parameters": [
+            {
+              "Name": "data",
+              "Type": "string | buffer"
+            }
+          ],
+          "Returns": ["string"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "UniqueId",
+          "Parameters": [],
+          "Returns": ["string"],
+          "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "VerifyPasswordAsync",
+          "Parameters": [
+            {
+              "Name": "password",
+              "Type": "string"
+            },
+            {
+              "Name": "hash",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
           "Yields": true,
           "ThreadSafety": "Unsafe"
         }
@@ -2974,6 +3117,10 @@
           "Type": "BasePart?"
         },
         {
+          "Name": "Character2D",
+          "Type": "Part2D?"
+        },
+        {
           "Name": "Team",
           "Type": "Team?"
         },
@@ -3664,6 +3811,11 @@
           "Name": "KeepOnSceneLoad",
           "Type": "boolean",
           "Default": "false"
+        },
+        {
+          "Name": "ReferenceHeight",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "ScreenInsets",
@@ -5419,6 +5571,12 @@
           "Name": "ScreenOrientation",
           "Type": "Enum.ScreenOrientation",
           "Default": "Enum.ScreenOrientation.LandscapeSensor"
+        },
+        {
+          "Name": "ViewportSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
         }
       ],
       "Methods": [
@@ -9891,6 +10049,34 @@
           "Value": 97
         },
         {
+          "Name": "Virtual10",
+          "Value": 141
+        },
+        {
+          "Name": "Virtual11",
+          "Value": 142
+        },
+        {
+          "Name": "Virtual12",
+          "Value": 143
+        },
+        {
+          "Name": "Virtual13",
+          "Value": 144
+        },
+        {
+          "Name": "Virtual14",
+          "Value": 145
+        },
+        {
+          "Name": "Virtual15",
+          "Value": 146
+        },
+        {
+          "Name": "Virtual16",
+          "Value": 147
+        },
+        {
           "Name": "Virtual2",
           "Value": 98
         },
@@ -9901,6 +10087,26 @@
         {
           "Name": "Virtual4",
           "Value": 100
+        },
+        {
+          "Name": "Virtual5",
+          "Value": 136
+        },
+        {
+          "Name": "Virtual6",
+          "Value": 137
+        },
+        {
+          "Name": "Virtual7",
+          "Value": 138
+        },
+        {
+          "Name": "Virtual8",
+          "Value": 139
+        },
+        {
+          "Name": "Virtual9",
+          "Value": 140
         },
         {
           "Name": "VirtualStick1",

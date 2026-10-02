@@ -236,3 +236,57 @@ TEST_CASE("the pointer presses a sign in the world, unless it is behind somethin
     world.surfaceGuis().find(gui)->face = 0; // Front: -Z, away from the camera.
     CHECK_FALSE(app::pickWorldUi(world, workspace, {}, viewport, camera, centre, nothingInTheWay).has_value());
 }
+
+TEST_CASE("D435: a billboard floats over a part on the 2D plane")
+{
+    // `Adornee` took a `BasePart` and nothing else, so a name or a health bar
+    // over a sprite was screen interface a game placed by hand every frame.
+    app::testing::Fixture fixture;
+    scene::World world{fixture.classes, fixture.enums, fixture.atoms, 7u};
+    const core::InstanceId workspace = world.create(fixture.workspaceClass);
+    world.workspaces().add(workspace, scene::WorkspaceComponent{});
+
+    const core::InstanceId hero = world.create(fixture.folderClass);
+    scene::Part2DComponent sprite;
+    sprite.position = core::Vec2{3.0f, 2.0f};
+    world.parts2d().add(hero, sprite);
+    (void)world.setParent(hero, workspace);
+
+    const core::InstanceId name = world.create(fixture.folderClass);
+    scene::BillboardGuiComponent gui;
+    gui.adornee = hero;
+    gui.size = core::UDim2{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 50.0f}};
+    world.billboardGuis().add(name, gui);
+    (void)world.setParent(name, workspace);
+
+    // Ten metres in front of the plane, looking at it.
+    render::RenderCamera camera = cameraAtOrigin();
+    camera.origin = core::DVec3{0.0, 0.0, 10.0};
+    const core::Vec2 viewport{1280.0f, 720.0f};
+
+    const std::vector<app::PlacedCanvas> placed =
+        app::placeWorldCanvases(world, workspace, core::InstanceId{}, viewport, camera);
+    REQUIRE(placed.size() == 1);
+    CHECK(placed[0].canvas == name);
+    // Its middle is over the sprite: (3, 2) on the plane, from the camera.
+    const CanvasPlacement& canvas = placed[0].placement;
+    const core::Vec3 middle =
+        canvas.topLeft + canvas.right * (canvas.canvas.x * 0.5f) + canvas.down * (canvas.canvas.y * 0.5f);
+    CHECK(near(middle, core::Vec3{3.0f, 2.0f, -10.0f}, 1e-2f));
+
+    // The sprite moves, and so does the name.
+    world.parts2d().find(hero)->position = core::Vec2{-4.0f, 1.0f};
+    const std::vector<app::PlacedCanvas> moved =
+        app::placeWorldCanvases(world, workspace, core::InstanceId{}, viewport, camera);
+    REQUIRE(moved.size() == 1);
+    const CanvasPlacement& after = moved[0].placement;
+    const core::Vec3 middleAfter =
+        after.topLeft + after.right * (after.canvas.x * 0.5f) + after.down * (after.canvas.y * 0.5f);
+    CHECK(near(middleAfter, core::Vec3{-4.0f, 1.0f, -10.0f}, 1e-2f));
+
+    // With no adornee it floats over its parent, when its parent is a sprite.
+    world.billboardGuis().find(name)->adornee = core::InstanceId{};
+    CHECK(app::placeWorldCanvases(world, workspace, core::InstanceId{}, viewport, camera).empty());
+    (void)world.setParent(name, hero);
+    CHECK(app::placeWorldCanvases(world, workspace, core::InstanceId{}, viewport, camera).size() == 1);
+}

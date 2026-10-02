@@ -25,6 +25,7 @@
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
 #include "engine/script/content_provider.h"
+#include "engine/script/crypto_service.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
@@ -1619,10 +1620,10 @@ int inputServiceSetVirtualState(lua_State* L)
         luaL_argerror(L, 2, "Enum.KeyCode");
     if (!input::isVirtual(item.value)) {
         // Writing to `Space` would be a script pretending to be a keyboard, and
-        // nothing downstream could then tell the two apart. The four channels
-        // the engine set aside are the seam, and this is the line that keeps it
-        // one-way.
-        luaL_argerror(L, 2, "Enum.KeyCode.Virtual1..Virtual4");
+        // nothing downstream could then tell the two apart. The sixteen
+        // channels the engine set aside are the seam, and this is the line
+        // that keeps it one-way.
+        luaL_argerror(L, 2, "Enum.KeyCode.Virtual1..Virtual16");
     }
 
     const auto value = static_cast<f32>(luaL_checknumber(L, 3));
@@ -2157,6 +2158,14 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
     {"SaveService", "ListSlots", saveServiceListSlots},
     {"SaveService", "DeleteSlot", saveServiceDeleteSlot},
+    {"CryptoService", "RandomBytes", cryptoServiceRandomBytes},
+    {"CryptoService", "RandomInteger", cryptoServiceRandomInteger},
+    {"CryptoService", "UniqueId", cryptoServiceUniqueId},
+    {"CryptoService", "Sha256", cryptoServiceSha256},
+    {"CryptoService", "HmacSha256", cryptoServiceHmacSha256},
+    {"CryptoService", "SecureEquals", cryptoServiceSecureEquals},
+    {"CryptoService", "HashPasswordAsync", cryptoServiceHashPasswordAsync},
+    {"CryptoService", "VerifyPasswordAsync", cryptoServiceVerifyPasswordAsync},
     {"Player", "GetIntent", playerGetIntent},
     {"ParticleEmitter", "Emit", particleEmitterEmit},
     {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},

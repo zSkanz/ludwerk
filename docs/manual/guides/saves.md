@@ -62,7 +62,7 @@ end)
 | Run | Folder |
 |---|---|
 | An exported game | the player's folder for the game's `[project]` company and name: `%APPDATA%/<company>/<name>/saves` on Windows, `~/.local/share/<company>/<name>/saves` on Linux, the app's storage on Android |
-| The editor's Play, `ludwerk dev` | the project's `.engine/saves/` -- a test run never touches a real player's |
+| The editor's Play, `ludwerk dev`, the host run on a project folder by hand | the project's `.engine/saves/` -- a test run never touches a real player's |
 | A match started from the editor | `.engine/saves/<window>/`, one folder per window |
 
 Each slot is `<name>.save`, beside `<name>.bak`, the save before it. A damaged

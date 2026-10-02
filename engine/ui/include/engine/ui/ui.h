@@ -37,7 +37,8 @@
 
 namespace engine::scene {
 class World;
-}
+struct ScreenGuiComponent;
+} // namespace engine::scene
 
 namespace engine::ui {
 
@@ -385,6 +386,9 @@ struct LayoutStats
 // `windowSize` is the drawable size in pixels. A change to it dirties every
 // tree, because a scale is a fraction of something that just changed.
 void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSize);
+// How many pixels one unit of a `ScreenGui` is in a window this size: the
+// window's height over its `ReferenceHeight`, or one where it has none.
+[[nodiscard]] f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) noexcept;
 
 // **One tree against a canvas of its own** (F3): the children of `root` laid
 // out inside `(0, 0)` to `canvasSize`, with `AbsolutePosition` and

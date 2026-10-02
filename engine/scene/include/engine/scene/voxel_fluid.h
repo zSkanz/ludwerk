@@ -40,13 +40,15 @@ inline constexpr core::u32 MaxFluidUpdatesPerTick = 8192;
 // the reaction when `result` is air. Keeps the list sorted and one per pair.
 void setFluidReaction(VoxelComponent& voxels, asset::BlockId from, asset::BlockId touching, asset::BlockId result);
 
-// Asks the next step to look at a block and its six neighbours, because one of
-// them changed. What a script or a tool calls after writing the grid; a world
-// with no fluid type registered does nothing here.
+// Asks the next step to look at a block and the blocks whose decision reads
+// it, because it changed -- **those of them a look would change** (D448). What
+// a script or a tool calls after writing the grid. A world with no fluid type
+// registered does nothing here, and neither does a write with no fluid in any
+// chunk around it: building dry land costs no fluid work.
 void wakeFluids(VoxelComponent& voxels, core::i32 x, core::i32 y, core::i32 z);
 
 // The same for a box and the blocks around it -- after `FillBlocks`. Only its
-// shell and the layer outside it are woken: inside a filled box every block's
+// shell and the layer outside it are asked: inside a filled box every block's
 // neighbours are the same block, and nothing there can change.
 void wakeFluidsInBox(VoxelComponent& voxels, core::i32 minX, core::i32 minY, core::i32 minZ, core::i32 maxX,
                      core::i32 maxY, core::i32 maxZ);

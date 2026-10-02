@@ -56,7 +56,15 @@ constexpr i32 LeftStickY = PadAxisFirst + 1;
 constexpr i32 RightStickX = PadAxisFirst + 2;
 constexpr i32 RightStickY = PadAxisFirst + 3;
 
-static_assert(ExtraKeysFirst + ExtraKeysCount == static_cast<i32>(kKeyCodeCount),
+// **The rest of the virtual keys** (D443), `Virtual5` to `Virtual16`, after
+// the appended keyboard for the reason that block is where it is: no value a
+// game already held moves. Four was "a thumbstick and two or three buttons",
+// and the first action game on a phone had a skill bar. They are keys like the
+// first four and halves of no stick.
+constexpr i32 MoreVirtualFirst = ExtraKeysFirst + ExtraKeysCount; // 136
+constexpr i32 MoreVirtualCount = 12;
+
+static_assert(MoreVirtualFirst + MoreVirtualCount == static_cast<i32>(kKeyCodeCount),
               "the KeyCode ranges above must cover the whole enum with no gap");
 
 [[nodiscard]] constexpr bool inRange(i32 value, i32 first, i32 count) noexcept
@@ -115,9 +123,19 @@ constexpr f32 AnalogPressThreshold = 0.5f;
 
 } // namespace
 
+namespace {
+
+// One a script may WRITE: a virtual key, and not a stick made of two.
+[[nodiscard]] constexpr bool isVirtualKey(i32 keyCode) noexcept
+{
+    return inRange(keyCode, VirtualFirst, VirtualCount) || inRange(keyCode, MoreVirtualFirst, MoreVirtualCount);
+}
+
+} // namespace
+
 bool isVirtual(i32 keyCode) noexcept
 {
-    return inRange(keyCode, VirtualFirst, VirtualCount) || keyCode == VirtualStick1 || keyCode == VirtualStick2;
+    return isVirtualKey(keyCode) || keyCode == VirtualStick1 || keyCode == VirtualStick2;
 }
 
 DeviceType deviceOf(i32 keyCode) noexcept
@@ -151,6 +169,10 @@ bool isAnalog(i32 keyCode) noexcept
 constexpr std::string_view AnalogNames[] = {"MouseMovement", "MouseWheel"};
 constexpr std::string_view StickNames[] = {"LeftThumbstick", "RightThumbstick"};
 constexpr std::string_view VirtualNames[] = {"Virtual1", "Virtual2", "Virtual3", "Virtual4"};
+constexpr std::string_view MoreVirtualNames[] = {"Virtual5",  "Virtual6",  "Virtual7",  "Virtual8",
+                                                 "Virtual9",  "Virtual10", "Virtual11", "Virtual12",
+                                                 "Virtual13", "Virtual14", "Virtual15", "Virtual16"};
+static_assert(std::size(MoreVirtualNames) == static_cast<usize>(MoreVirtualCount));
 constexpr std::string_view VirtualStickNames[] = {"VirtualStick1", "VirtualStick2"};
 
 i32 keyCodeFromName(std::string_view name) noexcept
@@ -185,6 +207,10 @@ i32 keyCodeFromName(std::string_view name) noexcept
         if (name == VirtualNames[index])
             return VirtualFirst + index;
     }
+    for (i32 index = 0; index < MoreVirtualCount; ++index) {
+        if (name == MoreVirtualNames[index])
+            return MoreVirtualFirst + index;
+    }
     return 0;
 }
 
@@ -204,6 +230,8 @@ std::string_view keyCodeName(i32 keyCode) noexcept
         return AnalogNames[keyCode - MouseMovement];
     if (inRange(keyCode, VirtualFirst, VirtualCount))
         return VirtualNames[keyCode - VirtualFirst];
+    if (inRange(keyCode, MoreVirtualFirst, MoreVirtualCount))
+        return MoreVirtualNames[keyCode - MoreVirtualFirst];
     if (keyCode == VirtualStick1 || keyCode == VirtualStick2)
         return VirtualStickNames[keyCode - VirtualStick1];
     if (keyCode == LeftThumbstick || keyCode == RightThumbstick)
@@ -468,9 +496,15 @@ namespace {
 
 } // namespace
 
+void InputSystem::setFingerTakenByUi(u64 fingerId)
+{
+    if (std::find(m_uiFingers.begin(), m_uiFingers.end(), fingerId) == m_uiFingers.end())
+        m_uiFingers.push_back(fingerId);
+}
+
 void InputSystem::setVirtualState(i32 keyCode, f32 value) noexcept
 {
-    if (!inRange(keyCode, VirtualFirst, VirtualCount))
+    if (!isVirtualKey(keyCode))
         return;
     m_state.axis[static_cast<usize>(keyCode)] = value;
     // A virtual press marks the device family too, so a HUD that switches its
@@ -593,8 +627,15 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
 
     // **Fingers, by slot**: each begins, moves and ends on its own, and its
     // slot is its `TouchId`. After the keys and the pad, in slot order (R10).
-    // Not UI-consumed: the interface follows one pointer, and a game's own
-    // on-screen controls are what these are for.
+    //
+    // **One that came down on the interface says so** (D444), from its
+    // `Began` to its `Ended`: a game that also aims by tapping the world has
+    // to know a button was under the finger, exactly as it does for a click.
+    // It is still reported -- a game's own on-screen controls are made of
+    // these -- and what the handler does with the flag is the handler's.
+    const auto taken = [this](u64 id) {
+        return std::find(m_uiFingers.begin(), m_uiFingers.end(), id) != m_uiFingers.end();
+    };
     for (usize index = 0; index < m_state.fingers.size(); ++index) {
         const Finger& now = m_state.fingers[index];
         const Finger before = m_hasPrevious ? m_previous.fingers[index] : Finger{};
@@ -607,8 +648,15 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
             // which ends the old one before the new one begins.
             event.phase = RawInputEvent::Phase::Ended;
             event.position = core::Vec3{before.position.x, before.position.y, 0.0f};
+            event.uiConsumed = taken(before.id);
             m_rawEvents.push_back(event);
+            // Unless the same finger is the one that is down again already (a
+            // tap and a second tap inside one tick reuse the id on some
+            // devices): then the claim is the new press's.
+            if (!(now.down && now.id == before.id))
+                std::erase(m_uiFingers, before.id);
         }
+        event.uiConsumed = now.down && taken(now.id);
         if (now.down && !sameFinger) {
             event.phase = RawInputEvent::Phase::Began;
             event.position = core::Vec3{now.position.x, now.position.y, 0.0f};
@@ -624,6 +672,12 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
 
     m_previous = m_state;
     m_hasPrevious = true;
+    // A claim outlives its finger by nothing: one whose finger never took a
+    // slot (a sixth finger), or was swept away with the focus, goes here.
+    std::erase_if(m_uiFingers, [this](u64 id) {
+        return std::none_of(m_previous.fingers.begin(), m_previous.fingers.end(),
+                            [id](const Finger& finger) { return finger.down && finger.id == id; });
+    });
     // A tap shorter than a frame has now been seen down; it ends next tick.
     for (Finger& finger : m_state.fingers) {
         if (finger.lifting) {

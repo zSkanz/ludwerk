@@ -111,6 +111,13 @@ struct StrokeEntry
     u32 order = 0;
 };
 
+// How many pixels one of an element's units is (`UIObjectComponent::unitScale`).
+[[nodiscard]] f32 unitScaleOf(const scene::World& world, core::InstanceId id) noexcept
+{
+    const scene::UIObjectComponent* object = world.uiObjects().find(id);
+    return object != nullptr ? object->unitScale : 1.0f;
+}
+
 // Everything an element owes after its own drawing: its gradient over what it
 // drew, then its border strokes in `ZIndex` order. A destructor, like the turn
 // stamp beside it, because `emit` leaves by four doors.
@@ -124,6 +131,8 @@ struct AppearanceStamp
     u32 scissor = 0;
     GradientPaint gradient;
     std::vector<StrokeEntry> borders;
+    // The element's units, in pixels (`UIObjectComponent::unitScale`).
+    f32 unitScale = 1.0f;
 
     ~AppearanceStamp()
     {
@@ -142,12 +151,13 @@ struct AppearanceStamp
         const f32 shorter = std::fmin(box.max.x - box.min.x, box.max.y - box.min.y);
         for (const StrokeEntry& entry : borders) {
             const scene::UIStrokeComponent& stroke = *entry.stroke;
-            const f32 thickness = stroke.strokeSizingMode == 1 ? stroke.thickness * shorter : stroke.thickness;
+            const f32 thickness =
+                stroke.strokeSizingMode == 1 ? stroke.thickness * shorter : stroke.thickness * unitScale;
             const f32 alpha = 1.0f - std::fmin(std::fmax(stroke.transparency, 0.0f), 1.0f);
             if (!(thickness > 0.0f) || !(alpha > 0.0f))
                 continue;
             // Where the band lies, in pixels from the edge, outwards positive.
-            const f32 offset = stroke.borderOffset.scale * shorter + stroke.borderOffset.offset;
+            const f32 offset = stroke.borderOffset.scale * shorter + stroke.borderOffset.offset * unitScale;
             f32 inner = offset;
             if (stroke.borderStrokePosition == 1)
                 inner = offset - thickness * 0.5f;
@@ -459,7 +469,7 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
     // An empty field that is not being typed into shows its placeholder.
     if (label.text.empty() && field.composition.empty() && !field.focused) {
         if (!field.placeholderText.empty())
-            buildTextGeometry(field.placeholderText, label.font, label.textSize,
+            buildTextGeometry(field.placeholderText, label.font, label.textSize * unitScaleOf(world, entry.id),
                               field.multiLine ? box.max.x - box.min.x : 0.0f, box, label.horizontalAlignment,
                               label.verticalAlignment, field.placeholderColor, textAlpha, scissor, out.quads);
         return;
@@ -589,7 +599,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             // A `UDim`, so `Scale` is a fraction of the SHORTER side: a radius
             // that meant a fraction of the width would make a wide button's
             // corners taller than its height.
-            const f32 radius = corner->cornerRadius.scale * shorter + corner->cornerRadius.offset;
+            const f32 radius = corner->cornerRadius.scale * shorter + corner->cornerRadius.offset * self->unitScale;
             cornerRadius = std::fmax(0.0f, std::fmin(radius, shorter * 0.5f));
             break;
         }
@@ -600,6 +610,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
     // goes to the glyphs below; every other stroke is a border.
     const bool isText = world.textLabels().find(entry.id) != nullptr;
     AppearanceStamp appearance{world, out, out.quads.size(), box, cornerRadius, entry.scissor, {}, {}};
+    appearance.unitScale = self->unitScale;
     appearance.gradient = gradientUnder(world, entry.id, box, out);
     TextStroke textStroke;
     bool textStroked = false;
@@ -613,8 +624,8 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             if (textStroked)
                 continue;
             textStroked = true;
-            textStroke.thickness = stroke->thickness;
             textStroke.scaled = stroke->strokeSizingMode == 1;
+            textStroke.thickness = textStroke.scaled ? stroke->thickness : stroke->thickness * self->unitScale;
             textStroke.color = stroke->color;
             textStroke.alpha = 1.0f - std::fmin(std::fmax(stroke->transparency, 0.0f), 1.0f);
             textStroke.join = static_cast<u32>(std::clamp(stroke->lineJoinMode, 0, 2));
@@ -649,13 +660,16 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
         // not the region's. A `ScrollFrame` clips its descendants, and a bar
         // clipped by that clip would scroll away with the content it reports on.
         const core::Vec2 size{box.max.x - box.min.x, box.max.y - box.min.y};
-        const ScrollAxis horizontal{scroll->canvasSize.x.scale * size.x + scroll->canvasSize.x.offset, size.x,
-                                    scroll->canvasPosition.x};
-        const ScrollAxis vertical{scroll->canvasSize.y.scale * size.y + scroll->canvasSize.y.offset, size.y,
-                                  scroll->canvasPosition.y};
-        appendScrollBar(box, vertical, scroll->scrollBarThickness, true, self->backgroundColor, entry.scissor,
+        // The canvas's offsets, its position and the bar are in the tree's
+        // units; the box is in pixels.
+        const f32 unit = self->unitScale;
+        const ScrollAxis horizontal{scroll->canvasSize.x.scale * size.x + scroll->canvasSize.x.offset * unit, size.x,
+                                    scroll->canvasPosition.x * unit};
+        const ScrollAxis vertical{scroll->canvasSize.y.scale * size.y + scroll->canvasSize.y.offset * unit, size.y,
+                                  scroll->canvasPosition.y * unit};
+        appendScrollBar(box, vertical, scroll->scrollBarThickness * unit, true, self->backgroundColor, entry.scissor,
                         out.quads);
-        appendScrollBar(box, horizontal, scroll->scrollBarThickness, false, self->backgroundColor, entry.scissor,
+        appendScrollBar(box, horizontal, scroll->scrollBarThickness * unit, false, self->backgroundColor, entry.scissor,
                         out.quads);
     }
 
@@ -704,7 +718,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
         // `TextScaled` re-measures at the size that fills the box rather than
         // stretching a bitmap: there is no distance field in v1, and a stretched
         // glyph is what "scaled text" usually looks like.
-        f32 size = label->textSize;
+        f32 size = label->textSize * self->unitScale;
         if (label->textScaled && !text.empty()) {
             const TextRunMetrics unit =
                 rich ? measureRichText(text, label->font, 100.0f, 0.0f) : measureText(text, label->font, 100.0f, 0.0f);

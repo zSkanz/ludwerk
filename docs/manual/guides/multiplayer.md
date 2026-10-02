@@ -29,7 +29,9 @@ NetworkService:Join("play.example.com:7777") -- or Join() for [network] server
 
 - **Joining replaces this machine's scene with the server's.** What the server
   replicates arrives, and this machine's server code stops: it no longer
-  decides the world.
+  decides the world. The scene's client code -- `ClientScriptService` -- starts
+  fresh in the world that arrived, once the join has succeeded; until then
+  `State` is `Connecting` and it is not running.
 - **Leaving goes back to solo** in the scene it is in, and the game's code
   decides what next, usually `SceneService:LoadScene` of its menu. The other
   players go, and server code starts again, fresh.
@@ -57,6 +59,21 @@ for as long as it runs, who it was on each server it joined, and a script's
 `Join` to that address presents it: the server welcomes the player back with
 the `UserId` it had, so a score or an inventory keyed on it is still theirs. A
 game that wants to come back on its own calls `Join` from `Disconnected`.
+
+**A connection that drops is dialled again, for as long as the timeout.** While
+it is, `State` is `Connecting`. What happens next depends on who answers:
+
+| Who answers | What this machine gets |
+|---|---|
+| the same run of the server | the match it was in, as the player it was: `Connected` fires and nothing else changes |
+| a server that was restarted | a new join: the world is replaced by the new server's, the scene's client code starts fresh, and `Connected` fires. The old run's `UserId` meant nothing to the new one |
+| nobody, for `[network] timeout` | `Disconnected`, and the machine is solo |
+
+So a game needs one rule for all three: draw "reconnecting" while `State` is
+`Connecting`, and treat `Connected` as "the world is here" every time it fires
+-- it fires on every return, not only the first. The first dial of a client
+started with `--join=` has no timeout: it waits for a server that is not up
+yet.
 
 **A server that goes silent is gone after ten seconds**, whether it closed or
 a cable was pulled, and the same holds for a player a server stops hearing.
@@ -157,7 +174,10 @@ always wins.
 
 ## A player's own character
 
-Set `player.Character` to the part that is them. Two things follow from it:
+Set `player.Character` to the part that is them -- or, in a 2D game,
+`player.Character2D` to the `Part2D` that is. It is one thing with two names,
+each typed as what it holds, and setting either replaces the other. Two things
+follow from it:
 
 - **Their machine moves it at once.** A replica runs the same movement code on
   its own character from its own keys, and the authority's snapshots correct it
@@ -170,6 +190,62 @@ Set `player.Character` to the part that is them. Two things follow from it:
 
 Everybody else's parts are drawn between the last two snapshots, a few ticks
 behind the authority, so they glide instead of stepping.
+
+### A character a script moves
+
+A `CharacterBody` is predicted for you. A character your own code moves -- a
+hero on a grid, a ship, anything on the 2D plane -- is predicted by **running
+the same step on both sides**: one module, required by the server and by the
+client, that turns an intent into a move.
+
+```luau
+--!strict
+-- GlobalScriptService.Shared.Step
+local Step = {}
+
+function Step.move(hero: Part2D, direction: Vector2, dt: number)
+    hero.Position += direction * 5 * dt
+end
+
+return Step
+```
+
+```luau
+--!strict
+-- ServerScriptService: the authority, for every player
+RunService.Heartbeat:Connect(function(dt: number)
+    for _, player in NetworkService:GetPlayers() do
+        local hero = player.Character2D
+        if hero then
+            Step.move(hero, player:GetIntent("Move") :: Vector2, dt)
+        end
+    end
+end)
+```
+
+```luau
+--!strict
+-- ClientScriptService: this machine, for its own hero only
+RunService.Heartbeat:Connect(function(dt: number)
+    local me = NetworkService.LocalPlayer
+    local hero = if me then me.Character2D else nil
+    if hero and not NetworkService.Authority then
+        Step.move(hero, move:GetState() :: Vector2, dt)
+    end
+end)
+```
+
+The client's hero answers the key on the tick it was pressed. The authority's
+snapshots do not overwrite it: each one says where the authority had the hero
+at the intent it last applied, the engine compares that with where THIS machine
+had it at that same tick, and moves the hero by the difference. While both
+sides step alike the difference is nothing and nothing moves. When the
+authority stops the hero against something the client walked through, the hero
+comes back.
+
+A client that does not step its own character at all still gets the newer of
+the two pictures: its hero is put where the authority's newest snapshot has
+it, where everyone else's is drawn a few ticks in the past.
 
 ## Attributes: state every machine sees
 
@@ -394,6 +470,37 @@ scores, input history) in your own tables and restore it beside the buffer.
 `RestoreSimulation` answers `false` and changes nothing if a simulated part was
 created, destroyed or anchored since the save. `StepSimulation` fires no
 `Touched`; those ticks already did.
+
+## Accounts, tokens and passwords
+
+`CryptoService` is what a login is made of ([`CryptoService`](api:CryptoService)):
+
+```luau
+--!strict
+local CryptoService = game:GetService("CryptoService")
+
+-- Registering: store the hash, never the password.
+local hash = CryptoService:HashPasswordAsync(password)
+-- Logging in: check against the stored hash.
+if CryptoService:VerifyPasswordAsync(password, hash) then
+    local session = CryptoService:UniqueId() -- a token nobody can guess
+end
+```
+
+- **Chance nobody can predict** comes from `RandomBytes`, `RandomInteger` and
+  `UniqueId`. `Random.new()` and `math.random` are the simulation's: the same
+  numbers on every run, on purpose, and the wrong thing for a token.
+- **`HashPasswordAsync` is for passwords and `Sha256` is not.** The first is
+  slow on purpose and salts itself; the second is a fingerprint, and a
+  fingerprint of a password is guessed at billions of tries a second.
+- **Compare secrets with `SecureEquals`**, and sign what a client must not
+  forge with `HmacSha256` under a key only the server holds.
+
+**What a `RemoteEvent` carries is not hidden yet.** The connection is not
+encrypted until ADR 0120 is built, so a password sent from a client can be read
+by whoever carries the packets. Until then, keep a login for a network you
+trust, or send it to your own backend over `https://` with `net.request`
+([Talking to a backend](manual:guides/backend)), which is encrypted today.
 
 ## What is not here
 

@@ -107,8 +107,27 @@ end)
 
 `examples/20-platformer` is this at full size: three buttons that appear the
 first time a finger touches the screen, two thumbs at once, and a thumb that
-slides from left to right turning around. A tap also presses the interface's
-buttons as a click does; touches are never marked consumed by it.
+slides from left to right turning around.
+
+There are sixteen virtual keys, `Virtual1` to `Virtual16`. The first four are
+also the halves of `VirtualStick1` and `VirtualStick2`; the rest are for the
+buttons a HUD grows.
+
+**A finger that lands on the interface says so.** A tap presses the
+interface's buttons as a click does, and that finger's `InputBegan`, every
+`InputChanged` and its `InputEnded` arrive with the second argument true --
+the same `uiConsumed` a click on a button carries. A game that also aims by
+tapping the world checks it:
+
+```luau
+--!strict
+InputService.InputBegan:Connect(function(input: InputObject, uiConsumed: boolean)
+    if uiConsumed or input.UserInputType ~= Enum.UserInputType.Touch then
+        return -- a button was under the finger
+    end
+    aimAt(input.Position)
+end)
+```
 
 ## The pointer
 

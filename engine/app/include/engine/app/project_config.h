@@ -228,4 +228,29 @@ inline constexpr bool Handheld = false;
 // none.
 [[nodiscard]] render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides, bool handheld = Handheld);
 
+// **Whose saves a run keeps** (ADR 0111, D445).
+enum class SaveHome : core::u8
+{
+    // The project's own `.engine/saves/`: a run of a project that is being
+    // made.
+    Project,
+    // The player's folder for the game: the game somebody was given.
+    Player,
+};
+
+// The player's folder is the PACKAGED game's -- the `game/` beside the
+// executable, which is what an export is -- and only on a run that is nobody's
+// test of it. Everything else is a project being made, whoever started it and
+// however: the editor's Play, `ludwerk dev`, a match's windows, and the host
+// handed a project folder on the command line.
+//
+// It was the other way round -- the project's folder only for the three runs
+// the engine could name -- so a plain `engine-host <project>` saved over the
+// developer's own copy of the game in `%APPDATA%`, which the saves page
+// promised no test run would.
+[[nodiscard]] constexpr SaveHome saveHomeFor(bool packagedGame, bool developmentRun) noexcept
+{
+    return packagedGame && !developmentRun ? SaveHome::Player : SaveHome::Project;
+}
+
 } // namespace engine::app

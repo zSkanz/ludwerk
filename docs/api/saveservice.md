@@ -6,7 +6,7 @@
 - A **service**: reached with `game:GetService("SaveService")`
 - **Not creatable**: `Instance.new` refuses it
 
-Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. It keeps named SLOTS, each a file on the player's own machine, under the folder the game's `[project]` name and company say -- `%APPDATA%\<company>\<name>\saves` on Windows. In the editor's Play and under `ludwerk dev` the saves go to `.engine/saves/` in the project instead, so a test run never touches a real player's.
+Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. It keeps named SLOTS, each a file on the player's own machine, under the folder the game's `[project]` name and company say -- `%APPDATA%\<company>\<name>\saves` on Windows. That is the exported game's. Every run of the project itself -- the editor's Play, `ludwerk dev`, the host given the project's folder -- saves to `.engine/saves/` in the project instead, so a test run never touches a real player's.
 
 **The only way from a script to a disk**, and it names slots, never paths. It is not replicated: every machine keeps its own. What a slot held is a fact about this machine, not about the simulation, so a replay that loads one records the load as an input.
 

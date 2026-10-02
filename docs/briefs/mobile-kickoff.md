@@ -28,6 +28,14 @@ side hands over an APK and reads the log's frame reports.
 
 - [x] **A tap presses the interface** (D430): buttons, fields, the keyboard.
 - [x] **An exported game can open a socket** (D431): the manifest's permissions.
+- [x] **A new project is `medium` on a phone**: the starter template leaves
+  `[graphics] quality` commented out, so the platform's default stands, and
+  carries a commented `[graphics.android]` table.
+- [x] **The window is made the way up the package says** (D446), and **the
+  safe area is the cutout and the visible bars** (D447). Both to be confirmed
+  on the device.
+- [x] **A finger on the interface says so** (D444), and there are **sixteen
+  virtual keys** (D443).
 
 ## M2 -- what is loaded and how far (after M1's numbers)
 

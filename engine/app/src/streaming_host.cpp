@@ -270,6 +270,11 @@ std::vector<asset::StreamingFocus> collectStreamingFoci(const scene::World& worl
         else if (const scene::CameraComponent* camera = world.cameras().find(id); camera != nullptr) {
             out.position = camera->cframe.position;
         }
+        // A hero on the plane (D434).
+        else if (const scene::Part2DComponent* sprite = world.parts2d().find(id); sprite != nullptr) {
+            out.position = core::DVec3{static_cast<core::f64>(sprite->position.x),
+                                       static_cast<core::f64>(sprite->position.y), 0.0};
+        }
         else {
             return false;
         }

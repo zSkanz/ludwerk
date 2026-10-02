@@ -38,6 +38,7 @@
 #include "engine/script/animation.h"
 #include "engine/script/binding.h"
 #include "engine/script/content_provider.h"
+#include "engine/script/crypto_service.h"
 #include "engine/script/detectors.h"
 #include "engine/script/reload_state.h"
 #include "engine/script/save_store.h"
@@ -292,7 +293,7 @@ public:
     nav::INavigation* navigation = nullptr;
 
     // The input system `InputService` reads and, in exactly one place, writes:
-    // `SetVirtualState` drives the four virtual channels, which is the seam that
+    // `SetVirtualState` drives the sixteen virtual channels, which is the seam that
     // lets a HUD button feed an action without becoming a second input model.
     // Null before the host hands it over. Same arrangement as `physics` and
     // `animation`: the system belongs to the host's lifetime and this is a view
@@ -347,6 +348,16 @@ public:
     int migrateHandler = -1;
     // Each slot's `Changed`, by name, made when first asked for.
     std::map<std::string, SignalId, std::less<>> slotSignals;
+
+    // **`CryptoService`** (ADR 0151): the thread passwords are hashed on, made
+    // by the first one, and the threads waiting on it.
+    struct PasswordWaiter
+    {
+        u64 ticket = 0;
+        int threadRef = -1;
+    };
+    std::vector<PasswordWaiter> passwordWaiters;
+    std::unique_ptr<PasswordWorker> passwords;
 };
 
 // Creates `game` and the two services that exist from boot, installs the

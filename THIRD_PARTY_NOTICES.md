@@ -6,7 +6,7 @@ GENERATED FILE — do not edit. Regenerate with:
 lute tools/repo/vendor.luau notices
 ```
 
-LuauG vendors third-party source under `third_party/`. Each dependency keeps
+Ludwerk vendors third-party source under `third_party/`. Each dependency keeps
 its own license; this file is the aggregated index, generated from
 [`third_party/manifest.json`](third_party/manifest.json) (ADR 0021).
 
@@ -36,12 +36,13 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | doctest | 2.5.3 | `2d0a9359a60c` | MIT | https://github.com/doctest/doctest | `third_party/doctest/` |
 | blake3 | 1.8.7 | `f3149ec5bb54` | CC0-1.0 OR Apache-2.0 | https://github.com/BLAKE3-team/BLAKE3 | `third_party/blake3/` |
 | xxhash | 0.8.3 | `e626a72bc232` | BSD-2-Clause | https://github.com/Cyan4973/xxHash | `third_party/xxhash/` |
+| libsodium | 1.0.22 | `77e1ce5d6dee` | ISC | https://github.com/jedisct1/libsodium | `third_party/libsodium/` |
 | inter | 4.1 | `e3a3d4c57d5e` | OFL-1.1 | https://github.com/rsms/inter | `third_party/inter/` |
 
 ## Fetched binary artifacts
 
 Build-time tools that are **not** vendored and never committed: they are
-downloaded at configure time into a cache under `$LUAUG_BUILD_ROOT` and pinned
+downloaded at configure time into a cache under `$ENG_BUILD_ROOT` and pinned
 by SHA256 (ADR 0032). They do not ship inside the engine or a packaged game.
 
 | Artifact | Version | License | Platform | SHA256 | Source |

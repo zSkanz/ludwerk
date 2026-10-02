@@ -113,6 +113,7 @@ public:
             status.welcomed = m_replica->welcomed();
             status.lost = m_replica->lost();
             status.token = m_replica->playerToken();
+            status.freshJoins = m_replica->freshJoins();
             const net::PeerLink link = m_replica->link();
             status.pingMs = link.roundTripMs;
             status.jitterMs = link.jitterMs;
@@ -192,9 +193,22 @@ private:
         m_receives += 1;
         if (!m_replica->lost()) {
             if (m_attempts > 0)
-                core::log(core::LogLevel::Info, ENG_TR("net.info.reconnected"));
+                m_sayWhenWelcomed = true;
             m_attempts = 0;
             m_redialAt = 0;
+            // Said at the welcome, which is when it is known who answered:
+            // the server this machine left, or one that has never heard of
+            // it -- which is a new player in a new world, and it said "as the
+            // same player" of both (D432).
+            if (m_replica->welcomed()) {
+                if (m_sayWhenWelcomed) {
+                    m_sayWhenWelcomed = false;
+                    core::log(core::LogLevel::Info, m_replica->freshJoins() != m_freshJoinsSaid
+                                                        ? ENG_TR("net.info.rejoined")
+                                                        : ENG_TR("net.info.reconnected"));
+                }
+                m_freshJoinsSaid = m_replica->freshJoins();
+            }
             return;
         }
         if (m_redialAt == 0) {
@@ -220,6 +234,8 @@ private:
     u64 m_receives = 0;
     u64 m_redialAt = 0;
     u32 m_attempts = 0;
+    bool m_sayWhenWelcomed = false;
+    u32 m_freshJoinsSaid = 0;
     std::optional<AuthoritySession> m_authority;
     std::optional<ReplicaSession> m_replica;
     std::function<bool(core::InstanceId)> m_probe;

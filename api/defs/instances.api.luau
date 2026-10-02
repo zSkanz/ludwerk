@@ -36,6 +36,9 @@ local InTheWorld = under("Workspace", "Model", "BasePart")
 local InTheWorldOrAFrame = under("Workspace", "Model", "BasePart", "ViewportFrame")
 --- Something a part or a point on one gives off or wears.
 local OnAPart = under("BasePart", "Attachment")
+--- A canvas that floats over something in the world: a part, a point on one,
+--- or a part on the 2D plane.
+local OverAPart = under("BasePart", "Attachment", "Part2D")
 --- An element of a UI tree, under one of its three roots or another element.
 local InAUi = under("ScreenGui", "BillboardGui", "SurfaceGui", "UIObject")
 
@@ -1788,6 +1791,39 @@ local Classes: { Schema.Class } = {
                     .. "a run with no window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend on "
                     .. "when a frame happened. A camera that follows this reads it.",
             },
+            {
+                Name = "WorldToViewportPoint",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "Vector2", "number", "boolean" },
+                ThreadSafety = "ReadParallel",
+                Doc = "Where a point in the world is in the picture: its place in pixels from the top-left of "
+                    .. "what the world is drawn into -- the unit `UIObject.AbsolutePosition` and "
+                    .. "`InputService:GetPointerPosition` use -- then how far in front of the camera it is, in "
+                    .. "metres, then whether it is on the screen. The place is meaningful past the edges, so an "
+                    .. "arrow at the border can point at it; with a depth of zero or less the point is beside "
+                    .. "or behind a perspective camera and the place means nothing. For either projection. A "
+                    .. "`ScreenGui` that places things by it wants `ScreenInsets = false`, or they are off by "
+                    .. "the notch.",
+            },
+            {
+                Name = "ViewportPointToRay",
+                Parameters = { { Name = "point", Type = "Vector2" } },
+                Returns = { "vector", "vector" },
+                ThreadSafety = "ReadParallel",
+                Doc = "The ray a pixel looks along, as an origin and a direction of length one: what to give "
+                    .. "`Workspace:Raycast` to find what is under the pointer. From the camera through the "
+                    .. "pixel for a perspective camera; straight ahead from the pixel's own place for an "
+                    .. "orthographic one.",
+            },
+            {
+                Name = "ViewportPointToWorld2D",
+                Parameters = { { Name = "point", Type = "Vector2" } },
+                Returns = { "Vector2?" },
+                ThreadSafety = "ReadParallel",
+                Doc = "Where a pixel is on the 2D plane: the place a tap or a click points at in a 2D game, "
+                    .. "to compare with a `Part2D.Position`. Nil when the camera looks along the plane or "
+                    .. "away from it.",
+            },
         } :: { Schema.Method },
     },
     {
@@ -2901,6 +2937,20 @@ local Classes: { Schema.Class } = {
                     .. "shared numbering.",
             },
             {
+                Name = "ReferenceHeight",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The height of the window this tree was laid out for, or 0 for pixels. With one set, "
+                    .. "every offset, text size, corner and stroke under it is in units of a window that "
+                    .. "tall, and the engine scales the whole tree to the window it has -- so a layout drawn "
+                    .. "for a 720-line monitor takes the same share of a phone with twice the lines, where in "
+                    .. "pixels it would be half its size. The width follows: the window is as many units "
+                    .. "wide as its shape gives that height, so anchor to edges with `Scale` and size with "
+                    .. "`Offset`. `AbsolutePosition` and `AbsoluteSize` stay in window pixels. 720 suits a "
+                    .. "layout drawn on a desktop.",
+            },
+            {
                 Name = "ScreenInsets",
                 Type = "boolean",
                 Default = "true",
@@ -2922,7 +2972,7 @@ local Classes: { Schema.Class } = {
         Name = "BillboardGui",
         Extends = "Instance",
         Module = "ui",
-        Parents = OnAPart,
+        Parents = OverAPart,
         Storage = "BillboardGui",
         Doc = "A UI tree hung in the world and turned to face the camera (F3): a name over a head, a health "
             .. "bar over a crate, a marker on an objective. Its children are laid out exactly as a "
@@ -2941,9 +2991,10 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "Adornee",
-                Type = "BasePart?",
-                Doc = "The part it hangs over. Empty means its parent, when its parent is a part; a billboard "
-                    .. "with neither is not drawn.",
+                Type = "(BasePart | Part2D)?",
+                Doc = "The part it hangs over: a part in the world, or a `Part2D` on the plane -- a name over "
+                    .. "a sprite, a health bar over a monster. Empty means its parent, when its parent is "
+                    .. "one of those; a billboard with neither is not drawn.",
             },
             {
                 Name = "Size",

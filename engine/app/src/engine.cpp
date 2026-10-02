@@ -1897,6 +1897,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     host->setContentMounts(&contentMounts);
     host->setMaterialLibrary(&materialLibrary);
     editor.setMaterialLibrary(&materialLibrary);
+    // What the first frame will be drawn into, for a script's first line.
+    worldOptions.viewportSize = core::Vec2{static_cast<f32>(options.width), static_cast<f32>(options.height)};
     if (std::optional<core::EngineError> bootError = host->boot(worldOptions); bootError.has_value())
         return bootError;
 
@@ -4831,6 +4833,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             for (const platform::Event& event : heard) {
                 // The pointer's own events: where it is, and its presses.
                 uiPointer.feed(event);
+                // **A finger that comes down on the interface is the
+                // interface's, and the game is told** (D444). Asked here, of
+                // the rectangles the last frame laid out, because the tick
+                // that reports the finger runs before this frame's layout --
+                // and a finger, unlike a mouse, was nowhere the frame before.
+                if (event.type == platform::EventType::FingerDown &&
+                    ui::hitTest(host->world(), host->uiService(), core::Vec2{event.pointerX, event.pointerY}).valid())
+                    host->input().setFingerTakenByUi(event.fingerId);
                 switch (event.type) {
                 case platform::EventType::TextEditing:
                     uiComposition = event.text;

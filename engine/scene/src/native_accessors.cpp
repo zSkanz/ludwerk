@@ -341,10 +341,43 @@ void detachPlayerComponents(World& world, core::InstanceId id)
     world.players().remove(id);
 }
 
+// **One character, two properties** (D434): `Character` is the part in the
+// world and `Character2D` the part on the plane, each typed as what it holds,
+// over the one id a player has. Each reads nothing while the other kind is
+// set, and setting either replaces whatever was there.
 Value getPlayerCharacter(const World& world, core::InstanceId id)
 {
     const PlayerComponent* player = world.players().find(id);
-    return player == nullptr ? Value{} : Value{player->character};
+    if (player == nullptr || world.parts().find(player->character) == nullptr)
+        return Value{core::InstanceId{}};
+    return Value{player->character};
+}
+
+Value getPlayerCharacter2D(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    if (player == nullptr || world.parts2d().find(player->character) == nullptr)
+        return Value{core::InstanceId{}};
+    return Value{player->character};
+}
+
+// A hero on the plane was nobody's character, so its own player saw it a few
+// ticks in the past like everybody else's, and every client was sent the
+// whole world.
+bool setPlayerCharacter2D(World& world, core::InstanceId id, const Value& value)
+{
+    PlayerComponent* player = world.players().find(id);
+    const auto* character = std::get_if<core::InstanceId>(&value);
+    if (player == nullptr || character == nullptr)
+        return false;
+    if (character->valid() && world.parts2d().find(*character) == nullptr)
+        return false;
+    // Nothing, written here, takes away a character on the plane and leaves a
+    // part in the world alone: `Character2D = nil` in a 3D game is not a kick.
+    if (!character->valid() && world.parts().find(player->character) != nullptr)
+        return true;
+    player->character = *character;
+    return true;
 }
 
 bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value)
@@ -357,6 +390,9 @@ bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value)
     // nowhere a snapshot can correct or an interest radius can measure from.
     if (character->valid() && world.parts().find(*character) == nullptr)
         return false;
+    // The other half of `setPlayerCharacter2D`'s rule.
+    if (!character->valid() && world.parts2d().find(player->character) != nullptr)
+        return true;
     player->character = *character;
     return true;
 }

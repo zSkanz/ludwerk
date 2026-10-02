@@ -17,23 +17,98 @@ using Position = std::array<i32, 3>;
 constexpr std::array<Position, 6> Neighbours{{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}};
 constexpr std::array<std::array<i32, 2>, 4> Sides{{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}};
 
-[[nodiscard]] bool anyFluid(const VoxelComponent& voxels) noexcept
+// **Every block whose decision reads a given block**, as offsets from it: the
+// block itself, its six neighbours, and the four diagonally above -- a block
+// reads what is UNDER each of its sides, to tell a fluid that stands on
+// something and spreads from one that is pouring past. The last four were
+// never woken: a floor put under a pouring source left the air beside the
+// source dry until something else disturbed it.
+constexpr std::array<Position, 11> Readers{{{0, 0, 0},
+                                            {1, 0, 0},
+                                            {-1, 0, 0},
+                                            {0, 1, 0},
+                                            {0, -1, 0},
+                                            {0, 0, 1},
+                                            {0, 0, -1},
+                                            {1, 1, 0},
+                                            {-1, 1, 0},
+                                            {0, 1, 1},
+                                            {0, 1, -1}}};
+
+// The bits of the fluid types in `VoxelChunk::typesSeen`; zero when the
+// registry holds no fluid.
+[[nodiscard]] u64 fluidBits(const VoxelComponent& voxels) noexcept
 {
-    return std::any_of(voxels.types.begin(), voxels.types.end(),
-                       [](const VoxelBlockType& type) { return type.fluidReach > 0; });
+    u64 bits = 0;
+    for (usize at = 0; at < voxels.types.size(); ++at) {
+        if (voxels.types[at].fluidReach > 0)
+            bits |= asset::blockTypeBit(static_cast<BlockId>(at + 1));
+    }
+    return bits;
 }
 
-// Asks for `at` to be looked at by `due`, keeping the earlier of two asks.
-void schedule(VoxelComponent& voxels, const Position& at, u64 due)
+// Whether any chunk the box touches may hold a fluid. No is certain.
+[[nodiscard]] bool fluidNear(const VoxelComponent& voxels, u64 bits, i32 minX, i32 minY, i32 minZ, i32 maxX, i32 maxY,
+                             i32 maxZ) noexcept
 {
-    voxels.fluidWakes.schedule(at, due);
+    const asset::VoxelChunkKey low = asset::voxelChunkOf(minX, minY, minZ);
+    const asset::VoxelChunkKey high = asset::voxelChunkOf(maxX, maxY, maxZ);
+    // A box wider than the world has chunks is asked of the chunks instead.
+    const u64 spanned = static_cast<u64>(high.x - low.x + 1) * static_cast<u64>(high.y - low.y + 1) *
+                        static_cast<u64>(high.z - low.z + 1);
+    if (spanned > voxels.grid.chunkCount()) {
+        for (const asset::VoxelGrid::Entry& entry : voxels.grid.chunks()) {
+            const asset::VoxelChunkKey& key = entry.first;
+            if (key.x >= low.x && key.x <= high.x && key.y >= low.y && key.y <= high.y && key.z >= low.z &&
+                key.z <= high.z && (entry.second->typesSeen & bits) != 0)
+                return true;
+        }
+        return false;
+    }
+    for (i32 y = low.y; y <= high.y; ++y) {
+        for (i32 z = low.z; z <= high.z; ++z) {
+            for (i32 x = low.x; x <= high.x; ++x) {
+                const asset::VoxelChunk* chunk = voxels.grid.findChunk(asset::VoxelChunkKey{x, y, z});
+                if (chunk != nullptr && (chunk->typesSeen & bits) != 0)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] BlockId decide(const VoxelComponent& voxels, const Position& at);
+
+// **Asks for `at` to be looked at by `due` -- if a look would change it**
+// (D448). The step decides a block from the grid as it stands; so does this,
+// and a block whose decision is what it already is, is not queued.
+//
+// Every write used to queue itself and its neighbours whenever the registry
+// held a fluid TYPE, whether or not there was fluid within a mile: a mountain
+// of stone built beside a registered sea paid a map and a set insert for
+// every block of its surface -- seventy thousand a column, twenty times the
+// cost of the build -- and the step then read each one to find nothing to do.
+// What changes the answer later is a write, and every write asks again, of
+// every block that reads it (`Readers`).
+void consider(VoxelComponent& voxels, const Position& at, u64 due)
+{
+    const BlockId here = voxels.grid.get(at[0], at[1], at[2]);
+    if (here != asset::AirBlock) {
+        // Solid is no fluid's business, and a source stays a source unless
+        // something it touches turns it into something else.
+        if (!isFluidType(voxels, asset::blockTypeOf(here)))
+            return;
+        if (asset::blockStateOf(here) == 0 && voxels.fluidReactions.empty())
+            return;
+    }
+    if (decide(voxels, at) != here)
+        voxels.fluidWakes.schedule(at, due);
 }
 
 void wakeAround(VoxelComponent& voxels, const Position& at, u64 due)
 {
-    schedule(voxels, at, due);
-    for (const Position& step : Neighbours)
-        schedule(voxels, Position{at[0] + step[0], at[1] + step[1], at[2] + step[2]}, due);
+    for (const Position& step : Readers)
+        consider(voxels, Position{at[0] + step[0], at[1] + step[1], at[2] + step[2]}, due);
 }
 
 // What the block at `at` should be by the flow rules alone, from the grid as it
@@ -176,7 +251,10 @@ void setFluidReaction(VoxelComponent& voxels, asset::BlockId from, asset::BlockI
 
 void wakeFluids(VoxelComponent& voxels, i32 x, i32 y, i32 z)
 {
-    if (!anyFluid(voxels))
+    // Nothing to do where no fluid can be: not in the registry, or not in any
+    // chunk this block's readers are in.
+    const u64 bits = fluidBits(voxels);
+    if (bits == 0 || !fluidNear(voxels, bits, x - 1, y - 1, z - 1, x + 1, y + 1, z + 1))
         return;
     // Due at once: the next step, whatever tick it runs on.
     wakeAround(voxels, Position{x, y, z}, 0);
@@ -184,7 +262,8 @@ void wakeFluids(VoxelComponent& voxels, i32 x, i32 y, i32 z)
 
 void wakeFluidsInBox(VoxelComponent& voxels, i32 minX, i32 minY, i32 minZ, i32 maxX, i32 maxY, i32 maxZ)
 {
-    if (!anyFluid(voxels))
+    const u64 bits = fluidBits(voxels);
+    if (bits == 0)
         return;
     if (minX > maxX)
         std::swap(minX, maxX);
@@ -192,18 +271,25 @@ void wakeFluidsInBox(VoxelComponent& voxels, i32 minX, i32 minY, i32 minZ, i32 m
         std::swap(minY, maxY);
     if (minZ > maxZ)
         std::swap(minZ, maxZ);
+    // **Building dry land costs no fluid work at all**: a box none of whose
+    // chunks, nor the ones around it, may hold a fluid is left without a
+    // block of it being read.
+    if (!fluidNear(voxels, bits, minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1))
+        return;
     // The box's own shell and the layer outside it, face by face, so a box a
-    // thousand blocks across costs its surface and not its volume.
+    // thousand blocks across costs its surface and not its volume. Each is
+    // queued only if a look would change it: a sea filled against stone and
+    // against more sea queues its open faces and nothing else.
     for (i32 y = minY - 1; y <= maxY + 1; ++y) {
         for (i32 z = minZ - 1; z <= maxZ + 1; ++z) {
             const bool edgeRow = y <= minY || y >= maxY || z <= minZ || z >= maxZ;
             if (edgeRow) {
                 for (i32 x = minX - 1; x <= maxX + 1; ++x)
-                    schedule(voxels, Position{x, y, z}, 0);
+                    consider(voxels, Position{x, y, z}, 0);
                 continue;
             }
             for (const i32 x : {minX - 1, minX, maxX, maxX + 1})
-                schedule(voxels, Position{x, y, z}, 0);
+                consider(voxels, Position{x, y, z}, 0);
         }
     }
 }
@@ -215,12 +301,14 @@ void wakeAllFluids(VoxelComponent& voxels)
 
 void wakeFluidsIn(VoxelComponent& voxels, const asset::VoxelGrid& arrived)
 {
-    if (!anyFluid(voxels))
+    const u64 bits = fluidBits(voxels);
+    if (bits == 0)
         return;
     const auto edge = static_cast<i32>(asset::VoxelChunkEdge);
     for (const asset::VoxelChunkKey key : arrived.chunkKeys()) {
         const asset::VoxelChunk* chunk = arrived.findChunk(key);
-        if (chunk == nullptr)
+        // A chunk never given a fluid is not read.
+        if (chunk == nullptr || (chunk->typesSeen & bits) == 0)
             continue;
         for (i32 y = 0; y < edge; ++y) {
             for (i32 z = 0; z < edge; ++z) {
@@ -252,15 +340,28 @@ u32 stepFluids(VoxelComponent& voxels, u64 tick)
         if (next != voxels.grid.get(at[0], at[1], at[2]))
             writes.emplace_back(at, next);
     }
+    // Everything written, and only then who is due because of it: asked of
+    // the grid as the whole step left it, a block two of the writes touch is
+    // judged once, by what it now reads.
+    std::vector<u64> paces;
+    paces.reserve(writes.size());
     for (const auto& [at, next] : writes) {
         const BlockId before = voxels.grid.get(at[0], at[1], at[2]);
         (void)voxels.grid.set(at[0], at[1], at[2], next);
         // At the pace of the fluid that moved -- the one arriving, or the one
         // that drained away.
         const BlockId type = asset::blockTypeOf(next != asset::AirBlock ? next : before);
-        const u64 pace = isFluidType(voxels, type) ? std::max<u64>(voxels.types[type - 1u].fluidTicks, 1) : 1;
-        for (const Position& step : Neighbours)
-            schedule(voxels, Position{at[0] + step[0], at[1] + step[1], at[2] + step[2]}, tick + pace);
+        paces.push_back(isFluidType(voxels, type) ? std::max<u64>(voxels.types[type - 1u].fluidTicks, 1) : 1);
+    }
+    for (usize written = 0; written < writes.size(); ++written) {
+        const Position& at = writes[written].first;
+        for (const Position& step : Readers) {
+            // The block just written was decided this tick; its readers are
+            // what this write changed.
+            if (step == Position{0, 0, 0})
+                continue;
+            consider(voxels, Position{at[0] + step[0], at[1] + step[1], at[2] + step[2]}, tick + paces[written]);
+        }
     }
     if (!writes.empty())
         voxels.revision += 1;

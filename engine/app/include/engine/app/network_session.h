@@ -118,6 +118,11 @@ private:
     // A join waiting for its welcome, and when it began.
     bool m_connecting = false;
     core::u64 m_joinStartedNs = 0;
+    // **A connection that went, being dialled again** (D432): since when, by
+    // the clock, or zero while the server is there. And how many fresh joins
+    // the replica had counted when this machine last heard `Connected`.
+    core::u64 m_lostSinceNs = 0;
+    core::u32 m_seenFreshJoins = 0;
     core::f64 m_joinTimeoutSeconds = 10.0;
     std::function<core::u64()> m_clock;
     // The per-second figures of `EngineState::NetworkStats`, counted over the

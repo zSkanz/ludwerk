@@ -466,6 +466,8 @@ public:
     // Who this machine's player is to the authority: invalid before the first
     // welcome. Settable, so an identity can outlive the process that got it.
     [[nodiscard]] const PlayerToken& playerToken() const noexcept { return m_token; }
+    // Welcomes that made this machine a new player (`Status::freshJoins`).
+    [[nodiscard]] u32 freshJoins() const noexcept { return m_freshJoins; }
     void setPlayerToken(const PlayerToken& token) noexcept { m_token = token; }
     // **How the own character is stepped again when the authority corrects
     // it** (ADR 0076, as amended). Each tick's prediction keeps the command
@@ -546,6 +548,10 @@ private:
     void onAttributes(scene::World& world, core::InstanceId root, std::span<const u8> bytes);
     void sendOwned(const scene::World& world, u64 tick);
     void reconcile(scene::World& world, core::InstanceId character, const scene::CharacterReplayStart& authority);
+    // The same for a character on the plane (D434): where the authority has
+    // the sprite at the intent it last applied, against where this machine
+    // had it then.
+    void reconcile2d(scene::World& world, core::InstanceId character, core::Vec2 position, core::f32 rotation);
     void interpolate(scene::World& world);
     [[nodiscard]] const WorldState* stateAt(u64 tick) const noexcept;
 
@@ -556,6 +562,7 @@ private:
     bool m_lost = false;
     // Welcomed at least once on any connection, so the next welcome is a rejoin.
     bool m_joinedBefore = false;
+    u32 m_freshJoins = 0;
     PlayerToken m_token;
     u32 m_playerId = 0;
     u64 m_applied = 0;
@@ -636,6 +643,9 @@ private:
         core::f32 rotation = 0.0f;
     };
     std::map<u32, std::deque<Sample2D>> m_samples2d;
+    // Prediction, for an own character that is a `Part2D` (D434): where the
+    // sprite was after each local tick, by the intent tick that produced it.
+    std::deque<Sample2D> m_predicted2d;
     u64 m_serverClock = 0;
     u32 m_interpolationDelay = DefaultInterpolationDelay;
 

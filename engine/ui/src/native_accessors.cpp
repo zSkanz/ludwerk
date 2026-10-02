@@ -139,6 +139,23 @@ bool setScreenGuiDisplayOrder(scene::World& world, core::InstanceId id, const Va
     return true;
 }
 
+Value getScreenGuiReferenceHeight(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->referenceHeight)};
+}
+
+bool setScreenGuiReferenceHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* number = std::get_if<core::f64>(&value);
+    if (component == nullptr || number == nullptr || !std::isfinite(*number) || *number < 0.0)
+        return false;
+    component->referenceHeight = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
 Value getScreenGuiScreenInsets(const scene::World& world, core::InstanceId id)
 {
     const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
@@ -1531,12 +1548,14 @@ bool setUIStrokeZIndex(scene::World& world, core::InstanceId id, const Value& va
 namespace {
 
 // A part, or nothing. What `Adornee` accepts on both classes.
-[[nodiscard]] bool takeAdornee(const scene::World& world, const Value& value, core::InstanceId& out)
+// `plane`: whether a part on the 2D plane will do -- a billboard floats over
+// one (D435); a surface has no face of one to cover.
+[[nodiscard]] bool takeAdornee(const scene::World& world, const Value& value, core::InstanceId& out, bool plane = false)
 {
     const auto* id = std::get_if<core::InstanceId>(&value);
     if (id == nullptr)
         return false;
-    if (id->valid() && world.parts().find(*id) == nullptr)
+    if (id->valid() && world.parts().find(*id) == nullptr && !(plane && world.parts2d().find(*id) != nullptr))
         return false;
     out = *id;
     return true;
@@ -1578,7 +1597,7 @@ Value getBillboardGuiAdornee(const scene::World& world, core::InstanceId id)
 bool setBillboardGuiAdornee(scene::World& world, core::InstanceId id, const Value& value)
 {
     scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
-    return gui != nullptr && takeAdornee(world, value, gui->adornee);
+    return gui != nullptr && takeAdornee(world, value, gui->adornee, true);
 }
 
 Value getBillboardGuiSize(const scene::World& world, core::InstanceId id)
@@ -1976,6 +1995,11 @@ void detachUIStrokeComponents(scene::World& world, core::InstanceId id)
 Value getUIServiceSafeAreaInsets(const scene::World& world, core::InstanceId)
 {
     return Value{world.engineState().safeAreaInsets};
+}
+
+Value getUIServiceViewportSize(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().viewportSize};
 }
 
 Value getUIServiceDisplayScale(const scene::World& world, core::InstanceId)

@@ -95,6 +95,12 @@ Its optional `fadeTime` fades the weight in from zero over that many seconds,
 which is what makes a walk blend into an idle rather than snapping. It fades in
 **to this track's own `Weight`**, which is why one argument is enough.
 
+**`Weight` is what you set, and a fade does not change it.** `Stop` fades the
+track out and `Play` fades it back in, and after either `Weight` reads what it
+read before -- so an idle played, stopped and played again plays at the weight
+it had. A `Play` that lands while a `Stop` is still fading out ends the
+fade-out and carries on from where the fade was, with no pop.
+
 `AnimationTrack.Stop` ends the track, optionally fading its weight out first.
 **`Ended` does not fire either way** — it is a past-tense fact about reaching the
 end, and code that chains the next animation on it must not be fooled by one
@@ -108,7 +114,8 @@ its rest pose for the one tick before the handler ran would be a visible pop.
 
 Set `Weight` on several tracks and they blend. Assigning it is **immediate** —
 the faded form is `Play`'s and `Stop`'s argument, and a property that took a
-fade time would not be a property.
+fade time would not be a property. Set on a track that is stopped or fading
+out, it is the weight the next `Play` fades in to, and does not start it.
 
 **Blending is a weighted average per joint and per component.** A joint no clip
 drives keeps its rest transform rather than being dragged towards the origin by

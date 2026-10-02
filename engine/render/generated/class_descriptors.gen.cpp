@@ -253,13 +253,31 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setCameraClipPlaneEnabled,
         },
     }};
-    static std::array<scene::MethodDesc, 1> cameraMethods;
+    static std::array<scene::MethodDesc, 4> cameraMethods;
     cameraMethods = {{
         scene::MethodDesc{
             .name = atoms.intern("GetRenderCFrame"),
             .yields = false,
             .threadSafety = scene::ThreadSafety::ReadParallel,
             .doc = "**Where this is drawn this frame** (ADR 0136): between the last two ticks, as the picture shows it -- in a render phase, which is a `RunService:BindToRenderStep` function, a `PreRender` handler or an action at `Rate = Render`. Anywhere else -- a simulation phase, a run with no window, a server -- it is the simulation's `CFrame`, because what a tick reads must not depend on when a frame happened. A camera that follows this reads it.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("WorldToViewportPoint"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::ReadParallel,
+            .doc = "Where a point in the world is in the picture: its place in pixels from the top-left of what the world is drawn into -- the unit `UIObject.AbsolutePosition` and `InputService:GetPointerPosition` use -- then how far in front of the camera it is, in metres, then whether it is on the screen. The place is meaningful past the edges, so an arrow at the border can point at it; with a depth of zero or less the point is beside or behind a perspective camera and the place means nothing. For either projection. A `ScreenGui` that places things by it wants `ScreenInsets = false`, or they are off by the notch.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ViewportPointToRay"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::ReadParallel,
+            .doc = "The ray a pixel looks along, as an origin and a direction of length one: what to give `Workspace:Raycast` to find what is under the pointer. From the camera through the pixel for a perspective camera; straight ahead from the pixel's own place for an orthographic one.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("ViewportPointToWorld2D"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::ReadParallel,
+            .doc = "Where a pixel is on the 2D plane: the place a tap or a click points at in a 2D game, to compare with a `Part2D.Position`. Nil when the camera looks along the plane or away from it.",
         },
     }};
     scene::ClassDescriptor cameraDesc;

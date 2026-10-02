@@ -403,3 +403,20 @@ TEST_CASE("a project asks for a line about its frames every few seconds")
     const ProjectDir reporting("[debug]\nframe_report_seconds = 10\n");
     CHECK(app::loadProjectConfig(reporting.path, app::GraphicsOverrides{}).frameReportSeconds == 10.0);
 }
+
+TEST_CASE("D445: only the packaged game, run as a game, keeps its saves in the player's folder")
+{
+    // `engine-host <project>` by hand wrote into `%APPDATA%/<company>/<name>`
+    // -- the folder the developer's own installed copy of the game keeps its
+    // saves in -- because the project's folder was for the three runs the
+    // engine could name and the player's was for everything else.
+    using app::SaveHome;
+    // A project handed to the host: a test run, whoever started it.
+    CHECK(app::saveHomeFor(false, false) == SaveHome::Project);
+    // The editor's Play, `ludwerk dev`, a match's window.
+    CHECK(app::saveHomeFor(false, true) == SaveHome::Project);
+    // The export, double-clicked.
+    CHECK(app::saveHomeFor(true, false) == SaveHome::Player);
+    // The export, driven by a development session: still a test.
+    CHECK(app::saveHomeFor(true, true) == SaveHome::Project);
+}

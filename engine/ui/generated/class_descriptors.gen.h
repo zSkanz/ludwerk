@@ -111,6 +111,8 @@ scene::Value getScreenGuiEnabled(const scene::World& world, core::InstanceId id)
 bool setScreenGuiEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getScreenGuiDisplayOrder(const scene::World& world, core::InstanceId id);
 bool setScreenGuiDisplayOrder(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getScreenGuiReferenceHeight(const scene::World& world, core::InstanceId id);
+bool setScreenGuiReferenceHeight(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getScreenGuiScreenInsets(const scene::World& world, core::InstanceId id);
 bool setScreenGuiScreenInsets(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getScreenGuiKeepOnSceneLoad(const scene::World& world, core::InstanceId id);
@@ -354,6 +356,7 @@ void detachUIStrokeComponents(scene::World& world, core::InstanceId id);
 
 // UIService
 scene::Value getUIServiceSafeAreaInsets(const scene::World& world, core::InstanceId id);
+scene::Value getUIServiceViewportSize(const scene::World& world, core::InstanceId id);
 scene::Value getUIServiceDisplayScale(const scene::World& world, core::InstanceId id);
 scene::Value getUIServiceScreenOrientation(const scene::World& world, core::InstanceId id);
 bool setUIServiceScreenOrientation(scene::World& world, core::InstanceId id, const scene::Value& value);

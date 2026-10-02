@@ -430,9 +430,10 @@ local Classes: { Schema.Class } = {
         Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
         Doc = "Where a game keeps what has to outlive a run (ADR 0111): progress, settings, a best time. "
             .. "It keeps named SLOTS, each a file on the player's own machine, under the folder the game's "
-            .. "`[project]` name and company say -- `%APPDATA%\\<company>\\<name>\\saves` on Windows. In the "
-            .. "editor's Play and under `ludwerk dev` the saves go to `.engine/saves/` in the project instead, "
-            .. "so a test run never touches a real player's.\n\n"
+            .. "`[project]` name and company say -- `%APPDATA%\\<company>\\<name>\\saves` on Windows. That is "
+            .. "the exported game's. Every run of the project itself -- the editor's Play, `ludwerk dev`, the "
+            .. "host given the project's folder -- saves to `.engine/saves/` in the project instead, so a "
+            .. "test run never touches a real player's.\n\n"
             .. "**The only way from a script to a disk**, and it names slots, never paths. It is not "
             .. "replicated: every machine keeps its own. What a slot held is a fact about this machine, not "
             .. "about the simulation, so a replay that loads one records the load as an input.",
@@ -488,6 +489,111 @@ local Classes: { Schema.Class } = {
                     .. "read.",
             },
         } :: { Schema.Callback },
+    },
+    {
+        Name = "CryptoService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "What a game keeps a secret with, and tells one player from another by (ADR 0151): chance that "
+            .. "nobody can predict, two hashes, and a hash meant for passwords.\n\n"
+            .. "**Not the simulation's chance.** `Random.new()` and `math.random` give the same numbers on "
+            .. "every run, on purpose: a replay and a second machine must agree. A session token, a salt and "
+            .. "an identity key must be the opposite, and come from here -- the operating system's own "
+            .. "generator. What this service answers is a fact about this machine at this moment: a replay "
+            .. "does not reproduce it and a client does not predict it, so use it where a server decides, or "
+            .. "outside the simulation.\n\n"
+            .. "**It does not hide what a `RemoteEvent` carries.** A password sent from a client travels as "
+            .. "the connection carries it; hash what you STORE with `HashPasswordAsync`, and see the "
+            .. "multiplayer guide for what the connection itself protects.",
+        Methods = {
+            {
+                Name = "RandomBytes",
+                Parameters = { { Name = "count", Type = "number" } },
+                Returns = { "buffer" },
+                ThreadSafety = "Safe",
+                Doc = "A buffer of `count` bytes from the operating system's generator -- a key, a salt, a "
+                    .. "token. A whole number from 0 to 1048576.",
+            },
+            {
+                Name = "RandomInteger",
+                Parameters = { { Name = "min", Type = "number" }, { Name = "max", Type = "number" } },
+                Returns = { "number" },
+                ThreadSafety = "Safe",
+                Doc = "A whole number from `min` to `max`, both included, every one as likely as the next, "
+                    .. "that nobody can predict: a room code, a seed for a `Random` that must differ each "
+                    .. "run. Both are whole numbers and `min` is no more than `max`.",
+            },
+            {
+                Name = "UniqueId",
+                Parameters = {},
+                Returns = { "string" },
+                ThreadSafety = "Safe",
+                Doc = "A new identifier no other call will ever return, here or on any machine: a version-4 "
+                    .. "UUID in lower case, `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`. 122 random bits, so it "
+                    .. "serves as a session token as well as a name.",
+            },
+            {
+                Name = "Sha256",
+                Parameters = { { Name = "data", Type = "string | buffer" } },
+                Returns = { "string" },
+                ThreadSafety = "Safe",
+                Doc = "The SHA-256 of `data`'s bytes, as 64 lower-case hexadecimal characters. A fingerprint: "
+                    .. "the same bytes give the same answer everywhere. **Not for a password** -- it is fast, "
+                    .. "and a fast hash of a password is guessed at billions of tries a second; that is what "
+                    .. "`HashPasswordAsync` is for.",
+            },
+            {
+                Name = "HmacSha256",
+                Parameters = {
+                    { Name = "key", Type = "string | buffer" },
+                    { Name = "data", Type = "string | buffer" },
+                },
+                Returns = { "string" },
+                ThreadSafety = "Safe",
+                Doc = "The HMAC-SHA-256 of `data` under `key`, as 64 lower-case hexadecimal characters: a "
+                    .. "signature only a holder of the key can make or check. What a server signs a token "
+                    .. "with, and what most web services sign a request with. Compare one with `SecureEquals`.",
+            },
+            {
+                Name = "SecureEquals",
+                Parameters = {
+                    { Name = "a", Type = "string | buffer" },
+                    { Name = "b", Type = "string | buffer" },
+                },
+                Returns = { "boolean" },
+                ThreadSafety = "Safe",
+                Doc = "Whether `a` and `b` are the same bytes, taking the same time whether they differ at "
+                    .. "the first byte or the last. What a token or a signature from outside is compared "
+                    .. "with: `==` stops at the first difference, and how long it took tells a guesser how "
+                    .. "much of the guess was right.",
+            },
+            {
+                Name = "HashPasswordAsync",
+                Parameters = { { Name = "password", Type = "string" } },
+                Returns = { "string" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "A hash of `password` to store in its place -- yields while it is made, on a thread of "
+                    .. "its own, so a server's tick does not wait for it. Argon2id, salted with bytes of its "
+                    .. "own choosing and slow on purpose (tens of milliseconds, 64 MiB), so a stolen table "
+                    .. "cannot be guessed quickly. The same password hashed twice gives two different "
+                    .. "strings; check one with `VerifyPasswordAsync`, never with `==`.\n\n"
+                    .. "The answer is a line of text that carries its own salt and cost "
+                    .. "(`$argon2id$v=19$m=65536,t=2,p=1$...`, under 128 characters): store it whole. A "
+                    .. "password is at most 1024 bytes. Requests are hashed one at a time, in the order they "
+                    .. "came.",
+            },
+            {
+                Name = "VerifyPasswordAsync",
+                Parameters = { { Name = "password", Type = "string" }, { Name = "hash", Type = "string" } },
+                Returns = { "boolean" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Whether `password` is the one `hash` was made from by `HashPasswordAsync` -- yields "
+                    .. "while it is checked, as that does. False for a `hash` that is not one of its.",
+            },
+        } :: { Schema.Method },
     },
     {
         Name = "TeamService",
@@ -1030,15 +1136,31 @@ local Classes: { Schema.Class } = {
             {
                 Name = "Character",
                 Type = "BasePart?",
-                Doc = "The part that is this player in the world -- a `CharacterBody`, a racer, whatever the "
-                    .. "game moves for them. **The authority's game sets it**, and every replica learns it: "
-                    .. "each machine's `Player` for someone points at that machine's copy of their part.\n\n"
+                Doc = "The part that is this player in the world -- a `CharacterBody`, a racer, whatever "
+                    .. "the game moves for them; a hero on the 2D plane is `Character2D`. **The authority's "
+                    .. "game sets it**, and every replica learns it: each machine's `Player` for someone "
+                    .. "points at that machine's copy of their part.\n\n"
                     .. "It is what the engine knows about ownership, and it decides three things. A replica "
                     .. "PREDICTS its own player's character -- the local scripts move it at once, and the "
                     .. "authority's snapshots correct it rather than overwrite it -- and draws everyone "
                     .. "else's between snapshots. And the authority sends each replica only what is near "
                     .. "that replica's character, out to `StreamingService.LoadRadius`; a player with no "
                     .. "character is sent everything.",
+            },
+            {
+                Name = "Character2D",
+                Type = "Part2D?",
+                Doc = "The `Part2D` that is this player on the plane: `Character` for a 2D game, and the "
+                    .. "same one thing -- a player has one character, so setting either replaces the other, "
+                    .. "and each reads nil while the other kind is set. Two properties so that each is "
+                    .. "typed as what it holds: a 3D game reads a `BasePart` and a 2D game a `Part2D`, and "
+                    .. "neither has to say which.\n\n"
+                    .. "It decides the same things. The authority sends each replica what is near its "
+                    .. "character. And its own player's machine does not draw it from the past: whatever "
+                    .. "that machine's scripts did to the sprite is kept, the authority's snapshots correct "
+                    .. "it by the difference, and a client that steps it with the code the server steps it "
+                    .. "with is never corrected at all (the multiplayer guide shows the pattern). A client "
+                    .. "that moves nothing has it at the newest snapshot.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -1893,6 +2015,17 @@ local Classes: { Schema.Class } = {
                 Doc = "How far in from each window edge it is safe to draw, in pixels -- what a notch, a "
                     .. "rounded corner or a system gesture bar takes away. Zero on a desktop window, which is "
                     .. "why a HUD that ignores it looks fine until it does not.",
+            },
+            {
+                Name = "ViewportSize",
+                Type = "Vector2",
+                ReadOnly = true,
+                Transient = true,
+                -- The size of what is drawn into: the host's, like the two below.
+                HostFact = true,
+                Doc = "The size of what the interface is drawn into, in pixels: the window in a game, the "
+                    .. "Viewport panel in the editor. What `AbsolutePosition` and the pointer are measured "
+                    .. "in, and what a `ScreenGui.ReferenceHeight` is scaled to.",
             },
             {
                 Name = "DisplayScale",

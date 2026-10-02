@@ -14,6 +14,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/core/finite.h"
 #include "engine/core/log.h"
+#include "engine/scene/camera_view.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
@@ -389,6 +390,61 @@ int methodFindFirstAncestor(lua_State* L)
 int methodFindFirstAncestorOfClass(lua_State* L)
 {
     pushInstance(L, world(L).findFirstAncestorOfClass(liveInstance(L, 1), lookupClass(L, 2)));
+    return 1;
+}
+
+// The camera a method was called on, where it is drawn from, and the size of
+// what the world is drawn into.
+struct CameraView
+{
+    const scene::CameraComponent* camera = nullptr;
+    core::CFrameD frame;
+    core::Vec2 viewport;
+};
+
+[[nodiscard]] CameraView cameraView(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::World& w = world(L);
+    CameraView view;
+    view.camera = w.cameras().find(id);
+    if (view.camera == nullptr)
+        raise(L, ENG_TR("script.err.not_a_camera"));
+    // Where a render phase put it, when one did: the picture's own camera.
+    view.frame = view.camera->presenting ? view.camera->presented : view.camera->cframe;
+    view.viewport = w.engineState().viewportSize;
+    return view;
+}
+
+int methodWorldToViewportPoint(lua_State* L)
+{
+    const CameraView view = cameraView(L);
+    const scene::ViewportPoint point =
+        scene::worldToViewport(*view.camera, view.frame, view.viewport, core::toDVec3(checkVector3(L, 2)));
+    pushVector2(L, point.pixel);
+    lua_pushnumber(L, point.depth);
+    lua_pushboolean(L, point.onScreen ? 1 : 0);
+    return 3;
+}
+
+int methodViewportPointToRay(lua_State* L)
+{
+    const CameraView view = cameraView(L);
+    const scene::ViewRay ray = scene::viewportToRay(*view.camera, view.frame, view.viewport, checkVector2(L, 2));
+    pushVector3(L, core::toVec3(ray.origin));
+    pushVector3(L, ray.direction);
+    return 2;
+}
+
+int methodViewportPointToWorld2D(lua_State* L)
+{
+    const CameraView view = cameraView(L);
+    const std::optional<core::Vec2> place =
+        scene::viewportToPlane(*view.camera, view.frame, view.viewport, checkVector2(L, 2));
+    if (place.has_value())
+        pushVector2(L, *place);
+    else
+        lua_pushnil(L);
     return 1;
 }
 
@@ -2472,6 +2528,9 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"BasePart", "GetRenderCFrame", methodGetRenderCFrame},
     {"Attachment", "GetRenderCFrame", methodGetRenderCFrame},
     {"Camera", "GetRenderCFrame", methodGetRenderCFrame},
+    {"Camera", "WorldToViewportPoint", methodWorldToViewportPoint},
+    {"Camera", "ViewportPointToRay", methodViewportPointToRay},
+    {"Camera", "ViewportPointToWorld2D", methodViewportPointToWorld2D},
     {"BasePart", "ApplyImpulseAtPosition", methodApplyImpulseAtPosition},
     {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
     {"Water", "GetHeightAt", methodWaterGetHeightAt},

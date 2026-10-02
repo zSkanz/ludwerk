@@ -19,6 +19,31 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **`CharacterBody:Move` is a direction and a throttle** (D440): its length is
+  clamped to 1, so `Move(1, 0, 1)` walks at `WalkSpeed` and not 1.41 times it.
+  A game that normalised the vector itself changes nothing; one that passed a
+  longer vector to go faster raises `WalkSpeed` instead.
+- **`WalkSpeed` is the horizontal speed on a slope too** (D439): uphill is
+  faster than it was and downhill is the same across the ground. A game that
+  compensated -- scaling `WalkSpeed` uphill -- removes that.
+- **`CharacterBody.LinearVelocity` is the velocity the step produced** (D441),
+  not the one asked for: zero against a wall.
+- **`AnimationTrack.Weight` keeps what the script set** (D438): a fade no
+  longer changes it, and after `Stop` it reads what it read before.
+- **A scene's client scripts start again when the world is replaced** (D433):
+  `ClientScriptService`'s scripts start fresh after a join succeeds or fails
+  and after a match ends, and do not run while a join is being asked for.
+  State that has to live across a join belongs in `GlobalScriptService.Client`.
+- **`NetworkService.Connected` fires on every return to a match** (D432), and
+  a connection that drops is `Connecting` until it is back or
+  `[network] timeout` has passed, then `Disconnected`.
+- **A project run by hand saves into the project** (D445):
+  `engine-host <project>` writes `.engine/saves/`, like the editor's Play, and
+  only the exported game writes the player's folder.
+- **`UIService.SafeAreaInsets` on a phone is the cutout and the visible bars**
+  (D447), not the system's gesture strips: a layout that relied on the old
+  margin at the sides has none now.
+
 - **A cell of streamed ground somebody changed is not kept in memory for
   ever** (ADR 0149, ADR 0150): outside the editor and a match, once more than
   256 MiB of changed ground is held past the load radius (64 MiB on a phone),
@@ -89,6 +114,24 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **`CryptoService`** (ADR 0151, D442): `RandomBytes`, `RandomInteger` and
+  `UniqueId` from the operating system's generator; `Sha256`, `HmacSha256` and
+  `SecureEquals`; `HashPasswordAsync` and `VerifyPasswordAsync` (Argon2id, off
+  the tick). libsodium 1.0.22 is vendored for it.
+- **`Camera:WorldToViewportPoint`, `ViewportPointToRay` and
+  `ViewportPointToWorld2D`** (D436), in window pixels.
+- **`ScreenGui.ReferenceHeight`** (D437): a tree laid out for a window that
+  tall and scaled to the one it has. **`UIService.ViewportSize`**.
+- **`Player.Character2D`** (D434): a player's character on the 2D plane, the
+  same one slot as `Character`, typed `Part2D?`. Its machine is sent what is
+  near it and does not draw it from the past.
+- **`BillboardGui.Adornee` takes a `Part2D`** (D435), and a billboard may be a
+  `Part2D`'s child.
+- **`Enum.KeyCode.Virtual5` to `Virtual16`** (D443).
+- **A touch says when the interface took it** (D444): the `uiConsumed`
+  argument of `InputBegan`, `InputChanged` and `InputEnded` is true for a
+  finger that came down on the interface.
 
 - **A plain part can glow**: the engine default material declares `Emissive`
   beside `Color` and `Transparency`, so `part:SetMaterialParameter("Emissive",
@@ -737,6 +780,15 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   parameter*: such a name may be a surface shader's.
 
 ### Fixed
+
+- **Building a block world with a fluid registered costs what it costs
+  without one** (D448): a write is queued for the fluid step only where the
+  step would change something, and the step takes its budget without reading
+  the whole queue. Twenty times faster to build, and no 50 to 170 ms ticks
+  afterwards. A floor put under a pouring source now makes it spread.
+- **A server that restarts no longer strands its clients** (D432), an
+  animation track plays a second time (D438), and an Android game's window is
+  the right way up from its first frame (D446).
 
 - **A tap presses the interface on a phone** (D430): no button's `Activated`
   fired and no `TextInput` took focus, so the keyboard never opened -- every

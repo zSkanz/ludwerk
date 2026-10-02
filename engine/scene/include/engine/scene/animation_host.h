@@ -40,7 +40,14 @@ struct TrackState
     f64 timePosition = 0.0;
     f32 length = 0.0f;
     f32 speed = 1.0f;
+    // **What the script set** (`AnimationTrack.Weight`), which a fade does not
+    // touch: `Play` fades in TO it and `Stop` fades out FROM it, and after a
+    // stop it is what it was -- so the track plays again at the weight it had,
+    // where it came back at nothing (D438).
     f32 weight = 1.0f;
+    // What the track is blended with this tick: `weight`, times where the
+    // fade is. Zero for a track that is not playing.
+    f32 blend = 0.0f;
     bool looped = false;
     bool playing = false;
 };

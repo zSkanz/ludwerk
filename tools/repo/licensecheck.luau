@@ -47,6 +47,10 @@ local Allowed: { [string]: boolean } = {
     ["zlib"] = true,
     ["CC0-1.0 OR Apache-2.0"] = true,
     ["OFL-1.1"] = true,
+    -- libsodium's. The 2-clause BSD licence's terms in fewer words, and here by
+    -- the owner's decision and not by this file's: ADR 0120 approves the
+    -- dependency and names its licence.
+    ["ISC"] = true,
 }
 
 --- Any of these, in a dependency's root, counts as the licence text being

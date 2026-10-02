@@ -348,6 +348,15 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().engineVersion = ENG_VERSION_STRING;
     m_world->engineState().luauVersion = ENG_LUAU_VERSION;
     m_world->engineState().networkTopology = options.networkTopology;
+    // **Started to join** (`--join`, D433): the join is under way from the
+    // first line any script runs. `State` reads `Connecting`, not `Offline`
+    // -- "about to join" and "alone" looked the same -- and the scene's
+    // client code waits for the server's world.
+    if (options.networkTopology == scene::NetworkTopology::Replica) {
+        m_world->engineState().networkState = 1;
+        m_world->engineState().sceneClientHeld = true;
+    }
+    m_world->engineState().viewportSize = options.viewportSize;
     m_world->engineState().fixedTimestep = options.fixedTimestep;
     // Both, so a read before any write gives what the scheduler is running on
     // rather than the struct's default.
@@ -1645,7 +1654,22 @@ void WorldHost::returnToSolo()
         if (const std::optional<core::EngineError> error = loadScene(current); error.has_value())
             core::logText(LogLevel::Error, error->message);
     }
+#if ENG_ENABLE_REPLICATION
+    else {
+        // **A game with no scene has nothing to load over what the server
+        // sent**, and it stayed: the dead session's parts stood beside the
+        // ones this machine's own code then made (D432). What an authority
+        // replicates goes, as it went when this machine joined.
+        (void)replication::clearForReplica(*m_world, m_workspace);
+    }
+#endif
     restartServerCode();
+    script::reconcileAllScripts(m_runtime->state());
+}
+
+void WorldHost::holdSceneClientCode(bool held)
+{
+    m_world->engineState().sceneClientHeld = held;
     script::reconcileAllScripts(m_runtime->state());
 }
 

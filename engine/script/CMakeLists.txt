@@ -30,6 +30,7 @@ engine_add_module(script
         src/print_tree.cpp
         src/save_store.cpp
         src/save_service.cpp
+        src/crypto_service.cpp
         src/scenes.cpp
         src/services.cpp
         src/remote.cpp
@@ -80,6 +81,7 @@ engine_add_module_tests(script
         tests/debugger_tests.cpp
         tests/print_tests.cpp
         tests/save_tests.cpp
+        tests/crypto_service_tests.cpp
         tests/bytecode_tests.cpp
 )
 

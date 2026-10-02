@@ -32,7 +32,9 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage C4 — encryption, a player is a key, relay (ADR 0120)
 
-- [ ] Vendor **libsodium** (manifest row, `vendor.luau`, `THIRD_PARTY_NOTICES.md`).
+- [x] Vendor **libsodium** (manifest row, `vendor.luau`, `THIRD_PARTY_NOTICES.md`)
+  -- done early, 2026-10-02, for `CryptoService` (ADR 0151): 1.0.22, its
+  sources built by a target of ours with the reference implementations.
 - [ ] Noise `IK` handshake over X25519, ChaCha20-Poly1305, BLAKE2; sealed ENet
   packets with per-direction keys and counter nonces; replay window.
 - [ ] Inside `ITransport`; protocol version up; `docs/protocol/wire.md`

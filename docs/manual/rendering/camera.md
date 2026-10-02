@@ -142,12 +142,42 @@ camera with it. `camera.orbit` is the same rig turning by itself.
 `rig:Basis()` returns the rig's forward and right vectors, flattened, which is
 what turns a two-axis input into a world-space movement direction.
 
-## What is not here
+## From the world to the screen, and back
 
-There is no `ViewportSize`, no `WorldToViewportPoint` and no
-`ViewportPointToRay`. A script cannot currently project a world point to a
-screen coordinate; `UIService.SafeAreaInsets` and the UI tree are what
-screen-space work is built on.
+Three calls turn a place in the world into a pixel and a pixel into a place,
+all in **window pixels from the top-left** -- the unit of
+`UIObject.AbsolutePosition`, `InputService:GetPointerPosition` and a touch's
+`Position`:
+
+| Call | Gives |
+|---|---|
+| `camera:WorldToViewportPoint(position)` | the pixel, how far in front of the camera the point is, and whether it is on the screen |
+| `camera:ViewportPointToRay(pixel)` | an origin and a direction: what to hand `Workspace:Raycast` to find what is under the pointer |
+| `camera:ViewportPointToWorld2D(pixel)` | the place on the 2D plane a tap points at, or nil when the camera does not look at the plane |
+
+```luau
+--!strict
+-- A name that follows a monster.
+local pixel, depth, onScreen = camera:WorldToViewportPoint(monster.Position)
+label.Visible = onScreen and depth > 0
+label.Position = UDim2.fromOffset(pixel.X, pixel.Y)
+
+-- What did the player click?
+local origin, direction = camera:ViewportPointToRay(InputService:GetPointerPosition())
+local hit = workspace:Raycast(origin, direction * 500)
+```
+
+The pixel is meaningful past the edges of the window, so an arrow at the
+border can point at something off screen. `UIService.ViewportSize` is the size
+those pixels are measured in.
+
+**A `ScreenGui` that places things from the world wants `ScreenInsets = false`.**
+With it on, the tree is laid out inside the safe area, and a label placed at a
+pixel the camera gave is off by the notch.
+
+For a label that should simply stay over a part, a `BillboardGui` does this
+without code -- and takes a `Part2D` as well as a part
+([UI in the world](manual:ui/world-space)).
 
 ## Where to look next
 

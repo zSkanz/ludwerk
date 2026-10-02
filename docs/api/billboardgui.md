@@ -17,7 +17,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
-| `Adornee` | `BasePart?` | — | read/write | The part it hangs over. Empty means its parent, when its parent is a part; a billboard with neither is not drawn. |
+| `Adornee` | `(BasePart | Part2D)?` | — | read/write | The part it hangs over: a part in the world, or a `Part2D` on the plane -- a name over a sprite, a health bar over a monster. Empty means its parent, when its parent is one of those; a billboard with neither is not drawn. |
 | `AlwaysOnTop` | `boolean` | `false` | read/write | Whether it shows through walls. Off, it is hidden by whatever is in front of it, like anything in the world. |
 | `Brightness` | `number` | `1` | read/write | How bright its colours are in the world's light, which is brighter than the screen's: above one, it glows and blooms. |
 | `Enabled` | `boolean` | `true` | read/write | Whether it is laid out and drawn at all. |

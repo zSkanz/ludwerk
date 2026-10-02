@@ -96,6 +96,13 @@ struct VoxelChunk
     // be dropped without a scan.
     core::u32 solid = 0;
 
+    // **Which block types this chunk has been given**, a bit a type
+    // (`blockTypeBit`), set as blocks are written and never cleared by one
+    // being taken away. So it answers "may hold", not "holds" -- and a "no" is
+    // certain, which is what it is for: the fluid step asks it before reading
+    // a single block, and a chunk of dry stone says no (D448).
+    core::u64 typesSeen = 0;
+
     // xxh3 of the blocks, computed when first asked for and invalidated by any
     // write. Read it through `digestOf`.
     mutable core::u64 digest = 0;
@@ -103,6 +110,13 @@ struct VoxelChunk
 };
 
 [[nodiscard]] core::u64 digestOf(const VoxelChunk& chunk) noexcept;
+
+// A block type's bit in `VoxelChunk::typesSeen`: its number modulo 64, so two
+// types 64 apart share one -- a "may hold" that is wrong only towards yes.
+[[nodiscard]] constexpr core::u64 blockTypeBit(BlockId id) noexcept
+{
+    return 1ull << (blockTypeOf(id) & 63u);
+}
 
 [[nodiscard]] constexpr core::u32 voxelIndex(core::u32 x, core::u32 y, core::u32 z) noexcept
 {

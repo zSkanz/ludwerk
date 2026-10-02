@@ -471,6 +471,50 @@ TEST_CASE("a character touches the wall it walks into, and the floor it stands o
     CHECK(state.transform.position.z < 5.6);
 }
 
+TEST_CASE("D441: a character's velocity is what its step did, not what it was asked for")
+{
+    // Walking into a tree for twenty seconds, never moving, a character
+    // reported six metres a second the whole time: a game that picks its
+    // animation from the velocity walked on the spot against a wall.
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+
+    BodyDesc wall;
+    wall.shape.size = core::Vec3{6.0f, 6.0f, 1.0f};
+    wall.transform.position = core::DVec3{0.0, 3.0, 6.0};
+    wall.motion = MotionType::Static;
+    wall.userData = 21;
+    fixture.spawn(wall);
+
+    CharacterDesc desc;
+    desc.transform.position = core::DVec3{0.0, 2.5, 0.0};
+    desc.userData = 9;
+    const CharacterHandle character = fixture.physics->createCharacter(fixture.world, desc);
+    REQUIRE(character.valid());
+
+    const auto walk = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            const CharacterState state = fixture.physics->characterState(fixture.world, character);
+            const f32 vertical =
+                state.ground == CharacterGround::Grounded ? 0.0f : state.linearVelocity.y - 9.81f * kFixedDt;
+            fixture.physics->moveCharacter(fixture.world, character, core::Vec3{0.0f, vertical, 4.0f}, kFixedDt);
+            fixture.physics->step(fixture.world, kFixedDt);
+        }
+    };
+
+    // In the open, on the floor: what it was asked for is what it does.
+    walk(40);
+    const CharacterState open = fixture.physics->characterState(fixture.world, character);
+    CHECK(static_cast<double>(open.linearVelocity.z) == doctest::Approx(4.0).epsilon(0.02));
+
+    // Against the wall, still asked for four: it is going nowhere, and says so.
+    walk(160);
+    const CharacterState blocked = fixture.physics->characterState(fixture.world, character);
+    CHECK(blocked.transform.position.z < 5.6);
+    CHECK(std::abs(blocked.linearVelocity.z) < 0.05f);
+    CHECK(std::abs(blocked.linearVelocity.y) < 0.05f);
+}
+
 TEST_CASE("a character stops touching a wall it walks away from")
 {
     Fixture fixture;

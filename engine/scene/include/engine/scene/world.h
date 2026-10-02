@@ -440,6 +440,14 @@ struct EngineState
     // address goes; and a `Join`, `Host` or `Disconnect` a script asked for,
     // waiting for the safe point. Facts about the process, not the world.
     i32 networkState = 0;
+    // **The scene's client code is held** (D433): a join is under way, and the
+    // world a `ClientScriptService` script would run in is about to be
+    // replaced by the server's. Such a script is not live while this is set
+    // (`script::scriptLive`), so it starts once -- in the world it will play
+    // in, joined or solo -- where it started in one and woke up in another
+    // holding references to the first. `GlobalScriptService` is not held: a
+    // menu and its music live across every world.
+    bool sceneClientHeld = false;
     std::string defaultServer;
     struct NetworkRequest
     {

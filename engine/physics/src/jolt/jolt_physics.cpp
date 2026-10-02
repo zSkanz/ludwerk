@@ -284,6 +284,11 @@ struct CharacterRecord
     // Kept because `ExtendedUpdate` needs it every tick and the settings that
     // carried it are gone by then.
     JPH::ObjectLayer layer = 0;
+    // **What the last move did**, in metres a second (D441): where it ended
+    // less where it began, over the step. The controller's own velocity is
+    // what it was ASKED for, and a character walking into a wall for twenty
+    // seconds reported six metres a second the whole time.
+    core::Vec3 moved{};
 };
 
 // A kinematic body's target for this tick, waiting for the delta that turns it
@@ -1777,9 +1782,14 @@ public:
         // stopped it, and nothing said so. `GetDefaultLayerFilter` asks the same
         // `ObjectPairFilter` every body pair goes through, against the
         // character's own layer.
+        const JPH::RVec3 before = record->character->GetPosition();
         record->character->ExtendedUpdate(
             fixedDt, toJolt(m_gravity), settings, m_system.GetDefaultBroadPhaseLayerFilter(record->layer),
             m_system.GetDefaultLayerFilter(record->layer), JPH::BodyFilter{}, JPH::ShapeFilter{}, m_temp);
+        if (fixedDt > 0.0f) {
+            const JPH::Vec3 travelled = JPH::Vec3(record->character->GetPosition() - before);
+            record->moved = fromJolt(travelled / fixedDt);
+        }
     }
 
     void setCharacterTransform(CharacterHandle handle, const core::CFrameD& transform)
@@ -1820,7 +1830,8 @@ public:
 
         state.transform.position = toWorld(record->character->GetPosition());
         state.transform.rotation = fromJolt(record->character->GetRotation());
-        state.linearVelocity = fromJolt(record->character->GetLinearVelocity());
+        // What happened, not what was asked for (`CharacterRecord::moved`).
+        state.linearVelocity = record->moved;
 
         // `Enum.CharacterState` has two items, and Jolt has three: standing on
         // ground too steep to walk on is `OnSteepGround`, which is airborne as

@@ -19,6 +19,7 @@ engine_add_module(core
         src/base64.cpp
         src/content_hash.cpp
         src/content_path.cpp
+        src/crypto.cpp
         src/i18n.cpp
         src/json.cpp
         src/json_writer.cpp
@@ -38,6 +39,7 @@ engine_add_module(core
         engine::build_info
     PRIVATE_DEPS
         blake3::blake3
+        sodium::sodium
 )
 
 engine_add_module_tests(core
@@ -45,6 +47,7 @@ engine_add_module_tests(core
         tests/base64_tests.cpp
         tests/content_hash_tests.cpp
         tests/content_path_tests.cpp
+        tests/crypto_tests.cpp
         tests/dmath_tests.cpp
         tests/text_key_tests.cpp
         tests/i18n_tests.cpp

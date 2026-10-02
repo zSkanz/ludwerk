@@ -141,9 +141,9 @@ struct RawInputEvent
 // that no device event names. `input.cpp` static_asserts the arithmetic against
 // the generated enum descriptor at registration, which is the check that keeps
 // this number honest.
-inline constexpr usize kKeyCodeCount = 136;
+inline constexpr usize kKeyCodeCount = 148;
 
-// Whether a `KeyCode` is one of the four virtual axes or the two composites over
+// Whether a `KeyCode` is one of the sixteen virtual keys or the two composites over
 // them -- the ones `InputService:SetVirtualState` may write and nothing else
 // may. A HUD button writing to `Space` would be a script pretending to be a
 // keyboard, and there would then be no way for anything to tell the difference.
@@ -287,6 +287,14 @@ public:
     // pointer flag fixes one device over.
     void setKeyboardCapturedByUi(bool captured) noexcept { m_uiCapturedKeyboard = captured; }
 
+    // **A finger that came down on the interface** (D444): its `Began`, every
+    // `Changed` and its `Ended` say `uiConsumed`, as a click on a button does.
+    // Said by the host for the finger's WHOLE press, at the event that put it
+    // down -- a finger has no hover before it, so the frame-old "the pointer
+    // is over the interface" a mouse is judged by knows nothing of where a
+    // tap is about to land. Forgotten when the finger ends.
+    void setFingerTakenByUi(u64 fingerId);
+
     // The raw events this tick's `Simulation` dispatch produced, in a stable
     // order: keys first by `KeyCode`, then the pointer, then the wheel, then the
     // gamepad axes. Drained rather than pushed as a `scene::Change`, because a
@@ -323,6 +331,8 @@ private:
     core::Vec2 m_renderPointerDelta;
     core::Vec2 m_renderWheel;
     bool m_uiCapturedPointer = false;
+    // The fingers now down that the interface took, by their device id.
+    std::vector<u64> m_uiFingers;
     bool m_uiCapturedKeyboard = false;
 
     // What the last `Simulation` dispatch saw, so the next one can tell a press

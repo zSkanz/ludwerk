@@ -142,6 +142,8 @@ bool VoxelGrid::set(i32 x, i32 y, i32 z, BlockId id)
     VoxelChunk* chunk = chunkFor(key);
     const BlockId before = chunk->blocks[index];
     chunk->blocks[index] = id;
+    if (id != AirBlock)
+        chunk->typesSeen |= blockTypeBit(id);
     if (before == AirBlock && id != AirBlock)
         ++chunk->solid;
     else if (before != AirBlock && id == AirBlock)
@@ -181,6 +183,8 @@ u32 VoxelGrid::fill(i32 minX, i32 minY, i32 minZ, i32 maxX, i32 maxY, i32 maxZ, 
                 if (id == AirBlock && findChunk(key) == nullptr)
                     continue;
                 VoxelChunk* chunk = chunkFor(key);
+                if (id != AirBlock)
+                    chunk->typesSeen |= blockTypeBit(id);
                 const i32 lowX = std::max(minX, cx * edge);
                 const i32 highX = std::min(maxX, cx * edge + edge - 1);
                 const i32 lowY = std::max(minY, cy * edge);
@@ -297,6 +301,10 @@ void VoxelGrid::setChunk(VoxelChunkKey key, std::span<const BlockId> blocks)
     std::copy(blocks.begin(), blocks.end(), chunk->blocks);
     chunk->solid =
         static_cast<u32>(std::count_if(blocks.begin(), blocks.end(), [](BlockId id) { return id != AirBlock; }));
+    for (const BlockId id : blocks) {
+        if (id != AirBlock)
+            chunk->typesSeen |= blockTypeBit(id);
+    }
     const auto at = std::lower_bound(m_chunks.begin(), m_chunks.end(), key,
                                      [](const auto& entry, const VoxelChunkKey& probe) { return entry.first < probe; });
     const bool exists = at != m_chunks.end() && at->first == key;

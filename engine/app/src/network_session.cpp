@@ -234,11 +234,14 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     }
 #endif
     m_connecting = false;
+    m_lostSinceNs = 0;
     if (host == nullptr)
         return;
     scene::World& world = host->world();
     world.engineState().networkTopology = scene::NetworkTopology::Solo;
     world.engineState().networkPeerCount = 0;
+    // The world is this machine's own again: its scene's client code runs.
+    world.engineState().sceneClientHeld = false;
     setState(StateOffline);
 
     // **The others go**: a solo game has one player, the one at this machine.
@@ -297,7 +300,9 @@ void NetworkSession::update()
             (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
 #endif
             // And every script is checked against "live" for a replica (ADR
-            // 0137 §5): what does not run here stops.
+            // 0137 §5): what does not run here stops -- the scene's client
+            // code with it, until the server's world is here (D433).
+            state.sceneClientHeld = true;
             script::reconcileAllScripts(host->runtime().state());
             m_connecting = true;
             m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
@@ -395,7 +400,13 @@ void NetworkSession::update()
     if (m_connecting) {
         if (status.welcomed) {
             m_connecting = false;
+            m_lostSinceNs = 0;
+            m_seenFreshJoins = status.freshJoins;
             setState(StateConnected);
+            // **The world is the server's now, and the scene's client code
+            // starts in it** (D433) -- before `Connected` is raised, so what
+            // lives across worlds hears it with the scene already running.
+            host->holdSceneClientCode(false);
             script::fireNetworkEvent(host->runtime().state(), "Connected", std::nullopt);
         }
         // A command-line join dials until the server answers; a script's
@@ -410,8 +421,42 @@ void NetworkSession::update()
     }
     // A join from the command line dials again, as it always has (ADR 0085);
     // one a script made hands the decision back to the game.
-    if (status.lost && !m_redial)
+    if (status.lost && !m_redial) {
         goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
+        return;
+    }
+    // **A redial is a state, and it has an end** (D432). While the server is
+    // gone `State` said `Connected`, nothing fired and `ServerTick` stood
+    // still, for ever: a game could tell its player nothing. It is
+    // `Connecting` while this machine dials, and after `[network] timeout`
+    // it gives up -- `Disconnected`, and solo, as a script's own join does.
+    if (!status.welcomed) {
+        const core::u64 now = m_clock ? m_clock() : platform::nowNs();
+        if (m_lostSinceNs == 0) {
+            m_lostSinceNs = now != 0 ? now : 1;
+            setState(StateConnecting);
+        }
+        else if (static_cast<core::f64>(now - std::min(now, m_lostSinceNs)) > m_joinTimeoutSeconds * 1'000'000'000.0) {
+            m_lostSinceNs = 0;
+            goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
+        }
+        return;
+    }
+    if (m_lostSinceNs != 0) {
+        // **It answered.** As the same player, the world this machine held is
+        // the one it goes on in. As somebody new -- a server that restarted
+        // knows nobody -- it is a fresh join: the world was replaced, so the
+        // scene's client code starts again in it.
+        m_lostSinceNs = 0;
+        const bool fresh = status.freshJoins != m_seenFreshJoins;
+        m_seenFreshJoins = status.freshJoins;
+        setState(StateConnected);
+        if (fresh) {
+            host->holdSceneClientCode(true);
+            host->holdSceneClientCode(false);
+        }
+        script::fireNetworkEvent(host->runtime().state(), "Connected", std::nullopt);
+    }
 #endif
 }
 

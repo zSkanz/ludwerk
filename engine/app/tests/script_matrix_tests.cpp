@@ -228,6 +228,11 @@ struct Boot
         };
         options.networkTopology = topology;
         REQUIRE_FALSE(host.boot(options).has_value());
+        // A machine started to join holds its scene's client code until the
+        // server's world is here (D433), and the session lets it go at the
+        // welcome: the matrix is of what runs on a replica once it has joined.
+        if (topology == scene::NetworkTopology::Replica)
+            host.holdSceneClientCode(false);
         for (int tick = 0; tick < 4; ++tick)
             host.tick();
     }

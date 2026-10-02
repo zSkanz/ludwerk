@@ -1,6 +1,9 @@
 package engine.player;
 
+import android.content.Context;
+
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLSurface;
 
 /**
  * The activity a Ludwerk game runs in. SDL's own glue does the rest, compiled out
@@ -20,6 +23,12 @@ public class PlayerActivity extends SDLActivity {
     @Override
     protected String getMainFunction() {
         return "main";
+    }
+
+    /** The surface that says what the safe area is ({@link PlayerSurface}). */
+    @Override
+    protected SDLSurface createSDLSurface(Context context) {
+        return new PlayerSurface(context);
     }
 
     /**
