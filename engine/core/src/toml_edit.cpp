@@ -174,6 +174,10 @@ std::optional<std::string> setTomlValue(std::string_view text, std::string_view 
     std::string_view current;
     usize lineStart = 0;
     usize insertAt = std::string_view::npos;
+    // Where the key's table last had something written: after its header, a
+    // key or a comment. A new key goes there -- with the table, and before the
+    // blank line that sets the next one apart.
+    usize tableEnd = std::string_view::npos;
     bool sawTable = wanted.table.empty();
 
     while (lineStart <= text.size()) {
@@ -187,13 +191,18 @@ std::optional<std::string> setTomlValue(std::string_view text, std::string_view 
             // the END of the table it belongs to rather than at the end of the
             // file. A key under the wrong header is a key the reader never finds.
             if (current == wanted.table && insertAt == std::string_view::npos)
-                insertAt = lineStart;
+                insertAt = tableEnd != std::string_view::npos ? tableEnd : lineStart;
             current = *header;
-            if (current == wanted.table)
+            if (current == wanted.table) {
                 sawTable = true;
+                if (lineEnd < text.size())
+                    tableEnd = lineEnd + 1;
+            }
         }
         else if (current == wanted.table) {
             const std::string_view bare = trim(line);
+            if (!bare.empty() && lineEnd < text.size())
+                tableEnd = lineEnd + 1;
             if (!bare.empty() && bare.front() != '#') {
                 if (const usize equals = assignmentAt(line);
                     equals != std::string_view::npos && unquoteKey(trim(line.substr(0, equals))) == bareKey) {
@@ -251,6 +260,8 @@ std::optional<std::string> setTomlValue(std::string_view text, std::string_view 
         out += line;
         return out;
     }
+    // A table whose last line has no newline of its own cannot be the one
+    // being left, so `insertAt` is always at a line's start here.
 
     std::string out;
     out.reserve(text.size() + line.size());
@@ -258,6 +269,48 @@ std::optional<std::string> setTomlValue(std::string_view text, std::string_view 
     out += line;
     out.append(text.substr(insertAt));
     return out;
+}
+
+std::optional<std::string> removeTomlValue(std::string_view text, std::string_view key)
+{
+    const Split wanted = splitKey(key);
+    const std::string_view bareKey = unquoteKey(wanted.key);
+    if (bareKey.empty())
+        return std::nullopt;
+
+    std::string_view current;
+    usize lineStart = 0;
+    while (lineStart <= text.size()) {
+        usize lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string_view::npos)
+            lineEnd = text.size();
+        const std::string_view line = text.substr(lineStart, lineEnd - lineStart);
+
+        if (const std::optional<std::string_view> header = headerOnLine(line); header.has_value()) {
+            current = *header;
+        }
+        else if (current == wanted.table) {
+            const std::string_view bare = trim(line);
+            if (!bare.empty() && bare.front() != '#') {
+                if (const usize equals = assignmentAt(line);
+                    equals != std::string_view::npos && unquoteKey(trim(line.substr(0, equals))) == bareKey) {
+                    // The whole line and its newline: a comment on it was about
+                    // the value that is going.
+                    std::string out;
+                    out.reserve(text.size());
+                    out.append(text.substr(0, lineStart));
+                    if (lineEnd < text.size())
+                        out.append(text.substr(lineEnd + 1));
+                    return out;
+                }
+            }
+        }
+
+        if (lineEnd == text.size())
+            break;
+        lineStart = lineEnd + 1;
+    }
+    return std::string(text);
 }
 
 } // namespace engine::core

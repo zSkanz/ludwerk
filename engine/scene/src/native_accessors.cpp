@@ -2090,6 +2090,32 @@ bool setStreamingServicePauseOutsideLoadedArea(World& world, core::InstanceId, c
     return true;
 }
 
+// --- LocalizationService (ADR 0154) -------------------------------------------
+
+Value getLocalizationServiceLocale(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().locale};
+}
+
+bool setLocalizationServiceLocale(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    // The player's to choose: a machine with no player has nobody to ask.
+    if (text == nullptr || !world.engineState().graphicsDisplay)
+        return false;
+    // Narrowed to a catalog the project has; with no catalogs at all -- a
+    // test, a bare script -- to the name as locales are written.
+    const std::string locale =
+        world.localization() != nullptr ? world.localization()->narrow(*text) : canonicalLocale(*text);
+    if (locale.empty())
+        return false;
+    if (locale == world.engineState().locale)
+        return true;
+    world.engineState().locale = locale;
+    world.changes().pushText(id, world.atoms().intern("LocaleChanged"), locale);
+    return true;
+}
+
 // --- GraphicsService (ADR 0147) -----------------------------------------------
 //
 // Every property is one setting of `scene::GraphicsModel`: read as the value in

@@ -1402,7 +1402,7 @@ my-game/
 ├─ src/
 │  ├─ scripts/main.luau     -- entry Script (--!strict)
 │  └─ shared/greeting.luau  -- modules, require("@shared/...")
-├─ assets/i18n/en.json
+├─ i18n/en.json              -- the game's text, a catalog a locale (ADR 0154)
 ├─ tests/example.test.luau
 ├─ .engine/                  -- generated (gitignored): types/, cache/, manifest
 └─ .gitignore
@@ -1572,7 +1572,7 @@ Naming-rule lints run inside the generator (§9) as a CI gate.
 ## 6. i18n system
 
 - **Catalog format: flat JSON per locale** — `i18n/en.json` for the engine,
-  `tools/cli/i18n/en.json` for the CLI, `assets/i18n/en.json` for games. JSON
+  `tools/cli/i18n/en.json` for the CLI, `i18n/<locale>.json` in a project for a game. JSON
   because C++, Luau, and translation tools all consume it trivially. Values
   are template strings with `{param}` placeholders; plural values are objects
   keyed by CLDR category (`{"one": "...", "other": "..."}`, selected by a
@@ -1587,17 +1587,15 @@ Naming-rule lints run inside the generator (§9) as a CI gate.
   → surfaced to console/overlay/`error()`. Errors reaching Luau are
   pre-formatted strings prefixed with the key
   (`[engine.assets.err.not_found] …`) so tests match on keys, not prose.
-- **In-game `LocalizationService` — designed here and never built** (§2.1). The
-  three halves that did ship are the ones the engine itself needs: the catalog
-  format, the key discipline R3 enforces, and the C++ formatter above. What is
-  missing is the Luau surface, so a game today has a catalog under
-  `assets/i18n/` that nothing loads. The design stands as written:
-  `Locale: string` (BCP-47, settable),
-  `SystemLocale: string` (read), `LocaleChanged: Signal<string>`,
-  `Translate(key: string, params: {[string]: any}?) → string` (a missing key
-  echoes the key + a dev log), `LoadCatalog(locale: string, content: Content)`
-  (DLC/mods). v1 stops here; ICU-grade formatting, dates, and gender are
-  reserved extensions. `TextLabel.Text` accepts plain strings only in v1 —
+- **In-game `LocalizationService`** (§2.1, built by ADR 0154): `Locale: string`
+  (BCP-47, settable, kept for the player), `GetLocales()`,
+  `LocaleChanged: Signal<string>`, `Translate(key: string, params:
+  {[string]: any}?) → string` (a missing key echoes the key and warns once).
+  A project's catalogs are `i18n/<locale>.json`; the engine's own text is read
+  through the same call. Not built: `SystemLocale` (the system's language is
+  where `Locale` starts, and is not a property), `LoadCatalog` for DLC and
+  mods, ICU-grade formatting, dates, and gender.
+  `TextLabel.Text` accepts plain strings only in v1 —
   auto-localized UI is future work; `InputBinding.DisplayName` accepts a key.
 
 ---

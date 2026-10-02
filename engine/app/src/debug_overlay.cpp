@@ -14,6 +14,7 @@
 #include <SDL3/SDL_misc.h>
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cctype>
 #include <cfloat>
 #include <cmath>
@@ -9407,6 +9408,122 @@ void drawIconPreviews(const std::filesystem::path& picture, const char* label)
     ImGui::Dummy(ImVec2(phoneX + phoneW - origin.x, boxH));
 }
 
+// --- Graphics and display, in Project Settings (ADR 0147, G4) -------------------
+
+// The catalog's words for a setting, and for one of the things it may be.
+[[nodiscard]] const char* graphicsWords(const std::string& key)
+{
+    return core::engineCatalog().text(core::TextKey{core::hashTextKey(key)});
+}
+
+[[nodiscard]] const char* graphicsLabel(scene::GraphicsSetting setting)
+{
+    const std::string key = projectKeyOf(setting);
+    // `graphics.shadow_quality` is `engine.graphics.setting.shadow_quality`.
+    return graphicsWords("engine.graphics.setting." + key.substr(key.find('.') + 1));
+}
+
+[[nodiscard]] std::string graphicsChoices(scene::GraphicsSetting setting)
+{
+    const std::string key = projectKeyOf(setting);
+    const std::string name = key.substr(key.find('.') + 1);
+    const bool level = setting == scene::GraphicsSetting::FogQuality ||
+                       setting == scene::GraphicsSetting::GlobalIllumination ||
+                       setting == scene::GraphicsSetting::Reflections;
+    std::string out;
+    for (const std::string_view choice : projectChoicesOf(setting)) {
+        out += graphicsWords(level ? "engine.graphics.level." + std::string(choice)
+                                   : "engine.graphics.choice." + name + "." + std::string(choice));
+        out.push_back('\0');
+    }
+    return out;
+}
+
+// One setting as a row: whether the project says it, its name, and its value
+// -- the project's own when ticked, the level's and greyed when not.
+void graphicsSettingRow(scene::GraphicsModel& model, scene::GraphicsSetting setting)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    ImGui::PushID(static_cast<int>(setting));
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    bool said = model.project.says(setting);
+    if (ImGui::Checkbox("##said", &said)) {
+        if (said)
+            model.project.put(setting, model.effective(setting));
+        else
+            model.project.clear(setting);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.project_settings.set_here_tip")));
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(graphicsLabel(setting));
+
+    ImGui::TableNextColumn();
+    ImGui::BeginDisabled(!said);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const core::f64 current = model.effective(setting);
+    switch (info.kind) {
+    case scene::GraphicsValueKind::Flag: {
+        bool on = current != 0.0;
+        if (ImGui::Checkbox("##value", &on))
+            model.project.put(setting, on ? 1.0 : 0.0);
+        break;
+    }
+    case scene::GraphicsValueKind::Choice: {
+        int index = static_cast<int>(current);
+        if (ImGui::Combo("##value", &index, graphicsChoices(setting).c_str()))
+            model.project.put(setting, std::clamp(static_cast<core::f64>(index), info.lowest, info.highest));
+        break;
+    }
+    case scene::GraphicsValueKind::Whole: {
+        int value = static_cast<int>(current);
+        if (ImGui::DragInt("##value", &value, 1.0f, static_cast<int>(info.lowest), static_cast<int>(info.highest), "%d",
+                           ImGuiSliderFlags_AlwaysClamp))
+            model.project.put(setting, static_cast<core::f64>(value));
+        break;
+    }
+    case scene::GraphicsValueKind::Number: {
+        float value = static_cast<float>(current);
+        if (ImGui::SliderFloat("##value", &value, static_cast<float>(info.lowest), static_cast<float>(info.highest),
+                               "%.2f", ImGuiSliderFlags_AlwaysClamp))
+            model.project.put(setting, static_cast<core::f64>(value));
+        break;
+    }
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+}
+
+// A setting's value as `project.toml` holds it.
+[[nodiscard]] std::string graphicsRendered(const scene::GraphicsModel& model, scene::GraphicsSetting setting)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    const core::f64 value = model.project.at(setting);
+    if (info.kind == scene::GraphicsValueKind::Flag)
+        return core::tomlBoolean(value != 0.0);
+    if (info.kind == scene::GraphicsValueKind::Choice) {
+        const std::span<const std::string_view> choices = projectChoicesOf(setting);
+        const auto index = static_cast<std::size_t>(value);
+        return core::tomlString(index < choices.size() ? choices[index] : std::string_view{});
+    }
+    return core::tomlNumber(value);
+}
+
+// The settings the dialog offers: the ones something draws by, less the level
+// itself (its own combo), the resolution (the window's size, above) and the
+// handheld's cap.
+[[nodiscard]] bool graphicsOffered(scene::GraphicsSetting setting, bool display)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    if (!info.applied || setting == scene::GraphicsSetting::QualityLevel ||
+        setting == scene::GraphicsSetting::ResolutionWidth || setting == scene::GraphicsSetting::ResolutionHeight ||
+        setting == scene::GraphicsSetting::RenderResolutionCap)
+        return false;
+    return info.quality != display;
+}
+
 void drawProjectSettings(Editor& editor)
 {
     if (!beginEditorDialog(labelled(ENG_TR("engine.editor.dialog.project_settings"), "###Project Settings").c_str(),
@@ -9420,11 +9537,14 @@ void drawProjectSettings(Editor& editor)
     static std::array<char, 96> identity{};
     static std::array<int, 2> size{};
     static int quality = 2;
-    // ADR 0096's two machine switches: whether this project's worlds draw their
-    // depth of field and sun rays by default. Blur and colour correction have
-    // none -- a game uses them to say something.
-    static bool depthOfField = true;
-    static bool sunRays = true;
+    // **Every graphics and display setting, as the project's layer of the
+    // model** (ADR 0147, G4): what the file says is ticked, and the rest shows
+    // what the level gives. `written` is what the file said when the dialog
+    // opened, so a setting unticked is taken out of it rather than pinned to
+    // the level's value.
+    static scene::GraphicsModel shown;
+    static std::bitset<scene::kGraphicsSettingCount> written;
+    static bool rememberPlayer = true;
     // The App page (ADR 0104 §1): what every export stamps.
     static std::array<char, 32> version{};
     static std::array<char, 96> company{};
@@ -9449,8 +9569,9 @@ void drawProjectSettings(Editor& editor)
         size[0] = config.windowWidth > 0 ? config.windowWidth : 1280;
         size[1] = config.windowHeight > 0 ? config.windowHeight : 720;
         quality = static_cast<int>(config.graphics.quality);
-        depthOfField = config.graphics.depthOfField;
-        sunRays = config.graphics.sunRays;
+        shown = config.graphicsModel;
+        written = shown.project.said;
+        rememberPlayer = config.rememberPlayerSettings;
         version.fill(0);
         company.fill(0);
         icon.fill(0);
@@ -9530,13 +9651,28 @@ void drawProjectSettings(Editor& editor)
                           ENG_TR("engine.editor.project_settings.quality.ultra")})
                      .c_str());
     ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.default_quality_for_this_project")));
-    ImGui::Checkbox(core::tr(ENG_TR("engine.editor.project_settings.depth_of_field")), &depthOfField);
+    // The level the rows below show the values of.
+    shown.project.put(scene::GraphicsSetting::QualityLevel, static_cast<core::f64>(std::clamp(quality, 0, 3)));
+    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.levels_decide_the_rest")));
+
+    const ImGuiTableFlags rows = ImGuiTableFlags_SizingStretchProp;
+    for (const bool display : {false, true}) {
+        if (display)
+            ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.project_settings.display")));
+        if (ImGui::BeginTable(display ? "##display-settings" : "##graphics-settings", 2, rows)) {
+            ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+            ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+            for (core::usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
+                const auto setting = static_cast<scene::GraphicsSetting>(index);
+                if (graphicsOffered(setting, display))
+                    graphicsSettingRow(shown, setting);
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::Checkbox(core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings")), &rememberPlayer);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s",
-                          core::tr(ENG_TR("engine.editor.project_settings.whether_a_depthoffieldeffect_in_the_tip")));
-    ImGui::Checkbox(core::tr(ENG_TR("engine.editor.project_settings.sun_rays")), &sunRays);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.project_settings.whether_a_sunrayseffect_in_the_tip")));
+        ImGui::SetTooltip("%s", core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings_tip")));
 
     if (!problem.empty()) {
         ImGui::Spacing();
@@ -9556,7 +9692,7 @@ void drawProjectSettings(Editor& editor)
         // **One key at a time, and it stops at the first refusal.** A dialog
         // that pressed on after a failed write would leave the file half
         // changed, which is the one state worse than not saving.
-        const std::array<std::pair<const char*, std::string>, 12> writes{{
+        const std::array<std::pair<const char*, std::string>, 11> writes{{
             {"project.name", core::tomlString(std::string_view(name.data()))},
             {"project.id", core::tomlString(std::string_view(identity.data()))},
             {"project.version", core::tomlString(std::string_view(version.data()))},
@@ -9567,8 +9703,7 @@ void drawProjectSettings(Editor& editor)
             {"window.fullscreen", core::tomlBoolean(fullscreen)},
             {"window.resizable", core::tomlBoolean(resizable)},
             {"graphics.quality", core::tomlString(Presets[static_cast<std::size_t>(chosen)])},
-            {"graphics.depth_of_field", core::tomlBoolean(depthOfField)},
-            {"graphics.sun_rays", core::tomlBoolean(sunRays)},
+            {"display.remember_player_settings", core::tomlBoolean(rememberPlayer)},
         }};
 
         bool ok = true;
@@ -9581,6 +9716,19 @@ void drawProjectSettings(Editor& editor)
                 ok = false;
                 break;
             }
+        }
+        // **Each setting the project says is written, and each it stopped
+        // saying is taken out** -- never written as the level's value, which
+        // would pin it there when the level changes.
+        for (core::usize index = 0; ok && index < scene::kGraphicsSettingCount; ++index) {
+            const auto setting = static_cast<scene::GraphicsSetting>(index);
+            if (!graphicsOffered(setting, false) && !graphicsOffered(setting, true))
+                continue;
+            const std::string key = projectKeyOf(setting);
+            if (shown.project.says(setting))
+                ok = writeProjectSetting(root, key, graphicsRendered(shown, setting), &problem);
+            else if (written.test(index))
+                ok = removeProjectSetting(root, key, &problem);
         }
         if (ok) {
             // **Not applied to the running window**, and the dialog says so. A

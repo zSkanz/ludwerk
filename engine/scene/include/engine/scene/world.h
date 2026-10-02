@@ -35,6 +35,7 @@
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/graphics_model.h"
+#include "engine/scene/localization.h"
 #include "engine/scene/types.h"
 #include "engine/scene/value.h"
 
@@ -342,6 +343,10 @@ struct EngineState
     // there is refused. `graphicsQualityChanged` asks for `QualityChanged`.
     GraphicsModel graphics;
     bool graphicsDisplay = true;
+    // **`LocalizationService.Locale`** (ADR 0154): the locale text is asked
+    // for in. The player's, as the settings above are: set by the host at the
+    // start and by a script from a language menu, and kept by the host.
+    std::string locale = "en";
     // `UIService.SelectedObject` and `AutoSelect` (ADR 0128): what a gamepad
     // or the arrow keys have selected. Here rather than beside the hover and
     // the focus because a script writes it.
@@ -941,6 +946,11 @@ public:
     // world with none resolves every material to the engine default, which is
     // what a headless world with no content should draw.
     void setMaterialLibrary(asset::MaterialLibrary* library) noexcept { m_materialLibrary = library; }
+    // **The game's catalogs** (ADR 0154), the host's: what `LocalizationService`
+    // reads. Null where nobody gave one -- a test -- and then a key is asked
+    // of the engine's own text alone.
+    void setLocalization(const Localization* localization) noexcept { m_localization = localization; }
+    [[nodiscard]] const Localization* localization() const noexcept { return m_localization; }
     [[nodiscard]] asset::MaterialLibrary* materialLibrary() const noexcept { return m_materialLibrary; }
 
     // The asset behind a URN, folded flat; the engine default for an invalid
@@ -1524,6 +1534,7 @@ private:
     ClassId m_scriptClass = InvalidClass;
 
     asset::MaterialLibrary* m_materialLibrary = nullptr;
+    const Localization* m_localization = nullptr;
     MaterialClones m_materialClones;
     u32 m_lastMaterialClone = 0;
     PartShaderParameters m_partShaderParameters;

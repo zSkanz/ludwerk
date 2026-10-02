@@ -224,3 +224,62 @@ TEST_CASE("an empty key is refused rather than corrupting the file")
     CHECK_FALSE(setTomlValue(kProject, "", "1").has_value());
     CHECK_FALSE(setTomlValue(kProject, "project.", "1").has_value());
 }
+
+// --- Taking a key out ------------------------------------------------------------
+
+TEST_CASE("removing a key takes its line and nothing else")
+{
+    const std::string text =
+        "# Why the shadows are long.\n[graphics]\nquality = \"high\"\n"
+        "shadow_distance = 140.0 # the landmarks are far\nbloom = true\n\n[display]\nvsync = true\n";
+    const std::optional<std::string> edited = core::removeTomlValue(text, "graphics.shadow_distance");
+    REQUIRE(edited.has_value());
+    CHECK(*edited ==
+          "# Why the shadows are long.\n[graphics]\nquality = \"high\"\nbloom = true\n\n[display]\nvsync = true\n");
+
+    // The same name under another table is another setting, and stays.
+    const std::string twice = "[graphics]\nvsync = false\n\n[display]\nvsync = true\n";
+    const std::optional<std::string> one = core::removeTomlValue(twice, "display.vsync");
+    REQUIRE(one.has_value());
+    CHECK(*one == "[graphics]\nvsync = false\n\n[display]\n");
+
+    // The last line of a file with no newline at its end.
+    const std::optional<std::string> last = core::removeTomlValue("[display]\nvsync = true", "display.vsync");
+    REQUIRE(last.has_value());
+    CHECK(*last == "[display]\n");
+}
+
+TEST_CASE("removing a key the file does not have changes nothing")
+{
+    const std::string text = "[graphics]\nquality = \"high\"\n# bloom = false\n";
+    const std::optional<std::string> edited = core::removeTomlValue(text, "graphics.bloom");
+    REQUIRE(edited.has_value());
+    // A commented-out key is not the key.
+    CHECK(*edited == text);
+    CHECK(core::removeTomlValue(text, "display.vsync") == text);
+    CHECK_FALSE(core::removeTomlValue(text, "").has_value());
+
+    // And what is left still parses.
+    core::TomlDocument document;
+    CHECK(document.parse(*core::removeTomlValue(text, "graphics.quality"), "test"));
+}
+
+TEST_CASE("a new key goes with its table, before the blank line that sets the next one apart")
+{
+    const std::string text = "[graphics]\nquality = \"high\"\n\n[display]\nvsync = true\n";
+    const std::optional<std::string> edited = setTomlValue(text, "graphics.bloom", "false");
+    REQUIRE(edited.has_value());
+    CHECK(*edited == "[graphics]\nquality = \"high\"\nbloom = false\n\n[display]\nvsync = true\n");
+
+    // A table with nothing in it yet takes the key under its header.
+    const std::optional<std::string> empty =
+        setTomlValue("[graphics]\n\n[display]\nvsync = true\n", "graphics.bloom", "true");
+    REQUIRE(empty.has_value());
+    CHECK(*empty == "[graphics]\nbloom = true\n\n[display]\nvsync = true\n");
+
+    // A comment at a table's end is part of it: the key goes after.
+    const std::optional<std::string> commented =
+        setTomlValue("[graphics]\nquality = \"high\"\n# and nothing else\n\n[display]\n", "graphics.bloom", "true");
+    REQUIRE(commented.has_value());
+    CHECK(*commented == "[graphics]\nquality = \"high\"\n# and nothing else\nbloom = true\n\n[display]\n");
+}

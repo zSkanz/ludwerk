@@ -919,6 +919,7 @@ int main(int argc, char** argv)
         options.graphics = config.graphics;
         options.graphicsModel = config.graphicsModel;
         options.rememberPlayerSettings = config.rememberPlayerSettings;
+        options.defaultLocale = config.defaultLocale;
         options.pacing = engine::app::pacingWith(config.pacing, graphicsOverrides);
         options.windowTitle = config.windowTitle;
         // The project's, unless the run was told one (D468).

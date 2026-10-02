@@ -3680,6 +3680,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
+    function GetService(self, name: "LocalizationService"): LocalizationService
     function GetService(self, name: "GraphicsService"): GraphicsService
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CryptoService"): CryptoService
@@ -3880,6 +3881,23 @@ declare extern type SaveService extends Instance with
     function ListSlots(self): { string }
     --- Removes a slot and its backup. A `SaveSlot` already handed out is emptied.
     function DeleteSlot(self, name: string): ()
+end
+
+declare extern type LocalizationService extends Instance with
+    --- The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's saved choice,
+    --- else the system's language, else `[project] default_locale`, else `en` -- each narrowed to a
+    --- catalog the project has. Writing it is the player choosing: it is kept for the next run, and
+    --- `LocaleChanged` fires. A locale the project has no catalog for is narrowed to one of its
+    --- language (`pt` reads `pt-BR`), and refused when there is none.
+    Locale: string
+    --- `Locale` changed, or -- while a game is being made -- a catalog was edited and read again: where
+    --- a game sets its labels' text.
+    read LocaleChanged: Signal<string>
+    --- The locales the project has a catalog for, in order: what a language menu lists.
+    function GetLocales(self): { string }
+    --- The text for `key` in `Locale`. `{name}` in the text is replaced by `arguments.name` -- a
+    --- string, a number or a boolean. A key nobody has comes back as the key, and is warned about once.
+    function Translate(self, key: string, arguments: { [string]: any }?): string
 end
 
 declare extern type GraphicsService extends Instance with

@@ -45,6 +45,52 @@ test.suite("check", function(suite)
         fs.removeDirectory(root, { recursive = true })
     end)
 
+    suite:case("a game's catalogs are checked against its default locale's", function()
+        -- ADR 0154: a key the default locale has and another lacks is a
+        -- player reading another language's text.
+        local root = scratch("catalogs")
+        fs.createDirectory(`{root}/i18n`, { makeParents = true })
+        fs.writeStringToFile(`{root}/i18n/en.json`, '{"menu.play": "Play", "menu.quit": "Quit", "hud.score": "Score"}')
+        fs.writeStringToFile(`{root}/i18n/pt-BR.json`, '{"menu.play": "Jogar", "hud.vidas": "Vidas"}')
+        fs.writeStringToFile(
+            `{root}/i18n/es.json`,
+            '{"menu.play": "Jugar", "menu.quit": "Salir", "hud.score": "Puntos"}'
+        )
+
+        local report = check.checkCatalogs(root)
+        assert.eq(report.catalogs, 3)
+        assert.eq(#report.unreadable, 0)
+        -- By locale, then by key: the same list on every machine.
+        assert.eq(#report.missing, 2)
+        assert.eq(`{report.missing[1].locale}:{report.missing[1].key}`, "pt-BR:hud.score")
+        assert.eq(`{report.missing[2].locale}:{report.missing[2].key}`, "pt-BR:menu.quit")
+        assert.eq(#report.extra, 1)
+        assert.eq(`{report.extra[1].locale}:{report.extra[1].key}`, "pt-BR:hud.vidas")
+
+        -- The default is the project's to name.
+        fs.writeStringToFile(`{root}/project.toml`, '[project]\nname = "x"\ndefault_locale = "es"\n')
+        local other = check.checkCatalogs(root)
+        assert.eq(#other.missing, 2)
+        assert.eq(other.missing[1].locale, "pt-BR")
+        assert.eq(#other.extra, 1)
+
+        -- A file that is not a catalog is said, not skipped.
+        fs.writeStringToFile(`{root}/i18n/fr.json`, "not json")
+        assert.eq(check.checkCatalogs(root).unreadable[1], "i18n/fr.json")
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
+    suite:case("a project with no catalogs, or one, has nothing to compare", function()
+        local root = scratch("nocatalogs")
+        assert.eq(check.checkCatalogs(root).catalogs, 0)
+        fs.createDirectory(`{root}/i18n`, { makeParents = true })
+        fs.writeStringToFile(`{root}/i18n/en.json`, '{"menu.play": "Play"}')
+        local report = check.checkCatalogs(root)
+        assert.eq(report.catalogs, 1)
+        assert.eq(#report.missing, 0)
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
     suite:case("stylua is told to skip what check skips", function()
         local command = check.styluaCommand({ "stylua", "--check" }, ".", { ".engine", "dist" })
         local joined = table.concat(command, " ")

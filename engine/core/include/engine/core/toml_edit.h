@@ -51,4 +51,11 @@ namespace engine::core {
 [[nodiscard]] std::optional<std::string> setTomlValue(std::string_view text, std::string_view key,
                                                       std::string_view rendered);
 
+// Returns `text` without `key`'s line -- the key, its value and whatever was
+// written after it on that line -- and with every other byte where it was. A
+// key the document does not have is not an error: the text comes back as it
+// was. What a settings dialog needs to say "no longer said here": a key set
+// to its default is still a key that pins it.
+[[nodiscard]] std::optional<std::string> removeTomlValue(std::string_view text, std::string_view key);
+
 } // namespace engine::core

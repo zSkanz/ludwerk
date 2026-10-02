@@ -1263,11 +1263,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                       : options.saveDirectory / "settings.json";
     render::GraphicsSettings liveGraphics = options.graphics;
     FramePacing livePacing = options.pacing;
+    // The language the player chose last time, from the same file (ADR 0154).
+    std::string savedLocale;
     {
         const core::u64 before = graphicsHost.revision();
         std::vector<std::string> refused;
         scene::GraphicsLayer saved;
-        if (graphicsDisplay && readPlayerGraphics(playerSettingsFile, saved, &refused)) {
+        if (graphicsDisplay && readPlayerGraphics(playerSettingsFile, saved, &refused, &savedLocale)) {
             // A display that is not there any more is not gone to: the
             // project's default stands, and the log says so.
             if (saved.says(scene::GraphicsSetting::Monitor) &&
@@ -1316,6 +1318,69 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         return hash;
     };
     WindowChoice appliedWindow = windowChoiceOf(graphicsHost);
+
+    // **The game's catalogs** (ADR 0154): every `i18n/<locale>.json` of the
+    // project -- of a spec tree, for the conformance run -- read once here and
+    // again when one changes while a game is being made. The engine's own
+    // text is under them, so a module the engine ships asks the same way.
+    scene::Localization localization;
+    localization.setDefaultLocale(options.defaultLocale);
+    std::error_code catalogRootError;
+    const std::filesystem::path catalogRoot = !options.conformanceRoot.empty() ? options.conformanceRoot / "i18n"
+                                              : std::filesystem::is_directory(options.scriptPath, catalogRootError)
+                                                  ? options.scriptPath / "i18n"
+                                                  : std::filesystem::path{};
+    // Each catalog file and when it was last written, so a changed one is the
+    // only one read again.
+    std::map<std::filesystem::path, std::filesystem::file_time_type> catalogFiles;
+    const auto readCatalogs = [&]() {
+        bool changed = false;
+        std::error_code error;
+        if (catalogRoot.empty() || !std::filesystem::is_directory(catalogRoot, error))
+            return changed;
+        // In name order: what a directory lists first is the system's business.
+        std::vector<std::filesystem::path> files;
+        for (std::filesystem::directory_iterator it(catalogRoot, error), end; it != end && !error;
+             it.increment(error)) {
+            if (it->is_regular_file(error) && it->path().extension() == ".json")
+                files.push_back(it->path());
+        }
+        std::sort(files.begin(), files.end());
+        for (const std::filesystem::path& file : files) {
+            const std::filesystem::file_time_type written = std::filesystem::last_write_time(file, error);
+            if (const auto known = catalogFiles.find(file); known != catalogFiles.end() && known->second == written)
+                continue;
+            catalogFiles[file] = written;
+            std::string text;
+            std::string diagnostic;
+            if (!platform::readTextFile(file, text) || !localization.load(file.stem().string(), text, &diagnostic)) {
+                const std::array<I18nArg, 2> args{I18nArg{"file", file.string()}, I18nArg{"reason", diagnostic}};
+                core::log(LogLevel::Warn, ENG_TR("app.warn.catalog_unreadable"), args);
+                continue;
+            }
+            changed = true;
+        }
+        return changed;
+    };
+    (void)readCatalogs();
+    // Where the player starts: what they chose, else the system's language,
+    // else the project's default -- each narrowed to a catalog there is.
+    std::string hostLocale = localization.narrow(savedLocale);
+    if (hostLocale.empty() && graphicsDisplay) {
+        for (const std::string& preferred : platform::preferredLocales()) {
+            hostLocale = localization.narrow(preferred);
+            if (!hostLocale.empty())
+                break;
+        }
+    }
+    if (hostLocale.empty())
+        hostLocale = localization.narrow(localization.defaultLocale());
+    if (hostLocale.empty())
+        hostLocale = localization.locales().front();
+    core::u64 catalogFrame = 0;
+    // The locale that goes in the player's file: the one they chose, and
+    // nothing while they are only being shown the system's.
+    std::string chosenLocale = localization.narrow(savedLocale);
     core::u64 appliedGraphicsRevision = graphicsHost.revision();
     core::u64 appliedQualityRevision = qualityRevisionOf(graphicsHost);
 
@@ -2316,6 +2381,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     };
     worldOptions.graphics = graphicsHost;
     worldOptions.graphicsDisplay = graphicsDisplay;
+    worldOptions.localization = &localization;
+    worldOptions.locale = hostLocale;
 
     auto host = std::make_unique<WorldHost>();
     // **Before `boot`, and that is load-bearing.** `syncSkeletons` runs at the
@@ -2852,6 +2919,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             scene::EngineState& graphicsState = host->world().engineState();
             scene::GraphicsModel& live = graphicsState.graphics;
             graphicsState.graphicsDisplay = graphicsDisplay;
+
+            // **The player's language** (ADR 0154). A script's write to
+            // `Locale` is the player choosing, and is kept at once -- a
+            // language is picked from a menu, not applied and then saved. A
+            // catalog edited while a game is being made is read again, and
+            // `LocaleChanged` says the words moved.
+            if (graphicsState.locale != hostLocale) {
+                hostLocale = graphicsState.locale;
+                chosenLocale = hostLocale;
+                if (!playerSettingsFile.empty())
+                    (void)writePlayerGraphics(playerSettingsFile, graphicsHost.player, chosenLocale);
+            }
+            if (options.developerWarnings && ++catalogFrame % 30 == 0 && readCatalogs()) {
+                scene::World& world = host->world();
+                const core::InstanceId service = world.findFirstChildOfClass(
+                    host->dataModel(), world.classes().findId(world.atoms().lookup("LocalizationService")));
+                if (service.valid())
+                    world.changes().pushText(service, world.atoms().intern("LocaleChanged"), hostLocale);
+            }
             if (live.forgetPlayer) {
                 live.forgetPlayer = false;
                 graphicsHost.player = scene::GraphicsLayer{};
@@ -2860,7 +2946,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (live.saveRequested) {
                 live.saveRequested = false;
                 const scene::GraphicsLayer choices = live.playerChoices();
-                const bool done = !playerSettingsFile.empty() && writePlayerGraphics(playerSettingsFile, choices);
+                const bool done =
+                    !playerSettingsFile.empty() && writePlayerGraphics(playerSettingsFile, choices, chosenLocale);
                 if (done) {
                     // From here they are the player's, and nothing a script
                     // has yet to save.

@@ -91,16 +91,21 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## G4 — the editor (§6)
 
-- [ ] Project Settings → Graphics and Display (writes `project.toml`).
+- [x] Project Settings → Graphics and Display (writes `project.toml`): a box a
+  setting, greyed at the level's value until ticked; un-ticked, the key leaves
+  the file. One level at a time -- the matrix of section 6 is the next box.
+- [ ] The quality matrix: the levels as columns, a column per platform.
 - [ ] Editor Preferences → Performance (editor frame rate, throttle, viewport
   preset).
 - [ ] Viewport toolbar quick menu; Play mode's "use my saved player settings".
 
 ## G5 — the ready-made screen and the close (§7–8)
 
-- [ ] `@engine/settings`, an options screen in one call, themed and i18n'd.
-- [ ] A picture test per preset; the manual page `docs/manual/graphics/settings.md`
-  ("for players", "by script", "in the editor").
+- [x] `@engine/settings`, an options screen in one call, themed and i18n'd
+  (`settings_screen.spec.luau`, ten cases).
+- [x] A picture test per preset (`options_screen_gate`); the manual page, which
+  is `docs/manual/rendering/settings.md` ("for a player", "by script", "an
+  options screen in one call", "in the editor").
 - [ ] An example game uses `@engine/settings`; the package regenerated; the owner
   opens the editor (it no longer runs at 2 000 FPS) and the example's menu.
 

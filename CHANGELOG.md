@@ -153,6 +153,25 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`@engine/settings`** (ADR 0147): an options screen in one call.
+  `settings.open()` puts a Graphics page and a Display page over the game, a
+  row for each setting this build draws by, with Apply, Revert, Defaults and
+  Back; a mouse, a finger, a gamepad and the arrow keys drive it. It takes a
+  theme and a list of settings to hide, and its words are catalog keys a
+  game's own catalog can replace.
+- **Project Settings has Graphics and Display** (ADR 0147): `project.toml`'s
+  `[graphics]` and `[display]` as a form in the editor. A ticked setting is
+  the project's; an unticked one shows what the level gives and is not in the
+  file.
+- **`LocalizationService`** (ADR 0154): a game's text by key, in the player's
+  language. `Translate(key, arguments)` with `{name}` placeholders, `Locale`,
+  `GetLocales()` and `LocaleChanged`. A project's catalogs are
+  `i18n/<locale>.json`, read again when one changes while a game is being
+  made and carried into an export; `[project] default_locale` names the one
+  a key falls back to. The player's choice is kept in their folder. The
+  engine's own text is read by the same call. `ludwerk check` fails when a
+  locale lacks a key the default locale has.
+
 - **`GraphicsService`** (ADR 0147): a script reads and writes the machine's
   graphics and display settings -- `QualityLevel`, the shadow, post and
   detail settings, `WindowMode`, `Resolution`, `Monitor`, `VSync`,
@@ -924,6 +943,12 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A client is heard again after a long frame** (D480): a client that dropped
+  simulated time once -- a hitch of a tenth of a second is enough -- was
+  ignored by the server for the rest of the session: its character never
+  moved again, or never stopped. The server now takes up a client's input
+  again within a few ticks of its clock moving, corrects it once, and stops
+  holding a key for a client that has said nothing for a quarter of a second.
 - **A `ScrollFrame` is scrolled by the wheel and by a finger** (D477): it moved
   only when a script wrote `CanvasPosition`. The wheel over it moves its canvas,
   and a press that is then dragged scrolls it without pressing the row under

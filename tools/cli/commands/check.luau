@@ -15,9 +15,16 @@
 	`ENG_TR` keys against `i18n/en.json`, which a game does not have, so it is
 	the repository's -- `tools/repo/i18nlint.luau`, which the gate runs beside
 	this. The header said three until 2026-09-29, and `run` never had it.
+
+	**A game's own catalogs are** (ADR 0154): every key of the default
+	locale's `i18n/<locale>.json` is in every other, or the check fails and
+	names each one that is not -- a missing translation is shown to a player
+	as another language's text. A key only another locale has is said and does
+	not fail: it is text nobody asks for.
 ]]
 
 local fs = require("@std/fs")
+local json = require("@std/json")
 local process = require("@std/process")
 
 local catalog = require("../catalog")
@@ -158,6 +165,106 @@ local function styluaCommand(prefix: { string }, path: string, ignore: { string 
     return command
 end
 
+--- The keys of one catalog file, or nil for a file that is not a flat object.
+local function catalogKeys(file: string): { [string]: boolean }?
+    local ok, decoded = pcall(json.deserialize, fs.readFileToString(file))
+    local root = if ok then json.asObject(decoded) else nil
+    if root == nil then
+        return nil
+    end
+    local keys: { [string]: boolean } = {}
+    for key in root :: json.Object do
+        -- `@std/json` tags a decoded object with a sentinel key that is not a
+        -- string, and `$`-prefixed entries are a file's own notes.
+        if typeof(key) == "string" and string.sub(key, 1, 1) ~= "$" then
+            keys[key] = true
+        end
+    end
+    return keys
+end
+
+--- A project's default locale: `[project] default_locale`, `en` until it says.
+local function defaultLocale(root: string): string
+    local file = projectlib.joined(root, "project.toml")
+    if not fs.exists(file) then
+        return "en"
+    end
+    local named = string.match(fs.readFileToString(file), '\n%s*default_locale%s*=%s*"([%w_%-]+)"')
+    return named or "en"
+end
+
+export type CatalogReport = {
+    --- Each `{ locale, key }` the default locale has and that locale does not.
+    missing: { { locale: string, key: string } },
+    --- Each `{ locale, key }` a locale has and the default does not.
+    extra: { { locale: string, key: string } },
+    --- Each file that is not a catalog.
+    unreadable: { string },
+    --- How many catalogs were compared: none when the project has no `i18n`.
+    catalogs: number,
+}
+
+--- A project's catalogs against its default locale's (ADR 0154), in a fixed
+--- order: by locale, then by key.
+local function checkCatalogs(root: string): CatalogReport
+    local report: CatalogReport = { missing = {}, extra = {}, unreadable = {}, catalogs = 0 }
+    local folder = projectlib.joined(root, "i18n")
+    if not fs.exists(folder) then
+        return report
+    end
+    local names: { string } = {}
+    for _, entry in fs.listDirectory(folder) do
+        if entry.type == "file" and string.sub(entry.name, -5) == ".json" then
+            table.insert(names, string.sub(entry.name, 1, -6))
+        end
+    end
+    table.sort(names)
+
+    local catalogs: { [string]: { [string]: boolean } } = {}
+    for _, name in names do
+        local keys = catalogKeys(projectlib.joined(folder, `{name}.json`))
+        if keys == nil then
+            table.insert(report.unreadable, `i18n/{name}.json`)
+        else
+            catalogs[name] = keys
+            report.catalogs += 1
+        end
+    end
+
+    local first = defaultLocale(root)
+    local reference = catalogs[first]
+    if reference == nil then
+        return report
+    end
+    local referenceKeys: { string } = {}
+    for key in reference do
+        table.insert(referenceKeys, key)
+    end
+    table.sort(referenceKeys)
+    for _, name in names do
+        local keys = catalogs[name]
+        if name == first or keys == nil then
+            continue
+        end
+        for _, key in referenceKeys do
+            if not keys[key] then
+                table.insert(report.missing, { locale = name, key = key })
+            end
+        end
+        local own: { string } = {}
+        for key in keys do
+            if not reference[key] then
+                table.insert(own, key)
+            end
+        end
+        table.sort(own)
+        for _, key in own do
+            table.insert(report.extra, { locale = name, key = key })
+        end
+    end
+    return report
+end
+
 local function run(options: Options): number
     local files = collectLuau(options.path, options.ignore)
     if #files == 0 then
@@ -222,6 +329,22 @@ local function run(options: Options): number
         print(tr("cli.check.sides_skipped"))
     end
 
+    -- The game's catalogs against its default locale's (ADR 0154).
+    local catalogs = checkCatalogs(options.path)
+    for _, file in catalogs.unreadable do
+        print(tr("cli.check.err.catalog_unreadable", { file = file }))
+    end
+    for _, entry in catalogs.extra do
+        print(tr("cli.check.catalog_extra", { locale = entry.locale, key = entry.key }))
+    end
+    for _, entry in catalogs.missing do
+        print(tr("cli.check.err.catalog_missing", { locale = entry.locale, key = entry.key }))
+    end
+    if #catalogs.missing > 0 or #catalogs.unreadable > 0 then
+        print(tr("cli.check.err.i18n"))
+        return 1
+    end
+
     print(tr("cli.check.ok", { count = #files }))
     return 0
 end
@@ -231,4 +354,5 @@ return {
     collectLuau = collectLuau,
     styluaCommand = styluaCommand,
     definitionName = definitionName,
+    checkCatalogs = checkCatalogs,
 }

@@ -11,7 +11,7 @@
 # whose output the determinism test hashes.
 cmake_minimum_required(VERSION 3.24)
 
-foreach(required HOST ASSETC PROJECT REPORT GENERATOR REPO WORLD)
+foreach(required HOST ASSETC PROJECT STAGE REPORT GENERATOR REPO WORLD)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "run_soak_gate.cmake needs -D${required}=")
     endif()
@@ -32,12 +32,27 @@ if(DEFINED RETURN_RADIUS_M AND NOT RETURN_RADIUS_M STREQUAL "")
     set(return_radius_flag "--soak-return-radius=${RETURN_RADIUS_M}")
 endif()
 
-set(built "${PROJECT}/.engine")
+# **A copy of the project under the build tree, and the run is over that**
+# (R14). The pack used to be written into the project's own `.engine`, in the
+# source tree -- which two lanes of the local gate share. The Windows lane's
+# soak held `content.lpack` open while the Linux lane's `assetc` tried to write
+# it, and the lane failed on a file it had no business touching. Every lane
+# now packs and flies over its own copy; what a run leaves behind -- `.engine`,
+# an export, a log -- is not copied in.
+file(REMOVE_RECURSE "${STAGE}")
+file(MAKE_DIRECTORY "${STAGE}")
+file(COPY "${PROJECT}/" DESTINATION "${STAGE}"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "dist" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "*.dmp" EXCLUDE)
+
+set(built "${STAGE}/.engine")
 file(MAKE_DIRECTORY "${built}")
 
 execute_process(
     COMMAND "${ASSETC}"
-        --input "${PROJECT}/content"
+        --input "${STAGE}/content"
         --output "${built}/content.lpack"
         --manifest "${built}/content.manifest.json"
     RESULT_VARIABLE compileResult
@@ -60,7 +75,7 @@ message(STATUS "${compileOutput}")
 # purely GPU-side is invisible to this test. `--soak-min-instances` is what
 # stops the whole run being invisible.
 execute_process(
-    COMMAND "${HOST}" "${PROJECT}"
+    COMMAND "${HOST}" "${STAGE}"
         --headless --rhi=null --frames=${FRAMES} --exit
         --soak-report=${REPORT}
         --soak-ceiling-mb=${CEILING_MB}

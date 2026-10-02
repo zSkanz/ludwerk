@@ -870,6 +870,10 @@ void detachWorkspaceComponents(World& world, core::InstanceId id);
 Value getSaveServiceVersion(const World& world, core::InstanceId id);
 bool setSaveServiceVersion(World& world, core::InstanceId id, const Value& value);
 
+// LocalizationService
+Value getLocalizationServiceLocale(const World& world, core::InstanceId id);
+bool setLocalizationServiceLocale(World& world, core::InstanceId id, const Value& value);
+
 // GraphicsService
 Value getGraphicsServiceQualityLevel(const World& world, core::InstanceId id);
 bool setGraphicsServiceQualityLevel(World& world, core::InstanceId id, const Value& value);

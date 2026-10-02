@@ -1826,6 +1826,115 @@ int hapticServiceVibrate(lua_State* L)
     return 0;
 }
 
+// --- LocalizationService (ADR 0154) -------------------------------------------
+
+int localizationServiceGetLocales(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const World& w = world(L);
+    const std::vector<std::string> locales =
+        w.localization() != nullptr ? w.localization()->locales() : std::vector<std::string>{w.engineState().locale};
+    lua_createtable(L, static_cast<int>(locales.size()), 0);
+    for (usize index = 0; index < locales.size(); ++index) {
+        lua_pushlstring(L, locales[index].data(), locales[index].size());
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int localizationServiceTranslate(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t keyLength = 0;
+    const char* keyText = luaL_checklstring(L, 2, &keyLength);
+    const std::string_view key{keyText, keyLength};
+
+    // The arguments: a name to a string, a number or a boolean. Names and
+    // values are copied out of the VM before anything is formatted.
+    std::vector<std::string> names;
+    std::vector<core::I18nArg> arguments;
+    if (!lua_isnoneornil(L, 3)) {
+        luaL_checktype(L, 3, LUA_TTABLE);
+        struct Given
+        {
+            std::string name;
+            int type = LUA_TNIL;
+            std::string text;
+            double number = 0.0;
+        };
+        std::vector<Given> given;
+        lua_pushnil(L);
+        while (lua_next(L, 3) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                Given entry;
+                size_t length = 0;
+                const char* name = lua_tolstring(L, -2, &length);
+                entry.name.assign(name, length);
+                entry.type = lua_type(L, -1);
+                if (entry.type == LUA_TSTRING) {
+                    const char* text = lua_tolstring(L, -1, &length);
+                    entry.text.assign(text, length);
+                }
+                else if (entry.type == LUA_TNUMBER) {
+                    entry.number = lua_tonumber(L, -1);
+                }
+                else if (entry.type == LUA_TBOOLEAN) {
+                    entry.text = lua_toboolean(L, -1) != 0 ? "true" : "false";
+                }
+                if (entry.type == LUA_TSTRING || entry.type == LUA_TNUMBER || entry.type == LUA_TBOOLEAN)
+                    given.push_back(std::move(entry));
+            }
+            lua_pop(L, 1);
+        }
+        // In the order of their names: a table's own order is the VM's, and
+        // two arguments must not depend on it (R10).
+        std::sort(given.begin(), given.end(), [](const Given& a, const Given& b) { return a.name < b.name; });
+        names.reserve(given.size());
+        for (const Given& entry : given)
+            names.push_back(entry.name);
+        arguments.reserve(given.size());
+        for (usize index = 0; index < given.size(); ++index) {
+            const Given& entry = given[index];
+            if (entry.type != LUA_TNUMBER)
+                arguments.emplace_back(names[index], std::string_view{entry.text});
+            else if (entry.number == std::floor(entry.number) && std::fabs(entry.number) < 9.0e15)
+                arguments.emplace_back(names[index], static_cast<core::i64>(entry.number));
+            else
+                arguments.emplace_back(names[index], entry.number);
+        }
+    }
+
+    const World& w = world(L);
+    // A machine with no player reads the default locale: a server may still
+    // need the words for a reason it sends.
+    const scene::Localization* localization = w.localization();
+    const std::string& locale = !w.engineState().graphicsDisplay && localization != nullptr
+                                    ? localization->defaultLocale()
+                                    : w.engineState().locale;
+    std::optional<std::string> text;
+    if (localization != nullptr) {
+        text = localization->translate(locale, key, arguments);
+    }
+    else if (const core::TextKey hashed{core::hashTextKey(key)}; core::engineCatalog().contains(hashed)) {
+        text = core::engineCatalog().format(hashed, arguments);
+    }
+    if (!text.has_value()) {
+        // The key itself, and one line to say so: a missing translation must
+        // not stop a game, and must not hide either.
+        ServiceState& state = services(L);
+        if (std::find(state.missingTranslations.begin(), state.missingTranslations.end(), key) ==
+            state.missingTranslations.end()) {
+            state.missingTranslations.emplace_back(key);
+            const std::array<core::I18nArg, 2> args{core::I18nArg{"key", key}, core::I18nArg{"locale", locale}};
+            core::log(core::LogLevel::Warn, ENG_TR("script.warn.translation_missing"), args);
+        }
+        lua_pushlstring(L, key.data(), key.size());
+        return 1;
+    }
+    lua_pushlstring(L, text->data(), text->size());
+    return 1;
+}
+
 // --- GraphicsService (ADR 0147) -----------------------------------------------
 //
 // The settings are `scene::GraphicsModel`'s, in the world's engine state: a
@@ -2527,6 +2636,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
     {"HapticService", "SetMotor", hapticServiceSetMotor},
     {"HapticService", "Vibrate", hapticServiceVibrate},
+    {"LocalizationService", "GetLocales", localizationServiceGetLocales},
+    {"LocalizationService", "Translate", localizationServiceTranslate},
     {"GraphicsService", "ApplyPreset", graphicsServiceApplyPreset},
     {"GraphicsService", "ResetToDefaults", graphicsServiceResetToDefaults},
     {"GraphicsService", "GetSource", graphicsServiceGetSource},

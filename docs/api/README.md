@@ -32,6 +32,7 @@ guided tour.
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | The hot-reload loop as a script can see it (ADR 0024). |
 | [`InputService`](inputservice.md) | [`Instance`](instance.md) | The host of the Input Action System (§2.4, ADR 0029) and the only place device-wide state is readable. |
 | [`Lighting`](lighting.md) | [`Instance`](instance.md) | Day/night and the environment every surface is lit against. |
+| [`LocalizationService`](localizationservice.md) | [`Instance`](instance.md) | A game's text by key, in the player's language (ADR 0154). |
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Where an agent can walk, and how it gets somewhere (ADR 0089). |
 | [`NetworkService`](networkservice.md) | [`Instance`](instance.md) | What this process is in a networked game, and the way to join, host or leave one (ADR 0069, ADR 0106). |
 | [`PhysicsService`](physicsservice.md) | [`Instance`](instance.md) | The simulation tick grid and the physics controls that do not belong on an individual part. |

@@ -13,6 +13,7 @@
 #include "engine/app/project_config.h"
 #include "engine/core/json.h"
 #include "engine/platform/file.h"
+#include "engine/scene/localization.h"
 
 namespace engine::app {
 namespace {
@@ -33,9 +34,18 @@ using core::usize;
 
 } // namespace
 
-bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices)
+bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices,
+                         std::string_view locale)
 {
-    std::string text = "{\n  \"version\": 1,\n  \"settings\": {";
+    std::string text = "{\n  \"version\": 1,\n";
+    // A locale is letters, digits and dashes (`canonicalLocale`): nothing in it
+    // needs escaping.
+    if (!locale.empty()) {
+        text += "  \"locale\": \"";
+        text += scene::canonicalLocale(locale);
+        text += "\",\n";
+    }
+    text += "  \"settings\": {";
     bool first = true;
     for (usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
         const auto setting = static_cast<scene::GraphicsSetting>(index);
@@ -62,9 +72,11 @@ bool writePlayerGraphics(const std::filesystem::path& file, const scene::Graphic
 }
 
 bool readPlayerGraphics(const std::filesystem::path& file, scene::GraphicsLayer& choices,
-                        std::vector<std::string>* refused)
+                        std::vector<std::string>* refused, std::string* locale)
 {
     choices = scene::GraphicsLayer{};
+    if (locale != nullptr)
+        locale->clear();
     std::vector<std::byte> bytes;
     if (file.empty() || !platform::readFile(file, bytes))
         return false;
@@ -72,6 +84,10 @@ bool readPlayerGraphics(const std::filesystem::path& file, scene::GraphicsLayer&
     const std::string_view text{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
     if (!document.parse(text, file.string()))
         return false;
+    if (locale != nullptr) {
+        if (const core::JsonValue chosen = document.root()["locale"]; chosen.type() == core::JsonType::String)
+            *locale = scene::canonicalLocale(chosen.asString());
+    }
     const core::JsonValue settings = document.root()["settings"];
     if (settings.type() != core::JsonType::Object)
         return false;

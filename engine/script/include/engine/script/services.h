@@ -256,6 +256,10 @@ public:
     };
     std::vector<GraphicsWaiter> graphicsWaiters;
 
+    // The keys `LocalizationService:Translate` has already said nobody has
+    // (ADR 0154): each is warned about once, not once a frame.
+    std::vector<std::string> missingTranslations;
+
     // `@std/net.request` (api-design.md 7), the same parking shape as the two
     // waiters above and for the same reason -- except that what satisfies it is
     // a socket rather than the world, so the condition is a TICKET rather than a

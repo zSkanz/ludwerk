@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "engine/scene/class_registry.h"
+#include "engine/scene/localization.h"
 #include "engine/scene/world.h"
 #include "engine/script/remote.h"
 #include "engine/script/services.h"
@@ -921,4 +922,123 @@ TEST_CASE("a remote payload whose table key is NaN is dropped, not a thrown erro
         nanValue.push_back(static_cast<core::u8>(nanBits >> (8 * byte)));
     CHECK(engine::script::decodeRemoteArguments(L, nanValue, {}) == 1);
     lua_settop(L, top);
+}
+
+// --- LocalizationService (ADR 0154) ------------------------------------------------
+
+namespace {
+
+[[nodiscard]] scene::Localization twoLanguages()
+{
+    scene::Localization localization;
+    REQUIRE(localization.load("en", R"({"menu.play": "Play", "menu.quit": "Quit", "hud.score": "Score: {points}",
+                                        "hud.greeting": "Hello, {name}!"})"));
+    REQUIRE(localization.load("pt-BR", R"({"menu.play": "Jogar", "hud.score": "Pontos: {points}"})"));
+    return localization;
+}
+
+} // namespace
+
+TEST_CASE("LocalizationService: a key is read in the player's locale, and LocaleChanged says when that changes")
+{
+    Fixture fixture;
+    const scene::Localization localization = twoLanguages();
+    fixture.world->setLocalization(&localization);
+    fixture.world->engineState().locale = "en";
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization.Locale == "en")
+        local locales = Localization:GetLocales()
+        assert(#locales == 2 and locales[1] == "en" and locales[2] == "pt-BR")
+
+        assert(Localization:Translate("menu.play") == "Play")
+        assert(Localization:Translate("hud.score", { points = 1200 }) == "Score: 1200")
+        assert(Localization:Translate("hud.score", { points = 2.5 }) == "Score: 2.5")
+        assert(Localization:Translate("hud.greeting", { name = "Ana", unused = true }) == "Hello, Ana!")
+
+        local heard = {}
+        Localization.LocaleChanged:Connect(function(locale)
+            table.insert(heard, locale)
+        end)
+
+        Localization.Locale = "pt-BR"
+        assert(Localization.Locale == "pt-BR")
+        assert(Localization:Translate("menu.play") == "Jogar")
+        assert(Localization:Translate("hud.score", { points = 7 }) == "Pontos: 7")
+        -- What Portuguese lacks is read in the project's default.
+        assert(Localization:Translate("menu.quit") == "Quit")
+
+        -- The same locale again is no change; a language alone is narrowed.
+        Localization.Locale = "pt-BR"
+        Localization.Locale = "pt"
+        assert(Localization.Locale == "pt-BR")
+        task.wait()
+        assert(#heard == 1 and heard[1] == "pt-BR", `heard {#heard}`)
+
+        -- A locale the game has nothing for is refused, and nothing changes.
+        assert(not pcall(function()
+            Localization.Locale = "fr"
+        end))
+        assert(not pcall(function()
+            (Localization :: any).Locale = 12
+        end))
+        assert(Localization.Locale == "pt-BR")
+    )") == "");
+}
+
+TEST_CASE("LocalizationService: a key nobody has comes back as the key, and is warned about once")
+{
+    Fixture fixture;
+    const scene::Localization localization = twoLanguages();
+    fixture.world->setLocalization(&localization);
+    fixture.world->engineState().locale = "en";
+    fixture.logged.clear();
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization:Translate("menu.options") == "menu.options")
+        assert(Localization:Translate("menu.options") == "menu.options")
+        assert(Localization:Translate("menu.options", { any = 1 }) == "menu.options")
+        -- The engine's own text is read by the same call.
+        assert(Localization:Translate("scene.err.number_positive") == "It takes a number greater than zero.")
+    )") == "");
+
+    int warned = 0;
+    for (const auto& [level, text] : fixture.logged) {
+        if (level == core::LogLevel::Warn && text.find("menu.options") != std::string::npos)
+            ++warned;
+    }
+    CHECK(warned == 1);
+}
+
+TEST_CASE("LocalizationService: a machine with no player reads the default locale and may not choose one")
+{
+    Fixture fixture;
+    scene::Localization localization = twoLanguages();
+    localization.setDefaultLocale("pt-BR");
+    fixture.world->setLocalization(&localization);
+    // A dedicated server: whatever the locale says, there is nobody reading.
+    fixture.world->engineState().locale = "en";
+    fixture.world->engineState().graphicsDisplay = false;
+
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(Localization:Translate("menu.play") == "Jogar")
+        assert(not pcall(function()
+            Localization.Locale = "pt-BR"
+        end))
+        assert(Localization.Locale == "en")
+    )") == "");
+}
+
+TEST_CASE("LocalizationService: with no catalogs at all the engine's text is still there")
+{
+    Fixture fixture;
+    CHECK(fixture.failure(R"(
+        local Localization = game:GetService("LocalizationService")
+        assert(#Localization:GetLocales() == 1)
+        assert(Localization:Translate("scene.err.number_positive") == "It takes a number greater than zero.")
+        assert(Localization:Translate("nobody.has.this") == "nobody.has.this")
+    )") == "");
 }

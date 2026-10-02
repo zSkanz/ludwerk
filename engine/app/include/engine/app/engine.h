@@ -333,6 +333,8 @@ struct EngineOptions
     // `settings.json` beside the saves before the first frame, and
     // `GraphicsService:SaveAsync` writes them there.
     bool rememberPlayerSettings = true;
+    // `[project] default_locale` (ADR 0154).
+    std::string defaultLocale = "en";
 
     // The game's own window title, passed through rather than translated -- it
     // is the game's string and not the engine's (R3, and the split

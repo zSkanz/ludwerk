@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -181,6 +182,10 @@ struct ProjectConfig
     // `[display] remember_player_settings`: whether the player's choices are
     // kept in their folder and read at start. On unless a game manages its own.
     bool rememberPlayerSettings = true;
+
+    // `[project] default_locale` (ADR 0154): the locale a key falls back to,
+    // and the one a player starts in when the system's is none of the game's.
+    std::string defaultLocale = "en";
 };
 
 // Whether this is a device held in the hand: a phone or a tablet, where a game
@@ -244,6 +249,20 @@ inline constexpr bool Handheld = false;
 [[nodiscard]] bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key,
                                        std::string_view rendered, std::string* diagnostic = nullptr);
 
+// Takes one setting out of `<projectRoot>/project.toml`, leaving the rest of
+// the file byte for byte: what a dialog does to say a setting is the level's
+// again, where writing the level's value would pin it. A key that is not there
+// is not an error.
+[[nodiscard]] bool removeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key,
+                                        std::string* diagnostic = nullptr);
+
+// A setting's key in a project file: its table and its name in snake case
+// -- `graphics.shadow_quality`, `display.window_mode` -- and the words a file
+// names each of its choices by, in their order; empty for a setting that is
+// not one of a set.
+[[nodiscard]] std::string projectKeyOf(scene::GraphicsSetting setting);
+[[nodiscard]] std::span<const std::string_view> projectChoicesOf(scene::GraphicsSetting setting) noexcept;
+
 // **What the model's values are to the renderer** (ADR 0147): the preset in
 // force with every setting the layers say over it, clamped. `instruments`
 // carries what is no setting -- a forced surface, a debug view -- from the
@@ -263,9 +282,13 @@ void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& ove
 // changed. Writing replaces the file whole. Reading takes what it understands:
 // a name that is no setting, or a value that is not that setting's kind, is
 // left out and named in `refused` -- reported, not applied.
-[[nodiscard]] bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices);
+//
+// The same file keeps the language they chose (ADR 0154), as `"locale"`: empty
+// is "none chosen", and is not written.
+[[nodiscard]] bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices,
+                                       std::string_view locale = {});
 [[nodiscard]] bool readPlayerGraphics(const std::filesystem::path& file, scene::GraphicsLayer& choices,
-                                      std::vector<std::string>* refused = nullptr);
+                                      std::vector<std::string>* refused = nullptr, std::string* locale = nullptr);
 
 // The same resolution without a file, for a bare script or a project that has
 // none.

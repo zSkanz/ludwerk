@@ -525,6 +525,68 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Callback },
     },
     {
+        Name = "LocalizationService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "A game's text by key, in the player's language (ADR 0154). A project keeps a catalog a "
+            .. "locale -- `i18n/en.json`, `i18n/pt-BR.json`, each a flat object of key to text -- and a "
+            .. 'script asks for a key: `Translate("menu.play")`.\n\n'
+            .. "**A key is looked for in the player's locale, then in the project's default, then in the "
+            .. "engine's own text.** One that nobody has comes back as the key itself, with one warning: "
+            .. "a missing translation never stops a game.\n\n"
+            .. "**Text properties are plain strings.** Nothing is translated behind a script's back: a "
+            .. "label shows what it was given, and a game that changes language sets its labels again "
+            .. "from `LocaleChanged`.\n\n"
+            .. "The language is the player's, like the graphics settings: it is not saved with a scene and "
+            .. "does not travel. A dedicated server has no player -- `Translate` there gives the default "
+            .. "locale's text, and a write to `Locale` raises.",
+        Properties = {
+            {
+                Name = "Locale",
+                Type = "string",
+                Default = '"en"',
+                ErrorKey = "scene.err.locale_unknown",
+                Transient = true,
+                -- Which language a person reads: a fact about the player.
+                HostFact = true,
+                Doc = "The locale text is asked for in, as `en` or `pt-BR`. It starts as the player's "
+                    .. "saved choice, else the system's language, else `[project] default_locale`, else "
+                    .. "`en` -- each narrowed to a catalog the project has. Writing it is the player "
+                    .. "choosing: it is kept for the next run, and `LocaleChanged` fires. A locale the "
+                    .. "project has no catalog for is narrowed to one of its language (`pt` reads "
+                    .. "`pt-BR`), and refused when there is none.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "GetLocales",
+                Parameters = {},
+                Returns = { "{ string }" },
+                Doc = "The locales the project has a catalog for, in order: what a language menu lists.",
+            },
+            {
+                Name = "Translate",
+                Parameters = {
+                    { Name = "key", Type = "string" },
+                    { Name = "arguments", Type = "{ [string]: any }?" },
+                },
+                Returns = { "string" },
+                Doc = "The text for `key` in `Locale`. `{name}` in the text is replaced by "
+                    .. "`arguments.name` -- a string, a number or a boolean. A key nobody has comes back "
+                    .. "as the key, and is warned about once.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "LocaleChanged",
+                Parameters = { { Name = "locale", Type = "string" } },
+                Doc = "`Locale` changed, or -- while a game is being made -- a catalog was edited and "
+                    .. "read again: where a game sets its labels' text.",
+            },
+        } :: { Schema.Event },
+    },
+    {
         Name = "GraphicsService",
         Extends = "Instance",
         Module = "scene",

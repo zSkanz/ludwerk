@@ -490,6 +490,12 @@ local function compose(options: ComposeOptions)
         end)
     end
 
+    -- The game's catalogs (ADR 0154): its text, which no pack holds.
+    local catalogs = projectlib.joined(project.root, "i18n")
+    if fs.exists(catalogs) then
+        copyTree(catalogs, projectlib.joined(game, "i18n"))
+    end
+
     local generated = projectlib.joined(project.root, ".engine")
     local target = projectlib.joined(game, ".engine")
     if fs.exists(generated) then

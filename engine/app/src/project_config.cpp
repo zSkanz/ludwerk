@@ -11,6 +11,7 @@
 #include "engine/core/toml.h"
 #include "engine/core/toml_edit.h"
 #include "engine/platform/file.h"
+#include "engine/scene/localization.h"
 
 namespace engine::app {
 namespace {
@@ -291,6 +292,18 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
     return key;
 }
 
+// A setting's key inside its table. Three are older than the rule.
+[[nodiscard]] std::string nameInFile(GraphicsSetting setting)
+{
+    if (setting == GraphicsSetting::VSync)
+        return "vsync";
+    if (setting == GraphicsSetting::RenderResolutionCap)
+        return "render_cap";
+    if (setting == GraphicsSetting::QualityLevel)
+        return "quality";
+    return keyOf(scene::graphicsSettingInfo(setting).name);
+}
+
 // The items of the enums a setting is one of, lowercase, as a file names them.
 [[nodiscard]] std::span<const std::string_view> choicesOf(GraphicsSetting setting) noexcept
 {
@@ -361,19 +374,28 @@ void sayTable(const core::TomlDocument& document, std::string_view table, bool d
             continue;
         std::string key(table);
         key += '.';
-        // Three keys are older than the rule.
-        if (setting == GraphicsSetting::VSync)
-            key += "vsync";
-        else if (setting == GraphicsSetting::RenderResolutionCap)
-            key += "render_cap";
-        else
-            key += keyOf(info.name);
+        key += nameInFile(setting);
         if (const std::optional<f64> value = fileValue(document, key, setting))
             say(layer, setting, *value);
     }
 }
 
 } // namespace
+
+std::string projectKeyOf(scene::GraphicsSetting setting)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    const bool display = !info.quality && setting != GraphicsSetting::QualityLevel;
+    return std::string(display ? "display." : "graphics.") + nameInFile(setting);
+}
+
+std::span<const std::string_view> projectChoicesOf(scene::GraphicsSetting setting) noexcept
+{
+    static constexpr std::array<std::string_view, 6> Quality{"low", "medium", "high", "ultra", "custom", "auto"};
+    if (setting == GraphicsSetting::QualityLevel)
+        return Quality;
+    return choicesOf(setting);
+}
 
 void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& overrides, bool handheld)
 {
@@ -626,6 +648,9 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         }
         if (const std::optional<bool> value = document.boolean("display.remember_player_settings"))
             config.rememberPlayerSettings = *value;
+        if (const std::optional<std::string_view> value = document.string("project.default_locale");
+            value.has_value() && !scene::canonicalLocale(*value).empty())
+            config.defaultLocale = scene::canonicalLocale(*value);
     }
     return config;
 }
@@ -664,6 +689,31 @@ bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_v
                              {{"file", file.filename().string()}, {"reason", result.diagnostic}}));
     }
 
+    if (!platform::writeTextFile(file, *edited))
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_write"), {{"path", file.string()}}));
+    return true;
+}
+
+bool removeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key, std::string* diagnostic)
+{
+    const std::filesystem::path file = projectRoot / "project.toml";
+    std::string text;
+    // No file has no key: nothing to take out.
+    if (!std::filesystem::exists(file))
+        return true;
+    const auto fail = [&](std::string message) {
+        if (diagnostic != nullptr)
+            *diagnostic = std::move(message);
+        return false;
+    };
+    if (!readFile(file, text))
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_read"), {{"path", file.string()}}));
+    const std::optional<std::string> edited = core::removeTomlValue(text, key);
+    if (!edited.has_value())
+        return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_place"),
+                             {{"key", key}, {"path", file.string()}}));
+    if (*edited == text)
+        return true;
     if (!platform::writeTextFile(file, *edited))
         return fail(core::tr(ENG_TR("engine.editor.project_settings.could_not_write"), {{"path", file.string()}}));
     return true;

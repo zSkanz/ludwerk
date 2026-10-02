@@ -8,6 +8,7 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_locale.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_platform_defines.h>
 #include <SDL3/SDL_process.h>
@@ -638,6 +639,27 @@ void pickFiles(Window& window, std::string_view startIn, bool allowMany,
     const std::string start(startIn);
     SDL_ShowOpenFileDialog(&onFilesChosen, nullptr, nativeWindow(window), nullptr, 0,
                            start.empty() ? nullptr : start.c_str(), allowMany);
+}
+
+std::vector<std::string> preferredLocales()
+{
+    std::vector<std::string> names;
+    int count = 0;
+    SDL_Locale** locales = SDL_GetPreferredLocales(&count);
+    if (locales == nullptr)
+        return names;
+    for (int index = 0; index < count; ++index) {
+        if (locales[index] == nullptr || locales[index]->language == nullptr)
+            continue;
+        std::string name = locales[index]->language;
+        if (locales[index]->country != nullptr && locales[index]->country[0] != '\0') {
+            name += '-';
+            name += locales[index]->country;
+        }
+        names.push_back(std::move(name));
+    }
+    SDL_free(locales);
+    return names;
 }
 
 } // namespace engine::platform

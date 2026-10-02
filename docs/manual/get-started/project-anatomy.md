@@ -38,7 +38,7 @@ my-game/
 │  └─ scenes/arena/
 │     ├─ server/countdown.luau      the arena scene's own server code
 │     └─ client/scoreboard.luau     and its own player code
-├─ assets/i18n/en.json              the game's own strings
+├─ i18n/en.json                     the game's own text, a file a language
 └─ tests/example.test.luau
 ```
 

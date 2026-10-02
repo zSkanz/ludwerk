@@ -273,4 +273,8 @@ void pickFiles(Window& window, std::string_view startIn, bool allowMany,
 // that happens twice a session. Valid until the next pump.
 [[nodiscard]] std::span<const std::string> droppedFiles() noexcept;
 
+// The languages the person at this machine reads, as the system lists them,
+// most wanted first: `pt-BR`, `en-US`. Empty where the system does not say.
+[[nodiscard]] std::vector<std::string> preferredLocales();
+
 } // namespace engine::platform

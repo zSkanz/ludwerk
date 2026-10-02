@@ -252,6 +252,11 @@ struct WorldHostOptions
     // script's write to: a dedicated server has none.
     scene::GraphicsModel graphics{};
     bool graphicsDisplay = true;
+
+    // **The game's catalogs and the locale the player starts in** (ADR 0154):
+    // the host's, alive as long as the world is.
+    const scene::Localization* localization = nullptr;
+    std::string locale = "en";
 };
 
 // What the conformance run reported. Read after the loop, because the run ends

@@ -45,7 +45,7 @@ using core::LogLevel;
 // a directory walk, because the set is the engine's own surface (ADR 0030) and
 // discovering it from a directory would make an accidentally-shipped file part
 // of the API.
-constexpr std::string_view RuntimeModules[] = {"camera", "ragdoll", "testing", "views"};
+constexpr std::string_view RuntimeModules[] = {"camera", "ragdoll", "settings", "testing", "views"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -350,6 +350,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().networkTopology = options.networkTopology;
     m_world->engineState().graphics.takeHostLayers(options.graphics);
     m_world->engineState().graphicsDisplay = options.graphicsDisplay;
+    m_world->setLocalization(options.localization);
+    m_world->engineState().locale = options.locale;
     // **Started to join** (`--join`, D433): the join is under way from the
     // first line any script runs. `State` reads `Connecting`, not `Offline`
     // -- "about to join" and "alone" looked the same -- and the scene's

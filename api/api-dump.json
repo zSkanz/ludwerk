@@ -3538,6 +3538,51 @@
       "Events": []
     },
     {
+      "Name": "LocalizationService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Locale",
+          "Type": "string",
+          "Default": "\"en\"",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetLocales",
+          "Parameters": [],
+          "Returns": ["{ string }"]
+        },
+        {
+          "Name": "Translate",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "arguments",
+              "Type": "{ [string]: any }?"
+            }
+          ],
+          "Returns": ["string"]
+        }
+      ],
+      "Events": [
+        {
+          "Name": "LocaleChanged",
+          "Parameters": [
+            {
+              "Name": "locale",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "Name": "LowPassSoundEffect",
       "Extends": "SoundEffect",
       "Tags": [],

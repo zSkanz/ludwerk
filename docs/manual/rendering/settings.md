@@ -141,17 +141,100 @@ A platform's own table -- `[graphics.android]` -- is read over `[graphics]` on
 that platform. The older keys, their ranges and what each level sets are in
 [Graphics quality settings](manual:rendering/quality).
 
+## An options screen in one call
+
+A game that wants the usual screen and not the work of writing it asks for the
+engine's:
+
+```luau
+local settings = require("@engine/settings")
+
+optionsButton.Activated:Connect(function()
+    local screen = settings.open()
+    screen.Closed:Connect(function()
+        -- back to the pause menu
+    end)
+end)
+```
+
+It has a Graphics page and a Display page, a row for each setting **this build
+draws by** -- one `IsApplied` says nothing reads yet has no row -- and four
+buttons. Nothing of it is private: every row reads and writes `GraphicsService`,
+and every word comes from `LocalizationService:Translate`, so a game that writes
+its own menu has the same two services to write it with.
+
+- **A quality row writes at once**, so the player sees the picture change
+  behind the menu. **The three that move the window** -- its mode, its
+  resolution and its monitor -- **are held until Apply**: a window that changed
+  mode at every step through a list would be a window nobody could read the
+  list on.
+- **Apply** writes what is held and keeps everything (`SaveAsync`). **Revert**
+  goes back to what was last kept (`LoadAsync`), and so does leaving without
+  applying. **Defaults** is `ResetToDefaults`, kept only by Apply.
+- The quality row steps Automatic, Low, Medium, High, Ultra. It reads Custom
+  when a setting was changed by itself, and a step from Custom goes to
+  Automatic.
+- A mouse, a finger, a gamepad and the arrow keys all drive it: every control
+  is a button, the [selection](manual:ui/selection) walks them, and a row the
+  selection reaches is scrolled into sight. If something was selected when it
+  opened it takes the selection, and gives it back when it closes.
+- On a handheld the Display page is the frame rate limit alone: there is no
+  window to arrange.
+
+`settings.open` takes a table, every field optional:
+
+| Field | What it is |
+|---|---|
+| `Theme` | `Backdrop`, `BackdropTransparency`, `Panel`, `Raised`, `Accent`, `Text`, `Dim` (colours), `Font` (an `asset://` typeface) and `CornerRadius` |
+| `Hide` | Settings to leave out, by their `GraphicsService` name: `{ "MotionBlur" }` |
+| `Title` | The heading, already in the player's language |
+| `DisplayOrder` | The screen's place among the game's own; 100 by default |
+
+What it returns:
+
+| Member | What it does |
+|---|---|
+| `Gui` | The `ScreenGui`, yours to hide or to move in the draw order |
+| `IsOpen`, `IsDirty` | Whether it is open, and whether something waits for Apply |
+| `Closed` | A signal, fired once |
+| `Step(setting, direction)` | What a row's two buttons do: one choice down (`-1`) or up (`1`). Returns whether anything changed |
+| `GetValueText(setting)` | The words a row shows, or nil when there is no such row |
+| `ShowPage(page)` | `"Graphics"` or `"Display"` |
+| `Apply()`, `Revert()` | As the buttons; both **yield** |
+| `ResetToDefaults()`, `Close()` | As the buttons |
+
+**Its words are the engine's catalog, and a game's own catalog wins.** To call
+Apply something else, or to say it in a language the engine has no catalog
+for, put the key in the project's `i18n/<locale>.json`:
+
+```json
+{ "engine.settings.apply": "Save" }
+```
+
+The keys are `engine.settings.*` for the screen and `engine.graphics.*` for the
+settings and their choices; see [Localization](manual:guides/i18n).
+
 ## In the editor
+
+**Project Settings, Graphics and Display** is `project.toml`'s `[graphics]` and
+`[display]` as a form. Each setting has a box: ticked, the project says the
+value and the row is the project's; unticked, the row shows greyed what the
+level in force gives, and the key is not in the file. **Apply** writes the
+ticked ones and removes the unticked, each under its own table, and leaves the
+rest of the file -- its comments, its order -- as it was. "Remember the
+player's settings" is `remember_player_settings`.
 
 A game's options menu tried in Play changes the Viewport's picture, and not the
 editor's own window, sync or frame rate: the display's settings are the game's
 window's. Stop puts back what Play changed.
 
-Project Settings writes `project.toml`. The quality matrix, the Viewport's own
-level and the editor's frame rate as preferences are not built yet.
+Not built yet: the levels side by side as a matrix, the Viewport's own level,
+the editor's frame rate as a preference, and Play with a player's saved
+settings.
 
 ## Where to look next
 
 - [Graphics quality settings](manual:rendering/quality) — the keys, the ranges, the levels
 - [Graphics settings belong to the player](manual:why/graphics-settings)
-- [`GraphicsService`](api:GraphicsService)
+- [`GraphicsService`](api:GraphicsService) · [`LocalizationService`](api:LocalizationService)
+- [A gamepad and the arrow keys](manual:ui/selection) — what drives the options screen

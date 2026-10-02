@@ -239,18 +239,25 @@ add_custom_target(engine_host_catalog ALL
     COMMENT "Staging the engine message catalog")
 add_dependencies(engine_host engine_host_catalog)
 
-add_custom_command(TARGET engine_host POST_BUILD
-    # `@engine/…` ships as content for the same reason: a project reads the same
-    # file its editor type-checks against, rather than a copy compiled into the
-    # binary that nothing can inspect.
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+# `@engine/...` ships as content for the same reason: a project reads the same
+# file its editor type-checks against, rather than a copy compiled into the
+# binary that nothing can inspect. The conformance runner too: it is an entry
+# script the headless runner mounts, and a real file is one the gate can analyse.
+#
+# **Staged every build, as the catalog is, and for the catalog's reason**: as a
+# post-build step these were copied only when the host relinked, so a module
+# added or edited by itself was not there to require until some C++ changed.
+add_custom_target(engine_host_runtime ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         "${CMAKE_SOURCE_DIR}/runtime/engine"
-        "$<TARGET_FILE_DIR:engine_host>/content/runtime/engine"
-    # The conformance runner, for the same reason again: it is an entry script
-    # the headless runner mounts, and a real file is one the gate can analyse.
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/content/runtime/engine"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         "${CMAKE_SOURCE_DIR}/runtime/conformance"
-        "$<TARGET_FILE_DIR:engine_host>/content/runtime/conformance"
+        "${CMAKE_CURRENT_BINARY_DIR}/content/runtime/conformance"
+    COMMENT "Staging the engine's Luau modules")
+add_dependencies(engine_host engine_host_runtime)
+
+add_custom_command(TARGET engine_host POST_BUILD
     # The default typeface (roadmap M7, human decision 2026-08-20). Content
     # rather than an array compiled into the binary: it is 868 KB of data the
     # engine READS, a packaged build ships it beside the executable like every
@@ -651,6 +658,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DASSETC=$<TARGET_FILE:assetc>
             -DPROJECT=${CMAKE_SOURCE_DIR}/examples/05-streaming
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/streaming-soak-project
             -DGENERATOR=${CMAKE_SOURCE_DIR}/examples/05-streaming/tools/generate_world.luau
             -DREPO=${CMAKE_SOURCE_DIR}
             -DWORLD=${CMAKE_SOURCE_DIR}/examples/05-streaming/content/world
@@ -703,6 +711,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DASSETC=$<TARGET_FILE:assetc>
             -DPROJECT=${CMAKE_SOURCE_DIR}/examples/10-open-world
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/openworld-soak-project
             -DGENERATOR=${CMAKE_SOURCE_DIR}/examples/10-open-world/tools/generate_world.luau
             -DREPO=${CMAKE_SOURCE_DIR}
             # **A scene rather than a directory of chunk sources** (ADR 0053).
@@ -923,6 +932,22 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(ui_layouts_gate PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
+
+    # ADR 0147, section 7: the ready-made options screen. Each level its
+    # quality row offers is the picture of a game started at that level, no
+    # two neighbouring levels are the same picture, and the screen's pages are
+    # drawn where they say.
+    add_test(NAME options_screen_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/optionsscreen
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/options-screen
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_options_screen_gate.cmake)
+    set_tests_properties(options_screen_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
 
     # ADR 0153: a sprite's colours on the screen are the colours it was given,
     # asked of the screenshot square by square, to within one step.
@@ -1611,7 +1636,7 @@ if(ENG_BUILD_TESTS)
         screenshot_gate_sprites ui_appearance_gate ui_layouts_gate sprite_color_gate views_gate mirrors_gate ortho_gate
         subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
-        graphics_settings_differential graphics_runtime_differential local_shadow_differential
+        graphics_settings_differential graphics_runtime_differential options_screen_gate local_shadow_differential
         terrain_gallery_holes terrain_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential

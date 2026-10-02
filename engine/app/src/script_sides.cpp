@@ -117,8 +117,8 @@ std::vector<SideFinding> lintScriptSide(std::string_view source, script::ScriptS
         return findings;
     const std::vector<Word> words = wordsOf(source);
     constexpr std::array<std::string_view, 2> ServerOnly{"ServerStorage", "ServerScriptService"};
-    constexpr std::array<std::string_view, 4> PlayerOnly{"CurrentCamera", "UIService", "InputService",
-                                                         "GraphicsService"};
+    constexpr std::array<std::string_view, 5> PlayerOnly{"CurrentCamera", "UIService", "InputService",
+                                                         "GraphicsService", "LocalizationService"};
     for (const Word& word : words) {
         if (side == script::ScriptSide::Client && oneOf(word.text, ServerOnly)) {
             findings.push_back(SideFinding{word.line, word.column, static_cast<core::u32>(word.text.size()),

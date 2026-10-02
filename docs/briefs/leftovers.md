@@ -100,12 +100,18 @@ clean-up).
 
 ## The repository
 
-- [ ] **Two lanes of the gate write one file**: `openworld_soak` packs
+- [x] **Two lanes of the gate wrote one file**: `openworld_soak` packed
   `examples/10-open-world/.engine/content.lpack` in the source tree, and the
-  Windows and Linux lanes run at once. On 2026-10-02, once, under load, the
-  Linux lane's `assetc` could not open it for writing while the Windows soak
-  held it; the lane alone was green. The soak wants a pack of its own under
-  the build tree, as every other test's output is.
+  Windows and Linux lanes run at once -- on 2026-10-02 the Linux lane's
+  `assetc` could not open it while the Windows soak held it. Both soaks run
+  over a copy of their project under their own build tree now (R14).
+- [ ] **A generated world is still written into the source tree** the first
+  time a soak finds none (`ensure_generated_world.cmake`): two lanes on a
+  fresh clone could both write it. It is written once and kept, so nobody has
+  seen it.
+- [ ] **ICU-grade text** (ADR 0154): plural rules beyond the catalog's own,
+  gendered text, lists, dates and numbers by locale; right-to-left layout and
+  font fallback by script.
 - [x] **A windowed game does not pay 95 ms for gamepads at start** (D476):
   the joystick subsystem is started by the event pump after the first frame is
   presented, and never by a run with no hands. `platform_tests.cpp` times the
@@ -118,6 +124,20 @@ clean-up).
 - [ ] **A clean-machine job in CI**: fresh clone, bootstrap, build,
   `ludwerk new`, run. The local gate does it (`tests/packaging`); no workflow
   does. (`m8-kickoff.md`)
+
+- [ ] **The options screen has no language row** (`@engine/settings`, ADR
+  0147 G5): `LocalizationService:Translate` reads the current locale, and a
+  row of languages needs each one's own name. A key every catalog says of
+  itself (`locale.name`) and a way to read it for a locale that is not the
+  current one; then the row is `GetLocales()` and a write to `Locale`.
+- [ ] **A selection step can leave the topmost screen** (ADR 0128): the
+  nearest selectable object in a direction is looked for on every enabled
+  screen, so with a menu over a HUD a step past the menu's last button lands
+  on the HUD's. A screen that is modal -- the topmost with a selected object,
+  or one that says so -- should keep the selection in.
+- [ ] **`GetStats()` does not say how often a client's input was anchored
+  again** (D480): the authority counts it (`intentReanchors`) and nothing
+  shows it. With batch 6's counters.
 
 ## Waits for the owner
 

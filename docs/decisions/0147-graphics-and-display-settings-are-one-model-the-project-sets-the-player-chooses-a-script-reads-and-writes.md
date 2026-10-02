@@ -276,3 +276,48 @@ same API.
 - **A new service is a new instance in every world**: the determinism traces
   were recorded again, as for the two services before it. No property of it is
   hashed, saved with a scene or sent.
+
+## As built, 2026-10-02 (G4's first part, and G5's)
+
+- **Project Settings, Graphics and Display** edits the same model the game
+  reads: the dialog holds a `GraphicsModel` whose project layer is what the
+  form says, so a greyed row is the level's value by the rule the game applies
+  and not by a second copy of it. A setting is in `project.toml` when its box
+  is ticked and absent when it is not -- `removeTomlValue`, beside
+  `setTomlValue`, which now puts a new key with its table rather than after the
+  blank line that sets the next table apart. **It is a list, not the matrix
+  section 6 draws**: one level at a time, chosen at the top. The matrix, the
+  Viewport's level, Editor Preferences' Performance page and Play with saved
+  settings stay open in the ledger.
+- **`@engine/settings` is a module of buttons.** Every control is a
+  `TextButton` -- two a row, or one for a switch -- so the selection of ADR
+  0128 drives it with no input code of its own, and a touch screen has
+  something a finger can hit. A slider would have needed a drag and a second
+  way to move it from a gamepad.
+- **Quality is written at once and the window is held**: `WindowMode`,
+  `Resolution` and `Monitor` wait for Apply, which writes the display first,
+  then how the window sits on it, then how large, and then `SaveAsync`.
+  Leaving without Apply is Revert. There is no "keep these settings? 15
+  seconds" countdown: fullscreen takes the display's nearest mode to what was
+  asked (G1), so there is no mode the display cannot show to guard against.
+- **`Auto` is a stop**, the first: `ApplyPreset(Auto)` leaves `QualityLevel`
+  reading `Auto`, so a row that stepped only through the four levels could
+  not leave it.
+- **Its words are catalog keys read through `LocalizationService`** (ADR
+  0154), the same `engine.graphics.*` keys the editor's form uses, with
+  `engine.settings.*` for the screen's own. A project's catalog is read before
+  the engine's, which is how a game re-words it.
+- **The engine's Luau modules are staged on every build.** As a post-build
+  step of the host they were copied only when the host relinked: a module
+  added or edited by itself was not there to require until some C++ changed.
+- **`options_screen_gate`** is section 8's picture a level: the world at each
+  of the four, chosen by a step of the screen's own row, compared with a game
+  started at that level, and each with its neighbour, which must differ; then
+  the screen's two pages by probes. `Low`, `Medium` and `High` match a fresh
+  start to the pixel. **`Ultra` differs on 228 pixels of 230 400, all on
+  shadow edges**: a cascade keeps last frame's box while it can, so after the
+  sun's reach changed while the game ran an edge sits a fraction of a texel
+  from where a fresh start puts it. The gate allows 512.
+- **Not in this slice**: a language row (a locale's own name is not something
+  `Translate` can give for a locale that is not the current one), and the
+  example game.

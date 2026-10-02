@@ -1,0 +1,6 @@
+{
+  "spec.menu.play": "Play",
+  "spec.menu.quit": "Quit",
+  "spec.hud.score": "Score: {points}",
+  "spec.hud.greeting": "Hello, {name}!"
+}
