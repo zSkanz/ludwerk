@@ -21,6 +21,7 @@
 #include "engine/render/environment.h"
 #include "engine/render/particles.h"
 #include "engine/render/renderer.h"
+#include "engine/render/ribbons.h"
 #include "engine/render/settings.h"
 #include "engine/render/shader_types.h"
 #include "engine/render/shadow.h"
@@ -611,6 +612,9 @@ private:
         // in the sense that matters here -- it wants a position and nothing else
         // -- which is why it shares the shadow pass's vertex shaders.
         Outline,
+        // The same mask for one `Highlight` (ADR 0129): every draw that
+        // carries `highlightFilter_`.
+        Highlight,
         // Depth only, but filtered like the forward pass: a caster outside the
         // view still casts into it, and a caster outside the view still must not
         // fill the depth buffer the camera reads.
@@ -700,6 +704,15 @@ private:
     [[nodiscard]] bool ensureParticles(rhi::IDevice& device);
     // The decal pipeline, on the same lazy terms.
     [[nodiscard]] bool ensureDecals(rhi::IDevice& device);
+    // The ribbon pipeline and its vertex buffer (ADR 0129), on the same terms.
+    [[nodiscard]] bool ensureRibbons(rhi::IDevice& device);
+    // The two mask pipelines of an occluded `Highlight` (ADR 0129), on the
+    // same terms: a world with no such highlight makes neither.
+    [[nodiscard]] bool ensureHighlightMasks(rhi::IDevice& device);
+    // Every `Highlight` of the frame over the finished image: a mask and a
+    // composite each.
+    void drawHighlights(rhi::ICmdList& cmd, rhi::IDevice& device, const RenderWorld& world, const MeshCache& meshes,
+                        const RenderTarget& target);
     // The world UI pipelines and buffer, on the same lazy terms.
     [[nodiscard]] bool ensureWorldUi(rhi::IDevice& device);
     // The sprite pipeline and its instance buffer (the 2D layer), on the same
@@ -964,6 +977,18 @@ private:
     bool particleTried_ = false;
     std::vector<GpuParticle> particleStaging_;
     u32 particleCount_ = 0;
+    // Beams and trails (ADR 0129): the pipeline and the buffer this frame's
+    // vertices are uploaded into, made the first frame there is a ribbon.
+    rhi::PipelineHandle ribbonPipeline_{};
+    rhi::BufferHandle ribbonBuffer_{};
+    bool ribbonTried_ = false;
+    u32 ribbonVertexCount_ = 0;
+    // An occluded `Highlight`'s mask pipelines, and which highlight the mask
+    // pass is drawing (one more than its place; a draw carries the same).
+    rhi::PipelineHandle highlightMaskPipeline_{};
+    rhi::PipelineHandle highlightMaskSkinnedPipeline_{};
+    bool highlightTried_ = false;
+    core::u8 highlightFilter_ = 0;
     // The 2D layer's sprites: one instance each, drawn in runs that share an
     // image and a filter.
     rhi::PipelineHandle spritePipeline_{};
@@ -2019,7 +2044,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
          {&terrainPipeline_, &terrainShadowPipeline_, &terrainPrepassPipeline_, &terrainPackColorPipeline_,
           &terrainPackLinearPipeline_, &voxelPipeline_, &particlePipeline_, &voxelTilePipeline_, &voxelBlendPipeline_,
           &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_, &worldUiOnTopPipeline_, &spritePipeline_,
-          &spriteExactPipeline_}) {
+          &spriteExactPipeline_, &ribbonPipeline_, &highlightMaskPipeline_, &highlightMaskSkinnedPipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
@@ -2042,6 +2067,11 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (particleBuffer_.valid())
         device.destroy(particleBuffer_);
     particleBuffer_ = {};
+    if (ribbonBuffer_.valid())
+        device.destroy(ribbonBuffer_);
+    ribbonBuffer_ = {};
+    ribbonTried_ = false;
+    highlightTried_ = false;
     if (worldUiBuffer_.valid())
         device.destroy(worldUiBuffer_);
     worldUiBuffer_ = {};
@@ -2751,8 +2781,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                                    const Mat4& viewProjection, rhi::PipelineHandle staticPipeline,
                                    rhi::PipelineHandle skinnedPipeline, Selection selection, const CullSphere* cull)
 {
-    const bool depthOnly =
-        selection == Selection::Shadow || selection == Selection::Prepass || selection == Selection::Outline;
+    // The two masks -- a tool's selection and a game's highlight -- are one
+    // kind of pass and differ only in which draws they take.
+    const bool mask = selection == Selection::Outline || selection == Selection::Highlight;
+    const bool depthOnly = selection == Selection::Shadow || selection == Selection::Prepass || mask;
     // Which pipeline is currently set. Three variants now rather than two, so a
     // handle is clearer than a bool -- and `extract`'s sort keeps runs of each
     // together, so this switches a handful of times per pass whatever the scene.
@@ -2791,8 +2823,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // all five or none. Treating every draw as its own here costs a handful
         // of calls, because only what is selected is drawn at all, and it
         // leaves the batching the rest of the frame is built on untouched.
-        const InstanceBatch* batch =
-            selection == Selection::Outline || batchIndex == kNoBatch ? nullptr : &batches_[batchIndex];
+        const InstanceBatch* batch = mask || batchIndex == kNoBatch ? nullptr : &batches_[batchIndex];
         if (batch != nullptr && batch->firstDraw != drawIndex)
             continue;
 
@@ -2812,6 +2843,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // A transparent selected part still gets an outline: what is selected
         // is a fact about the tool, not about the material.
         if (selection == Selection::Outline && !draw.outlined)
+            continue;
+        if (selection == Selection::Highlight && draw.highlight != highlightFilter_)
             continue;
         if (selection == Selection::Transparent && !draw.transparent)
             continue;
@@ -2862,10 +2895,10 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // A surface shader's own pipelines, for a plain or instanced mesh (ADR
         // 0091). Skinned, terrain and voxel geometry keep the built-in surface,
         // and so does the outline mask, which wants a position and nothing else.
-        const u32 surfaceId = selection != Selection::Outline && !skinnedDraw && !draw.terrain && !draw.voxelBlock &&
-                                      draw.material < materialSurface_.size()
-                                  ? materialSurface_[draw.material]
-                                  : 0u;
+        const u32 surfaceId =
+            !mask && !skinnedDraw && !draw.terrain && !draw.voxelBlock && draw.material < materialSurface_.size()
+                ? materialSurface_[draw.material]
+                : 0u;
         const SurfaceSet* surface = surfaceId != 0 ? &surfaces_[surfaceId - 1] : nullptr;
         // A masked surface cuts itself in its fragment, which its depth pass
         // does not run: left in the prepass, its holes would show whatever the
@@ -3620,6 +3653,191 @@ bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
         .debugName = "particles",
     });
     return particlePipeline_.valid() && particleBuffer_.valid();
+}
+
+bool DefaultRenderer::ensureRibbons(rhi::IDevice& device)
+{
+    if (ribbonTried_)
+        return ribbonPipeline_.valid() && ribbonBuffer_.valid();
+    ribbonTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+
+    core::EngineError error;
+    const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle vertex = load("ribbon", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle fragment = load("ribbon", rhi::ShaderStage::Fragment);
+    if (!vertex.valid() || !fragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    // A corner at a time: where it is, its colour, and where on the ribbon.
+    const std::array<rhi::VertexAttribute, 3> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+    };
+    const std::array<rhi::VertexBufferLayout, 1> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(RenderRibbonVertex)},
+    };
+    // Premultiplied, as the particles are and for their reason.
+    const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true,
+                  .srcColor = rhi::BlendFactor::One,
+                  .dstColor = rhi::BlendFactor::OneMinusSrcAlpha,
+                  .srcAlpha = rhi::BlendFactor::One,
+                  .dstAlpha = rhi::BlendFactor::OneMinusSrcAlpha},
+    }};
+    ribbonPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        // Both sides: a ribbon that does not face the camera has two.
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        .colorTargets = hdrTarget,
+        .debugName = "ribbon",
+    });
+    ribbonBuffer_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Vertex,
+        .sizeBytes = static_cast<u32>(RibbonSystem::MaxVertices * sizeof(RenderRibbonVertex)),
+        .debugName = "ribbons",
+    });
+    return ribbonPipeline_.valid() && ribbonBuffer_.valid();
+}
+
+bool DefaultRenderer::ensureHighlightMasks(rhi::IDevice& device)
+{
+    if (highlightTried_)
+        return highlightMaskPipeline_.valid() && highlightMaskSkinnedPipeline_.valid();
+    highlightTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+
+    core::EngineError error;
+    const auto load = [&](std::string_view name, rhi::ShaderStage stage) -> rhi::ShaderHandle {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle vertex = load("highlight_mask", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle fragment = load("highlight_mask", rhi::ShaderStage::Fragment);
+    const rhi::ShaderHandle skinnedVertex = load("shadow_skinned", rhi::ShaderStage::Vertex);
+    if (!vertex.valid() || !fragment.valid() || !skinnedVertex.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    // The outline mask's two layouts, said again: the static mesh's stream,
+    // and the same with the skin stream beside it.
+    const std::array<rhi::VertexAttribute, 4> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 12},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 24},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float2, .offsetBytes = 40},
+    };
+    const std::array<rhi::VertexBufferLayout, 1> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+    };
+    const std::array<rhi::VertexBufferLayout, 2> skinnedBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = 32},
+    };
+    const std::array<rhi::VertexAttribute, 3> skinnedAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+    };
+    const std::array<rhi::ColorTargetDesc, 1> maskTarget{rhi::ColorTargetDesc{.format = kOcclusionFormat}};
+    highlightMaskPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        // No depth attachment: the fragment reads the scene's depth and tests
+        // against it by hand (`highlight_mask.hlsl`).
+        .depthStencil = {.depthTest = false, .depthWrite = false},
+        .colorTargets = maskTarget,
+        .debugName = "highlight_mask",
+    });
+    highlightMaskSkinnedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = skinnedVertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = skinnedBuffers,
+        .vertexAttributes = skinnedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .depthStencil = {.depthTest = false, .depthWrite = false},
+        .colorTargets = maskTarget,
+        .debugName = "highlight_mask_skinned",
+    });
+    return highlightMaskPipeline_.valid() && highlightMaskSkinnedPipeline_.valid();
+}
+
+// **Every `Highlight`, over the finished image** (ADR 0129): for each, the
+// draws that carry it into the mask, and the mask's edge and its fill
+// composited in the colours it was given.
+//
+// After the tone curve and not before it, for the reason the editor's
+// silhouette is: a highlight is a mark on the picture -- "this one", "an
+// ally", "you can pick this up" -- and its colour must be the colour the game
+// said at noon and at midnight. One mask and one composite a highlight, which
+// is what the budget (`[render] max_highlights`) is a budget of.
+void DefaultRenderer::drawHighlights(rhi::ICmdList& cmd, rhi::IDevice& device, const RenderWorld& world,
+                                     const MeshCache& meshes, const RenderTarget& target)
+{
+    if (world.highlights.empty() || !world.camera.valid)
+        return;
+    cmd.pushDebugGroup("highlights");
+    for (usize index = 0; index < world.highlights.size(); ++index) {
+        const RenderHighlight& highlight = world.highlights[index];
+        const bool occluded = highlight.occluded && ensureHighlightMasks(device);
+        const rhi::PipelineHandle still = occluded ? highlightMaskPipeline_ : outlinePipeline_;
+        const rhi::PipelineHandle skinned = occluded ? highlightMaskSkinnedPipeline_ : outlineSkinnedPipeline_;
+
+        cmd.beginRenderPass({
+            .colorAttachments = std::array<rhi::ColorAttachment, 1>{rhi::ColorAttachment{
+                .texture = outlineMask_,
+                .loadOp = rhi::LoadOp::Clear,
+                .storeOp = rhi::StoreOp::Store,
+            }},
+            .debugName = "highlight-mask",
+        });
+        cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+        cmd.setScissor(
+            {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+        cmd.setPipeline(still);
+        if (occluded) {
+            const std::array<rhi::TextureBinding, 1> sceneDepth{rhi::TextureBinding{depth_, pointSampler_}};
+            cmd.bindTextures(rhi::ShaderStage::Fragment, 0, sceneDepth);
+        }
+        highlightFilter_ = static_cast<core::u8>(index + 1);
+        drawGeometry(cmd, world, meshes, world.camera.viewProjection, still, skinned, Selection::Highlight);
+        highlightFilter_ = 0;
+        cmd.endRenderPass();
+
+        GpuOutlineUniforms outline;
+        outline.texelWidth[0] = 1.0f / static_cast<f32>(renderWidth_);
+        outline.texelWidth[1] = 1.0f / static_cast<f32>(renderHeight_);
+        outline.texelWidth[2] = 2.0f;
+        for (usize channel = 0; channel < 4; ++channel) {
+            outline.color[channel] = highlight.outline[channel];
+            outline.fillColor[channel] = highlight.fill[channel];
+        }
+        const std::array<rhi::TextureBinding, 1> maskBinding{rhi::TextureBinding{outlineMask_, linearSampler_}};
+        fullscreenPass(cmd, outlineCompositePipeline_, target.color, target.width, target.height, "highlight-composite",
+                       maskBinding, asBytes(&outline, sizeof(outline)), rhi::LoadOp::Load);
+        stats_.drawCalls += 1;
+    }
+    cmd.popDebugGroup();
 }
 
 bool DefaultRenderer::ensureFoliage(rhi::IDevice& device)
@@ -4593,6 +4811,15 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         particleCount_ = static_cast<u32>(count);
     }
 
+    // This frame's beams and trails (ADR 0129), on the same terms: the
+    // vertices are the stream, so they go up as they are.
+    ribbonVertexCount_ = 0;
+    if (!world.ribbonVertices.empty() && !world.ribbonRuns.empty() && ensureRibbons(device)) {
+        const usize count = std::min(world.ribbonVertices.size(), RibbonSystem::MaxVertices);
+        cmd.upload(ribbonBuffer_, asBytes(world.ribbonVertices.data(), count * sizeof(RenderRibbonVertex)), 0);
+        ribbonVertexCount_ = static_cast<u32>(count);
+    }
+
     // This frame's sprites (the 2D layer), up before any pass for the same
     // reason. Past `MaxSprites` the rest are not drawn: the order is ZIndex
     // first, so what goes is the front-most, which is loud rather than subtle.
@@ -5563,7 +5790,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // pane of glass draws over it. Sorting the two together would put a
         // per-particle draw into a per-draw sort, and the whole point of a
         // particle is that it is not a draw of its own.
-        if (particleCount_ > 0) {
+        if (particleCount_ > 0 || ribbonVertexCount_ > 0) {
             GpuParticleUniforms particleUniforms;
             particleUniforms.viewProjection = world.camera.viewProjection;
             const Mat4 cameraToWorld = core::inverse(world.camera.view);
@@ -5613,15 +5840,40 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
             cmd.setScissor(
                 {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
-            cmd.setPipeline(particlePipeline_);
-            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
-            cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
-            const std::array<rhi::TextureBinding, 1> sceneDepth{rhi::TextureBinding{depth_, pointSampler_}};
-            cmd.bindTextures(rhi::ShaderStage::Fragment, 0, sceneDepth);
-            const std::array<rhi::BufferHandle, 1> particleBuffers{particleBuffer_};
-            cmd.bindVertexBuffers(0, particleBuffers);
-            cmd.draw(6, particleCount_, 0, 0);
-            stats_.drawCalls += 1;
+            // **Beams and trails first** (ADR 0129), then the particles over
+            // them: a ribbon is the larger and the further thing more often
+            // than not, and each kind is in order within itself. A run is one
+            // texture.
+            if (ribbonVertexCount_ > 0) {
+                cmd.setPipeline(ribbonPipeline_);
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
+                cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
+                const std::array<rhi::BufferHandle, 1> ribbonBuffers{ribbonBuffer_};
+                cmd.bindVertexBuffers(0, ribbonBuffers);
+                for (const RenderRibbonRun& run : world.ribbonRuns) {
+                    if (run.firstVertex >= ribbonVertexCount_)
+                        break;
+                    const u32 count = std::min(run.vertexCount, ribbonVertexCount_ - run.firstVertex);
+                    const std::array<rhi::TextureBinding, 2> ribbonTextures{
+                        rhi::TextureBinding{depth_, pointSampler_},
+                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, linearSampler_},
+                    };
+                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, ribbonTextures);
+                    cmd.draw(count, 1, run.firstVertex, 0);
+                    stats_.drawCalls += 1;
+                }
+            }
+            if (particleCount_ > 0) {
+                cmd.setPipeline(particlePipeline_);
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
+                cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
+                const std::array<rhi::TextureBinding, 1> sceneDepth{rhi::TextureBinding{depth_, pointSampler_}};
+                cmd.bindTextures(rhi::ShaderStage::Fragment, 0, sceneDepth);
+                const std::array<rhi::BufferHandle, 1> particleBuffers{particleBuffer_};
+                cmd.bindVertexBuffers(0, particleBuffers);
+                cmd.draw(6, particleCount_, 0, 0);
+                stats_.drawCalls += 1;
+            }
             cmd.endRenderPass();
 
             const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
@@ -5933,6 +6185,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                        asBytes(&fxaa, sizeof(fxaa)));
         cmd.popDebugGroup();
     }
+
+    // A game's highlights (ADR 0129), over the finished image and under the
+    // editor's own mark.
+    drawHighlights(cmd, device, world, meshes, target);
 
     // --- The editor's selection silhouette -----------------------------------
     //

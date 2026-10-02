@@ -99,6 +99,9 @@ inline constexpr scene::EnumId ActuatorRelativeToEnumId = 56;
 inline constexpr scene::EnumId VelocityConstraintModeEnumId = 57;
 inline constexpr scene::EnumId PositionAlignmentModeEnumId = 58;
 inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
+inline constexpr scene::EnumId VibrationMotorEnumId = 60;
+inline constexpr scene::EnumId HighlightDepthModeEnumId = 61;
+inline constexpr scene::EnumId TextureModeEnumId = 62;
 
 } // namespace generated
 
@@ -250,6 +253,98 @@ scene::Value getParticleEmitterShape(const scene::World& world, core::InstanceId
 bool setParticleEmitterShape(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachParticleEmitterComponents(scene::World& world, core::InstanceId id);
 void detachParticleEmitterComponents(scene::World& world, core::InstanceId id);
+
+// Highlight
+scene::Value getHighlightAdornee(const scene::World& world, core::InstanceId id);
+bool setHighlightAdornee(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightFillColor(const scene::World& world, core::InstanceId id);
+bool setHighlightFillColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightFillTransparency(const scene::World& world, core::InstanceId id);
+bool setHighlightFillTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightOutlineColor(const scene::World& world, core::InstanceId id);
+bool setHighlightOutlineColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightOutlineTransparency(const scene::World& world, core::InstanceId id);
+bool setHighlightOutlineTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightDepthMode(const scene::World& world, core::InstanceId id);
+bool setHighlightDepthMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighlightEnabled(const scene::World& world, core::InstanceId id);
+bool setHighlightEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachHighlightComponents(scene::World& world, core::InstanceId id);
+void detachHighlightComponents(scene::World& world, core::InstanceId id);
+
+// Beam
+scene::Value getBeamAttachment0(const scene::World& world, core::InstanceId id);
+bool setBeamAttachment0(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamAttachment1(const scene::World& world, core::InstanceId id);
+bool setBeamAttachment1(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamColor(const scene::World& world, core::InstanceId id);
+bool setBeamColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamTransparency(const scene::World& world, core::InstanceId id);
+bool setBeamTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamWidth0(const scene::World& world, core::InstanceId id);
+bool setBeamWidth0(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamWidth1(const scene::World& world, core::InstanceId id);
+bool setBeamWidth1(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamCurveSize0(const scene::World& world, core::InstanceId id);
+bool setBeamCurveSize0(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamCurveSize1(const scene::World& world, core::InstanceId id);
+bool setBeamCurveSize1(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamSegments(const scene::World& world, core::InstanceId id);
+bool setBeamSegments(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamTexture(const scene::World& world, core::InstanceId id);
+bool setBeamTexture(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamTextureLength(const scene::World& world, core::InstanceId id);
+bool setBeamTextureLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamTextureMode(const scene::World& world, core::InstanceId id);
+bool setBeamTextureMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamTextureSpeed(const scene::World& world, core::InstanceId id);
+bool setBeamTextureSpeed(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamFaceCamera(const scene::World& world, core::InstanceId id);
+bool setBeamFaceCamera(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamLightEmission(const scene::World& world, core::InstanceId id);
+bool setBeamLightEmission(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamLightInfluence(const scene::World& world, core::InstanceId id);
+bool setBeamLightInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamZOffset(const scene::World& world, core::InstanceId id);
+bool setBeamZOffset(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBeamEnabled(const scene::World& world, core::InstanceId id);
+bool setBeamEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachBeamComponents(scene::World& world, core::InstanceId id);
+void detachBeamComponents(scene::World& world, core::InstanceId id);
+
+// Trail
+scene::Value getTrailAttachment0(const scene::World& world, core::InstanceId id);
+bool setTrailAttachment0(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailAttachment1(const scene::World& world, core::InstanceId id);
+bool setTrailAttachment1(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailLifetime(const scene::World& world, core::InstanceId id);
+bool setTrailLifetime(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailMinLength(const scene::World& world, core::InstanceId id);
+bool setTrailMinLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailMaxLength(const scene::World& world, core::InstanceId id);
+bool setTrailMaxLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailColor(const scene::World& world, core::InstanceId id);
+bool setTrailColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailTransparency(const scene::World& world, core::InstanceId id);
+bool setTrailTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailWidthScale(const scene::World& world, core::InstanceId id);
+bool setTrailWidthScale(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailTexture(const scene::World& world, core::InstanceId id);
+bool setTrailTexture(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailTextureLength(const scene::World& world, core::InstanceId id);
+bool setTrailTextureLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailTextureMode(const scene::World& world, core::InstanceId id);
+bool setTrailTextureMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailFaceCamera(const scene::World& world, core::InstanceId id);
+bool setTrailFaceCamera(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailLightEmission(const scene::World& world, core::InstanceId id);
+bool setTrailLightEmission(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailLightInfluence(const scene::World& world, core::InstanceId id);
+bool setTrailLightInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTrailEnabled(const scene::World& world, core::InstanceId id);
+bool setTrailEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachTrailComponents(scene::World& world, core::InstanceId id);
+void detachTrailComponents(scene::World& world, core::InstanceId id);
 
 // SpotLight
 scene::Value getSpotLightCFrame(const scene::World& world, core::InstanceId id);

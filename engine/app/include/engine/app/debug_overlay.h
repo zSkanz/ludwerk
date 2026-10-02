@@ -95,6 +95,15 @@ struct RenderCounters
     core::u32 foliageTiles = 0;
     core::u32 foliageInstances = 0;
     core::u32 foliageGrown = 0;
+    // Effects (ADR 0129, ADR 0072): the highlights drawn and the ones the
+    // budget left out, the beams and trails and the quads they are, and the
+    // particles alive.
+    core::u32 highlights = 0;
+    core::u32 highlightsDropped = 0;
+    core::u32 beams = 0;
+    core::u32 trails = 0;
+    core::u32 ribbonPieces = 0;
+    core::u32 particles = 0;
     // **How long a terrain edit takes to be seen** (`TerrainLoader::
     // editLatency`): the last one and the worst of the last sixty-four, in
     // milliseconds and in frames drawn meanwhile with the ground as it was.

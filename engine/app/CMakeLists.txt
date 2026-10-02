@@ -919,6 +919,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # ADR 0129: a highlight through a wall and one hidden by it, a beam and a
+    # trail, each asked what colour it is where it should be and where it
+    # should not.
+    add_test(NAME effects_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/effects
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/effects.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_effects_gate.cmake)
+    set_tests_properties(effects_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0107: two cameras draw into two textures in one frame, and a picture
     # shows each.
     add_test(NAME views_gate
@@ -1242,9 +1256,14 @@ if(ENG_BUILD_TESTS)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
+        # Five minutes, not two: a boot that decodes a sky's worth of images
+        # takes ten seconds here and forty-five on a hosted Windows runner that
+        # is also drawing three terrain goldens in software -- and on a slow
+        # afternoon it took more than a hundred and thirty, which turned a
+        # green tree red (the run of e3dd5513). A boot that hangs still fails.
         set_tests_properties(example_boot_${example} PROPERTIES
             FAIL_REGULAR_EXPRESSION "\\[error\\];\\[warn\\]"
-            TIMEOUT 120)
+            TIMEOUT 300)
     endforeach()
 
     # `examples/12-ragdoll` builds its characters from a RIG, and that is the

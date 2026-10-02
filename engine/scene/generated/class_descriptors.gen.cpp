@@ -4786,6 +4786,43 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     saveServiceDesc.methods = saveServiceMethods;
     classes.registerClass(saveServiceDesc);
 
+    // --- HapticService ---
+    static std::array<MethodDesc, 4> hapticServiceMethods;
+    hapticServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("IsVibrationSupported"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether that kind of device can vibrate at all, on this machine now: `Enum.UserInputType.Gamepad` for a connected gamepad with motors, `Enum.UserInputType.Touch` for the device itself -- a phone. False for anything else.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsMotorSupported"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether that one motor is there. Most gamepads have `Large` and `Small`; fewer have motors in their triggers; a phone has none of these -- it has `Vibrate`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetMotor"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs one motor of every connected gamepad at `value`, 0 (still) to 1 (full), until it is set again. A motor that is not there is ignored, so a game need not ask first.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Vibrate"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Shakes the device itself -- a phone -- at `strength`, 0 to 1, for `seconds`, up to five. A machine with no vibrator of its own ignores it.",
+        },
+    }};
+    ClassDescriptor hapticServiceDesc;
+    hapticServiceDesc.name = atoms.intern("HapticService");
+    hapticServiceDesc.super = instanceClass;
+    hapticServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    hapticServiceDesc.defaultName = atoms.intern("HapticService");
+    hapticServiceDesc.doc = "What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration.\012\012**A level, not a pulse.** `SetMotor` leaves a motor running at what it was told until it is told something else -- zero stops it -- so an engine that rumbles while it runs is one call when it starts and one when it stops. `Vibrate` is the other shape: a phone shakes for a moment and stops by itself.\012\012**It stops when nobody is there to feel it**: every motor is still while the game's window is not the one in front, picks up where it was when it is again, and stops for good when the game closes. Nothing here is the simulation's: a dedicated server and a headless run have no hands, answer false to every question, and ignore every call.";
+    hapticServiceDesc.methods = hapticServiceMethods;
+    classes.registerClass(hapticServiceDesc);
+
     // --- CryptoService ---
     static std::array<MethodDesc, 8> cryptoServiceMethods;
     cryptoServiceMethods = {{
@@ -8549,6 +8586,91 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     orientationAlignmentModeDesc.docKey = {};
     orientationAlignmentModeDesc.items = orientationAlignmentModeItems;
     enums.registerEnum(orientationAlignmentModeDesc);
+
+    // --- VibrationMotor ---
+    static std::array<EnumItemDesc, 6> vibrationMotorItems;
+    vibrationMotorItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Large"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Small"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LeftTrigger"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RightTrigger"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LeftHand"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RightHand"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor vibrationMotorDesc;
+    vibrationMotorDesc.name = atoms.intern("VibrationMotor");
+    vibrationMotorDesc.docKey = {};
+    vibrationMotorDesc.items = vibrationMotorItems;
+    enums.registerEnum(vibrationMotorDesc);
+
+    // --- HighlightDepthMode ---
+    static std::array<EnumItemDesc, 2> highlightDepthModeItems;
+    highlightDepthModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("AlwaysOnTop"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Occluded"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor highlightDepthModeDesc;
+    highlightDepthModeDesc.name = atoms.intern("HighlightDepthMode");
+    highlightDepthModeDesc.docKey = {};
+    highlightDepthModeDesc.items = highlightDepthModeItems;
+    enums.registerEnum(highlightDepthModeDesc);
+
+    // --- TextureMode ---
+    static std::array<EnumItemDesc, 3> textureModeItems;
+    textureModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Stretch"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Wrap"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Static"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor textureModeDesc;
+    textureModeDesc.name = atoms.intern("TextureMode");
+    textureModeDesc.docKey = {};
+    textureModeDesc.items = textureModeItems;
+    enums.registerEnum(textureModeDesc);
 }
 
 } // namespace engine::scene::generated

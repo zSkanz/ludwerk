@@ -105,6 +105,59 @@ print(DebugService:GetStat("AudioClipsMissing"))  -- how many are the placeholde
 A headless run opens no audio device at all and reports zero, which is the
 truthful answer rather than a missing one.
 
+## Effects
+
+Nine instances change a sound on its way to the speakers. Parent one to a
+`Sound` and that sound goes through it; parent one to an `AudioGroup` and
+everything in the group does, mixed together first.
+
+```luau
+--!strict
+-- Everything in the cave group echoes off its walls.
+local cave = Instance.new("AudioGroup")
+cave.Parent = game:GetService("AudioService")
+local room = Instance.new("ReverbSoundEffect")
+room.RoomSize = 0.85
+room.WetLevel = 0.4
+room.Parent = cave
+
+-- A voice on a radio: no lows, no highs, a little broken up.
+local function radio(voice: Sound)
+    local band = Instance.new("EqualizerSoundEffect")
+    band.LowGain = -30
+    band.HighGain = -30
+    band.Parent = voice
+    local crackle = Instance.new("DistortionSoundEffect")
+    crackle.Level = 0.3
+    crackle.Priority = 1 -- after the equalizer
+    crackle.Parent = voice
+end
+```
+
+| Class | What it does | Its numbers |
+|---|---|---|
+| `ReverbSoundEffect` | a room | `RoomSize`, `Damping`, `WetLevel`, `DryLevel`, `Width` |
+| `EchoSoundEffect` | the sound again, later | `Delay` (seconds), `Feedback`, `WetLevel`, `DryLevel` |
+| `EqualizerSoundEffect` | three tone controls | `LowGain`, `MidGain`, `HighGain` (decibels), `MidLow`, `MidHigh` (hertz) |
+| `LowPassSoundEffect` | takes the highs away | `Cutoff` (hertz), `Resonance` |
+| `HighPassSoundEffect` | takes the lows away | `Cutoff` (hertz), `Resonance` |
+| `DistortionSoundEffect` | breaks it up | `Level` |
+| `CompressorSoundEffect` | turns the loud parts down | `Threshold` (decibels), `Ratio`, `Attack`, `Release` (seconds), `MakeupGain` |
+| `ChorusSoundEffect` | one voice as several | `Rate` (hertz), `Depth`, `Mix` |
+| `PitchShiftSoundEffect` | higher or lower, the same length | `Octave` (0.5 to 2) |
+
+- **`Enabled`** switches one off without removing it, and **`Priority`** orders
+  the effects under one parent: lower first. A tone squared off and then
+  filtered is not the tone filtered and then squared off.
+- **An effect on a `Sound` stops with the sound; one on an `AudioGroup` rings
+  on.** A reverb or an echo belongs on a group, where its tail outlives the
+  sound that fed it.
+- **A number outside its range is refused**, with the property's page saying
+  what the range is.
+- **Nothing a script can read changes.** A sound through a pitch shift is as
+  long as it was and ends when it did: what the speakers do is downstream of
+  the simulation.
+
 ## Where to look next
 
 - [Sounds](manual:audio/sounds)

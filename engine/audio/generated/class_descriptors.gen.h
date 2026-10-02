@@ -99,6 +99,9 @@ inline constexpr scene::EnumId ActuatorRelativeToEnumId = 56;
 inline constexpr scene::EnumId VelocityConstraintModeEnumId = 57;
 inline constexpr scene::EnumId PositionAlignmentModeEnumId = 58;
 inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
+inline constexpr scene::EnumId VibrationMotorEnumId = 60;
+inline constexpr scene::EnumId HighlightDepthModeEnumId = 61;
+inline constexpr scene::EnumId TextureModeEnumId = 62;
 
 } // namespace generated
 
@@ -118,6 +121,104 @@ scene::Value getAudioGroupVolume(const scene::World& world, core::InstanceId id)
 bool setAudioGroupVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachAudioGroupComponents(scene::World& world, core::InstanceId id);
 void detachAudioGroupComponents(scene::World& world, core::InstanceId id);
+
+// SoundEffect
+scene::Value getSoundEffectEnabled(const scene::World& world, core::InstanceId id);
+bool setSoundEffectEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSoundEffectPriority(const scene::World& world, core::InstanceId id);
+bool setSoundEffectPriority(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// ReverbSoundEffect
+scene::Value getReverbSoundEffectRoomSize(const scene::World& world, core::InstanceId id);
+bool setReverbSoundEffectRoomSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getReverbSoundEffectDamping(const scene::World& world, core::InstanceId id);
+bool setReverbSoundEffectDamping(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getReverbSoundEffectWetLevel(const scene::World& world, core::InstanceId id);
+bool setReverbSoundEffectWetLevel(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getReverbSoundEffectDryLevel(const scene::World& world, core::InstanceId id);
+bool setReverbSoundEffectDryLevel(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getReverbSoundEffectWidth(const scene::World& world, core::InstanceId id);
+bool setReverbSoundEffectWidth(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachReverbSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachReverbSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// EchoSoundEffect
+scene::Value getEchoSoundEffectDelay(const scene::World& world, core::InstanceId id);
+bool setEchoSoundEffectDelay(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEchoSoundEffectFeedback(const scene::World& world, core::InstanceId id);
+bool setEchoSoundEffectFeedback(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEchoSoundEffectWetLevel(const scene::World& world, core::InstanceId id);
+bool setEchoSoundEffectWetLevel(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEchoSoundEffectDryLevel(const scene::World& world, core::InstanceId id);
+bool setEchoSoundEffectDryLevel(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachEchoSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachEchoSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// EqualizerSoundEffect
+scene::Value getEqualizerSoundEffectLowGain(const scene::World& world, core::InstanceId id);
+bool setEqualizerSoundEffectLowGain(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEqualizerSoundEffectMidGain(const scene::World& world, core::InstanceId id);
+bool setEqualizerSoundEffectMidGain(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEqualizerSoundEffectHighGain(const scene::World& world, core::InstanceId id);
+bool setEqualizerSoundEffectHighGain(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEqualizerSoundEffectMidLow(const scene::World& world, core::InstanceId id);
+bool setEqualizerSoundEffectMidLow(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getEqualizerSoundEffectMidHigh(const scene::World& world, core::InstanceId id);
+bool setEqualizerSoundEffectMidHigh(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachEqualizerSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachEqualizerSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// LowPassSoundEffect
+scene::Value getLowPassSoundEffectCutoff(const scene::World& world, core::InstanceId id);
+bool setLowPassSoundEffectCutoff(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLowPassSoundEffectResonance(const scene::World& world, core::InstanceId id);
+bool setLowPassSoundEffectResonance(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachLowPassSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachLowPassSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// HighPassSoundEffect
+scene::Value getHighPassSoundEffectCutoff(const scene::World& world, core::InstanceId id);
+bool setHighPassSoundEffectCutoff(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHighPassSoundEffectResonance(const scene::World& world, core::InstanceId id);
+bool setHighPassSoundEffectResonance(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachHighPassSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachHighPassSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// DistortionSoundEffect
+scene::Value getDistortionSoundEffectLevel(const scene::World& world, core::InstanceId id);
+bool setDistortionSoundEffectLevel(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachDistortionSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachDistortionSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// CompressorSoundEffect
+scene::Value getCompressorSoundEffectThreshold(const scene::World& world, core::InstanceId id);
+bool setCompressorSoundEffectThreshold(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCompressorSoundEffectRatio(const scene::World& world, core::InstanceId id);
+bool setCompressorSoundEffectRatio(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCompressorSoundEffectAttack(const scene::World& world, core::InstanceId id);
+bool setCompressorSoundEffectAttack(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCompressorSoundEffectRelease(const scene::World& world, core::InstanceId id);
+bool setCompressorSoundEffectRelease(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCompressorSoundEffectMakeupGain(const scene::World& world, core::InstanceId id);
+bool setCompressorSoundEffectMakeupGain(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachCompressorSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachCompressorSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// ChorusSoundEffect
+scene::Value getChorusSoundEffectRate(const scene::World& world, core::InstanceId id);
+bool setChorusSoundEffectRate(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getChorusSoundEffectDepth(const scene::World& world, core::InstanceId id);
+bool setChorusSoundEffectDepth(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getChorusSoundEffectMix(const scene::World& world, core::InstanceId id);
+bool setChorusSoundEffectMix(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachChorusSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachChorusSoundEffectComponents(scene::World& world, core::InstanceId id);
+
+// PitchShiftSoundEffect
+scene::Value getPitchShiftSoundEffectOctave(const scene::World& world, core::InstanceId id);
+bool setPitchShiftSoundEffectOctave(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachPitchShiftSoundEffectComponents(scene::World& world, core::InstanceId id);
+void detachPitchShiftSoundEffectComponents(scene::World& world, core::InstanceId id);
 
 // Sound
 scene::Value getSoundContent(const scene::World& world, core::InstanceId id);

@@ -6,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <system_error>
+#include <type_traits>
 
 #include "engine/asset/chunk.h"
 #include "engine/asset/content.h"
@@ -156,10 +157,31 @@ struct CachedSource
     // lose its own -- within a single build, not only across two.
     hasher.update(std::as_bytes(std::span<const char>(urn.data(), urn.size())));
 
-    // The pinned options, byte for byte. An upstream default change is a diff in
-    // this tool (Decision 1), so hashing the struct is hashing the decision.
+    // The pinned options: an upstream default change is a diff in this tool
+    // (Decision 1), so hashing them is hashing the decision.
+    //
+    // **Field by field, never the struct's bytes** (D474). The struct has a
+    // `bool` with three bytes of padding after it, and padding is whatever the
+    // memory held: hashed "byte for byte", the key was a different key in
+    // every process, so every run of the engine compiled a project's meshes
+    // and pictures again and added to a cache nothing ever read. One example
+    // had 2,208 entries for six pictures, and booted in ten seconds.
     const asset::MeshCompileOptions& mesh = options.mesh;
-    hasher.update(std::as_bytes(std::span<const asset::MeshCompileOptions, 1>{&mesh, 1}));
+    const auto field = [&hasher](const auto& value) {
+        hasher.update(std::as_bytes(std::span<const std::remove_reference_t<decltype(value)>, 1>{&value, 1}));
+    };
+    field(mesh.maxLods);
+    field(mesh.lodStep);
+    field(mesh.lodTargetError);
+    field(mesh.lodMinReduction);
+    const core::u32 meshlets = mesh.buildMeshlets ? 1u : 0u;
+    field(meshlets);
+    field(mesh.meshletMaxVertices);
+    field(mesh.meshletMaxTriangles);
+    field(mesh.meshletConeWeight);
+    // A field added to the options and not to this list would be a cache that
+    // answers for options it was not asked with.
+    static_assert(sizeof(asset::MeshCompileOptions) == 32, "hash every field of MeshCompileOptions above");
 
     const core::u32 rules = kCompilerRules;
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&rules, 1}));

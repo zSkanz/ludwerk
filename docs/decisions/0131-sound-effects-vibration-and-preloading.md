@@ -1,6 +1,6 @@
 # 0131 — Sound effects, vibration, and preloading
 
-- Status: accepted (to be built; see `docs/briefs/toolkit-kickoff.md`, F6 and F8)
+- Status: accepted and built (sections 1 and 2 on 2026-10-02, F6; section 3 before them, F8)
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, approving sound effects, vibration and
   asset preloading from a survey of public documentation (R7).
@@ -50,3 +50,33 @@
 
 - A cave that echoes, a radio that crackles, a controller that rumbles, and a
   first frame without assets popping in.
+
+## As built, 2026-10-02
+
+- **The effects are the engine's own processors in the engine's own mixer**,
+  not nodes of miniaudio's graph. That graph has been compiled out since the
+  mixer was written (`MA_NO_NODE_GRAPH`): voices are mixed by hand on a
+  timeline the simulation owns, so an effect is a function over a block of
+  that mixer's samples. The filters are the textbook second-order ones
+  miniaudio's are; the reverb is the one miniaudio vendors (`verblib`), used
+  without the graph; the echo, distortion, compressor, chorus and pitch shift
+  are the engine's. No new dependency, as decided.
+- **Parameters travel with the voices**, under the lock the voices are
+  published under and the audio thread only ever tries -- the mixer's own
+  rule, which this did not need to change. Nothing allocates on the audio
+  thread: an effect's state is made on the frame and handed to it.
+- **An effect on a `Sound` stops with the sound; one on an `AudioGroup` runs
+  every block**, voices or none, so a room and an echo ring on. That is the
+  rule the manual gives for where to put one.
+- **`Priority` is a number, lower first**, and equals apply in the order they
+  were made.
+- **The equalizer's middle band is two frequencies**, `MidLow` and `MidHigh`:
+  below is the low band, above the high one.
+- **Vibration is levels, re-sent each frame for half a second**: a game that
+  stops pumping -- closed, crashed, frozen -- stops shaking by itself. Still
+  while the window is not in front; the levels return with it.
+- **Not on hardware yet (D476)**: the vendored SDL is built with its
+  joystick, haptic and HID support off, as it has been since M1 -- which also
+  means no gamepad has ever worked. Turning them on is a build decision of
+  its own (three platforms, one of which only CI builds) and is the next
+  push's, by itself.

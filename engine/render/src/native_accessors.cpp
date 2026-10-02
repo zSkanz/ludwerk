@@ -2387,4 +2387,720 @@ bool setFoliageMeshMaterial(scene::World& world, core::InstanceId id, const Valu
     return true;
 }
 
+// --- Highlight, Beam and Trail (ADR 0129) ---------------------------------------
+//
+// What a script sets and nothing else: the renderer reads these on the frame.
+// A fraction is refused outside 0 to 1 and a length when negative, as every
+// number here is; an end must be an `Attachment`, and what is highlighted a
+// part or a model.
+
+namespace {
+
+// An `Attachment`, or nothing.
+[[nodiscard]] bool takeAttachment(const scene::World& world, const Value& value, core::InstanceId& out)
+{
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        if (!world.alive(*reference) || world.attachments().find(*reference) == nullptr)
+            return false;
+        out = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    out = core::InstanceId{};
+    return true;
+}
+
+// A shape, or nothing: a part, or a `Model` holding them. A point, a light or
+// a script has no outline to draw.
+[[nodiscard]] bool takeInstance(const scene::World& world, const Value& value, core::InstanceId& out)
+{
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        if (!world.alive(*reference) || world.destroyed(*reference))
+            return false;
+        const scene::ClassId model = world.classes().findId(world.atoms().lookup("Model"));
+        if (world.parts().find(*reference) == nullptr &&
+            !(model != scene::InvalidClass && world.isA(*reference, model)))
+            return false;
+        out = *reference;
+        return true;
+    }
+    if (scene::valueType(value) != scene::ValueType::Nil)
+        return false;
+    out = core::InstanceId{};
+    return true;
+}
+
+} // namespace
+
+void attachHighlightComponents(scene::World& world, core::InstanceId id)
+{
+    world.highlights().add(id, scene::HighlightComponent{});
+}
+
+void detachHighlightComponents(scene::World& world, core::InstanceId id)
+{
+    world.highlights().remove(id);
+}
+
+Value getHighlightAdornee(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    if (self == nullptr || !self->adornee.valid() || !world.alive(self->adornee) || world.destroyed(self->adornee))
+        return Value{};
+    return Value{self->adornee};
+}
+
+bool setHighlightAdornee(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::HighlightComponent* self = world.highlights().find(id);
+    return self != nullptr && takeInstance(world, value, self->adornee);
+}
+
+Value getHighlightFillColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{self->fillColor};
+}
+
+bool setHighlightFillColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::Color3>(&value);
+    scene::HighlightComponent* self = world.highlights().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->fillColor = *next;
+    return true;
+}
+
+Value getHighlightFillTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->fillTransparency)};
+}
+
+bool setHighlightFillTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::HighlightComponent* self = world.highlights().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->fillTransparency = next;
+    return true;
+}
+
+Value getHighlightOutlineColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{self->outlineColor};
+}
+
+bool setHighlightOutlineColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::Color3>(&value);
+    scene::HighlightComponent* self = world.highlights().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->outlineColor = *next;
+    return true;
+}
+
+Value getHighlightOutlineTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->outlineTransparency)};
+}
+
+bool setHighlightOutlineTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::HighlightComponent* self = world.highlights().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->outlineTransparency = next;
+    return true;
+}
+
+Value getHighlightDepthMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::HighlightDepthModeEnumId, self->depthMode}};
+}
+
+bool setHighlightDepthMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::HighlightComponent* self = world.highlights().find(id);
+    if (item == nullptr || self == nullptr || item->enumId != generated::HighlightDepthModeEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->depthMode = item->value;
+    return true;
+}
+
+Value getHighlightEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::HighlightComponent* self = world.highlights().find(id);
+    return self == nullptr ? Value{} : Value{self->enabled};
+}
+
+bool setHighlightEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::HighlightComponent* self = world.highlights().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->enabled = *next;
+    return true;
+}
+
+void attachBeamComponents(scene::World& world, core::InstanceId id)
+{
+    world.beams().add(id, scene::BeamComponent{});
+}
+
+void detachBeamComponents(scene::World& world, core::InstanceId id)
+{
+    world.beams().remove(id);
+}
+
+Value getBeamAttachment0(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    if (self == nullptr || !self->attachment0.valid() || !world.alive(self->attachment0) ||
+        world.destroyed(self->attachment0))
+        return Value{};
+    return Value{self->attachment0};
+}
+
+bool setBeamAttachment0(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    return self != nullptr && takeAttachment(world, value, self->attachment0);
+}
+
+Value getBeamAttachment1(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    if (self == nullptr || !self->attachment1.valid() || !world.alive(self->attachment1) ||
+        world.destroyed(self->attachment1))
+        return Value{};
+    return Value{self->attachment1};
+}
+
+bool setBeamAttachment1(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    return self != nullptr && takeAttachment(world, value, self->attachment1);
+}
+
+Value getBeamColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{self->color};
+}
+
+bool setBeamColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::ColorSequence>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (next == nullptr || self == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    self->color = *next;
+    return true;
+}
+
+Value getBeamTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{self->transparency};
+}
+
+bool setBeamTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::NumberSequence>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (next == nullptr || self == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    self->transparency = *next;
+    return true;
+}
+
+Value getBeamWidth0(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->width0)};
+}
+
+bool setBeamWidth0(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->width0 = next;
+    return true;
+}
+
+Value getBeamWidth1(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->width1)};
+}
+
+bool setBeamWidth1(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->width1 = next;
+    return true;
+}
+
+Value getBeamCurveSize0(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->curveSize0)};
+}
+
+bool setBeamCurveSize0(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next))
+        return false;
+    self->curveSize0 = next;
+    return true;
+}
+
+Value getBeamCurveSize1(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->curveSize1)};
+}
+
+bool setBeamCurveSize1(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next))
+        return false;
+    self->curveSize1 = next;
+    return true;
+}
+
+Value getBeamSegments(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->segments)};
+}
+
+bool setBeamSegments(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 1.0f || next > 64.0f || next != std::floor(next))
+        return false;
+    self->segments = static_cast<core::i32>(next);
+    return true;
+}
+
+Value getBeamTexture(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->texture))};
+}
+
+bool setBeamTexture(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->texture = world.atoms().intern(*text);
+    return true;
+}
+
+Value getBeamTextureLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->textureLength)};
+}
+
+bool setBeamTextureLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next <= 0.0f)
+        return false;
+    self->textureLength = next;
+    return true;
+}
+
+Value getBeamTextureMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::TextureModeEnumId, self->textureMode}};
+}
+
+bool setBeamTextureMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (item == nullptr || self == nullptr || item->enumId != generated::TextureModeEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->textureMode = item->value;
+    return true;
+}
+
+Value getBeamTextureSpeed(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->textureSpeed)};
+}
+
+bool setBeamTextureSpeed(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next))
+        return false;
+    self->textureSpeed = next;
+    return true;
+}
+
+Value getBeamFaceCamera(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{self->faceCamera};
+}
+
+bool setBeamFaceCamera(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->faceCamera = *next;
+    return true;
+}
+
+Value getBeamLightEmission(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lightEmission)};
+}
+
+bool setBeamLightEmission(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->lightEmission = next;
+    return true;
+}
+
+Value getBeamLightInfluence(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lightInfluence)};
+}
+
+bool setBeamLightInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->lightInfluence = next;
+    return true;
+}
+
+Value getBeamZOffset(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->zOffset)};
+}
+
+bool setBeamZOffset(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BeamComponent* self = world.beams().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next))
+        return false;
+    self->zOffset = next;
+    return true;
+}
+
+Value getBeamEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::BeamComponent* self = world.beams().find(id);
+    return self == nullptr ? Value{} : Value{self->enabled};
+}
+
+bool setBeamEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::BeamComponent* self = world.beams().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->enabled = *next;
+    return true;
+}
+
+void attachTrailComponents(scene::World& world, core::InstanceId id)
+{
+    world.trails().add(id, scene::TrailComponent{});
+}
+
+void detachTrailComponents(scene::World& world, core::InstanceId id)
+{
+    world.trails().remove(id);
+}
+
+Value getTrailAttachment0(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    if (self == nullptr || !self->attachment0.valid() || !world.alive(self->attachment0) ||
+        world.destroyed(self->attachment0))
+        return Value{};
+    return Value{self->attachment0};
+}
+
+bool setTrailAttachment0(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    return self != nullptr && takeAttachment(world, value, self->attachment0);
+}
+
+Value getTrailAttachment1(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    if (self == nullptr || !self->attachment1.valid() || !world.alive(self->attachment1) ||
+        world.destroyed(self->attachment1))
+        return Value{};
+    return Value{self->attachment1};
+}
+
+bool setTrailAttachment1(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    return self != nullptr && takeAttachment(world, value, self->attachment1);
+}
+
+Value getTrailLifetime(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lifetime)};
+}
+
+bool setTrailLifetime(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next <= 0.0f)
+        return false;
+    self->lifetime = next;
+    return true;
+}
+
+Value getTrailMinLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->minLength)};
+}
+
+bool setTrailMinLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->minLength = next;
+    return true;
+}
+
+Value getTrailMaxLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->maxLength)};
+}
+
+bool setTrailMaxLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->maxLength = next;
+    return true;
+}
+
+Value getTrailColor(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{self->color};
+}
+
+bool setTrailColor(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::ColorSequence>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (next == nullptr || self == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    self->color = *next;
+    return true;
+}
+
+Value getTrailTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{self->transparency};
+}
+
+bool setTrailTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::NumberSequence>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (next == nullptr || self == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    self->transparency = *next;
+    return true;
+}
+
+Value getTrailWidthScale(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{self->widthScale};
+}
+
+bool setTrailWidthScale(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<core::NumberSequence>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (next == nullptr || self == nullptr || !core::validSequence(next->keypoints))
+        return false;
+    self->widthScale = *next;
+    return true;
+}
+
+Value getTrailTexture(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->texture))};
+}
+
+bool setTrailTexture(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->texture = world.atoms().intern(*text);
+    return true;
+}
+
+Value getTrailTextureLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->textureLength)};
+}
+
+bool setTrailTextureLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next <= 0.0f)
+        return false;
+    self->textureLength = next;
+    return true;
+}
+
+Value getTrailTextureMode(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{scene::EnumValue{generated::TextureModeEnumId, self->textureMode}};
+}
+
+bool setTrailTextureMode(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (item == nullptr || self == nullptr || item->enumId != generated::TextureModeEnumId)
+        return false;
+    if (world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    self->textureMode = item->value;
+    return true;
+}
+
+Value getTrailFaceCamera(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{self->faceCamera};
+}
+
+bool setTrailFaceCamera(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->faceCamera = *next;
+    return true;
+}
+
+Value getTrailLightEmission(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lightEmission)};
+}
+
+bool setTrailLightEmission(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->lightEmission = next;
+    return true;
+}
+
+Value getTrailLightInfluence(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lightInfluence)};
+}
+
+bool setTrailLightInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TrailComponent* self = world.trails().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->lightInfluence = next;
+    return true;
+}
+
+Value getTrailEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::TrailComponent* self = world.trails().find(id);
+    return self == nullptr ? Value{} : Value{self->enabled};
+}
+
+bool setTrailEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::TrailComponent* self = world.trails().find(id);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->enabled = *next;
+    return true;
+}
+
 } // namespace engine::render::native

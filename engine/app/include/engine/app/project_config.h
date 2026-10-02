@@ -114,6 +114,9 @@ struct ProjectConfig
     core::u32 maxViewsPerFrame = 4;
     core::u32 maxViewResolution = 1024;
     core::u32 maxSubWorlds = 2;
+    // `[render] max_highlights` (ADR 0129): how many `Highlight`s a frame
+    // draws, each a mask and a composite; past it the nearest win.
+    core::u32 maxHighlights = 32;
 
     // **Foliage** (ADR 0116), `[render]`: the fraction of every layer drawn,
     // and how far from the camera it casts shadows. Lower on a phone, where a

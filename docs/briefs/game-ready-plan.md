@@ -52,11 +52,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [ ] 6b | **F2** movers and constraints (motor, servo, align, rope, rod, spring) | toolkit | Builds on B8's impulses at a point; a part moves without code |
 | [ ] 7 | **C1** `Request` and WebSocket in `NetworkService` | network | What people ask of a network first |
 | [ ] 7b | **F3** UI grids, pages, flex, scale, size constraints, `CanvasGroup`, `UIDragDetector`, gamepad selection | toolkit | UI for every screen and a controller |
-| [ ] 7c | **F4** `Highlight`, `Beam`, `Trail` | toolkit | — |
+| [x] 7c | **F4** `Highlight`, `Beam`, `Trail` | toolkit | — |
 | [x] 8 | **A3** bytecode in the export | foundation | The shipped game stops carrying its source |
-| [ ] 9 | **B7** friction and footsteps | world | — |
+| [x] 9 | **B7** friction and footsteps | world | — |
 | [ ] 9b | **F5** solids (union, subtract, intersect) and two shapes | toolkit | Manifold adopted (2026-09-30); built after the block-world stages |
-| [ ] 9c | **F6** sound effects and vibration | toolkit | — |
+| [x] 9c | **F6** sound effects and vibration | toolkit | Vibration waits on SDL's gamepad support being built in (D476) |
 | [ ] 10 | **E0 to E4** actors: scripts in parallel, committed in a fixed order | parallel | A game's own logic on every core |
 | [ ] 11 | **D1** `EditableImage` and `AudioStream` · **D3** `EditableMesh` | media | Creativity |
 | [ ] 12 | **C4** encryption, a player is a key, relay | network | Multiplayer across the internet |

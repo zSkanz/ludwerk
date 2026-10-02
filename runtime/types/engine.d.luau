@@ -207,6 +207,15 @@ end
 declare extern type EnumOrientationAlignmentMode extends EnumItem with
 end
 
+declare extern type EnumVibrationMotor extends EnumItem with
+end
+
+declare extern type EnumHighlightDepthMode extends EnumItem with
+end
+
+declare extern type EnumTextureMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2041,6 +2050,110 @@ declare extern type ParticleEmitter extends Instance with
     function Emit(self, count: number): ()
 end
 
+declare extern type Highlight extends Instance with
+    --- What is highlighted: a part, or a model and every part in it. Nothing means the highlight's own
+    --- parent.
+    Adornee: (BasePart | Model)?
+    --- The colour laid over the whole shape.
+    FillColor: Color3
+    --- How see-through the fill is: 0 hides what it covers, 1 leaves only the outline.
+    FillTransparency: number
+    --- The colour of the line round the shape's edge.
+    OutlineColor: Color3
+    --- How see-through the outline is: 1 is a fill with no line.
+    OutlineTransparency: number
+    --- Whether the highlight shows through what is in front of the shape, or only where the shape
+    --- itself is seen.
+    DepthMode: EnumHighlightDepthMode
+    --- Whether it is drawn.
+    Enabled: boolean
+end
+
+declare extern type Beam extends Instance with
+    --- Where it starts.
+    Attachment0: Attachment?
+    --- Where it ends.
+    Attachment1: Attachment?
+    --- Its colour along its length, from `Attachment0` at 0 to `Attachment1` at 1. Multiplies the
+    --- texture.
+    Color: ColorSequence
+    --- How see-through it is along its length: 0 solid, 1 gone.
+    Transparency: NumberSequence
+    --- How wide it is at `Attachment0`, in metres.
+    Width0: number
+    --- How wide it is at `Attachment1`, in metres.
+    Width1: number
+    --- How far the beam leaves `Attachment0` along that attachment's own X before it bends towards the
+    --- other end, in metres. Zero at both ends is a straight line; negative leaves the other way.
+    CurveSize0: number
+    --- How far before `Attachment1` the beam is already running along that attachment's own X, in
+    --- metres.
+    CurveSize1: number
+    --- How many straight pieces a curved beam is drawn as, 1 to 64. A straight beam needs one.
+    Segments: number
+    --- The image along it, its U along the beam and its V across. None is a plain band of `Color`.
+    Texture: Content
+    --- How long one repeat of the texture is, in metres, in `Wrap` and `Static` modes.
+    TextureLength: number
+    --- How the texture is laid along it.
+    TextureMode: EnumTextureMode
+    --- How fast the texture runs from `Attachment0` towards `Attachment1`: in repeats a second in
+    --- `Stretch` mode, in metres a second in `Wrap`. `Static` does not run.
+    TextureSpeed: number
+    --- Whether the band turns about its own length to face the camera. Off, it lies in the plane of its
+    --- attachments' Y axes -- a flat ribbon with two sides.
+    FaceCamera: boolean
+    --- How much it adds its colour to what is behind it instead of covering it: 0 an ordinary surface,
+    --- 1 light.
+    LightEmission: number
+    --- How much the scene's light colours it: 1 is lit like a surface, 0 is its own colour at any hour.
+    LightInfluence: number
+    --- Metres towards the camera it is drawn at, so a beam lying on a wall is not cut by it.
+    ZOffset: number
+    --- Whether it is drawn.
+    Enabled: boolean
+end
+
+declare extern type Trail extends Instance with
+    --- One edge of the ribbon.
+    Attachment0: Attachment?
+    --- The other edge.
+    Attachment1: Attachment?
+    --- How long a piece of the trail lasts, in seconds, from when the attachments were there.
+    Lifetime: number
+    --- How far the attachments must move before the trail gains a piece, in metres. Smaller is smoother
+    --- and costs more.
+    MinLength: number
+    --- The longest the trail may be, in metres; what is older is dropped. Zero is no limit but
+    --- `Lifetime`.
+    MaxLength: number
+    --- Its colour over a piece's life, from new at 0 to `Lifetime` at 1. Multiplies the texture.
+    Color: ColorSequence
+    --- How see-through a piece is over its life: 0 solid, 1 gone.
+    Transparency: NumberSequence
+    --- How wide a piece is over its life, as a fraction of the distance between the attachments.
+    WidthScale: NumberSequence
+    --- The image along it, its U along the trail and its V across. None is a plain band of `Color`.
+    Texture: Content
+    --- How long one repeat of the texture is, in metres, in `Wrap` and `Static` modes.
+    TextureLength: number
+    --- How the texture is laid along it.
+    TextureMode: EnumTextureMode
+    --- Whether the ribbon is turned to face the camera about its own middle line, as wide as the
+    --- attachments are apart. Off, it is the surface the two attachments swept.
+    FaceCamera: boolean
+    --- How much it adds its colour to what is behind it instead of covering it: 0 an ordinary surface,
+    --- 1 light.
+    LightEmission: number
+    --- How much the scene's light colours it: 1 is lit like a surface, 0 is its own colour at any hour.
+    LightInfluence: number
+    --- Whether the trail grows. Off, what is already there fades out over its `Lifetime`.
+    Enabled: boolean
+    --- Drops the whole trail at once: what something that teleports calls, so the ribbon does not
+    --- stretch from where it was to where it is.
+    function Clear(self): ()
+end
+
 declare extern type SpotLight extends Instance with
     --- Where the light is. **In the world when nothing holds it** -- a light dropped straight into the
     --- Workspace shines from here, and turns with it -- and relative to the BasePart or Attachment it
@@ -2700,6 +2813,97 @@ declare extern type AudioGroup extends Instance with
     Volume: number
 end
 
+declare extern type SoundEffect extends Instance with
+    --- Whether the sound goes through it.
+    Enabled: boolean
+    --- Its place among the effects under one parent: lower is applied first. Equal ones are applied in
+    --- the order they were made.
+    Priority: number
+end
+
+declare extern type ReverbSoundEffect extends SoundEffect with
+    --- How large the room is, 0 to 1: larger rings for longer.
+    RoomSize: number
+    --- How quickly the high notes die in it, 0 to 1: a stone hall is low, a carpeted room high.
+    Damping: number
+    --- How loud the room's answer is, 0 to 1.
+    WetLevel: number
+    --- How loud the sound itself stays, 0 to 1.
+    DryLevel: number
+    --- How far apart the room's answer is spread across the two speakers.
+    Width: number
+end
+
+declare extern type EchoSoundEffect extends SoundEffect with
+    --- How long until the echo, in seconds, 0.01 to 2.
+    Delay: number
+    --- How much of each echo is echoed again, 0 to 0.95: zero is one echo, more is a trail of them.
+    Feedback: number
+    --- How loud the echoes are, 0 to 1.
+    WetLevel: number
+    --- How loud the sound itself stays, 0 to 1.
+    DryLevel: number
+end
+
+declare extern type EqualizerSoundEffect extends SoundEffect with
+    --- The low band's level, in decibels, -80 to 12.
+    LowGain: number
+    --- The middle band's level, in decibels, -80 to 12.
+    MidGain: number
+    --- The high band's level, in decibels, -80 to 12.
+    HighGain: number
+    --- Where the middle band begins, in hertz. Below it is the low band.
+    MidLow: number
+    --- Where the middle band ends, in hertz. Above it is the high band.
+    MidHigh: number
+end
+
+declare extern type LowPassSoundEffect extends SoundEffect with
+    --- The frequency above which sound is taken away, in hertz.
+    Cutoff: number
+    --- How much the notes right at the cutoff are raised, 0.1 to 10: 0.707 is flat, more whistles.
+    Resonance: number
+end
+
+declare extern type HighPassSoundEffect extends SoundEffect with
+    --- The frequency below which sound is taken away, in hertz.
+    Cutoff: number
+    --- How much the notes right at the cutoff are raised, 0.1 to 10: 0.707 is flat, more whistles.
+    Resonance: number
+end
+
+declare extern type DistortionSoundEffect extends SoundEffect with
+    --- How hard it is pushed, 0 (untouched) to 1.
+    Level: number
+end
+
+declare extern type CompressorSoundEffect extends SoundEffect with
+    --- The level above which it turns down, in decibels, -60 to 0.
+    Threshold: number
+    --- How much it turns down what is over the threshold: at 4, four decibels over come out as one.
+    Ratio: number
+    --- How quickly it reacts to a loud part, in seconds.
+    Attack: number
+    --- How quickly it lets go after one, in seconds.
+    Release: number
+    --- What is added back to the whole afterwards, in decibels, 0 to 24.
+    MakeupGain: number
+end
+
+declare extern type ChorusSoundEffect extends SoundEffect with
+    --- How fast the copy drifts back and forth, in hertz.
+    Rate: number
+    --- How far it drifts, 0 to 1.
+    Depth: number
+    --- How much of what is heard is the copy, 0 to 1.
+    Mix: number
+end
+
+declare extern type PitchShiftSoundEffect extends SoundEffect with
+    --- What the pitch is multiplied by, 0.5 (an octave down) to 2 (an octave up). 1 changes nothing.
+    Octave: number
+end
+
 declare extern type Sound extends Instance with
     --- The audio, as an `asset://` URI. WAV, MP3, FLAC and Ogg Vorbis. A file of up to ten seconds is
     --- decoded once and held; a longer one STREAMS -- its encoded bytes are kept and each voice decodes
@@ -3244,6 +3448,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
+    function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CryptoService"): CryptoService
     function GetService(self, name: "TeamService"): TeamService
     function GetService(self, name: "ContentProvider"): ContentProvider
@@ -3442,6 +3647,22 @@ declare extern type SaveService extends Instance with
     function ListSlots(self): { string }
     --- Removes a slot and its backup. A `SaveSlot` already handed out is emptied.
     function DeleteSlot(self, name: string): ()
+end
+
+declare extern type HapticService extends Instance with
+    --- Whether that kind of device can vibrate at all, on this machine now:
+    --- `Enum.UserInputType.Gamepad` for a connected gamepad with motors, `Enum.UserInputType.Touch` for
+    --- the device itself -- a phone. False for anything else.
+    function IsVibrationSupported(self, inputType: EnumUserInputType): boolean
+    --- Whether that one motor is there. Most gamepads have `Large` and `Small`; fewer have motors in
+    --- their triggers; a phone has none of these -- it has `Vibrate`.
+    function IsMotorSupported(self, inputType: EnumUserInputType, motor: EnumVibrationMotor): boolean
+    --- Runs one motor of every connected gamepad at `value`, 0 (still) to 1 (full), until it is set
+    --- again. A motor that is not there is ignored, so a game need not ask first.
+    function SetMotor(self, inputType: EnumUserInputType, motor: EnumVibrationMotor, value: number): ()
+    --- Shakes the device itself -- a phone -- at `strength`, 0 to 1, for `seconds`, up to five. A
+    --- machine with no vibrator of its own ignores it.
+    function Vibrate(self, strength: number, seconds: number): ()
 end
 
 declare extern type CryptoService extends Instance with
@@ -4764,6 +4985,26 @@ declare Enum: {
         TwoAttachment: EnumOrientationAlignmentMode,
         GetEnumItems: (self: any) -> { EnumOrientationAlignmentMode },
     },
+    VibrationMotor: {
+        Large: EnumVibrationMotor,
+        Small: EnumVibrationMotor,
+        LeftTrigger: EnumVibrationMotor,
+        RightTrigger: EnumVibrationMotor,
+        LeftHand: EnumVibrationMotor,
+        RightHand: EnumVibrationMotor,
+        GetEnumItems: (self: any) -> { EnumVibrationMotor },
+    },
+    HighlightDepthMode: {
+        AlwaysOnTop: EnumHighlightDepthMode,
+        Occluded: EnumHighlightDepthMode,
+        GetEnumItems: (self: any) -> { EnumHighlightDepthMode },
+    },
+    TextureMode: {
+        Stretch: EnumTextureMode,
+        Wrap: EnumTextureMode,
+        Static: EnumTextureMode,
+        GetEnumItems: (self: any) -> { EnumTextureMode },
+    },
 }
 
 declare Vector3: {
@@ -5046,6 +5287,9 @@ declare Instance: {
         & (("CameraTexture") -> CameraTexture)
         & (("SubWorld") -> SubWorld)
         & (("ParticleEmitter") -> ParticleEmitter)
+        & (("Highlight") -> Highlight)
+        & (("Beam") -> Beam)
+        & (("Trail") -> Trail)
         & (("SpotLight") -> SpotLight)
         & (("BloomEffect") -> BloomEffect)
         & (("ColorCorrectionEffect") -> ColorCorrectionEffect)
@@ -5074,6 +5318,15 @@ declare Instance: {
         & (("UIGradient") -> UIGradient)
         & (("UIStroke") -> UIStroke)
         & (("AudioGroup") -> AudioGroup)
+        & (("ReverbSoundEffect") -> ReverbSoundEffect)
+        & (("EchoSoundEffect") -> EchoSoundEffect)
+        & (("EqualizerSoundEffect") -> EqualizerSoundEffect)
+        & (("LowPassSoundEffect") -> LowPassSoundEffect)
+        & (("HighPassSoundEffect") -> HighPassSoundEffect)
+        & (("DistortionSoundEffect") -> DistortionSoundEffect)
+        & (("CompressorSoundEffect") -> CompressorSoundEffect)
+        & (("ChorusSoundEffect") -> ChorusSoundEffect)
+        & (("PitchShiftSoundEffect") -> PitchShiftSoundEffect)
         & (("Sound") -> Sound)
         & (("AnimationPlayer") -> AnimationPlayer)
         & (("Part2D") -> Part2D)

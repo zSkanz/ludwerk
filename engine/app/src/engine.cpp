@@ -93,6 +93,7 @@
 #include "engine/render/particles.h"
 #include "engine/render/render_world.h"
 #include "engine/render/renderer.h"
+#include "engine/render/ribbons.h"
 #include "engine/render/shader_library.h"
 #include "engine/render/sky_loader.h"
 #include "engine/render/terrain_loader.h"
@@ -1408,6 +1409,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     viewHost.setLimits(options.maxViewsPerFrame, options.maxViewResolution);
     // Reused from frame to frame, so a view's extraction allocates once.
     render::RenderWorld viewSnapshot;
+    viewSnapshot.maxHighlights = options.maxHighlights;
     // **What the frame keeps for each sub-world it draws** (ADR 0107 §3): its
     // own meshes and textures. A cache is keyed by one world's instances and
     // atoms, which mean nothing in another's -- the two-worlds proof's lesson.
@@ -1665,6 +1667,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     render::WaterLoader waterLoader;
     // Particles (F2): simulated on the frame, because they are a picture.
     render::ParticleSystem particles;
+    // Beams and trails (ADR 0129), on the render clock as the particles are.
+    render::RibbonSystem ribbons;
     // Foliage over terrain (ADR 0116), grown per tile around the camera.
     render::FoliageSystem foliage;
     foliage.setSettings(
@@ -2329,6 +2333,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     };
 
     render::RenderWorld snapshot;
+    snapshot.maxHighlights = options.maxHighlights;
 
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
     bool quit = false;
@@ -5398,6 +5403,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                              frame.renderDt, &framePoses);
             particles.append(snapshot);
+            // **Beams and trails** (ADR 0129), on the same clock and for the
+            // same root: a trail gains a piece where its ends are drawn.
+            ribbons.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                           frame.renderDt, &framePoses);
+            ribbons.append(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot,
+                           &textureLibrary, &framePoses);
             // The foliage the tiles hold, as runs and buckets for the cull.
             foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
             // The sky's pictures, for the sky the extract resolved: a bake
@@ -5965,6 +5976,9 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                     terrainNodes);
                     terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
                     particles.append(viewSnapshot);
+                    // Built again for this view: a ribbon that faces the
+                    // camera faces THIS one.
+                    ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
                     skyLoader.append(viewSnapshot);
                     viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
                     // `Simple`: no shadows and none of the look's effects; the
@@ -6113,6 +6127,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     .foliageTiles = foliage.stats().tilesResident,
                     .foliageInstances = foliage.stats().instancesResident,
                     .foliageGrown = foliage.stats().tilesGrownLastSync,
+                    .highlights = static_cast<core::u32>(snapshot.highlights.size()),
+                    .highlightsDropped = snapshot.highlightsDropped,
+                    .beams = ribbons.stats().beams,
+                    .trails = ribbons.stats().trails,
+                    .ribbonPieces = ribbons.stats().pieces,
+                    .particles = static_cast<core::u32>(particles.liveCount()),
                     .terrainEdits = terrainLoader.editLatency().edits,
                     .terrainEditMs = terrainLoader.editLatency().lastMs,
                     .terrainEditFrames = terrainLoader.editLatency().lastFrames,

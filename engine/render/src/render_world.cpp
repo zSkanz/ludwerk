@@ -625,6 +625,64 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         return false;
     };
 
+    // **What is highlighted** (ADR 0129): each enabled `Highlight` under the
+    // root and what it marks -- its `Adornee`, or its own parent -- sorted by
+    // what is marked, so a draw finds its highlight by walking up from its
+    // instance. A world with none pays one size check per draw.
+    struct Marked
+    {
+        core::InstanceId adornee;
+        u32 slot = 0;
+    };
+    static thread_local std::vector<Marked> marked;
+    static thread_local std::vector<RenderHighlight> everyHighlight;
+    marked.clear();
+    everyHighlight.clear();
+    world.highlights().forEach([&](core::InstanceId id, const scene::HighlightComponent& highlight) {
+        if (!highlight.enabled || world.destroyed(id) || !inWorld(world, id, root))
+            return;
+        // A byte names it on a draw; past 255 in one world the rest are not
+        // marked, and are counted as dropped below.
+        if (everyHighlight.size() >= 255) {
+            ++out.highlightsDropped;
+            return;
+        }
+        const core::InstanceId adornee =
+            highlight.adornee.valid() && world.alive(highlight.adornee) && !world.destroyed(highlight.adornee)
+                ? highlight.adornee
+                : world.parentOf(id);
+        if (!adornee.valid())
+            return;
+        RenderHighlight drawn;
+        drawn.outline[0] = highlight.outlineColor.r;
+        drawn.outline[1] = highlight.outlineColor.g;
+        drawn.outline[2] = highlight.outlineColor.b;
+        drawn.outline[3] = std::clamp(1.0f - highlight.outlineTransparency, 0.0f, 1.0f);
+        drawn.fill[0] = highlight.fillColor.r;
+        drawn.fill[1] = highlight.fillColor.g;
+        drawn.fill[2] = highlight.fillColor.b;
+        drawn.fill[3] = std::clamp(1.0f - highlight.fillTransparency, 0.0f, 1.0f);
+        drawn.occluded = highlight.depthMode == 1;
+        marked.push_back(Marked{adornee, static_cast<u32>(everyHighlight.size())});
+        everyHighlight.push_back(drawn);
+    });
+    std::sort(marked.begin(), marked.end(),
+              [&byId](const Marked& a, const Marked& b) { return byId(a.adornee, b.adornee); });
+    // The nearest thing marked above a draw's instance wins: a highlight on a
+    // sword inside a highlighted character is the sword's.
+    const auto highlightOf = [&](core::InstanceId id) -> core::u8 {
+        if (marked.empty())
+            return 0;
+        for (core::InstanceId cursor = id; cursor.valid() && cursor != root; cursor = world.parentOf(cursor)) {
+            const auto at =
+                std::lower_bound(marked.begin(), marked.end(), cursor,
+                                 [&byId](const Marked& m, core::InstanceId v) { return byId(m.adornee, v); });
+            if (at != marked.end() && at->adornee == cursor)
+                return static_cast<core::u8>(at->slot + 1);
+        }
+        return 0;
+    };
+
     // Where a thing is at the fractional time this frame is being drawn at
     // (`draw_poses.h`, ADR 0134; `transform_history.h`, D047). Every transform
     // below goes through `poses`, so the whole frame -- camera, parts, meshes,
@@ -1111,6 +1169,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .firstBone = firstBone,
                 .boneCount = boneCount,
                 .outlined = isOutlined(id),
+                .highlight = highlightOf(id),
                 .terrain = false,
                 .voxelBlock = false,
             });
@@ -1703,6 +1762,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
             .inCameraFrustum = visible,
             .outlined = isOutlined(id),
+            .highlight = highlightOf(id),
             .terrain = false,
             .voxelBlock = false,
         });
@@ -1806,6 +1866,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
                 .inCameraFrustum = visible,
                 .outlined = isOutlined(id),
+                .highlight = highlightOf(id),
                 .terrain = false,
                 .voxelBlock = false,
             });
@@ -1823,6 +1884,42 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     // changed is what moves. A `DrawItem` is over a hundred bytes and a merge
     // sort moves each one about log2(n) times; a pair is sixteen, and each item
     // is then copied exactly once, into the buffer the previous frame left.
+    // **The highlights that are drawn** (ADR 0129): the ones something on
+    // screen carries, the nearest first, and no more than the budget. A draw
+    // of one that was left out is not marked at all.
+    if (!everyHighlight.empty()) {
+        struct Seen
+        {
+            f32 nearest = std::numeric_limits<f32>::max();
+            u32 slot = 0;
+        };
+        std::vector<Seen> seen(everyHighlight.size());
+        for (usize slot = 0; slot < seen.size(); ++slot)
+            seen[slot].slot = static_cast<u32>(slot);
+        for (const DrawItem& draw : out.draws) {
+            if (draw.highlight == 0 || !draw.inCameraFrustum)
+                continue;
+            Seen& entry = seen[draw.highlight - 1u];
+            entry.nearest = std::min(entry.nearest, core::length(draw.boundsCenter));
+        }
+        std::erase_if(seen, [](const Seen& entry) { return entry.nearest == std::numeric_limits<f32>::max(); });
+        std::stable_sort(seen.begin(), seen.end(), [](const Seen& a, const Seen& b) { return a.nearest < b.nearest; });
+        const usize budget = std::min<usize>(out.maxHighlights, 255);
+        if (seen.size() > budget) {
+            out.highlightsDropped += static_cast<u32>(seen.size() - budget);
+            seen.resize(budget);
+        }
+        std::vector<core::u8> place(everyHighlight.size(), 0);
+        for (usize index = 0; index < seen.size(); ++index) {
+            place[seen[index].slot] = static_cast<core::u8>(index + 1);
+            out.highlights.push_back(everyHighlight[seen[index].slot]);
+        }
+        for (DrawItem& draw : out.draws) {
+            if (draw.highlight != 0)
+                draw.highlight = place[draw.highlight - 1u];
+        }
+    }
+
     out.sortScratch.resize(out.draws.size());
     for (usize index = 0; index < out.draws.size(); ++index)
         out.sortScratch[index] = RenderWorld::SortEntry{out.draws[index].sortKey, static_cast<u32>(index)};

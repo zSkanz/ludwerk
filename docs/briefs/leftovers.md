@@ -67,6 +67,11 @@ clean-up).
 
 ## Network
 
+- [ ] **`Highlight`, `Beam` and `Trail` travel.** ADR 0129 has them replicate
+  as instances; they are excluded, because a highlight names what it marks by
+  reference, a beam and a trail name two attachments, and the wire has no
+  reference field but `Parent`, no `Attachment`, and no sequence. (ADR 0129,
+  as built)
 - [ ] **Clients prepare a scene too, in a match**: today only the authority
   does, and a client's call is a keyed error. It needs a message on the wire.
   (`foundation-kickoff.md`)
@@ -83,6 +88,12 @@ clean-up).
 
 ## The repository
 
+- [ ] **Gamepads work** (D476, P1). The vendored SDL is built with
+  `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, as `third_party/
+  CMakeLists.txt` has said since M1 ("off until the milestone that needs
+  them"); M6 wrote the gamepad half of the Input Action System against a
+  library that reports none. A push of its own: three platforms, one of which
+  only CI builds.
 - [ ] **A clean-machine job in CI**: fresh clone, bootstrap, build,
   `ludwerk new`, run. The local gate does it (`tests/packaging`); no workflow
   does. (`m8-kickoff.md`)

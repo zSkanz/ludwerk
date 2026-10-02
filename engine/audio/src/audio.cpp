@@ -43,6 +43,15 @@
 #define MA_NO_ENGINE
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
+// The reverb miniaudio ships beside its node graph (`extras/nodes`): one
+// header, used here without the graph -- the mixer below is the engine's own.
+#define VERBLIB_IMPLEMENTATION
+#include <extras/nodes/ma_reverb_node/verblib.h>
+// miniaudio brings the platform's headers with it, and on Windows those define
+// `min` and `max` as macros: gone again here, so the standard's own can be
+// called by name below.
+#undef min
+#undef max
 
 namespace engine::audio {
 namespace {
@@ -244,6 +253,12 @@ struct Voice
     f64 cursor = 0.0;
     f64 cursorStep = 1.0;
     bool looped = false;
+
+    // The effects it goes through (ADR 0131), as places in `Impl::buses`:
+    // its own `Sound`'s, then its `AudioGroup`'s. Minus one for none, which is
+    // every voice in a world with no effect in it.
+    core::i32 bus = -1;
+    core::i32 groupBus = -1;
 };
 
 // A stable pitch per content id, so two different sounds are audibly different
@@ -351,6 +366,315 @@ struct Voice
 // What the editor is auditioning, if anything. See `AudioSystem::audition`: it
 // is deliberately not a `Voice` and deliberately not a `Sound`, because the one
 // thing it has that neither of those may have is a cursor the wall clock drives.
+// --- Sound effects (ADR 0131) -----------------------------------------------------
+//
+// **The engine's own processors, in the engine's own mixer.** ADR 0131 names
+// miniaudio's node graph; this mixer has never been that graph (it is compiled
+// out, `MA_NO_NODE_GRAPH`) -- voices are mixed here, by hand, on a timeline
+// the simulation owns -- so an effect is a function over a block of this
+// mixer's samples. The filters are the textbook biquads miniaudio's own are,
+// the reverb is the one miniaudio vendors, and the rest are a few lines each.
+//
+// **State is per effect and outlives a frame**: a filter's memory, a delay's
+// line, a compressor's envelope. `update` hands each effect the state it had
+// (by its instance), so changing a number never clicks, and nothing here
+// allocates on the audio thread.
+
+constexpr core::usize kBlockFrames = 4096;
+constexpr f32 kTwoPi = 6.28318530717958f;
+
+// One second-order filter over both channels.
+struct Biquad
+{
+    f32 b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+    f32 z1[kChannels] = {};
+    f32 z2[kChannels] = {};
+
+    void process(f32* samples, core::usize frames) noexcept
+    {
+        for (core::usize frame = 0; frame < frames; ++frame) {
+            for (u32 channel = 0; channel < kChannels; ++channel) {
+                const f32 in = samples[frame * kChannels + channel];
+                const f32 out = b0 * in + z1[channel];
+                z1[channel] = b1 * in - a1 * out + z2[channel];
+                z2[channel] = b2 * in - a2 * out;
+                samples[frame * kChannels + channel] = out;
+            }
+        }
+    }
+
+    void set(f32 nb0, f32 nb1, f32 nb2, f32 a0, f32 na1, f32 na2) noexcept
+    {
+        const f32 inverse = 1.0f / a0;
+        b0 = nb0 * inverse;
+        b1 = nb1 * inverse;
+        b2 = nb2 * inverse;
+        a1 = na1 * inverse;
+        a2 = na2 * inverse;
+    }
+
+    // The cookbook's five, at this mixer's rate.
+    void lowPass(f32 hertz, f32 q) noexcept
+    {
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set((1.0f - c) * 0.5f, 1.0f - c, (1.0f - c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
+    }
+    void highPass(f32 hertz, f32 q) noexcept
+    {
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set((1.0f + c) * 0.5f, -(1.0f + c), (1.0f + c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
+    }
+    void lowShelf(f32 hertz, f32 decibels) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 c = std::cos(w);
+        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
+        set(a * ((a + 1.0f) - (a - 1.0f) * c + beta), 2.0f * a * ((a - 1.0f) - (a + 1.0f) * c),
+            a * ((a + 1.0f) - (a - 1.0f) * c - beta), (a + 1.0f) + (a - 1.0f) * c + beta,
+            -2.0f * ((a - 1.0f) + (a + 1.0f) * c), (a + 1.0f) + (a - 1.0f) * c - beta);
+    }
+    void highShelf(f32 hertz, f32 decibels) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 c = std::cos(w);
+        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
+        set(a * ((a + 1.0f) + (a - 1.0f) * c + beta), -2.0f * a * ((a - 1.0f) + (a + 1.0f) * c),
+            a * ((a + 1.0f) + (a - 1.0f) * c - beta), (a + 1.0f) - (a - 1.0f) * c + beta,
+            2.0f * ((a - 1.0f) - (a + 1.0f) * c), (a + 1.0f) - (a - 1.0f) * c - beta);
+    }
+    void peak(f32 hertz, f32 decibels, f32 q) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set(1.0f + alpha * a, -2.0f * c, 1.0f - alpha * a, 1.0f + alpha / a, -2.0f * c, 1.0f - alpha / a);
+    }
+};
+
+// What one effect remembers between blocks.
+struct EffectState
+{
+    Biquad filters[3];
+    // The numbers the filters were last made from, so they are made again
+    // only when one changes.
+    f32 made[5] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+    // A delay line, interleaved: an echo's two seconds, a chorus's and a
+    // pitch shift's tenth of one.
+    std::vector<f32> line;
+    core::usize head = 0;
+    // A chorus's sweep and a pitch shift's ramp.
+    f64 phase = 0.0;
+    // A compressor's reading of how loud things are.
+    f32 envelope = 0.0f;
+    std::unique_ptr<verblib> reverb;
+    std::vector<f32> scratch;
+};
+
+// One effect as the mixer holds it: what the world says of it, and its state.
+struct EffectNode
+{
+    core::InstanceId id;
+    scene::SoundEffectComponent settings;
+    std::shared_ptr<EffectState> state;
+};
+
+// The effects under one `Sound` or one `AudioGroup`, in the order they apply.
+struct Bus
+{
+    core::InstanceId owner;
+    bool group = false;
+    std::vector<EffectNode> effects;
+    // A group's voices, mixed together before its effects (`kBlockFrames`).
+    std::vector<f32> buffer;
+};
+
+[[nodiscard]] std::shared_ptr<EffectState> makeEffectState(core::i32 kind)
+{
+    auto state = std::make_shared<EffectState>();
+    const auto frames = [](f64 seconds) {
+        return static_cast<core::usize>(seconds * static_cast<f64>(kSampleRate)) * kChannels;
+    };
+    if (kind == 1) {
+        state->reverb = std::make_unique<verblib>();
+        (void)verblib_initialize(state->reverb.get(), kSampleRate, kChannels);
+        state->scratch.assign(kBlockFrames * kChannels, 0.0f);
+    }
+    else if (kind == 2) {
+        state->line.assign(frames(2.0), 0.0f);
+    }
+    else if (kind == 8 || kind == 9) {
+        state->line.assign(frames(0.1), 0.0f);
+    }
+    return state;
+}
+
+// A sample `delay` frames behind the head of an interleaved line, between the
+// two it falls between.
+[[nodiscard]] f32 tap(const std::vector<f32>& line, core::usize head, f32 delay, u32 channel) noexcept
+{
+    const core::usize frames = line.size() / kChannels;
+    const f32 clamped = std::clamp(delay, 1.0f, static_cast<f32>(frames - 2));
+    const auto whole = static_cast<core::usize>(clamped);
+    const f32 part = clamped - static_cast<f32>(whole);
+    const core::usize at = (head / kChannels + frames - whole) % frames;
+    const core::usize before = (at + frames - 1) % frames;
+    return line[at * kChannels + channel] * (1.0f - part) + line[before * kChannels + channel] * part;
+}
+
+// One effect over one block, in place.
+void runEffect(EffectNode& node, f32* samples, core::usize frames) noexcept
+{
+    const scene::SoundEffectComponent& p = node.settings;
+    EffectState& state = *node.state;
+    const auto rate = static_cast<f32>(kSampleRate);
+    switch (p.kind) {
+    case 1: { // Reverb
+        if (state.reverb == nullptr || frames > kBlockFrames)
+            return;
+        verblib_set_room_size(state.reverb.get(), p.roomSize);
+        verblib_set_damping(state.reverb.get(), p.damping);
+        verblib_set_wet(state.reverb.get(), p.wetLevel);
+        verblib_set_dry(state.reverb.get(), p.dryLevel);
+        verblib_set_width(state.reverb.get(), p.width);
+        verblib_process(state.reverb.get(), samples, state.scratch.data(), static_cast<unsigned long>(frames));
+        std::memcpy(samples, state.scratch.data(), frames * kChannels * sizeof(f32));
+        return;
+    }
+    case 2: { // Echo
+        const core::usize size = state.line.size();
+        if (size == 0)
+            return;
+        const core::usize delay = static_cast<core::usize>(std::clamp(p.delay, 0.01f, 1.99f) * rate) * kChannels;
+        for (core::usize index = 0; index < frames * kChannels; ++index) {
+            const f32 echoed = state.line[(state.head + size - delay) % size];
+            const f32 in = samples[index];
+            state.line[state.head] = in + echoed * p.feedback;
+            state.head = (state.head + 1) % size;
+            samples[index] = in * p.dryLevel + echoed * p.wetLevel;
+        }
+        return;
+    }
+    case 3: { // Equalizer
+        const f32 low = std::min(p.midLow, p.midHigh);
+        const f32 high = std::max(p.midLow, p.midHigh);
+        if (state.made[0] != p.lowGain || state.made[1] != p.midGain || state.made[2] != p.highGain ||
+            state.made[3] != low || state.made[4] != high) {
+            state.filters[0].lowShelf(low, p.lowGain);
+            // The middle band, centred between its two edges and as wide as
+            // they are apart.
+            const f32 centre = std::sqrt(low * high);
+            state.filters[1].peak(centre, p.midGain, centre / std::max(high - low, 1.0f));
+            state.filters[2].highShelf(high, p.highGain);
+            state.made[0] = p.lowGain, state.made[1] = p.midGain, state.made[2] = p.highGain;
+            state.made[3] = low, state.made[4] = high;
+        }
+        for (Biquad& filter : state.filters)
+            filter.process(samples, frames);
+        return;
+    }
+    case 4:
+    case 5: { // LowPass, HighPass
+        if (state.made[0] != p.cutoff || state.made[1] != p.resonance) {
+            if (p.kind == 4)
+                state.filters[0].lowPass(p.cutoff, p.resonance);
+            else
+                state.filters[0].highPass(p.cutoff, p.resonance);
+            state.made[0] = p.cutoff, state.made[1] = p.resonance;
+        }
+        state.filters[0].process(samples, frames);
+        return;
+    }
+    case 6: { // Distortion
+        // Pushed into a curve that flattens: the harder, the squarer.
+        const f32 drive = 1.0f + std::clamp(p.level, 0.0f, 1.0f) * 24.0f;
+        const f32 scale = 1.0f / std::tanh(drive);
+        for (core::usize index = 0; index < frames * kChannels; ++index)
+            samples[index] = std::tanh(samples[index] * drive) * scale * (1.0f - 0.5f * p.level);
+        return;
+    }
+    case 7: { // Compressor
+        const f32 attack = std::exp(-1.0f / (std::max(p.attack, 0.0005f) * rate));
+        const f32 release = std::exp(-1.0f / (std::max(p.release, 0.005f) * rate));
+        const f32 makeup = std::pow(10.0f, p.makeupGain / 20.0f);
+        const f32 slope = 1.0f - 1.0f / std::max(p.ratio, 1.0f);
+        for (core::usize frame = 0; frame < frames; ++frame) {
+            f32* at = samples + frame * kChannels;
+            const f32 loud = std::max(std::fabs(at[0]), std::fabs(at[1]));
+            const f32 follow = loud > state.envelope ? attack : release;
+            state.envelope = follow * state.envelope + (1.0f - follow) * loud;
+            const f32 level = 20.0f * std::log10(state.envelope + 1.0e-9f);
+            const f32 over = level - p.threshold;
+            const f32 gain = (over > 0.0f ? std::pow(10.0f, -over * slope / 20.0f) : 1.0f) * makeup;
+            at[0] *= gain;
+            at[1] *= gain;
+        }
+        return;
+    }
+    case 8: { // Chorus
+        const core::usize size = state.line.size();
+        if (size == 0)
+            return;
+        const f64 step = static_cast<f64>(kTwoPi * p.rate / rate);
+        for (core::usize frame = 0; frame < frames; ++frame) {
+            f32* at = samples + frame * kChannels;
+            state.line[state.head] = at[0];
+            state.line[state.head + 1] = at[1];
+            // Fifteen milliseconds behind, and up to ten more as it sweeps;
+            // the right a quarter of a sweep after the left, which is what
+            // makes one voice sound like a room of them.
+            for (u32 channel = 0; channel < kChannels; ++channel) {
+                const auto sweep =
+                    static_cast<f32>(0.5 + 0.5 * std::sin(state.phase + (channel == 1 ? 1.5707963 : 0.0)));
+                const f32 delay = (0.015f + 0.010f * p.depth * sweep) * rate;
+                const f32 copy = tap(state.line, state.head, delay, channel);
+                at[channel] = at[channel] * (1.0f - p.mix) + copy * p.mix;
+            }
+            state.head = (state.head + kChannels) % size;
+            state.phase += step;
+            if (state.phase > 6.283185307179586)
+                state.phase -= 6.283185307179586;
+        }
+        return;
+    }
+    case 9: { // PitchShift
+        const core::usize size = state.line.size();
+        if (size == 0)
+            return;
+        // Two readers slide along a short loop of the sound at a speed that
+        // is not the speed it was written at -- which is what a different
+        // pitch is -- and each fades out as it reaches the loop's end while
+        // the other, half a loop behind, fades in.
+        const f32 window = 0.05f * rate;
+        const f64 slide = static_cast<f64>((1.0f - std::clamp(p.octave, 0.5f, 2.0f)) / window);
+        for (core::usize frame = 0; frame < frames; ++frame) {
+            f32* at = samples + frame * kChannels;
+            state.line[state.head] = at[0];
+            state.line[state.head + 1] = at[1];
+            const auto first = static_cast<f32>(state.phase);
+            const f32 second = first + 0.5f - std::floor(first + 0.5f);
+            const f32 fade = 1.0f - std::fabs(2.0f * first - 1.0f);
+            for (u32 channel = 0; channel < kChannels; ++channel) {
+                at[channel] = tap(state.line, state.head, 1.0f + first * window, channel) * fade +
+                              tap(state.line, state.head, 1.0f + second * window, channel) * (1.0f - fade);
+            }
+            state.head = (state.head + kChannels) % size;
+            state.phase += slide;
+            state.phase -= std::floor(state.phase);
+        }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
 struct Audition
 {
     const Clip* clip = nullptr;
@@ -372,6 +696,11 @@ struct AudioSystem::Impl
     std::mutex mutex;
     std::vector<Voice> voices;
     Audition audition;
+    // The effects (ADR 0131), published with the voices and under the same
+    // lock; and the block a voice with effects is mixed into before them.
+    std::vector<Bus> buses;
+    std::vector<f32> voiceScratch = std::vector<f32>(kBlockFrames * kChannels, 0.0f);
+    void mixBlock(float* samples, ma_uint32 frameCount) noexcept;
 
     std::atomic<u64> underruns{0};
     std::atomic<u64> dropped{0};
@@ -500,38 +829,98 @@ void AudioSystem::Impl::mix(float* samples, ma_uint32 frameCount) noexcept
 {
     activeVoices.store(static_cast<u32>(voices.size()), std::memory_order_relaxed);
 
+    // **A block at a time** (ADR 0131): an effect works over a buffer of a
+    // known size, so a device that asks for more than one block is answered
+    // in several. A world with no effect in it mixes exactly as it did.
+    for (ma_uint32 done = 0; done < frameCount;) {
+        const ma_uint32 count = std::min<ma_uint32>(frameCount - done, static_cast<ma_uint32>(kBlockFrames));
+        mixBlock(samples + static_cast<core::usize>(done) * kChannels, count);
+        done += count;
+    }
+
+    // Soft-clipped rather than left to wrap: a mix past full scale is a game
+    // balance problem, and clipping it is what a mixer does. Wrapping is
+    // what a bug does.
+    const core::usize total = static_cast<core::usize>(frameCount) * kChannels;
+    for (core::usize index = 0; index < total; ++index)
+        samples[index] = std::clamp(samples[index], -1.0f, 1.0f);
+}
+
+void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
+{
+    const core::usize floats = static_cast<core::usize>(frameCount) * kChannels;
+    for (Bus& bus : buses) {
+        if (bus.group)
+            std::memset(bus.buffer.data(), 0, floats * sizeof(float));
+    }
+
     for (Voice& voice : voices) {
         if (voice.amplitude <= 0.0f)
             continue;
+
+        // Straight into the output, or -- a voice with effects of its own or
+        // of its group's -- into a block of its own first.
+        const bool own = voice.bus >= 0 && static_cast<core::usize>(voice.bus) < buses.size();
+        const bool grouped = voice.groupBus >= 0 && static_cast<core::usize>(voice.groupBus) < buses.size();
+        float* target = samples;
+        if (own) {
+            std::memset(voiceScratch.data(), 0, floats * sizeof(float));
+            target = voiceScratch.data();
+        }
+        else if (grouped) {
+            target = buses[static_cast<core::usize>(voice.groupBus)].buffer.data();
+        }
 
         if (voice.clip != nullptr) {
             if (voice.clip->streamed) {
                 // A streamed clip whose decoder could not open is silent:
                 // its length is real and the tone would be a lie about it.
                 if (voice.stream != nullptr)
-                    (void)mixStream(samples, frameCount, *voice.clip, *voice.stream, voice.cursor, voice.cursorStep,
+                    (void)mixStream(target, frameCount, *voice.clip, *voice.stream, voice.cursor, voice.cursorStep,
                                     voice.amplitude * voice.panLeft, voice.amplitude * voice.panRight, voice.positional,
                                     voice.looped);
-                continue;
             }
-            (void)mixClip(samples, frameCount, *voice.clip, voice.cursor, voice.cursorStep,
-                          voice.amplitude * voice.panLeft, voice.amplitude * voice.panRight, voice.positional,
-                          voice.looped);
-            continue;
+            else {
+                (void)mixClip(target, frameCount, *voice.clip, voice.cursor, voice.cursorStep,
+                              voice.amplitude * voice.panLeft, voice.amplitude * voice.panRight, voice.positional,
+                              voice.looped);
+            }
+        }
+        else {
+            for (ma_uint32 frame = 0; frame < frameCount; ++frame) {
+                // The widening is written out: `voice.phase` is f64 and the
+                // amplitude f32, and `-Wdouble-promotion` is an error on
+                // `engine/` so that a narrow value entering a wide computation
+                // is a decision rather than an accident.
+                const auto value = static_cast<float>(std::sin(voice.phase) * static_cast<double>(voice.amplitude));
+                target[frame * kChannels] += value;
+                target[frame * kChannels + 1] += value;
+                voice.phase += voice.phaseStep;
+                if (voice.phase > 6.283185307179586)
+                    voice.phase -= 6.283185307179586;
+            }
         }
 
-        for (ma_uint32 frame = 0; frame < frameCount; ++frame) {
-            // The widening is written out: `voice.phase` is f64 and the
-            // amplitude f32, and `-Wdouble-promotion` is an error on
-            // `engine/` so that a narrow value entering a wide computation
-            // is a decision rather than an accident.
-            const auto value = static_cast<float>(std::sin(voice.phase) * static_cast<double>(voice.amplitude));
-            samples[frame * kChannels] += value;
-            samples[frame * kChannels + 1] += value;
-            voice.phase += voice.phaseStep;
-            if (voice.phase > 6.283185307179586)
-                voice.phase -= 6.283185307179586;
+        if (own) {
+            // Its own effects, then on to its group's block or to the output.
+            for (EffectNode& effect : buses[static_cast<core::usize>(voice.bus)].effects)
+                runEffect(effect, voiceScratch.data(), frameCount);
+            float* onward = grouped ? buses[static_cast<core::usize>(voice.groupBus)].buffer.data() : samples;
+            for (core::usize index = 0; index < floats; ++index)
+                onward[index] += voiceScratch[index];
         }
+    }
+
+    // **A group's effects run every block, voices or none**: an echo or a
+    // room goes on after the sound that fed it has stopped, which is the
+    // reason to put one on a group.
+    for (Bus& bus : buses) {
+        if (!bus.group)
+            continue;
+        for (EffectNode& effect : bus.effects)
+            runEffect(effect, bus.buffer.data(), frameCount);
+        for (core::usize index = 0; index < floats; ++index)
+            samples[index] += bus.buffer[index];
     }
 
     // **The audition is mixed whatever the world is doing**, including while
@@ -554,13 +943,6 @@ void AudioSystem::Impl::mix(float* samples, ma_uint32 frameCount) noexcept
             audition.active = mixClip(samples, frameCount, *audition.clip, audition.cursor, audition.cursorStep,
                                       audition.amplitude, audition.amplitude, false, false);
     }
-
-    // Soft-clipped rather than left to wrap: a mix past full scale is a game
-    // balance problem, and clipping it is what a mixer does. Wrapping is
-    // what a bug does.
-    const core::usize total = static_cast<core::usize>(frameCount) * kChannels;
-    for (core::usize index = 0; index < total; ++index)
-        samples[index] = std::clamp(samples[index], -1.0f, 1.0f);
 }
 
 AudioSystem::~AudioSystem()
@@ -721,6 +1103,58 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
     std::vector<Voice> next;
     next.reserve(kMaxVoices);
 
+    // **The effects of the frame** (ADR 0131): each enabled one under a
+    // `Sound` or an `AudioGroup`, gathered by parent and put in the order of
+    // its `Priority` -- and, between equals, of when it was made. Each keeps
+    // the state it had last frame, found by its instance; a new one is given
+    // its own here, where allocating is allowed.
+    std::vector<Bus> nextBuses;
+    if (!m_suspended && world.soundEffects().size() > 0) {
+        world.soundEffects().forEach([&](core::InstanceId id, const scene::SoundEffectComponent& effect) {
+            if (!effect.enabled || effect.kind == 0 || world.destroyed(id))
+                return;
+            const core::InstanceId owner = world.parentOf(id);
+            const bool onGroup = world.audioGroups().find(owner) != nullptr;
+            if (!onGroup && world.sounds().find(owner) == nullptr)
+                return;
+            auto bus = std::find_if(nextBuses.begin(), nextBuses.end(),
+                                    [owner](const Bus& candidate) { return candidate.owner == owner; });
+            if (bus == nextBuses.end()) {
+                nextBuses.push_back(Bus{});
+                bus = nextBuses.end() - 1;
+                bus->owner = owner;
+                bus->group = onGroup;
+                if (onGroup)
+                    bus->buffer.assign(kBlockFrames * kChannels, 0.0f);
+            }
+            EffectNode node;
+            node.id = id;
+            node.settings = effect;
+            for (const Bus& old : m_impl->buses) {
+                for (const EffectNode& had : old.effects) {
+                    if (had.id == id && had.settings.kind == effect.kind)
+                        node.state = had.state;
+                }
+            }
+            if (node.state == nullptr)
+                node.state = makeEffectState(effect.kind);
+            bus->effects.push_back(std::move(node));
+        });
+        for (Bus& bus : nextBuses) {
+            std::stable_sort(bus.effects.begin(), bus.effects.end(), [](const EffectNode& a, const EffectNode& b) {
+                return a.settings.priority != b.settings.priority ? a.settings.priority < b.settings.priority
+                                                                  : a.id.index < b.id.index;
+            });
+        }
+    }
+    const auto busOf = [&nextBuses](core::InstanceId owner) -> core::i32 {
+        for (core::usize index = 0; index < nextBuses.size(); ++index) {
+            if (nextBuses[index].owner == owner)
+                return static_cast<core::i32>(index);
+        }
+        return -1;
+    };
+
     world.sounds().forEach([&](core::InstanceId id, const scene::SoundComponent& sound) {
         // Every sound with content, playing or not, and before any early return
         // below -- which is the whole point. A sound authored in a scene is
@@ -779,6 +1213,10 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
 
         Voice voice;
         voice.id = id;
+        if (!nextBuses.empty()) {
+            voice.bus = busOf(id);
+            voice.groupBus = sound.group.valid() ? busOf(sound.group) : -1;
+        }
         voice.amplitude = std::fmin(gain, 4.0f);
         voice.positional = positional;
         voice.panLeft = panLeft;
@@ -864,6 +1302,7 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
             }
         }
         m_impl->voices.swap(next);
+        m_impl->buses.swap(nextBuses);
     }
 }
 

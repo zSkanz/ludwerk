@@ -113,11 +113,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F4 — Highlight, Beam, Trail (ADR 0129)
 
-- [ ] `Highlight` (mask, outline, fill; `DepthMode`; budget).
-- [ ] `Beam` and `Trail` as ribbons in the transparent pass.
-- [ ] Reference screenshots for each; F3 counts.
-- [ ] Tests: an occluded highlight with `AlwaysOnTop` shows; a trail's length
-  follows `Lifetime`; nothing enters the trace.
+- [x] `Highlight` (mask, outline, fill; `DepthMode`; budget).
+- [x] `Beam` and `Trail` as ribbons in the transparent pass.
+- [x] Reference screenshots for each; F3 counts. As probes rather than
+  checked-in pictures: `effects_gate` renders `tests/screenshots/effects` on a
+  real device and asks what colour each place is.
+- [x] Tests: an occluded highlight with `AlwaysOnTop` shows (`effects_gate`);
+  a trail's length follows `Lifetime` (`ribbons_tests.cpp`); nothing enters
+  the trace (every property is presentation, and no determinism trace moved).
 
 ## Stage F5 — solids and shapes (ADR 0130)
 
@@ -134,11 +137,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F6 — sound effects and vibration (ADR 0131 §1-2)
 
-- [ ] The nine effect classes on miniaudio's graph (its delay, filter and shelf
-  nodes, the vendored reverb node, and the engine's own four).
-- [ ] `HapticService` over SDL3 and the Android vibrator; stop on focus loss.
-- [ ] Tests: an effect changes the rendered samples (an offline render compared
-  against a reference); vibration calls reach SDL (a fake device).
+- [x] The nine effect classes -- in the engine's own mixer rather than on
+  miniaudio's graph, which the mixer has never been (ADR 0131, as built): the
+  vendored reverb, and the engine's own filters and five others.
+- [x] `HapticService` over SDL3; stop on focus loss. The service, its rules
+  and its tests are in.
+- [ ] **On hardware** (D476): the vendored SDL is built with joystick, haptic
+  and HID off, so no gamepad works and nothing vibrates. Turn them on, as a
+  push of its own; then the Android vibrator on a phone.
+- [x] Tests: an effect changes the rendered samples (an offline render compared
+  against the dry one and against what the effect is for); vibration calls
+  reach the device (a fake standing where SDL does).
 
 ## Stage F7 — text chat (ADR 0132)
 

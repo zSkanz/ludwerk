@@ -241,6 +241,7 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("render.max_views_per_frame", 0, 64, config.maxViewsPerFrame);
     count("render.max_view_resolution", 16, 4096, config.maxViewResolution);
     count("render.max_sub_worlds", 0, 8, config.maxSubWorlds);
+    count("render.max_highlights", 0, 255, config.maxHighlights);
     count("save.max_slots", 1, 4096, config.saveMaxSlots);
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
     count("script.max_memory_mb", 16, 65536, config.scriptMemoryMb);

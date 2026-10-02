@@ -514,6 +514,7 @@ struct NameIndex
     X(ScriptComponent, scripts)                                                                                        \
     X(SoundComponent, sounds)                                                                                          \
     X(AudioGroupComponent, audioGroups)                                                                                \
+    X(SoundEffectComponent, soundEffects)                                                                              \
     X(ScreenGuiComponent, screenGuis)                                                                                  \
     X(BillboardGuiComponent, billboardGuis)                                                                            \
     X(SurfaceGuiComponent, surfaceGuis)                                                                                \
@@ -535,6 +536,9 @@ struct NameIndex
     X(PointLightComponent, pointLights)                                                                                \
     X(ParticleEmitterComponent, particleEmitters)                                                                      \
     X(DecalComponent, decals)                                                                                          \
+    X(HighlightComponent, highlights)                                                                                  \
+    X(BeamComponent, beams)                                                                                            \
+    X(TrailComponent, trails)                                                                                          \
     X(CameraTextureComponent, cameraTextures)                                                                          \
     X(SubWorldComponent, subWorlds)                                                                                    \
     X(ViewportFrameComponent, viewportFrames)                                                                          \
@@ -1265,6 +1269,14 @@ public:
     {
         return m_spriteAnimators;
     }
+    [[nodiscard]] ComponentPool<HighlightComponent>& highlights() noexcept { return m_highlights; }
+    [[nodiscard]] const ComponentPool<HighlightComponent>& highlights() const noexcept { return m_highlights; }
+    [[nodiscard]] ComponentPool<BeamComponent>& beams() noexcept { return m_beams; }
+    [[nodiscard]] const ComponentPool<BeamComponent>& beams() const noexcept { return m_beams; }
+    [[nodiscard]] ComponentPool<TrailComponent>& trails() noexcept { return m_trails; }
+    [[nodiscard]] const ComponentPool<TrailComponent>& trails() const noexcept { return m_trails; }
+    [[nodiscard]] ComponentPool<SoundEffectComponent>& soundEffects() noexcept { return m_soundEffects; }
+    [[nodiscard]] const ComponentPool<SoundEffectComponent>& soundEffects() const noexcept { return m_soundEffects; }
     [[nodiscard]] ComponentPool<ParticleEmitterComponent>& particleEmitters() noexcept { return m_particleEmitters; }
     [[nodiscard]] const ComponentPool<ParticleEmitterComponent>& particleEmitters() const noexcept
     {

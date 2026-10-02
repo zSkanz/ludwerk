@@ -178,6 +178,8 @@ struct EngineOptions
     // largest side one may have.
     core::u32 maxViewsPerFrame = 4;
     core::u32 maxViewResolution = 1024;
+    // `[render] max_highlights` (ADR 0129).
+    core::u32 maxHighlights = 32;
     // `[render] max_sub_worlds` (ADR 0107 §3).
     core::u32 maxSubWorlds = 2;
     // `[render] foliage_density` and `foliage_shadow_distance` (ADR 0116).

@@ -895,6 +895,9 @@ Every other concrete class is deliberately off the wire, and this is why.
 |---|---|
 | FoliageLayer | Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the terrain, the layer and its seed, so every machine grows the same field from the scene it already has, and the wire carries none of it. |
 | FoliageMesh | Part of a `FoliageLayer`, and excluded for its reason. |
+| Highlight | A mark on the picture (ADR 0129). ADR 0129 has it travel as an instance and each machine draw its own; it does not yet, because what it marks is named by reference and the wire's fields carry no reference but a parent. A box in the network's ledger. |
+| Beam | Drawn between two attachments (ADR 0129), and `Attachment` is not on the wire, nor is a sequence of colours a width the wire has. Excluded until both are; a box in the network's ledger. |
+| Trail | Excluded for `Beam`'s reasons. |
 | Terrain | Its bulk is not a property and a field is megabytes. A world's ground arrives with the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, authored, and not a per-tick fact. ADR 0069 decides this by name so the next person does not have to work out whether it was considered. |
 | Player | Lives under `NetworkService`, which is not replicated, and each end makes its own: an authority one per peer, a replica one for itself and one for each player the `Players` roster names. What a replica knows of a player -- their number, their character and their team -- is the roster, not a snapshot of the instance. |
 | DataModel | The root. Every world has exactly one and it is created at boot on both sides, so there is nothing to spawn and nothing to reference by id. |
@@ -924,6 +927,15 @@ Every other concrete class is deliberately off the wire, and this is why.
 | ModuleScript | The same as `Script`. |
 | Sound | Playback position is local and drifts by design. What replicates is the world event that starts a sound, not the sound. |
 | AudioGroup | A mixer bus. What a player hears at what volume is theirs. |
+| ReverbSoundEffect | What the speakers do with a sound is each machine's, as the `Sound` and the `AudioGroup` it sits under are. |
+| EchoSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| EqualizerSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| LowPassSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| HighPassSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| DistortionSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| CompressorSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| ChorusSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
+| PitchShiftSoundEffect | Excluded for `ReverbSoundEffect`'s reason. |
 | PointLight | Lighting is drawn from world state a replica already has. A light that moved because its parent moved needs no message of its own. |
 | SpotLight | The same as `PointLight`. |
 | PostEffect | Abstract. Its five classes are replicated by name. |

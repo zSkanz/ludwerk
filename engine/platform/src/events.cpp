@@ -1,3 +1,5 @@
+#include <SDL3/SDL_haptic.h>
+#include <SDL3/SDL_init.h>
 #include <algorithm>
 #include <cstring>
 #include <span>
@@ -381,6 +383,112 @@ constexpr KeyNaming KeyNames[] = {
 // handful of pads, and a linear scan over four entries beats a hash of one.
 std::vector<SDL_Gamepad*> g_gamepads;
 
+// --- Vibration (ADR 0131) ---------------------------------------------------------
+
+// The hardware: every open gamepad, and the first haptic device SDL names --
+// which on a phone is the phone.
+class SdlVibration final : public VibrationSink
+{
+public:
+    [[nodiscard]] bool gamepad() const override
+    {
+        for (SDL_Gamepad* pad : g_gamepads) {
+            if (SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false))
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool triggers() const override
+    {
+        for (SDL_Gamepad* pad : g_gamepads) {
+            if (SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad), SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN,
+                                       false))
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool device() const override { return const_cast<SdlVibration*>(this)->open() != nullptr; }
+
+    void rumble(f32 heavy, f32 light) override
+    {
+        for (SDL_Gamepad* pad : g_gamepads)
+            (void)SDL_RumbleGamepad(pad, level(heavy), level(light), kLifeMs);
+    }
+
+    void rumbleTriggers(f32 left, f32 right) override
+    {
+        for (SDL_Gamepad* pad : g_gamepads)
+            (void)SDL_RumbleGamepadTriggers(pad, level(left), level(right), kLifeMs);
+    }
+
+    void vibrate(f32 strength, f32 seconds) override
+    {
+        if (SDL_Haptic* haptic = open(); haptic != nullptr)
+            (void)SDL_PlayHapticRumble(haptic, strength, static_cast<Uint32>(seconds * 1000.0f));
+    }
+
+    void stop() override
+    {
+        for (SDL_Gamepad* pad : g_gamepads) {
+            (void)SDL_RumbleGamepad(pad, 0, 0, 0);
+            (void)SDL_RumbleGamepadTriggers(pad, 0, 0, 0);
+        }
+        if (m_haptic != nullptr)
+            (void)SDL_StopHapticRumble(m_haptic);
+    }
+
+private:
+    // How long one send lasts. Re-sent every frame, so this is how long a game
+    // that has stopped pumping goes on shaking.
+    static constexpr Uint32 kLifeMs = 500;
+
+    [[nodiscard]] static Uint16 level(f32 value) noexcept
+    {
+        return static_cast<Uint16>(std::clamp(value, 0.0f, 1.0f) * 65535.0f);
+    }
+
+    // The device's own vibrator, opened the first time it is asked for: a
+    // desktop has none, and never pays for the subsystem.
+    [[nodiscard]] SDL_Haptic* open()
+    {
+        if (m_tried)
+            return m_haptic;
+        m_tried = true;
+        if (!SDL_InitSubSystem(SDL_INIT_HAPTIC))
+            return nullptr;
+        int count = 0;
+        SDL_HapticID* ids = SDL_GetHaptics(&count);
+        if (ids != nullptr && count > 0) {
+            m_haptic = SDL_OpenHaptic(ids[0]);
+            if (m_haptic != nullptr && !SDL_InitHapticRumble(m_haptic)) {
+                SDL_CloseHaptic(m_haptic);
+                m_haptic = nullptr;
+            }
+        }
+        SDL_free(ids);
+        return m_haptic;
+    }
+
+    SDL_Haptic* m_haptic = nullptr;
+    bool m_tried = false;
+};
+
+struct VibrationState
+{
+    SdlVibration hardware;
+    VibrationSink* sink = nullptr;
+    f32 motors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bool focused = true;
+    // Whether the last pump sent anything, so going quiet says so once.
+    bool running = false;
+
+    [[nodiscard]] VibrationSink& out() noexcept { return sink != nullptr ? *sink : hardware; }
+};
+
+VibrationState g_vibration;
+
 [[nodiscard]] MouseButton translateMouseButton(Uint8 button) noexcept
 {
     switch (button) {
@@ -593,6 +701,8 @@ void translate(const SDL_Event& raw, std::vector<Event>& out)
     }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST: {
+        // Nobody holds the pad of a game they are not playing (ADR 0131).
+        setVibrationFocus(raw.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
         Event event;
         event.type =
             raw.type == SDL_EVENT_WINDOW_FOCUS_GAINED ? EventType::WindowFocusGained : EventType::WindowFocusLost;
@@ -814,6 +924,88 @@ GamepadAxis gamepadAxisFromName(std::string_view name) noexcept
     return GamepadAxis::Unknown;
 }
 
+void setVibrationSink(VibrationSink* sink) noexcept
+{
+    g_vibration.sink = sink;
+}
+
+bool vibrationSupported(bool gamepad) noexcept
+{
+    return gamepad ? g_vibration.out().gamepad() : g_vibration.out().device();
+}
+
+bool vibrationMotorSupported(bool gamepad, VibrationMotor motor) noexcept
+{
+    // A phone has one vibrator and no named motors: it has `vibrateDevice`.
+    if (!gamepad)
+        return false;
+    switch (motor) {
+    case VibrationMotor::Large:
+    case VibrationMotor::Small:
+        return g_vibration.out().gamepad();
+    case VibrationMotor::LeftTrigger:
+    case VibrationMotor::RightTrigger:
+        return g_vibration.out().triggers();
+    case VibrationMotor::LeftHand:
+    case VibrationMotor::RightHand:
+        return false;
+    }
+    return false;
+}
+
+void setVibrationMotor(VibrationMotor motor, f32 value) noexcept
+{
+    const auto index = static_cast<std::size_t>(motor);
+    if (index >= std::size(g_vibration.motors))
+        return;
+    g_vibration.motors[index] = value == value ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+}
+
+void vibrateDevice(f32 strength, f32 seconds) noexcept
+{
+    if (!g_vibration.focused || !(strength > 0.0f) || !(seconds > 0.0f))
+        return;
+    g_vibration.out().vibrate(std::clamp(strength, 0.0f, 1.0f), std::clamp(seconds, 0.0f, 5.0f));
+}
+
+void setVibrationFocus(bool focused) noexcept
+{
+    if (g_vibration.focused == focused)
+        return;
+    g_vibration.focused = focused;
+    // Still at once, not when the last send runs out.
+    if (!focused) {
+        g_vibration.out().stop();
+        g_vibration.running = false;
+    }
+}
+
+void pumpVibration() noexcept
+{
+    const f32* motors = g_vibration.motors;
+    const bool any = motors[0] > 0.0f || motors[1] > 0.0f || motors[2] > 0.0f || motors[3] > 0.0f;
+    if (!g_vibration.focused || !any) {
+        // Told to stop once, when it goes quiet -- not every frame after.
+        if (g_vibration.running) {
+            g_vibration.out().stop();
+            g_vibration.running = false;
+        }
+        return;
+    }
+    g_vibration.out().rumble(motors[0], motors[1]);
+    if (motors[2] > 0.0f || motors[3] > 0.0f)
+        g_vibration.out().rumbleTriggers(motors[2], motors[3]);
+    g_vibration.running = true;
+}
+
+void stopVibration() noexcept
+{
+    for (f32& motor : g_vibration.motors)
+        motor = 0.0f;
+    g_vibration.out().stop();
+    g_vibration.running = false;
+}
+
 void setTextInputEnabled(u32 windowId, bool enabled, const TextInputOptions& options) noexcept
 {
     SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(windowId));
@@ -894,6 +1086,8 @@ std::span<const Event> pumpEvents()
     g_rawEvents.clear();
     g_events.clear();
     g_droppedFiles.clear();
+    // The motors' levels, sent on for another half second (ADR 0131).
+    pumpVibration();
 
     SDL_Event raw;
     while (SDL_PollEvent(&raw)) {

@@ -153,6 +153,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`Highlight`, `Beam` and `Trail`** (ADR 0129): an outline and a tint over a
+  part or a model, through walls or not, in the colours it is given; a band
+  between two attachments, straight or curved, with a texture that can run;
+  and the ribbon two attachments leave behind. Pictures, drawn on the frame.
+  `[render] max_highlights` is the budget, 32 by default.
+- **Nine sound effects** (ADR 0131): `ReverbSoundEffect`, `EchoSoundEffect`,
+  `EqualizerSoundEffect`, `LowPassSoundEffect`, `HighPassSoundEffect`,
+  `DistortionSoundEffect`, `CompressorSoundEffect`, `ChorusSoundEffect` and
+  `PitchShiftSoundEffect`, under a `Sound` or an `AudioGroup`, in the order of
+  their `Priority`.
+- **`HapticService`** (ADR 0131): `SetMotor`, `Vibrate`, `IsVibrationSupported`,
+  `IsMotorSupported`, and `Enum.VibrationMotor`. Not on hardware yet (D476).
 - **A material is what a thing is made of** (ADR 0117): `Friction`,
   `Restitution`, `FootstepSound` and `Tags` on a material. A part collides
   with what it wears and a terrain with what each piece of ground is drawn as;
@@ -868,6 +880,13 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A project's content is compiled once** (D474): the import cache's key was
+  different in every run, so every start compiled every mesh and picture
+  again. A project with six sky pictures started in ten seconds, and starts
+  in a tenth of one.
+- **A part is in every query from the moment it is in the world** (D475):
+  `Raycast`, `Spherecast`, `GetBodiesInBox` and `GetBodiesInSphere` right
+  after `Parent = workspace` find it.
 - **A servo settles** (D470): a hinge's and a ball socket's servo is a
   critically damped spring at its responsiveness, in radians a second, whatever
   the arm it turns -- it swung round its target for seconds. Far from the

@@ -525,6 +525,64 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Callback },
     },
     {
+        Name = "HapticService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration.\n\n"
+            .. "**A level, not a pulse.** `SetMotor` leaves a motor running at what it was told until it is "
+            .. "told something else -- zero stops it -- so an engine that rumbles while it runs is one call "
+            .. "when it starts and one when it stops. `Vibrate` is the other shape: a phone shakes for a "
+            .. "moment and stops by itself.\n\n"
+            .. "**It stops when nobody is there to feel it**: every motor is still while the game's window "
+            .. "is not the one in front, picks up where it was when it is again, and stops for good when "
+            .. "the game closes. Nothing here is the simulation's: a dedicated server and a headless run "
+            .. "have no hands, answer false to every question, and ignore every call.",
+        Methods = {
+            {
+                Name = "IsVibrationSupported",
+                Parameters = { { Name = "inputType", Type = "Enum.UserInputType" } },
+                Returns = { "boolean" },
+                Doc = "Whether that kind of device can vibrate at all, on this machine now: "
+                    .. "`Enum.UserInputType.Gamepad` for a connected gamepad with motors, "
+                    .. "`Enum.UserInputType.Touch` for the device itself -- a phone. False for anything else.",
+            },
+            {
+                Name = "IsMotorSupported",
+                Parameters = {
+                    { Name = "inputType", Type = "Enum.UserInputType" },
+                    { Name = "motor", Type = "Enum.VibrationMotor" },
+                },
+                Returns = { "boolean" },
+                Doc = "Whether that one motor is there. Most gamepads have `Large` and `Small`; fewer have "
+                    .. "motors in their triggers; a phone has none of these -- it has `Vibrate`.",
+            },
+            {
+                Name = "SetMotor",
+                Parameters = {
+                    { Name = "inputType", Type = "Enum.UserInputType" },
+                    { Name = "motor", Type = "Enum.VibrationMotor" },
+                    { Name = "value", Type = "number" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Runs one motor of every connected gamepad at `value`, 0 (still) to 1 (full), until it "
+                    .. "is set again. A motor that is not there is ignored, so a game need not ask first.",
+            },
+            {
+                Name = "Vibrate",
+                Parameters = {
+                    { Name = "strength", Type = "number" },
+                    { Name = "seconds", Type = "number" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Shakes the device itself -- a phone -- at `strength`, 0 to 1, for `seconds`, up to "
+                    .. "five. A machine with no vibrator of its own ignores it.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "CryptoService",
         Extends = "Instance",
         Module = "scene",

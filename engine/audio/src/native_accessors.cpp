@@ -264,6 +264,526 @@ bool setAudioServiceMasterVolume(scene::World& world, core::InstanceId, const Va
     return takeAtLeastZero(value, world.engineState().masterVolume);
 }
 
+// --- Sound effects (ADR 0131) ---------------------------------------------------
+//
+// Nine classes over one component. Every number has a range its page says,
+// and a value outside it is refused: a filter told to cut at a million hertz
+// or a compressor at a ratio of nothing is a sound that goes wrong with
+// nothing saying why.
+
+namespace {
+
+[[nodiscard]] bool takeWithin(const Value& value, f32 low, f32 high, f32& out)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < static_cast<f64>(low) || *number > static_cast<f64>(high))
+        return false;
+    out = static_cast<f32>(*number);
+    return true;
+}
+
+} // namespace
+
+Value getSoundEffectEnabled(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{effect->enabled};
+}
+
+bool setSoundEffectEnabled(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    if (next == nullptr || effect == nullptr)
+        return false;
+    effect->enabled = *next;
+    return true;
+}
+
+Value getSoundEffectPriority(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->priority)};
+}
+
+bool setSoundEffectPriority(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, -1.0e6f, 1.0e6f, effect->priority);
+}
+
+void attachReverbSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 1;
+    effect.roomSize = 0.5f;
+    effect.damping = 0.5f;
+    effect.wetLevel = 0.3f;
+    effect.dryLevel = 1.0f;
+    effect.width = 1.0f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachReverbSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getReverbSoundEffectRoomSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->roomSize)};
+}
+
+bool setReverbSoundEffectRoomSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->roomSize);
+}
+
+Value getReverbSoundEffectDamping(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->damping)};
+}
+
+bool setReverbSoundEffectDamping(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->damping);
+}
+
+Value getReverbSoundEffectWetLevel(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->wetLevel)};
+}
+
+bool setReverbSoundEffectWetLevel(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->wetLevel);
+}
+
+Value getReverbSoundEffectDryLevel(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->dryLevel)};
+}
+
+bool setReverbSoundEffectDryLevel(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->dryLevel);
+}
+
+Value getReverbSoundEffectWidth(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->width)};
+}
+
+bool setReverbSoundEffectWidth(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->width);
+}
+
+void attachEchoSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 2;
+    effect.delay = 0.3f;
+    effect.feedback = 0.4f;
+    effect.wetLevel = 0.5f;
+    effect.dryLevel = 1.0f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachEchoSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getEchoSoundEffectDelay(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->delay)};
+}
+
+bool setEchoSoundEffectDelay(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.01f, 2.0f, effect->delay);
+}
+
+Value getEchoSoundEffectFeedback(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->feedback)};
+}
+
+bool setEchoSoundEffectFeedback(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 0.95f, effect->feedback);
+}
+
+Value getEchoSoundEffectWetLevel(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->wetLevel)};
+}
+
+bool setEchoSoundEffectWetLevel(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->wetLevel);
+}
+
+Value getEchoSoundEffectDryLevel(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->dryLevel)};
+}
+
+bool setEchoSoundEffectDryLevel(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->dryLevel);
+}
+
+void attachEqualizerSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 3;
+    effect.lowGain = 0.0f;
+    effect.midGain = 0.0f;
+    effect.highGain = 0.0f;
+    effect.midLow = 400.0f;
+    effect.midHigh = 4000.0f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachEqualizerSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getEqualizerSoundEffectLowGain(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->lowGain)};
+}
+
+bool setEqualizerSoundEffectLowGain(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, -80.0f, 12.0f, effect->lowGain);
+}
+
+Value getEqualizerSoundEffectMidGain(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->midGain)};
+}
+
+bool setEqualizerSoundEffectMidGain(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, -80.0f, 12.0f, effect->midGain);
+}
+
+Value getEqualizerSoundEffectHighGain(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->highGain)};
+}
+
+bool setEqualizerSoundEffectHighGain(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, -80.0f, 12.0f, effect->highGain);
+}
+
+Value getEqualizerSoundEffectMidLow(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->midLow)};
+}
+
+bool setEqualizerSoundEffectMidLow(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 20.0f, 20000.0f, effect->midLow);
+}
+
+Value getEqualizerSoundEffectMidHigh(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->midHigh)};
+}
+
+bool setEqualizerSoundEffectMidHigh(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 20.0f, 20000.0f, effect->midHigh);
+}
+
+void attachLowPassSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 4;
+    effect.cutoff = 2000.0f;
+    effect.resonance = 0.707f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachLowPassSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getLowPassSoundEffectCutoff(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->cutoff)};
+}
+
+bool setLowPassSoundEffectCutoff(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 20.0f, 20000.0f, effect->cutoff);
+}
+
+Value getLowPassSoundEffectResonance(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->resonance)};
+}
+
+bool setLowPassSoundEffectResonance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.1f, 10.0f, effect->resonance);
+}
+
+void attachHighPassSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 5;
+    effect.cutoff = 500.0f;
+    effect.resonance = 0.707f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachHighPassSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getHighPassSoundEffectCutoff(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->cutoff)};
+}
+
+bool setHighPassSoundEffectCutoff(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 20.0f, 20000.0f, effect->cutoff);
+}
+
+Value getHighPassSoundEffectResonance(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->resonance)};
+}
+
+bool setHighPassSoundEffectResonance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.1f, 10.0f, effect->resonance);
+}
+
+void attachDistortionSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 6;
+    effect.level = 0.5f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachDistortionSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getDistortionSoundEffectLevel(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->level)};
+}
+
+bool setDistortionSoundEffectLevel(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->level);
+}
+
+void attachCompressorSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 7;
+    effect.threshold = -20.0f;
+    effect.ratio = 4.0f;
+    effect.attack = 0.01f;
+    effect.release = 0.1f;
+    effect.makeupGain = 0.0f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachCompressorSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getCompressorSoundEffectThreshold(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->threshold)};
+}
+
+bool setCompressorSoundEffectThreshold(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, -60.0f, 0.0f, effect->threshold);
+}
+
+Value getCompressorSoundEffectRatio(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->ratio)};
+}
+
+bool setCompressorSoundEffectRatio(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 1.0f, 20.0f, effect->ratio);
+}
+
+Value getCompressorSoundEffectAttack(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->attack)};
+}
+
+bool setCompressorSoundEffectAttack(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.001f, 1.0f, effect->attack);
+}
+
+Value getCompressorSoundEffectRelease(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->release)};
+}
+
+bool setCompressorSoundEffectRelease(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.01f, 2.0f, effect->release);
+}
+
+Value getCompressorSoundEffectMakeupGain(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->makeupGain)};
+}
+
+bool setCompressorSoundEffectMakeupGain(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 24.0f, effect->makeupGain);
+}
+
+void attachChorusSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 8;
+    effect.rate = 0.5f;
+    effect.depth = 0.5f;
+    effect.mix = 0.5f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachChorusSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getChorusSoundEffectRate(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->rate)};
+}
+
+bool setChorusSoundEffectRate(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.01f, 10.0f, effect->rate);
+}
+
+Value getChorusSoundEffectDepth(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->depth)};
+}
+
+bool setChorusSoundEffectDepth(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->depth);
+}
+
+Value getChorusSoundEffectMix(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->mix)};
+}
+
+bool setChorusSoundEffectMix(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.0f, 1.0f, effect->mix);
+}
+
+void attachPitchShiftSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    scene::SoundEffectComponent effect;
+    effect.kind = 9;
+    effect.octave = 1.25f;
+    world.soundEffects().add(id, effect);
+}
+
+void detachPitchShiftSoundEffectComponents(scene::World& world, core::InstanceId id)
+{
+    world.soundEffects().remove(id);
+}
+
+Value getPitchShiftSoundEffectOctave(const scene::World& world, core::InstanceId id)
+{
+    const scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect == nullptr ? Value{} : Value{static_cast<f64>(effect->octave)};
+}
+
+bool setPitchShiftSoundEffectOctave(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SoundEffectComponent* effect = world.soundEffects().find(id);
+    return effect != nullptr && takeWithin(value, 0.5f, 2.0f, effect->octave);
+}
+
 } // namespace native
 
 void registerSceneTypes(scene::ClassRegistry& classes, core::AtomTable& atoms)

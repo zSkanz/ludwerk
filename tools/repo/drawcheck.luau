@@ -33,6 +33,7 @@ local process = require("@std/process")
 local Visual = {
     "engine/render/src/render_world.cpp",
     "engine/render/src/particles.cpp",
+    "engine/render/src/ribbons.cpp",
     "engine/render/src/draw_poses.cpp",
     "engine/app/src/world_ui.cpp",
     "engine/app/src/view_host.cpp",

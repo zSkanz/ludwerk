@@ -95,6 +95,7 @@ local Sections: { Section } = {
             { Slug = "shadows", Title = "Shadows" },
             { Slug = "lights", Title = "Point and spot lights" },
             { Slug = "particles-and-decals", Title = "Particles and decals" },
+            { Slug = "effects", Title = "Highlights, beams and trails" },
             { Slug = "post", Title = "Post effects" },
             { Slug = "surface-shaders", Title = "Surface shaders" },
             { Slug = "views", Title = "Views: cameras on screens" },
@@ -124,6 +125,7 @@ local Sections: { Section } = {
             { Slug = "rebinding", Title = "Rebinding and prompts" },
             { Slug = "interactions", Title = "Clicks and proximity prompts" },
             { Slug = "raw", Title = "Raw input, and when to use it" },
+            { Slug = "vibration", Title = "Vibration" },
         },
     },
     {

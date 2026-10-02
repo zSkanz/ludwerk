@@ -939,3 +939,180 @@ TEST_CASE("text input switches on and off for a window, which is what raises a p
     engine::platform::setTextInputEnabled(id, false);
     CHECK_FALSE(engine::platform::textInputEnabled(id));
 }
+
+// --- Vibration (ADR 0131 section 2) ---------------------------------------------
+//
+// What is asked of a motor reaches the device, and stops reaching it when the
+// window is not in front. The device here is a fake standing where SDL does:
+// it records what arrived.
+
+namespace {
+
+struct FakeVibration final : engine::platform::VibrationSink
+{
+    bool hasGamepad = true;
+    bool hasTriggers = false;
+    bool hasDevice = false;
+    int rumbles = 0;
+    int triggerRumbles = 0;
+    int stops = 0;
+    float heavy = 0.0f;
+    float light = 0.0f;
+    float left = 0.0f;
+    float right = 0.0f;
+    float strength = 0.0f;
+    float seconds = 0.0f;
+
+    [[nodiscard]] bool gamepad() const override { return hasGamepad; }
+    [[nodiscard]] bool triggers() const override { return hasTriggers; }
+    [[nodiscard]] bool device() const override { return hasDevice; }
+    void rumble(float l, float s) override
+    {
+        ++rumbles;
+        heavy = l;
+        light = s;
+    }
+    void rumbleTriggers(float l, float r) override
+    {
+        ++triggerRumbles;
+        left = l;
+        right = r;
+    }
+    void vibrate(float s, float t) override
+    {
+        strength = s;
+        seconds = t;
+    }
+    void stop() override { ++stops; }
+};
+
+// Puts the fake in for a case and the hardware back after it, with every
+// level at zero and the window in front -- whatever the case before left.
+struct VibrationRig
+{
+    FakeVibration fake;
+
+    VibrationRig()
+    {
+        engine::platform::setVibrationSink(&fake);
+        engine::platform::setVibrationFocus(true);
+        engine::platform::stopVibration();
+        fake.stops = 0;
+    }
+
+    ~VibrationRig()
+    {
+        engine::platform::stopVibration();
+        engine::platform::setVibrationFocus(true);
+        engine::platform::setVibrationSink(nullptr);
+    }
+};
+
+} // namespace
+
+TEST_CASE("a motor's level reaches the device every frame until it is set to nothing")
+{
+    using namespace engine::platform;
+    VibrationRig rig;
+
+    // Nothing asked: nothing sent.
+    pumpVibration();
+    CHECK(rig.fake.rumbles == 0);
+    CHECK(rig.fake.stops == 0);
+
+    setVibrationMotor(VibrationMotor::Large, 0.75f);
+    setVibrationMotor(VibrationMotor::Small, 0.25f);
+    pumpVibration();
+    pumpVibration();
+    CHECK(rig.fake.rumbles == 2);
+    CHECK(static_cast<double>(rig.fake.heavy) == doctest::Approx(0.75));
+    CHECK(static_cast<double>(rig.fake.light) == doctest::Approx(0.25));
+    // No trigger was asked for, so none was driven.
+    CHECK(rig.fake.triggerRumbles == 0);
+
+    setVibrationMotor(VibrationMotor::RightTrigger, 1.0f);
+    pumpVibration();
+    CHECK(rig.fake.triggerRumbles == 1);
+    CHECK(static_cast<double>(rig.fake.right) == doctest::Approx(1.0));
+
+    // Back to nothing: told to stop once, not once a frame.
+    setVibrationMotor(VibrationMotor::Large, 0.0f);
+    setVibrationMotor(VibrationMotor::Small, 0.0f);
+    setVibrationMotor(VibrationMotor::RightTrigger, 0.0f);
+    pumpVibration();
+    pumpVibration();
+    CHECK(rig.fake.rumbles == 3);
+    CHECK(rig.fake.stops == 1);
+}
+
+TEST_CASE("a level outside nought to one is held inside it, and a hand motor is nobody's")
+{
+    using namespace engine::platform;
+    VibrationRig rig;
+    setVibrationMotor(VibrationMotor::Large, 7.0f);
+    setVibrationMotor(VibrationMotor::Small, -3.0f);
+    setVibrationMotor(VibrationMotor::LeftHand, 1.0f);
+    pumpVibration();
+    CHECK(static_cast<double>(rig.fake.heavy) == doctest::Approx(1.0));
+    CHECK(static_cast<double>(rig.fake.light) == doctest::Approx(0.0));
+
+    CHECK(vibrationMotorSupported(true, VibrationMotor::Large));
+    CHECK_FALSE(vibrationMotorSupported(true, VibrationMotor::LeftTrigger));
+    CHECK_FALSE(vibrationMotorSupported(true, VibrationMotor::LeftHand));
+    rig.fake.hasTriggers = true;
+    CHECK(vibrationMotorSupported(true, VibrationMotor::LeftTrigger));
+    // A phone has no motors by name.
+    CHECK_FALSE(vibrationMotorSupported(false, VibrationMotor::Large));
+    CHECK(vibrationSupported(true));
+    CHECK_FALSE(vibrationSupported(false));
+    rig.fake.hasDevice = true;
+    CHECK(vibrationSupported(false));
+}
+
+TEST_CASE("everything is still while the window is not in front, and returns with it")
+{
+    using namespace engine::platform;
+    VibrationRig rig;
+    setVibrationMotor(VibrationMotor::Large, 0.5f);
+    pumpVibration();
+    REQUIRE(rig.fake.rumbles == 1);
+
+    // Focus lost: stopped at once, and nothing sent while it is away.
+    setVibrationFocus(false);
+    CHECK(rig.fake.stops == 1);
+    pumpVibration();
+    pumpVibration();
+    CHECK(rig.fake.rumbles == 1);
+    CHECK(rig.fake.stops == 1);
+    // Nor does the device shake for a game nobody is looking at.
+    vibrateDevice(1.0f, 1.0f);
+    CHECK(rig.fake.seconds == 0.0f);
+
+    // And back: the level was kept.
+    setVibrationFocus(true);
+    pumpVibration();
+    CHECK(rig.fake.rumbles == 2);
+    CHECK(static_cast<double>(rig.fake.heavy) == doctest::Approx(0.5));
+}
+
+TEST_CASE("the device itself shakes for as long as it is told, up to five seconds, and closing a game stills all")
+{
+    using namespace engine::platform;
+    VibrationRig rig;
+    vibrateDevice(0.5f, 0.25f);
+    CHECK(static_cast<double>(rig.fake.strength) == doctest::Approx(0.5));
+    CHECK(static_cast<double>(rig.fake.seconds) == doctest::Approx(0.25));
+    vibrateDevice(2.0f, 60.0f);
+    CHECK(static_cast<double>(rig.fake.strength) == doctest::Approx(1.0));
+    CHECK(static_cast<double>(rig.fake.seconds) == doctest::Approx(5.0));
+
+    setVibrationMotor(VibrationMotor::Small, 1.0f);
+    pumpVibration();
+    stopVibration();
+    const int stopped = rig.fake.stops;
+    CHECK(stopped >= 1);
+    // The levels went with it: the next frame sends nothing.
+    const int before = rig.fake.rumbles;
+    pumpVibration();
+    CHECK(rig.fake.rumbles == before);
+}

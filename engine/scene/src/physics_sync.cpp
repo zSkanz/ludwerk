@@ -1865,6 +1865,31 @@ void PhysicsSync::applyScene()
     applyNoCollisions();
 }
 
+void PhysicsSync::syncForQuery()
+{
+    if (!m_workspace.valid())
+        return;
+    const u64 written = m_scene.mutations();
+    if (written == m_querySynced)
+        return;
+    m_querySynced = written;
+
+    // The memo `applyScene` clears, for its reason.
+    m_lastParent = core::InstanceId{};
+    m_lastParentInWorld = false;
+    // In the pool's own order, as the tick makes them: the bodies come to be
+    // in the order they would have, only sooner.
+    m_scene.rigidBodies().forEach([&](core::InstanceId id, RigidBodyComponent& body) {
+        // Already a body, or already refused one: the tick's.
+        if (id.index < m_bodies.size() && m_bodies[id.index].generation == id.generation)
+            return;
+        PartComponent* part = m_scene.parts().find(id);
+        if (part == nullptr || m_scene.destroyed(id) || !inWorld(id) || m_scene.characterBodies().find(id) != nullptr)
+            return;
+        applyBody(id, *part, body);
+    });
+}
+
 bool PhysicsSync::isDriven(core::InstanceId id) const
 {
     return marked(m_drivenMarks, id);

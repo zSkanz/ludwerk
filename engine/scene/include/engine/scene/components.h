@@ -623,6 +623,69 @@ struct DecalComponent
     f32 transparency = 0.0f;
 };
 
+// --- ADR 0129: Highlight, Beam and Trail ----------------------------------------
+//
+// **Pictures, not the world.** Each is how something is DRAWN -- a mark over
+// a shape, a band between two points, the ribbon two points leave -- so what
+// is here is only what a script can set: the renderer reads it on the frame
+// and keeps whatever it needs to draw it (a trail's pieces) on its own side.
+// None of it is in the world hash, and none of it is simulated.
+struct HighlightComponent
+{
+    core::InstanceId adornee;
+    core::Color3 fillColor{1.0f, 0.2f, 0.2f};
+    f32 fillTransparency = 0.5f;
+    core::Color3 outlineColor{1.0f, 1.0f, 1.0f};
+    f32 outlineTransparency = 0.0f;
+    i32 depthMode = 0;
+    bool enabled = true;
+};
+
+struct BeamComponent
+{
+    core::InstanceId attachment0;
+    core::InstanceId attachment1;
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    f32 width0 = 1.0f;
+    f32 width1 = 1.0f;
+    f32 curveSize0 = 0.0f;
+    f32 curveSize1 = 0.0f;
+    i32 segments = 10;
+    core::NameAtom texture;
+    f32 textureLength = 1.0f;
+    i32 textureMode = 0;
+    f32 textureSpeed = 0.0f;
+    bool faceCamera = true;
+    f32 lightEmission = 0.0f;
+    f32 lightInfluence = 1.0f;
+    f32 zOffset = 0.0f;
+    bool enabled = true;
+};
+
+struct TrailComponent
+{
+    core::InstanceId attachment0;
+    core::InstanceId attachment1;
+    f32 lifetime = 2.0f;
+    f32 minLength = 0.1f;
+    f32 maxLength = 0.0f;
+    core::ColorSequence color;
+    core::NumberSequence transparency;
+    // The whole distance between the ends, for a piece's whole life.
+    core::NumberSequence widthScale{{core::NumberKeypoint{0.0f, 1.0f, 0.0f}, core::NumberKeypoint{1.0f, 1.0f, 0.0f}}};
+    core::NameAtom texture;
+    f32 textureLength = 1.0f;
+    i32 textureMode = 0;
+    bool faceCamera = false;
+    f32 lightEmission = 0.0f;
+    f32 lightInfluence = 1.0f;
+    bool enabled = true;
+    // How many times `Clear` was called: a running total the renderer compares
+    // with the one it last saw, so dropping a trail writes nothing back.
+    u32 cleared = 0;
+};
+
 // `ViewportFrame` (ADR 0107): a UI element drawing the instances inside it,
 // by its own light. Its rectangle is the `UIObjectComponent` every element has.
 struct ViewportFrameComponent
@@ -1871,6 +1934,43 @@ struct UIStrokeComponent
 struct AudioGroupComponent
 {
     f32 volume = 1.0f;
+};
+
+// A sound effect (ADR 0131): which of the nine it is, whether it is on, where
+// it stands among its parent's, and its numbers -- one struct for all of them,
+// as the movers share one, because which fields a class reads is its class.
+// Read by the mixer on the frame and by nothing in the simulation.
+struct SoundEffectComponent
+{
+    // 1 Reverb, 2 Echo, 3 Equalizer, 4 LowPass, 5 HighPass, 6 Distortion,
+    // 7 Compressor, 8 Chorus, 9 PitchShift. Set when the class is made.
+    i32 kind = 0;
+    bool enabled = true;
+    f32 priority = 0.0f;
+    f32 roomSize = 0.5f;
+    f32 damping = 0.5f;
+    f32 wetLevel = 0.3f;
+    f32 dryLevel = 1.0f;
+    f32 width = 1.0f;
+    f32 delay = 0.3f;
+    f32 feedback = 0.4f;
+    f32 lowGain = 0.0f;
+    f32 midGain = 0.0f;
+    f32 highGain = 0.0f;
+    f32 midLow = 400.0f;
+    f32 midHigh = 4000.0f;
+    f32 cutoff = 2000.0f;
+    f32 resonance = 0.707f;
+    f32 level = 0.5f;
+    f32 threshold = -20.0f;
+    f32 ratio = 4.0f;
+    f32 attack = 0.01f;
+    f32 release = 0.1f;
+    f32 makeupGain = 0.0f;
+    f32 rate = 0.5f;
+    f32 depth = 0.5f;
+    f32 mix = 0.5f;
+    f32 octave = 1.25f;
 };
 
 // `Sound`. The timeline is the SIMULATION's (M6 brief, Decision 9): every field

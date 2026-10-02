@@ -925,6 +925,7 @@ int main(int argc, char** argv)
         options.defaultServer = config.networkServer;
         options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
+        options.maxHighlights = config.maxHighlights;
         options.foliageDensity = config.foliageDensity;
         options.foliageShadowDistance = config.foliageShadowDistance;
         options.maxViewResolution = config.maxViewResolution;

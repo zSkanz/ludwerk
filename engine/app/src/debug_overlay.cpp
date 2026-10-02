@@ -633,6 +633,26 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
         endSectionGrid();
     }
 
+    // **Effects** (ADR 0129, ADR 0072): what a frame draws that is not a
+    // surface. The highlights left out are the ones past the project's
+    // `[render] max_highlights`, which is the number to raise or the scene to
+    // thin.
+    if ((counters.highlights > 0 || counters.highlightsDropped > 0 || counters.beams > 0 || counters.trails > 0 ||
+         counters.particles > 0) &&
+        propertiesSection(core::tr(ENG_TR("engine.editor.stats.effects"))) && beginSectionGrid("effects")) {
+        statRow(core::tr(ENG_TR("engine.editor.stats.highlights")), "%s",
+                core::tr(ENG_TR("engine.editor.stats.value.highlights"),
+                         {{"drawn", static_cast<core::i64>(counters.highlights)},
+                          {"dropped", static_cast<core::i64>(counters.highlightsDropped)}})
+                    .c_str());
+        statRow(core::tr(ENG_TR("engine.editor.stats.beams")), "%s", formatCount(counters.beams).c_str());
+        statRow(core::tr(ENG_TR("engine.editor.stats.trails")), "%s", formatCount(counters.trails).c_str());
+        statRow(core::tr(ENG_TR("engine.editor.stats.ribbon_pieces")), "%s",
+                formatCount(counters.ribbonPieces).c_str());
+        statRow(core::tr(ENG_TR("engine.editor.stats.particles")), "%s", formatCount(counters.particles).c_str());
+        endSectionGrid();
+    }
+
     // **Every view, with what it costs** (ADR 0107): a camera texture is the
     // world drawn again, and a wall of them is where a frame's time goes.
     if (g_views != nullptr && !g_views->views().empty() &&

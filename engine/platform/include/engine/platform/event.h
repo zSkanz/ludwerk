@@ -368,6 +368,64 @@ struct Event
 [[nodiscard]] std::string_view gamepadAxisName(GamepadAxis axis) noexcept;
 [[nodiscard]] GamepadAxis gamepadAxisFromName(std::string_view name) noexcept;
 
+// --- Vibration (ADR 0131 section 2) ---------------------------------------------
+//
+// A gamepad's motors and a phone's own vibrator. **A motor is a level**: it
+// runs at what it was last told until it is told otherwise, and it is still
+// while the window is not in front -- nobody is holding the pad of a game they
+// are not playing. `pumpVibration` re-sends the levels each frame with a short
+// life, so a game that stops pumping -- closed, crashed, frozen -- stops
+// shaking within half a second by itself.
+
+enum class VibrationMotor : u8
+{
+    Large,
+    Small,
+    LeftTrigger,
+    RightTrigger,
+    // Two controllers, one a hand: nothing this layer drives has them yet.
+    LeftHand,
+    RightHand,
+};
+
+// Where the calls end up. The hardware's is the default; a test puts its own
+// here and reads what arrived.
+class VibrationSink
+{
+public:
+    virtual ~VibrationSink() = default;
+    // Whether a gamepad with motors is connected, whether one has motors in
+    // its triggers, and whether the device itself can vibrate.
+    [[nodiscard]] virtual bool gamepad() const = 0;
+    [[nodiscard]] virtual bool triggers() const = 0;
+    [[nodiscard]] virtual bool device() const = 0;
+    // Every gamepad's two body motors, and its two trigger motors, 0 to 1,
+    // for the next half second.
+    virtual void rumble(f32 heavy, f32 light) = 0;
+    virtual void rumbleTriggers(f32 left, f32 right) = 0;
+    // The device itself, for `seconds`.
+    virtual void vibrate(f32 strength, f32 seconds) = 0;
+    // Everything still, now.
+    virtual void stop() = 0;
+};
+
+// Null puts the hardware back.
+void setVibrationSink(VibrationSink* sink) noexcept;
+
+[[nodiscard]] bool vibrationSupported(bool gamepad) noexcept;
+[[nodiscard]] bool vibrationMotorSupported(bool gamepad, VibrationMotor motor) noexcept;
+// A gamepad motor's level, 0 to 1, until it is set again.
+void setVibrationMotor(VibrationMotor motor, f32 value) noexcept;
+// The device itself: `strength` 0 to 1 for `seconds`, at most five.
+void vibrateDevice(f32 strength, f32 seconds) noexcept;
+// Whether the game's window is the one in front. Losing it stills everything;
+// the levels are kept and return with it.
+void setVibrationFocus(bool focused) noexcept;
+// Once a frame: sends the levels on, while focused.
+void pumpVibration() noexcept;
+// Every level to zero and everything still: what closing a game does.
+void stopVibration() noexcept;
+
 // Whether the platform layer delivers `TextInput` events for this window.
 //
 // Off by default, and that is SDL's rule rather than ours: a game that never

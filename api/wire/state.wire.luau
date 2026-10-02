@@ -1890,6 +1890,22 @@ local Excluded: { Schema.Excluded } = {
         Reason = "Part of a `FoliageLayer`, and excluded for its reason.",
     },
     {
+        Name = "Highlight",
+        Reason = "A mark on the picture (ADR 0129). ADR 0129 has it travel as an instance and each machine "
+            .. "draw its own; it does not yet, because what it marks is named by reference and the wire's "
+            .. "fields carry no reference but a parent. A box in the network's ledger.",
+    },
+    {
+        Name = "Beam",
+        Reason = "Drawn between two attachments (ADR 0129), and `Attachment` is not on the wire, nor is a "
+            .. "sequence of colours a width the wire has. Excluded until both are; a box in the network's "
+            .. "ledger.",
+    },
+    {
+        Name = "Trail",
+        Reason = "Excluded for `Beam`'s reasons.",
+    },
+    {
         Name = "Terrain",
         Reason = "Its bulk is not a property and a field is megabytes. A world's ground arrives with "
             .. "the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, "
@@ -2043,6 +2059,42 @@ local Excluded: { Schema.Excluded } = {
     {
         Name = "AudioGroup",
         Reason = "A mixer bus. What a player hears at what volume is theirs.",
+    },
+    {
+        Name = "ReverbSoundEffect",
+        Reason = "What the speakers do with a sound is each machine's, as the `Sound` and the `AudioGroup` it sits under are.",
+    },
+    {
+        Name = "EchoSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "EqualizerSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "LowPassSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "HighPassSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "DistortionSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "CompressorSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "ChorusSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
+    },
+    {
+        Name = "PitchShiftSoundEffect",
+        Reason = "Excluded for `ReverbSoundEffect`'s reason.",
     },
     {
         Name = "PointLight",

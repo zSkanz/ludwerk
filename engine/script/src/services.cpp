@@ -908,6 +908,7 @@ int workspaceRaycast(lua_State* L)
         return 1;
     }
 
+    sync->syncForQuery();
     std::vector<u64> storage;
     physics::QueryFilter filter = buildFilter(L, 4, storage);
 
@@ -1159,6 +1160,7 @@ int workspaceSpherecast(lua_State* L)
         return 1;
     }
 
+    sync->syncForQuery();
     std::vector<u64> storage;
     physics::QueryFilter filter = buildFilter(L, 5, storage);
 
@@ -1200,6 +1202,7 @@ int workspaceGetBodiesInBox(lua_State* L)
     const physics::QueryFilter filter = buildFilter(L, 4, storage);
 
     std::vector<u64> hits;
+    sync->syncForQuery();
     sync->backend().overlapBox(sync->worldHandle(), frame, size, filter, hits);
 
     // Built after the query rather than during it, because a hit that names an
@@ -1236,6 +1239,7 @@ int workspaceGetBodiesInSphere(lua_State* L)
     const physics::QueryFilter filter = buildFilter(L, 4, storage);
 
     std::vector<u64> hits;
+    sync->syncForQuery();
     sync->backend().overlapSphere(sync->worldHandle(), core::toDVec3(center), static_cast<f32>(radius), filter, hits);
 
     lua_createtable(L, static_cast<int>(hits.size()), 0);
@@ -1306,6 +1310,17 @@ int particleEmitterEmit(lua_State* L)
     // loop calling it every tick cannot bury the frame.
     const auto count = static_cast<core::u64>(std::clamp(std::floor(requested), 0.0, 1000.0));
     emitter->emitted += count;
+    return 0;
+}
+
+// `Trail:Clear()` (ADR 0129): a running total the renderer compares with the
+// one it last saw, as a burst is -- the ribbon is the renderer's, and nothing
+// is written back to say it went.
+int trailClear(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    if (scene::TrailComponent* trail = world(L).trails().find(self); trail != nullptr)
+        ++trail->cleared;
     return 0;
 }
 
@@ -1738,6 +1753,76 @@ int inputServiceIsKeyDown(lua_State* L)
     const input::InputSystem* devices = services(L).input;
     lua_pushboolean(L, devices != nullptr && devices->isKeyDown(item.value));
     return 1;
+}
+
+// --- HapticService (ADR 0131 section 2) ---------------------------------------
+//
+// Straight to the platform: what shakes is a fact about this machine's hands
+// and nothing the simulation holds. A run with no device answers false and
+// does nothing, which is what a server and a test are.
+
+// Whether an input type is one that can vibrate, and which: a gamepad, or the
+// device itself (touch). Anything else is neither.
+[[nodiscard]] bool hapticDevice(lua_State* L, int index, bool& gamepad)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::UserInputTypeEnumId)
+        luaL_argerror(L, index, "Enum.UserInputType");
+    const scene::EnumItemDesc* described = world(L).enums().findValue(item.enumId, item.value);
+    const std::string_view name = described != nullptr ? world(L).atoms().text(described->name) : std::string_view{};
+    gamepad = name == "Gamepad";
+    return gamepad || name == "Touch";
+}
+
+[[nodiscard]] platform::VibrationMotor checkVibrationMotor(lua_State* L, int index)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::VibrationMotorEnumId)
+        luaL_argerror(L, index, "Enum.VibrationMotor");
+    return static_cast<platform::VibrationMotor>(std::clamp(item.value, 0, 5));
+}
+
+int hapticServiceIsVibrationSupported(lua_State* L)
+{
+    bool gamepad = false;
+    lua_pushboolean(L, hapticDevice(L, 2, gamepad) && platform::vibrationSupported(gamepad));
+    return 1;
+}
+
+int hapticServiceIsMotorSupported(lua_State* L)
+{
+    bool gamepad = false;
+    const bool known = hapticDevice(L, 2, gamepad);
+    const platform::VibrationMotor motor = checkVibrationMotor(L, 3);
+    lua_pushboolean(L, known && platform::vibrationMotorSupported(gamepad, motor));
+    return 1;
+}
+
+int hapticServiceSetMotor(lua_State* L)
+{
+    bool gamepad = false;
+    const bool known = hapticDevice(L, 2, gamepad);
+    const platform::VibrationMotor motor = checkVibrationMotor(L, 3);
+    const double value = luaL_checknumber(L, 4);
+    if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+        luaL_argerror(L, 4, "a number from 0 to 1");
+    // Only a gamepad has motors by name; the rest is ignored, so a game need
+    // not ask what it is running on first.
+    if (known && gamepad)
+        platform::setVibrationMotor(motor, static_cast<f32>(value));
+    return 0;
+}
+
+int hapticServiceVibrate(lua_State* L)
+{
+    const double strength = luaL_checknumber(L, 2);
+    const double seconds = luaL_checknumber(L, 3);
+    if (!std::isfinite(strength) || strength < 0.0 || strength > 1.0)
+        luaL_argerror(L, 2, "a number from 0 to 1");
+    if (!std::isfinite(seconds) || seconds < 0.0 || seconds > 5.0)
+        luaL_argerror(L, 3, "a number of seconds from 0 to 5");
+    platform::vibrateDevice(static_cast<f32>(strength), static_cast<f32>(seconds));
+    return 0;
 }
 
 // --- Sound and AudioService (M6) ---------------------------------------------
@@ -2262,7 +2347,12 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"CryptoService", "VerifyPasswordAsync", cryptoServiceVerifyPasswordAsync},
     {"Player", "GetIntent", playerGetIntent},
     {"ParticleEmitter", "Emit", particleEmitterEmit},
+    {"Trail", "Clear", trailClear},
     {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},
+    {"HapticService", "IsVibrationSupported", hapticServiceIsVibrationSupported},
+    {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
+    {"HapticService", "SetMotor", hapticServiceSetMotor},
+    {"HapticService", "Vibrate", hapticServiceVibrate},
     {"InputService", "GetPointerPosition", inputServiceGetPointerPosition},
     {"InputService", "IsKeyDown", inputServiceIsKeyDown},
     {"InputService", "SetVirtualState", inputServiceSetVirtualState},

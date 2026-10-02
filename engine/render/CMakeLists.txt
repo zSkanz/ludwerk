@@ -35,6 +35,7 @@ engine_add_module(render
         src/terrain_loader.cpp
         src/foliage.cpp
         src/particles.cpp
+        src/ribbons.cpp
         src/voxel_loader.cpp
         src/water_loader.cpp
         src/scene_types.cpp
@@ -97,6 +98,7 @@ engine_add_module_tests(render
         tests/terrain_seam_tests.cpp
         tests/foliage_tests.cpp
         tests/particles_tests.cpp
+        tests/ribbons_tests.cpp
         tests/voxel_loader_tests.cpp
 )
 

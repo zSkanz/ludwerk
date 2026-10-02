@@ -415,6 +415,22 @@ private:
     // order instead of the rigid-body pool's.
     [[nodiscard]] physics::BodyHandle bodyHandleOf(core::InstanceId id) const;
 
+public:
+    // **A query sees the world a script has just written** (D475): every part
+    // that has come into the world since the simulation last looked is given
+    // its body now, so a ray cast in the line after `Parent = workspace` meets
+    // the part. Called before a query; costs one compare when nothing was
+    // written since the last call.
+    //
+    // **Only what is NEW.** A part that is already a body and was moved by
+    // its `CFrame` is the tick's to move: an anchored part is swept to where
+    // it was written, so what stands on it is carried, and putting it there
+    // early would turn that sweep into a jump.
+    void syncForQuery();
+
+private:
+    core::u64 m_querySynced = ~core::u64{0};
+
     void applyConstraint(core::InstanceId id, ConstraintComponent& constraint);
 
     // What one constraint looked like when it was last built, so a tick can tell

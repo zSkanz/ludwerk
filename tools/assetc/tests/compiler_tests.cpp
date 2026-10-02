@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
@@ -554,6 +555,23 @@ TEST_CASE("a second build of an unchanged tree compiles nothing")
     CHECK(second.stats.meshesCompiled == 0);
     CHECK(second.stats.texturesEncoded == 0);
     CHECK(second.stats.cacheHits == first.stats.cacheMisses);
+
+    // **And another process finds the same cache** (D474). The options are the
+    // same decisions wherever they happen to sit in memory: built here over
+    // bytes that were all ones, as a stack that held something else leaves
+    // them. The key hashed the struct byte for byte, the three bytes of
+    // padding after its `bool` included, so every run of the engine wrote the
+    // cache again and read none of it.
+    alignas(CompileOptions) unsigned char elsewhere[sizeof(CompileOptions)];
+    std::memset(elsewhere, 0xFF, sizeof(elsewhere));
+    CompileOptions* later = new (elsewhere) CompileOptions;
+    later->inputRoot = fixture.root;
+    later->cacheRoot = cache;
+    const CompileResult third = compile(*later);
+    later->~CompileOptions();
+    REQUIRE_MESSAGE(third.ok, third.diagnostic);
+    CHECK(third.stats.cacheMisses == 0);
+    CHECK(third.stats.cacheHits == first.stats.cacheMisses);
 
     // **And it produced the same build.** A cache that returned faster and
     // differently would be worse than no cache at all -- this is the property

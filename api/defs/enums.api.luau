@@ -1385,6 +1385,63 @@ local Definition: Schema.Definition = {
                 { Name = "TwoAttachment", Value = 1, Doc = "Its `Attachment1`." },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "VibrationMotor",
+            Doc = "One of the things in a controller that can shake (`HapticService`).",
+            Items = {
+                { Name = "Large", Value = 0, Doc = "The heavy, slow motor: a rumble." },
+                { Name = "Small", Value = 1, Doc = "The light, fast one: a buzz." },
+                { Name = "LeftTrigger", Value = 2, Doc = "The motor in the left trigger, where there is one." },
+                { Name = "RightTrigger", Value = 3, Doc = "The motor in the right trigger, where there is one." },
+                {
+                    Name = "LeftHand",
+                    Value = 4,
+                    Doc = "The left of two controllers held one in each hand. No device this engine runs on "
+                        .. "has one yet: it answers unsupported.",
+                },
+                { Name = "RightHand", Value = 5, Doc = "The right of the two, likewise." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "HighlightDepthMode",
+            Doc = "Where a `Highlight` shows.",
+            Items = {
+                {
+                    Name = "AlwaysOnTop",
+                    Value = 0,
+                    Doc = "Through whatever is in front of the shape: an ally behind a wall.",
+                },
+                {
+                    Name = "Occluded",
+                    Value = 1,
+                    Doc = "Only where the shape itself is seen: what is behind a wall is not marked.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "TextureMode",
+            Doc = "How a `Beam`'s or a `Trail`'s texture is laid along it.",
+            Items = {
+                {
+                    Name = "Stretch",
+                    Value = 0,
+                    Doc = "Once over the whole length, however long that is.",
+                },
+                {
+                    Name = "Wrap",
+                    Value = 1,
+                    Doc = "Repeated every `TextureLength` metres, measured from the start: on a trail the "
+                        .. "picture slides along as the trail moves.",
+                },
+                {
+                    Name = "Static",
+                    Value = 2,
+                    Doc = "Repeated every `TextureLength` metres and fixed where it was laid: a trail's "
+                        .. "picture stays on the ground it was drawn over, as a tyre mark does. A beam's "
+                        .. "does not run.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

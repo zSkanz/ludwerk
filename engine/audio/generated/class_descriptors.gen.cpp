@@ -70,6 +70,532 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     audioGroupDesc.detachComponents = native::detachAudioGroupComponents;
     classes.registerClass(audioGroupDesc);
 
+    // --- SoundEffect ---
+    static std::array<scene::PropertyDesc, 2> soundEffectProperties;
+    soundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the sound goes through it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSoundEffectEnabled,
+            .set = native::setSoundEffectEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Priority"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Its place among the effects under one parent: lower is applied first. Equal ones are applied in the order they were made.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_finite"),
+            .get = native::getSoundEffectPriority,
+            .set = native::setSoundEffectPriority,
+        },
+    }};
+    scene::ClassDescriptor soundEffectDesc;
+    soundEffectDesc.name = atoms.intern("SoundEffect");
+    soundEffectDesc.super = instanceClass;
+    soundEffectDesc.flags = scene::ClassFlags::Abstract | scene::ClassFlags::NotCreatable;
+    soundEffectDesc.defaultName = atoms.intern("SoundEffect");
+    soundEffectDesc.doc = "Something done to a sound on its way to the speakers (ADR 0131). Parent one to a `Sound` and that sound goes through it; parent one to an `AudioGroup` and everything in the group does, mixed together first. Several under one parent are applied in the order of their `Priority`.\012\012**What comes out of the speakers is downstream of the simulation**: an effect changes nothing a script can read, and a sound is as long with one as without. An effect on a `Sound` stops with the sound; one on an `AudioGroup` rings on after it -- which is where a reverb belongs.";
+    soundEffectDesc.properties = soundEffectProperties;
+    const scene::ClassId soundEffectClass = classes.registerClass(soundEffectDesc);
+
+    // --- ReverbSoundEffect ---
+    static std::array<scene::PropertyDesc, 5> reverbSoundEffectProperties;
+    reverbSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("RoomSize"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How large the room is, 0 to 1: larger rings for longer.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getReverbSoundEffectRoomSize,
+            .set = native::setReverbSoundEffectRoomSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How quickly the high notes die in it, 0 to 1: a stone hall is low, a carpeted room high.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getReverbSoundEffectDamping,
+            .set = native::setReverbSoundEffectDamping,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WetLevel"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How loud the room's answer is, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getReverbSoundEffectWetLevel,
+            .set = native::setReverbSoundEffectWetLevel,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DryLevel"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How loud the sound itself stays, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getReverbSoundEffectDryLevel,
+            .set = native::setReverbSoundEffectDryLevel,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Width"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far apart the room's answer is spread across the two speakers.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getReverbSoundEffectWidth,
+            .set = native::setReverbSoundEffectWidth,
+        },
+    }};
+    scene::ClassDescriptor reverbSoundEffectDesc;
+    reverbSoundEffectDesc.name = atoms.intern("ReverbSoundEffect");
+    reverbSoundEffectDesc.super = soundEffectClass;
+    reverbSoundEffectDesc.flags = scene::ClassFlags::None;
+    reverbSoundEffectDesc.defaultName = atoms.intern("ReverbSoundEffect");
+    reverbSoundEffectDesc.doc = "The sound of a room: what is played comes back from the walls. A hall, a cave, a bathroom.";
+    static constexpr std::array<std::string_view, 4> reverbSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    reverbSoundEffectDesc.parents = reverbSoundEffectParents;
+    reverbSoundEffectDesc.properties = reverbSoundEffectProperties;
+    reverbSoundEffectDesc.attachComponents = native::attachReverbSoundEffectComponents;
+    reverbSoundEffectDesc.detachComponents = native::detachReverbSoundEffectComponents;
+    classes.registerClass(reverbSoundEffectDesc);
+
+    // --- EchoSoundEffect ---
+    static std::array<scene::PropertyDesc, 4> echoSoundEffectProperties;
+    echoSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Delay"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How long until the echo, in seconds, 0.01 to 2.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEchoSoundEffectDelay,
+            .set = native::setEchoSoundEffectDelay,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Feedback"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much of each echo is echoed again, 0 to 0.95: zero is one echo, more is a trail of them.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEchoSoundEffectFeedback,
+            .set = native::setEchoSoundEffectFeedback,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("WetLevel"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How loud the echoes are, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEchoSoundEffectWetLevel,
+            .set = native::setEchoSoundEffectWetLevel,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DryLevel"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How loud the sound itself stays, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEchoSoundEffectDryLevel,
+            .set = native::setEchoSoundEffectDryLevel,
+        },
+    }};
+    scene::ClassDescriptor echoSoundEffectDesc;
+    echoSoundEffectDesc.name = atoms.intern("EchoSoundEffect");
+    echoSoundEffectDesc.super = soundEffectClass;
+    echoSoundEffectDesc.flags = scene::ClassFlags::None;
+    echoSoundEffectDesc.defaultName = atoms.intern("EchoSoundEffect");
+    echoSoundEffectDesc.doc = "What is played, again after a moment, and again more quietly: a canyon, a tunnel, a dub delay.";
+    static constexpr std::array<std::string_view, 4> echoSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    echoSoundEffectDesc.parents = echoSoundEffectParents;
+    echoSoundEffectDesc.properties = echoSoundEffectProperties;
+    echoSoundEffectDesc.attachComponents = native::attachEchoSoundEffectComponents;
+    echoSoundEffectDesc.detachComponents = native::detachEchoSoundEffectComponents;
+    classes.registerClass(echoSoundEffectDesc);
+
+    // --- EqualizerSoundEffect ---
+    static std::array<scene::PropertyDesc, 5> equalizerSoundEffectProperties;
+    equalizerSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("LowGain"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The low band's level, in decibels, -80 to 12.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEqualizerSoundEffectLowGain,
+            .set = native::setEqualizerSoundEffectLowGain,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MidGain"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The middle band's level, in decibels, -80 to 12.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEqualizerSoundEffectMidGain,
+            .set = native::setEqualizerSoundEffectMidGain,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("HighGain"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The high band's level, in decibels, -80 to 12.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEqualizerSoundEffectHighGain,
+            .set = native::setEqualizerSoundEffectHighGain,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MidLow"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Where the middle band begins, in hertz. Below it is the low band.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEqualizerSoundEffectMidLow,
+            .set = native::setEqualizerSoundEffectMidLow,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MidHigh"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Where the middle band ends, in hertz. Above it is the high band.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getEqualizerSoundEffectMidHigh,
+            .set = native::setEqualizerSoundEffectMidHigh,
+        },
+    }};
+    scene::ClassDescriptor equalizerSoundEffectDesc;
+    equalizerSoundEffectDesc.name = atoms.intern("EqualizerSoundEffect");
+    equalizerSoundEffectDesc.super = soundEffectClass;
+    equalizerSoundEffectDesc.flags = scene::ClassFlags::None;
+    equalizerSoundEffectDesc.defaultName = atoms.intern("EqualizerSoundEffect");
+    equalizerSoundEffectDesc.doc = "Three tone controls: the low notes, the middle and the high, each turned up or down. A radio is no lows and no highs; a voice through a wall is lows alone.";
+    static constexpr std::array<std::string_view, 4> equalizerSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    equalizerSoundEffectDesc.parents = equalizerSoundEffectParents;
+    equalizerSoundEffectDesc.properties = equalizerSoundEffectProperties;
+    equalizerSoundEffectDesc.attachComponents = native::attachEqualizerSoundEffectComponents;
+    equalizerSoundEffectDesc.detachComponents = native::detachEqualizerSoundEffectComponents;
+    classes.registerClass(equalizerSoundEffectDesc);
+
+    // --- LowPassSoundEffect ---
+    static std::array<scene::PropertyDesc, 2> lowPassSoundEffectProperties;
+    lowPassSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Cutoff"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The frequency above which sound is taken away, in hertz.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getLowPassSoundEffectCutoff,
+            .set = native::setLowPassSoundEffectCutoff,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Resonance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much the notes right at the cutoff are raised, 0.1 to 10: 0.707 is flat, more whistles.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getLowPassSoundEffectResonance,
+            .set = native::setLowPassSoundEffectResonance,
+        },
+    }};
+    scene::ClassDescriptor lowPassSoundEffectDesc;
+    lowPassSoundEffectDesc.name = atoms.intern("LowPassSoundEffect");
+    lowPassSoundEffectDesc.super = soundEffectClass;
+    lowPassSoundEffectDesc.flags = scene::ClassFlags::None;
+    lowPassSoundEffectDesc.defaultName = atoms.intern("LowPassSoundEffect");
+    lowPassSoundEffectDesc.doc = "Lets the low notes through and takes the high ones away: under water, behind a door, a paused game.";
+    static constexpr std::array<std::string_view, 4> lowPassSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    lowPassSoundEffectDesc.parents = lowPassSoundEffectParents;
+    lowPassSoundEffectDesc.properties = lowPassSoundEffectProperties;
+    lowPassSoundEffectDesc.attachComponents = native::attachLowPassSoundEffectComponents;
+    lowPassSoundEffectDesc.detachComponents = native::detachLowPassSoundEffectComponents;
+    classes.registerClass(lowPassSoundEffectDesc);
+
+    // --- HighPassSoundEffect ---
+    static std::array<scene::PropertyDesc, 2> highPassSoundEffectProperties;
+    highPassSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Cutoff"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The frequency below which sound is taken away, in hertz.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getHighPassSoundEffectCutoff,
+            .set = native::setHighPassSoundEffectCutoff,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Resonance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much the notes right at the cutoff are raised, 0.1 to 10: 0.707 is flat, more whistles.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getHighPassSoundEffectResonance,
+            .set = native::setHighPassSoundEffectResonance,
+        },
+    }};
+    scene::ClassDescriptor highPassSoundEffectDesc;
+    highPassSoundEffectDesc.name = atoms.intern("HighPassSoundEffect");
+    highPassSoundEffectDesc.super = soundEffectClass;
+    highPassSoundEffectDesc.flags = scene::ClassFlags::None;
+    highPassSoundEffectDesc.defaultName = atoms.intern("HighPassSoundEffect");
+    highPassSoundEffectDesc.doc = "Lets the high notes through and takes the low ones away: a telephone, a tinny speaker.";
+    static constexpr std::array<std::string_view, 4> highPassSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    highPassSoundEffectDesc.parents = highPassSoundEffectParents;
+    highPassSoundEffectDesc.properties = highPassSoundEffectProperties;
+    highPassSoundEffectDesc.attachComponents = native::attachHighPassSoundEffectComponents;
+    highPassSoundEffectDesc.detachComponents = native::detachHighPassSoundEffectComponents;
+    classes.registerClass(highPassSoundEffectDesc);
+
+    // --- DistortionSoundEffect ---
+    static std::array<scene::PropertyDesc, 1> distortionSoundEffectProperties;
+    distortionSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Level"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How hard it is pushed, 0 (untouched) to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getDistortionSoundEffectLevel,
+            .set = native::setDistortionSoundEffectLevel,
+        },
+    }};
+    scene::ClassDescriptor distortionSoundEffectDesc;
+    distortionSoundEffectDesc.name = atoms.intern("DistortionSoundEffect");
+    distortionSoundEffectDesc.super = soundEffectClass;
+    distortionSoundEffectDesc.flags = scene::ClassFlags::None;
+    distortionSoundEffectDesc.defaultName = atoms.intern("DistortionSoundEffect");
+    distortionSoundEffectDesc.doc = "Pushes the sound until it breaks up: a megaphone, a blown speaker, an electric guitar.";
+    static constexpr std::array<std::string_view, 4> distortionSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    distortionSoundEffectDesc.parents = distortionSoundEffectParents;
+    distortionSoundEffectDesc.properties = distortionSoundEffectProperties;
+    distortionSoundEffectDesc.attachComponents = native::attachDistortionSoundEffectComponents;
+    distortionSoundEffectDesc.detachComponents = native::detachDistortionSoundEffectComponents;
+    classes.registerClass(distortionSoundEffectDesc);
+
+    // --- CompressorSoundEffect ---
+    static std::array<scene::PropertyDesc, 5> compressorSoundEffectProperties;
+    compressorSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Threshold"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The level above which it turns down, in decibels, -60 to 0.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getCompressorSoundEffectThreshold,
+            .set = native::setCompressorSoundEffectThreshold,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Ratio"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much it turns down what is over the threshold: at 4, four decibels over come out as one.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getCompressorSoundEffectRatio,
+            .set = native::setCompressorSoundEffectRatio,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Attack"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How quickly it reacts to a loud part, in seconds.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getCompressorSoundEffectAttack,
+            .set = native::setCompressorSoundEffectAttack,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Release"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How quickly it lets go after one, in seconds.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getCompressorSoundEffectRelease,
+            .set = native::setCompressorSoundEffectRelease,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MakeupGain"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "What is added back to the whole afterwards, in decibels, 0 to 24.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getCompressorSoundEffectMakeupGain,
+            .set = native::setCompressorSoundEffectMakeupGain,
+        },
+    }};
+    scene::ClassDescriptor compressorSoundEffectDesc;
+    compressorSoundEffectDesc.name = atoms.intern("CompressorSoundEffect");
+    compressorSoundEffectDesc.super = soundEffectClass;
+    compressorSoundEffectDesc.flags = scene::ClassFlags::None;
+    compressorSoundEffectDesc.defaultName = atoms.intern("CompressorSoundEffect");
+    compressorSoundEffectDesc.doc = "Turns the loud parts down so the whole can be turned up: speech that stays audible under music, an explosion that does not drown the room.";
+    static constexpr std::array<std::string_view, 4> compressorSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    compressorSoundEffectDesc.parents = compressorSoundEffectParents;
+    compressorSoundEffectDesc.properties = compressorSoundEffectProperties;
+    compressorSoundEffectDesc.attachComponents = native::attachCompressorSoundEffectComponents;
+    compressorSoundEffectDesc.detachComponents = native::detachCompressorSoundEffectComponents;
+    classes.registerClass(compressorSoundEffectDesc);
+
+    // --- ChorusSoundEffect ---
+    static std::array<scene::PropertyDesc, 3> chorusSoundEffectProperties;
+    chorusSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Rate"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How fast the copy drifts back and forth, in hertz.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getChorusSoundEffectRate,
+            .set = native::setChorusSoundEffectRate,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Depth"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far it drifts, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getChorusSoundEffectDepth,
+            .set = native::setChorusSoundEffectDepth,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Mix"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much of what is heard is the copy, 0 to 1.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getChorusSoundEffectMix,
+            .set = native::setChorusSoundEffectMix,
+        },
+    }};
+    scene::ClassDescriptor chorusSoundEffectDesc;
+    chorusSoundEffectDesc.name = atoms.intern("ChorusSoundEffect");
+    chorusSoundEffectDesc.super = soundEffectClass;
+    chorusSoundEffectDesc.flags = scene::ClassFlags::None;
+    chorusSoundEffectDesc.defaultName = atoms.intern("ChorusSoundEffect");
+    chorusSoundEffectDesc.doc = "A copy of the sound that drifts a little out of time and tune with it: one voice as several, a shimmer.";
+    static constexpr std::array<std::string_view, 4> chorusSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    chorusSoundEffectDesc.parents = chorusSoundEffectParents;
+    chorusSoundEffectDesc.properties = chorusSoundEffectProperties;
+    chorusSoundEffectDesc.attachComponents = native::attachChorusSoundEffectComponents;
+    chorusSoundEffectDesc.detachComponents = native::detachChorusSoundEffectComponents;
+    classes.registerClass(chorusSoundEffectDesc);
+
+    // --- PitchShiftSoundEffect ---
+    static std::array<scene::PropertyDesc, 1> pitchShiftSoundEffectProperties;
+    pitchShiftSoundEffectProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Octave"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "What the pitch is multiplied by, 0.5 (an octave down) to 2 (an octave up). 1 changes nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getPitchShiftSoundEffectOctave,
+            .set = native::setPitchShiftSoundEffectOctave,
+        },
+    }};
+    scene::ClassDescriptor pitchShiftSoundEffectDesc;
+    pitchShiftSoundEffectDesc.name = atoms.intern("PitchShiftSoundEffect");
+    pitchShiftSoundEffectDesc.super = soundEffectClass;
+    pitchShiftSoundEffectDesc.flags = scene::ClassFlags::None;
+    pitchShiftSoundEffectDesc.defaultName = atoms.intern("PitchShiftSoundEffect");
+    pitchShiftSoundEffectDesc.doc = "Raises or lowers the pitch without changing how long the sound lasts -- which `PlaybackSpeed` cannot: a chipmunk, a giant, a voice disguised.";
+    static constexpr std::array<std::string_view, 4> pitchShiftSoundEffectParents{{"Sound", "AudioGroup", "ReplicatedStorage", "ServerStorage"}};
+    pitchShiftSoundEffectDesc.parents = pitchShiftSoundEffectParents;
+    pitchShiftSoundEffectDesc.properties = pitchShiftSoundEffectProperties;
+    pitchShiftSoundEffectDesc.attachComponents = native::attachPitchShiftSoundEffectComponents;
+    pitchShiftSoundEffectDesc.detachComponents = native::detachPitchShiftSoundEffectComponents;
+    classes.registerClass(pitchShiftSoundEffectDesc);
+
     // --- Sound ---
     static std::array<scene::PropertyDesc, 10> soundProperties;
     soundProperties = {{

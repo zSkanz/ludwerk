@@ -27,6 +27,7 @@ guided tour.
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | What a game keeps a secret with, and tells one player from another by (ADR 0151): chance that nobody can predict, two hashes, and a hash meant for passwords. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | The debug overlay and the engine's own instrumentation. |
 | [`GlobalScriptService`](globalscriptservice.md) | [`Instance`](instance.md) | The game's code, for every scene (ADR 0105). |
+| [`HapticService`](hapticservice.md) | [`Instance`](instance.md) | What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration. |
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | The hot-reload loop as a script can see it (ADR 0024). |
 | [`InputService`](inputservice.md) | [`Instance`](instance.md) | The host of the Input Action System (§2.4, ADR 0029) and the only place device-wide state is readable. |
 | [`Lighting`](lighting.md) | [`Instance`](instance.md) | Day/night and the environment every surface is lit against. |
@@ -62,6 +63,7 @@ guided tour.
 | [`BallSocketConstraint`](ballsocketconstraint.md) | [`Constraint`](constraint.md) | A joint free to rotate in every direction about one point, and optionally limited to a cone and a twist. |
 | [`BasePart`](basepart.md) | [`PVInstance`](pvinstance.md) | The abstract base of every solid object in the world: a transform, a size and a look. |
 | [`BaseScript`](basescript.md) | [`Instance`](instance.md) | The abstract base of anything that carries Luau code. |
+| [`Beam`](beam.md) | [`Instance`](instance.md) | A band of colour or a texture between two attachments: a laser, a tractor beam, a rope of light, lightning with a texture that runs. |
 | [`BillboardGui`](billboardgui.md) | [`Instance`](instance.md) | A UI tree hung in the world and turned to face the camera (F3): a name over a head, a health bar over a crate, a marker on an objective. |
 | [`BloomEffect`](bloomeffect.md) | [`PostEffect`](posteffect.md) | The glow that bright light spills onto what is around it. |
 | [`BlurEffect`](blureffect.md) | [`PostEffect`](posteffect.md) | Softens the whole world picture, as behind a pause menu. |
@@ -69,19 +71,26 @@ guided tour.
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is rendered from. |
 | [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. |
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: the player, or anything that should climb a ramp and step over a kerb instead of tumbling. |
+| [`ChorusSoundEffect`](chorussoundeffect.md) | [`SoundEffect`](soundeffect.md) | A copy of the sound that drifts a little out of time and tune with it: one voice as several, a shimmer. |
 | [`ClickDetector`](clickdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player clicks (ADR 0126). |
 | [`ColorCorrectionEffect`](colorcorrectioneffect.md) | [`PostEffect`](posteffect.md) | A grade over the whole picture: brighter or darker, flatter or punchier, greyer or more vivid, and tinted. |
+| [`CompressorSoundEffect`](compressorsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Turns the loud parts down so the whole can be turned up: speech that stays audible under music, an explosion that does not drown the room. |
 | [`Constraint`](constraint.md) | [`Instance`](instance.md) | The base of anything the SOLVER holds together. |
 | [`Constraint2D`](constraint2d.md) | [`Instance`](instance.md) | The base of a joint between two `Part2D`s (ADR 0102): the 2D solver holds them together, and a rope bridge, a door on a hinge or a swinging lamp is what comes of it. |
 | [`DataModel`](datamodel.md) | [`Instance`](instance.md) | The root of the instance tree, reached through the `game` global. |
 | [`Decal`](decal.md) | [`Instance`](instance.md) | An image projected onto whatever lies inside a box (F2): a scorch mark, a footprint, a poster, a crack. |
 | [`DepthOfFieldEffect`](depthoffieldeffect.md) | [`PostEffect`](posteffect.md) | Focus by distance, as a camera lens has it: a band of the world in focus, and what is nearer or further softening away from it. |
+| [`DistortionSoundEffect`](distortionsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Pushes the sound until it breaks up: a megaphone, a blown speaker, an electric guitar. |
 | [`DragDetector`](dragdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player drags (ADR 0126): a drawer pulled along a line, a lever turned about an axis, a crate pushed across the floor. |
+| [`EchoSoundEffect`](echosoundeffect.md) | [`SoundEffect`](soundeffect.md) | What is played, again after a moment, and again more quietly: a canyon, a tunnel, a dub delay. |
+| [`EqualizerSoundEffect`](equalizersoundeffect.md) | [`SoundEffect`](soundeffect.md) | Three tone controls: the low notes, the middle and the high, each turned up or down. |
 | [`FixedConstraint`](fixedconstraint.md) | [`Constraint`](constraint.md) | A joint with no freedom at all: two bodies the solver treats as one rigid assembly. |
 | [`Folder`](folder.md) | [`Instance`](instance.md) | A node with no behaviour of its own, for grouping instances; mounting a script folder under `src/` also builds one per subdirectory. |
 | [`FoliageLayer`](foliagelayer.md) | [`Instance`](instance.md) | Where foliage grows over a terrain (ADR 0116): grass, flowers, stones, bushes -- drawn and never simulated. |
 | [`FoliageMesh`](foliagemesh.md) | [`Instance`](instance.md) | One mesh a `FoliageLayer` grows (ADR 0116), with its share of the layer, its size, how it sits on the ground and how the wind moves it. |
 | [`Frame`](frame.md) | [`UIObject`](uiobject.md) | A rectangle and nothing else: a background, a border of children, and the layout it imposes on them. |
+| [`HighPassSoundEffect`](highpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Lets the high notes through and takes the low ones away: a telephone, a tinny speaker. |
+| [`Highlight`](highlight.md) | [`Instance`](instance.md) | An outline and a tint over a part or a model: what is selected, what can be picked up, an ally seen through a wall. |
 | [`HingeConstraint`](hingeconstraint.md) | [`Constraint`](constraint.md) | A joint free to rotate about one axis: a door, a lid, an elbow. |
 | [`HingeConstraint2D`](hingeconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A point both parts turn about: a door, a wheel, a pendulum, a lever. |
 | [`ImageButton`](imagebutton.md) | [`ImageLabel`](imagelabel.md) | An `ImageLabel` that is meant to be pressed, and the same argument `TextButton` carries: it adds nothing, and it is the class a reader recognizes. |
@@ -91,6 +100,7 @@ guided tour.
 | [`InputContext`](inputcontext.md) | [`Instance`](instance.md) | A group of `InputAction` children that are live together (§2.4, ADR 0029). |
 | [`Instance`](instance.md) | — | The root of the class hierarchy: a node in the tree, carrying a name, a parent, attributes and tags. |
 | [`LinearVelocity`](linearvelocity.md) | [`Constraint`](constraint.md) | Holds the part its `Attachment0` is on at a velocity, with as much force as `MaxForce` allows: a conveyor's crate, a platform that glides, a thrown thing that does not slow. |
+| [`LowPassSoundEffect`](lowpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Lets the low notes through and takes the high ones away: under water, behind a door, a paused game. |
 | [`MeshPart`](meshpart.md) | [`BasePart`](basepart.md) | A part whose geometry is an imported mesh rather than a primitive solid. |
 | [`Model`](model.md) | [`PVInstance`](pvinstance.md) | A group of parts handled as one object, with a pivot to move it by and an extents box to measure it with. |
 | [`ModuleScript`](modulescript.md) | [`BaseScript`](basescript.md) | Luau that is REQUIRED rather than run. |
@@ -102,6 +112,7 @@ guided tour.
 | [`Part`](part.md) | [`BasePart`](basepart.md) | The primitive solid: a part whose geometry is one of a small set of shapes rather than an imported mesh. |
 | [`Part2D`](part2d.md) | [`Instance`](instance.md) | A sprite and a body in one, on the 2D plane (the 2D layer, phase 3): what a `Part` is to a 3D world. |
 | [`ParticleEmitter`](particleemitter.md) | [`Instance`](instance.md) | Sparks, smoke, dust and magic (F2). |
+| [`PitchShiftSoundEffect`](pitchshiftsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Raises or lowers the pitch without changing how long the sound lasts -- which `PlaybackSpeed` cannot: a chipmunk, a giant, a voice disguised. |
 | [`Player`](player.md) | [`Instance`](instance.md) | Somebody taking part in this world (N1). |
 | [`PointLight`](pointlight.md) | [`Instance`](instance.md) | A light radiating equally in every direction. |
 | [`PostEffect`](posteffect.md) | [`Instance`](instance.md) | The abstract base of the effects that change the finished picture rather than the world in it (ADR 0096). |
@@ -110,6 +121,7 @@ guided tour.
 | [`Ragdoll`](ragdoll.md) | [`Instance`](instance.md) | Makes a character's pose come from the simulation instead of from a clip. |
 | [`RemoteEvent`](remoteevent.md) | [`Instance`](instance.md) | A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. |
 | [`RemoteFunction`](remotefunction.md) | [`Instance`](instance.md) | A question a client asks the server and waits for the answer to (ADR 0079): "what is in my inventory?", "may I open this door?". |
+| [`ReverbSoundEffect`](reverbsoundeffect.md) | [`SoundEffect`](soundeffect.md) | The sound of a room: what is played comes back from the walls. |
 | [`RodConstraint`](rodconstraint.md) | [`Constraint`](constraint.md) | Two attachments held exactly `Length` apart, free to turn about either end: a rod, a strut, the link of a mechanism. |
 | [`RopeConstraint`](ropeconstraint.md) | [`Constraint`](constraint.md) | Two attachments that can be no further apart than `Length`, and as close as they like: a rope, a chain, a leash. |
 | [`ScreenGui`](screengui.md) | [`Instance`](instance.md) | The root of one screen-space UI tree, parented to `UIService` (§2.2). |
@@ -117,6 +129,7 @@ guided tour.
 | [`ScrollFrame`](scrollframe.md) | [`UIObject`](uiobject.md) | A `Frame` whose contents can be larger than it is (§2.2). |
 | [`Sky`](sky.md) | [`Instance`](instance.md) | What the sky shows: six images around the world, the sun's and the moon's look, stars and clouds. |
 | [`Sound`](sound.md) | [`Instance`](instance.md) | One sound, playing or not (§2.2). |
+| [`SoundEffect`](soundeffect.md) | [`Instance`](instance.md) | Something done to a sound on its way to the speakers (ADR 0131). |
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light confined to a cone about its forward direction -- its holder's, turned by its own `CFrame`, or its own alone when nothing holds it (ADR 0095). |
 | [`SpringConstraint`](springconstraint.md) | [`Constraint`](constraint.md) | A spring between two attachments: it pulls them together when they are further apart than `FreeLength` and pushes them apart when they are closer, harder the further they are from it. |
 | [`SpringConstraint2D`](springconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A distance between two points, held softly: a spring, a bungee, a suspension. |
@@ -131,6 +144,7 @@ guided tour.
 | [`TextLabel`](textlabel.md) | [`UIObject`](uiobject.md) | Text in a box (§2.2). |
 | [`Tilemap2D`](tilemap2d.md) | [`Instance`](instance.md) | A grid of tiles from one tileset image, on the 2D plane (the 2D layer, phase 3): a level you paint. |
 | [`Torque`](torque.md) | [`Constraint`](constraint.md) | A constant torque on the part its `Attachment0` is on: something that keeps being twisted. |
+| [`Trail`](trail.md) | [`Instance`](instance.md) | The ribbon two attachments leave behind as they move: a sword's swing, a tyre's mark, the wake of something fast. |
 | [`UICorner`](uicorner.md) | [`Instance`](instance.md) | Rounds its parent's corners (§2.2). |
 | [`UIGradient`](uigradient.md) | [`Instance`](instance.md) | Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its text -- is multiplied by `Color` and faded by `Transparency` along the gradient. |
 | [`UIListLayout`](uilistlayout.md) | [`Instance`](instance.md) | Stacks its parent's `UIObject` children in a line (§2.2). |

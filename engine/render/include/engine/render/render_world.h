@@ -320,6 +320,10 @@ struct DrawItem
     // False on every frame a game renders, so a packaged build's draw list is
     // the one it always was.
     bool outlined = false;
+    // Which `Highlight` marks this draw (ADR 0129), as one more than its place
+    // in `RenderWorld::highlights`; zero for none, which is every draw in a
+    // world with no highlight in it.
+    core::u8 highlight = 0;
     // A terrain mesh (ADR 0082): drawn with the terrain's own forward shader,
     // which takes its material and the sky it sees per vertex.
     bool terrain = false;
@@ -471,6 +475,45 @@ struct RenderDecal
     f32 opacity = 1.0f;
     // The projection axis in camera-relative world space.
     Vec3 axis{0.0f, 0.0f, 1.0f};
+};
+
+// One `Highlight` as drawn (ADR 0129): the colours over the shape and round
+// it, premultiplied by nothing -- the alpha is how much of each shows.
+struct RenderHighlight
+{
+    f32 outline[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    f32 fill[4] = {1.0f, 0.2f, 0.2f, 0.5f};
+    // Only where the shape itself is seen, rather than through what is in
+    // front of it.
+    bool occluded = false;
+};
+
+// One corner of a ribbon (ADR 0129): a beam's or a trail's.
+struct RenderRibbonVertex
+{
+    // Camera-relative, and half the ribbon's width there: what it fades over
+    // where it meets a surface, as a particle does.
+    Vec3 position;
+    f32 halfWidth = 0.0f;
+    // Linear colour, and opacity.
+    f32 color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Along the ribbon and across it.
+    f32 u = 0.0f;
+    f32 v = 0.0f;
+    f32 emission = 0.0f;
+    f32 lightInfluence = 1.0f;
+};
+
+static_assert(sizeof(RenderRibbonVertex) == 48, "RenderRibbonVertex is a vertex stride; see ribbon.hlsl");
+
+// A run of ribbon vertices drawn with one texture.
+struct RenderRibbonRun
+{
+    // Invalid for none, or for an image that has not loaded yet -- which
+    // draws the ribbon's colour alone.
+    rhi::TextureHandle texture;
+    u32 firstVertex = 0;
+    u32 vertexCount = 0;
 };
 
 // One particle as drawn: a camera-facing square of `size` metres at `position`.
@@ -634,6 +677,20 @@ struct RenderWorld
     // appended by `ParticleSystem::append` after the extract, because they are
     // simulated on the frame and are not in the world the extract reads.
     std::vector<RenderParticle> particles;
+    // This frame's beams and trails (ADR 0129), as triangles: appended by
+    // `RibbonSystem::append` after the extract, back to front, in runs of one
+    // texture.
+    std::vector<RenderRibbonVertex> ribbonVertices;
+    std::vector<RenderRibbonRun> ribbonRuns;
+    // This frame's highlights (ADR 0129), nearest first; a draw's `highlight`
+    // is one more than its place here.
+    std::vector<RenderHighlight> highlights;
+    // How many were left out because there were more than `maxHighlights`.
+    u32 highlightsDropped = 0;
+    // The most drawn in a frame: the project's `[render] max_highlights`.
+    // **Not reset by `clear`** -- it is a setting the host gives once, not
+    // something the extract finds.
+    u32 maxHighlights = 32;
     // This frame's decals, in pool order.
     std::vector<RenderDecal> decals;
     // This frame's sprites (the 2D layer), in the order they are drawn: by
@@ -686,6 +743,10 @@ struct RenderWorld
         voxelColors.clear();
         voxelTextures.clear();
         particles.clear();
+        ribbonVertices.clear();
+        ribbonRuns.clear();
+        highlights.clear();
+        highlightsDropped = 0;
         decals.clear();
         sprites.clear();
         worldUiVertices.clear();

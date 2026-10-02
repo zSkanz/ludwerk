@@ -220,6 +220,15 @@ The shape of a `UIGradient`.
 | `Radial` | 1 | Out from the element's centre (plus `Offset`) to a radius of (width + height) / 4. `Rotation` does nothing. |
 | `Conical` | 2 | Clockwise round the element's centre (plus `Offset`), a whole turn, starting where `Rotation` points. |
 
+## Enum.HighlightDepthMode
+
+Where a `Highlight` shows.
+
+| Item | Value | Description |
+|---|---|---|
+| `AlwaysOnTop` | 0 | Through whatever is in front of the shape: an ally behind a wall. |
+| `Occluded` | 1 | Only where the shape itself is seen: what is behind a wall is not marked. |
+
 ## Enum.HorizontalAlignment
 
 Alignment along the X axis. One set of values for two jobs: a `TextLabel`'s `TextXAlignment` places its words with it and a `UIListLayout`'s `HorizontalAlignment` places its children with it.
@@ -733,6 +742,16 @@ How a picture is sampled when it is drawn larger or smaller than it is.
 | `Linear` | 0 | Blended between texels: smooth, for painted art. |
 | `Nearest` | 1 | The nearest texel, unblended: sharp pixels, for pixel art at any zoom. |
 
+## Enum.TextureMode
+
+How a `Beam`'s or a `Trail`'s texture is laid along it.
+
+| Item | Value | Description |
+|---|---|---|
+| `Stretch` | 0 | Once over the whole length, however long that is. |
+| `Wrap` | 1 | Repeated every `TextureLength` metres, measured from the start: on a trail the picture slides along as the trail moves. |
+| `Static` | 2 | Repeated every `TextureLength` metres and fixed where it was laid: a trail's picture stays on the ground it was drawn over, as a tyre mark does. A beam's does not run. |
+
 ## Enum.UserInputType
 
 What KIND of input an `InputObject` came from, on `InputService`'s raw events (§2.4, ADR 0041). It is coarser than `KeyCode` on purpose: a handler that only cares whether something was typed at all reads this and stops, and one that cares which key reads `KeyCode` beside it.
@@ -770,6 +789,19 @@ Alignment along the Y axis: a `TextLabel`'s `TextYAlignment` and a layout's `Ver
 | `Top` | 0 |  |
 | `Center` | 1 |  |
 | `Bottom` | 2 |  |
+
+## Enum.VibrationMotor
+
+One of the things in a controller that can shake (`HapticService`).
+
+| Item | Value | Description |
+|---|---|---|
+| `Large` | 0 | The heavy, slow motor: a rumble. |
+| `Small` | 1 | The light, fast one: a buzz. |
+| `LeftTrigger` | 2 | The motor in the left trigger, where there is one. |
+| `RightTrigger` | 3 | The motor in the right trigger, where there is one. |
+| `LeftHand` | 4 | The left of two controllers held one in each hand. No device this engine runs on has one yet: it answers unsupported. |
+| `RightHand` | 5 | The right of the two, likewise. |
 
 ## Enum.ViewQuality
 

@@ -960,3 +960,256 @@ TEST_CASE("a decoded sound that is looped loses no frame at the loop point")
     const std::vector<float> head = listen(content.mounts, "asset://sfx/head.wav", 0.0, 4800u);
     CHECK(std::equal(head.begin(), head.end(), looped.begin() + 4800 * 2));
 }
+
+// --- Sound effects (ADR 0131) -------------------------------------------------
+//
+// What an effect does is asked of the samples: the same sound is rendered
+// offline with the effect and without it, and what came out is compared -- to
+// the dry render, and to what that effect is for. The sound is the placeholder
+// tone (a sine between 220 and 880 Hz at a quarter of full scale), which makes
+// every expectation below arithmetic.
+
+namespace {
+
+struct Heard
+{
+    std::vector<float> samples;
+    double rms = 0.0;
+    float peak = 0.0f;
+    int crossings = 0;
+};
+
+[[nodiscard]] Heard measure(std::vector<float> samples)
+{
+    Heard heard;
+    double squares = 0.0;
+    float before = 0.0f;
+    for (std::size_t index = 0; index < samples.size(); index += 2) {
+        const float left = samples[index];
+        squares += static_cast<double>(left) * static_cast<double>(left);
+        heard.peak = std::max(heard.peak, std::fabs(left));
+        if ((before <= 0.0f && left > 0.0f) || (before >= 0.0f && left < 0.0f))
+            ++heard.crossings;
+        if (left != 0.0f)
+            before = left;
+    }
+    heard.rms = std::sqrt(squares / static_cast<double>(samples.size() / 2));
+    heard.samples = std::move(samples);
+    return heard;
+}
+
+// One sound, playing, with whatever effects a case gives it or its group.
+struct EffectRig
+{
+    Fixture fixture;
+    InstanceId sound;
+    InstanceId group;
+
+    EffectRig()
+    {
+        group = fixture.make("AudioGroup");
+        sound = fixture.make("Sound");
+        fixture.sound(sound).playing = true;
+        fixture.sound(sound).volume = 0.25f;
+    }
+
+    scene::SoundEffectComponent& effect(const char* className, InstanceId parent)
+    {
+        const InstanceId id = fixture.make(className);
+        REQUIRE_FALSE(fixture.world->setParent(id, parent).has_value());
+        scene::SoundEffectComponent* component = fixture.world->soundEffects().find(id);
+        REQUIRE(component != nullptr);
+        return *component;
+    }
+
+    // The next `seconds` of what the speakers would get.
+    Heard hear(double seconds)
+    {
+        fixture.system.update(*fixture.world, InstanceId{});
+        std::vector<float> samples(static_cast<std::size_t>(seconds * 48000.0) * 2, 0.0f);
+        fixture.system.renderInto(samples);
+        return measure(std::move(samples));
+    }
+};
+
+[[nodiscard]] Heard dryTone(double seconds)
+{
+    EffectRig rig;
+    return rig.hear(seconds);
+}
+
+} // namespace
+
+TEST_CASE("an effect that is off, or under nothing that plays, changes nothing")
+{
+    const Heard dry = dryTone(0.25);
+    REQUIRE(dry.rms == doctest::Approx(0.25 / std::sqrt(2.0)).epsilon(0.02));
+
+    EffectRig rig;
+    rig.effect("LowPassSoundEffect", rig.sound).enabled = false;
+    // On a group the sound is not in.
+    rig.effect("DistortionSoundEffect", rig.group);
+    const Heard heard = rig.hear(0.25);
+    CHECK(heard.samples == dry.samples);
+}
+
+TEST_CASE("a low pass takes a tone above its cutoff away, and a high pass one below")
+{
+    const Heard dry = dryTone(0.5);
+
+    EffectRig low;
+    low.effect("LowPassSoundEffect", low.sound).cutoff = 60.0f;
+    // Past the filter's first moments.
+    (void)low.hear(0.1);
+    CHECK(low.hear(0.4).rms < dry.rms * 0.3);
+
+    EffectRig high;
+    high.effect("HighPassSoundEffect", high.sound).cutoff = 8000.0f;
+    (void)high.hear(0.1);
+    CHECK(high.hear(0.4).rms < dry.rms * 0.1);
+
+    // And one that lets the tone through leaves it as loud.
+    EffectRig open;
+    open.effect("LowPassSoundEffect", open.sound).cutoff = 18000.0f;
+    (void)open.hear(0.1);
+    CHECK(open.hear(0.4).rms == doctest::Approx(dry.rms).epsilon(0.05));
+}
+
+TEST_CASE("an equalizer turns down the band the tone is in and no other")
+{
+    const Heard dry = dryTone(0.5);
+
+    // The tone is below a middle band that starts at four kilohertz: in the
+    // low band.
+    EffectRig cut;
+    scene::SoundEffectComponent& lows = cut.effect("EqualizerSoundEffect", cut.sound);
+    lows.midLow = 4000.0f;
+    lows.midHigh = 8000.0f;
+    lows.lowGain = -40.0f;
+    (void)cut.hear(0.1);
+    CHECK(cut.hear(0.4).rms < dry.rms * 0.2);
+
+    EffectRig other;
+    scene::SoundEffectComponent& highs = other.effect("EqualizerSoundEffect", other.sound);
+    highs.midLow = 4000.0f;
+    highs.midHigh = 8000.0f;
+    highs.highGain = -40.0f;
+    (void)other.hear(0.1);
+    CHECK(other.hear(0.4).rms == doctest::Approx(dry.rms).epsilon(0.1));
+}
+
+TEST_CASE("distortion squares a tone off, and a compressor turns a loud one down")
+{
+    const Heard dry = dryTone(0.5);
+    // A sine's level is 0.707 of its peak.
+    CHECK(dry.rms / static_cast<double>(dry.peak) == doctest::Approx(0.707).epsilon(0.02));
+
+    EffectRig driven;
+    driven.effect("DistortionSoundEffect", driven.sound).level = 1.0f;
+    const Heard square = driven.hear(0.5);
+    CHECK(square.rms / static_cast<double>(square.peak) > 0.85);
+    CHECK(square.peak <= 1.0f);
+
+    EffectRig squeezed;
+    scene::SoundEffectComponent& compressor = squeezed.effect("CompressorSoundEffect", squeezed.sound);
+    compressor.threshold = -40.0f;
+    compressor.ratio = 20.0f;
+    compressor.attack = 0.001f;
+    (void)squeezed.hear(0.1);
+    const Heard quiet = squeezed.hear(0.4);
+    CHECK(quiet.rms < dry.rms * 0.4);
+    // And its makeup gain gives it back.
+    compressor.makeupGain = 12.0f;
+    (void)squeezed.hear(0.1);
+    CHECK(squeezed.hear(0.4).rms > quiet.rms * 3.0);
+}
+
+TEST_CASE("a pitch shift of an octave doubles the tone and leaves how long it is")
+{
+    const Heard dry = dryTone(0.5);
+
+    EffectRig rig;
+    rig.effect("PitchShiftSoundEffect", rig.sound).octave = 2.0f;
+    (void)rig.hear(0.2);
+    const Heard up = rig.hear(0.5);
+    CHECK(up.crossings == doctest::Approx(dry.crossings * 2).epsilon(0.15));
+
+    EffectRig lower;
+    lower.effect("PitchShiftSoundEffect", lower.sound).octave = 0.5f;
+    (void)lower.hear(0.2);
+    CHECK(lower.hear(0.5).crossings == doctest::Approx(dry.crossings / 2).epsilon(0.15));
+}
+
+TEST_CASE("a chorus changes what is heard and stays inside full scale")
+{
+    const Heard dry = dryTone(0.5);
+    EffectRig rig;
+    rig.effect("ChorusSoundEffect", rig.sound);
+    const Heard wet = rig.hear(0.5);
+    double difference = 0.0;
+    for (std::size_t index = 0; index < wet.samples.size(); ++index)
+        difference += std::fabs(static_cast<double>(wet.samples[index] - dry.samples[index]));
+    CHECK(difference / static_cast<double>(wet.samples.size()) > 0.01);
+    CHECK(wet.peak <= 1.0f);
+}
+
+TEST_CASE("an echo and a reverb on a group go on after the sound has stopped; on the sound they stop with it")
+{
+    // Without either, a stopped sound is silence.
+    {
+        EffectRig rig;
+        (void)rig.hear(0.1);
+        rig.fixture.sound(rig.sound).playing = false;
+        CHECK(rig.hear(0.5).peak == 0.0f);
+    }
+    for (const char* className : {"EchoSoundEffect", "ReverbSoundEffect"}) {
+        CAPTURE(className);
+        EffectRig rig;
+        rig.fixture.sound(rig.sound).group = rig.group;
+        (void)rig.effect(className, rig.group);
+        (void)rig.hear(0.1);
+        rig.fixture.sound(rig.sound).playing = false;
+        const Heard tail = rig.hear(0.5);
+        CHECK(tail.rms > 0.005);
+
+        // The same effect on the sound itself has nothing to ring through.
+        EffectRig own;
+        (void)own.effect(className, own.sound);
+        (void)own.hear(0.1);
+        own.fixture.sound(own.sound).playing = false;
+        CHECK(own.hear(0.5).peak == 0.0f);
+    }
+
+    // The echo comes back when its delay says: silence until then.
+    EffectRig rig;
+    rig.fixture.sound(rig.sound).group = rig.group;
+    scene::SoundEffectComponent& echo = rig.effect("EchoSoundEffect", rig.group);
+    echo.delay = 0.3f;
+    echo.feedback = 0.0f;
+    (void)rig.hear(0.1);
+    rig.fixture.sound(rig.sound).playing = false;
+    // The tone ran from 0 to 0.1 s, so its echo runs from 0.3 to 0.4 s: the
+    // next 0.15 s hold none of it, and the 0.15 s after that hold it.
+    CHECK(rig.hear(0.15).peak == 0.0f);
+    CHECK(rig.hear(0.15).rms > 0.02);
+}
+
+TEST_CASE("effects under one parent apply in the order of their priority")
+{
+    const auto chain = [](bool distortionFirst) {
+        EffectRig rig;
+        scene::SoundEffectComponent& distortion = rig.effect("DistortionSoundEffect", rig.sound);
+        distortion.level = 1.0f;
+        distortion.priority = distortionFirst ? 0.0f : 2.0f;
+        scene::SoundEffectComponent& filter = rig.effect("LowPassSoundEffect", rig.sound);
+        filter.cutoff = 120.0f;
+        filter.priority = 1.0f;
+        (void)rig.hear(0.1);
+        return rig.hear(0.4);
+    };
+    // Squared off and then filtered is a quiet rounded tone; filtered and then
+    // squared off is a loud square one.
+    const Heard thenFiltered = chain(true);
+    const Heard thenSquared = chain(false);
+    CHECK(thenSquared.rms > thenFiltered.rms * 1.5);
+}

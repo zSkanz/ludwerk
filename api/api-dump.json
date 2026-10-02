@@ -586,6 +586,102 @@
       "Events": []
     },
     {
+      "Name": "Beam",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Attachment0",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Attachment1",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Color",
+          "Type": "ColorSequence",
+          "Default": "ColorSequence.new(Color3.new(1, 1, 1))"
+        },
+        {
+          "Name": "CurveSize0",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "CurveSize1",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FaceCamera",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "LightEmission",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "LightInfluence",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Segments",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "Texture",
+          "Type": "Content"
+        },
+        {
+          "Name": "TextureLength",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "TextureMode",
+          "Type": "Enum.TextureMode",
+          "Default": "Enum.TextureMode.Stretch"
+        },
+        {
+          "Name": "TextureSpeed",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(0)"
+        },
+        {
+          "Name": "Width0",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Width1",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ZOffset",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "BillboardGui",
       "Extends": "Instance",
       "Tags": [],
@@ -908,6 +1004,30 @@
       ]
     },
     {
+      "Name": "ChorusSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Depth",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Mix",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "Rate",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "ClickDetector",
       "Extends": "Instance",
       "Tags": [],
@@ -996,6 +1116,40 @@
           "Name": "TintColor",
           "Type": "Color3",
           "Default": "Color3.new(1, 1, 1)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "CompressorSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Attack",
+          "Type": "number",
+          "Default": "0.01"
+        },
+        {
+          "Name": "MakeupGain",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Ratio",
+          "Type": "number",
+          "Default": "4"
+        },
+        {
+          "Name": "Release",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Threshold",
+          "Type": "number",
+          "Default": "-20"
         }
       ],
       "Methods": [],
@@ -1545,6 +1699,20 @@
       "Events": []
     },
     {
+      "Name": "DistortionSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Level",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "DragDetector",
       "Extends": "Instance",
       "Tags": [],
@@ -1672,6 +1840,69 @@
           ]
         }
       ]
+    },
+    {
+      "Name": "EchoSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Delay",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "DryLevel",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Feedback",
+          "Type": "number",
+          "Default": "0.4"
+        },
+        {
+          "Name": "WetLevel",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "EqualizerSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "HighGain",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "LowGain",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MidGain",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MidHigh",
+          "Type": "number",
+          "Default": "4000"
+        },
+        {
+          "Name": "MidLow",
+          "Type": "number",
+          "Default": "400"
+        }
+      ],
+      "Methods": [],
+      "Events": []
     },
     {
       "Name": "FixedConstraint",
@@ -1847,6 +2078,135 @@
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "HapticService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "IsMotorSupported",
+          "Parameters": [
+            {
+              "Name": "inputType",
+              "Type": "Enum.UserInputType"
+            },
+            {
+              "Name": "motor",
+              "Type": "Enum.VibrationMotor"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "IsVibrationSupported",
+          "Parameters": [
+            {
+              "Name": "inputType",
+              "Type": "Enum.UserInputType"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "SetMotor",
+          "Parameters": [
+            {
+              "Name": "inputType",
+              "Type": "Enum.UserInputType"
+            },
+            {
+              "Name": "motor",
+              "Type": "Enum.VibrationMotor"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Vibrate",
+          "Parameters": [
+            {
+              "Name": "strength",
+              "Type": "number"
+            },
+            {
+              "Name": "seconds",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "HighPassSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Cutoff",
+          "Type": "number",
+          "Default": "500"
+        },
+        {
+          "Name": "Resonance",
+          "Type": "number",
+          "Default": "0.707"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Highlight",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Adornee",
+          "Type": "(BasePart | Model)?"
+        },
+        {
+          "Name": "DepthMode",
+          "Type": "Enum.HighlightDepthMode",
+          "Default": "Enum.HighlightDepthMode.AlwaysOnTop"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FillColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 0.2, 0.2)"
+        },
+        {
+          "Name": "FillTransparency",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "OutlineColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "OutlineTransparency",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
       "Methods": [],
       "Events": []
     },
@@ -2828,6 +3188,25 @@
       "Events": []
     },
     {
+      "Name": "LowPassSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Cutoff",
+          "Type": "number",
+          "Default": "2000"
+        },
+        {
+          "Name": "Resonance",
+          "Type": "number",
+          "Default": "0.707"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "MeshPart",
       "Extends": "BasePart",
       "Tags": [],
@@ -3621,6 +4000,20 @@
       "Events": []
     },
     {
+      "Name": "PitchShiftSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Octave",
+          "Type": "number",
+          "Default": "1.25"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "Player",
       "Extends": "Instance",
       "Tags": ["NotCreatable"],
@@ -4069,6 +4462,40 @@
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ReverbSoundEffect",
+      "Extends": "SoundEffect",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "DryLevel",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "RoomSize",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
+          "Name": "WetLevel",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "Width",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
       "Methods": [],
       "Events": []
     },
@@ -4722,6 +5149,25 @@
           "Parameters": []
         }
       ]
+    },
+    {
+      "Name": "SoundEffect",
+      "Extends": "Instance",
+      "Tags": ["Abstract", "NotCreatable"],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Priority",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
     },
     {
       "Name": "SpotLight",
@@ -6015,6 +6461,94 @@
         }
       ],
       "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "Trail",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Attachment0",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Attachment1",
+          "Type": "Attachment?"
+        },
+        {
+          "Name": "Color",
+          "Type": "ColorSequence",
+          "Default": "ColorSequence.new(Color3.new(1, 1, 1))"
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "FaceCamera",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Lifetime",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "LightEmission",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "LightInfluence",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "MaxLength",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MinLength",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "Texture",
+          "Type": "Content"
+        },
+        {
+          "Name": "TextureLength",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "TextureMode",
+          "Type": "Enum.TextureMode",
+          "Default": "Enum.TextureMode.Stretch"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(0)"
+        },
+        {
+          "Name": "WidthScale",
+          "Type": "NumberSequence",
+          "Default": "NumberSequence.new(1)"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Clear",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
       "Events": []
     },
     {
@@ -10316,6 +10850,19 @@
       ]
     },
     {
+      "Name": "HighlightDepthMode",
+      "Items": [
+        {
+          "Name": "AlwaysOnTop",
+          "Value": 0
+        },
+        {
+          "Name": "Occluded",
+          "Value": 1
+        }
+      ]
+    },
+    {
       "Name": "HorizontalAlignment",
       "Items": [
         {
@@ -11578,6 +12125,23 @@
       ]
     },
     {
+      "Name": "TextureMode",
+      "Items": [
+        {
+          "Name": "Static",
+          "Value": 2
+        },
+        {
+          "Name": "Stretch",
+          "Value": 0
+        },
+        {
+          "Name": "Wrap",
+          "Value": 1
+        }
+      ]
+    },
+    {
       "Name": "UserInputType",
       "Items": [
         {
@@ -11649,6 +12213,35 @@
         {
           "Name": "Top",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "VibrationMotor",
+      "Items": [
+        {
+          "Name": "Large",
+          "Value": 0
+        },
+        {
+          "Name": "LeftHand",
+          "Value": 4
+        },
+        {
+          "Name": "LeftTrigger",
+          "Value": 2
+        },
+        {
+          "Name": "RightHand",
+          "Value": 5
+        },
+        {
+          "Name": "RightTrigger",
+          "Value": 3
+        },
+        {
+          "Name": "Small",
+          "Value": 1
         }
       ]
     },

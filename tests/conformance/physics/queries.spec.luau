@@ -301,3 +301,64 @@ describe("Workspace:GetBodiesInBox", function()
         expect(#found):ToBe(0)
     end)
 end)
+
+describe("A part made this instant", function()
+    afterEach(function()
+        for _, instance in spawned do
+            instance:Destroy()
+        end
+        table.clear(spawned)
+    end)
+
+    it("is in every query from the moment it is in the world (D475)", function()
+        -- No wait anywhere: the part is made, and asked for, in one
+        -- resumption. A query answered from the simulation's last step found
+        -- nothing where a script had just put something.
+        local made = block("Made", vector.create(300, 5, 0), vector.create(4, 4, 4))
+
+        local hit = workspace:Raycast(vector.create(300, 20, 0), vector.create(0, -30, 0))
+        assert(hit, "a ray through a part made this instant met nothing")
+        expect(hit.Instance):ToBe(made)
+        expect(hit.Position.y):ToBeCloseTo(7, 0.01)
+
+        local swept = workspace:Spherecast(vector.create(300, 20, 0), 0.5, vector.create(0, -30, 0))
+        assert(swept, "a sphere swept through a part made this instant met nothing")
+        expect(swept.Instance):ToBe(made)
+
+        local boxed = workspace:GetBodiesInBox(CFrame.new(300, 5, 0), vector.create(2, 2, 2))
+        expect(#boxed):ToBe(1)
+        expect(boxed[1]):ToBe(made)
+
+        local near = workspace:GetBodiesInSphere(vector.create(300, 5, 0), 1)
+        expect(#near):ToBe(1)
+        expect(near[1]):ToBe(made)
+    end)
+
+    it("and one made after a query is in the next", function()
+        local first = block("First", vector.create(320, 5, 0), vector.create(4, 4, 4))
+        expect(#workspace:GetBodiesInBox(CFrame.new(320, 5, 0), vector.create(2, 2, 2))):ToBe(1)
+        -- A second, made after the world was last asked about.
+        local second = block("Second", vector.create(320, 15, 0), vector.create(4, 4, 4))
+        local hit = workspace:Raycast(vector.create(320, 30, 0), vector.create(0, -40, 0))
+        assert(hit, "expected a hit")
+        expect(hit.Instance):ToBe(second)
+        -- And gone again the moment it is destroyed (D458).
+        second:Destroy()
+        local under = workspace:Raycast(vector.create(320, 30, 0), vector.create(0, -40, 0))
+        assert(under, "expected a hit")
+        expect(under.Instance):ToBe(first)
+    end)
+
+    it("a part outside the world is in none, and is in them once it is parented in", function()
+        local waiting = Instance.new("Part")
+        waiting.Size = vector.create(4, 4, 4)
+        waiting.Position = vector.create(340, 5, 0)
+        waiting.Anchored = true
+        table.insert(spawned, waiting)
+        expect(workspace:Raycast(vector.create(340, 20, 0), vector.create(0, -30, 0))):ToBeNil()
+        waiting.Parent = workspace
+        local hit = workspace:Raycast(vector.create(340, 20, 0), vector.create(0, -30, 0))
+        assert(hit, "expected a hit")
+        expect(hit.Instance):ToBe(waiting)
+    end)
+end)

@@ -99,6 +99,9 @@ inline constexpr scene::EnumId ActuatorRelativeToEnumId = 56;
 inline constexpr scene::EnumId VelocityConstraintModeEnumId = 57;
 inline constexpr scene::EnumId PositionAlignmentModeEnumId = 58;
 inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
+inline constexpr scene::EnumId VibrationMotorEnumId = 60;
+inline constexpr scene::EnumId HighlightDepthModeEnumId = 61;
+inline constexpr scene::EnumId TextureModeEnumId = 62;
 
 } // namespace generated
 

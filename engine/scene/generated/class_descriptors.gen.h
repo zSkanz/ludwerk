@@ -97,6 +97,9 @@ inline constexpr EnumId ActuatorRelativeToEnumId = 56;
 inline constexpr EnumId VelocityConstraintModeEnumId = 57;
 inline constexpr EnumId PositionAlignmentModeEnumId = 58;
 inline constexpr EnumId OrientationAlignmentModeEnumId = 59;
+inline constexpr EnumId VibrationMotorEnumId = 60;
+inline constexpr EnumId HighlightDepthModeEnumId = 61;
+inline constexpr EnumId TextureModeEnumId = 62;
 
 } // namespace generated
 

@@ -226,7 +226,7 @@ struct Hit
 [[nodiscard]] std::optional<Hit> cast(const ServiceState& services, const Ray& ray, f32 reach,
                                       InstanceId character = {})
 {
-    const scene::PhysicsSync* sync = services.physics;
+    scene::PhysicsSync* sync = services.physics;
     if (sync == nullptr)
         return std::nullopt;
     physics::RayHit hit;
@@ -235,6 +235,7 @@ struct Hit
     physics::QueryFilter filter;
     if (own != 0)
         filter.userData = std::span<const u64>(&own, 1);
+    sync->syncForQuery();
     if (!sync->backend().raycast(sync->worldHandle(), query, filter, hit))
         return std::nullopt;
     return Hit{sync->instanceOf(hit.userData), hit.position, hit.distance};
