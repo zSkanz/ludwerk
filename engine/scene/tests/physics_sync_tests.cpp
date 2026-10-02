@@ -265,8 +265,7 @@ public:
         moves.push_back(velocity);
     }
 
-    void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle,
-                               const core::CFrameD& transform) override
+    void setCharacterTransform(physics::WorldHandle, physics::CharacterHandle, const core::CFrameD& transform) override
     {
         characterTransforms.push_back(transform);
     }

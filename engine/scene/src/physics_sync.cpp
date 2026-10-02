@@ -857,8 +857,8 @@ struct Sweep
 inline constexpr f64 SweepSeconds = 0.1;
 inline constexpr f64 SweepMargin = 1.0;
 
-[[nodiscard]] Sweep sweepOf(core::InstanceId id, const PartComponent& part, const RigidBodyComponent& body,
-                            bool loose, bool character = false) noexcept
+[[nodiscard]] Sweep sweepOf(core::InstanceId id, const PartComponent& part, const RigidBodyComponent& body, bool loose,
+                            bool character = false) noexcept
 {
     const f64 reach = static_cast<f64>(core::length(part.size)) * 0.5 +
                       static_cast<f64>(core::length(body.linearVelocity)) * SweepSeconds + SweepMargin;
