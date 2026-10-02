@@ -1989,6 +1989,18 @@ void applyOverrides(World& world, core::InstanceId placed, const JsonValue& over
     }
 }
 
+// **The mark a partition leaves on an instance whose children stream** (D422):
+// which instance that number became is recorded as the scene is read. Only a
+// partition's residual scene carries it; nothing an editor saves does.
+void noteStreamAnchor(World& world, core::InstanceId id, const JsonValue& json)
+{
+    if (const JsonValue anchor = json["anchor"]; anchor.type() == core::JsonType::Number && id.valid()) {
+        const f64 number = anchor.asNumber();
+        if (number >= 0.0 && number < 4294967295.0)
+            world.setStreamAnchor(static_cast<u32>(number), id);
+    }
+}
+
 core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonValue& json,
                               std::vector<PendingReference>& pending, SceneIoReport& report, StampLoad* stamps,
                               int depth)
@@ -2060,6 +2072,7 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
             }
         }
         applyCarried(world, node, json, report, false);
+        noteStreamAnchor(world, node, json);
         if (const JsonValue children = json["children"]; children.type() == core::JsonType::Array) {
             for (core::usize index = 0; index < children.size(); ++index)
                 readInstance(world, node, children.at(index), pending, report, stamps, depth);
@@ -2087,6 +2100,7 @@ core::InstanceId readInstance(World& world, core::InstanceId parent, const JsonV
     ++report.instances;
 
     applyNode(world, id, json, pending, report);
+    noteStreamAnchor(world, id, json);
 
     if (const JsonValue children = json["children"]; children.type() == core::JsonType::Array) {
         for (core::usize index = 0; index < children.size(); ++index)
@@ -2424,6 +2438,8 @@ void readVoxels(World& world, const JsonValue& root, SceneIoReport& out)
 
 void clearScene(World& world)
 {
+    // The scene that named them is going; the next names its own.
+    world.clearStreamAnchors();
     const core::InstanceId workspace = workspaceOf(world);
     if (!workspace.valid())
         return;
@@ -2750,6 +2766,7 @@ std::optional<core::EngineError> applyScene(World& world, const JsonValue root, 
         // The file's root IS the workspace, so its own properties apply to the
         // workspace and only its children are created.
         applyNode(world, workspace, rootNode, pending, out);
+        noteStreamAnchor(world, workspace, rootNode);
         if (const JsonValue children = rootNode["children"]; children.type() == core::JsonType::Array) {
             // **Numbered as read** (ADR 0138 §6): what this read made, and
             // nothing else the world already held, so an authority and a

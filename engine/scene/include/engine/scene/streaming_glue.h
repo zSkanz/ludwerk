@@ -67,12 +67,12 @@ public:
 private:
     struct Resident
     {
+        // The cell's own folder, made only when something has nowhere
+        // authored to go (a generated world's records).
         core::InstanceId folder;
-        // One `Model` per `asset::ChunkGroup`, in the chunk's own order, so a
-        // record's `group` index means the same thing here that it means in the
-        // payload. An entry may be invalid -- see `materialize` for why it is
-        // kept rather than skipped.
-        std::vector<core::InstanceId> groups;
+        // The `Model`s this cell made, one for each group that is not an
+        // authored instance: what eviction takes away once they are empty.
+        std::vector<core::InstanceId> models;
         std::vector<core::InstanceId> instances;
     };
 

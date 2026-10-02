@@ -665,6 +665,19 @@ public:
     void setGenerated(core::InstanceId id, bool generated) noexcept;
     [[nodiscard]] bool generated(core::InstanceId id) const noexcept;
 
+    // **Where streamed content is born** (D422). A partitioned scene marks
+    // each instance whose children left for a cell with a number, and reading
+    // it records which instance that became -- once, as the scene is read,
+    // before any script has run. So a streamed part comes back under exactly
+    // the instance it was authored under, however many siblings share its
+    // name and whatever a script has added or destroyed since; and one whose
+    // parent a script destroyed does not come back at all, because what it
+    // was part of is gone (`StreamingGlue::materialize`).
+    void setStreamAnchor(core::u32 anchor, core::InstanceId id);
+    // The instance, or none when the number names nothing or it was destroyed.
+    [[nodiscard]] core::InstanceId streamAnchor(core::u32 anchor) const noexcept;
+    void clearStreamAnchors() noexcept { m_streamAnchors.clear(); }
+
     // Marks an instance as made from a file under `src/` (ADR 0092, 0105).
     // Unlike `generated` it is NOT inherited by a subtree: a file's script may
     // hold instances somebody authored, and those are saved.
@@ -1336,6 +1349,10 @@ public:
     [[nodiscard]] const ComponentPool<AudioGroupComponent>& audioGroups() const noexcept { return m_audioGroups; }
 
 private:
+    // By anchor number (`setStreamAnchor`). Not in a snapshot: the instances
+    // it names keep their ids across one, and a scene read anew fills it anew.
+    std::vector<core::InstanceId> m_streamAnchors;
+
     // The pool walk `snapshot` and `restore` share, as `fn(worldPool,
     // snapshotPool)`. Templated on both sides so one body serves a `const
     // World&` copying out and a `World&` copying back, and each caller's lambda

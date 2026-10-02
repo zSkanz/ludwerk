@@ -39,6 +39,9 @@ struct Cell
     asset::Chunk chunk;
     core::DAABB contents;
     std::unordered_map<std::string, u32> strings;
+    // The group that stands for an authored parent, by its anchor: one a
+    // cell, however many of its children the cell holds.
+    std::unordered_map<u32, u32> parents;
 
     [[nodiscard]] u32 intern(std::string_view text)
     {
@@ -103,14 +106,19 @@ void expand(core::DAABB& box, const core::DAABB& other) noexcept
 // `children` is empty. Every other member is copied VERBATIM, which is what
 // keeps a scene that partitions to itself byte-identical: no number written by
 // the serializer is ever read and written again.
-[[nodiscard]] std::string spliceChildren(std::string_view node, std::string_view children)
+//
+// `anchor`, when the node's children stream: the number written on it as
+// `"anchor"`, which is what brings them back under it (D422).
+[[nodiscard]] std::string spliceChildren(std::string_view node, std::string_view children,
+                                         u32 anchor = asset::ChunkGroup::NoAnchor)
 {
     std::string out;
-    out.reserve(node.size() + children.size());
+    out.reserve(node.size() + children.size() + 24);
     out.push_back('{');
     bool any = false;
     jsonslice::forEachMember(node, [&](std::string_view key, std::string_view value) {
-        if (key == "children") {
+        // A mark from an earlier partition is not this one's.
+        if (key == "children" || key == "anchor") {
             return;
         }
         if (any) {
@@ -122,6 +130,14 @@ void expand(core::DAABB& box, const core::DAABB& other) noexcept
         out.append("\":");
         out.append(value);
     });
+    if (anchor != asset::ChunkGroup::NoAnchor) {
+        if (any) {
+            out.push_back(',');
+        }
+        any = true;
+        out.append("\"anchor\":");
+        out.append(std::to_string(anchor));
+    }
     if (!children.empty()) {
         if (any) {
             out.push_back(',');
@@ -463,6 +479,14 @@ private:
     [[nodiscard]] Cell& cellFor(asset::ChunkId id);
     void finish();
 
+    // **The authored parent of whatever is being visited** (D422), as the
+    // number its node is marked with -- given the first time a child of it
+    // leaves, so a node nothing left is not rewritten to carry one.
+    [[nodiscard]] u32 parentAnchor();
+    // The group in `cell` that stands for that parent, or `NoGroup` when the
+    // cell has no room for another.
+    [[nodiscard]] u32 parentGroup(Cell& cell);
+
     const PartitionSettings& m_settings;
     const PartitionSink& m_sink;
     PartitionResult& m_out;
@@ -475,6 +499,9 @@ private:
     ClassId m_modelClass = InvalidClass;
 
     std::unordered_set<std::string> m_pins;
+    // One entry for each node whose children are being walked, innermost last.
+    std::vector<u32> m_parents;
+    u32 m_nextAnchor = 0;
     // Ordered, so the index and the order cells are handed to the sink are
     // properties of the world rather than of a hash seed (R10).
     std::map<asset::ChunkId, Cell> m_cells;
@@ -671,6 +698,31 @@ Leaf Partitioner::readLeaf(std::string_view node)
 
 // --- filing a record --------------------------------------------------------
 
+u32 Partitioner::parentAnchor()
+{
+    if (m_parents.empty())
+        return asset::ChunkGroup::NoAnchor;
+    if (m_parents.back() == asset::ChunkGroup::NoAnchor)
+        m_parents.back() = m_nextAnchor++;
+    return m_parents.back();
+}
+
+u32 Partitioner::parentGroup(Cell& cell)
+{
+    const u32 anchor = parentAnchor();
+    if (anchor == asset::ChunkGroup::NoAnchor)
+        return asset::ChunkInstance::NoGroup;
+    if (const auto found = cell.parents.find(anchor); found != cell.parents.end())
+        return found->second;
+    asset::ChunkGroup group;
+    group.anchor = anchor;
+    group.existing = true;
+    const auto index = static_cast<u32>(cell.chunk.groups.size());
+    cell.chunk.groups.push_back(group);
+    cell.parents.emplace(anchor, index);
+    return index;
+}
+
 Cell& Partitioner::cellFor(asset::ChunkId id)
 {
     const auto found = m_cells.find(id);
@@ -692,7 +744,7 @@ bool Partitioner::emitLeaf(const Leaf& leaf)
     }
 
     Cell& cell = cellFor(id);
-    if (cell.chunk.instances.size() >= asset::MaxChunkInstances) {
+    if (cell.chunk.instances.size() >= asset::MaxChunkInstances || cell.chunk.groups.size() >= asset::MaxChunkGroups) {
         // A cell is a file with a stated ceiling, and one authored densely
         // enough to reach it keeps what does not fit rather than writing a
         // payload the decoder refuses.
@@ -701,6 +753,9 @@ bool Partitioner::emitLeaf(const Leaf& leaf)
     }
 
     asset::ChunkInstance record = leaf.record;
+    // **Under what it was authored under** (D422): the record names its
+    // parent, which stays in the scene and is where it is born.
+    record.group = parentGroup(cell);
     record.name = cell.intern(leaf.name);
     record.meshContent = cell.intern(leaf.meshContent);
     record.collisionGroup = cell.intern(leaf.collisionGroup);
@@ -779,6 +834,8 @@ bool Partitioner::emitGroup(std::string_view node, const std::string& path, bool
 
     asset::ChunkGroup group;
     group.name = cell.intern(textOf(node, "name"));
+    // The model is made where the model was (D422).
+    group.anchor = parentAnchor();
     const auto groupIndex = static_cast<u32>(cell.chunk.groups.size());
     cell.chunk.groups.push_back(group);
 
@@ -813,6 +870,9 @@ Outcome Partitioner::visitChildren(std::string_view node, const std::string& pat
 
     std::string kept = "[";
     bool anyKept = false;
+    // This node is the parent of whatever leaves below; it is marked only if
+    // something does (`parentAnchor`).
+    m_parents.push_back(asset::ChunkGroup::NoAnchor);
     // **Two questions, not one.** A child that left changes this node; so does a
     // child that stayed and was rebuilt, because the rebuild is in `kept` and
     // nowhere else. Asking only the first is D084: the deeper rewrite was
@@ -833,6 +893,8 @@ Outcome Partitioner::visitChildren(std::string_view node, const std::string& pat
         kept.append(one);
     });
     kept.push_back(']');
+    const u32 anchor = m_parents.back();
+    m_parents.pop_back();
 
     // Verbatim when nothing under it moved at all, which is what makes a scene
     // with nothing streamable in it partition to itself byte for byte.
@@ -840,7 +902,7 @@ Outcome Partitioner::visitChildren(std::string_view node, const std::string& pat
         residual.append(node);
         return Outcome::Verbatim;
     }
-    residual.append(spliceChildren(node, anyKept ? kept : std::string_view{}));
+    residual.append(spliceChildren(node, anyKept ? kept : std::string_view{}, anchor));
     return Outcome::Rewritten;
 }
 
@@ -935,7 +997,8 @@ Outcome Partitioner::visit(std::string_view node, const std::string& parentPath,
         }
         // `Nonatomic`: the model stays and its parts descend individually, so a
         // path to the model still resolves and a script that looks for it finds
-        // it -- empty, until the grid brings its parts back.
+        // it -- empty, until the grid brings its parts back UNDER it (D422:
+        // they came back in a folder of their cell, and never under it).
         ++m_out.report.kept;
         return visitChildren(node, path, residual);
     }

@@ -712,6 +712,16 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A streamed part comes back under what it was authored under** (D422). In
+  a scene large enough to be cut into cells, the parts of every `Model` left
+  at the default `StreamingMode` -- and of every `Folder` -- came back under a
+  `Chunk_x_z_layer` folder in `Workspace`, and the model stayed an empty shell:
+  `model:FindFirstChild`, `GetChildren` and `Destroy` found nothing of it. A
+  part now streams in and out under its own parent, an atomic model is made
+  where it was authored, and the tree a script sees is the scene's whether or
+  not the world is partitioned. A model a script destroys does not come back
+  when its cell is loaded again. `Chunk_*` folders remain only in a generated
+  world, whose cells no scene ever held.
 - **While the game plays in the editor, the viewport is the game's** (D421).
   A click selects nothing and opens nothing; no brush, tool, drop or handle
   works on the running world; Ctrl+Z does nothing; a key typed into the

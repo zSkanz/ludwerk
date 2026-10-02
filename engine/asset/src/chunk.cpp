@@ -23,7 +23,10 @@ using core::u64;
 // same convention `pack.cpp` states.
 constexpr usize HeaderBytes = 88;
 constexpr usize InstanceRecordBytes = 140;
-constexpr usize GroupRecordBytes = 4;
+// A name; and since version four an anchor and flags.
+constexpr usize NamedGroupRecordBytes = 4;
+constexpr usize GroupRecordBytes = 12;
+constexpr u32 GroupFlagExisting = 1u << 0;
 constexpr usize TagRefBytes = 4;
 
 // The three booleans, packed into the u32 the record already spends on
@@ -217,6 +220,8 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
 
     for (const ChunkGroup& group : chunk.groups) {
         writeU32(out, group.name);
+        writeU32(out, group.anchor);
+        writeU32(out, group.existing ? GroupFlagExisting : 0u);
     }
     for (const u32 tag : chunk.tagRefs) {
         writeU32(out, tag);
@@ -243,7 +248,8 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
 
     Reader reader(bytes, 4);
     const u32 version = reader.u32v();
-    if (version != ChunkFormatVersion && version != ChunkFormatVersionColumns) {
+    if (version != ChunkFormatVersion && version != ChunkFormatVersionNamedGroups &&
+        version != ChunkFormatVersionColumns) {
         const I18nArg args[] = {{"found", std::to_string(version)}, {"expected", std::to_string(ChunkFormatVersion)}};
         return core::makeError(ENG_TR("asset.chunk.err.version"), args);
     }
@@ -274,7 +280,9 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         return core::makeError(ENG_TR("asset.chunk.err.too_large"));
     }
     const usize remaining = bytes.size() - reader.at();
-    if (static_cast<u64>(instanceCount) * InstanceRecordBytes + static_cast<u64>(groupCount) * GroupRecordBytes +
+    const bool anchoredGroups = version >= ChunkFormatVersion;
+    const usize groupBytes = anchoredGroups ? GroupRecordBytes : NamedGroupRecordBytes;
+    if (static_cast<u64>(instanceCount) * InstanceRecordBytes + static_cast<u64>(groupCount) * groupBytes +
             static_cast<u64>(tagRefCount) * TagRefBytes >
         remaining) {
         return malformed();
@@ -322,7 +330,12 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
     for (u32 i = 0; i < groupCount; ++i) {
         ChunkGroup group;
         group.name = reader.u32v();
-        if (!reader.ok()) {
+        if (anchoredGroups) {
+            group.anchor = reader.u32v();
+            group.existing = (reader.u32v() & GroupFlagExisting) != 0;
+        }
+        // A group that IS its anchor, with no anchor, is nothing at all.
+        if (!reader.ok() || (group.existing && group.anchor == ChunkGroup::NoAnchor)) {
             return malformed();
         }
         out.groups.push_back(group);

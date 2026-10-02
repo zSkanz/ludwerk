@@ -132,9 +132,10 @@ struct Partition
     return out;
 }
 
-// Every part in a world, as a comparable row. The tree SHAPE differs by design
-// -- streaming parents into a chunk folder -- so what has to match is the set
-// of parts and what each of them is.
+// Every part in a world, as a comparable row: the set of parts and what each
+// of them is. The tree's SHAPE is `treeOf`'s to compare, below -- it was
+// believed to differ by design, streaming parenting into a folder of the cell,
+// and that belief is D422.
 struct PartRow
 {
     std::string name;
@@ -378,10 +379,18 @@ TEST_CASE("a nonatomic model stays and its parts descend on their own")
     // Two cells, because `Nonatomic` files each part by its own position.
     CHECK(partitioned.cells.size() == 2);
     // The model itself is still there, so a path to it resolves and a script
-    // that looks for it finds it -- empty, until the grid brings its parts.
+    // that looks for it finds it -- empty, until the grid brings its parts
+    // back under it: marked in the scene with the number each cell's record
+    // names as its parent (D422). No `Model` is made for it; it is the one
+    // that stayed.
     CHECK(partitioned.result.scene.find("\"Rocks\"") != std::string::npos);
+    CHECK(partitioned.result.scene.find("\"anchor\":0") != std::string::npos);
     for (const auto& cell : partitioned.cells) {
-        CHECK(cell.second.groups.empty());
+        REQUIRE(cell.second.groups.size() == 1);
+        CHECK(cell.second.groups[0].existing);
+        CHECK(cell.second.groups[0].anchor == 0u);
+        REQUIRE(cell.second.instances.size() == 1);
+        CHECK(cell.second.instances[0].group == 0u);
     }
 }
 
@@ -709,4 +718,224 @@ TEST_CASE("a field too small to stream stays in the scene, byte for byte")
     CHECK(partitioned.result.report.terrainCells == 0);
     CHECK(partitioned.cells.empty());
     CHECK(partitioned.result.scene == text);
+}
+
+namespace {
+
+// Every instance under `root` as the path a script would walk to it, with what
+// it is and what it carries: `Workspace.Recursos.Tree.Trunk|Part|tags|attributes`.
+// Sorted, so two worlds with the same tree give the same list whatever order
+// streaming made their instances in.
+[[nodiscard]] std::vector<std::string> treeOf(const scene::World& world, core::InstanceId root)
+{
+    std::vector<std::string> rows;
+    const auto walk = [&](const auto& self, core::InstanceId id, const std::string& path) -> void {
+        for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
+            std::string row = path + "." + std::string(world.atoms().text(world.name(child)));
+            const std::string here = row;
+            row += "|";
+            if (const scene::ClassDescriptor* descriptor = world.classes().find(world.classOf(child));
+                descriptor != nullptr)
+                row += std::string(world.atoms().text(descriptor->name));
+            scene::TagSet tags;
+            world.collectTags(child, tags);
+            std::vector<std::string> named;
+            for (const core::NameAtom tag : tags)
+                named.emplace_back(world.atoms().text(tag));
+            std::sort(named.begin(), named.end());
+            row += "|";
+            for (const std::string& tag : named)
+                row += tag + ";";
+            scene::AttributeMap attributes;
+            world.collectAttributes(child, attributes);
+            std::vector<std::string> keys;
+            for (const auto& entry : attributes)
+                keys.emplace_back(world.atoms().text(entry.first));
+            std::sort(keys.begin(), keys.end());
+            row += "|";
+            for (const std::string& key : keys)
+                row += key + ";";
+            rows.push_back(std::move(row));
+            self(self, child, here);
+        }
+    };
+    walk(walk, root, "Workspace");
+    std::sort(rows.begin(), rows.end());
+    return rows;
+}
+
+// The shape of the game the defect was found in: a folder of resources, each
+// a `Model` with attributes and a tag and the default `StreamingMode`, with a
+// few plain anchored parts -- some tagged -- under it, and many of them
+// sharing one name.
+[[nodiscard]] std::string resourcesScene(int count)
+{
+    std::string models;
+    for (int index = 0; index < count; ++index) {
+        const double x = static_cast<double>(index % 12) * 60.0 - 300.0;
+        const double z = static_cast<double>(index / 12) * 60.0 - 300.0;
+        if (index != 0)
+            models += ",";
+        // Three in four are trees called `Tree`; the rest are rocks.
+        const bool tree = index % 4 != 3;
+        models += std::string(R"({"class":"Model","name":")") + (tree ? "Tree" : "Rock") +
+                  R"(","attributes":{"Kind":")" + (tree ? "Tree" : "Rock") +
+                  R"(","Health":100,"MaxHealth":100},"tags":["Resource"],"children":[)";
+        models += partNode(tree ? "Trunk" : "Stone", x, 2.0, z, 2.0, R"(,"tags":["Choppable"])") + "," +
+                  partNode(tree ? "Leaves" : "Chip", x, 5.0, z, 4.0);
+        if (tree)
+            models += "," + partNode("Leaves", x + 1.0, 6.0, z, 3.0);
+        models += "]}";
+    }
+    return sceneText(R"({"class":"Folder","name":"Recursos","children":[)" + models + "," +
+                     partNode("Marker", 0.0, 1.0, 0.0, 1.0) + "]}," + partNode("Loose", 200.0, 1.0, 200.0, 2.0) + "," +
+                     R"({"class":"Model","name":"Hut","properties":{"StreamingMode":"Atomic"},"children":[)" +
+                     partNode("Wall", -200.0, 2.0, 200.0, 4.0) + "," + partNode("Roof", -200.0, 5.0, 200.0, 5.0) +
+                     "]}");
+}
+
+} // namespace
+
+TEST_CASE("D422: a streamed part comes back under what it was authored under")
+{
+    // Found making a real game: 235 trees and rocks, each a `Model` with
+    // attributes, on a large map. Partitioned, every model was an empty shell
+    // for ever -- its parts came back in a folder of their cell, so
+    // `model:FindFirstChild("Trunk")` was nil and `model:Destroy()` left the
+    // tree standing. The tree a script sees is the scene's, partitioned or not.
+    seedRealCatalog();
+    const std::string text = resourcesScene(96);
+
+    Sandbox whole;
+    REQUIRE(!scene::readScene(whole.world, text).has_value());
+    const std::vector<std::string> expected = treeOf(whole.world, whole.workspace);
+
+    Sandbox streamed;
+    const Partition partitioned = partition(streamed, text);
+    // It did partition: parts left, and the models that hold them stayed.
+    REQUIRE(partitioned.cells.size() >= 4);
+    REQUIRE(partitioned.result.report.records > 200);
+    REQUIRE(!scene::readScene(streamed.world, partitioned.result.scene).has_value());
+
+    // Before anything streams in: every model is there, with what it carries,
+    // and holds no part yet.
+    core::InstanceId recursos =
+        streamed.world.findFirstChild(streamed.workspace, streamed.world.atoms().intern("Recursos"));
+    REQUIRE(recursos.valid());
+    CHECK(streamed.world.childCount(recursos) == 96);
+
+    scene::StreamingGlue glue(streamed.world, streamed.workspace);
+    for (const auto& cell : partitioned.cells) {
+        asset::Chunk decoded;
+        REQUIRE(!asset::decodeChunk(asset::encodeChunk(cell.second), decoded).has_value());
+        (void)glue.materialize(decoded.id, decoded);
+    }
+
+    // **The same tree**: every path, class, tag and attribute, for what left
+    // and for what stayed.
+    const std::vector<std::string> actual = treeOf(streamed.world, streamed.workspace);
+    REQUIRE(actual.size() == expected.size());
+    for (core::usize index = 0; index < expected.size(); ++index)
+        CHECK(actual[index] == expected[index]);
+    // And no folder of a cell stands anywhere in it.
+    for (const std::string& row : actual)
+        CHECK(row.find("Chunk_") == std::string::npos);
+
+    // Every model has its own parts -- its own, among ninety-six sharing two
+    // names: each part is where its model is.
+    std::vector<core::InstanceId> models;
+    streamed.world.collectChildren(recursos, models);
+    core::usize checked = 0;
+    for (const core::InstanceId model : models) {
+        if (streamed.world.models().find(model) == nullptr)
+            continue;
+        const bool tree = streamed.world.atoms().text(streamed.world.name(model)) == "Tree";
+        CHECK(streamed.world.childCount(model) == (tree ? 3u : 2u));
+        std::vector<core::InstanceId> parts;
+        streamed.world.collectChildren(model, parts);
+        REQUIRE(!parts.empty());
+        const scene::PartComponent* first = streamed.world.parts().find(parts.front());
+        REQUIRE(first != nullptr);
+        for (const core::InstanceId part : parts) {
+            const scene::PartComponent* placed = streamed.world.parts().find(part);
+            REQUIRE(placed != nullptr);
+            CHECK(std::abs(placed->cframe.position.x - first->cframe.position.x) <= 1.0);
+            CHECK(placed->cframe.position.z == doctest::Approx(first->cframe.position.z));
+        }
+        ++checked;
+    }
+    CHECK(checked == 96);
+
+    // **Streaming out and in again is the same tree again.**
+    for (const auto& cell : partitioned.cells)
+        glue.evict(cell.second.id);
+    CHECK(streamed.world.childCount(recursos) == 96);
+    for (const core::InstanceId model : models) {
+        if (streamed.world.models().find(model) != nullptr)
+            CHECK(streamed.world.childCount(model) == 0);
+    }
+    for (const auto& cell : partitioned.cells)
+        (void)glue.materialize(cell.second.id, cell.second);
+    const std::vector<std::string> again = treeOf(streamed.world, streamed.workspace);
+    REQUIRE(again.size() == expected.size());
+    for (core::usize index = 0; index < expected.size(); ++index)
+        CHECK(again[index] == expected[index]);
+
+    // **A felled tree does not grow back.** A script destroys a model -- its
+    // parts go with it, being under it -- and when its cell comes round again
+    // the parts that were part of it are not made.
+    const core::InstanceId felled = models.front();
+    REQUIRE(streamed.world.models().find(felled) != nullptr);
+    const core::usize before = treeOf(streamed.world, streamed.workspace).size();
+    const core::usize felledParts = streamed.world.childCount(felled);
+    (void)streamed.world.destroy(felled);
+    streamed.world.retireDestroyed();
+    for (const auto& cell : partitioned.cells)
+        glue.evict(cell.second.id);
+    for (const auto& cell : partitioned.cells)
+        (void)glue.materialize(cell.second.id, cell.second);
+    CHECK(treeOf(streamed.world, streamed.workspace).size() == before - 1 - felledParts);
+}
+
+TEST_CASE("D422: a cell written before groups had anchors is still read, into its folder")
+{
+    // A generated world's cells -- and every cell an earlier build cached --
+    // have no authored tree to return to.
+    seedRealCatalog();
+    asset::Chunk cell;
+    cell.id = asset::ChunkId{1, 2, 0};
+    cell.strings = {"Gate", "Pier"};
+    asset::ChunkGroup group;
+    group.name = 0;
+    cell.groups.push_back(group);
+    asset::ChunkInstance record;
+    record.name = 1;
+    record.group = 0;
+    cell.instances.push_back(record);
+    asset::ChunkInstance loose;
+    loose.name = 1;
+    cell.instances.push_back(loose);
+
+    asset::Chunk decoded;
+    REQUIRE(!asset::decodeChunk(asset::encodeChunk(cell), decoded).has_value());
+    REQUIRE(decoded.groups.size() == 1);
+    CHECK(decoded.groups[0].anchor == asset::ChunkGroup::NoAnchor);
+    CHECK_FALSE(decoded.groups[0].existing);
+
+    Sandbox sandbox;
+    scene::StreamingGlue glue(sandbox.world, sandbox.workspace);
+    (void)glue.materialize(decoded.id, decoded);
+    const core::InstanceId folder =
+        sandbox.world.findFirstChild(sandbox.workspace, sandbox.world.atoms().intern("Chunk_1_2_0"));
+    REQUIRE(folder.valid());
+    // The model, and the part that belongs to none.
+    CHECK(sandbox.world.childCount(folder) == 2);
+    glue.evict(decoded.id);
+    CHECK_FALSE(sandbox.world.findFirstChild(sandbox.workspace, sandbox.world.atoms().intern("Chunk_1_2_0")).valid());
+
+    // A group that says it IS its anchor and names none is not a cell.
+    asset::Chunk broken = cell;
+    broken.groups[0].existing = true;
+    asset::Chunk refused;
+    CHECK(asset::decodeChunk(asset::encodeChunk(broken), refused).has_value());
 }

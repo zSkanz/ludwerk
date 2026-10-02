@@ -118,6 +118,16 @@ comes with it**, through `Model.StreamingMode`:
 `Atomic` is what a gate, a machine or a building wants. `Persistent` is for the
 spawn, the checkpoint, and anything a script holds a long-lived reference to.
 
+**The tree is the one you authored.** A part streams in and out under its own
+parent: a `Nonatomic` model is always there, with its attributes and tags, and
+holds whichever of its parts are loaded -- none of them, far away -- and an
+`Atomic` model appears where it was placed, under the folder it was placed in.
+`model:FindFirstChild("Trunk")` is nil while the trunk is streamed out and the
+trunk while it is in; `model.ChildAdded` and a tag's signals say when. Destroy
+a model and it stays destroyed: its parts are not made again when their cell
+comes back. A world whose cells a generator wrote, with no scene behind them,
+keeps them in a `Chunk_x_z_layer` folder each.
+
 ### What stays authored, and why it says so
 
 The partition is deliberately conservative. An instance leaves the scene only

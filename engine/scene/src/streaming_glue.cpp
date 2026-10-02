@@ -49,47 +49,75 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
     }
 
     Resident resident;
-    // A folder per chunk, named for its coordinates. Not decoration: it is what
-    // makes a streamed world navigable in the explorer, and it is what eviction
-    // removes when nothing inside it is held.
-    resident.folder = m_world.create(folderClass);
-    if (!resident.folder.valid()) {
-        return 0.0;
-    }
-    const std::string folderName =
-        "Chunk_" + std::to_string(id.x) + "_" + std::to_string(id.z) + "_" + std::to_string(id.layer);
-    m_world.setName(resident.folder, m_world.atoms().intern(folderName));
-    (void)m_world.setParent(resident.folder, m_root);
-    // Made by streaming, not authored by anybody, so a scene does not record it.
-    // Marking the folder is enough: the serializer skips a marked instance and
-    // everything under it, and the parts inside were never separately written
-    // down either.
-    m_world.setGenerated(resident.folder, true);
+    // **A folder for the cell, only for what has nowhere authored to go**: a
+    // generated world's records, which no scene ever held. Named for its
+    // coordinates; what eviction removes when nothing inside it is held.
+    const auto cellFolder = [&]() {
+        if (resident.folder.valid())
+            return resident.folder;
+        resident.folder = m_world.create(folderClass);
+        if (!resident.folder.valid())
+            return resident.folder;
+        const std::string folderName =
+            "Chunk_" + std::to_string(id.x) + "_" + std::to_string(id.z) + "_" + std::to_string(id.layer);
+        m_world.setName(resident.folder, m_world.atoms().intern(folderName));
+        (void)m_world.setParent(resident.folder, m_root);
+        // Made by streaming, not authored by anybody, so a scene does not
+        // record it -- nor anything under it.
+        m_world.setGenerated(resident.folder, true);
+        return resident.folder;
+    };
 
-    // **An atomic model's `Model` first, so its parts have somewhere to be born**
-    // (ADR 0053). A group is a model and the parts under it, one level deep, and
-    // the whole of it arrives in this call or none of it does -- which is the
-    // entire difference between `Atomic` and `Nonatomic`, expressed as where a
-    // record is parented rather than as a second code path.
-    resident.groups.reserve(chunk.groups.size());
+    // **Where each group's records are born** (D422), by the group's index:
+    // an authored instance that stayed in the scene, a `Model` made here, or
+    // the cell's folder. And whether they are born at all: a group whose
+    // authored parent a script destroyed is `gone`, because what its parts
+    // were part of is -- a felled tree does not grow back when its cell comes
+    // round again.
+    //
+    // An atomic model's `Model` is made first, so its parts have somewhere to
+    // be born (ADR 0053): the whole of it arrives in this call or none does.
+    std::vector<core::InstanceId> parents;
+    std::vector<bool> gone;
+    parents.reserve(chunk.groups.size());
+    gone.reserve(chunk.groups.size());
     for (const asset::ChunkGroup& group : chunk.groups) {
+        const bool anchored = group.anchor != asset::ChunkGroup::NoAnchor;
+        const core::InstanceId anchor = anchored ? m_world.streamAnchor(group.anchor) : core::InstanceId{};
+        if (anchored && !anchor.valid()) {
+            parents.push_back(core::InstanceId{});
+            gone.push_back(true);
+            continue;
+        }
+        if (group.existing) {
+            parents.push_back(anchor);
+            gone.push_back(false);
+            continue;
+        }
         const core::InstanceId model = modelClass != InvalidClass ? m_world.create(modelClass) : core::InstanceId{};
         if (model.valid()) {
             const std::string_view name = chunk.stringAt(group.name);
             if (!name.empty()) {
                 m_world.setName(model, m_world.atoms().intern(name));
             }
-            (void)m_world.setParent(model, resident.folder);
+            (void)m_world.setParent(model, anchored ? anchor : cellFolder());
+            // Under an authored parent it is its own mark that keeps it out
+            // of a saved scene; under the cell's folder the folder's does.
+            m_world.setGenerated(model, true);
+            resident.models.push_back(model);
         }
         // Pushed even when it is invalid, so a record's `group` stays an index
         // into this vector. A model that could not be created leaves its parts
         // in the chunk folder, which is a flatter world rather than a missing
         // one.
-        resident.groups.push_back(model);
+        parents.push_back(model);
+        gone.push_back(false);
     }
 
     resident.instances.reserve(chunk.instances.size());
     for (const asset::ChunkInstance& source : chunk.instances) {
+        if (source.group < gone.size() && gone[source.group])
+            continue;
         const bool isMesh = source.kind == asset::ChunkInstance::Kind::MeshPart && meshPartClass != InvalidClass;
         const core::InstanceId id2 = m_world.create(isMesh ? meshPartClass : partClass);
         if (!id2.valid()) {
@@ -151,9 +179,11 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
             }
         }
 
-        const core::InstanceId parent = source.group < resident.groups.size() && resident.groups[source.group].valid()
-                                            ? resident.groups[source.group]
-                                            : resident.folder;
+        const core::InstanceId parent =
+            source.group < parents.size() && parents[source.group].valid() ? parents[source.group] : cellFolder();
+        // Made by streaming wherever it is born: a scene saved with it
+        // resident does not write it a second time.
+        m_world.setGenerated(id2, true);
         (void)m_world.setParent(id2, parent);
         resident.instances.push_back(id2);
     }
@@ -187,9 +217,10 @@ void StreamingGlue::evict(asset::ChunkId id)
     m_residentInstances -= std::min<u32>(m_residentInstances, static_cast<u32>(at->second.instances.size()));
 
     // A group's `Model` goes the way its folder does, and for the same reason:
-    // empty means nothing is left in it that was not this chunk's.
-    for (const core::InstanceId model : at->second.groups) {
-        if (model.valid() && m_world.childCount(model) == 0) {
+    // empty means nothing is left in it that was not this chunk's. An authored
+    // instance records were born under is the scene's, and stays.
+    for (const core::InstanceId model : at->second.models) {
+        if (m_world.alive(model) && m_world.childCount(model) == 0) {
             (void)m_world.destroy(model);
         }
     }
@@ -199,7 +230,7 @@ void StreamingGlue::evict(asset::ChunkId id)
     // something a script parented in there has not -- and destroying the folder
     // out from under that is how a streamed world eats things that were never
     // its to remove.
-    if (m_world.childCount(at->second.folder) == 0) {
+    if (at->second.folder.valid() && m_world.alive(at->second.folder) && m_world.childCount(at->second.folder) == 0) {
         (void)m_world.destroy(at->second.folder);
     }
 
@@ -219,12 +250,11 @@ void StreamingGlue::clear()
         for (const core::InstanceId instance : entry.second.instances) {
             (void)m_world.destroy(instance);
         }
-        for (const core::InstanceId model : entry.second.groups) {
-            if (model.valid()) {
-                (void)m_world.destroy(model);
-            }
+        for (const core::InstanceId model : entry.second.models) {
+            (void)m_world.destroy(model);
         }
-        (void)m_world.destroy(entry.second.folder);
+        if (entry.second.folder.valid())
+            (void)m_world.destroy(entry.second.folder);
     }
     m_chunks.clear();
     m_streamedOut.clear();

@@ -64,6 +64,13 @@ class World;
 inline constexpr core::f32 StructureExtent = 12.0f;
 inline constexpr core::f32 TerrainExtent = 24.0f;
 
+// **What a cached partition was made by.** A cache is keyed by the scene's
+// text, and a partitioner that cuts the same text differently -- as D422's
+// does: the residual marks its anchors and the cells name them -- must not be
+// handed one an earlier build wrote. Raised whenever what a partition writes
+// changes meaning.
+inline constexpr core::u32 PartitionRevision = 2;
+
 // The size class an object of this extent belongs to, as a `ChunkId::layer`.
 [[nodiscard]] core::i32 layerForExtent(core::f32 extent) noexcept;
 

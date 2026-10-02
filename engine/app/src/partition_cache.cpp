@@ -162,7 +162,9 @@ PartitionOutcome partitionProject(scene::World& registries, const std::filesyste
     }
 
     const std::filesystem::path root = projectRoot / ".engine" / "partition";
-    const std::filesystem::path directory = root / core::hashText(sceneText).toHex();
+    // By the scene's text and by what cut it (`scene::PartitionRevision`).
+    const std::filesystem::path directory =
+        root / (core::hashText(sceneText).toHex() + "-r" + std::to_string(scene::PartitionRevision));
     outcome.directory = directory;
 
     // **The cache first, because that is the whole point of it.** A person

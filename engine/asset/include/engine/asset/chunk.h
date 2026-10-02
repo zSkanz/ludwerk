@@ -44,7 +44,11 @@ using core::usize;
 inline constexpr char ChunkMagic[4] = {'L', 'G', 'C', 'H'};
 // Three since a cell has a vertical band (`ChunkId::y`, ADR 0086). Version two
 // is still read, as band zero, which is what every cell of it was.
-inline constexpr u32 ChunkFormatVersion = 3;
+//
+// Four since a group says where in the authored tree it is (`ChunkGroup::anchor`,
+// D422). Version three is still read: its groups are a name and nothing else.
+inline constexpr u32 ChunkFormatVersion = 4;
+inline constexpr u32 ChunkFormatVersionNamedGroups = 3;
 inline constexpr u32 ChunkFormatVersionColumns = 2;
 
 // How many size classes a cell's `layer` may name (ADR 0053): 0 is detail,
@@ -94,10 +98,27 @@ struct ChunkId
 // A model whose subtree holds anything a record cannot express -- a light, a
 // script, another model -- is not a group. It stays in the scene, whole, and
 // the partition report counts it. Half a model is worse than an authored one.
+//
+// **And a group says where in the authored tree it is** (D422). A part taken
+// out of a scene is still the child of what it was authored under: a streamed
+// record that came back in a folder of its cell left every `Model` in the
+// scene an empty shell, and `model:FindFirstChild("Trunk")` nil for ever.
+// `anchor` is the number the partitioner marked that parent with in the scene
+// it left behind (`"anchor"` on the node, `World::streamAnchor`):
+//   - `existing`: the anchor IS the group. Nothing is created for it, and its
+//     records are born under the authored instance itself -- the parts of a
+//     model that stayed, or of a folder.
+//   - otherwise a `Model` is created, as before, and under the anchor.
+// With no anchor a group's model, and a record with no group, go under the
+// cell's own folder: a generated world has no authored tree to return to.
 struct ChunkGroup
 {
+    static constexpr u32 NoAnchor = 0xFFFFFFFFu;
+
     // Index into `Chunk::strings`, or `ChunkInstance::NoString`.
     u32 name = 0xFFFFFFFFu;
+    u32 anchor = NoAnchor;
+    bool existing = false;
 };
 
 // What a chunk creates. One record per instance, flat: a chunk's contents are a

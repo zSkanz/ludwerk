@@ -235,6 +235,26 @@ bool World::generated(core::InstanceId id) const noexcept
     return record != nullptr && record->generated;
 }
 
+void World::setStreamAnchor(core::u32 anchor, core::InstanceId id)
+{
+    // A scene names at most as many anchors as it has instances; a number
+    // past any scene's size is a file somebody damaged, not a table to grow.
+    constexpr core::u32 MostAnchors = 1u << 24;
+    if (anchor >= MostAnchors)
+        return;
+    if (anchor >= m_streamAnchors.size())
+        m_streamAnchors.resize(static_cast<usize>(anchor) + 1);
+    m_streamAnchors[anchor] = id;
+}
+
+core::InstanceId World::streamAnchor(core::u32 anchor) const noexcept
+{
+    if (anchor >= m_streamAnchors.size())
+        return {};
+    const core::InstanceId id = m_streamAnchors[anchor];
+    return alive(id) ? id : core::InstanceId{};
+}
+
 void World::keepUnread(core::InstanceId parent, std::string json)
 {
     m_unread.emplace_back(parent, std::move(json));
