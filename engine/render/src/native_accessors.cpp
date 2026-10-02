@@ -1449,6 +1449,38 @@ bool setLightingExposureCompensation(scene::World& world, core::InstanceId id, c
     return true;
 }
 
+Value getLightingExposureMin(const scene::World& world, core::InstanceId id)
+{
+    const scene::LightingComponent* lighting = readLighting(world, id);
+    return lighting == nullptr ? Value{} : Value{static_cast<f64>(lighting->exposureMin)};
+}
+
+bool setLightingExposureMin(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::LightingComponent* lighting = writeLighting(world, id);
+    f32 stops = 0.0f;
+    if (lighting == nullptr || !takeFinite(value, stops))
+        return false;
+    lighting->exposureMin = stops;
+    return true;
+}
+
+Value getLightingExposureMax(const scene::World& world, core::InstanceId id)
+{
+    const scene::LightingComponent* lighting = readLighting(world, id);
+    return lighting == nullptr ? Value{} : Value{static_cast<f64>(lighting->exposureMax)};
+}
+
+bool setLightingExposureMax(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::LightingComponent* lighting = writeLighting(world, id);
+    f32 stops = 0.0f;
+    if (lighting == nullptr || !takeFinite(value, stops))
+        return false;
+    lighting->exposureMax = stops;
+    return true;
+}
+
 Value getLightingSunDirection(const scene::World& world, core::InstanceId id)
 {
     const scene::LightingComponent* lighting = readLighting(world, id);

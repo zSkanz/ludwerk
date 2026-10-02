@@ -487,6 +487,20 @@ local Definition: Schema.Definition = {
                 { Name = "Virtual14", Value = 145 },
                 { Name = "Virtual15", Value = 146 },
                 { Name = "Virtual16", Value = 147 },
+                {
+                    Name = "SwipeUp",
+                    Value = 148,
+                    Doc = "**A swipe, as a key** (D462): a finger -- or the mouse with its left button down "
+                        .. "-- that has travelled `InputService.SwipeThreshold` up the screen. Bound to an "
+                        .. "`InputAction` like any key, it is a press that lasts one tick, so a puzzle moves "
+                        .. "a piece by `SwipeLeft` beside the arrow key and has nothing to recognise itself. "
+                        .. "It is said while the finger is still down, as soon as it has gone far enough; one "
+                        .. "long drag one way is one swipe, and a change of direction is the next. A press "
+                        .. "the interface took starts none.",
+                },
+                { Name = "SwipeDown", Value = 149 },
+                { Name = "SwipeLeft", Value = 150 },
+                { Name = "SwipeRight", Value = 151 },
             } :: { Schema.EnumItem },
         },
         {
@@ -1293,6 +1307,32 @@ local Definition: Schema.Definition = {
                 { Name = "Phone", Value = 3, Doc = "A phone's dial pad." },
                 { Name = "Email", Value = 4, Doc = "An address, with `@` at hand." },
                 { Name = "Url", Value = 5, Doc = "A web address, with `/` and `.` at hand." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "SwipeDirection",
+            Doc = "Which way a swipe went, as `InputService.TouchSwiped` says it. Up is towards the top of "
+                .. "the window.",
+            Items = {
+                { Name = "Up", Value = 0 },
+                { Name = "Down", Value = 1 },
+                { Name = "Left", Value = 2 },
+                { Name = "Right", Value = 3 },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "Platform",
+            Doc = "The operating system a game is running on: `RunService.Platform`. For the few things "
+                .. "that differ by system -- a store's rules, a path a player is told about. What a game "
+                .. "shows on screen should follow what the machine HAS (`InputService.TouchAvailable`, "
+                .. "`UIService.ViewportSize`), not what it is called: a tablet with a keyboard and a "
+                .. "laptop with a touchscreen are both real.",
+            Items = {
+                { Name = "Windows", Value = 0 },
+                { Name = "Linux", Value = 1 },
+                { Name = "MacOS", Value = 2 },
+                { Name = "Android", Value = 3 },
+                { Name = "IOS", Value = 4 },
             } :: { Schema.EnumItem },
         },
     },

@@ -253,3 +253,42 @@ TEST_CASE("rich text's stroke tag outlines what it encloses and nothing else")
     const std::string unreadable = "<stroke joins=\"wavy\">x</stroke>";
     CHECK(ui::plainTextOf(unreadable) == unreadable);
 }
+
+TEST_CASE("D453: a picture has a see-through of its own, apart from its box's")
+{
+    // An icon could not be faded: a label's words had `TextTransparency`, and
+    // a picture had only the background's.
+    Fixture fixture;
+    const InstanceId screen = fixture.child("ScreenGui", fixture.service);
+    const InstanceId icon = fixture.child("ImageLabel", screen);
+    fixture.object(icon).size = core::UDim2{core::UDim{0.0f, 64.0f}, core::UDim{0.0f, 64.0f}};
+    fixture.object(icon).backgroundTransparency = 1.0f;
+    scene::ImageLabelComponent* image = fixture.world->imageLabels().find(icon);
+    REQUIRE(image != nullptr);
+    // No provider resolves it, so it draws as its flat tint: one quad.
+    image->image = "asset://icons/star.png";
+    fixture.run();
+
+    const auto drawn = [&] {
+        ui::DrawList list;
+        ui::buildDrawList(*fixture.world, fixture.service, list);
+        return list;
+    };
+    REQUIRE(drawn().quads.size() == 1);
+    CHECK(drawn().quads[0].alpha == doctest::Approx(1.0));
+
+    image->imageTransparency = 0.75f;
+    REQUIRE(drawn().quads.size() == 1);
+    CHECK(static_cast<double>(drawn().quads[0].alpha) == doctest::Approx(0.25));
+
+    // Gone at one, and past it: not a quad nobody can see.
+    image->imageTransparency = 1.0f;
+    CHECK(drawn().quads.empty());
+    image->imageTransparency = 4.0f;
+    CHECK(drawn().quads.empty());
+
+    // The property, as a script writes it.
+    CHECK(fixture.world->setProperty(icon, fixture.atoms.intern("ImageTransparency"), scene::Value{0.5}) ==
+          scene::World::SetResult::Changed);
+    CHECK(static_cast<double>(drawn().quads[0].alpha) == doctest::Approx(0.5));
+}

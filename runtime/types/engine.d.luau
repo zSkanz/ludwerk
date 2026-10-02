@@ -186,6 +186,12 @@ end
 declare extern type EnumTextInputKeyboard extends EnumItem with
 end
 
+declare extern type EnumSwipeDirection extends EnumItem with
+end
+
+declare extern type EnumPlatform extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -910,9 +916,9 @@ end
 declare extern type BaseScript extends Instance with
     --- The Luau this instance carries. It is data on the instance rather than a path to a file, which
     --- is what makes a script something you can create, copy, put inside a prefab and save in a scene
-    --- like anything else. **The editor writes it, and a script only reads it** (ADR 0137 §4): a
-    --- script that could write another's `Source` and enable it would run text the sandbox never
-    --- loaded. A script made at run time takes its code from a copy -- `Clone` of one in the scene, or
+    --- like anything else. **The editor writes it, and a script only reads it** (ADR 0137): a script
+    --- that could write another's `Source` and enable it would run text the sandbox never loaded. A
+    --- script made at run time takes its code from a copy -- `Clone` of one in the scene, or
     --- `Instance.stamp`.
     read Source: string
 end
@@ -1988,9 +1994,20 @@ declare extern type UIObject extends Instance with
     Rotation: number
     --- The fill behind the object's own content. No `3` suffix (§2.5, divergence #11).
     BackgroundColor: Color3
-    --- 0 opaque, 1 invisible. A fully transparent background still lays out and still hit-tests --
-    --- `Visible` is the property that stops both.
+    --- 0 opaque, 1 invisible. A fully transparent background still lays out; whether it takes the
+    --- pointer is `Active`'s to say.
     BackgroundTransparency: number
+    --- Whether this object takes the pointer: whether a press lands on it, whether the pointer is over
+    --- it, and whether a press there is the interface's -- the `uiConsumed` a game reads from
+    --- `InputService.InputBegan` -- or goes on to the game and to whatever is under it. **Until you
+    --- write it, it is what the object is.** A button, a `TextInput` and a `ScrollFrame` take the
+    --- pointer. A `TextLabel` and an `ImageLabel` do not, so a press on the icon or the caption inside
+    --- a button is a press on the button. A `Frame` takes it when it draws a background --
+    --- `BackgroundTransparency` under 1 -- so a veil behind a dialog blocks what is under it, and a
+    --- clear frame that only holds a layout lets every press through. Write it and what you wrote
+    --- stands: `true` on a clear frame makes an invisible blocker, `false` on a button makes it
+    --- something to look at.
+    Active: boolean
     --- Whether this object and its descendants are laid out, drawn and hit-tested. All three together:
     --- an invisible element that still swallowed clicks is the defect this sentence exists to rule out.
     Visible: boolean
@@ -2159,6 +2176,11 @@ declare extern type ImageLabel extends UIObject with
     --- Multiplied into the image, so one white glyph sheet can be drawn in any colour. White leaves it
     --- alone.
     ImageColor: Color3
+    --- How see-through the picture is: 0 solid, 1 not drawn at all. The picture's own, apart from
+    --- `BackgroundTransparency`, as `TextTransparency` is a label's words' -- an icon fades and its box
+    --- stays, or the other way round. Values outside 0 to 1 are kept as written and drawn as the nearer
+    --- end.
+    ImageTransparency: number
     --- How the picture fits the box. `Tile` is BOUNDED: past about four thousand tiles the picture
     --- stretches instead, because a one-pixel image tiled over a full-screen frame is nearly a million
     --- quads and the frame that built them would be the hitch. A visibly wrong picture is one somebody
@@ -2966,6 +2988,16 @@ declare extern type Lighting extends Instance with
     --- itself. Zero means whatever it measured; +1 is twice the light and -1 is half, which is the unit
     --- a camera uses. It is a look rather than a limit, so it is not clamped.
     ExposureCompensation: number
+    --- The most the automatic exposure may DARKEN the picture, in EV stops: how far it follows a world
+    --- that gets brighter. About two and three quarter stops down by default. Raise it towards 0 and a
+    --- bright place stays bright -- snow glares, a desert at noon is hard to look at.
+    ExposureMin: number
+    --- The most the automatic exposure may BRIGHTEN the picture, in EV stops: how far it follows a
+    --- world that gets darker. About a stop and a half by default, so a night is darker than a day and
+    --- still seen. **Lower it and night is dark**: at 0 the exposure never brightens at all, and a
+    --- world lit a third as bright LOOKS a third as bright -- what a game with a day and a night that
+    --- should feel like one sets. Set both to the same number and the exposure is fixed there.
+    ExposureMax: number
     --- How much the sky lights the world's matte surfaces, from 0 to 1: 1 is all of its light, 0 none
     --- -- a surface is then lit by the sun, its lamps and `Ambient` alone. The sky itself is drawn as
     --- it is either way.
@@ -3261,6 +3293,9 @@ declare extern type Player extends Instance with
 end
 
 declare extern type RunService extends Instance with
+    --- The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a
+    --- dedicated server it is the server's. Known from a script's first line.
+    read Platform: EnumPlatform
     --- The simulation clock, in seconds, at the current tick. It is constant for the whole tick --
     --- deferred drains included -- and advances by `PhysicsService.FixedTimestep` between ticks. This
     --- is the clock simulation code reads: the wall clock is forbidden to it, there is no `tick()`, and
@@ -3521,6 +3556,22 @@ declare extern type InputService extends Instance with
     --- changes on a real input and not on a resting one: a gamepad stick drifting inside its dead zone
     --- does not steal the prompts from a keyboard.
     read LastInputDeviceType: EnumInputDeviceType
+    --- How far a finger travels before it is a swipe, in MILLIMETRES of screen -- a length under a
+    --- thumb, the same on a phone and on a monitor, where a number of pixels would be a nudge on one
+    --- and a reach across on the other. Six by default; the engine turns it into pixels from the
+    --- display's density.
+    SwipeThreshold: number
+    --- Whether this machine has a touchscreen. **Known from a script's first line**, before anybody has
+    --- touched anything -- which `LastInputDeviceType` cannot say -- so a game can decide which HUD to
+    --- build and how far to draw before its first frame. True on a phone and on a laptop with a
+    --- touchscreen alike.
+    read TouchAvailable: boolean
+    --- Whether a keyboard is attached. False on a phone until somebody plugs one in or pairs one, and
+    --- then true.
+    read KeyboardAvailable: boolean
+    --- Whether at least one gamepad is connected now. It changes as one is plugged in or taken away;
+    --- `InputDeviceChanged` says when one is first USED.
+    read GamepadAvailable: boolean
     --- Fired on the tick an input STARTS -- a key pressed, a button pushed, a trigger crossing half
     --- deflection (§2.4, ADR 0041). **`uiConsumed` is the second argument for a reason: read it.** It
     --- is true when the interface already took this input -- the pointer was over an element, or a
@@ -3546,6 +3597,26 @@ declare extern type InputService extends Instance with
     --- when the input began, so a press that started on a button is still marked consumed when it is
     --- released off one.
     read InputEnded: Signal<InputObject, boolean>
+    --- A finger -- or the mouse with its left button down -- travelled `SwipeThreshold` along one axis.
+    --- Fired while it is still down, with where that stroke began in window pixels and how many fingers
+    --- are down. One long drag one way is one swipe; a change of direction is the next, measured from
+    --- where the finger then is. The same swipe is `Enum.KeyCode.SwipeUp` and its three siblings for an
+    --- `InputAction`. A press the interface took (`UIObject.Active`) starts none of these gestures.
+    read TouchSwiped: Signal<EnumSwipeDirection, Vector2, number>
+    --- A finger came down and went up again where it landed, within a third of a second: the place, in
+    --- window pixels. A mouse click on the world is one too.
+    read TouchTapped: Signal<Vector2>
+    --- A finger has stayed where it landed for half a second. Fired once, while it is still down;
+    --- lifting it afterwards is not a tap.
+    read TouchLongPressed: Signal<Vector2>
+    --- Two fingers moved apart or together: the distance between them over what it was when the second
+    --- landed -- 2 is twice as far apart -- and the point midway between them. Fired each tick it
+    --- changes; multiply a zoom the game kept from before the pinch.
+    read TouchPinched: Signal<number, Vector2>
+    --- What is down moved: how far this tick, in window pixels (down the window is +Y, as `Position`
+    --- is), as one motion however many fingers made it. What a camera that is dragged follows, with one
+    --- finger or two.
+    read TouchPanned: Signal<Vector2, number>
     --- Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than polling.
     read InputDeviceChanged: Signal<EnumInputDeviceType>
     --- Fired when the game window gains or loses keyboard focus. Losing focus releases every held
@@ -3959,6 +4030,10 @@ declare Enum: {
         Virtual14: EnumKeyCode,
         Virtual15: EnumKeyCode,
         Virtual16: EnumKeyCode,
+        SwipeUp: EnumKeyCode,
+        SwipeDown: EnumKeyCode,
+        SwipeLeft: EnumKeyCode,
+        SwipeRight: EnumKeyCode,
         GetEnumItems: (self: any) -> { EnumKeyCode },
     },
     InputActionType: {
@@ -4247,6 +4322,21 @@ declare Enum: {
         Email: EnumTextInputKeyboard,
         Url: EnumTextInputKeyboard,
         GetEnumItems: (self: any) -> { EnumTextInputKeyboard },
+    },
+    SwipeDirection: {
+        Up: EnumSwipeDirection,
+        Down: EnumSwipeDirection,
+        Left: EnumSwipeDirection,
+        Right: EnumSwipeDirection,
+        GetEnumItems: (self: any) -> { EnumSwipeDirection },
+    },
+    Platform: {
+        Windows: EnumPlatform,
+        Linux: EnumPlatform,
+        MacOS: EnumPlatform,
+        Android: EnumPlatform,
+        IOS: EnumPlatform,
+        GetEnumItems: (self: any) -> { EnumPlatform },
     },
 }
 

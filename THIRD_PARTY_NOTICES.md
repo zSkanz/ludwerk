@@ -68,3 +68,8 @@ escalation rules) and an ADR.
 Tooling installed via rokit (not vendored): Lute 1.0.0 (MIT), luau-lsp 1.69.0
 (MIT), StyLua 2.5.2 (MPL-2.0 — a build tool, never linked into the engine or
 shipped games).
+
+An installation of the engine carries the first two as programs (ADR 0152) --
+Lute runs its command line and luau-lsp checks a project's types -- with their
+licence texts in `licenses/` (`third_party/licenses/` here). StyLua is not
+carried: MPL-2.0 is not a licence R6 ships under.

@@ -159,6 +159,8 @@ public:
     // and on from the start in `Shell::Editor`, where it IS the application.
     [[nodiscard]] bool visible() const noexcept { return visible_; }
     void setVisible(bool visible) noexcept { visible_ = visible; }
+    // The key that opens and closes it (`[debug] overlay_key`); `Unknown` for none.
+    void setToggleKey(platform::Key key) noexcept { toggleKey_ = key; }
 
     // The editor's model: where the viewport is, what it was rendered with, and
     // what a click asked it to find. Null -- the default -- draws no viewport
@@ -377,6 +379,7 @@ public:
 private:
     bool active_ = false;
     bool visible_ = false;
+    platform::Key toggleKey_ = platform::Key::F3;
     EditorDrive* drive_ = nullptr;
     bool driveQuit_ = false;
 

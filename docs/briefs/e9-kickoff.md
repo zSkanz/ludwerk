@@ -248,7 +248,7 @@ thing is built, because the milestone's content **is** the interfaces —
       above it anyway, because macOS is Tier-3 and nothing local can watch it.
 - [x] **`scripts/localgate.ps1` green on every stage**, including the Linux one:
       this milestone touches six modules and Clang diagnoses what MSVC does not.
-- [~] **The end to end, by hand, with the model that started it**: drag it in,
+- [>] **The end to end, by hand, with the model that started it**: drag it in,
       see named parts and material files, scale it, weld a part to a bone, press
       play, ragdoll it, reopen the project and have it not recompile.
       **The only item here nothing automated can close**, because it needs a

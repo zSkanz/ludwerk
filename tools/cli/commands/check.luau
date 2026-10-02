@@ -22,6 +22,7 @@ local process = require("@std/process")
 
 local catalog = require("../catalog")
 local projectlib = require("../project")
+local tools = require("../tools")
 
 local tr = catalog.tr
 
@@ -157,11 +158,6 @@ local function styluaCommand(prefix: { string }, path: string, ignore: { string 
     return command
 end
 
-local function toolMissing(tool: string): boolean
-    local probe = process.run({ tool, "--version" }, { stdio = "none" })
-    return not probe.ok
-end
-
 local function run(options: Options): number
     local files = collectLuau(options.path, options.ignore)
     if #files == 0 then
@@ -173,15 +169,22 @@ local function run(options: Options): number
     end
     print(tr("cli.check.running", { count = #files }))
 
-    for _, tool in { "luau-lsp", "stylua" } do
-        if toolMissing(tool) then
-            print(tr("cli.check.err.missing_tool", { tool = tool }))
-            return 2
-        end
+    -- **This installation's own analyser, or the one on PATH** (ADR 0152): a
+    -- project made a minute ago on a machine with nothing else on it has to
+    -- pass its first check.
+    local install = projectlib.installRoot()
+    local analyser = tools.find("luau-lsp", install)
+    if analyser == nil then
+        print(tr("cli.check.err.missing_tool", { program = "luau-lsp" }))
+        return 2
     end
+    -- The formatter is not the installation's to carry (its licence is not
+    -- one the engine ships under), so its absence is not this project's
+    -- failure: the types are checked, and the formatting is said to be not.
+    local formatter = tools.find("stylua", install)
 
     -- The new solver, which is what R2 says every script is checked by.
-    local analyze: { string } = { "luau-lsp", "analyze", "--platform=standard", "--flag:LuauSolverV2=true" }
+    local analyze: { string } = { analyser, "analyze", "--platform=standard", "--flag:LuauSolverV2=true" }
     local scratch = projectlib.joined(options.path, ".engine/check")
     for _, definition in options.definitions do
         -- Named after the file (`@engine`, `@scene`): unnamed, the analyser
@@ -201,11 +204,15 @@ local function run(options: Options): number
         return 1
     end
 
-    local formatted =
-        process.run(styluaCommand({ "stylua", "--check" }, options.path, options.ignore), { stdio = "inherit" })
-    if not formatted.ok then
-        print(tr("cli.check.err.stylua"))
-        return 1
+    if formatter ~= nil then
+        local formatted =
+            process.run(styluaCommand({ formatter, "--check" }, options.path, options.ignore), { stdio = "inherit" })
+        if not formatted.ok then
+            print(tr("cli.check.err.stylua"))
+            return 1
+        end
+    else
+        print(tr("cli.check.stylua_skipped"))
     end
 
     local engine = projectlib.findEngine()

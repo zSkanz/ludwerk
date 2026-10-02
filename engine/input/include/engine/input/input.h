@@ -141,7 +141,7 @@ struct RawInputEvent
 // that no device event names. `input.cpp` static_asserts the arithmetic against
 // the generated enum descriptor at registration, which is the check that keeps
 // this number honest.
-inline constexpr usize kKeyCodeCount = 148;
+inline constexpr usize kKeyCodeCount = 152;
 
 // Whether a `KeyCode` is one of the sixteen virtual keys or the two composites over
 // them -- the ones `InputService:SetVirtualState` may write and nothing else
@@ -196,6 +196,39 @@ struct Finger
     bool lifting = false;
     u64 id = 0;
     core::Vec2 position;
+    // Where it came down. In the snapshot with the rest, so a flick that
+    // begins and ends between two ticks still has both of its ends.
+    core::Vec2 origin;
+};
+
+// **What a finger did, said in the words a game uses** (D462): a swipe, a
+// tap, a press held, two fingers closing or parting, a drag. Recognised from
+// the snapshot at each `Simulation` tick -- never from a clock -- so the same
+// fingers make the same gestures in a replay, and drained beside the raw
+// events of the same tick.
+struct GestureEvent
+{
+    enum class Kind : core::u8
+    {
+        Swipe,
+        Tap,
+        LongPress,
+        Pinch,
+        Pan,
+    };
+    Kind kind = Kind::Tap;
+    // `Swipe`: `Enum.SwipeDirection`'s value -- 0 Up, 1 Down, 2 Left, 3 Right.
+    i32 direction = 0;
+    // Window pixels. `Swipe`: where the stroke began. `Tap`, `LongPress`:
+    // where the finger is. `Pinch`: midway between the two.
+    core::Vec2 position;
+    // `Pan`: how far the fingers moved this tick, in window pixels.
+    core::Vec2 delta;
+    // `Pinch`: the distance between the two fingers over what it was when
+    // the second landed.
+    f32 scale = 1.0f;
+    // `Swipe`, `Pan`: how many fingers are down.
+    i32 fingers = 1;
 };
 
 struct DeviceState
@@ -295,6 +328,16 @@ public:
     // tap is about to land. Forgotten when the finger ends.
     void setFingerTakenByUi(u64 fingerId);
 
+    // How far a finger travels along one axis before it is a swipe, in window
+    // pixels. The host's to say, from a physical length and the display's
+    // density (`InputService.SwipeThreshold`): six millimetres is 38 pixels
+    // on a desktop monitor and four times that on a phone.
+    void setSwipeThreshold(f32 pixels) noexcept { m_swipeThreshold = pixels > 1.0f ? pixels : 1.0f; }
+
+    // The gestures this tick's `Simulation` dispatch recognised, in the order
+    // they happened. Valid until the next dispatch.
+    [[nodiscard]] std::span<const GestureEvent> drainGestures() const noexcept { return m_gestures; }
+
     // The raw events this tick's `Simulation` dispatch produced, in a stable
     // order: keys first by `KeyCode`, then the pointer, then the wheel, then the
     // gamepad axes. Drained rather than pushed as a `scene::Change`, because a
@@ -333,6 +376,40 @@ private:
     bool m_uiCapturedPointer = false;
     // The fingers now down that the interface took, by their device id.
     std::vector<u64> m_uiFingers;
+
+    // Fills `m_gestures` and the four swipe codes from the snapshot. Called
+    // from `collectRawEvents`, before the snapshot becomes the previous one.
+    void collectGestures();
+
+    // One finger's stroke -- or the mouse's, with the left button down, which
+    // is the last of them: a swipe is the same motion on a desk.
+    struct GestureTrack
+    {
+        bool active = false;
+        // The interface took the press: it is nobody's gesture.
+        bool ui = false;
+        u64 id = 0;
+        // Where the stroke began, and where the swipe now being measured did:
+        // the second moves to the finger each time a swipe is recognised.
+        core::Vec2 start;
+        core::Vec2 anchor;
+        core::Vec2 last;
+        // The direction of the last swipe of this stroke, or -1.
+        i32 direction = -1;
+        u64 downTick = 0;
+        bool moved = false;
+        bool longFired = false;
+    };
+    std::array<GestureTrack, kMaxFingers + 1> m_tracks{};
+    std::vector<GestureEvent> m_gestures;
+    f32 m_swipeThreshold = 38.0f;
+    u64 m_gestureTick = 0;
+    // The two fingers a pinch is between, and how far apart they began.
+    u64 m_pinchFirst = 0;
+    u64 m_pinchSecond = 0;
+    f32 m_pinchStart = 0.0f;
+    f32 m_pinchLast = 1.0f;
+    bool m_pinching = false;
     bool m_uiCapturedKeyboard = false;
 
     // What the last `Simulation` dispatch saw, so the next one can tell a press

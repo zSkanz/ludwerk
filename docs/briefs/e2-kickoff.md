@@ -154,7 +154,7 @@ touches `engine.cpp`'s frame loop.
 
 ## Gate checklist (verbatim from roadmap)
 
-- [ ] `luaug edit examples/06-scene` opens, a part is selected, and each of the three
+- [>] `luaug edit examples/06-scene` opens, a part is selected, and each of the three
       manipulators moves it in the viewport. A screenshot per mode is attached to the
       gate record.
 - [x] **The manipulator arithmetic has unit tests over a camera and a viewport
@@ -188,7 +188,7 @@ touches `engine.cpp`'s frame loop.
       asserts for one.
 - [x] `scripts/localgate.ps1` green on every stage; `luaug check` clean; docs-lint
       clean.
-- [ ] **A human opens the editor on the flagship, moves something, and says whether
+- [x] **A human opens the editor on the flagship, moves something, and says whether
       it moves the way a manipulator should** — deliberately not automatable, and the
       gate item every milestone since M4 has proven is where the real defects come
       from.

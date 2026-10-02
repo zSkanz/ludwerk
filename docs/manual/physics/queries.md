@@ -119,6 +119,12 @@ end
 
 A fresh array in a stable order, every time.
 
+## What was destroyed is not there
+
+A part is out of every query from the moment of `Destroy` -- `Raycast`,
+`Spherecast`, `GetBodiesInBox` -- though its body leaves the simulation at the
+next step. A ray goes through where it stood to whatever is behind.
+
 ## What is not here
 
 There is no multi-hit raycast, no blockcast, and no `RaycastParams` flag for

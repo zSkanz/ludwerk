@@ -17,6 +17,7 @@
 #include "../generated/class_descriptors.gen.h"
 #include "engine/asset/terrain.h"
 #include "engine/core/finite.h"
+#include "engine/core/host_platform.h"
 #include "engine/physics/types.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/world.h"
@@ -1924,6 +1925,12 @@ Value getNetworkServiceServerTick(const World& world, core::InstanceId)
 Value getNetworkServicePeerCount(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkPeerCount)};
+}
+
+Value getRunServicePlatform(const World&, core::InstanceId)
+{
+    // A fact of the build (D456).
+    return Value{EnumValue{generated::PlatformEnumId, static_cast<i32>(core::ThisPlatform)}};
 }
 
 Value getRunServiceSimTime(const World& world, core::InstanceId)

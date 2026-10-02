@@ -395,6 +395,10 @@ Items are analogue or digital, and mixing them is the one mistake this enum make
 | `Virtual14` | 145 |  |
 | `Virtual15` | 146 |  |
 | `Virtual16` | 147 |  |
+| `SwipeUp` | 148 | **A swipe, as a key** (D462): a finger -- or the mouse with its left button down -- that has travelled `InputService.SwipeThreshold` up the screen. Bound to an `InputAction` like any key, it is a press that lasts one tick, so a puzzle moves a piece by `SwipeLeft` beside the arrow key and has nothing to recognise itself. It is said while the finger is still down, as soon as it has gone far enough; one long drag one way is one swipe, and a change of direction is the next. A press the interface took starts none. |
+| `SwipeDown` | 149 |  |
+| `SwipeLeft` | 150 |  |
+| `SwipeRight` | 151 |  |
 
 ## Enum.LineJoinMode
 
@@ -462,6 +466,18 @@ What one particle looks like before its colour is applied. Drawn in the shader r
 | `Soft` | 0 | A round puff that fades to nothing at its edge: smoke, dust, steam, a glow. |
 | `Disc` | 1 | A round dot with a crisp edge: sparks, bubbles, confetti. |
 | `Square` | 2 | A square facing the camera: pixels, debris, blocky confetti. |
+
+## Enum.Platform
+
+The operating system a game is running on: `RunService.Platform`. For the few things that differ by system -- a store's rules, a path a player is told about. What a game shows on screen should follow what the machine HAS (`InputService.TouchAvailable`, `UIService.ViewportSize`), not what it is called: a tablet with a keyboard and a laptop with a touchscreen are both real.
+
+| Item | Value | Description |
+|---|---|---|
+| `Windows` | 0 |  |
+| `Linux` | 1 |  |
+| `MacOS` | 2 |  |
+| `Android` | 3 |  |
+| `IOS` | 4 |  |
 
 ## Enum.PlaybackState
 
@@ -632,6 +648,17 @@ What a `UIStroke`'s `Thickness` is measured in.
 |---|---|---|
 | `FixedSize` | 0 | Pixels. |
 | `ScaledSize` | 1 | A fraction of the parent's shorter side -- or, on text, of the font size -- so the stroke grows with what it outlines. |
+
+## Enum.SwipeDirection
+
+Which way a swipe went, as `InputService.TouchSwiped` says it. Up is towards the top of the window.
+
+| Item | Value | Description |
+|---|---|---|
+| `Up` | 0 |  |
+| `Down` | 1 |  |
+| `Left` | 2 |  |
+| `Right` | 3 |  |
 
 ## Enum.TerrainPaintMode
 

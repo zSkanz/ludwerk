@@ -303,7 +303,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(inputBindingDesc);
 
     // --- InputService ---
-    static std::array<scene::PropertyDesc, 3> inputServiceProperties;
+    static std::array<scene::PropertyDesc, 7> inputServiceProperties;
     inputServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("PointerLocked"),
@@ -341,6 +341,58 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getInputServiceLastInputDeviceType,
             .set = nullptr,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("SwipeThreshold"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far a finger travels before it is a swipe, in MILLIMETRES of screen -- a length under a thumb, the same on a phone and on a monitor, where a number of pixels would be a nudge on one and a reach across on the other. Six by default; the engine turns it into pixels from the display's density.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getInputServiceSwipeThreshold,
+            .set = native::setInputServiceSwipeThreshold,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TouchAvailable"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether this machine has a touchscreen. **Known from a script's first line**, before anybody has touched anything -- which `LastInputDeviceType` cannot say -- so a game can decide which HUD to build and how far to draw before its first frame. True on a phone and on a laptop with a touchscreen alike.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getInputServiceTouchAvailable,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("KeyboardAvailable"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a keyboard is attached. False on a phone until somebody plugs one in or pairs one, and then true.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getInputServiceKeyboardAvailable,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GamepadAvailable"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether at least one gamepad is connected now. It changes as one is plugged in or taken away; `InputDeviceChanged` says when one is first USED.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getInputServiceGamepadAvailable,
+            .set = nullptr,
+        },
     }};
     static std::array<scene::MethodDesc, 3> inputServiceMethods;
     inputServiceMethods = {{
@@ -363,7 +415,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Drives one of the `Virtual` key codes from something that is not hardware -- a HUD button, an on-screen thumbstick, an accessibility control for a player who cannot hold a key (\302\247" "2.4).\012\012**It writes into the same device snapshot a keyboard writes into**, which is what makes it one input model rather than two: the value binds through an ordinary `InputBinding`, resolves in the ordinary order, is eaten by an ordinary sinking context, and is carried by the recorded stream a replay hands back. A seam that reached past the snapshot would be a HUD button a recorded stream could not see.\012\012**It carries a value, not a press.** Write 1 and 0 for a button; write anything between for a slider or the axis of a thumbstick. Bound to a `Bool` action the value counts as pressed past half deflection, which is the rule every analogue source follows.\012\012The value STICKS until it is written again -- a button that is held is a 1 nobody has cleared -- and losing window focus clears it with everything else, so a press cannot survive an alt-tab. Refuses any key code that is not one of the `Virtual` family: writing to `Space` would be a script pretending to be a keyboard.",
         },
     }};
-    static std::array<scene::EventDesc, 5> inputServiceEvents;
+    static std::array<scene::EventDesc, 10> inputServiceEvents;
     inputServiceEvents = {{
         scene::EventDesc{
             .name = atoms.intern("InputBegan"),
@@ -381,13 +433,38 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Fired on the tick an input STOPS. It fires for everything held when the window loses focus, so a handler that pairs `InputBegan` with this one never leaks a press -- which is the failure that leaves a character walking into a wall after an alt-tab.\012\012`uiConsumed` carries what it carried when the input began, so a press that started on a button is still marked consumed when it is released off one.",
         },
         scene::EventDesc{
-            .name = atoms.intern("InputDeviceChanged"),
+            .name = atoms.intern("TouchSwiped"),
             .slot = 10,
+            .doc = "A finger -- or the mouse with its left button down -- travelled `SwipeThreshold` along one axis. Fired while it is still down, with where that stroke began in window pixels and how many fingers are down. One long drag one way is one swipe; a change of direction is the next, measured from where the finger then is. The same swipe is `Enum.KeyCode.SwipeUp` and its three siblings for an `InputAction`. A press the interface took (`UIObject.Active`) starts none of these gestures.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TouchTapped"),
+            .slot = 11,
+            .doc = "A finger came down and went up again where it landed, within a third of a second: the place, in window pixels. A mouse click on the world is one too.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TouchLongPressed"),
+            .slot = 12,
+            .doc = "A finger has stayed where it landed for half a second. Fired once, while it is still down; lifting it afterwards is not a tap.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TouchPinched"),
+            .slot = 13,
+            .doc = "Two fingers moved apart or together: the distance between them over what it was when the second landed -- 2 is twice as far apart -- and the point midway between them. Fired each tick it changes; multiply a zoom the game kept from before the pinch.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("TouchPanned"),
+            .slot = 14,
+            .doc = "What is down moved: how far this tick, in window pixels (down the window is +Y, as `Position` is), as one motion however many fingers made it. What a camera that is dragged follows, with one finger or two.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("InputDeviceChanged"),
+            .slot = 15,
             .doc = "Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than polling.",
         },
         scene::EventDesc{
             .name = atoms.intern("WindowFocusChanged"),
-            .slot = 11,
+            .slot = 16,
             .doc = "Fired when the game window gains or loses keyboard focus. Losing focus releases every held input, so an alt-tab does not leave a character walking into a wall.",
         },
     }};

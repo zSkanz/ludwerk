@@ -113,6 +113,22 @@ meters far brighter than its ground alone, so the aperture closes and the ground
 goes dark; a stop of positive compensation is the fix. Changing albedos is
 **not** the fix, because metering normalises whatever it is shown.
 
+**How far the meter may go is the world's to say.** `Lighting.ExposureMax` is
+the most it may brighten a dark picture and `Lighting.ExposureMin` the most it
+may darken a bright one, both in EV stops: about a stop and a half up and two
+and three quarters down by default. A game with a day and a night that should
+FEEL like one lowers `ExposureMax` -- at 0 the exposure never brightens at
+all, and a world lit a third as bright looks a third as bright:
+
+```luau
+--!strict
+Lighting.ExposureMax = 0    -- night is as dark as it is lit
+Lighting.ExposureMin = -1   -- and a bright place still glares a little
+```
+
+Both at one number is a fixed exposure there; `AutoExposure = false` is the
+same thing at zero.
+
 ## Where to look next
 
 - [Shadows](manual:rendering/shadows) — what `ClockTime` does to them

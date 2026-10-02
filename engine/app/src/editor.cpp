@@ -6916,7 +6916,7 @@ std::optional<PickHit> Editor::resolvePick(const scene::World& world, core::Inst
         }
         const core::InstanceId selected = inspector.selection();
         if (uiService.valid() && selected.valid() && (selected == uiService || world.isAncestorOf(uiService, selected)))
-            uiHit = ui::hitTest(world, uiService, request.pixel);
+            uiHit = ui::elementAt(world, uiService, request.pixel);
     }
 
     const PickRay ray = rayThrough(request.pixel);

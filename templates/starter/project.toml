@@ -3,7 +3,7 @@
 [project]
 name = "{{name}}"
 # Reverse-DNS, so two games with the same name are still two games.
-id = "dev.local.{{name}}"
+id = "dev.local.{{id}}"
 version = "0.1.0"
 # The world the project starts with, relative to `content/`. Its scripts are
 # in it too, inside the instances they belong to (ADR 0092).

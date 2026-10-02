@@ -737,6 +737,8 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         out.environment.fogStart = lighting->fogStart;
         out.environment.fogEnd = lighting->fogEnd;
         out.environment.exposureCompensation = lighting->exposureCompensation;
+        out.environment.exposureMin = lighting->exposureMin;
+        out.environment.exposureMax = lighting->exposureMax;
         out.environment.environmentDiffuseScale = lighting->environmentDiffuseScale;
         out.environment.environmentSpecularScale = lighting->environmentSpecularScale;
         out.environment.shadowSoftness = lighting->shadowSoftness;

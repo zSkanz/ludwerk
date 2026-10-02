@@ -3,15 +3,18 @@
 #include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_platform_defines.h>
 #include <SDL3/SDL_process.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_system.h>
 #include <SDL3/SDL_timer.h>
+#include <SDL3/SDL_touch.h>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -461,6 +464,29 @@ bool startDetached(const std::vector<std::string>& args)
     // releasing our side of it -- which is exactly what "detached" means here.
     SDL_DestroyProcess(process);
     return true;
+}
+
+InputDevices inputDevices() noexcept
+{
+    InputDevices devices;
+    if (!isInitialized())
+        return devices;
+    int touches = 0;
+    if (SDL_TouchID* ids = SDL_GetTouchDevices(&touches); ids != nullptr) {
+        // A touchscreen, not a laptop's trackpad: an indirect device moves a
+        // pointer and has nothing under the finger to press.
+        for (int at = 0; at < touches; ++at)
+            devices.touch = devices.touch || SDL_GetTouchDeviceType(ids[at]) == SDL_TOUCH_DEVICE_DIRECT;
+        SDL_free(ids);
+    }
+#if defined(SDL_PLATFORM_ANDROID)
+    // A phone IS one, whether or not a finger has yet said so: the system
+    // lists the screen only once it has been touched on some devices.
+    devices.touch = true;
+#endif
+    devices.keyboard = SDL_HasKeyboard();
+    devices.gamepad = SDL_HasGamepad();
+    return devices;
 }
 
 void setScreenOrientation([[maybe_unused]] Window& window, [[maybe_unused]] int orientation)

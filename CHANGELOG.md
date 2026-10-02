@@ -19,6 +19,24 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **What takes a press is what does something with it** (`UIObject.Active`,
+  D452): a `TextLabel`, an `ImageLabel` and a `Frame` with no background no
+  longer take the pointer, so a press on them goes to what is under them -- a
+  button's own icon, the screen below, the game. A panel made of an
+  `ImageLabel`, or an invisible blocker, sets `Active = true`.
+- **A scene change resets `Workspace` itself** (D450): its properties, its
+  attributes and its tags, as every other scene-scoped service's already were.
+- **A leaving player is out of `GetPlayers` at once and readable in
+  `PlayerRemoving`** (D459), and a destroyed part is out of every query from
+  the moment of `Destroy` (D458).
+- **The overlay's key is not delivered to the game** in a host that has an
+  overlay (D461); `[debug] overlay_key` moves it.
+- **The wire protocol is 31** (D460): `Lighting.ExposureMin` and `ExposureMax`
+  travel.
+- **The documentation site builds again** (D463): it had written nothing since
+  the rename, and the gate that builds it now looks for the page as well as
+  the exit code.
+
 - **`CharacterBody:Move` is a direction and a throttle** (D440): its length is
   clamped to 1, so `Move(1, 0, 1)` walks at `WalkSpeed` and not 1.41 times it.
   A game that normalised the vector itself changes nothing; one that passed a
@@ -114,6 +132,19 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **Gestures** (D462): `InputService.TouchSwiped`, `TouchTapped`,
+  `TouchLongPressed`, `TouchPinched`, `TouchPanned`, `SwipeThreshold`, and
+  `Enum.KeyCode.SwipeUp`, `SwipeDown`, `SwipeLeft`, `SwipeRight` for an action
+  to bind.
+- **`UIObject.Active`** (D452) and **`ImageLabel.ImageTransparency`** (D453).
+- **`InputService.TouchAvailable`, `KeyboardAvailable`, `GamepadAvailable`**
+  and **`RunService.Platform`** with `Enum.Platform` (D456).
+- **`Lighting.ExposureMin` and `ExposureMax`** (D460).
+- **A `RemoteEvent` keeps what arrives before anybody listens** (D451), and a
+  client that joins late has every attribute as it stands (D457).
+- **An installation checks a project's types with nothing else installed**
+  (ADR 0152, D455), and `ludwerk new` makes an id a store accepts (D454).
 
 - **`CryptoService`** (ADR 0151, D442): `RandomBytes`, `RandomInteger` and
   `UniqueId` from the operating system's generator; `Sha256`, `HmacSha256` and

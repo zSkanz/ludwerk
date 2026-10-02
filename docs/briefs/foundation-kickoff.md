@@ -134,7 +134,7 @@ where the old scene's `scene:BindToClose` runs.
 - [x] The scene reader gains a detached target: `scene::parseScene` reads and
   checks a file into a `ParsedScene` on a job; `readScene(world, parsed)`
   instantiates it on the main thread.
-- [~] Assets warmed from the parse: **meshes and pictures** (every
+- [>] Assets warmed from the parse: **meshes and pictures** (every
   `asset://*.gltf|glb|png|jpg|jpeg|ktx2` the parse names, through the mesh
   loader's own feeds, `MeshLoader::warmMeshes` and `warmTextures`, which F8's
   preloading shares). **Not yet:** materials, sounds, and terrain and block
@@ -147,11 +147,11 @@ where the old scene's `scene:BindToClose` runs.
   `Finished(true)`.
 - [x] One load at a time (a second, or a `LoadScene`, cancels the first,
   logged); `Cancel()` drops it and `Finished(false)` fires.
-- [~] In a match: authority only (a client's call is a keyed error). **Not yet:**
+- [>] In a match: authority only (a client's call is a keyed error). **Not yet:**
   clients preparing when the authority starts one -- they load at the switch,
   as they do for `LoadScene`, which needs a wire message of its own. A
   `SubWorld` runs its own host, so the same call loads its next scene.
-- [ ] F3 and Stats: a prepared scene, its status and bytes.
+- [>] F3 and Stats: a prepared scene, its status and bytes.
 - [x] `examples/24-scenes` uses it: the menu asks the game by message, the game
   prepares the arena behind a progress bar, fades, `Activate()`; the arena
   prints from `scene:BindToClose`.

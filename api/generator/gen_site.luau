@@ -54,14 +54,14 @@ local IconDirectory = "icons/default/class"
 --- renamed when it is remade; a generator that named one of them would break
 --- the documentation every time the logo did.
 local BrandLogoCandidates: { string } = {
-    "branding/engine-lockup-horizontal.png",
-    "branding/engine-logo.svg",
-    "branding/engine-logo-512.png",
+    "branding/lockup-horizontal.png",
+    "branding/logo.svg",
+    "branding/logo-512.png",
 }
 local BrandMarkCandidates: { string } = {
-    "branding/engine-mark.svg",
-    "branding/engine-mark-512.png",
-    "branding/icon/engine-64.png",
+    "branding/mark.svg",
+    "branding/mark-512.png",
+    "branding/icon/64.png",
 }
 local VersionSourcePath = "CMakeLists.txt"
 local VersionPattern = "project%(Engine%s+VERSION%s+([%w%.%-]+)"

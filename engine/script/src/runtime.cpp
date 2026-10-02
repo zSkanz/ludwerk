@@ -411,6 +411,11 @@ void ScriptRuntime::fireInputEvents(std::span<const input::RawInputEvent> events
     engine::script::fireInputEvents(m_impl->state, events);
 }
 
+void ScriptRuntime::fireGestureEvents(std::span<const input::GestureEvent> events)
+{
+    script::fireGestureEvents(m_impl->state, events);
+}
+
 void ScriptRuntime::setAnimation(scene::AnimationHost* animation)
 {
     m_impl->services.animation = animation;

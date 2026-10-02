@@ -11,6 +11,8 @@ local process = require("@std/process")
 
 local catalog = require("../catalog")
 local check = require("./check")
+local projectlib = require("../project")
+local tools = require("../tools")
 
 local tr = catalog.tr
 
@@ -22,7 +24,12 @@ export type Options = {
 local function run(options: Options): number
     local files = check.collectLuau(options.path, options.ignore)
 
-    local result = process.run(check.styluaCommand({ "stylua" }, options.path, options.ignore), { stdio = "inherit" })
+    local formatter = tools.find("stylua", projectlib.installRoot())
+    if formatter == nil then
+        print(tr("cli.fmt.err.no_stylua"))
+        return 2
+    end
+    local result = process.run(check.styluaCommand({ formatter }, options.path, options.ignore), { stdio = "inherit" })
     if not result.ok then
         return 1
     end

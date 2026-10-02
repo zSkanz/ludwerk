@@ -54,6 +54,7 @@
 #include "engine/app/picking.h"
 #include "engine/app/pointer_ownership.h"
 #include "engine/app/preview_renderer.h"
+#include "engine/app/project_config.h"
 #include "engine/app/reference_grid.h"
 #include "engine/app/reload.h"
 #include "engine/app/scene_definitions.h"
@@ -1086,6 +1087,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             options.editor ? options.scriptPath / ".engine" / "editor-layout.v3.ini" : std::filesystem::path{};
         overlay.emplace(*window, *device, options.editor ? Shell::Editor : Shell::Overlay,
                         options.editor ? layout.string() : std::string{});
+        overlay->setToggleKey(options.overlayKey);
     }
 
     // The editor's model and the texture its viewport is drawn into. Both are
@@ -1899,6 +1901,16 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     editor.setMaterialLibrary(&materialLibrary);
     // What the first frame will be drawn into, for a script's first line.
     worldOptions.viewportSize = core::Vec2{static_cast<f32>(options.width), static_cast<f32>(options.height)};
+    // **What the machine has, before the first script asks** (D456). A run
+    // with a window asks the system; one without says what the platform is --
+    // a keyboard on a desktop, a touchscreen on a phone -- so a headless test
+    // of a game builds the HUD that game would build here.
+    {
+        const platform::InputDevices devices = platform::inputDevices();
+        worldOptions.touchAvailable = options.headless ? Handheld : devices.touch;
+        worldOptions.keyboardAvailable = options.headless ? !Handheld : devices.keyboard;
+        worldOptions.gamepadAvailable = !options.headless && devices.gamepad;
+    }
     if (std::optional<core::EngineError> bootError = host->boot(worldOptions); bootError.has_value())
         return bootError;
 
@@ -4458,6 +4470,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // because they change with a window drag between two monitors and
             // there is no event for that worth subscribing to at this price.
             engineState.displayScale = platform::windowDisplayScale(*window);
+            // And what is plugged in, as it comes and goes (D456).
+            {
+                const platform::InputDevices devices = platform::inputDevices();
+                engineState.touchAvailable = devices.touch;
+                engineState.keyboardAvailable = devices.keyboard;
+                engineState.gamepadAvailable = devices.gamepad;
+            }
 
             // **`UIService.ScreenOrientation`, applied when it changes** -- from
             // a script, from the scene that was loaded, or from the Properties
@@ -4806,6 +4825,25 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     uiPointer.letGo();
                 }
                 heard = viewportEvents;
+            }
+            else if (overlay.has_value() && options.overlayKey != platform::Key::Unknown) {
+                // **A key the host takes is not the game's as well** (D461).
+                // F3 opened the overlay and reached the game's own binding in
+                // the same press: two things answered one key. In a host that
+                // has an overlay, its key is taken out of what the game hears
+                // -- press and release -- and `[debug] overlay_key` moves it
+                // off a key the game wants. A shipped player has no overlay,
+                // and every key is the game's.
+                static std::vector<platform::Event> withoutOverlayKey;
+                withoutOverlayKey.clear();
+                for (const platform::Event& event : events) {
+                    const bool key =
+                        event.type == platform::EventType::KeyDown || event.type == platform::EventType::KeyUp;
+                    if (!(key && event.key == options.overlayKey))
+                        withoutOverlayKey.push_back(event);
+                }
+                host->pumpInput(withoutOverlayKey);
+                heard = withoutOverlayKey;
             }
             else {
                 host->pumpInput(events);

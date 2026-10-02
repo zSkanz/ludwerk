@@ -92,6 +92,8 @@ inline constexpr scene::EnumId WaterShapeEnumId = 49;
 inline constexpr scene::EnumId RenderPriorityEnumId = 50;
 inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
 inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
+inline constexpr scene::EnumId SwipeDirectionEnumId = 53;
+inline constexpr scene::EnumId PlatformEnumId = 54;
 
 } // namespace generated
 
@@ -439,6 +441,10 @@ scene::Value getLightingFogEnd(const scene::World& world, core::InstanceId id);
 bool setLightingFogEnd(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingExposureCompensation(const scene::World& world, core::InstanceId id);
 bool setLightingExposureCompensation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLightingExposureMin(const scene::World& world, core::InstanceId id);
+bool setLightingExposureMin(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLightingExposureMax(const scene::World& world, core::InstanceId id);
+bool setLightingExposureMax(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingEnvironmentDiffuseScale(const scene::World& world, core::InstanceId id);
 bool setLightingEnvironmentDiffuseScale(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingEnvironmentSpecularScale(const scene::World& world, core::InstanceId id);

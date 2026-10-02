@@ -861,6 +861,42 @@ void groundAlongRay(lua_State* L, core::Vec3 origin, core::Vec3 direction)
     }
 }
 
+// **A ray does not stop at what is no longer there** (D458). An instance
+// destroyed this tick keeps its body until the simulation's next step takes it
+// away, and a ray met it: a hit with no `Instance`, typed as one that has, for
+// as many ticks as a round's end took to clear its fighters. So a hit on a body
+// nothing owns any more is not a hit: the body is left out and the query asked
+// again, for what is behind it.
+template <class Cast>
+[[nodiscard]] bool castPastTheGone(const scene::PhysicsSync& sync, physics::QueryFilter& filter,
+                                   std::vector<u64>& storage, physics::RayHit& hit, Cast&& cast)
+{
+    // A heap of them in one ray's way is a round ending; past this many the
+    // ray answers that it found nothing.
+    constexpr int MostGone = 256;
+    for (int gone = 0; gone < MostGone; ++gone) {
+        if (!cast(filter, hit))
+            return false;
+        if (sync.instanceOf(hit.userData).valid())
+            return true;
+        if (filter.mode == physics::QueryFilter::Mode::Include) {
+            // Named, and gone: taken off the list. A list with nothing left
+            // on it includes nothing.
+            const auto named = std::find(storage.begin(), storage.end(), hit.userData);
+            if (named == storage.end())
+                return false;
+            storage.erase(named);
+            if (storage.empty())
+                return false;
+        }
+        else {
+            storage.push_back(hit.userData);
+        }
+        filter.userData = storage;
+    }
+    return false;
+}
+
 int workspaceRaycast(lua_State* L)
 {
     const core::InstanceId workspace = checkInstance(L, 1);
@@ -875,14 +911,17 @@ int workspaceRaycast(lua_State* L)
     }
 
     std::vector<u64> storage;
-    const physics::QueryFilter filter = buildFilter(L, 4, storage);
+    physics::QueryFilter filter = buildFilter(L, 4, storage);
 
     physics::RayD ray;
     ray.origin = core::toDVec3(origin);
     ray.direction = direction;
 
     physics::RayHit hit;
-    const bool bodyHit = sync->backend().raycast(sync->worldHandle(), ray, filter, hit);
+    const bool bodyHit =
+        castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
+            return sync->backend().raycast(sync->worldHandle(), ray, asked, out);
+        });
     const TerrainRayHit ground = raycastTerrains(L, workspace, origin, direction, filter);
     // Whichever is nearer. A terrain's own collider, where it has one, and
     // the field agree to within the mesh; the body wins a tie so a part lying
@@ -1109,14 +1148,16 @@ int workspaceSpherecast(lua_State* L)
     }
 
     std::vector<u64> storage;
-    const physics::QueryFilter filter = buildFilter(L, 5, storage);
+    physics::QueryFilter filter = buildFilter(L, 5, storage);
 
     physics::RayD ray;
     ray.origin = core::toDVec3(origin);
     ray.direction = direction;
 
     physics::RayHit hit;
-    if (!sync->backend().spherecast(sync->worldHandle(), ray, radius, filter, hit)) {
+    if (!castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
+            return sync->backend().spherecast(sync->worldHandle(), ray, radius, asked, out);
+        })) {
         lua_pushnil(L);
         return 1;
     }

@@ -389,7 +389,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .readOnly = false,
             .scriptReadOnly = true,
             .inert = false,
-            .doc = "The Luau this instance carries. It is data on the instance rather than a path to a file, which is what makes a script something you can create, copy, put inside a prefab and save in a scene like anything else.\012\012**The editor writes it, and a script only reads it** (ADR 0137 \302\247" "4): a script that could write another's `Source` and enable it would run text the sandbox never loaded. A script made at run time takes its code from a copy -- `Clone` of one in the scene, or `Instance.stamp`.",
+            .doc = "The Luau this instance carries. It is data on the instance rather than a path to a file, which is what makes a script something you can create, copy, put inside a prefab and save in a scene like anything else.\012\012**The editor writes it, and a script only reads it** (ADR 0137): a script that could write another's `Source` and enable it would run text the sandbox never loaded. A script made at run time takes its code from a copy -- `Clone` of one in the scene, or `Instance.stamp`.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getBaseScriptSource,
             .set = native::setBaseScriptSource,
@@ -3998,8 +3998,22 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(playerDesc);
 
     // --- RunService ---
-    static std::array<PropertyDesc, 1> runServiceProperties;
+    static std::array<PropertyDesc, 2> runServiceProperties;
     runServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Platform"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("Platform"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a dedicated server it is the server's. Known from a script's first line.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getRunServicePlatform,
+            .set = nullptr,
+        },
         PropertyDesc{
             .name = atoms.intern("SimTime"),
             .type = ValueType::Number,
@@ -5003,7 +5017,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(runContextDesc);
 
     // --- KeyCode ---
-    static std::array<EnumItemDesc, 148> keyCodeItems;
+    static std::array<EnumItemDesc, 152> keyCodeItems;
     keyCodeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Unknown"),
@@ -5743,6 +5757,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Virtual16"),
             .value = 147,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SwipeUp"),
+            .value = 148,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SwipeDown"),
+            .value = 149,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SwipeLeft"),
+            .value = 150,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SwipeRight"),
+            .value = 151,
             .docKey = {},
         },
     }};
@@ -6976,6 +7010,71 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     textInputKeyboardDesc.docKey = {};
     textInputKeyboardDesc.items = textInputKeyboardItems;
     enums.registerEnum(textInputKeyboardDesc);
+
+    // --- SwipeDirection ---
+    static std::array<EnumItemDesc, 4> swipeDirectionItems;
+    swipeDirectionItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Up"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Down"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Left"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Right"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor swipeDirectionDesc;
+    swipeDirectionDesc.name = atoms.intern("SwipeDirection");
+    swipeDirectionDesc.docKey = {};
+    swipeDirectionDesc.items = swipeDirectionItems;
+    enums.registerEnum(swipeDirectionDesc);
+
+    // --- Platform ---
+    static std::array<EnumItemDesc, 5> platformItems;
+    platformItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Windows"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Linux"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("MacOS"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Android"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("IOS"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor platformDesc;
+    platformDesc.name = atoms.intern("Platform");
+    platformDesc.docKey = {};
+    platformDesc.items = platformItems;
+    enums.registerEnum(platformDesc);
 }
 
 } // namespace engine::scene::generated

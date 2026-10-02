@@ -92,6 +92,8 @@ inline constexpr scene::EnumId WaterShapeEnumId = 49;
 inline constexpr scene::EnumId RenderPriorityEnumId = 50;
 inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
 inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
+inline constexpr scene::EnumId SwipeDirectionEnumId = 53;
+inline constexpr scene::EnumId PlatformEnumId = 54;
 
 } // namespace generated
 
@@ -153,6 +155,11 @@ bool setInputServicePointerLocked(scene::World& world, core::InstanceId id, cons
 scene::Value getInputServicePointerVisible(const scene::World& world, core::InstanceId id);
 bool setInputServicePointerVisible(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getInputServiceLastInputDeviceType(const scene::World& world, core::InstanceId id);
+scene::Value getInputServiceSwipeThreshold(const scene::World& world, core::InstanceId id);
+bool setInputServiceSwipeThreshold(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getInputServiceTouchAvailable(const scene::World& world, core::InstanceId id);
+scene::Value getInputServiceKeyboardAvailable(const scene::World& world, core::InstanceId id);
+scene::Value getInputServiceGamepadAvailable(const scene::World& world, core::InstanceId id);
 
 } // namespace native
 

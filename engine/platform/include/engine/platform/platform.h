@@ -212,6 +212,17 @@ struct Paths
 // turn, nothing happens.
 void setScreenOrientation(Window& window, int orientation);
 
+// **What this machine has to play with**, as the system reports it now
+// (D456): a touchscreen, a keyboard, at least one gamepad. Cheap enough to ask
+// every frame; all false before `init`.
+struct InputDevices
+{
+    bool touch = false;
+    bool keyboard = false;
+    bool gamepad = false;
+};
+[[nodiscard]] InputDevices inputDevices() noexcept;
+
 // Whether this build can show the system's own folder picker. False on a
 // platform with none, and false in a build with `SDL_DIALOG` off -- callers ask
 // so they can say WHY the button did nothing, rather than doing nothing.

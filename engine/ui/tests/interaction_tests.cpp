@@ -269,9 +269,145 @@ TEST_CASE("a button is its whole box: an image button with or without an image, 
     CHECK(press(Vec2{50.0f, 30.0f}));
     CHECK(press(Vec2{250.0f, 30.0f}));
     CHECK(press(Vec2{100.0f, 390.0f}));
-    // And a click on the label beside it is the label's, not the button's.
-    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{50.0f, 230.0f}) == label);
+    // And a click on the label beside it is not the button's. Nor the
+    // label's, which takes no pointer (D452): it is the frame's they are in.
+    CHECK_FALSE(ui::takesPointer(*fixture.world, label));
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{50.0f, 230.0f}) == holder);
     CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 390.0f}) == restart);
+}
+
+TEST_CASE("D452: a press on a label inside a button is a press on the button")
+{
+    // A level button with a number and three stars: pressing the number
+    // activated it, pressing a star did nothing -- the star was on top, and a
+    // press went to whatever was on top.
+    Fixture fixture;
+    const InstanceId button = fixture.box(fixture.screen, 10.0f, 10.0f, 120.0f, 60.0f);
+    const InstanceId star = fixture.child("ImageLabel", button);
+    const InstanceId caption = fixture.child("TextLabel", button);
+    for (const InstanceId id : {star, caption}) {
+        scene::UIObjectComponent* object = fixture.world->uiObjects().find(id);
+        object->size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{1.0f, 0.0f}};
+    }
+    fixture.run();
+    (void)fixture.events();
+
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{40.0f, 40.0f}) == button);
+    (void)fixture.interact(Vec2{40.0f, 40.0f}, true, false);
+    (void)fixture.interact(Vec2{40.0f, 40.0f}, false, true);
+    const std::vector<std::string> events = fixture.events();
+    CHECK(std::find(events.begin(), events.end(), "Activated") != events.end());
+
+    // An editor's click is another question: the star is what is there.
+    CHECK(ui::elementAt(*fixture.world, fixture.service, Vec2{40.0f, 40.0f}) == caption);
+
+    // What a label is until somebody says otherwise -- and then it is what
+    // they said: one told to take the pointer does, button under it or not.
+    CHECK_FALSE(ui::takesPointer(*fixture.world, star));
+    fixture.world->uiObjects().find(star)->active = 1;
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{40.0f, 40.0f}) == star);
+    // And a button told not to is something to look at.
+    fixture.world->uiObjects().find(star)->active = -1;
+    fixture.world->uiObjects().find(button)->active = 0;
+    CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, Vec2{40.0f, 40.0f}).valid());
+}
+
+TEST_CASE("D452: a clear frame lets a press through to what is under it, and a veil does not")
+{
+    // A full-screen frame with no background, in a layer of its own above the
+    // HUD, kept to hold the touch controls: it took every press meant for the
+    // hotbar in the layer below, and made every touch "the interface's".
+    Fixture fixture;
+    const InstanceId hotbar = fixture.box(fixture.screen, 300.0f, 500.0f, 200.0f, 60.0f);
+    const InstanceId overlay = fixture.child("ScreenGui", fixture.service);
+    fixture.world->screenGuis().find(overlay)->displayOrder = 10.0f;
+    const InstanceId layer = fixture.child("Frame", overlay);
+    scene::UIObjectComponent* frame = fixture.world->uiObjects().find(layer);
+    frame->size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{1.0f, 0.0f}};
+    frame->backgroundTransparency = 1.0f;
+    fixture.run();
+
+    // Clear: the button under it is pressed, and where there is no button the
+    // press is the game's.
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{350.0f, 520.0f}) == hotbar);
+    CHECK_FALSE(fixture.interact(Vec2{50.0f, 50.0f}).pointerOverUi);
+    CHECK(fixture.interact(Vec2{350.0f, 520.0f}).pointerOverUi);
+
+    // **A veil**: the same frame with something to see blocks what is under
+    // it, as a dialog's backdrop must.
+    frame->backgroundTransparency = 0.5f;
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{350.0f, 520.0f}) == layer);
+    CHECK(fixture.interact(Vec2{50.0f, 50.0f}).pointerOverUi);
+
+    // And a clear frame told to block is an invisible blocker.
+    frame->backgroundTransparency = 1.0f;
+    frame->active = 1;
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{350.0f, 520.0f}) == layer);
+}
+
+TEST_CASE("D452: a frame that fades out stops taking the pointer, and takes it again when it fades back")
+{
+    // What `Active` reads is what the object is NOW, until somebody writes it.
+    Fixture fixture;
+    const InstanceId veil = fixture.child("Frame", fixture.screen);
+    scene::UIObjectComponent* frame = fixture.world->uiObjects().find(veil);
+    frame->size = core::UDim2{core::UDim{1.0f, 0.0f}, core::UDim{1.0f, 0.0f}};
+    fixture.run();
+    const core::NameAtom active = fixture.atoms.intern("Active");
+    const core::NameAtom fade = fixture.atoms.intern("BackgroundTransparency");
+    const auto reads = [&] {
+        const std::optional<scene::Value> value = fixture.world->getProperty(veil, active);
+        REQUIRE(value.has_value());
+        return std::get<bool>(*value);
+    };
+
+    CHECK(reads());
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 100.0f}) == veil);
+    // Faded right out: the property reads what is so, and the pointer passes.
+    (void)fixture.world->setProperty(veil, fade, scene::Value{1.0});
+    CHECK_FALSE(reads());
+    CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 100.0f}).valid());
+    // And back.
+    (void)fixture.world->setProperty(veil, fade, scene::Value{0.4});
+    CHECK(reads());
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 100.0f}) == veil);
+
+    // **Unwritten, it is not the scene file's to keep**: a frame saved while
+    // clear must not stay out of the pointer's way once it is given a
+    // background. Written, it is.
+    const scene::ClassDescriptor* descriptor = fixture.classes.find(fixture.world->classOf(veil));
+    const scene::PropertyDesc* property = fixture.classes.findProperty(fixture.world->classOf(veil), active);
+    REQUIRE(descriptor != nullptr);
+    REQUIRE(property != nullptr);
+    CHECK(scene::quietAtDefault(*fixture.world, veil, *property, scene::Value{true}));
+    (void)fixture.world->setProperty(veil, active, scene::Value{false});
+    CHECK_FALSE(scene::quietAtDefault(*fixture.world, veil, *property, scene::Value{false}));
+    CHECK_FALSE(reads());
+    // A written value wins over what it draws.
+    CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, Vec2{100.0f, 100.0f}).valid());
+}
+
+TEST_CASE("D452: a button under a safe-area inset is pressed where it is drawn")
+{
+    // "Buttons in a ScreenGui with ScreenInsets on could not be pressed on the
+    // phone": the layout moves the tree in by the inset, and the press is in
+    // window pixels. Both from the same rectangle.
+    Fixture fixture;
+    fixture.world->engineState().safeAreaInsets = core::Rect{Vec2{180.0f, 85.0f}, Vec2{0.0f, 40.0f}};
+    const InstanceId button = fixture.box(fixture.screen, 24.0f, 24.0f, 100.0f, 40.0f);
+    fixture.run();
+    (void)fixture.events();
+
+    const scene::UIObjectComponent* placed = fixture.world->uiObjects().find(button);
+    CHECK(placed->absolutePosition.x == 204.0f);
+    CHECK(placed->absolutePosition.y == 109.0f);
+    // Where it is drawn, and not where it would be with no inset.
+    CHECK(ui::hitTest(*fixture.world, fixture.service, Vec2{210.0f, 115.0f}) == button);
+    CHECK_FALSE(ui::hitTest(*fixture.world, fixture.service, Vec2{30.0f, 30.0f}).valid());
+    (void)fixture.interact(Vec2{210.0f, 115.0f}, true, false);
+    (void)fixture.interact(Vec2{210.0f, 115.0f}, false, true);
+    const std::vector<std::string> events = fixture.events();
+    CHECK(std::find(events.begin(), events.end(), "Activated") != events.end());
 }
 
 TEST_CASE("the UI reports whether it took the pointer")

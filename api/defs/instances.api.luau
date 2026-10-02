@@ -379,7 +379,7 @@ local Classes: { Schema.Class } = {
                 Doc = "The Luau this instance carries. It is data on the instance rather than a path to a file, "
                     .. "which is what makes a script something you can create, copy, put inside a prefab and save "
                     .. "in a scene like anything else.\n\n"
-                    .. "**The editor writes it, and a script only reads it** (ADR 0137 §4): a script that could "
+                    .. "**The editor writes it, and a script only reads it** (ADR 0137): a script that could "
                     .. "write another's `Source` and enable it would run text the sandbox never loaded. A script "
                     .. "made at run time takes its code from a copy -- `Clone` of one in the scene, or "
                     .. "`Instance.stamp`.",
@@ -3153,8 +3153,24 @@ local Classes: { Schema.Class } = {
                 Name = "BackgroundTransparency",
                 Type = "number",
                 Default = "0",
-                Doc = "0 opaque, 1 invisible. A fully transparent background still lays out and still hit-tests "
-                    .. "-- `Visible` is the property that stops both.",
+                Doc = "0 opaque, 1 invisible. A fully transparent background still lays out; whether it takes "
+                    .. "the pointer is `Active`'s to say.",
+            },
+            {
+                Name = "Active",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether this object takes the pointer: whether a press lands on it, whether the pointer "
+                    .. "is over it, and whether a press there is the interface's -- the `uiConsumed` a game "
+                    .. "reads from `InputService.InputBegan` -- or goes on to the game and to whatever is "
+                    .. "under it.\n\n"
+                    .. "**Until you write it, it is what the object is.** A button, a `TextInput` and a "
+                    .. "`ScrollFrame` take the pointer. A `TextLabel` and an `ImageLabel` do not, so a press "
+                    .. "on the icon or the caption inside a button is a press on the button. A `Frame` "
+                    .. "takes it when it draws a background -- `BackgroundTransparency` under 1 -- so a veil "
+                    .. "behind a dialog blocks what is under it, and a clear frame that only holds a layout "
+                    .. "lets every press through. Write it and what you wrote stands: `true` on a clear "
+                    .. "frame makes an invisible blocker, `false` on a button makes it something to look at.",
             },
             {
                 Name = "Visible",
@@ -3586,6 +3602,15 @@ local Classes: { Schema.Class } = {
                 Default = "Color3.new(1, 1, 1)",
                 Doc = "Multiplied into the image, so one white glyph sheet can be drawn in any colour. White "
                     .. "leaves it alone.",
+            },
+            {
+                Name = "ImageTransparency",
+                Type = "number",
+                Default = "0",
+                Doc = "How see-through the picture is: 0 solid, 1 not drawn at all. The picture's own, apart "
+                    .. "from `BackgroundTransparency`, as `TextTransparency` is a label's words' -- an icon "
+                    .. "fades and its box stays, or the other way round. Values outside 0 to 1 are kept as "
+                    .. "written and drawn as the nearer end.",
             },
             {
                 Name = "ScaleType",

@@ -68,6 +68,18 @@ local function copyTree(from: string, to: string, substitutions: { [string]: str
     end
 end
 
+--- **The project's id from its name** (D454): reverse-DNS, and what an
+--- Android package is named by -- lower case, letters, digits and
+--- underscores, never a digit first. `LabirintoDeTinta` made
+--- `dev.local.LabirintoDeTinta`, which a store refuses.
+local function identifier(name: string): string
+    local id = string.gsub(string.lower(name), "[^%l%d_]", "_")
+    if string.match(id, "^%d") ~= nil then
+        id = `game_{id}`
+    end
+    return id
+end
+
 local function run(options: Options): number
     if not Templates[options.template] then
         print(tr("cli.new.err.unknown_template", { name = options.template }))
@@ -92,7 +104,11 @@ local function run(options: Options): number
         print(tr("cli.new.err.no_install"))
         return 1
     end
-    copyTree(projectlib.joined(root, "templates", options.template), target, { ["{{name}}"] = options.name })
+    copyTree(
+        projectlib.joined(root, "templates", options.template),
+        target,
+        { ["{{name}}"] = options.name, ["{{id}}"] = identifier(options.name) }
+    )
 
     -- `.engine/` is generated and gitignored, which is why it is written here
     -- rather than kept in the template: it belongs to the engine version, not
@@ -111,6 +127,7 @@ end
 
 return {
     run = run,
+    identifier = identifier,
     defaultParent = function(): string
         -- A `Path`, not a string: formatted, or the caller got a table.
         return path.format(process.cwd())

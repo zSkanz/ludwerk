@@ -201,7 +201,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
       separate processes, tiled; each one's log in the Output panel under its
       own name; Stop ends them all. Plain Play stays solo in the viewport.
 - [x] Test the process orchestration headless (start, names, stop all).
-- [ ] The tiling, checked by hand on a real screen and recorded here.
+- [>] The tiling, checked by hand on a real screen and recorded here.
       **Not done by the agent**: it has no screen to look at. The tiles are a
       pure function under test; what the windows do with them on a desktop is
       the owner's to see.

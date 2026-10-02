@@ -16,7 +16,7 @@ file is the order of work inside block F and where each piece stands.
 | F2 — movers and constraints | [ADR 0127](../decisions/0127-movers-and-constraints-move-a-part-without-code.md) |
 | F3 — UI layouts, adaptation, gamepad | [ADR 0128](../decisions/0128-ui-lays-out-in-grids-and-pages-adapts-to-any-screen-and-is-driven-by-a-gamepad.md) |
 | F4 — Highlight, Beam, Trail | [ADR 0129](../decisions/0129-highlight-beam-and-trail.md) |
-| F5 — solids and shapes | [ADR 0130](../decisions/0130-parts-combine-into-solids-and-two-more-shapes.md) (Manifold awaits approval) |
+| F5 — solids and shapes | [ADR 0130](../decisions/0130-parts-combine-into-solids-and-two-more-shapes.md) (Manifold adopted, 2026-09-30) |
 | F6 — sound effects and vibration | [ADR 0131](../decisions/0131-sound-effects-vibration-and-preloading.md) §1-2 |
 | F7 — text chat | [ADR 0132](../decisions/0132-players-chat-through-textchatservice.md) |
 | F8 — preloading | [ADR 0131](../decisions/0131-sound-effects-vibration-and-preloading.md) §3 |
@@ -105,7 +105,8 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F5 — solids and shapes (ADR 0130)
 
-- [ ] **The owner approves Manifold** (R5). Nothing below starts before it.
+- [x] **Manifold is approved** (R5): adopted on 2026-09-30 under the owner's
+  standing rule -- Apache-2.0, inside R6 -- and recorded in ADR 0130.
 - [ ] Vendor Manifold (manifest row, notices).
 - [ ] `UnionAsync`, `SubtractAsync`, `IntersectAsync`; `UnionOperation`,
   `NegateOperation`; sources kept; Separate.

@@ -569,7 +569,7 @@ u64 World::worldHash() const
                     if (property.hostFact)
                         continue;
                     const Value value = property.get(*this, id);
-                    if (quietAtDefault(*this, property, value))
+                    if (quietAtDefault(*this, id, property, value))
                         continue;
                     hasher.text(m_atoms.text(property.name));
                     hashValue(hasher, value, *this);
@@ -581,12 +581,29 @@ u64 World::worldHash() const
     return hasher.digest();
 }
 
-bool quietAtDefault(const World& world, const PropertyDesc& property, const Value& value)
+bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc& property, const Value& value)
 {
-    if (property.name != world.atoms().lookup("RunContext"))
+    const std::string_view name = world.atoms().text(property.name);
+    if (name == "RunContext") {
+        const auto* item = std::get_if<EnumValue>(&value);
+        return item != nullptr && item->enumId == generated::RunContextEnumId && item->value == 2;
+    }
+    if (name == "Active") {
+        const UIObjectComponent* object = world.uiObjects().find(id);
+        return object != nullptr && object->active < 0;
+    }
+    const auto* number = std::get_if<core::f64>(&value);
+    if (number == nullptr)
         return false;
-    const auto* item = std::get_if<EnumValue>(&value);
-    return item != nullptr && item->enumId == generated::RunContextEnumId && item->value == 2;
+    if (name == "ImageTransparency")
+        return world.imageLabels().find(id) != nullptr && *number == 0.0;
+    if (name == "ExposureMin")
+        return world.lighting().find(id) != nullptr &&
+               *number == static_cast<core::f64>(LightingComponent{}.exposureMin);
+    if (name == "ExposureMax")
+        return world.lighting().find(id) != nullptr &&
+               *number == static_cast<core::f64>(LightingComponent{}.exposureMax);
+    return false;
 }
 
 } // namespace engine::scene

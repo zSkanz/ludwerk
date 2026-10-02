@@ -49,10 +49,10 @@ away is the same shape drawn close, at lower resolution.
   (`--debug-view=holes`), and no sky inside the ground (`imgholes`), nor where
   the same frame at full detail (`--terrain-detail=full`) has ground. In the
   local gate.
-- [ ] Visual goldens, once the owner approves references.
+- [>] Visual goldens, once the owner approves references.
 - [x] Switches: `[graphics] contact_shadows`; the debug views of each node's
   level, the sky term, the shadow factor and occlusion.
-- [~] CPU tests at every level, L0 to L5: every shape keeps triangles; flat
+- [>] CPU tests at every level, L0 to L5: every shape keeps triangles; flat
   ground within centimetres; the seam between L and L+1 closed, by a ray grid;
   a coarse cell's material is the surface's; the sky term matches the level's
   own geometry; winding agrees with the surface-net sign.
@@ -480,10 +480,10 @@ again). ADR 0141:
 
 ## T6 — the close
 
-- [ ] The gallery and every CPU test green; the full local gate.
-- [ ] The owner's place photographed again at the audit's distances, before and
+- [x] The gallery and every CPU test green; the full local gate.
+- [>] The owner's place photographed again at the audit's distances, before and
   after side by side, from a copy.
-- [ ] **The owner's own look**, packaged: he sculpts, paints and flies. The
+- [>] **The owner's own look**, packaged: he sculpts, paints and flies. The
   ledger closes only on his word -- the one gate item no machine can run.
 
 ### T0 as it stands

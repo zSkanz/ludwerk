@@ -355,6 +355,28 @@ local Classes: { Schema.Class } = {
                     .. "unit a camera uses. It is a look rather than a limit, so it is not clamped.",
             },
             {
+                Name = "ExposureMin",
+                Type = "number",
+                Default = "-2.7369655",
+                ErrorKey = "scene.err.number_exposure_stops",
+                Doc = "The most the automatic exposure may DARKEN the picture, in EV stops: how far it follows "
+                    .. "a world that gets brighter. About two and three quarter stops down by default. Raise "
+                    .. "it towards 0 and a bright place stays bright -- snow glares, a desert at noon is "
+                    .. "hard to look at.",
+            },
+            {
+                Name = "ExposureMax",
+                Type = "number",
+                Default = "1.5849625",
+                ErrorKey = "scene.err.number_exposure_stops",
+                Doc = "The most the automatic exposure may BRIGHTEN the picture, in EV stops: how far it "
+                    .. "follows a world that gets darker. About a stop and a half by default, so a night is "
+                    .. "darker than a day and still seen. **Lower it and night is dark**: at 0 the exposure "
+                    .. "never brightens at all, and a world lit a third as bright LOOKS a third as bright -- "
+                    .. "what a game with a day and a night that should feel like one sets. Set both to the "
+                    .. "same number and the exposure is fixed there.",
+            },
+            {
                 Name = "EnvironmentDiffuseScale",
                 Type = "number",
                 Default = "1",
@@ -1184,6 +1206,15 @@ local Classes: { Schema.Class } = {
         Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
         Properties = {
             {
+                Name = "Platform",
+                Type = "Enum.Platform",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or "
+                    .. "`IOS`. On a dedicated server it is the server's. Known from a script's first line.",
+            },
+            {
                 Name = "SimTime",
                 Type = "number",
                 ReadOnly = true,
@@ -1849,6 +1880,47 @@ local Classes: { Schema.Class } = {
                     .. "prompts on. It changes on a real input and not on a resting one: a gamepad stick "
                     .. "drifting inside its dead zone does not steal the prompts from a keyboard.",
             },
+            {
+                Name = "SwipeThreshold",
+                Type = "number",
+                Default = "6",
+                Transient = true,
+                HostFact = true,
+                ErrorKey = "scene.err.number_positive",
+                Doc = "How far a finger travels before it is a swipe, in MILLIMETRES of screen -- a length "
+                    .. "under a thumb, the same on a phone and on a monitor, where a number of pixels would "
+                    .. "be a nudge on one and a reach across on the other. Six by default; the engine turns "
+                    .. "it into pixels from the display's density.",
+            },
+            {
+                Name = "TouchAvailable",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether this machine has a touchscreen. **Known from a script's first line**, before "
+                    .. "anybody has touched anything -- which `LastInputDeviceType` cannot say -- so a game "
+                    .. "can decide which HUD to build and how far to draw before its first frame. True on a "
+                    .. "phone and on a laptop with a touchscreen alike.",
+            },
+            {
+                Name = "KeyboardAvailable",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a keyboard is attached. False on a phone until somebody plugs one in or "
+                    .. "pairs one, and then true.",
+            },
+            {
+                Name = "GamepadAvailable",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether at least one gamepad is connected now. It changes as one is plugged in or "
+                    .. "taken away; `InputDeviceChanged` says when one is first USED.",
+            },
         } :: { Schema.Property },
         Methods = {
             {
@@ -1940,6 +2012,46 @@ local Classes: { Schema.Class } = {
                     .. "is the failure that leaves a character walking into a wall after an alt-tab.\n\n"
                     .. "`uiConsumed` carries what it carried when the input began, so a press that started on "
                     .. "a button is still marked consumed when it is released off one.",
+            },
+            {
+                Name = "TouchSwiped",
+                Parameters = {
+                    { Name = "direction", Type = "Enum.SwipeDirection" },
+                    { Name = "start", Type = "Vector2" },
+                    { Name = "fingers", Type = "number" },
+                },
+                Doc = "A finger -- or the mouse with its left button down -- travelled `SwipeThreshold` "
+                    .. "along one axis. Fired while it is still down, with where that stroke began in "
+                    .. "window pixels and how many fingers are down. One long drag one way is one swipe; a "
+                    .. "change of direction is the next, measured from where the finger then is. The same "
+                    .. "swipe is `Enum.KeyCode.SwipeUp` and its three siblings for an `InputAction`. A "
+                    .. "press the interface took (`UIObject.Active`) starts none of these gestures.",
+            },
+            {
+                Name = "TouchTapped",
+                Parameters = { { Name = "position", Type = "Vector2" } },
+                Doc = "A finger came down and went up again where it landed, within a third of a second: "
+                    .. "the place, in window pixels. A mouse click on the world is one too.",
+            },
+            {
+                Name = "TouchLongPressed",
+                Parameters = { { Name = "position", Type = "Vector2" } },
+                Doc = "A finger has stayed where it landed for half a second. Fired once, while it is still "
+                    .. "down; lifting it afterwards is not a tap.",
+            },
+            {
+                Name = "TouchPinched",
+                Parameters = { { Name = "scale", Type = "number" }, { Name = "centre", Type = "Vector2" } },
+                Doc = "Two fingers moved apart or together: the distance between them over what it was when "
+                    .. "the second landed -- 2 is twice as far apart -- and the point midway between them. "
+                    .. "Fired each tick it changes; multiply a zoom the game kept from before the pinch.",
+            },
+            {
+                Name = "TouchPanned",
+                Parameters = { { Name = "delta", Type = "Vector2" }, { Name = "fingers", Type = "number" } },
+                Doc = "What is down moved: how far this tick, in window pixels (down the window is +Y, as "
+                    .. "`Position` is), as one motion however many fingers made it. What a camera that is "
+                    .. "dragged follows, with one finger or two.",
             },
             {
                 Name = "InputDeviceChanged",

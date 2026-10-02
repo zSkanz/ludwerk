@@ -16,6 +16,7 @@
 #include "engine/scene/world.h"
 #include "engine/ui/scene_types.h"
 #include "engine/ui/text_edit.h"
+#include "engine/ui/ui.h"
 
 // By a path relative to this file rather than through an include directory:
 // every module's generated header has the same name, so two of them on one
@@ -285,6 +286,22 @@ bool setUIObjectBackgroundTransparency(scene::World& world, core::InstanceId id,
     if (number == nullptr || !isFinite(*number))
         return false;
     component->backgroundTransparency = static_cast<f32>(*number);
+    return true;
+}
+
+Value getUIObjectActive(const scene::World& world, core::InstanceId id)
+{
+    // What it does, whether or not anybody said: the answer a script wants.
+    return world.uiObjects().find(id) == nullptr ? Value{} : Value{takesPointer(world, id)};
+}
+
+bool setUIObjectActive(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::UIObjectComponent* component = world.uiObjects().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (component == nullptr || flag == nullptr)
+        return false;
+    component->active = *flag ? 1 : 0;
     return true;
 }
 
@@ -880,6 +897,23 @@ bool setImageLabelImageColor(scene::World& world, core::InstanceId id, const Val
     if (color == nullptr)
         return false;
     component->imageColor = *color;
+    return true;
+}
+
+Value getImageLabelImageTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->imageTransparency)};
+}
+
+bool setImageLabelImageTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ImageLabelComponent* component = world.imageLabels().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    // Kept as written, like `TextTransparency`; the draw clamps.
+    if (component == nullptr || number == nullptr || !isFinite(*number))
+        return false;
+    component->imageTransparency = static_cast<f32>(*number);
     return true;
 }
 

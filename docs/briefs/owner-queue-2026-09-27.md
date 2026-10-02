@@ -173,7 +173,7 @@ details included. After Q1, and before anything else; defects still come first.
       a marker a watcher photographs the window at (`PrintWindow`). The editor
       is driven and pictured with nobody's mouse moved -- the gap every
       milestone since E1 recorded ("no automated picture of the editor").
-- [~] **The survey** (2026-09-27, photographs in the session's scratchpad):
+- [x] **The survey** (2026-09-27, photographs in the session's scratchpad):
 
   | Where | What a VS Code user meets | What VS Code does |
   |---|---|---|
@@ -190,7 +190,7 @@ details included. After Q1, and before anything else; defects still come first.
   | Test tab | The dedicated-server checkbox is nearly invisible | Checkboxes with a visible box in both themes |
   | Colour | A teal-graphite palette of its own | Neutral greys, one blue accent, hairline borders |
 
-- [~] **The remake**, in this order, each one photographed before and after:
+- [x] **The remake**, in this order, each one photographed before and after:
   1. [x] The theme: VS Code's Dark Modern and Light Modern families (neutral
      greys, `#0078D4` accent, hairline borders, compact rows), fonts and
      metrics; fields and checkboxes on `#313131`, so a box is seen before it

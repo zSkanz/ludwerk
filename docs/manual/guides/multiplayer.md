@@ -285,6 +285,11 @@ end
 - An attribute that holds an instance arrives as the replica's copy of it, or
   nil if the replica was not sent it.
 
+**A client that joins late has them as they stand.** Whatever the attributes
+were when it arrived -- of the workspace, of a service, of a part, of a player
+-- is what it reads from its first tick: a round's number set before a player
+came in is there for that player.
+
 ## Messages: `RemoteEvent`
 
 Some things a game says are not state and are not a key held down: "I bought
@@ -326,6 +331,15 @@ A function, a thread, a table that contains itself, or more than 64 KiB is
 refused at the call that tried to send it. Messages are reliable and arrive in
 order, at the start of the receiver's next tick. An authority takes at most
 256 from one player a tick.
+
+**A call that arrives before anybody listens is kept for the first who
+does.** A scene's client and server scripts start in the same tick, so a client
+that fires at once fires into a remote the server may not have connected yet.
+The call is not lost: it waits, with the others in the order they were sent,
+and the first `Connect` to `ServerReceived` -- or `ClientReceived`, the other
+way -- is handed them all. Up to 256 a remote each way; past that the calls
+are dropped and the remote says so once in the log. There is nothing to do
+about it in game code, and no "ready" flag to keep.
 
 ## Questions: `RemoteFunction`
 

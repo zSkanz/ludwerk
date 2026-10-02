@@ -61,7 +61,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - [x] A game driven by real input: every shortcut, the mouse, a paste
   from another application, a masked field, a multi-line one. Two defects
   found and fixed on the way (D361, D362).
-- [ ] Android: the on-screen keyboard of each type. **Waiting on the owner's
+- [>] Android: the on-screen keyboard of each type. **Waiting on the owner's
   phone**: none was connected on 2026-09-30.
 
 ## Findings

@@ -469,6 +469,35 @@ local function run(): number
         end
     end
 
+    -- **The analyser `check` runs** (ADR 0152), at the version `rokit.toml`
+    -- pins, from where the tool manager keeps the real program -- its launcher
+    -- on PATH is a file that runs only on a machine with the manager behind
+    -- it, which is the mistake the Lute copy above is verified against.
+    -- Its licence, and Lute's, go with them. The formatter is not copied: its
+    -- licence (MPL-2.0) is not one R6 lets this folder ship under.
+    do
+        local pinned = string.match(fs.readFileToString("rokit.toml"), 'luau%-lsp%s*=%s*"[^@"]+@([^"]+)"')
+        local home = process.env.USERPROFILE or process.env.HOME
+        local analyser = executableName("luau-lsp")
+        if pinned == nil or home == nil then
+            fail("luau-lsp: rokit.toml does not pin it, or this machine has no home folder to find it under")
+        else
+            local from = joined(home, ".rokit", "tool-storage", "johnnymorganz", "luau-lsp", pinned, analyser)
+            if copyFile(from, joined(target, "tools", "bin", analyser), `luau-lsp {pinned}`) then
+                local probe = process.run({ joined(target, "tools", "bin", analyser), "--version" })
+                if not probe.ok then
+                    fail(`the copied luau-lsp does not run: {joined(target, "tools", "bin", analyser)}`)
+                end
+            end
+        end
+        copyFile("third_party/licenses/luau-lsp.txt", joined(target, "licenses", "luau-lsp.txt"), "luau-lsp's licence")
+        copyFile("third_party/licenses/lute.txt", joined(target, "licenses", "lute.txt"), "Lute's licence")
+    end
+
+    -- The product's name, which the CLI reads from here and from nowhere else
+    -- (ADR 0109): without it an installation called itself "engine".
+    copyFile("branding/brand.toml", joined(target, "branding", "brand.toml"), "the brand")
+
     -- The CLI, its template, and the definitions `ludwerk new` puts in a project.
     -- `tests/` is left out: it drives the CLI through Lute's test runner, which
     -- an installation has no reason to carry.

@@ -1,7 +1,15 @@
 # Welds and constraints
 
-There is one joint in this release and it is a rigid weld. It comes in two
-spellings, and choosing between them is the whole of what there is to learn.
+Two kinds of joint, and the difference is who moves the second part.
+
+- **A weld drives it.** `Weld` and `WeldConstraint` put one part where another
+  is, every tick, and the solver is never asked. A sword stays on a hand
+  whatever else is happening.
+- **A constraint asks the solver.** `HingeConstraint`, `BallSocketConstraint`
+  and `FixedConstraint` hand both bodies to the simulation and let it work out
+  where they end up: a door swings under its own weight, a ragdoll falls.
+
+Use a weld to attach, a constraint to articulate. The welds first.
 
 | Class | The offset is |
 |---|---|
@@ -98,18 +106,76 @@ another weld — directly or through a chain. Welds form a graph and a cycle has
 no resolution order, so the write that would create one is refused at the write,
 where the caller can be told which write it was.
 
+## Constraints: the solver's joints
+
+A constraint joins two **`Attachment`s**, not two parts. An attachment is a
+named place on a part -- its `CFrame` is relative to the part it is parented
+to -- so where a door hinges is a place on the door and a place on the frame,
+both of which you can see and move.
+
+```luau
+--!strict
+local function attach(part: BasePart, world: CFrame): Attachment
+    local attachment = Instance.new("Attachment")
+    attachment.CFrame = part.CFrame:ToObjectSpace(world)
+    attachment.Parent = part
+    return attachment
+end
+
+-- A shin hanging from a thigh by a knee that bends one way.
+local knee = CFrame.new(0, 4.8, 0)
+local hinge = Instance.new("HingeConstraint")
+hinge.Attachment0 = attach(thigh, knee)
+hinge.Attachment1 = attach(shin, knee)
+hinge.LimitsEnabled = true
+hinge.LowerAngle = -135
+hinge.UpperAngle = 5
+hinge.CollideConnected = false
+hinge.Parent = workspace
+```
+
+| Class | Freedom | Limits |
+|---|---|---|
+| `HingeConstraint` | turns about one axis: a door, a lid, an elbow | `LowerAngle` to `UpperAngle`, in degrees |
+| `BallSocketConstraint` | turns every way about one point: a shoulder, a hip, a rope's end | a swing cone of `UpperAngle` and a twist of `TwistLimit` either way |
+| `FixedConstraint` | none: two bodies the solver treats as one | -- |
+
+Four things about the joint's frame that every one of them shares:
+
+- **The axis is the attachment's own X.** A hinge turns about its attachment's
+  X axis, and a ball socket's cone is measured from it. Pointing the
+  attachment points the joint.
+- **The two frames are the same place when the constraint is built.** That is
+  what "this is where they are attached" means: put both attachments at the
+  joint, as the example does, and the parts are held as they stand.
+- **Limits count by the right hand about that X**, the second part
+  (`Attachment1`'s) against the first: with the thumb along X, the fingers
+  curl towards positive. The knee above lets the shin's foot swing 135 degrees
+  one way and 5 the other.
+- **A limit is not exceeded and pulled back; it is not exceeded.** A limited
+  ball socket is a different solver joint from a free one, not a free one with
+  corrections on top.
+
+`Enabled = false` leaves the joint in the world holding nothing, which is how a
+grip lets go without being destroyed. `CollideConnected = false` stops the two
+parts colliding with each other -- an upper arm and a lower arm overlap at the
+elbow by construction, and left colliding they shove each other apart every
+step.
+
+A constraint can be made and destroyed while the game runs, and one end may be
+on an anchored part. It cannot reach a `CharacterBody`: that is swept rather
+than solved, so there is no body for a joint to hold -- weld to it instead.
+
 ## What is not here
 
-**Every constraint except the rigid weld.** There is no `HingeConstraint`, no
-`SpringConstraint`, no `Motor6D`, and no solver joint of any kind. There is also
-no `Attachment` class — a weld's offsets are `CFrame` properties on the joint
-itself.
-
-A hinge is expressible as physics: rest a plank on a fulcrum and let contact and
-centre of mass do it. That is what the physics example does, and it is the
-honest answer for this release.
+No motor and no spring yet: a joint holds and limits, and does no work of its
+own. No `SliderConstraint`, no rope, no `Motor6D`. Movers and powered joints
+are ADR 0127's, and not built.
 
 ## Where to look next
 
 - [Rigid bodies](manual:physics/bodies)
+- [Ragdolls](manual:physics/ragdoll)
 - [`Weld`](api:Weld) · [`WeldConstraint`](api:WeldConstraint)
+- [`HingeConstraint`](api:HingeConstraint) · [`BallSocketConstraint`](api:BallSocketConstraint) ·
+  [`FixedConstraint`](api:FixedConstraint) · [`Attachment`](api:Attachment)

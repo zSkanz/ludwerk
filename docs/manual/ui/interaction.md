@@ -45,10 +45,18 @@ Hit-testing walks every enabled `ScreenGui`, ordered by
 `ScreenGui.DisplayOrder`; within one tree the topmost `UIObject.ZIndex` wins,
 ties broken by document order.
 
-Three rules decide whether an element is reachable at all:
+Four rules decide whether an element is reachable at all:
 
-- **`Visible = false` prunes it and its descendants.** A transparent background
-  does not: `BackgroundTransparency = 1` still hit-tests.
+- **`Active` says whether it takes the pointer.** Until you write it, it is
+  what the object is: a button, a `TextInput` and a `ScrollFrame` take the
+  pointer; a `TextLabel` and an `ImageLabel` do not, so a press on the icon or
+  the caption inside a button is a press on the button; and a `Frame` takes it
+  when it draws a background (`BackgroundTransparency` under 1), so a veil
+  behind a dialog blocks what is under it and a clear frame that only holds a
+  layout lets every press through. What you write wins: `Active = true` on a
+  clear frame is an invisible blocker, and **a panel made of an `ImageLabel`
+  needs `Active = true`** or presses go through its picture.
+- **`Visible = false` prunes it and its descendants.**
 - **Clipping removes what is clipped away.** An element scrolled off the end of
   a `ScrollFrame` does not answer a click that lands where it would have been.
 - Interaction runs **after** layout, deliberately — a hit test against last
@@ -85,6 +93,20 @@ a password, focus from code -- is on its own page:
 keypad's Enter), and false when a press elsewhere took the focus.
 
 ## The UI and the rest of the input system
+
+**A press on something that takes the pointer is the interface's.** That is the
+`uiConsumed` every raw input event carries, and what it means depends on the
+device:
+
+| Device | `uiConsumed` is true when |
+|---|---|
+| Mouse | the pointer is over an element that takes it (`Active`), for the buttons, the wheel and motion |
+| Touch | that finger came down on such an element -- for its whole press, wherever it is dragged |
+| Keyboard | a `TextInput` has the focus |
+| Gamepad | never: nothing in the interface takes a gamepad yet |
+
+A gesture (`TouchSwiped` and the rest) is not started by a press the interface
+took.
 
 While the pointer is over any `UIObject`, the UI **claims the pointer**: mouse
 buttons, movement and wheel are marked consumed before any `InputContext`

@@ -680,8 +680,16 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
             // still arriving looks like, and it is better than a hole.
             ResolvedImage resolved;
             const bool ready = resolveImage(image->image, resolved);
-            appendImageQuads(box, resolved, ready, image->scaleType, image->sliceCenter, image->imageColor,
-                             entry.scissor, cornerRadius, out.quads, image->imageRectOffset, image->imageRectSize);
+            // **The picture's own see-through** (`ImageTransparency`, D453):
+            // an icon fades and its box stays, as a label's words do.
+            const f32 shown = 1.0f - std::clamp(image->imageTransparency, 0.0f, 1.0f);
+            if (shown > 0.0f) {
+                const usize first = out.quads.size();
+                appendImageQuads(box, resolved, ready, image->scaleType, image->sliceCenter, image->imageColor,
+                                 entry.scissor, cornerRadius, out.quads, image->imageRectOffset, image->imageRectSize);
+                for (usize at = first; at < out.quads.size(); ++at)
+                    out.quads[at].alpha *= shown;
+            }
         }
         return;
     }

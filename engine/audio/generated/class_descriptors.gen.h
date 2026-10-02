@@ -92,6 +92,8 @@ inline constexpr scene::EnumId WaterShapeEnumId = 49;
 inline constexpr scene::EnumId RenderPriorityEnumId = 50;
 inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
 inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
+inline constexpr scene::EnumId SwipeDirectionEnumId = 53;
+inline constexpr scene::EnumId PlatformEnumId = 54;
 
 } // namespace generated
 

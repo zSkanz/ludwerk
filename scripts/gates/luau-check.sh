@@ -293,7 +293,11 @@ fi
 echo "== the documentation site builds =="
 site_out="$(mktemp -d)"
 trap 'rm -f "$defs_before" "$icons_before" "$dump_before"; rm -rf "$reference_before" "$descriptors_before" "$site_out"' EXIT
-if ! lute api/generator/gen_site.luau "--out=$site_out" >/dev/null; then
+# The exit code alone is not the answer: a module that fails to LOAD leaves the
+# runner printing a stack and returning zero, and this stage passed for as long
+# as the site built nothing at all (D463). So the page it must have written is
+# looked for as well.
+if ! lute api/generator/gen_site.luau "--out=$site_out" >/dev/null || [ ! -s "$site_out/index.html" ]; then
     echo "luau-check: the documentation site did not build." >&2
     echo "  Re-run it to see what it could not resolve:" >&2
     echo "    lute api/generator/gen_site.luau" >&2

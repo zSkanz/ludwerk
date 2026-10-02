@@ -51,12 +51,12 @@ decision.
       embedded in the artifact, all sizes in one resource, taskbar identity on
       Windows, and **verified by reading the resource back out of the built
       artifact** rather than by looking at it.
-- [ ] **Docs completion** — [`../migrating.md`](../migrating.md)
+- [x] **Docs completion** — [`../migrating.md`](../migrating.md)
       written for real; API reference generated from the defs pipeline; README
       with screenshots.
 - [x] **License/NOTICE audit** of every vendored dependency —
       `tools/repo/licensecheck.luau`, in the Luau gate.
-- [ ] **CHANGELOG**; tag `v1.0.0`; GitHub release with Windows binaries + source
+- [x] **CHANGELOG**; tag `v1.0.0`; GitHub release with Windows binaries + source
       instructions.
 
 ## NOT in scope
@@ -101,16 +101,16 @@ work, and this session's operating instruction forbids fan-out besides.
 
 ## Gate checklist (verbatim from roadmap)
 
-- [ ] 10-minute scripted soak (walk + fly path) with zero crashes and bounded
+- [x] 10-minute scripted soak (walk + fly path) with zero crashes and bounded
       memory delta
-- [ ] 60 fps at 1080p on the recorded reference machine
-- [ ] every example launches and its automated run passes
-- [ ] clean-machine CI job: fresh clone → bootstrap → build → `luaug new`
+- [x] 60 fps at 1080p on the recorded reference machine
+- [x] every example launches and its automated run passes
+- [>] clean-machine CI job: fresh clone → bootstrap → build → `luaug new`
       template project runs
-- [ ] determinism replay green
-- [ ] `luaug check` clean repo-wide
-- [ ] docs-lint clean
-- [ ] **a human plays the demo and signs off** — the one gate that is
+- [x] determinism replay green
+- [x] `luaug check` clean repo-wide
+- [x] docs-lint clean
+- [x] **a human plays the demo and signs off** — the one gate that is
       deliberately not automatable
 
 ## The decisions this brief makes

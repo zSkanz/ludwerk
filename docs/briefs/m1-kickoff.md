@@ -34,7 +34,7 @@ place that knows which one exists.
 
 - [x] SDL3 init / window / event pump — the `platform` module (L1), the only
       module besides `rhi_sdlgpu` and `app` glue that may touch SDL (ADR 0004)
-- [~] RHI v1: the ~40-call `rhi_api` (L2, header-only) is **done**, with three
+- [x] RHI v1: the ~40-call `rhi_api` (L2, header-only) is **done**, with three
       backends. The `IRenderer`/`RenderWorld` contract (ADR 0027) is **not** —
       `engine/render` currently holds only `DebugDraw`. `RenderWorld` is defined
       as the POD snapshot extracted from `scene`, and `scene` is M2, so the

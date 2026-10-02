@@ -549,6 +549,20 @@ void resetInteraction() noexcept;
 // believe as a case than as a consequence.
 [[nodiscard]] core::InstanceId hitTest(const scene::World& world, core::InstanceId uiService, core::Vec2 point);
 
+// The topmost visible element under a point WHETHER OR NOT it takes the
+// pointer: what an editor's click selects. A label is not pressed in a game
+// and is very much something a person arranging the interface points at.
+[[nodiscard]] core::InstanceId elementAt(const scene::World& world, core::InstanceId uiService, core::Vec2 point);
+
+// **Whether an element takes the pointer** (`UIObject.Active`, D452): what a
+// press lands on, what the pointer is "over", and what makes a press the
+// interface's rather than the game's. What it was told, or -- told nothing --
+// what it is: a button, a text input and a scroll frame take it; a label does
+// not, so a press on a button's icon is a press on the button; and a frame
+// takes it when it draws a background, so a veil behind a dialog blocks what is
+// under it and a clear frame that only lays things out does not.
+[[nodiscard]] bool takesPointer(const scene::World& world, core::InstanceId id);
+
 // The topmost visible element of one canvas tree under a point in the canvas's
 // own pixels, as `layoutCanvas` laid it out -- a world canvas's answer to the
 // same question.

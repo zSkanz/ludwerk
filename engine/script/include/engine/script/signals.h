@@ -317,6 +317,10 @@ void closeInstanceSignalsExceptDestroying(lua_State* L, core::InstanceId owner);
 // lets `Heartbeat` fire sixty times a second into an empty world for free.
 void fireInstanceEvent(lua_State* L, core::InstanceId owner, u16 slot, int first, int count);
 
+// Whether anything is connected to an instance's event, or parked in its
+// `:Wait()`: what a fire into it would reach.
+[[nodiscard]] bool instanceEventHeard(lua_State* L, core::InstanceId owner, u16 slot);
+
 // The same, for an engine console message. It carries the reporting handler's
 // own depth rather than one below it, because the message is *about* that
 // handler rather than raised by it -- and a report raised one deeper than the

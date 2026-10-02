@@ -90,6 +90,8 @@ inline constexpr EnumId WaterShapeEnumId = 49;
 inline constexpr EnumId RenderPriorityEnumId = 50;
 inline constexpr EnumId FocusLossReasonEnumId = 51;
 inline constexpr EnumId TextInputKeyboardEnumId = 52;
+inline constexpr EnumId SwipeDirectionEnumId = 53;
+inline constexpr EnumId PlatformEnumId = 54;
 
 } // namespace generated
 
@@ -631,6 +633,7 @@ void attachPlayerComponents(World& world, core::InstanceId id);
 void detachPlayerComponents(World& world, core::InstanceId id);
 
 // RunService
+Value getRunServicePlatform(const World& world, core::InstanceId id);
 Value getRunServiceSimTime(const World& world, core::InstanceId id);
 
 // StreamingService

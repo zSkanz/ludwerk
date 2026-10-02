@@ -35,6 +35,7 @@
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/physics_sync_2d.h"
 #include "engine/scene/skeleton_host.h"
+#include "engine/scene/world.h"
 #include "engine/script/animation.h"
 #include "engine/script/binding.h"
 #include "engine/script/content_provider.h"
@@ -210,6 +211,11 @@ public:
         int functionRef = -1;
     };
     std::vector<InvokeHandler> invokeHandlers;
+    // **Calls that arrived at a `RemoteEvent` nobody was listening to yet**
+    // (D451), oldest first, for the first connection to be handed in order.
+    // And the remotes already warned about for reaching the bound.
+    std::vector<scene::RemoteMessage> heldRemoteCalls;
+    std::vector<core::InstanceId> heldRemoteWarned;
     struct InvokeWaiter
     {
         core::u32 call = 0;

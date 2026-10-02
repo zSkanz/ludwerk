@@ -1,8 +1,11 @@
 # 0130 — Parts combine into solids, and two more shapes
 
 - Status: accepted (to be built; see `docs/briefs/toolkit-kickoff.md`, F5).
-  **The dependency Manifold awaits the owner's approval (R5)**; nothing is
-  vendored before it.
+  **Manifold is adopted** (2026-09-30), under the owner's standing rule of
+  that day -- *"do not keep asking me to decide things; everything should be
+  based on how professional game engines work"*: it is Apache-2.0, inside R6,
+  and the library the tools that do this at run time use. It is vendored
+  through the manifest, at a pinned release tag, when F5 starts.
 - Date: 2026-09-27
 - Decided by: the owner, on 2026-09-27, approving solid modelling (union,
   subtraction, intersection of parts) and more part shapes from a survey of

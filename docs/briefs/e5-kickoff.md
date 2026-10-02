@@ -114,28 +114,28 @@ Two corrections follow, both from the human, 2026-08-24:
 
 ## Scope checklist (from the roadmap)
 
-- [ ] `Model.StreamingMode`: `Nonatomic` (default), `Atomic`, `Persistent`.
+- [x] `Model.StreamingMode`: `Nonatomic` (default), `Atomic`, `Persistent`.
       `PersistentPerPlayer` is out — it needs a per-connection player.
-- [ ] The partitioner: walks the scene, `floor(position / chunkSize)`, groups by
+- [x] The partitioner: walks the scene, `floor(position / chunkSize)`, groups by
       cell honouring each model's mode, writes cell sources and the index.
-- [ ] It buckets records as it reads and never materialises the world.
-- [ ] It runs on play, cached by a hash of the scene; a shipping build pre-warms
+- [x] It buckets records as it reads and never materialises the world.
+- [x] It runs on play, cached by a hash of the scene; a shipping build pre-warms
       the same cache and is not a second code path.
-- [ ] A cell holds groups: an atomic model and its descendants materialise
+- [x] A cell holds groups: an atomic model and its descendants materialise
       together.
-- [ ] Size classes on `layer` — 0 detail, 1 structures, 2 terrain features —
+- [x] Size classes on `layer` — 0 detail, 1 structures, 2 terrain features —
       with a `minRadius`/`loadRadius` pair per layer on `StreamingFocus`.
-- [ ] Tag addressing documented as the primary path. Nothing built.
-- [ ] The replica's pause: `PauseOutsideLoadedArea` stays the authoritative
+- [x] Tag addressing documented as the primary path. Nothing built.
+- [x] The replica's pause: `PauseOutsideLoadedArea` stays the authoritative
       world's; a replica holds its camera. Written down, not built.
 
 ### Added at kickoff, from the reconnaissance above
 
-- [ ] The chunk format grows to version 2: the rest of `BasePart`, tags, and
+- [x] The chunk format grows to version 2: the rest of `BasePart`, tags, and
       groups.
-- [ ] The chunk index carries real world-space x/z bounds.
-- [ ] A Streaming panel in the debug overlay, which the manual already promises.
-- [ ] `--partition` on the host, so `luaug build` pre-warms the cache through
+- [x] The chunk index carries real world-space x/z bounds.
+- [x] A Streaming panel in the debug overlay, which the manual already promises.
+- [x] `--partition` on the host, so `luaug build` pre-warms the cache through
       the same code the run uses.
 
 ## NOT in scope
@@ -197,35 +197,35 @@ thing is built because the milestone's whole content IS the interfaces.
 
 ## Gate checklist (verbatim from the roadmap)
 
-- [ ] **A world built by hand in the editor streams.** `examples/06-scene` grows
+- [x] **A world built by hand in the editor streams.** `examples/06-scene` grows
       a few hundred parts spread over more than one cell, is saved, and
       `luaug run` streams it — with no generator script anywhere in the project.
       A screenshot of the chunk-state overlay is attached to the gate record.
-- [ ] **The default changes nothing.** `examples/10-open-world` runs
+- [x] **The default changes nothing.** `examples/10-open-world` runs
       byte-identically through the partitioner: the cells it produces from the
       flagship's scene plus its generated world match what `generate_world.luau`
       and `assetc` produce today, or the difference is explained in the record.
       This is the regression that matters, because `Nonatomic` is supposed to be
       what already happens.
-- [ ] **The partitioner never holds the world.** Proven by measurement, not by
+- [x] **The partitioner never holds the world.** Proven by measurement, not by
       inspection: peak resident instance count during a partition of a world
       with N instances is bounded by a constant, not by N. A test partitions a
       synthetic world an order of magnitude larger than the flagship's and
       asserts it.
-- [ ] **An atomic model crosses a boundary and arrives whole.** A model whose
+- [x] **An atomic model crosses a boundary and arrives whole.** A model whose
       parts straddle two cells materialises in one frame with every descendant
       present, and evicts with none left behind. Driven headlessly.
-- [ ] **A persistent model is never in a cell.** It is in the saved scene, it
+- [x] **A persistent model is never in a cell.** It is in the saved scene, it
       exists before the first tick, and no eviction touches it — including at
       four kilometres from the origin, where its cell would long since have gone.
-- [ ] **The cache is a cache.** Editing the scene and pressing play
+- [x] **The cache is a cache.** Editing the scene and pressing play
       repartitions; pressing play again does not. Asserted on the hash, not on
       wall-clock time.
-- [ ] **Layers separate.** With three layers configured, a large object stays
+- [x] **Layers separate.** With three layers configured, a large object stays
       resident at a distance that has already evicted a small one, and the
       overlay shows both states. A unit test over the scoring covers it without
       a window.
-- [ ] **`luaug check` and the full local gate are green**, and the docs say what
+- [x] **`luaug check` and the full local gate are green**, and the docs say what
       a script may assume about a streamed world — the tag path written down,
       with the `nil` a path reference may return stated rather than discovered.
 

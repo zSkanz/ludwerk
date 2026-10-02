@@ -105,7 +105,12 @@ PhysicsSync::~PhysicsSync()
 core::InstanceId PhysicsSync::instanceOf(u64 userData) const noexcept
 {
     const core::InstanceId id = unpackInstance(userData);
-    return m_scene.alive(id) ? id : core::InstanceId{};
+    // **Destroyed is gone, from the moment of `Destroy`** (D458): the instance
+    // is still in the pools until the tick retires it and its body is still
+    // in the simulation until the next step, and neither is something a query
+    // may answer with -- a ray handed back the part that had just been
+    // destroyed.
+    return m_scene.alive(id) && !m_scene.destroyed(id) ? id : core::InstanceId{};
 }
 
 u64 PhysicsSync::userDataOf(core::InstanceId id) const noexcept

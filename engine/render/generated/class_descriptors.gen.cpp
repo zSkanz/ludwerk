@@ -1855,7 +1855,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(foliageMeshDesc);
 
     // --- Lighting ---
-    static std::array<scene::PropertyDesc, 15> lightingProperties;
+    static std::array<scene::PropertyDesc, 17> lightingProperties;
     lightingProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("ClockTime"),
@@ -1955,6 +1955,28 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_exposure_stops"),
             .get = native::getLightingExposureCompensation,
             .set = native::setLightingExposureCompensation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ExposureMin"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most the automatic exposure may DARKEN the picture, in EV stops: how far it follows a world that gets brighter. About two and three quarter stops down by default. Raise it towards 0 and a bright place stays bright -- snow glares, a desert at noon is hard to look at.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_exposure_stops"),
+            .get = native::getLightingExposureMin,
+            .set = native::setLightingExposureMin,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ExposureMax"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most the automatic exposure may BRIGHTEN the picture, in EV stops: how far it follows a world that gets darker. About a stop and a half by default, so a night is darker than a day and still seen. **Lower it and night is dark**: at 0 the exposure never brightens at all, and a world lit a third as bright LOOKS a third as bright -- what a game with a day and a night that should feel like one sets. Set both to the same number and the exposure is fixed there.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_exposure_stops"),
+            .get = native::getLightingExposureMax,
+            .set = native::setLightingExposureMax,
         },
         scene::PropertyDesc{
             .name = atoms.intern("EnvironmentDiffuseScale"),

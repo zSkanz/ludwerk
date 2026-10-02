@@ -29,12 +29,29 @@ end
 **The old scene goes whole**:
 
 - its world;
-- the contents and settings of every service, such as `Lighting`, `UIService`
-  and the storages;
+- the contents, the settings, the attributes and the tags of `Workspace` and
+  of every scene-scoped service, such as `Lighting`, `UIService` and the
+  storages;
 - its scripts, whose threads stop.
 
 The new scene opens from the engine's settings, so nothing the old scene set
-leaks into it. It reads its file, mounts its own code from
+leaks into it: each scene-scoped service goes back to its defaults, and then
+to what the new scene's file says.
+
+| Scene-scoped: back to defaults at every change | Game-scoped: untouched |
+|---|---|
+| `Workspace` and everything in it | `game` itself: its attributes and tags |
+| `Lighting`, `UIService`, `AudioService`, `PhysicsService`, `StreamingService`, and every other service a scene's file can describe | `GlobalScriptService` and what is in it |
+| `ReplicatedStorage`, `ServerStorage`, the scene's two script services | `Player`s and their attributes |
+| `VoxelService`'s blocks **and its registry of block types** | a `ScreenGui` with `KeepOnSceneLoad` |
+| every `RemoteEvent` and `RemoteFunction` in the storages | the connection, the saves |
+
+**For code that is the game's** -- a module in `GlobalScriptService` that
+lives across scenes -- everything in the left column is new each time. A
+`ScreenGui` it made without `KeepOnSceneLoad` died with the scene; "I already
+registered the blocks" is false in the next one; a remote it kept a reference
+to is gone. Keep what the game owns on `game`, on a `Player`, or in the module
+itself, and build the rest again on `SceneLoaded`. It reads its file, mounts its own code from
 `src/scenes/<scene>/`, and starts its scripts.
 
 **What stays** is the game's:

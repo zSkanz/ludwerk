@@ -361,50 +361,50 @@ never recomputed. Check the build's exit code, not the diff.
 
 ## Gate (definition of done)
 
-- [ ] **A person drags a brush across the ground and the ground changes**, at
+- [>] **A person drags a brush across the ground and the ground changes**, at
       60 Hz with no dotted line across a fast drag, and one Ctrl+Z takes the
       whole stroke back. The last clause is `editor_tests.cpp`'s `DragRig`,
       headless. The first is a person at a window and nothing automated
       replaces it.
-- [ ] **A cave has a roof you can stand under and a floor you can stand on**,
+- [x] **A cave has a roof you can stand under and a floor you can stand on**,
       and both collide — asserted by the seam-continuity gate (H1), per column,
       across a boundary that is simultaneously a cell boundary and a
       brick/height boundary.
-- [ ] **The render mesh and the collider are the same triangles where the cell
+- [x] **The render mesh and the collider are the same triangles where the cell
       has no bricks**, asserted as an equality rather than a tolerance, with the
       diagonal pinned to Jolt's `(x,y)→(x+1,y+1)`.
-- [ ] **A raise-ground stroke fires no spurious `Touched`.** A character stands
+- [>] **A raise-ground stroke fires no spurious `Touched`.** A character stands
       on a cell, the cell is sculpted for 60 frames, and the contact-pair diff
       reports zero `Began` and zero `Ended`. Break-verified by removing the
       `SetHeights` path and watching it fire 60 times.
-- [ ] **A cell that promotes whole degrades into pure voxel and says so**, and
+- [>] **A cell that promotes whole degrades into pure voxel and says so**, and
       the slope survey (A5) records what fraction of the flagship's ground does.
-- [ ] **A `.lterrain` round trip is byte-identical**, keys in order,
+- [x] **A `.lterrain` round trip is byte-identical**, keys in order,
       quantization deterministic, and every count checked against its ceiling
       before allocation.
-- [ ] **A save/load round trip is hash-preserving**, representation included.
-- [ ] **`worldHash` is O(objects), not O(bytes)**, asserted as a timing ratio
+- [x] **A save/load round trip is hash-preserving**, representation included.
+- [>] **`worldHash` is O(objects), not O(bytes)**, asserted as a timing ratio
       across two worlds differing only in resident cell count.
-- [ ] **Two worlds built by the same call sequence are bit-identical after 3000
+- [x] **Two worlds built by the same call sequence are bit-identical after 3000
       ticks with a scripted sculpt in the middle**, and
       `tests/determinism/terrain` says so on both tiers.
-- [ ] **Terrain costs nothing to a scene that does not use it.**
+- [x] **Terrain costs nothing to a scene that does not use it.**
       `tests/bench/{physics1k, churn10k, instances500, crowd50, platforms200,
       ragdoll10, sockets200}` unchanged within noise.
-- [ ] **`Enum.CollisionFidelity.Precise` collides against the triangles**, and
+- [>] **`Enum.CollisionFidelity.Precise` collides against the triangles**, and
       `physics_sync_tests.cpp:1785` asserts the opposite of what it asserts
       today. *(Cut to F2 if F1 runs long; if cut, the enum's Doc must keep
       saying it is not implemented.)*
-- [ ] **A `MeshContent` naming a reserved scheme is never blacklisted** (D2).
-- [ ] **The shape-build bench exists and its numbers are in
+- [>] **A `MeshContent` naming a reserved scheme is never blacklisted** (D2).
+- [x] **The shape-build bench exists and its numbers are in
       `perf-baselines.md`** — `MeshShapeSettings::Create`,
       `HeightFieldShapeSettings::Create`, a `SetHeights` sub-rect, and a full
       `updateBody` round trip. Nothing in this milestone may cite a cost this
       table does not contain.
-- [ ] **The `MeshUsage::Dynamic` hazard is measured, not assumed**, and the
+- [>] **The `MeshUsage::Dynamic` hazard is measured, not assumed**, and the
       answer is recorded whichever way it went.
-- [ ] **`scripts/localgate.ps1` green on every stage, Linux included.**
-- [ ] **The end to end, by hand**: open the flagship, sculpt a valley, dig a
+- [x] **`scripts/localgate.ps1` green on every stage, Linux included.**
+- [>] **The end to end, by hand**: open the flagship, sculpt a valley, dig a
       cave under it, walk into the cave, save, reopen, and have the cave still
       be there. The one row nothing automated closes.
 

@@ -129,6 +129,25 @@ inline constexpr core::usize MaxGradeStages = 8;
 // Where contrast turns: the exposure's key, the frame's own middle.
 inline constexpr core::f32 GradePivot = 0.45f;
 
+// **The automatic exposure's limits** (`Lighting.ExposureMin`/`ExposureMax`,
+// D460), as what the meter is held to: the lowest and the highest average
+// luminance it accepts. An exposure of E stops is the key over that average,
+// so the most it may BRIGHTEN is the lowest average, and the most it may
+// darken the highest; whichever way round the two were written, the smaller
+// is the floor.
+//
+// The defaults are the limits the engine had before a world could say --
+// 0.15 and 3 -- and answer exactly those, so no picture moved when the
+// properties arrived.
+inline constexpr core::f32 DefaultExposureMin = -2.7369655f;
+inline constexpr core::f32 DefaultExposureMax = 1.5849625f;
+struct ExposureRange
+{
+    core::f32 lowest = 0.15f;
+    core::f32 highest = 3.0f;
+};
+[[nodiscard]] ExposureRange exposureRange(core::f32 exposureMin, core::f32 exposureMax) noexcept;
+
 struct RenderLook
 {
     // --- Bloom ---------------------------------------------------------------

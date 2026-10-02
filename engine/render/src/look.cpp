@@ -320,4 +320,16 @@ LookStanding lookStanding(const scene::World& world, InstanceId id, InstanceId l
     return standing;
 }
 
+ExposureRange exposureRange(core::f32 exposureMin, core::f32 exposureMax) noexcept
+{
+    const core::f32 low = std::min(exposureMin, exposureMax);
+    const core::f32 high = std::max(exposureMin, exposureMax);
+    ExposureRange range;
+    if (high != DefaultExposureMax)
+        range.lowest = GradePivot * std::exp2(-high);
+    if (low != DefaultExposureMin)
+        range.highest = GradePivot * std::exp2(-low);
+    return range;
+}
+
 } // namespace engine::render

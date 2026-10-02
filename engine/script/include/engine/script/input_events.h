@@ -35,4 +35,8 @@ void registerInputTypes(lua_State* L);
 // world whose scripts do not read input at all.
 void fireInputEvents(lua_State* L, std::span<const input::RawInputEvent> events);
 
+// `InputService.TouchSwiped`, `TouchTapped`, `TouchLongPressed`, `TouchPinched` and
+// `TouchPanned` (D462), for the gestures one dispatch recognised.
+void fireGestureEvents(lua_State* L, std::span<const input::GestureEvent> events);
+
 } // namespace engine::script

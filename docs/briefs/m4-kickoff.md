@@ -48,45 +48,45 @@ so the claim ends the milestone either true with evidence or as a finding.
 
 ## Scope checklist (from roadmap)
 
-- [ ] fastgltf runtime import (the offline pipeline is M7; the runtime path
+- [x] fastgltf runtime import (the offline pipeline is M7; the runtime path
       stays as the dev-mode path forever)
-- [ ] meshoptimizer on import
-- [ ] forward PBR (albedo/normal/metal-rough)
-- [ ] directional + point lights
-- [ ] single-cascade shadow map
-- [ ] HDR + tonemap
-- [ ] Camera as an Instance
-- [ ] MeshPart-equivalent and material handling per `api-design.md`
-- [ ] frustum culling
-- [ ] render pass list kept behind the `IRenderer` contract
-- [ ] **End of M4 = RHI interface freeze**
-- [ ] the human Android-device checkpoint must have happened by now
+- [x] meshoptimizer on import
+- [x] forward PBR (albedo/normal/metal-rough)
+- [x] directional + point lights
+- [x] single-cascade shadow map
+- [x] HDR + tonemap
+- [x] Camera as an Instance
+- [x] MeshPart-equivalent and material handling per `api-design.md`
+- [x] frustum culling
+- [x] render pass list kept behind the `IRenderer` contract
+- [x] **End of M4 = RHI interface freeze**
+- [x] the human Android-device checkpoint must have happened by now
 
 Added to M4 by human decision on 2026-08-20 (roadmap § M4, "The `DebugShell` —
 explorer and properties"):
 
-- [ ] `DebugShell` tree explorer
-- [ ] properties panel that reads **and writes** through the generated
+- [x] `DebugShell` tree explorer
+- [x] properties panel that reads **and writes** through the generated
       descriptors, honouring `readOnly` and going through the same setters a
       script goes through — never a second write path
 
 The triangle sample and its Android package, added by human decision on
 2026-08-20 after the same gap was hit from two directions on the same day:
 
-- [ ] a standalone triangle sample — window, clear, one triangle through
+- [x] a standalone triangle sample — window, clear, one triangle through
       `rhi_sdlgpu` — deliberately **not** `luaug-host`, which links the Luau VM
       and answers a much larger question
-- [ ] an Android project around it, from SDL3's own vendored template, with the
+- [x] an Android project around it, from SDL3's own vendored template, with the
       shaders shipped as SPIR-V
-- [ ] the nightly Android job builds and packages it
+- [x] the nightly Android job builds and packages it
 
 Carried debt, scheduled into M4 by the same decision:
 
-- [ ] **Trim `Luau.Analysis`** (carried from M0) — a patch under
+- [x] **Trim `Luau.Analysis`** (carried from M0) — a patch under
       `third_party/patches/luau/`, which only became possible this milestone
       (Findings 2 and 3)
-- [ ] **`api-dump.json`** (carried from M3) — generated and diff-checked in CI
-- [ ] **`luaug --version`** — advertised by `--help`, answered with "Unknown
+- [x] **`api-dump.json`** (carried from M3) — generated and diff-checked in CI
+- [x] **`luaug --version`** — advertised by `--help`, answered with "Unknown
       command"
 
 The roadmap's reasoning on the api-dump is the one worth restating, because it
@@ -590,18 +590,18 @@ it later does not require re-deriving the split:
 
 ## Gate checklist (verbatim from roadmap)
 
-- [ ] capture-stream goldens for 3 camera angles × 2 lighting states (blocking)
-- [ ] Tier-2 lavapipe image goldens attempted (non-blocking)
-- [ ] frame time baseline at 1080p recorded
-- [ ] GPU validation clean
-- [ ] Tier-3 compile gate becomes blocking
+- [x] capture-stream goldens for 3 camera angles × 2 lighting states (blocking)
+- [x] Tier-2 lavapipe image goldens attempted (non-blocking)
+- [x] frame time baseline at 1080p recorded
+- [x] GPU validation clean
+- [x] Tier-3 compile gate becomes blocking
 
 Plus the roadmap's three non-gate obligations for this milestone, tracked here so
 they cannot be forgotten at the end:
 
-- [ ] **RHI interface freeze** declared, with the frozen surface recorded
-- [ ] **Human Android-device checkpoint** performed (see below)
-- [ ] The performance recording carries **draw calls and triangles** beside frame
+- [x] **RHI interface freeze** declared, with the frozen surface recorded
+- [x] **Human Android-device checkpoint** performed (see below)
+- [x] The performance recording carries **draw calls and triangles** beside frame
       time — the roadmap asks for the *why* next to the *what*, and the capture
       stream has counted commands deterministically since M1
 

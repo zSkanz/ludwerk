@@ -72,7 +72,10 @@ void fire(scene::World& world, core::InstanceId subject, const char* event)
 // the one the pointer is over, and draw order is `ZIndex` then document order.
 // Walking the tree twice -- once to draw and once to hit-test -- is what keeps
 // the two from disagreeing about which is on top.
-void probe(const scene::World& world, core::InstanceId id, Vec2 point, Rect clip, core::InstanceId& best, f32& bestZ)
+// `everything`: whatever is drawn there, whether or not it takes the pointer
+// -- what somebody arranging the interface points at.
+void probe(const scene::World& world, core::InstanceId id, Vec2 point, Rect clip, core::InstanceId& best, f32& bestZ,
+           bool everything = false)
 {
     const scene::UIObjectComponent* self = world.uiObjects().find(id);
     if (self == nullptr || !self->visible)
@@ -88,13 +91,20 @@ void probe(const scene::World& world, core::InstanceId id, Vec2 point, Rect clip
     // Clipped OUT means not hit, which is the whole reason the clip is threaded
     // through: an element scrolled off the end of a list must not answer a
     // click that lands where it would have been.
-    if (contains(box, point) && contains(clip, point) && self->zIndex >= bestZ) {
+    //
+    // **And only what takes the pointer is hit** (D452). Every visible
+    // element was: a press on the number in a button activated it and a press
+    // on the star beside the number did nothing, the star being on top and a
+    // label; and a clear frame laid over a screen to hold its children took
+    // every press meant for the buttons in the screens under it.
+    if (contains(box, point) && contains(clip, point) && self->zIndex >= bestZ &&
+        (everything || takesPointer(world, id))) {
         best = id;
         bestZ = self->zIndex;
     }
 
     for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
-        probe(world, child, point, childClip, best, bestZ);
+        probe(world, child, point, childClip, best, bestZ, everything);
 }
 
 // --- The focused field (ADR 0139) ---------------------------------------------
@@ -269,7 +279,33 @@ void resetInteraction() noexcept
     g_state = InteractionState{};
 }
 
-core::InstanceId hitTest(const scene::World& world, core::InstanceId uiService, core::Vec2 point)
+bool takesPointer(const scene::World& world, core::InstanceId id)
+{
+    const scene::UIObjectComponent* object = world.uiObjects().find(id);
+    if (object == nullptr)
+        return false;
+    if (object->active >= 0)
+        return object->active != 0;
+    // Told nothing: as what it is does. A button, by its class or one it
+    // extends -- every `UIObject` has `Activated`, so the event says nothing.
+    for (const scene::ClassDescriptor* current = world.classes().find(world.classOf(id)); current != nullptr;
+         current = world.classes().find(current->super)) {
+        const std::string_view name = world.atoms().text(current->name);
+        if (name == "TextButton" || name == "ImageButton")
+            return true;
+    }
+    if (world.textInputs().find(id) != nullptr || world.scrollFrames().find(id) != nullptr)
+        return true;
+    if (world.textLabels().find(id) != nullptr || world.imageLabels().find(id) != nullptr)
+        return false;
+    // A frame, and anything else that is a rectangle: there when it is drawn.
+    return object->backgroundTransparency < 1.0f;
+}
+
+namespace {
+
+[[nodiscard]] core::InstanceId hitTestScreens(const scene::World& world, core::InstanceId uiService, core::Vec2 point,
+                                              bool everything)
 {
     if (!uiService.valid())
         return {};
@@ -292,12 +328,24 @@ core::InstanceId hitTest(const scene::World& world, core::InstanceId uiService, 
         f32 bestZ = -1.0e30f;
         for (core::InstanceId element = world.firstChild(screen); element.valid();
              element = world.nextSibling(element)) {
-            probe(world, element, point, whole, hit, bestZ);
+            probe(world, element, point, whole, hit, bestZ, everything);
         }
         if (hit.valid())
             best = hit;
     }
     return best;
+}
+
+} // namespace
+
+core::InstanceId hitTest(const scene::World& world, core::InstanceId uiService, core::Vec2 point)
+{
+    return hitTestScreens(world, uiService, point, false);
+}
+
+core::InstanceId elementAt(const scene::World& world, core::InstanceId uiService, core::Vec2 point)
+{
+    return hitTestScreens(world, uiService, point, true);
 }
 
 core::InstanceId hitTestCanvas(const scene::World& world, core::InstanceId root, core::Vec2 point)

@@ -253,6 +253,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     if (const std::optional<f64> value = document.number("debug.frame_report_seconds");
         value.has_value() && *value >= 0.0 && *value <= 3600.0)
         config.frameReportSeconds = *value;
+    if (const std::optional<std::string_view> value = document.string("debug.overlay_key"))
+        config.overlayKey = std::string(*value);
     if (const std::optional<f64> value = document.number("scene.close_grace_seconds");
         value.has_value() && *value >= 0.0 && *value <= 60.0)
         config.sceneCloseGrace = *value;

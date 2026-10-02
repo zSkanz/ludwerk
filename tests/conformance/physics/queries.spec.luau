@@ -50,6 +50,46 @@ describe("Workspace:Raycast", function()
         expect(result.Normal.y):ToBeCloseTo(1, 0.01)
     end)
 
+    it("does not stop at a part destroyed this tick: what is behind it is what is hit", function()
+        -- D458: a round ending destroyed every fighter, and for the rest of
+        -- that tick a ray "hit" their bodies and answered with no Instance.
+        local floor = block("Floor", vector.create(0, -1, 0), vector.create(40, 2, 40))
+        local lid = Instance.new("Part")
+        lid.Name = "Lid"
+        lid.Size = vector.create(4, 1, 4)
+        lid.Position = vector.create(0, 5, 0)
+        lid.Anchored = true
+        lid.Parent = workspace
+        local alone = Instance.new("Part")
+        alone.Name = "Alone"
+        alone.Size = vector.create(4, 1, 4)
+        alone.Position = vector.create(200, 5, 0)
+        alone.Anchored = true
+        alone.Parent = workspace
+        task.wait()
+
+        local down = vector.create(0, -20, 0)
+        local only = RaycastParams.new({ FilterType = Enum.RaycastFilterType.Include, Filter = { lid } })
+        local before = workspace:Raycast(vector.create(0, 10, 0), down)
+        assert(before, "expected a hit")
+        expect(before.Instance):ToBe(lid)
+
+        lid:Destroy()
+        alone:Destroy()
+        -- The same tick: its body has not left the simulation yet, and the
+        -- ray goes through it to the floor.
+        local after = workspace:Raycast(vector.create(0, 10, 0), down)
+        assert(after, "expected the floor")
+        expect(after.Instance):ToBe(floor)
+        expect(workspace:Raycast(vector.create(200, 10, 0), down)):ToBeNil()
+        expect(#workspace:GetBodiesInBox(CFrame.new(200, 5, 0), vector.create(8, 8, 8))):ToBe(0)
+        local swept = workspace:Spherecast(vector.create(0, 10, 0), 0.5, down)
+        assert(swept, "expected the floor")
+        expect(swept.Instance):ToBe(floor)
+        -- And an Include filter that names only what is gone finds nothing.
+        expect(workspace:Raycast(vector.create(0, 10, 0), down, only)):ToBeNil()
+    end)
+
     it("reaches exactly as far as the direction is long", function()
         block("Floor", vector.create(0, -1, 0), vector.create(40, 2, 40))
         task.wait()

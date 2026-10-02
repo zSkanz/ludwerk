@@ -9,6 +9,20 @@
 
 namespace engine::scene {
 
+namespace {
+
+// Taking part: not destroyed, and not on its way out with `PlayerRemoving`
+// still to be heard (D459) -- that one can be read, and is nobody's player.
+[[nodiscard]] bool present(const World& world, core::InstanceId id) noexcept
+{
+    if (world.destroyed(id))
+        return false;
+    const std::vector<core::InstanceId>& leaving = world.engineState().leavingPlayers;
+    return std::find(leaving.begin(), leaving.end(), id) == leaving.end();
+}
+
+} // namespace
+
 core::InstanceId networkServiceOf(const World& world, core::InstanceId dataModel) noexcept
 {
     const ClassId networkClass = world.classes().findId(world.atoms().lookup("NetworkService"));
@@ -52,7 +66,24 @@ void removePlayer(World& world, core::InstanceId networkService, core::InstanceI
                 body.networkOwner = 0;
         });
     }
-    (void)world.destroy(player);
+    // **Out of the list now, and gone a tick later** (D459). It was destroyed
+    // here, and `PlayerRemoving` is deferred like every signal: by the time a
+    // handler ran, the player it was handed was dead, and reading the id of
+    // who had left -- the one thing the event is for -- raised. So the player
+    // leaves the tree, which is what takes it out of `GetPlayers`, and is
+    // destroyed at the start of the next tick, after the handlers.
+    (void)world.setParent(player, core::InstanceId{});
+    world.engineState().leavingPlayers.push_back(player);
+}
+
+void finishLeavingPlayers(World& world)
+{
+    std::vector<core::InstanceId> leaving;
+    leaving.swap(world.engineState().leavingPlayers);
+    for (const core::InstanceId player : leaving) {
+        if (world.alive(player))
+            (void)world.destroy(player);
+    }
 }
 
 void assignTeam(World& world, core::InstanceId player)
@@ -74,7 +105,7 @@ void assignTeam(World& world, core::InstanceId player)
             continue;
         core::usize members = 0;
         world.players().forEach([&](core::InstanceId id, const PlayerComponent& other) {
-            if (other.team == child && !world.destroyed(id))
+            if (other.team == child && present(world, id))
                 ++members;
         });
         if (!chosen.valid() || members < fewest) {
@@ -88,8 +119,8 @@ void assignTeam(World& world, core::InstanceId player)
 core::InstanceId localPlayerOf(const World& world) noexcept
 {
     core::InstanceId found;
-    world.players().forEach([&found](core::InstanceId id, const PlayerComponent& player) {
-        if (!found.valid() && player.local)
+    world.players().forEach([&](core::InstanceId id, const PlayerComponent& player) {
+        if (!found.valid() && player.local && present(world, id))
             found = id;
     });
     return found;
@@ -99,7 +130,7 @@ core::InstanceId playerByUserId(const World& world, core::u32 userId) noexcept
 {
     core::InstanceId found;
     world.players().forEach([&](core::InstanceId id, const PlayerComponent& player) {
-        if (!found.valid() && player.userId == userId && !world.destroyed(id))
+        if (!found.valid() && player.userId == userId && present(world, id))
             found = id;
     });
     return found;

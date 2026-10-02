@@ -17,7 +17,9 @@ ludwerk new my-game --template=starter
 ```
 
 Scaffolds a project. The name must be letters, digits, underscores and hyphens.
-`starter` is the only template.
+`starter` is the only template. The project's `id` is made from the name in
+lower case (`dev.local.my_game`), which is what an Android package may be
+called; change `dev.local` to a domain of your own before you ship.
 
 ### ludwerk dev
 
@@ -73,6 +75,12 @@ ludwerk check --definitions=runtime/types/engine.d.luau
 The analyzer with the engine's generated definitions, plus the formatter in
 check mode. `--definitions` takes a comma-separated list.
 
+**Nothing to install for the types.** An installation carries its own
+analyzer (`tools/bin/luau-lsp`), at the version its definitions were generated
+for, so a project made a minute ago passes its first check. The formatter is
+StyLua, which is not carried: if it is not on your `PATH` the check says the
+formatting was not checked and passes on the types.
+
 An empty check — zero files collected — is a **failure**.
 
 ### ludwerk fmt
@@ -81,7 +89,9 @@ An empty check — zero files collected — is a **failure**.
 ludwerk fmt
 ```
 
-Formats every Luau file.
+Formats every Luau file, with [StyLua](https://github.com/JohnnyMorganz/StyLua/releases):
+put `stylua` on your `PATH`, or in the installation's `tools/bin` folder. It is
+the one tool an installation does not carry.
 
 ### ludwerk build-assets
 

@@ -11,6 +11,17 @@ DebugService.OverlayVisible = true
 DebugService:ShowPanel("Streaming")
 ```
 
+**The key is the host's, and the game does not hear it.** In a run that has
+the overlay, F3 opens it and is not delivered to the game as well -- a game
+with an F3 of its own moves the overlay's, or takes the key away from it:
+
+```toml
+[debug]
+overlay_key = "F9"     # or "None": no key, and every key is the game's
+```
+
+A shipped game has no overlay, and every key is its own.
+
 The overlay has two authors — the F3 key and `DebugService.OverlayVisible` — and
 it **starts off**, shipped builds included. A debug overlay that greets everyone
 who starts the engine is in the way.

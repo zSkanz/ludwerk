@@ -89,7 +89,7 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
   by a search. It walks each row's chord of the ball now (a voxel wider each
   side; the distance test still decides), through the writer's chunk:
   `PaintBall` r 24, blend, **4.8 to 2.5 ms**.
-- [ ] Past that the cost is the voxels themselves: a ball of 24 m paints
+- [>] Past that the cost is the voxels themselves: a ball of 24 m paints
   58 000 of them, most inside the ground where nothing shows. Painting only
   what is within reach of the surface is the next halving, and a change of
   what paint means (dig into painted ground and the paint is not there) --
@@ -139,7 +139,7 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
   53 000 at level 1, 30 in 13 000 at level 2 -- drawn only from where the
   level's error is under the pixel budget. Held under one in fifty; unchanged
   by this stage.
-- [ ] **P2, to revisit**: gather the coarse levels a sheet at a time, as
+- [>] **P2, to revisit**: gather the coarse levels a sheet at a time, as
   level 0 now is -- a coarse cell's vertices clustered by the sheet their
   level-0 vertices are on -- so the bound of one in fifty can become none.
 - Meshing a full-detail node costs what it did: 21.6 ms before, 22.2 after
@@ -182,7 +182,7 @@ And headless, a stamp a tick on 512 m of hills: `SmoothBall` at radius 8 cost
   flat slab 12 km across under a camera that sees five: the row under the
   far plane's line is ground from one side of the picture to the other, the
   row over it sky.
-- [ ] **The cut itself is never seen**: by default the far ground should be
+- [>] **The cut itself is never seen**: by default the far ground should be
   gone into the air before the plane clips it, as the engines' defaults do.
   A scene has no fog unless it sets `FogEnd` or wears an `Atmosphere`, and
   neither knows the camera's far plane. To decide with ADR 0147's
@@ -410,23 +410,23 @@ A teleport of ten kilometres has ground under the player in 252 to 268 ms
 575 MiB. A project from before makes its files in the background in
 under three minutes, at a p99 of 8.2 ms while it does.
 
-- [ ] **The session cache as one file** (ADR 0150 section 7.4). A file a cell
+- [>] **The session cache as one file** (ADR 0150 section 7.4). A file a cell
   costs half a millisecond to create on Windows whatever it holds: 65 536 of
   them are most of what an import's writing costs, and the reason changed
   ground is held to a budget and not written as it goes. Cells appended to a
   file of the run, found by an offset, make writing one cost what encoding it
   does. It needs reads of a part of a file from the streaming's IO, and a
   save that writes the cells out and does not rename them.
-- [ ] **The editor during an import draws at 8 to 10 frames a second**: a
+- [>] **The editor during an import draws at 8 to 10 frames a second**: a
   tile is laid inside each frame. Enough for a bar and Cancel; not what an
   editor should feel like. The tile on a worker, the frame free.
-- [ ] **The streaming manager walks every row of its index a tick**: a third
+- [>] **The streaming manager walks every row of its index a tick**: a third
   of a millisecond at 65 536 cells. A world four times that would notice.
-- [ ] **The block world has no far ground**, and a cell of it somebody built
+- [>] **The block world has no far ground**, and a cell of it somebody built
   in is still never let go.
-- [ ] **The async IO service answers 150 to 250 reads a second**, and it is
+- [x] **The async IO service answers 150 to 250 reads a second**, and it is
   not known why; the held ring reads where it stands instead of asking it.
-- [ ] **A streamed terrain on a phone, run**: checked to the APK's contents
+- [>] **A streamed terrain on a phone, run**: checked to the APK's contents
   and no further. The first launch extracts a file a cell.
 
 These five and the first are a ledger of their own after R3 (ludwerk-08,

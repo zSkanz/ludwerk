@@ -129,6 +129,69 @@ InputService.InputBegan:Connect(function(input: InputObject, uiConsumed: boolean
 end)
 ```
 
+## Gestures
+
+A swipe, a tap, a press held, two fingers closing, a drag: the engine
+recognises them, from a finger and from the mouse with its left button down
+alike, so a game written on a desk is the game on a phone.
+
+| Signal | Says |
+|---|---|
+| `InputService.TouchSwiped(direction, start, fingers)` | a finger travelled `SwipeThreshold` along one axis |
+| `InputService.TouchTapped(position)` | down and up again where it landed, within a third of a second |
+| `InputService.TouchLongPressed(position)` | held where it landed for half a second |
+| `InputService.TouchPinched(scale, centre)` | two fingers apart or together: the distance over what it was when the second landed |
+| `InputService.TouchPanned(delta, fingers)` | what is down moved, this tick, in window pixels |
+
+**A swipe is also a key.** `Enum.KeyCode.SwipeUp`, `SwipeDown`, `SwipeLeft` and
+`SwipeRight` bind to an `InputAction` like any other, as a press that lasts one
+tick -- so "move left" is the `A` key and a swipe left in the same action, and
+the code that moves the piece never asks which:
+
+```luau
+--!strict
+for _, code in { Enum.KeyCode.A, Enum.KeyCode.Left, Enum.KeyCode.SwipeLeft } do
+    local binding = Instance.new("InputBinding")
+    binding.KeyCode = code
+    binding.Parent = moveLeft
+end
+moveLeft.Pressed:Connect(slideLeft)
+```
+
+Three rules:
+
+- **It is said while the finger is still down**, as soon as it has gone far
+  enough -- not when it lifts.
+- **One long drag one way is one swipe.** A change of direction is the next,
+  measured from where the finger then is.
+- **A press the interface took starts none** (`UIObject.Active`).
+
+`InputService.SwipeThreshold` is the length, in **millimetres** of screen -- 6
+by default. A length under a thumb is the same on a phone and on a monitor; a
+number of pixels would be a nudge on one and a reach across on the other.
+
+## What the machine has
+
+`InputService.LastInputDeviceType` says what was used last. Before anything has
+been used -- a script's first line, where a game decides which HUD to build --
+ask what is there:
+
+| Property | True when |
+|---|---|
+| `InputService.TouchAvailable` | the machine has a touchscreen |
+| `InputService.KeyboardAvailable` | a keyboard is attached |
+| `InputService.GamepadAvailable` | at least one gamepad is connected |
+
+`RunService.Platform` is the operating system (`Enum.Platform`), for the few
+things that differ by system. What a game shows should follow what the machine
+has, not what it is called: a tablet with a keyboard and a laptop with a
+touchscreen are both real.
+
+**A touch's `Position` is in window pixels**, and a `ScreenGui` with
+`ScreenInsets` on starts at the safe area. Something a game places at a finger
+inside such a screen is off by the inset: subtract the `AbsolutePosition` of a
+full-size frame in it, or give that screen `ScreenInsets = false`.
+
 ## The pointer
 
 ```luau

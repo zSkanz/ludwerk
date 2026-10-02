@@ -392,6 +392,14 @@ using generated::Source;
             setBool(out, lighting->autoExposure);
             return true;
         }
+        if (field.name == "ExposureMin") {
+            setF32(out, lighting->exposureMin);
+            return true;
+        }
+        if (field.name == "ExposureMax") {
+            setF32(out, lighting->exposureMax);
+            return true;
+        }
         return false;
     }
 
@@ -1658,6 +1666,10 @@ using generated::Source;
             lighting->globalShadows = asBool(value);
         else if (field.name == "AutoExposure")
             lighting->autoExposure = asBool(value);
+        else if (field.name == "ExposureMin")
+            lighting->exposureMin = asF32(value);
+        else if (field.name == "ExposureMax")
+            lighting->exposureMax = asF32(value);
         else
             return false;
         return true;

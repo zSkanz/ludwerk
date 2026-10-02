@@ -440,7 +440,7 @@ camera and evicts them behind it. See
 [Streaming a large world](manual:assets/streaming).
 
 **What is past the load radius is drawn from files of its own**
-([ADR 0150](../../decisions/0150-the-far-ground-is-kept-on-disk-as-it-was-gathered-and-a-node-is-named-by-its-cells.md)):
+(ADR 0150):
 the far ground, as it is drawn at each of its three coarsest resolutions, kept
 under the project's `.engine/terrain-pyramid/` -- about a quarter of what the
 cells weigh. `ludwerk terrain import` makes them, and so does `ludwerk build`,
@@ -458,7 +458,7 @@ ground under the player loads, and for that time the frame is the ground's --
 ten kilometres away, a quarter of a second.
 
 **Ground a game changes or makes is kept, and not all of it in memory**
-([ADR 0149](../../decisions/0149-changed-ground-is-kept-on-disk-for-the-session-and-a-world-larger-than-memory-is-imported-a-tile-at-a-time.md)).
+(ADR 0149).
 A cell somebody changed -- a crater, a tunnel, ground a script wrote where
 there was none -- stays in memory while there is room: 256 MiB of changed
 ground past the load radius, 64 MiB on a phone. Past that the furthest is
@@ -499,7 +499,7 @@ by its `Position` streams round the camera where it is now.
 
 ## In a match
 
-**The ground replicates** ([ADR 0135](../../decisions/0135-the-ground-replicates-terrain-and-block-edits-travel-as-whole-chunks.md)).
+**The ground replicates** (ADR 0135).
 Every machine loads the scene's ground from its own package; the server sends
 what differs from it -- to a player who joins, every chunk a script or the
 editor changed, and from then on each chunk as it changes, with the layers and

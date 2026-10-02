@@ -914,6 +914,9 @@ int main(int argc, char** argv)
         // The flag beats the file, as every other one does.
         if (options.frameReportSeconds <= 0.0)
             options.frameReportSeconds = config.frameReportSeconds;
+        // A name that is no key is no key: the overlay is then opened from
+        // the menu alone, and every key is the game's.
+        options.overlayKey = engine::platform::keyFromName(config.overlayKey);
         options.developerWarnings =
             isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
         if (!options.conformanceRoot.empty()) {

@@ -296,7 +296,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(surfaceGuiDesc);
 
     // --- UIObject ---
-    static std::array<scene::PropertyDesc, 13> uIObjectProperties;
+    static std::array<scene::PropertyDesc, 14> uIObjectProperties;
     uIObjectProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Position"),
@@ -359,10 +359,21 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "0 opaque, 1 invisible. A fully transparent background still lays out and still hit-tests -- `Visible` is the property that stops both.",
+            .doc = "0 opaque, 1 invisible. A fully transparent background still lays out; whether it takes the pointer is `Active`'s to say.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getUIObjectBackgroundTransparency,
             .set = native::setUIObjectBackgroundTransparency,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Active"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether this object takes the pointer: whether a press lands on it, whether the pointer is over it, and whether a press there is the interface's -- the `uiConsumed` a game reads from `InputService.InputBegan` -- or goes on to the game and to whatever is under it.\012\012**Until you write it, it is what the object is.** A button, a `TextInput` and a `ScrollFrame` take the pointer. A `TextLabel` and an `ImageLabel` do not, so a press on the icon or the caption inside a button is a press on the button. A `Frame` takes it when it draws a background -- `BackgroundTransparency` under 1 -- so a veil behind a dialog blocks what is under it, and a clear frame that only holds a layout lets every press through. Write it and what you wrote stands: `true` on a clear frame makes an invisible blocker, `false` on a button makes it something to look at.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIObjectActive,
+            .set = native::setUIObjectActive,
         },
         scene::PropertyDesc{
             .name = atoms.intern("Visible"),
@@ -907,7 +918,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(textInputDesc);
 
     // --- ImageLabel ---
-    static std::array<scene::PropertyDesc, 6> imageLabelProperties;
+    static std::array<scene::PropertyDesc, 7> imageLabelProperties;
     imageLabelProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Image"),
@@ -931,6 +942,17 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
             .get = native::getImageLabelImageColor,
             .set = native::setImageLabelImageColor,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ImageTransparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How see-through the picture is: 0 solid, 1 not drawn at all. The picture's own, apart from `BackgroundTransparency`, as `TextTransparency` is a label's words' -- an icon fades and its box stays, or the other way round. Values outside 0 to 1 are kept as written and drawn as the nearer end.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getImageLabelImageTransparency,
+            .set = native::setImageLabelImageTransparency,
         },
         scene::PropertyDesc{
             .name = atoms.intern("ScaleType"),

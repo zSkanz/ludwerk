@@ -158,6 +158,10 @@ struct RenderEnvironment
     // frame measured", positive is brighter, and the unit is the one a person
     // who has used a camera already knows. `Lighting.ExposureCompensation`.
     f32 exposureCompensation = 0.0f;
+    // `Lighting.ExposureMin` and `ExposureMax` (D460): the automatic
+    // exposure's limits, in EV stops.
+    f32 exposureMin = -2.7369655f;
+    f32 exposureMax = 1.5849625f;
     // ADR 0096: `Lighting`'s five, as the renderer applies them. Defaults
     // reproduce the picture before they existed, to the bit.
     f32 environmentDiffuseScale = 1.0f;

@@ -811,6 +811,22 @@ local LightingFields: { Schema.Field } = {
         Component = "lighting",
         Doc = "Whether the world's exposure follows the frame.",
     },
+    {
+        Name = "ExposureMin",
+        Id = 14,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "lighting",
+        Doc = "The most the automatic exposure darkens, in EV stops (protocol 31).",
+    },
+    {
+        Name = "ExposureMax",
+        Id = 15,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "lighting",
+        Doc = "The most the automatic exposure brightens, in EV stops (protocol 31).",
+    },
 }
 
 local DecalFields: { Schema.Field } = {

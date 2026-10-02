@@ -68,7 +68,7 @@ and "not loaded" were the same fact.
       old scene's ground on every replica.
 - [x] **R5 (P2)** A scene with no block world leaves the last one's `shipped`;
       a save leaves `shipped` as it was loaded.
-- [ ] **R6 (P2)** A joiner is sent every changed chunk in one tick; the look
+- [>] **R6 (P2)** A joiner is sent every changed chunk in one tick; the look
       and types are encoded every send; a hostile server's types are not
       checked for finite colours. **The types are checked** (D317); pacing and
       encoding are left -- see below.
@@ -82,12 +82,12 @@ and "not loaded" were the same fact.
       stall or an out-of-memory (the sky map's reach is in metres).
 - [x] **P3 (P1)** The renderer visits every root in the terrain's bounding
       box every frame: two edits a million metres apart freeze a client.
-- [ ] **P4 (P1)** -- left, see below. Continuous digging rebuilds the 3x3
+- [x] **P4 (P1)** -- left, see below. Continuous digging rebuilds the 3x3
       columns of meshes, colliders and foliage round every edit, whatever it
       touched.
 - [x] **P5 (P2)** A dig across more than four chunks rebuilds the same nearest
       four every tick and starves the rest.
-- [ ] **P6 (P2)** -- the revision and the URN fixed (D322), the rest left.
+- [>] **P6 (P2)** -- the revision and the URN fixed (D322), the rest left.
       `TerrainLoader::find` is a linear scan; a restore rolls
       `fieldRevision` back so a cached node can be trusted stale; the node URN
       ignores the slot generation; foliage meshes the whole column height; one

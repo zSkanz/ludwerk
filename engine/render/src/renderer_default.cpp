@@ -5577,6 +5577,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     }
     else {
         GpuLuminanceUniforms luminance;
+        // **The world's own limits** (`Lighting.ExposureMin`/`ExposureMax`,
+        // D460): the meter is held to the averages those gains answer to.
+        {
+            const ExposureRange range = exposureRange(world.environment.exposureMin, world.environment.exposureMax);
+            luminance.range[0] = range.lowest;
+            luminance.range[1] = range.highest;
+        }
         luminance.texelRate[0] = 1.0f / static_cast<f32>(renderWidth_);
         luminance.texelRate[1] = 1.0f / static_cast<f32>(renderHeight_);
         const std::array<rhi::TextureBinding, 1> hdrBinding{rhi::TextureBinding{sceneColor, linearSampler_}};

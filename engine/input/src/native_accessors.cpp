@@ -398,6 +398,36 @@ Value getInputServiceLastInputDeviceType(const scene::World& world, core::Instan
     return enumValue(generated::InputDeviceTypeEnumId, world.engineState().lastInputDeviceType);
 }
 
+Value getInputServiceSwipeThreshold(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<core::f64>(world.engineState().swipeThreshold)};
+}
+
+bool setInputServiceSwipeThreshold(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* number = std::get_if<core::f64>(&value);
+    // A length somebody can swipe: more than nothing, and less than a screen.
+    if (number == nullptr || !(*number > 0.0) || *number > 500.0)
+        return false;
+    world.engineState().swipeThreshold = static_cast<core::f32>(*number);
+    return true;
+}
+
+Value getInputServiceTouchAvailable(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().touchAvailable};
+}
+
+Value getInputServiceKeyboardAvailable(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().keyboardAvailable};
+}
+
+Value getInputServiceGamepadAvailable(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().gamepadAvailable};
+}
+
 } // namespace native
 
 void registerSceneTypes(scene::ClassRegistry& classes, core::AtomTable& atoms)

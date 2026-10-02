@@ -357,6 +357,9 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
         m_world->engineState().sceneClientHeld = true;
     }
     m_world->engineState().viewportSize = options.viewportSize;
+    m_world->engineState().touchAvailable = options.touchAvailable;
+    m_world->engineState().keyboardAvailable = options.keyboardAvailable;
+    m_world->engineState().gamepadAvailable = options.gamepadAvailable;
     m_world->engineState().fixedTimestep = options.fixedTimestep;
     // Both, so a read before any write gives what the scheduler is running on
     // rather than the struct's default.
@@ -1070,6 +1073,9 @@ void WorldHost::tick()
     state.tick += 1;
     state.simTime = static_cast<f64>(state.tick) * state.fixedTimestep;
 
+    // Whoever left during the last tick has been said goodbye to (D459).
+    scene::finishLeavingPlayers(*m_world);
+
     // **The camera the player last saw becomes the tick's** (ADR 0136): a
     // camera a render phase presented since the last tick is its simulated
     // `CFrame` from here, before anything in the tick reads it -- the only
@@ -1087,6 +1093,9 @@ void WorldHost::tick()
     // purpose -- a `Pressed` raised here is drained by the same drain the
     // phase's own handlers go through, so a script that jumps on a press sees
     // the press in the tick it happened rather than in the next one.
+    // A swipe's length in pixels, from the length the game asked for and how
+    // dense this display is: 160 dots to the inch at a scale of one.
+    m_input.setSwipeThreshold(state.swipeThreshold * std::max(state.displayScale, 0.25f) * (160.0f / 25.4f));
     m_input.dispatchSimTick(*m_world, state.tick);
 
     // The raw events the same dispatch produced (ADR 0041), enqueued right
@@ -1099,6 +1108,7 @@ void WorldHost::tick()
     // the world as this tick begins.
     m_runtime->stepDetectors(state.fixedTimestep, rawEvents);
     m_runtime->fireInputEvents(rawEvents);
+    m_runtime->fireGestureEvents(m_input.drainGestures());
 
     // `RemoteEvent` messages that arrived since the last tick (ADR 0077):
     // beside the input events, for the same reason -- arrival was a network

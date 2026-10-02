@@ -958,6 +958,22 @@ void fireInstanceEvent(lua_State* L, core::InstanceId owner, u16 slot, int first
         enqueueFire(L, id, first, count);
 }
 
+bool instanceEventHeard(lua_State* L, core::InstanceId owner, u16 slot)
+{
+    const SignalId id = findOwnedSignal(L, owner, SignalKind::Event, slot);
+    if (!id.valid())
+        return false;
+    SignalSystem& sys = system(L);
+    const SignalRecord* signal = sys.signals.find(id);
+    if (signal == nullptr || signal->closed)
+        return false;
+    for (const ConnectionId connection : signal->connections) {
+        if (const ConnectionRecord* record = sys.connections.find(connection); record != nullptr && record->connected)
+            return true;
+    }
+    return false;
+}
+
 void fireEngineMessage(lua_State* L, core::InstanceId owner, u16 slot, int first, int count)
 {
     const SignalId id = findOwnedSignal(L, owner, SignalKind::Event, slot);

@@ -28,6 +28,10 @@ core::InstanceId createPlayer(World& world, core::InstanceId networkService, cor
 // Fires `PlayerRemoving`, then destroys the player.
 void removePlayer(World& world, core::InstanceId networkService, core::InstanceId player);
 
+// Destroys the players `removePlayer` took out of the list, now that the
+// handlers of their `PlayerRemoving` have had them. Once a tick, at its start.
+void finishLeavingPlayers(World& world);
+
 // **Puts a player with no side on one** (ADR 0099): the `AutoAssign` team under
 // `TeamService` with the fewest players, ties to the first in child order. A
 // player already on a team, or a world with no such team, is left alone.

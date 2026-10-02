@@ -16,9 +16,13 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `GamepadAvailable` | `boolean` | — | read-only | Whether at least one gamepad is connected now. It changes as one is plugged in or taken away; `InputDeviceChanged` says when one is first USED. |
+| `KeyboardAvailable` | `boolean` | — | read-only | Whether a keyboard is attached. False on a phone until somebody plugs one in or pairs one, and then true. |
 | `LastInputDeviceType` | `Enum.InputDeviceType` | — | read-only | The device family the player most recently used, which is what a HUD switches its prompts on. It changes on a real input and not on a resting one: a gamepad stick drifting inside its dead zone does not steal the prompts from a keyboard. |
 | `PointerLocked` | `boolean` | `false` | read/write | Whether the pointer is locked to the window and reporting motion instead of position -- what a first-person camera wants. While it is locked, `GetPointerPosition` keeps reporting the position the pointer had when it was locked, because there is no other honest answer, and a `Direction2D` action bound to `MouseMovement` is the way to read the motion. |
 | `PointerVisible` | `boolean` | `true` | read/write | Whether the system cursor is drawn. Independent of `PointerLocked`, because the two are separate wishes: a strategy game hides the cursor during a cutscene without locking it. |
+| `SwipeThreshold` | `number` | `6` | read/write | How far a finger travels before it is a swipe, in MILLIMETRES of screen -- a length under a thumb, the same on a phone and on a monitor, where a number of pixels would be a nudge on one and a reach across on the other. Six by default; the engine turns it into pixels from the display's density. |
+| `TouchAvailable` | `boolean` | — | read-only | Whether this machine has a touchscreen. **Known from a script's first line**, before anybody has touched anything -- which `LastInputDeviceType` cannot say -- so a game can decide which HUD to build and how far to draw before its first frame. True on a phone and on a laptop with a touchscreen alike. |
 
 ## Methods
 
@@ -74,6 +78,26 @@ Fired when `LastInputDeviceType` changes, so a prompt redraws once rather than p
 Fired on the tick an input STOPS. It fires for everything held when the window loses focus, so a handler that pairs `InputBegan` with this one never leaks a press -- which is the failure that leaves a character walking into a wall after an alt-tab.
 
 `uiConsumed` carries what it carried when the input began, so a press that started on a button is still marked consumed when it is released off one.
+
+### `TouchLongPressed(position: Vector2)`
+
+A finger has stayed where it landed for half a second. Fired once, while it is still down; lifting it afterwards is not a tap.
+
+### `TouchPanned(delta: Vector2, fingers: number)`
+
+What is down moved: how far this tick, in window pixels (down the window is +Y, as `Position` is), as one motion however many fingers made it. What a camera that is dragged follows, with one finger or two.
+
+### `TouchPinched(scale: number, centre: Vector2)`
+
+Two fingers moved apart or together: the distance between them over what it was when the second landed -- 2 is twice as far apart -- and the point midway between them. Fired each tick it changes; multiply a zoom the game kept from before the pinch.
+
+### `TouchSwiped(direction: Enum.SwipeDirection, start: Vector2, fingers: number)`
+
+A finger -- or the mouse with its left button down -- travelled `SwipeThreshold` along one axis. Fired while it is still down, with where that stroke began in window pixels and how many fingers are down. One long drag one way is one swipe; a change of direction is the next, measured from where the finger then is. The same swipe is `Enum.KeyCode.SwipeUp` and its three siblings for an `InputAction`. A press the interface took (`UIObject.Active`) starts none of these gestures.
+
+### `TouchTapped(position: Vector2)`
+
+A finger came down and went up again where it landed, within a third of a second: the place, in window pixels. A mouse click on the world is one too.
 
 ### `WindowFocusChanged(focused: boolean)`
 

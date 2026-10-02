@@ -64,8 +64,20 @@ constexpr i32 RightStickY = PadAxisFirst + 3;
 constexpr i32 MoreVirtualFirst = ExtraKeysFirst + ExtraKeysCount; // 136
 constexpr i32 MoreVirtualCount = 12;
 
-static_assert(MoreVirtualFirst + MoreVirtualCount == static_cast<i32>(kKeyCodeCount),
+// **The four swipes** (D462): `SwipeUp`, `SwipeDown`, `SwipeLeft`,
+// `SwipeRight`, in `Enum.SwipeDirection`'s order. Codes like any other, so an
+// action binds one beside a key; down for the one tick the swipe is
+// recognised in, which is a press.
+constexpr i32 SwipeFirst = MoreVirtualFirst + MoreVirtualCount; // 148
+constexpr i32 SwipeCount = 4;
+
+static_assert(SwipeFirst + SwipeCount == static_cast<i32>(kKeyCodeCount),
               "the KeyCode ranges above must cover the whole enum with no gap");
+
+// How long a finger may stay down and still be a tap, and how long it must
+// stay to be a long press, in ticks: a third and a half of a second at sixty.
+constexpr u64 TapTicks = 20;
+constexpr u64 LongPressTicks = 30;
 
 [[nodiscard]] constexpr bool inRange(i32 value, i32 first, i32 count) noexcept
 {
@@ -144,6 +156,8 @@ DeviceType deviceOf(i32 keyCode) noexcept
         keyCode == LeftThumbstick || keyCode == RightThumbstick) {
         return DeviceType::Gamepad;
     }
+    if (inRange(keyCode, SwipeFirst, SwipeCount))
+        return DeviceType::Touch;
     // The roadmap's clause, honoured: an on-screen control is the same thing a
     // touch control will be, so the virtual family reports `Touch` rather than
     // growing a fourth item nobody asked for.
@@ -173,6 +187,8 @@ constexpr std::string_view MoreVirtualNames[] = {"Virtual5",  "Virtual6",  "Virt
                                                  "Virtual9",  "Virtual10", "Virtual11", "Virtual12",
                                                  "Virtual13", "Virtual14", "Virtual15", "Virtual16"};
 static_assert(std::size(MoreVirtualNames) == static_cast<usize>(MoreVirtualCount));
+constexpr std::string_view SwipeNames[] = {"SwipeUp", "SwipeDown", "SwipeLeft", "SwipeRight"};
+static_assert(std::size(SwipeNames) == static_cast<usize>(SwipeCount));
 constexpr std::string_view VirtualStickNames[] = {"VirtualStick1", "VirtualStick2"};
 
 i32 keyCodeFromName(std::string_view name) noexcept
@@ -211,6 +227,10 @@ i32 keyCodeFromName(std::string_view name) noexcept
         if (name == MoreVirtualNames[index])
             return MoreVirtualFirst + index;
     }
+    for (i32 index = 0; index < SwipeCount; ++index) {
+        if (name == SwipeNames[index])
+            return SwipeFirst + index;
+    }
     return 0;
 }
 
@@ -232,6 +252,8 @@ std::string_view keyCodeName(i32 keyCode) noexcept
         return VirtualNames[keyCode - VirtualFirst];
     if (inRange(keyCode, MoreVirtualFirst, MoreVirtualCount))
         return MoreVirtualNames[keyCode - MoreVirtualFirst];
+    if (inRange(keyCode, SwipeFirst, SwipeCount))
+        return SwipeNames[keyCode - SwipeFirst];
     if (keyCode == VirtualStick1 || keyCode == VirtualStick2)
         return VirtualStickNames[keyCode - VirtualStick1];
     if (keyCode == LeftThumbstick || keyCode == RightThumbstick)
@@ -335,7 +357,8 @@ void InputSystem::pumpFrame(std::span<const platform::Event> events)
             *slot = Finger{.down = true,
                            .lifting = false,
                            .id = event.fingerId,
-                           .position = core::Vec2{event.pointerX, event.pointerY}};
+                           .position = core::Vec2{event.pointerX, event.pointerY},
+                           .origin = core::Vec2{event.pointerX, event.pointerY}};
             m_state.lastDevice = DeviceType::Touch;
             break;
         }
@@ -555,6 +578,10 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
         // twice under a name no device produced.
         if (code == LeftThumbstick || code == RightThumbstick || code == VirtualStick1 || code == VirtualStick2)
             continue;
+        // A swipe is said by `TouchSwiped`, with where it began and with how
+        // many fingers; as a raw press it would be a key no device has.
+        if (inRange(code, SwipeFirst, SwipeCount))
+            continue;
 
         const auto slot = static_cast<usize>(code);
         // `digital` rather than `held`, so a trigger crossing half deflection
@@ -670,6 +697,8 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
         }
     }
 
+    collectGestures();
+
     m_previous = m_state;
     m_hasPrevious = true;
     // A claim outlives its finger by nothing: one whose finger never took a
@@ -684,6 +713,182 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
             finger.down = false;
             finger.lifting = false;
         }
+    }
+}
+
+void InputSystem::collectGestures()
+{
+    ++m_gestureTick;
+    m_gestures.clear();
+    // Last tick's swipes were presses of one tick: they are up again.
+    for (i32 code = SwipeFirst; code < SwipeFirst + SwipeCount; ++code)
+        m_state.held[static_cast<usize>(code)] = false;
+
+    const f32 threshold = m_swipeThreshold;
+    const auto taken = [this](u64 id) {
+        return std::find(m_uiFingers.begin(), m_uiFingers.end(), id) != m_uiFingers.end();
+    };
+
+    // What is down now, slot by slot, and the mouse last: its left button is a
+    // finger of its own, so the same motion is the same gesture on a desk.
+    struct Contact
+    {
+        bool down = false;
+        bool ui = false;
+        u64 id = 0;
+        core::Vec2 position;
+        core::Vec2 origin;
+    };
+    std::array<Contact, kMaxFingers + 1> contacts{};
+    for (usize index = 0; index < kMaxFingers; ++index) {
+        const Finger& finger = m_state.fingers[index];
+        contacts[index] =
+            Contact{finger.down, finger.down && taken(finger.id), finger.id, finger.position, finger.origin};
+    }
+    {
+        const auto left = static_cast<usize>(MouseButtonFirst);
+        Contact& mouse = contacts[kMaxFingers];
+        mouse.down = m_state.held[left];
+        // What the interface took when the button went down stays its own
+        // until it comes up, wherever the pointer is dragged to.
+        mouse.ui = mouse.down && m_beganConsumed[left];
+        mouse.id = 1;
+        mouse.position = m_state.pointer;
+        mouse.origin = m_tracks[kMaxFingers].active ? m_tracks[kMaxFingers].start : m_state.pointer;
+    }
+
+    i32 fingersDown = 0;
+    for (const Contact& contact : contacts)
+        fingersDown += contact.down && !contact.ui ? 1 : 0;
+
+    const auto ended = [this](GestureTrack& track) {
+        // Down and up again without going anywhere, and not held: a tap.
+        if (!track.ui && !track.moved && !track.longFired && m_gestureTick - track.downTick <= TapTicks) {
+            GestureEvent tap;
+            tap.kind = GestureEvent::Kind::Tap;
+            tap.position = track.last;
+            m_gestures.push_back(tap);
+        }
+        track = GestureTrack{};
+    };
+
+    // The one a swipe is read from: the first finger down, or the mouse.
+    bool primaryFound = false;
+    core::Vec2 panTotal;
+    i32 panCount = 0;
+    for (usize index = 0; index < contacts.size(); ++index) {
+        const Contact& contact = contacts[index];
+        GestureTrack& track = m_tracks[index];
+        const bool same = track.active && contact.down && track.id == contact.id;
+        if (track.active && !same)
+            ended(track);
+        if (!contact.down)
+            continue;
+        const bool began = !same;
+        if (began) {
+            track.active = true;
+            track.ui = contact.ui;
+            track.id = contact.id;
+            track.start = contact.origin;
+            track.anchor = contact.origin;
+            track.last = contact.origin;
+            track.direction = -1;
+            track.downTick = m_gestureTick;
+        }
+        if (track.ui)
+            continue;
+
+        const core::Vec2 fromStart{contact.position.x - track.start.x, contact.position.y - track.start.y};
+        if (std::max(std::abs(fromStart.x), std::abs(fromStart.y)) >= threshold)
+            track.moved = true;
+
+        // **A swipe, while the finger is still down**: once it has travelled
+        // the threshold along one axis. One long drag one way is ONE swipe --
+        // the anchor follows the finger and nothing more is said -- and a
+        // change of direction, measured from where the finger then is, is the
+        // next.
+        if (!primaryFound) {
+            primaryFound = true;
+            const core::Vec2 travelled{contact.position.x - track.anchor.x, contact.position.y - track.anchor.y};
+            const f32 across = std::abs(travelled.x);
+            const f32 along = std::abs(travelled.y);
+            if (std::max(across, along) >= threshold) {
+                // 0 Up, 1 Down, 2 Left, 3 Right; the window's y grows downwards.
+                const i32 direction = across >= along ? (travelled.x > 0.0f ? 3 : 2) : (travelled.y > 0.0f ? 1 : 0);
+                if (direction != track.direction) {
+                    GestureEvent swipe;
+                    swipe.kind = GestureEvent::Kind::Swipe;
+                    swipe.direction = direction;
+                    swipe.position = track.anchor;
+                    swipe.fingers = fingersDown;
+                    m_gestures.push_back(swipe);
+                    m_state.held[static_cast<usize>(SwipeFirst + direction)] = true;
+                    track.direction = direction;
+                }
+                track.anchor = contact.position;
+            }
+        }
+
+        // Held where it landed: a long press, once.
+        if (!track.moved && !track.longFired && m_gestureTick - track.downTick >= LongPressTicks) {
+            track.longFired = true;
+            GestureEvent held;
+            held.kind = GestureEvent::Kind::LongPress;
+            held.position = contact.position;
+            m_gestures.push_back(held);
+        }
+
+        if (!began) {
+            panTotal = panTotal + core::Vec2{contact.position.x - track.last.x, contact.position.y - track.last.y};
+            ++panCount;
+        }
+        track.last = contact.position;
+    }
+
+    // **A drag**: how far what is down moved this tick, as one motion.
+    if (panCount > 0 && (panTotal.x != 0.0f || panTotal.y != 0.0f)) {
+        GestureEvent pan;
+        pan.kind = GestureEvent::Kind::Pan;
+        pan.delta = panTotal * (1.0f / static_cast<f32>(panCount));
+        pan.fingers = panCount;
+        m_gestures.push_back(pan);
+    }
+
+    // **A pinch**: the first two fingers down, and the distance between them
+    // against what it was when the second landed.
+    const GestureTrack* first = nullptr;
+    const GestureTrack* second = nullptr;
+    for (usize index = 0; index < kMaxFingers; ++index) {
+        const GestureTrack& track = m_tracks[index];
+        if (!track.active || track.ui)
+            continue;
+        if (first == nullptr)
+            first = &track;
+        else if (second == nullptr)
+            second = &track;
+    }
+    if (first == nullptr || second == nullptr) {
+        m_pinching = false;
+        return;
+    }
+    const core::Vec2 apart{second->last.x - first->last.x, second->last.y - first->last.y};
+    const f32 distance = std::max(std::sqrt(apart.x * apart.x + apart.y * apart.y), 1.0f);
+    if (!m_pinching || m_pinchFirst != first->id || m_pinchSecond != second->id) {
+        m_pinching = true;
+        m_pinchFirst = first->id;
+        m_pinchSecond = second->id;
+        m_pinchStart = distance;
+        m_pinchLast = 1.0f;
+        return;
+    }
+    const f32 scale = distance / m_pinchStart;
+    if (std::abs(scale - m_pinchLast) > 1.0e-3f) {
+        m_pinchLast = scale;
+        GestureEvent pinch;
+        pinch.kind = GestureEvent::Kind::Pinch;
+        pinch.scale = scale;
+        pinch.position = core::Vec2{(first->last.x + second->last.x) * 0.5f, (first->last.y + second->last.y) * 0.5f};
+        m_gestures.push_back(pinch);
     }
 }
 
@@ -910,6 +1115,9 @@ void InputSystem::releaseAll(scene::World& world)
     m_state.held.fill(false);
     m_state.axis.fill(0.0f);
     m_state.fingers.fill(Finger{});
+    // Nothing a lost window was in the middle of is finished as a gesture.
+    m_tracks.fill(GestureTrack{});
+    m_pinching = false;
     m_simPointerDelta = core::Vec2{};
     m_renderPointerDelta = core::Vec2{};
     m_simWheel = core::Vec2{};

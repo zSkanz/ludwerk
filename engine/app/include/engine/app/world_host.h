@@ -204,6 +204,13 @@ struct WorldHostOptions
     // camera's conversions read it from a script's first line, where they
     // read zero until a frame had been drawn. Zero when nothing is drawn.
     core::Vec2 viewportSize{};
+    // **What the machine has**, known before the first script runs too
+    // (D456): `InputService.TouchAvailable`, `KeyboardAvailable` and
+    // `GamepadAvailable`. A run with no window says what the platform is: a
+    // keyboard on a desktop, a touchscreen on a phone.
+    bool touchAvailable = false;
+    bool keyboardAvailable = false;
+    bool gamepadAvailable = false;
 
     // **Where `SaveService` writes** (ADR 0111), decided by the host: the
     // player's own folder for a game, `.engine/saves/` in the project for the

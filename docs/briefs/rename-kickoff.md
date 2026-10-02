@@ -62,12 +62,12 @@ record of what changed and how:
 
 ## What is left, and whose
 
-- [ ] **The owner**: register `ludwerk.com` and `ludwerk.dev`; check INPI and
+- [>] **The owner**: register `ludwerk.com` and `ludwerk.dev`; check INPI and
       EUIPO for LUDWERK; confirm making `zSkanz/LuauG` private.
-- [ ] Machines set up before the rename: set `ENG_BUILD_ROOT` (bootstrap does),
+- [x] Machines set up before the rename: set `ENG_BUILD_ROOT` (bootstrap does),
       and run `scripts/install-android.ps1` again -- the toolchains live under
       the user's Ludwerk folder now.
-- [ ] Release 0.0.1 when the owner says: tag `v0.0.1`, release notes, package.
+- [>] Release 0.0.1 when the owner says: tag `v0.0.1`, release notes, package.
 
 ## Findings
 

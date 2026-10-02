@@ -146,6 +146,8 @@ public:
     // events (ADR 0041). Called right after the simulation dispatch, so they
     // land in the same drain as the `InputAction` signals the same tick raised.
     void fireInputEvents(std::span<const input::RawInputEvent> events);
+    // The gestures the same dispatch recognised (D462), on `InputService`.
+    void fireGestureEvents(std::span<const input::GestureEvent> events);
 
     // **The watchdog** (audit S5): a resumption running past `warnSeconds` is
     // warned about, and one past `killSeconds` is stopped with an error in its

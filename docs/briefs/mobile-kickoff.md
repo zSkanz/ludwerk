@@ -36,6 +36,12 @@ side hands over an APK and reads the log's frame reports.
   on the device.
 - [x] **A finger on the interface says so** (D444), and there are **sixteen
   virtual keys** (D443).
+- [x] **Gestures** (D462): swipe, tap, long press, pinch and pan as signals, and
+  the four swipes as keys an action binds.
+- [x] **What the machine has, before the first touch** (D456): `TouchAvailable`,
+  `KeyboardAvailable`, `GamepadAvailable`, `RunService.Platform`.
+- [x] **A clear frame over the screen does not eat the touches under it**
+  (D452, `UIObject.Active`) -- what the hotbar that could not be pressed was.
 
 ## M2 -- what is loaded and how far (after M1's numbers)
 

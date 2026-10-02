@@ -437,3 +437,33 @@ TEST_CASE("the air hides what its documentation says, at the distances it names"
     CHECK(std::isfinite(upward));
     CHECK(upward < render::airOpticalDepth(medium, 0.0f, 40000.0f));
 }
+
+TEST_CASE("D460: the automatic exposure is held to the world's own limits, and the defaults are the old ones")
+{
+    // An evenly lit world was as bright at eleven at night as at noon: the
+    // meter's limits were the engine's and no world could move them.
+    const render::ExposureRange defaults =
+        render::exposureRange(render::DefaultExposureMin, render::DefaultExposureMax);
+    // To the bit: what every picture before this was made with.
+    CHECK(defaults.lowest == 0.15f);
+    CHECK(defaults.highest == 3.0f);
+    // And what the numbers mean: a stop and a half up, two and three quarters down.
+    CHECK(static_cast<double>(render::GradePivot / defaults.lowest) == doctest::Approx(3.0));
+    CHECK(static_cast<double>(std::log2(render::GradePivot / defaults.highest)) ==
+          doctest::Approx(-2.737).epsilon(0.001));
+
+    // **Night stays dark**: with no brightening allowed, the lowest average
+    // the meter accepts is the key itself, so the gain never passes one.
+    const render::ExposureRange night = render::exposureRange(render::DefaultExposureMin, 0.0f);
+    CHECK(night.lowest == render::GradePivot);
+    CHECK(night.highest == 3.0f);
+    // Both at one number: the exposure is fixed there.
+    const render::ExposureRange fixed = render::exposureRange(1.0f, 1.0f);
+    CHECK(static_cast<double>(fixed.lowest) == doctest::Approx(0.225));
+    CHECK(fixed.lowest == fixed.highest);
+    // Written the wrong way round, the smaller is still the floor.
+    const render::ExposureRange swapped = render::exposureRange(2.0f, -1.0f);
+    CHECK(swapped.lowest < swapped.highest);
+    CHECK(static_cast<double>(swapped.lowest) == doctest::Approx(0.1125));
+    CHECK(static_cast<double>(swapped.highest) == doctest::Approx(0.9));
+}

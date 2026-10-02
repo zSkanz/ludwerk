@@ -1715,6 +1715,11 @@
           "Default": "Vector2.zero"
         },
         {
+          "Name": "ImageTransparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "ScaleType",
           "Type": "Enum.ScaleType",
           "Default": "Enum.ScaleType.Stretch"
@@ -1866,6 +1871,18 @@
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
         {
+          "Name": "GamepadAvailable",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "KeyboardAvailable",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
           "Name": "LastInputDeviceType",
           "Type": "Enum.InputDeviceType",
           "ReadOnly": true
@@ -1880,6 +1897,18 @@
           "Name": "PointerVisible",
           "Type": "boolean",
           "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "SwipeThreshold",
+          "Type": "number",
+          "Default": "6",
+          "Transient": true
+        },
+        {
+          "Name": "TouchAvailable",
+          "Type": "boolean",
+          "ReadOnly": true,
           "Transient": true
         }
       ],
@@ -1961,6 +1990,67 @@
             {
               "Name": "uiConsumed",
               "Type": "boolean"
+            }
+          ]
+        },
+        {
+          "Name": "TouchLongPressed",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "Vector2"
+            }
+          ]
+        },
+        {
+          "Name": "TouchPanned",
+          "Parameters": [
+            {
+              "Name": "delta",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "fingers",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "TouchPinched",
+          "Parameters": [
+            {
+              "Name": "scale",
+              "Type": "number"
+            },
+            {
+              "Name": "centre",
+              "Type": "Vector2"
+            }
+          ]
+        },
+        {
+          "Name": "TouchSwiped",
+          "Parameters": [
+            {
+              "Name": "direction",
+              "Type": "Enum.SwipeDirection"
+            },
+            {
+              "Name": "start",
+              "Type": "Vector2"
+            },
+            {
+              "Name": "fingers",
+              "Type": "number"
+            }
+          ]
+        },
+        {
+          "Name": "TouchTapped",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "Vector2"
             }
           ]
         },
@@ -2300,6 +2390,16 @@
         {
           "Name": "ExposureCompensation",
           "Type": "number"
+        },
+        {
+          "Name": "ExposureMax",
+          "Type": "number",
+          "Default": "1.5849625"
+        },
+        {
+          "Name": "ExposureMin",
+          "Type": "number",
+          "Default": "-2.7369655"
         },
         {
           "Name": "FogColor",
@@ -3490,6 +3590,12 @@
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
+        {
+          "Name": "Platform",
+          "Type": "Enum.Platform",
+          "ReadOnly": true,
+          "Transient": true
+        },
         {
           "Name": "SimTime",
           "Type": "number",
@@ -5448,6 +5554,11 @@
           "Type": "Vector2",
           "ReadOnly": true,
           "Transient": true
+        },
+        {
+          "Name": "Active",
+          "Type": "boolean",
+          "Default": "true"
         },
         {
           "Name": "AnchorPoint",
@@ -10021,6 +10132,22 @@
           "Value": 50
         },
         {
+          "Name": "SwipeDown",
+          "Value": 149
+        },
+        {
+          "Name": "SwipeLeft",
+          "Value": 150
+        },
+        {
+          "Name": "SwipeRight",
+          "Value": 151
+        },
+        {
+          "Name": "SwipeUp",
+          "Value": 148
+        },
+        {
           "Name": "T",
           "Value": 33
         },
@@ -10261,6 +10388,31 @@
         {
           "Name": "Square",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "Platform",
+      "Items": [
+        {
+          "Name": "Android",
+          "Value": 3
+        },
+        {
+          "Name": "IOS",
+          "Value": 4
+        },
+        {
+          "Name": "Linux",
+          "Value": 1
+        },
+        {
+          "Name": "MacOS",
+          "Value": 2
+        },
+        {
+          "Name": "Windows",
+          "Value": 0
         }
       ]
     },
@@ -10573,6 +10725,27 @@
         {
           "Name": "ScaledSize",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "SwipeDirection",
+      "Items": [
+        {
+          "Name": "Down",
+          "Value": 1
+        },
+        {
+          "Name": "Left",
+          "Value": 2
+        },
+        {
+          "Name": "Right",
+          "Value": 3
+        },
+        {
+          "Name": "Up",
+          "Value": 0
         }
       ]
     },

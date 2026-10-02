@@ -3,7 +3,7 @@
 Two instances change how an element looks without an image: a `UIGradient`
 colours and fades it, and a `UIStroke` outlines it. Like `UICorner`, both change
 the drawing and never the layout or the hit test
-([ADR 0110](../../decisions/0110-a-gradient-colours-and-a-stroke-outlines-a-ui-element.md)).
+(ADR 0110).
 
 ## UIGradient
 

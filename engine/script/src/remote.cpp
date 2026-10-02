@@ -676,18 +676,30 @@ int decodeRemoteArguments(lua_State* L, std::span<const u8> payload, std::span<c
     return count;
 }
 
+// How many calls one `RemoteEvent` keeps, each way, for a listener that has
+// not connected yet. A scene's first exchange is a handful; a remote fired
+// every tick at nobody reaches this in four seconds and is told.
+constexpr usize MaxHeldRemoteCalls = 256;
+
 void fireRemoteMessages(lua_State* L)
 {
     World& w = world(L);
-    if (!invokeState(L).invokeRunning.empty())
+    ServiceState& state = invokeState(L);
+    if (!state.invokeRunning.empty())
         finishRunningInvokes(L);
+    // **What waited for a listener first, then what has just arrived** (D451):
+    // one list, in the order the calls were made.
     std::vector<scene::RemoteMessage> inbox;
-    inbox.swap(w.engineState().remoteInbox);
+    inbox.swap(state.heldRemoteCalls);
+    for (scene::RemoteMessage& arrived : w.engineState().remoteInbox)
+        inbox.push_back(std::move(arrived));
+    w.engineState().remoteInbox.clear();
+    std::erase_if(state.heldRemoteWarned, [&w](core::InstanceId remote) { return !w.alive(remote); });
     if (inbox.empty())
         return;
     const core::NameAtom serverEvent = w.atoms().intern("ServerReceived");
     const core::NameAtom clientEvent = w.atoms().intern("ClientReceived");
-    for (const scene::RemoteMessage& message : inbox) {
+    for (scene::RemoteMessage& message : inbox) {
         // An answer is for a caller, and finds it by number whatever became
         // of the instance it named.
         if (message.reply) {
@@ -703,6 +715,38 @@ void fireRemoteMessages(lua_State* L)
         const scene::EventDesc* event =
             w.classes().findEvent(w.classOf(message.remote), message.toServer ? serverEvent : clientEvent);
         if (event == nullptr)
+            continue;
+        // **A call that arrives before anybody listens is kept for the first
+        // who does** (D451). A scene's client and server scripts start in the
+        // same tick, so a client that fires at once fired into a remote the
+        // server had not connected yet -- it was still yielding on its saves
+        // -- and the call was dropped without a word: the first message of
+        // every scene was a race, won by luck the first time and lost the
+        // second. Kept in order, both ways, up to a bound; past it the call
+        // is dropped, and the remote says so once.
+        if (!instanceEventHeard(L, message.remote, event->slot)) {
+            const auto waiting = static_cast<usize>(std::count_if(
+                state.heldRemoteCalls.begin(), state.heldRemoteCalls.end(), [&](const scene::RemoteMessage& held) {
+                    return held.remote == message.remote && held.toServer == message.toServer;
+                }));
+            if (waiting < MaxHeldRemoteCalls) {
+                state.heldRemoteCalls.push_back(std::move(message));
+            }
+            else if (std::find(state.heldRemoteWarned.begin(), state.heldRemoteWarned.end(), message.remote) ==
+                     state.heldRemoteWarned.end()) {
+                state.heldRemoteWarned.push_back(message.remote);
+                const core::I18nArg args[] = {
+                    {"remote", w.atoms().text(w.name(message.remote))},
+                    {"event",
+                     message.toServer ? std::string_view{"ServerReceived"} : std::string_view{"ClientReceived"}},
+                    {"limit", static_cast<core::i64>(MaxHeldRemoteCalls)},
+                };
+                core::log(core::LogLevel::Warn, ENG_TR("net.warn.remote_unheard"), args);
+            }
+            continue;
+        }
+        // Whoever sent it has gone: there is nobody to say it is from.
+        if (message.toServer && !w.alive(message.player))
             continue;
         const int top = lua_gettop(L);
         int count = 0;

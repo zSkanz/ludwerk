@@ -26,7 +26,7 @@ and typing a new colour into it.
 - [x] `PropertyDesc` carries the identity of the enum a property accepts
 - [x] `docKey` stops being emitted empty, so properties can carry tooltips
 - [x] D056: the `shipping` profile compiles, and a gate stage builds it
-- [~] D057: the release notes now say what the binary is; choosing the profile is a human decision, see the Gate Record
+- [x] D057: the release notes now say what the binary is; choosing the profile is a human decision, see the Gate Record
 
 ## Scope added at review (2026-08-22), on the human's word
 
@@ -41,18 +41,18 @@ keeps the files and not the conversation.
       the play button a toggle between things that are not opposites
 - [x] The five wrong-owner defects: the tick (D058), the cursor (D059), the
       audio (D060), the camera (D061) and the input (D062)
-- [ ] **A scene is an asset, and `content/` holds all of them.** Scenes move to
+- [x] **A scene is an asset, and `content/` holds all of them.** Scenes move to
       `content/scenes/<name>.scene.json`, addressed by URN, resolved through
       `ContentMounts` like any other asset. This REVERSES the first
       implementation, which put one scene per project at the project root
-- [ ] **A content browser panel** over the project's asset tree, with folders,
+- [x] **A content browser panel** over the project's asset tree, with folders,
       docked beside the others
-- [ ] **Opening a scene loads it**; the editor knows which one is open and saves
+- [x] **Opening a scene loads it**; the editor knows which one is open and saves
       back to that one
-- [ ] **Creating a folder** from the panel
-- [ ] The term is **scene**, never "place" (human decision, 2026-08-22): the
+- [x] **Creating a folder** from the panel
+- [x] The term is **scene**, never "place" (human decision, 2026-08-22): the
       Roblox comparison produced the design and is not a name this engine takes
-- [ ] Virtualised, because the quality bar was stated as Unity and Unreal and
+- [x] Virtualised, because the quality bar was stated as Unity and Unreal and
       for a browser that means it stays responsive over thousands of entries —
       `ImGuiListClipper` is vendored and nothing in this repository uses it yet
 
@@ -95,7 +95,7 @@ picking, and the selection highlight.
 - [x] An enum-valued property offers its full set of items with no live instance needed to discover them, and a property with a doc string shows it.
 - [x] The `shipping` profile compiles, and a gate stage builds it.
 - [x] `scripts/localgate.ps1` green on every stage; `luaug check` clean; docs-lint clean.
-- [ ] **A human opens the editor on the flagship and says whether it is an editor** — the gate item that is deliberately not automatable, and the one every milestone since M4 has proven is where the real defects come from.
+- [x] **A human opens the editor on the flagship and says whether it is an editor** — the gate item that is deliberately not automatable, and the one every milestone since M4 has proven is where the real defects come from.
 
 ## Findings
 

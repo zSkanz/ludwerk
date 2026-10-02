@@ -148,6 +148,11 @@ struct ProjectConfig
     // saying how the frames went -- for a machine nobody is sitting at with a
     // profiler, a phone above all. Zero, the default, says nothing.
     core::f64 frameReportSeconds = 0.0;
+    // `[debug] overlay_key`: the key that opens the host's overlay in a run of
+    // the project being made, by `Enum.KeyCode`'s name for it -- "F3" unless
+    // the project says, "None" for no key at all. The host takes that key: the
+    // game does not hear it (D461).
+    std::string overlayKey = "F3";
 
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and

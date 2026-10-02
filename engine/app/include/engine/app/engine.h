@@ -9,6 +9,7 @@
 #include "engine/app/frame_pacing.h"
 #include "engine/core/error.h"
 #include "engine/core/types.h"
+#include "engine/platform/event.h"
 #include "engine/platform/window.h"
 #include "engine/render/settings.h"
 #include "engine/replication/types.h"
@@ -257,6 +258,10 @@ struct EngineOptions
     // `--frame-report=SECONDS` and `[debug] frame_report_seconds`: a line in
     // the log every so many seconds saying how the frames went. Zero is off.
     core::f64 frameReportSeconds = 0.0;
+    // `[debug] overlay_key`, as a key: what opens the overlay, and what the
+    // game therefore never hears in a host that has one (D461). `Unknown` is
+    // no key.
+    platform::Key overlayKey = platform::Key::F3;
     // **`--pace=HZ`: a headless frame waits for its share of a second** before
     // the next begins, the wait left out of `--frame-stats`. Headless runs a
     // frame as soon as the last is done, so a flight of 1 500 frames is over in

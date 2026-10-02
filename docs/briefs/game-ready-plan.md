@@ -55,7 +55,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [ ] 7c | **F4** `Highlight`, `Beam`, `Trail` | toolkit | — |
 | [x] 8 | **A3** bytecode in the export | foundation | The shipped game stops carrying its source |
 | [ ] 9 | **B7** friction and footsteps | world | — |
-| [ ] 9b | **F5** solids (union, subtract, intersect) and two shapes | toolkit | Waits for the owner to approve Manifold |
+| [ ] 9b | **F5** solids (union, subtract, intersect) and two shapes | toolkit | Manifold adopted (2026-09-30); built after the block-world stages |
 | [ ] 9c | **F6** sound effects and vibration | toolkit | — |
 | [ ] 10 | **E0 to E4** actors: scripts in parallel, committed in a fixed order | parallel | A game's own logic on every core |
 | [ ] 11 | **D1** `EditableImage` and `AudioStream` · **D3** `EditableMesh` | media | Creativity |

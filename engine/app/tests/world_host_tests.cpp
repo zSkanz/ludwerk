@@ -2774,6 +2774,267 @@ namespace {
 
 } // namespace
 
+TEST_CASE("D462: a script hears a swipe, a tap and a drag, and binds a swipe like a key")
+{
+    // "I swiped right, up, down, left -- the engine has to support this."
+    Captured log;
+    Project project;
+    project.write("src/client/game.luau", R"(
+        local InputService = game:GetService("InputService")
+        InputService.TouchSwiped:Connect(function(direction: Enum.SwipeDirection, start: Vector2, fingers: number)
+            print(`swiped {direction.Name} from {start.X},{start.Y} with {fingers}`)
+        end)
+        InputService.TouchTapped:Connect(function(position: Vector2)
+            print(`tapped {position.X},{position.Y}`)
+        end)
+        InputService.TouchPanned:Connect(function(delta: Vector2, fingers: number)
+            print(`panned {delta.X},{delta.Y} with {fingers}`)
+        end)
+        -- The same swipe, as an action beside a key: a puzzle's "move left".
+        local context = Instance.new("InputContext")
+        context.Parent = workspace
+        local left = Instance.new("InputAction")
+        left.Name = "Left"
+        left.Parent = context
+        for _, code in { Enum.KeyCode.A, Enum.KeyCode.SwipeLeft } do
+            local binding = Instance.new("InputBinding")
+            binding.KeyCode = code
+            binding.Parent = left
+        end
+        left.Pressed:Connect(function()
+            print("moved left")
+        end)
+        print(`threshold {InputService.SwipeThreshold}`)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+
+    const auto finger = [](platform::EventType type, float x, float y) {
+        platform::Event event;
+        event.type = type;
+        event.fingerId = 11;
+        event.pointerX = x;
+        event.pointerY = y;
+        return event;
+    };
+    const auto frame = [&](std::initializer_list<platform::Event> events) {
+        const std::vector<platform::Event> list(events);
+        host.pumpInput(list);
+        host.tick();
+    };
+    frame({finger(platform::EventType::FingerDown, 500.0f, 300.0f)});
+    frame({finger(platform::EventType::FingerMoved, 440.0f, 300.0f)});
+    frame({finger(platform::EventType::FingerUp, 440.0f, 300.0f)});
+    frame({});
+    frame({finger(platform::EventType::FingerDown, 90.0f, 80.0f), finger(platform::EventType::FingerUp, 90.0f, 80.0f)});
+    frame({});
+    frame({});
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("threshold 6"));
+    CHECK(log.contains("swiped Left from 500,300 with 1"));
+    CHECK(log.contains("panned -60,0 with 1"));
+    CHECK(occurrences(log, "moved left") == 1);
+    CHECK(log.contains("tapped 90,80"));
+}
+
+TEST_CASE("D459: PlayerRemoving hands over a player that can still be read")
+{
+    // `player.UserId` in a `PlayerRemoving` handler raised: the player was
+    // destroyed where it was removed, and the handler ran after.
+    Captured log;
+    Project project;
+    project.write("src/server/game.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.PlayerRemoving:Connect(function(player: Player)
+            print(`leaving {player.UserId} named {player.Name} coins {player:GetAttribute("Coins")} of {#NetworkService:GetPlayers()} left`)
+        end)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    scene::World& world = host.world();
+    const core::InstanceId network = scene::networkServiceOf(world, host.runtime().dataModel());
+    REQUIRE(network.valid());
+    const core::usize before = world.players().size();
+    const core::InstanceId guest = scene::createPlayer(world, network, 7, false);
+    REQUIRE(guest.valid());
+    REQUIRE(world.setAttribute(guest, world.atoms().intern("Coins"), scene::Value{3.0}));
+    host.tick();
+
+    scene::removePlayer(world, network, guest);
+    // Out of the list at once, and still somebody.
+    CHECK_FALSE(world.parentOf(guest).valid());
+    CHECK(world.alive(guest));
+    host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("leaving 7 named Player7 coins 3 of " + std::to_string(before) + " left"));
+    // And gone once the handlers have had it.
+    host.tick();
+    host.tick();
+    CHECK_FALSE(world.alive(guest));
+    CHECK(world.players().size() == before);
+}
+
+TEST_CASE("D456: a script knows what the machine has and which system it is, from its first line")
+{
+    // A game on a phone needed to know it was on one BEFORE the first touch:
+    // how far to build the world, which HUD to make. `LastInputDeviceType`
+    // says only what was used last.
+    Captured log;
+    Project project;
+    project.write("src/client/game.luau", R"(
+        local InputService = game:GetService("InputService")
+        local RunService = game:GetService("RunService")
+        print(`touch {InputService.TouchAvailable} keyboard {InputService.KeyboardAvailable} pad {InputService.GamepadAvailable}`)
+        print(`platform {RunService.Platform.Name}`)
+        print(`refused: {not pcall(function() (InputService :: any).TouchAvailable = false end)}`)
+    )");
+    app::WorldHostOptions options = bootOptions(project.root);
+    options.touchAvailable = true;
+    options.gamepadAvailable = true;
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("touch true keyboard false pad true"));
+    CHECK(log.contains("refused: true"));
+    // Whichever this build is for.
+#if defined(_WIN32)
+    CHECK(log.contains("platform Windows"));
+#elif defined(__APPLE__)
+    CHECK(log.contains("platform MacOS"));
+#else
+    CHECK(log.contains("platform Linux"));
+#endif
+}
+
+TEST_CASE("D451: a remote fired before anybody listens is handed to the first who does, in order")
+{
+    // A scene's client and server scripts start in the same tick. The client
+    // fired `EnterWorld` at once; the server was still yielding on its saves
+    // and had connected nothing; the call was dropped without a word.
+    Captured log;
+    Project project;
+    project.write("src/client/game.luau", R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Enter"
+        remote.Parent = game:GetService("ReplicatedStorage")
+        -- Both ways, before either side listens.
+        remote:FireServer("first", 1)
+        remote:FireServer("second", 2)
+        remote:FireAllClients("hello")
+        task.delay(0.1, function()
+            remote.ServerReceived:Connect(function(player: Player, word: string, n: number)
+                print(`server heard {word} {n} from {player.UserId}`)
+            end)
+            remote.ClientReceived:Connect(function(word: string)
+                print(`client heard {word}`)
+            end)
+            -- And one after: behind the ones that waited.
+            remote:FireServer("third", 3)
+        end)
+
+        -- Nobody ever listens to this one, and it is fired at for ever.
+        local shout = Instance.new("RemoteEvent")
+        shout.Name = "Shout"
+        shout.Parent = game:GetService("ReplicatedStorage")
+        for n = 1, 300 do
+            shout:FireServer(n)
+        end
+        task.delay(0.2, function()
+            shout.ServerReceived:Connect(function(_player: Player, n: number)
+                if n == 1 or n == 256 or n == 257 then
+                    print(`shout {n}`)
+                end
+            end)
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    for (int tick = 0; tick < 4; ++tick)
+        host.tick();
+    // Nothing yet: nobody is listening.
+    CHECK_FALSE(log.contains("server heard"));
+    for (int tick = 0; tick < 20; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    const int first = lineOf(log, "server heard first 1 from 1");
+    const int second = lineOf(log, "server heard second 2 from 1");
+    const int third = lineOf(log, "server heard third 3 from 1");
+    CHECK(first >= 0);
+    CHECK(second > first);
+    CHECK(third > second);
+    CHECK(log.contains("client heard hello"));
+
+    // The bound: the first 256 kept and handed over, the rest dropped, and
+    // the remote said so once.
+    CHECK(log.contains("shout 1"));
+    CHECK(log.contains("shout 256"));
+    CHECK_FALSE(log.contains("shout 257"));
+    CHECK(occurrences(log, "RemoteEvent Shout has 256 calls waiting") == 1);
+}
+
+TEST_CASE("D450: nothing a scene set on Workspace or on a service is there in the next")
+{
+    // A menu's server set `Workspace:SetAttribute("Worlds", ...)`, the world's
+    // set "WorldChunks", and back in the menu -- before the menu's server had
+    // run a line -- a client read both. The second world's HUD believed the
+    // first's "143 chunks built" and lifted its veil over nothing.
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/scenes/a/client/level.luau", R"(
+        workspace:SetAttribute("Worlds", "1|Teste")
+        workspace.Gravity = vector.create(0, -3, 0)
+        workspace:AddTag("Menu")
+        game:GetService("Lighting"):SetAttribute("Mood", "dusk")
+        game:GetService("Lighting"):AddTag("Menu")
+        -- And a setting of each: what a scene's file does not say is the
+        -- engine's, not the last scene's.
+        game:GetService("Lighting").Brightness = 9
+        game:GetService("AudioService").MasterVolume = 0.25
+        game:GetService("UIService").ScreenOrientation = Enum.ScreenOrientation.Portrait
+        -- The game's own, on the game: what a scene does not take with it.
+        game:SetAttribute("Coins", 7)
+    )");
+    project.write("src/scenes/b/client/level.luau", R"(
+        local Lighting = game:GetService("Lighting")
+        local function count(of: Instance): number
+            local n = 0
+            for _ in of:GetAttributes() do
+                n += 1
+            end
+            return n
+        end
+        print(`in b: workspace {count(workspace)} attributes, {#workspace:GetTags()} tags, gravity {workspace.Gravity.y}`)
+        print(`in b: lighting {count(Lighting)} attributes, {#Lighting:GetTags()} tags`)
+        print(`in b: game coins {game:GetAttribute("Coins")}`)
+        local orientation = game:GetService("UIService").ScreenOrientation
+        print(`in b: brightness kept {Lighting.Brightness == 9}, volume {game:GetService("AudioService").MasterVolume}, sideways {orientation == Enum.ScreenOrientation.LandscapeSensor}`)
+    )");
+    project.write("src/client/game.luau", R"(
+        task.defer(function()
+            game:GetService("SceneService"):LoadScene("scenes/b.scene.json")
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 6; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    REQUIRE(host.world().engineState().currentScene == "scenes/b.scene.json");
+    CHECK(log.contains("in b: workspace 0 attributes, 0 tags, gravity -9.81"));
+    CHECK(log.contains("in b: lighting 0 attributes, 0 tags"));
+    CHECK(log.contains("in b: game coins 7"));
+    CHECK(log.contains("in b: brightness kept false, volume 1, sideways true"));
+}
+
 TEST_CASE("a scene change waits for the old scene's close handlers and drops its game:BindToClose")
 {
     Captured log;

@@ -127,7 +127,7 @@ the drag began on the part within the player's reach, and works out where the
 part goes from each ray itself, as the client did -- so a `Geometric` drag is
 moved by the server, and every player sees it. A `Physical` drag of an
 unanchored part hands the part to the dragging player while it lasts (see
-[network ownership](../guides/multiplayer.md)): their machine pulls it, and it
+[network ownership](manual:guides/multiplayer)): their machine pulls it, and it
 comes back to the server when they let go.
 
 ## Limits

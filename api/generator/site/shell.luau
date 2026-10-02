@@ -51,7 +51,13 @@ export type PageSpec = {
     Wide: boolean?,
 }
 
-local SiteName = Brand.read().Name
+-- Read when a page is rendered, never when this module is loaded: reading the
+-- brand asks the file system, which yields, and a module that yields while it
+-- is being required does not load -- the site then built nothing and said so
+-- to nobody (D463).
+local function siteName(): string
+    return Brand.read().Name
+end
 
 --- How many `../` a page needs to reach the site root.
 local function prefixFor(path: string): string
@@ -153,6 +159,7 @@ export type Brand = { Logo: string, Mark: string }
 
 local function renderPage(spec: PageSpec, nav: { NavItem }, version: string, brand: Brand): string
     local prefix = prefixFor(spec.Path)
+    local SiteName = siteName()
     local title = if spec.Path == "index.html" then `{SiteName} — Documentation` else `{spec.Title} · {SiteName}`
     local description = spec.Summary or `The {SiteName} engine documentation.`
 
@@ -234,7 +241,6 @@ end
 
 return {
     Banner = Banner,
-    SiteName = SiteName,
     prefixFor = prefixFor,
     renderPage = renderPage,
     renderNavItems = renderNavItems,

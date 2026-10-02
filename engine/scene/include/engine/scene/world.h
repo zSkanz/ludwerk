@@ -312,6 +312,18 @@ struct EngineState
     bool pointerVisible = true;
     // `Enum.InputDeviceType`: 0 KeyboardMouse, 1 Gamepad, 2 Touch.
     i32 lastInputDeviceType = 0;
+    // Players taken out of the list whose `PlayerRemoving` is still to be
+    // heard (D459): destroyed at the start of the next tick.
+    std::vector<core::InstanceId> leavingPlayers;
+    // **What this machine has to play with** (D456), before anybody has used
+    // any of it: `InputService.TouchAvailable`, `KeyboardAvailable` and
+    // `GamepadAvailable`. Written by the host before the first script runs
+    // and kept up as devices come and go; a world with no host has none.
+    // `InputService.SwipeThreshold`, in millimetres (D462).
+    f32 swipeThreshold = 6.0f;
+    bool touchAvailable = false;
+    bool keyboardAvailable = false;
+    bool gamepadAvailable = false;
 
     // `UIService`'s two read-only numbers (M6). Both are properties of the
     // WINDOW, written by the host each frame, and both are zero-ish on a
@@ -1451,6 +1463,14 @@ private:
 // every scene written before the property existed hashes and reads as it did,
 // and no determinism trace and no scene moves -- the voxel fluid fields'
 // precedent, as a rule both writers share rather than two copies of it.
-[[nodiscard]] bool quietAtDefault(const World& world, const PropertyDesc& property, const Value& value);
+//
+// The same for the properties that arrived after it, each at the value that
+// is the picture before it existed: `Lighting.ExposureMin` and `ExposureMax`,
+// `ImageLabel.ImageTransparency`. And **`UIObject.Active` until somebody
+// writes it** (D452): what it reads is what the object is, which a file must
+// not freeze -- a frame saved while clear would stay out of the pointer's way
+// after it was given a background.
+[[nodiscard]] bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc& property,
+                                  const Value& value);
 
 } // namespace engine::scene

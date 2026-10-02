@@ -16,6 +16,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `Platform` | `Enum.Platform` | — | read-only | The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a dedicated server it is the server's. Known from a script's first line. |
 | `SimTime` | `number` | — | read-only | The simulation clock, in seconds, at the current tick. It is constant for the whole tick -- deferred drains included -- and advances by `PhysicsService.FixedTimestep` between ticks. This is the clock simulation code reads: the wall clock is forbidden to it, there is no `tick()`, and `os.clock` is for profiling and never for gameplay. It stops advancing while the world is paused. |
 
 ## Methods

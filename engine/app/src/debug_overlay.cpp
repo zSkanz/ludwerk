@@ -16485,8 +16485,8 @@ void DebugOverlay::handleEvents(std::span<const platform::Event> events)
         // to bring the furniture BACK: with it put away the viewport is all
         // there is, and a key that only worked one way would leave no way
         // out of the picture but stopping the game.
-        if (event.type == platform::EventType::KeyDown && event.key == platform::Key::F3 && !event.repeat &&
-            (!g_gameHasKeyboard || !visible_))
+        if (event.type == platform::EventType::KeyDown && toggleKey_ != platform::Key::Unknown &&
+            event.key == toggleKey_ && !event.repeat && (!g_gameHasKeyboard || !visible_))
             visible_ = !visible_;
     }
 }

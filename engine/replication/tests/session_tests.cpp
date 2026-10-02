@@ -1987,6 +1987,62 @@ TEST_CASE("attributes replicate: set, changed and removed on the authority, seen
     CHECK(match.replica->checksumFailures() == 0);
 }
 
+TEST_CASE("D457: a client that joins late has the attributes as they stand, of the workspace and the services too")
+{
+    // A round's server set `Workspace:SetAttribute("Round", 1)` when the round
+    // began; a client joining in the middle of it read nil for the round and
+    // for the scores until each was written again -- fourteen seconds.
+    seedCatalog();
+    auto network = net::createMemoryNetwork();
+    auto serverTransport = net::createMemoryTransport(network);
+    REQUIRE_FALSE(serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 4}).has_value());
+
+    RealSide server;
+    const core::InstanceId crate = server.world.create(server.classes.findId(server.atoms.intern("Part")));
+    REQUIRE_FALSE(server.world.setParent(crate, server.workspace).has_value());
+    REQUIRE(server.world.setAttribute(server.workspace, server.atoms.intern("Round"), scene::Value{3.0}));
+    REQUIRE(server.world.setAttribute(server.lighting, server.atoms.intern("Mood"), scene::Value{std::string("dusk")}));
+    REQUIRE(server.world.setAttribute(crate, server.atoms.intern("Health"), scene::Value{40.0}));
+
+    // The match runs for a while with nobody in it: nothing is an edit any more.
+    AuthoritySession authority(*serverTransport);
+    core::u64 tick = 0;
+    for (; tick < 10; ++tick) {
+        authority.receive(server.world, server.workspace);
+        authority.send(server.world, server.workspace, tick + 1);
+    }
+
+    // And then somebody joins.
+    auto clientTransport = net::createMemoryTransport(network);
+    REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 4}).has_value());
+    net::PeerId toServer;
+    REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
+    RealSide client;
+    ReplicaSession replica(*clientTransport, toServer);
+    for (int step = 0; step < 8; ++step, ++tick) {
+        authority.receive(server.world, server.workspace);
+        authority.send(server.world, server.workspace, tick + 1);
+        replica.receive(client.world, client.workspace);
+        replica.sendIntent(client.world, tick + 1);
+    }
+
+    CHECK(client.world.getAttribute(client.workspace, client.atoms.intern("Round")) == scene::Value{3.0});
+    CHECK(client.world.getAttribute(client.lighting, client.atoms.intern("Mood")) == scene::Value{std::string("dusk")});
+    const core::InstanceId seen = replica.localOf(authority.netIdOf(crate));
+    REQUIRE(seen.valid());
+    CHECK(client.world.getAttribute(seen, client.atoms.intern("Health")) == scene::Value{40.0});
+
+    // And a later change of the workspace's still arrives, once.
+    REQUIRE(server.world.setAttribute(server.workspace, server.atoms.intern("Round"), scene::Value{4.0}));
+    for (int step = 0; step < 4; ++step, ++tick) {
+        authority.receive(server.world, server.workspace);
+        authority.send(server.world, server.workspace, tick + 1);
+        replica.receive(client.world, client.workspace);
+    }
+    CHECK(client.world.getAttribute(client.workspace, client.atoms.intern("Round")) == scene::Value{4.0});
+    CHECK(replica.checksumFailures() == 0);
+}
+
 TEST_CASE("the world's blur travels under Lighting, and a camera's stays on its own screen (ADR 0096)")
 {
     PlayedMatch match;

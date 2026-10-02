@@ -1036,3 +1036,226 @@ TEST_CASE("punctuation and the keypad are KeyCodes, appended after everything a 
     CHECK(fixture.keyCode("VirtualStick2") == 102);
     CHECK(fixture.keyCode("Minus") == 103);
 }
+
+// --- Gestures (D462) -------------------------------------------------------------
+//
+// "I swiped right, up, down, left -- the engine has to support this." Every
+// game on a phone had written its own recogniser. These feed fingers and read
+// what the dispatch says they did.
+
+namespace {
+
+using Gesture = input::GestureEvent;
+
+// One tick with these events in it, and the gestures it recognised.
+[[nodiscard]] std::vector<Gesture> gesturesOf(Fixture& fixture, std::span<const platform::Event> events, core::u64 tick)
+{
+    fixture.system.pumpFrame(events);
+    fixture.system.dispatchSimTick(*fixture.world, tick);
+    const std::span<const Gesture> made = fixture.system.drainGestures();
+    return {made.begin(), made.end()};
+}
+
+[[nodiscard]] const Gesture* firstOf(const std::vector<Gesture>& gestures, Gesture::Kind kind)
+{
+    for (const Gesture& gesture : gestures) {
+        if (gesture.kind == kind)
+            return &gesture;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] int countOf(const std::vector<Gesture>& gestures, Gesture::Kind kind)
+{
+    int count = 0;
+    for (const Gesture& gesture : gestures)
+        count += gesture.kind == kind ? 1 : 0;
+    return count;
+}
+
+constexpr core::i32 Up = 0;
+constexpr core::i32 Left = 2;
+constexpr core::i32 Right = 3;
+
+} // namespace
+
+TEST_CASE("D462: a finger that travels the threshold is a swipe while it is still down, and a key for one tick")
+{
+    Fixture fixture;
+    const InstanceId context = fixture.context();
+    const InstanceId slide = fixture.action(context, input::ActionType::Bool);
+    fixture.world->inputBindings().find(fixture.binding(slide))->keyCode = fixture.keyCode("SwipeRight");
+    core::u64 tick = 0;
+    (void)gesturesOf(fixture, {}, ++tick);
+
+    // Down, and a little way: nothing yet. The threshold is 38 pixels here.
+    const platform::Event down[] = {finger(platform::EventType::FingerDown, 5, 100.0f, 500.0f)};
+    CHECK(countOf(gesturesOf(fixture, down, ++tick), Gesture::Kind::Swipe) == 0);
+    const platform::Event nudge[] = {finger(platform::EventType::FingerMoved, 5, 120.0f, 500.0f)};
+    CHECK(countOf(gesturesOf(fixture, nudge, ++tick), Gesture::Kind::Swipe) == 0);
+    CHECK_FALSE(fixture.state(slide).pressed);
+
+    // Past it, still down: a swipe to the right, from where the stroke began.
+    const platform::Event across[] = {finger(platform::EventType::FingerMoved, 5, 150.0f, 505.0f)};
+    const std::vector<Gesture> first = gesturesOf(fixture, across, ++tick);
+    REQUIRE(countOf(first, Gesture::Kind::Swipe) == 1);
+    const Gesture* swipe = firstOf(first, Gesture::Kind::Swipe);
+    CHECK(swipe->direction == Right);
+    CHECK(swipe->position.x == 100.0f);
+    CHECK(swipe->position.y == 500.0f);
+    CHECK(swipe->fingers == 1);
+    // And the action bound to it is pressed -- for this tick.
+    CHECK(fixture.state(slide).pressed);
+    CHECK(gesturesOf(fixture, {}, ++tick).empty());
+    CHECK_FALSE(fixture.state(slide).pressed);
+
+    // **One long drag one way is one swipe**, however far it goes.
+    for (float x = 190.0f; x <= 600.0f; x += 41.0f) {
+        const platform::Event further[] = {finger(platform::EventType::FingerMoved, 5, x, 505.0f)};
+        CHECK(countOf(gesturesOf(fixture, further, ++tick), Gesture::Kind::Swipe) == 0);
+    }
+    CHECK_FALSE(fixture.state(slide).pressed);
+
+    // A change of direction is the next, measured from where the finger is.
+    const platform::Event turn[] = {finger(platform::EventType::FingerMoved, 5, 600.0f, 460.0f)};
+    const std::vector<Gesture> second = gesturesOf(fixture, turn, ++tick);
+    REQUIRE(countOf(second, Gesture::Kind::Swipe) == 1);
+    CHECK(firstOf(second, Gesture::Kind::Swipe)->direction == Up);
+    CHECK(firstOf(second, Gesture::Kind::Swipe)->position.x == 600.0f);
+    // And back the way it came: left.
+    const platform::Event back[] = {finger(platform::EventType::FingerMoved, 5, 550.0f, 460.0f)};
+    const std::vector<Gesture> third = gesturesOf(fixture, back, ++tick);
+    REQUIRE(countOf(third, Gesture::Kind::Swipe) == 1);
+    CHECK(firstOf(third, Gesture::Kind::Swipe)->direction == Left);
+
+    // Lifted after all that: not a tap.
+    const platform::Event lift[] = {finger(platform::EventType::FingerUp, 5, 550.0f, 460.0f)};
+    CHECK(countOf(gesturesOf(fixture, lift, ++tick), Gesture::Kind::Tap) == 0);
+    CHECK(countOf(gesturesOf(fixture, {}, ++tick), Gesture::Kind::Tap) == 0);
+
+    // The names, for a recorded stream and a rebinding screen.
+    CHECK(input::keyCodeName(fixture.keyCode("SwipeLeft")) == "SwipeLeft");
+    CHECK(input::keyCodeFromName("SwipeUp") == fixture.keyCode("SwipeUp"));
+    CHECK(input::deviceOf(fixture.keyCode("SwipeDown")) == input::DeviceType::Touch);
+}
+
+TEST_CASE(
+    "D462: a flick shorter than a frame is a swipe, a touch that goes nowhere is a tap, and one held is a long press")
+{
+    Fixture fixture;
+    core::u64 tick = 0;
+    (void)gesturesOf(fixture, {}, ++tick);
+
+    // Down, across and up between two ticks: both of its ends are known.
+    const platform::Event flick[] = {finger(platform::EventType::FingerDown, 3, 400.0f, 300.0f),
+                                     finger(platform::EventType::FingerMoved, 3, 330.0f, 300.0f),
+                                     finger(platform::EventType::FingerUp, 3, 300.0f, 300.0f)};
+    const std::vector<Gesture> flicked = gesturesOf(fixture, flick, ++tick);
+    REQUIRE(countOf(flicked, Gesture::Kind::Swipe) == 1);
+    CHECK(firstOf(flicked, Gesture::Kind::Swipe)->direction == Left);
+    CHECK(firstOf(flicked, Gesture::Kind::Swipe)->position.x == 400.0f);
+    CHECK(countOf(gesturesOf(fixture, {}, ++tick), Gesture::Kind::Tap) == 0);
+
+    // A tap: down and up where it landed.
+    const platform::Event tap[] = {finger(platform::EventType::FingerDown, 4, 50.0f, 60.0f),
+                                   finger(platform::EventType::FingerUp, 4, 52.0f, 61.0f)};
+    CHECK(gesturesOf(fixture, tap, ++tick).empty());
+    const std::vector<Gesture> tapped = gesturesOf(fixture, {}, ++tick);
+    REQUIRE(countOf(tapped, Gesture::Kind::Tap) == 1);
+    CHECK(firstOf(tapped, Gesture::Kind::Tap)->position.x == 52.0f);
+
+    // Held for half a second: a long press, once, and lifting it is no tap.
+    const platform::Event press[] = {finger(platform::EventType::FingerDown, 6, 700.0f, 200.0f)};
+    int longPresses = countOf(gesturesOf(fixture, press, ++tick), Gesture::Kind::LongPress);
+    for (int held = 0; held < 60; ++held)
+        longPresses += countOf(gesturesOf(fixture, {}, ++tick), Gesture::Kind::LongPress);
+    CHECK(longPresses == 1);
+    const platform::Event release[] = {finger(platform::EventType::FingerUp, 6, 700.0f, 200.0f)};
+    CHECK(countOf(gesturesOf(fixture, release, ++tick), Gesture::Kind::Tap) == 0);
+    CHECK(countOf(gesturesOf(fixture, {}, ++tick), Gesture::Kind::Tap) == 0);
+}
+
+TEST_CASE("D462: a press the interface took starts no gesture, and the mouse swipes as a finger does")
+{
+    Fixture fixture;
+    core::u64 tick = 0;
+    (void)gesturesOf(fixture, {}, ++tick);
+
+    // On a button: dragged right across the screen, and nothing is said.
+    const platform::Event down[] = {finger(platform::EventType::FingerDown, 8, 100.0f, 100.0f)};
+    fixture.system.pumpFrame(down);
+    fixture.system.setFingerTakenByUi(8);
+    fixture.system.dispatchSimTick(*fixture.world, ++tick);
+    const platform::Event drag[] = {finger(platform::EventType::FingerMoved, 8, 400.0f, 100.0f)};
+    CHECK(gesturesOf(fixture, drag, ++tick).empty());
+    const platform::Event up[] = {finger(platform::EventType::FingerUp, 8, 400.0f, 100.0f)};
+    CHECK(gesturesOf(fixture, up, ++tick).empty());
+    CHECK(gesturesOf(fixture, {}, ++tick).empty());
+
+    // The mouse, with its left button down, on the world.
+    platform::Event place;
+    place.type = platform::EventType::MouseMoved;
+    place.pointerX = 200.0f;
+    place.pointerY = 200.0f;
+    const platform::Event press[] = {place, mouseButton(platform::EventType::MouseButtonDown)};
+    CHECK(countOf(gesturesOf(fixture, press, ++tick), Gesture::Kind::Swipe) == 0);
+    platform::Event moved = place;
+    moved.pointerY = 260.0f;
+    moved.pointerDeltaY = 60.0f;
+    const platform::Event pull[] = {moved};
+    const std::vector<Gesture> dragged = gesturesOf(fixture, pull, ++tick);
+    REQUIRE(countOf(dragged, Gesture::Kind::Swipe) == 1);
+    CHECK(firstOf(dragged, Gesture::Kind::Swipe)->direction == 1);
+    // And a drag is a pan: sixty pixels down the window.
+    const Gesture* pan = firstOf(dragged, Gesture::Kind::Pan);
+    REQUIRE(pan != nullptr);
+    CHECK(pan->delta.y == 60.0f);
+    CHECK(pan->fingers == 1);
+    // Moved with no button down: nothing.
+    const platform::Event release[] = {mouseButton(platform::EventType::MouseButtonUp)};
+    (void)gesturesOf(fixture, release, ++tick);
+    moved.pointerY = 400.0f;
+    const platform::Event hover[] = {moved};
+    CHECK(gesturesOf(fixture, hover, ++tick).empty());
+}
+
+TEST_CASE("D462: two fingers apart are a pinch by how far, and a swipe's length is the host's to say")
+{
+    Fixture fixture;
+    core::u64 tick = 0;
+    (void)gesturesOf(fixture, {}, ++tick);
+
+    const platform::Event down[] = {finger(platform::EventType::FingerDown, 1, 300.0f, 300.0f),
+                                    finger(platform::EventType::FingerDown, 2, 400.0f, 300.0f)};
+    CHECK(countOf(gesturesOf(fixture, down, ++tick), Gesture::Kind::Pinch) == 0);
+    // The second twice as far from the first: a scale of two, about the middle.
+    const platform::Event apart[] = {finger(platform::EventType::FingerMoved, 2, 500.0f, 300.0f)};
+    const std::vector<Gesture> opened = gesturesOf(fixture, apart, ++tick);
+    const Gesture* pinch = firstOf(opened, Gesture::Kind::Pinch);
+    REQUIRE(pinch != nullptr);
+    CHECK(static_cast<double>(pinch->scale) == doctest::Approx(2.0));
+    CHECK(pinch->position.x == 400.0f);
+    // Held still: nothing more is said.
+    CHECK(countOf(gesturesOf(fixture, {}, ++tick), Gesture::Kind::Pinch) == 0);
+    // Together again, to half of where they began.
+    const platform::Event closed[] = {finger(platform::EventType::FingerMoved, 2, 350.0f, 300.0f)};
+    const Gesture* closing = nullptr;
+    const std::vector<Gesture> shut = gesturesOf(fixture, closed, ++tick);
+    closing = firstOf(shut, Gesture::Kind::Pinch);
+    REQUIRE(closing != nullptr);
+    CHECK(static_cast<double>(closing->scale) == doctest::Approx(0.5));
+    const platform::Event lift[] = {finger(platform::EventType::FingerUp, 1, 300.0f, 300.0f),
+                                    finger(platform::EventType::FingerUp, 2, 350.0f, 300.0f)};
+    (void)gesturesOf(fixture, lift, ++tick);
+    (void)gesturesOf(fixture, {}, ++tick);
+
+    // **A longer swipe**: on a phone six millimetres is four times the pixels,
+    // and the same forty that were a swipe are a nudge.
+    fixture.system.setSwipeThreshold(150.0f);
+    const platform::Event again[] = {finger(platform::EventType::FingerDown, 9, 100.0f, 100.0f)};
+    (void)gesturesOf(fixture, again, ++tick);
+    const platform::Event forty[] = {finger(platform::EventType::FingerMoved, 9, 140.0f, 100.0f)};
+    CHECK(countOf(gesturesOf(fixture, forty, ++tick), Gesture::Kind::Swipe) == 0);
+    const platform::Event far[] = {finger(platform::EventType::FingerMoved, 9, 260.0f, 100.0f)};
+    CHECK(countOf(gesturesOf(fixture, far, ++tick), Gesture::Kind::Swipe) == 1);
+}

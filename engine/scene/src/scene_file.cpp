@@ -1092,7 +1092,7 @@ void writeInstance(JsonWriter& out, const World& world, core::InstanceId id,
             const std::string_view name = world.atoms().text(property.name);
 
             const std::optional<Value> value = property.get(world, id);
-            if (!value.has_value() || quietAtDefault(world, property, *value))
+            if (!value.has_value() || quietAtDefault(world, id, property, *value))
                 continue;
 
             if (!anyProperty) {
@@ -2471,12 +2471,21 @@ void clearScene(World& world)
     for (const core::InstanceId child : authored)
         (void)world.destroy(child);
 
-    // **And every service's settings back to the engine's**, attributes with
-    // them. A scene writes only the settings somebody changed, so one that says
-    // nothing about `Lighting` means the engine's `Lighting` -- not whatever the
-    // scene opened before it happened to leave behind.
+    // **And every service's settings back to the engine's**, attributes and
+    // tags with them. A scene writes only the settings somebody changed, so
+    // one that says nothing about `Lighting` means the engine's `Lighting` --
+    // not whatever the scene opened before it happened to leave behind.
+    //
+    // **`Workspace` too** (D450). It is the file's root and not a "carried"
+    // service, so this loop passed it by: an attribute a menu's server set on
+    // it, a tag, a gravity, were all still there in the next scene -- read by
+    // a client before that scene's server had run a line. The game's own
+    // instance, `game`, is not a scene's and keeps what it was given.
     ServiceDefaults defaults(world);
-    for (const auto& [name, service] : carriedServices(world)) {
+    std::vector<core::InstanceId> settled{workspace};
+    for (const auto& [name, service] : carriedServices(world))
+        settled.push_back(service);
+    for (const core::InstanceId service : settled) {
         const ClassId classId = world.classOf(service);
         for (const ClassDescriptor* current = world.classes().find(classId); current != nullptr;
              current = world.classes().find(current->super)) {
@@ -2492,6 +2501,10 @@ void clearScene(World& world)
         world.collectAttributes(service, attributes);
         for (const auto& entry : attributes)
             (void)world.setAttribute(service, entry.first, Value{});
+        TagSet tags;
+        world.collectTags(service, tags);
+        for (const core::NameAtom tag : tags)
+            (void)world.removeTag(service, tag);
     }
 }
 

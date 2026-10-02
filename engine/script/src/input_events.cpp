@@ -165,4 +165,54 @@ void fireInputEvents(lua_State* L, std::span<const input::RawInputEvent> events)
     }
 }
 
+void fireGestureEvents(lua_State* L, std::span<const input::GestureEvent> events)
+{
+    if (events.empty())
+        return;
+    VmContext& ctx = context(L);
+    scene::World& w = *ctx.world;
+    const scene::ClassId serviceClass = w.classes().findId(w.atoms().lookup("InputService"));
+    const core::InstanceId root = ctx.services->dataModel;
+    if (serviceClass == scene::InvalidClass || !root.valid())
+        return;
+    const core::InstanceId service = w.findFirstChildOfClass(root, serviceClass);
+    if (!service.valid())
+        return;
+
+    const auto fire = [&](const char* name, int count) {
+        if (const scene::EventDesc* descriptor = w.classes().findEvent(serviceClass, w.atoms().intern(name));
+            descriptor != nullptr)
+            fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - count + 1, count);
+        lua_pop(L, count);
+    };
+    for (const input::GestureEvent& event : events) {
+        switch (event.kind) {
+        case input::GestureEvent::Kind::Swipe:
+            pushEnumItem(L, scene::EnumValue{w.enums().findId(w.atoms().lookup("SwipeDirection")), event.direction});
+            pushVector2(L, event.position);
+            lua_pushinteger(L, event.fingers);
+            fire("TouchSwiped", 3);
+            break;
+        case input::GestureEvent::Kind::Tap:
+            pushVector2(L, event.position);
+            fire("TouchTapped", 1);
+            break;
+        case input::GestureEvent::Kind::LongPress:
+            pushVector2(L, event.position);
+            fire("TouchLongPressed", 1);
+            break;
+        case input::GestureEvent::Kind::Pinch:
+            lua_pushnumber(L, static_cast<double>(event.scale));
+            pushVector2(L, event.position);
+            fire("TouchPinched", 2);
+            break;
+        case input::GestureEvent::Kind::Pan:
+            pushVector2(L, event.delta);
+            lua_pushinteger(L, event.fingers);
+            fire("TouchPanned", 2);
+            break;
+        }
+    }
+}
+
 } // namespace engine::script

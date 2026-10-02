@@ -560,6 +560,13 @@ struct LightingComponent
     // light. Unbounded on purpose -- an exposure a scene deliberately blows out
     // is a look, not an error.
     f32 exposureCompensation = 0.0f;
+    // **How far the automatic exposure may go** (D460), in the same EV stops:
+    // the most it darkens a bright picture and the most it brightens a dark
+    // one. The defaults are the limits the engine always had -- the meter
+    // accepts an average between 0.15 and 3 against a key of 0.45, so log2 of
+    // 0.15 and of 3 -- written to the bit so that no picture moves.
+    f32 exposureMin = -2.7369655f;
+    f32 exposureMax = 1.5849625f;
     // ADR 0096's five, whose defaults are the picture before they existed:
     // how much the sky lights and reflects, as multiples of what it does; how
     // soft a sun shadow's edge is, 0 to 1 (0.2 is the filter the engine
@@ -1526,6 +1533,11 @@ struct UIObjectComponent
     i32 automaticSize = 0;
     bool visible = true;
     bool clipsDescendants = false;
+    // **`Active`: whether it takes the pointer** (D452). -1 until somebody
+    // writes it, which means "as what it is does": a button, a text input and
+    // a scroll frame do, a label does not, and a frame does when it draws a
+    // background. 0 and 1 are a script's or the editor's own word, and win.
+    core::i8 active = -1;
 };
 
 struct TextLabelComponent
@@ -1623,6 +1635,8 @@ struct ImageLabelComponent
     core::Vec2 imageRectOffset;
     core::Vec2 imageRectSize;
     core::Color3 imageColor{1.0f, 1.0f, 1.0f};
+    // `ImageTransparency`: the picture's own, apart from the background's.
+    f32 imageTransparency = 0.0f;
     // `Enum.ScaleType`: 0 Stretch, 1 Slice, 2 Tile.
     i32 scaleType = 0;
 };

@@ -355,6 +355,7 @@
   "net.err.join_failed": "Could not join {address}: nothing answered there.",
   "net.err.replication_peer_cap": "A game cannot accept {count} players; the transport holds between 1 and {cap}.",
   "net.err.transport_init_failed": "The network transport could not be initialised; no connection can be opened.",
+  "net.warn.remote_unheard": "RemoteEvent {remote} has {limit} calls waiting and nothing connected to {event}: the calls after them are dropped. Connect a handler, or stop firing it.",
   "net.warn.connection_lost": "The connection to the server was lost; dialling again until the network timeout, and the server will know this player if it is the same one that answers.",
   "net.info.reconnected": "Reconnected to the server as the same player.",
   "net.info.rejoined": "The server that answered is not the one this machine left: joined it as a new player, and its world replaces the one held.",

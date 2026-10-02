@@ -15,7 +15,9 @@
 
 #include "engine/app/project_config.h"
 #include "engine/core/toml_edit.h"
+#include "engine/platform/event.h"
 #include "engine/platform/file.h"
+#include "engine/platform/platform.h"
 
 using namespace engine;
 
@@ -419,4 +421,26 @@ TEST_CASE("D445: only the packaged game, run as a game, keeps its saves in the p
     CHECK(app::saveHomeFor(true, false) == SaveHome::Player);
     // The export, driven by a development session: still a test.
     CHECK(app::saveHomeFor(true, true) == SaveHome::Project);
+}
+
+TEST_CASE("D461: a project names the key that opens the overlay, or says there is none")
+{
+    // F3 opened the overlay and reached the game's own F3 in the same press.
+    // The host takes its key; a game that wants F3 moves the host's.
+    const auto keyOf = [](std::string_view toml) {
+        const std::filesystem::path root =
+            std::filesystem::temp_directory_path() / ("engine-overlay-key-" + std::to_string(platform::nowNs()));
+        std::filesystem::create_directories(root);
+        std::ofstream(root / "project.toml") << toml;
+        std::string diagnostic;
+        const app::ProjectConfig config = app::loadProjectConfig(root, {}, &diagnostic);
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+        return platform::keyFromName(config.overlayKey);
+    };
+    CHECK(keyOf("[project]\nname = 'a'\n") == platform::Key::F3);
+    CHECK(keyOf("[debug]\noverlay_key = 'F9'\n") == platform::Key::F9);
+    // No key: the overlay is opened from the menu, and every key is the game's.
+    CHECK(keyOf("[debug]\noverlay_key = 'None'\n") == platform::Key::Unknown);
+    CHECK(keyOf("[debug]\noverlay_key = 'not a key'\n") == platform::Key::Unknown);
 }

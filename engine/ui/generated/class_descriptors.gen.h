@@ -92,6 +92,8 @@ inline constexpr scene::EnumId WaterShapeEnumId = 49;
 inline constexpr scene::EnumId RenderPriorityEnumId = 50;
 inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
 inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
+inline constexpr scene::EnumId SwipeDirectionEnumId = 53;
+inline constexpr scene::EnumId PlatformEnumId = 54;
 
 } // namespace generated
 
@@ -167,6 +169,8 @@ scene::Value getUIObjectBackgroundColor(const scene::World& world, core::Instanc
 bool setUIObjectBackgroundColor(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getUIObjectBackgroundTransparency(const scene::World& world, core::InstanceId id);
 bool setUIObjectBackgroundTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectActive(const scene::World& world, core::InstanceId id);
+bool setUIObjectActive(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getUIObjectVisible(const scene::World& world, core::InstanceId id);
 bool setUIObjectVisible(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getUIObjectZIndex(const scene::World& world, core::InstanceId id);
@@ -255,6 +259,8 @@ scene::Value getImageLabelImage(const scene::World& world, core::InstanceId id);
 bool setImageLabelImage(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getImageLabelImageColor(const scene::World& world, core::InstanceId id);
 bool setImageLabelImageColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getImageLabelImageTransparency(const scene::World& world, core::InstanceId id);
+bool setImageLabelImageTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getImageLabelScaleType(const scene::World& world, core::InstanceId id);
 bool setImageLabelScaleType(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getImageLabelSliceCenter(const scene::World& world, core::InstanceId id);

@@ -1146,7 +1146,16 @@ void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& enteri
     if (!peer.attributesSeeded) {
         peer.attributesSeeded = true;
         for (const auto& [owner, body] : m_attributeShadows) {
-            if (owner.first != 0 && body.size() > 2)
+            if (body.size() <= 2)
+                continue;
+            // **And the owners nothing ever spawns** (D457): the workspace
+            // and the services are on both ends from boot, so they never
+            // "enter" a peer's view -- and what they held when it joined was
+            // sent to nobody. A round's number set before a player arrived
+            // was nil on that player's machine until it was written again.
+            const bool neverSpawned =
+                owner.first == 0 && (owner.second == RootNetId.value || owner.second >= ServiceNetIdBase);
+            if (owner.first != 0 || (neverSpawned && !isEntering(owner.second)))
                 send(owner, body);
         }
     }
@@ -2728,6 +2737,24 @@ void ReplicaSession::onAttributes(scene::World& world, InstanceId root, std::spa
     switch (owner) {
     case 0:
         target = localOf(NetId{id});
+        // **The workspace and the services are here from boot** (D457), and
+        // what they hold arrives with the welcome -- before the first state
+        // that would have told this machine which of its instances an id
+        // names. Found by what they are.
+        if (!target.valid() && id == RootNetId.value) {
+            target = root;
+        }
+        else if (!target.valid() && id >= ServiceNetIdBase && id - ServiceNetIdBase < std::size(generated::Classes) &&
+                 generated::Classes[id - ServiceNetIdBase].service) {
+            const std::string_view wanted = generated::Classes[id - ServiceNetIdBase].name;
+            for (InstanceId child = dataModel.valid() ? world.firstChild(dataModel) : InstanceId{}; child.valid();
+                 child = world.nextSibling(child)) {
+                if (world.atoms().text(world.classes().find(world.classOf(child))->name) == wanted) {
+                    target = child;
+                    break;
+                }
+            }
+        }
         break;
     case 1:
         target = scene::playerByUserId(world, id);

@@ -121,7 +121,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   nothing selected, Properties with a service selected, the terrain panel,
   Preferences, the Export window, a game running. The same words in the same
   places; 883 app tests green on the real catalog.
-- [ ] **In another language**: there is none to try. A second catalog is
+- [>] **In another language**: there is none to try. A second catalog is
   what shows the widths that were fitted to English by eye -- the first one
   added should be photographed panel by panel.
 
