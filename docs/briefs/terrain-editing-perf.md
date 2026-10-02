@@ -467,3 +467,14 @@ a low frame rate; any small action lags.
   capture, dirty marking), the foliage, navmesh and collider work a stamp
   sets off, and paint's uploads, are not measured yet; the starter grass
   still reads as a grid from ten to forty metres.
+
+## P8 — paint has the brush's shape
+
+- [x] **A round brush leaves a round edge, and a stroke no speck** (D419):
+  the rim of a stamp is a ramp a voxel wide and not a step, and a vertex's
+  cover is never the one value the shader's unpacking turned into nothing.
+  In `paintBall` and the mesher; no shader, no format, no finer paint grid.
+- Later (ADR 0114, as built, when this ledger closes): the rim's ramp and
+  `MaxVertexCover`; the shader's `uint(x + 0.5)` on a packed float past 2^23
+  should be `uint(x)`; paint stored finer than the voxels, if a crisp edge is
+  ever wanted at voxels of two metres and more.

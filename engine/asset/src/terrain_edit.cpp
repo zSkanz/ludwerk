@@ -1376,9 +1376,13 @@ namespace {
 
 // **One voxel painted** (ADR 0114): what `mode` makes of it, `weight` of the
 // way -- 0 to 1, the stroke's strength less its falloff there.
-[[nodiscard]] Voxel paintedVoxel(Voxel old, u8 material, PaintMode mode, float weight) noexcept
+// `edge` is how far inside the brush's rim the voxel is, from 1 half a voxel
+// in to 0 half a voxel out (`paintBall`): what of the paint may show there.
+[[nodiscard]] Voxel paintedVoxel(Voxel old, u8 material, PaintMode mode, float weight, float edge) noexcept
 {
     const float amount = std::clamp(weight, 0.0f, 1.0f);
+    // The most that may show here, and the least of what was over it.
+    const auto cap = static_cast<i32>(std::lround(255.0f * std::clamp(edge, 0.0f, 1.0f)));
     // **Towards the end by a share of what is left** (D328): a stamp takes
     // `weight` of the way from where the cover is to all or none, as an
     // opacity brush does, and never less than one step. The stamps of a stroke
@@ -1393,28 +1397,48 @@ namespace {
         return from + (step != 0 ? step : (gap > 0 ? 1 : -1));
     };
     Voxel voxel = old;
+    // `Replace` on the rim is the paint laid over what is there, as far as the
+    // rim lets it show: the whole strength, and the blend below.
+    const bool wholly = mode == PaintMode::Replace && cap < 255;
     switch (mode) {
     case PaintMode::Replace:
-        return Voxel{old.occupancy, material, 0, 0};
+        if (cap >= 255)
+            return Voxel{old.occupancy, material, 0, 0};
+        break;
     case PaintMode::Under:
+        // What is under has no edge to soften: the half of the rim inside it.
+        if (cap < 128)
+            return old;
         voxel.material = material;
         return canonical(voxel);
-    case PaintMode::Erase:
-        voxel.cover = static_cast<u8>(towards(old.cover, 0));
+    case PaintMode::Erase: {
+        // **All of it inside the radius**, as an eraser always took, and the
+        // ramp in the half voxel outside: what a brush painted to its rim,
+        // the same brush takes off whole.
+        const auto off = static_cast<i32>(std::lround(255.0f * std::clamp(2.0f * edge, 0.0f, 1.0f)));
+        const i32 least = std::min<i32>(old.cover, 255 - off);
+        voxel.cover = static_cast<u8>(std::max(towards(old.cover, 0), least));
         return canonical(voxel);
+    }
     case PaintMode::Blend:
         break;
     }
-    if (amount <= 0.0f)
+    if ((amount <= 0.0f && !wholly) || cap <= 0)
         return old;
+    const auto reach = [&](i32 from, i32 to) { return wholly ? to : towards(from, to); };
     // The material under painted over itself: what is over it shows less.
     if (old.material == material) {
-        voxel.cover = static_cast<u8>(towards(old.cover, 0));
+        const i32 least = std::min<i32>(old.cover, 255 - cap);
+        voxel.cover = static_cast<u8>(std::max(reach(old.cover, 0), least));
         return canonical(voxel);
     }
-    // The same over it again, or nothing over it yet: it shows more.
+    // The same over it again, or nothing over it yet: it shows more -- up to
+    // what the rim lets show, and never less than it showed.
     if (old.cover == 0 || old.top == material) {
-        const i32 cover = towards(old.top == material ? static_cast<i32>(old.cover) : 0, 255);
+        const i32 from = old.top == material ? static_cast<i32>(old.cover) : 0;
+        if (from >= cap)
+            return old;
+        const i32 cover = reach(from, cap);
         // Covered wholly, it is simply what the ground is made of.
         if (cover >= 255)
             return Voxel{old.occupancy, material, 0, 0};
@@ -1423,7 +1447,7 @@ namespace {
     // **A third over two**: the one that shows more goes under first, and
     // the new one starts over it.
     const u8 under = old.cover >= 128 ? old.top : old.material;
-    const i32 cover = towards(0, 255);
+    const i32 cover = reach(0, cap);
     if (cover >= 255)
         return Voxel{old.occupancy, material, 0, 0};
     return canonical(Voxel{old.occupancy, under, material, static_cast<u8>(cover)});
@@ -1456,7 +1480,15 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
     const auto visit = [&](i32 x, i32 y, i32 z) {
         const double distance =
             length(field.voxelCenter(x) - center.x, field.voxelCenter(y) - center.y, field.voxelCenter(z) - center.z);
-        if (distance > radius)
+        // **The rim is a ramp a voxel wide, not a step** (the owner's picture:
+        // a hard round brush left a polygon with triangular teeth). A voxel
+        // was painted or it was not, by which side of the radius its middle
+        // fell, and the mesh drew the staircase that makes. How far inside the
+        // rim a voxel is -- whole half a voxel in, none half a voxel out -- is
+        // how much of the paint may show there, so the half-way line of what
+        // is drawn is the circle itself, to a fraction of a voxel.
+        const double edge = std::clamp(0.5 + (radius - distance) / voxelSize, 0.0, 1.0);
+        if (!(edge > 0.0))
             return;
         const Voxel old = writer.get(x, y, z);
         if (old.occupancy == 0 || !options.mask.allows(old.material))
@@ -1490,8 +1522,12 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         // one half the rim still took half the strength, and the stamps of a
         // stroke summed there to a hard edge.
         const double core = radius * (1.0 - static_cast<double>(soft));
-        const float weight = distance <= core ? strength : strength * falloff(distance - core, radius - core);
-        const Voxel painted = paintedVoxel(old, material, options.mode, weight);
+        // The ramp's outer half is past the radius: a hard brush is as strong
+        // there as at its rim, and the ramp is what holds it back.
+        const double within = std::min(distance, radius);
+        const float weight =
+            within <= core || !(radius > core) ? strength : strength * falloff(within - core, radius - core);
+        const Voxel painted = paintedVoxel(old, material, options.mode, weight, static_cast<float>(edge));
         if (!(painted == old))
             writer.setExact(x, y, z, painted);
     };
@@ -1499,7 +1535,9 @@ EditReport paintBall(TerrainField& field, DVec3 center, double radius, u8 materi
         const double dz = field.voxelCenter(z) - center.z;
         for (i32 y = box.minY; y <= box.maxY; ++y) {
             const double dy = field.voxelCenter(y) - center.y;
-            const double rest = radius * radius - dy * dy - dz * dz;
+            // Half a voxel past the radius, where the rim's ramp ends.
+            const double reach = radius + 0.5 * voxelSize;
+            const double rest = reach * reach - dy * dy - dz * dz;
             if (rest < -voxelSize * voxelSize)
                 continue;
             const double half = std::sqrt(std::max(rest, 0.0)) + voxelSize;

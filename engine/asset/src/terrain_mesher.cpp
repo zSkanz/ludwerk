@@ -39,6 +39,15 @@ using core::u8;
 using core::usize;
 using core::Vec3;
 
+// **The most a vertex's cover is ever written as**: one short of whole. A
+// triangle's three covers ride in one float, a byte each, and a reader takes
+// them back by adding a half and truncating -- which past 2^23 rounds to
+// even, so a low byte of 255 became 256: nothing, and a carry. A vertex
+// painted wholly, in a triangle whose third corner was painted more than half,
+// drew as bare ground: the speck left unpainted inside a stroke (the owner's
+// picture). 254 is whole to the eye, and never carries.
+constexpr long MaxVertexCover = 254;
+
 // The eight corners of a lattice cell: bit 0 is x, bit 1 is y, bit 2 is z.
 constexpr std::array<std::array<i32, 3>, 8> CornerOffsets{{
     {0, 0, 0},
@@ -1828,7 +1837,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
         const bool painted = cell->topVotes > 0 && cell->top != material && cell->top != 0;
         vertexTop.push_back(painted ? cell->top : u8{0});
         vertexCover.push_back(
-            painted ? static_cast<u8>(std::clamp<long>(std::lround(cell->paintCover() * inverse), 0, 255)) : u8{0});
+            painted ? static_cast<u8>(std::clamp<long>(std::lround(cell->paintCover() * inverse), 0, MaxVertexCover))
+                    : u8{0});
         stitched.emplace(key, made);
         return made;
     };
@@ -1988,7 +1998,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
                             }
                         }
                         if (top != 0 && solid > 0 && top != material)
-                            cover = static_cast<u8>(std::min(255, (most + solid / 2) / solid));
+                            cover =
+                                static_cast<u8>(std::min(static_cast<int>(MaxVertexCover), (most + solid / 2) / solid));
                         else
                             top = 0;
                     }
@@ -2329,7 +2340,8 @@ TerrainMesh meshField(const TerrainField& field, const MeshRegion& region)
             const bool painted = cell->topVotes > 0 && cell->top != material && cell->top != 0;
             vertexTop.push_back(painted ? cell->top : u8{0});
             vertexCover.push_back(
-                painted ? static_cast<u8>(std::clamp(std::lround(cell->paintCover() * inverse), 0l, 255l)) : u8{0});
+                painted ? static_cast<u8>(std::clamp(std::lround(cell->paintCover() * inverse), 0l, MaxVertexCover))
+                        : u8{0});
             faceNormals.push_back(Vec3{0.0f, 0.0f, 0.0f});
             if (oneSided) {
                 cellVertex[seat] = index32;

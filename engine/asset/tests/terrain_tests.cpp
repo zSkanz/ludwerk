@@ -896,6 +896,130 @@ TEST_CASE("a half-soft brush paints its whole strength inside half its radius an
     CHECK(coverAt(9) < 20);
 }
 
+namespace {
+
+// How much of `material` shows at a voxel of the ground's top row, 0 to 1.
+[[nodiscard]] double shownAt(const asset::TerrainField& field, core::i32 x, core::i32 z, core::u8 material)
+{
+    const asset::Voxel voxel = field.voxel(x, -1, z);
+    if (voxel.material == material)
+        return 1.0;
+    return voxel.top == material ? static_cast<double>(voxel.cover) / 255.0 : 0.0;
+}
+
+// The same between voxels, as a mesh draws it: across the four round a point.
+[[nodiscard]] double shownBetween(const asset::TerrainField& field, double x, double z, core::u8 material)
+{
+    const double fx = std::floor(x - 0.5);
+    const double fz = std::floor(z - 0.5);
+    const double tx = x - 0.5 - fx;
+    const double tz = z - 0.5 - fz;
+    const auto ix = static_cast<core::i32>(fx);
+    const auto iz = static_cast<core::i32>(fz);
+    const double near = shownAt(field, ix, iz, material) * (1.0 - tx) + shownAt(field, ix + 1, iz, material) * tx;
+    const double far =
+        shownAt(field, ix, iz + 1, material) * (1.0 - tx) + shownAt(field, ix + 1, iz + 1, material) * tx;
+    return near * (1.0 - tz) + far * tz;
+}
+
+} // namespace
+
+TEST_CASE("a hard round brush leaves a round edge, to a fraction of a voxel")
+{
+    // The owner's picture: a hard circle of paint was a polygon with
+    // triangular teeth. A voxel was painted or not by which side of the
+    // radius its middle fell, and the half-way line of what a mesh draws
+    // between such voxels is a staircase.
+    for (const asset::PaintMode mode : {asset::PaintMode::Replace, asset::PaintMode::Blend}) {
+        CAPTURE(static_cast<int>(mode));
+        asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+        (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{64.0f, 16.0f, 64.0f}, 1);
+        // Off the lattice, as a brush is.
+        const core::DVec3 centre{0.3, -0.5, 0.7};
+        const double radius = 8.0;
+        (void)asset::paintBall(field, centre, radius, 3, paintWith(mode, 1.0f, 0.0f));
+
+        double worst = 0.0;
+        for (int step = 0; step < 72; ++step) {
+            const double angle = static_cast<double>(step) * 3.14159265358979 / 36.0;
+            const double dx = std::cos(angle);
+            const double dz = std::sin(angle);
+            // Where, going out, half of it shows.
+            double edge = -1.0;
+            for (double along = radius - 2.0; along <= radius + 2.0; along += 0.01) {
+                if (shownBetween(field, centre.x + dx * along, centre.z + dz * along, 3) < 0.5) {
+                    edge = along;
+                    break;
+                }
+            }
+            CAPTURE(step);
+            REQUIRE(edge > 0.0);
+            worst = std::max(worst, std::abs(edge - radius));
+        }
+        // A fifth of a voxel; the step it was is half of one and more.
+        CHECK(worst < 0.2);
+        // Whole in the middle, and none past the rim.
+        CHECK(shownAt(field, 0, 0, 3) == doctest::Approx(1.0));
+        CHECK(shownAt(field, 10, 0, 3) == doctest::Approx(0.0));
+    }
+}
+
+TEST_CASE("a stroke of a hard brush is whole inside its edge: no speck is left unpainted")
+{
+    for (const asset::PaintMode mode : {asset::PaintMode::Replace, asset::PaintMode::Blend}) {
+        CAPTURE(static_cast<int>(mode));
+        asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+        (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{96.0f, 16.0f, 96.0f}, 1);
+        // An S of stamps a metre apart, each off the lattice.
+        std::vector<core::DVec3> stamps;
+        for (int step = 0; step <= 60; ++step) {
+            const double t = static_cast<double>(step) / 60.0;
+            stamps.push_back(core::DVec3{-24.0 + 48.0 * t + 0.37, -0.5, 10.0 * std::sin(t * 6.2831853) + 0.21});
+        }
+        const double radius = 4.0;
+        for (const core::DVec3& stamp : stamps)
+            (void)asset::paintBall(field, stamp, radius, 3, paintWith(mode, 1.0f, 0.0f));
+
+        int specks = 0;
+        for (core::i32 z = -20; z <= 20; ++z) {
+            for (core::i32 x = -34; x <= 34; ++x) {
+                double nearest = 1e9;
+                for (const core::DVec3& stamp : stamps) {
+                    const double dx = static_cast<double>(x) + 0.5 - stamp.x;
+                    const double dz = static_cast<double>(z) + 0.5 - stamp.z;
+                    nearest = std::min(nearest, std::sqrt(dx * dx + dz * dz));
+                }
+                // A voxel wholly inside some stamp shows the paint, whole.
+                if (nearest <= radius - 1.0 && shownAt(field, x, z, 3) < 0.999)
+                    ++specks;
+            }
+        }
+        CHECK(specks == 0);
+    }
+}
+
+TEST_CASE("a soft brush fades from its middle to its rim without a step back")
+{
+    asset::TerrainField field(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
+    (void)asset::fillBlock(field, core::DVec3{0.0, -8.0, 0.0}, core::Vec3{64.0f, 16.0f, 64.0f}, 1);
+    const core::DVec3 centre{0.3, -0.5, 0.7};
+    (void)asset::paintBall(field, centre, 8.0, 3, paintWith(asset::PaintMode::Blend, 1.0f, 1.0f));
+    for (int step = 0; step < 24; ++step) {
+        const double angle = static_cast<double>(step) * 3.14159265358979 / 12.0;
+        double before = 2.0;
+        for (double along = 0.0; along <= 10.0; along += 0.25) {
+            const double shown =
+                shownBetween(field, centre.x + std::cos(angle) * along, centre.z + std::sin(angle) * along, 3);
+            CAPTURE(step);
+            CAPTURE(along);
+            // Never more further out, give or take a cover's rounding.
+            CHECK(shown <= before + 0.02);
+            before = shown;
+        }
+        CHECK(before == doctest::Approx(0.0));
+    }
+}
+
 TEST_CASE("a soft stroke keeps a soft edge however many stamps pass over it (D328)")
 {
     // A stroke is many stamps; summed, a soft brush's fading edge reached whole
@@ -1069,7 +1193,7 @@ namespace {
 // What `smoothBall` left before it was made cheap (2026-10-01).
 constexpr core::u64 SmoothedDigest = 8464619714787391466ull;
 // And what every brush left, the same day.
-constexpr core::u64 BrushedDigest = 194318197966584899ull;
+constexpr core::u64 BrushedDigest = 11842143710861507272ull;
 
 } // namespace
 

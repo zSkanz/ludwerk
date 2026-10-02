@@ -683,6 +683,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A round brush paints a round edge** (D419): a hard `PaintBall` left a
+  polygon with teeth a voxel across, and a stroke could leave an unpainted
+  speck inside it. The rim of a stamp is now a ramp a voxel wide, so the edge
+  drawn is the circle; `terrain:PaintBall` and the editor's Paint tool write
+  slightly different covers at a rim than they did.
 - **A fast body does not pass through the ground** (D417): every dynamic
   body is swept along its path on a step that moves it far, so a log at
   100 m/s lands on terrain, a block world or a thin part where it used to go
