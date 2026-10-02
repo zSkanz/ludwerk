@@ -485,6 +485,8 @@ Value getWaterCurrent(const World& world, core::InstanceId id);
 bool setWaterCurrent(World& world, core::InstanceId id, const Value& value);
 Value getWaterFlowSpeed(const World& world, core::InstanceId id);
 bool setWaterFlowSpeed(World& world, core::InstanceId id, const Value& value);
+Value getWaterBankWidth(const World& world, core::InstanceId id);
+bool setWaterBankWidth(World& world, core::InstanceId id, const Value& value);
 void attachWaterComponents(World& world, core::InstanceId id);
 void detachWaterComponents(World& world, core::InstanceId id);
 

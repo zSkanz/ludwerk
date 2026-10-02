@@ -305,6 +305,12 @@ namespace {
 // the machine that was drawing them and nowhere else. An id is only a name --
 // a theme that draws these is used, and the atlas falls back where none does.
 constexpr std::string_view WaterIcon = "class.Water";
+// What each of the tool's four draws, on the same terms: pictures the icon set
+// is still being given.
+constexpr std::string_view WaterRiverIcon = "action.WaterRiver";
+constexpr std::string_view WaterLakeIcon = "action.WaterLake";
+constexpr std::string_view WaterPoolIcon = "action.WaterPool";
+constexpr std::string_view WaterOceanIcon = "action.WaterOcean";
 
 // **A translated label with an id of its own** (ADR 0145): the words are the
 // catalog's, and the `##id` after them -- never shown -- keeps the widget the
@@ -13116,7 +13122,8 @@ void drawTilesPanel(Editor& editor, scene::World& world, core::InstanceId root, 
 // numbers somebody changes between two clicks: how wide, how deep, how high,
 // how fast. Everything else a `Water` has is in Properties, where drawing it
 // has already put it -- the tool selects what it makes.
-void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, const IconAtlas* icons)
+void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, const IconAtlas* icons,
+                    core::InstanceId root)
 {
     const auto opButton = [&](Editor::WaterOp op, std::string_view icon, const char* word, const char* tip) {
         const bool on = editor.waterOp() == op && editor.tool() == Editor::Tool::Water;
@@ -13134,16 +13141,16 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
             ImGui::PopStyleColor();
         ImGui::SetItemTooltip("%s", tip);
     };
-    opButton(Editor::WaterOp::River, icons::ActionWaterRiver, core::tr(ENG_TR("engine.editor.water_panel.river")),
+    opButton(Editor::WaterOp::River, WaterRiverIcon, core::tr(ENG_TR("engine.editor.water_panel.river")),
              core::tr(ENG_TR("engine.editor.water_panel.river_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Lake, icons::ActionWaterLake, core::tr(ENG_TR("engine.editor.water_panel.lake")),
+    opButton(Editor::WaterOp::Lake, WaterLakeIcon, core::tr(ENG_TR("engine.editor.water_panel.lake")),
              core::tr(ENG_TR("engine.editor.water_panel.lake_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Pool, icons::ActionWaterPool, core::tr(ENG_TR("engine.editor.water_panel.pool")),
+    opButton(Editor::WaterOp::Pool, WaterPoolIcon, core::tr(ENG_TR("engine.editor.water_panel.pool")),
              core::tr(ENG_TR("engine.editor.water_panel.pool_tip")));
     ImGui::SameLine();
-    opButton(Editor::WaterOp::Ocean, icons::ActionWaterOcean, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
+    opButton(Editor::WaterOp::Ocean, WaterOceanIcon, core::tr(ENG_TR("engine.editor.water_panel.ocean")),
              core::tr(ENG_TR("engine.editor.water_panel.ocean_tip")));
     ImGui::Separator();
 
@@ -13242,6 +13249,18 @@ void drawWaterPanel(Editor& editor, scene::World& world, Inspector& inspector, c
                 inspector.enqueue(inHand, world.atoms().intern("FlowSpeed"),
                                   scene::Value{static_cast<core::f64>(*flow)});
             }
+        }
+        if (!sea) {
+            // **The bed, cut into the ground**: the water lies over the
+            // ground until it is, and a river over a hillside shows why.
+            if (const std::optional<float> bank = number(ENG_TR("engine.editor.water_panel.bank"), "###water-bank",
+                                                         static_cast<float>(water->bankWidth), 0.05f, 0.0f, 64.0f)) {
+                inspector.enqueue(inHand, world.atoms().intern("BankWidth"),
+                                  scene::Value{static_cast<core::f64>(*bank)});
+            }
+            if (labeledIconButton(icons, icons::ActionDig, core::tr(ENG_TR("engine.editor.water_panel.carve"))))
+                (void)editor.carveWater(world, root, inspector);
+            ImGui::SetItemTooltip("%s", core::tr(ENG_TR("engine.editor.water_panel.carve_tip")));
         }
         if (river || lake) {
             ImGui::Spacing();
@@ -14990,7 +15009,7 @@ terrainPanelDone:;
             if (editor == nullptr || world == nullptr || inspector == nullptr)
                 ImGui::TextDisabled("%s", core::tr(ENG_TR("engine.editor.editor_shell.no_world")));
             else
-                drawWaterPanel(*editor, *world, *inspector, icons);
+                drawWaterPanel(*editor, *world, *inspector, icons, treeRoot);
         }
         ImGui::End();
     }

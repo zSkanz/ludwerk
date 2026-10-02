@@ -1045,8 +1045,11 @@ TEST_CASE("held for the ground, the ring under the player is read at once")
     streamed.lookFrom(core::DVec3{-420.0, 0.0, -420.0});
     REQUIRE_FALSE(streamed.holds(-7, -7));
     // The ring is asked after where the camera is now only once a pump has
-    // seen it there: one pump, which reads the ring and puts it in.
-    streamed.streamer.pump(50.0, true);
+    // seen it there: one pump, which reads the ring and puts it in. **Given
+    // the time to** (D420): the pump stops reading when its budget of
+    // milliseconds is spent, and fifty of them is not the ring on a runner
+    // drawing three other tests in software beside this one.
+    streamed.streamer.pump(60000.0, true);
     CHECK(streamed.streamer.minimumRingResident());
     CHECK(streamed.holds(-7, -7));
     CHECK(streamed.holds(-6, -8));

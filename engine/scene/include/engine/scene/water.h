@@ -137,6 +137,9 @@ struct WaterHere
     core::f64 level = 0.0;
     core::f64 depth = 0.0;
     core::Vec3 flow{};
+    // How far in from the water's edge the column is, in metres: what a bank
+    // slopes over. A sea has no edge.
+    core::f64 inside = 0.0;
 };
 
 // `course` is the water's, when the caller holds it; made here when it does
@@ -146,6 +149,17 @@ struct WaterHere
 
 // How much faster a river runs where it drops: by this times its slope.
 inline constexpr core::f64 RiverSlopeSpeed = 4.0;
+
+// **A water's bed, cut into a terrain** (ADR 0146 section 4): every column of
+// ground the water covers is lowered to the bed -- at the surface along the
+// water's edge, sloping down to its depth `WaterComponent::bankWidth` in --
+// and ground already lower is left as it is: it only ever digs. A river's bed
+// follows the river down. Answers how many columns it lowered; nothing for a
+// sea, a water with no extent, or a terrain that is not one.
+//
+// On the terrain's own edit path (`asset::writeHeights`): what is under the
+// top of a column -- a tunnel -- stays.
+[[nodiscard]] core::u64 carveWaterBed(World& world, core::InstanceId water, core::InstanceId terrain);
 
 // Whether a column is inside a water's extent -- everywhere for an ocean, a
 // pool's rectangle, a river's width along its course, a lake's outline -- and,

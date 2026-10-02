@@ -6,7 +6,9 @@
 // mirror is handed.
 #include <cmath>
 #include <doctest/doctest.h>
+#include <optional>
 
+#include "engine/asset/terrain.h"
 #include "engine/scene/components.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
@@ -340,4 +342,49 @@ TEST_CASE("a lake is the inside of the curve through its points, level at its su
     const core::InstanceId log = pool.box(core::DVec3{0.0, 6.5, 0.0}, core::Vec3{1.0f, 1.0f, 1.0f}, 0.5f);
     scene::applyWaterForces(pool.fixture.world, pool.workspace, 0.1);
     CHECK(pool.fixture.world.rigidBodies().find(log)->pendingImpulse.y > 0.5f);
+}
+
+TEST_CASE("a water's bed is cut into the ground under it, sloping from its edge to its depth (ADR 0146)")
+{
+    Pool pool;
+    // Flat ground at ten metres.
+    const core::InstanceId ground = pool.fixture.folder("Terrain");
+    scene::TerrainComponent terrain;
+    terrain.field =
+        asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -64.0f, .maxHeight = 64.0f});
+    (void)asset::fillFlat(terrain.field, core::DVec3{0.0, 0.0, 0.0}, 128.0f, 10.0f, 1);
+    terrain.fieldRevision = 1;
+    (void)pool.fixture.world.terrains().add(ground, terrain);
+    REQUIRE_FALSE(pool.fixture.world.setParent(ground, pool.workspace).has_value());
+
+    // A river along x on that ground: six wide, three deep, a bank of two.
+    scene::WaterComponent& water = *pool.fixture.world.waters().find(pool.water);
+    water.size = core::Vec3{6.0f, 3.0f, 1.0f};
+    water.bankWidth = 2.0;
+    along(pool, scene::water_shape::River, {{core::Vec3{-20.0f, 10.0f, 0.5f}}, {core::Vec3{20.0f, 10.0f, 0.5f}}});
+
+    CHECK(scene::carveWaterBed(pool.fixture.world, pool.water, ground) > 100);
+    const scene::TerrainComponent& carved = *pool.fixture.world.terrains().find(ground);
+    CHECK(carved.fieldRevision == 2);
+    const auto top = [&](core::i32 x, core::i32 z) {
+        const std::optional<float> height = carved.field.columnTop(x, z);
+        REQUIRE(height.has_value());
+        return static_cast<double>(*height);
+    };
+    // Down the middle, its whole depth; half way up the bank, half of it; at
+    // the water's edge and past it, the ground as it was.
+    CHECK(top(0, 0) == doctest::Approx(7.0).epsilon(0.03));
+    CHECK(top(0, 2) == doctest::Approx(8.5).epsilon(0.03));
+    CHECK(top(0, 3) == doctest::Approx(10.0).epsilon(0.03));
+    CHECK(top(0, 8) == doctest::Approx(10.0).epsilon(0.03));
+    // Past its end too.
+    CHECK(top(30, 0) == doctest::Approx(10.0).epsilon(0.03));
+
+    // It only ever digs: again, and there is nothing to cut.
+    CHECK(scene::carveWaterBed(pool.fixture.world, pool.water, ground) == 0);
+    CHECK(carved.fieldRevision == 2);
+
+    // A sea carves nothing.
+    water.shape = scene::water_shape::Ocean;
+    CHECK(scene::carveWaterBed(pool.fixture.world, pool.water, ground) == 0);
 }

@@ -58,9 +58,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## W2 — carving (§4)
 
-- [ ] `CarveTerrain`, `BankWidth`, `Water:Carve()`; the carve as a layer under
-  hand edits, restored when it moves away; re-carve on point moves; one undo
-  step; streamed cells (ADR 0144) and edits (ADR 0137) respected.
+- [x] **The bed is cut on demand** (as built, 2026-10-01): `Water:Carve()`,
+  `Water.BankWidth`, and the Water panel's **Carve bed** -- one undo step,
+  and none when there is nothing to cut. `scene::carveWaterBed` lowers each
+  column the water covers to the bed (the surface at the edge, the depth a
+  bank in) through `asset::writeHeights`, a tile of columns at a time; it
+  only ever digs. Tests: `water_tests.cpp` (the profile, and that a second
+  carve cuts nothing), `editor_tests.cpp` (the undo step).
+- [ ] Later: `CarveTerrain` -- the carve that follows the body by itself and
+  gives back the ground it took when the body moves away, as a layer under
+  hand edits; cells of a streamed terrain that are not resident.
 
 ## W3 — the look (§5)
 

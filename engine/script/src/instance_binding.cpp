@@ -1022,6 +1022,23 @@ int methodWaterGetNormalAt(lua_State* L)
     return 1;
 }
 
+// Cuts this water's bed into every terrain it lies over (ADR 0146 section 4).
+int methodWaterCarve(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    scene::World& w = world(L);
+    std::vector<core::InstanceId> terrains;
+    w.terrains().forEach([&](core::InstanceId terrain, const scene::TerrainComponent&) {
+        if (!w.destroyed(terrain))
+            terrains.push_back(terrain);
+    });
+    core::u64 lowered = 0;
+    for (const core::InstanceId terrain : terrains)
+        lowered += scene::carveWaterBed(w, id, terrain);
+    lua_pushnumber(L, static_cast<double>(lowered));
+    return 1;
+}
+
 // --- Network ownership (ADR 0099) ---------------------------------------------
 
 int methodSetNetworkOwner(lua_State* L)
@@ -2436,6 +2453,7 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
     {"Water", "GetHeightAt", methodWaterGetHeightAt},
     {"Water", "GetNormalAt", methodWaterGetNormalAt},
+    {"Water", "Carve", methodWaterCarve},
     {"BasePart", "GetNetworkOwner", methodGetNetworkOwner},
     {"BasePart", "SetMaterialParameter", methodSetMaterialParameter},
     {"TextInput", "CaptureFocus", methodTextInputCaptureFocus},

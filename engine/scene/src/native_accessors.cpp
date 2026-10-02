@@ -2362,6 +2362,17 @@ bool setWaterWavePhase(World& world, core::InstanceId id, const Value& value)
                                                                           WaterRule::Finite);
 }
 
+Value getWaterBankWidth(const World& world, core::InstanceId id)
+{
+    return getWaterNumber<WaterComponent, &WaterComponent::bankWidth>(world.waters(), id);
+}
+
+bool setWaterBankWidth(World& world, core::InstanceId id, const Value& value)
+{
+    return setWaterNumber<WaterComponent, &WaterComponent::bankWidth>(world.waters(), id, value,
+                                                                      WaterRule::AtLeastZero);
+}
+
 Value getWaterPointPosition(const World& world, core::InstanceId id)
 {
     const WaterPointComponent* point = world.waterPoints().find(id);

@@ -2528,7 +2528,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(clickDetectorDesc);
 
     // --- Water ---
-    static std::array<PropertyDesc, 8> waterProperties;
+    static std::array<PropertyDesc, 9> waterProperties;
     waterProperties = {{
         PropertyDesc{
             .name = atoms.intern("Shape"),
@@ -2619,8 +2619,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getWaterFlowSpeed,
             .set = native::setWaterFlowSpeed,
         },
+        PropertyDesc{
+            .name = atoms.intern("BankWidth"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How wide the bank `Carve` cuts is, in metres: the bed slopes from the water's edge, where it is at the surface, down to the water's depth this far in. Zero is a wall.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getWaterBankWidth,
+            .set = native::setWaterBankWidth,
+        },
     }};
-    static std::array<MethodDesc, 2> waterMethods;
+    static std::array<MethodDesc, 3> waterMethods;
     waterMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeightAt"),
@@ -2633,6 +2644,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::ReadParallel,
             .doc = "Which way the surface faces above the position's column now, or nil where this water is not.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Carve"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Cuts this water's bed into the terrain under it (ADR 0146): every column of ground it covers is lowered to the bed -- the surface at the water's edge, sloping to its depth `BankWidth` in -- and ground already lower is left alone. A river's bed follows it down. Answers how many columns it lowered; a sea carves nothing. Call it again after moving the water: it only ever digs.",
         },
     }};
     ClassDescriptor waterDesc;

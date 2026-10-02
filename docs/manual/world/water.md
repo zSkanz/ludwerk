@@ -41,9 +41,13 @@ else is in Properties, because the tool selects what it draws: a river's point
 has a `Width` and a `Depth` of its own there, and `Sharp` for a corner. Every
 click and every drag is one step of Undo.
 
-A river lies over the ground and does not cut into it yet: where the ground
-rises between two of its points, the ground covers it. Banks cut into the
-ground are the next stage of ADR 0146.
+**Carve bed** cuts the bed of the water in hand into the terrain under it:
+the ground is lowered to the water's depth, with a bank **Bank width** wide
+sloping up to the water's edge, and a river's bed follows it down the hill.
+It is one step of Undo, and it only ever digs -- ground already lower is left
+alone -- so after moving a point, carve again. Until a river is carved it
+lies over the ground, and where the ground rises between two of its points
+the ground covers it.
 
 ## Shapes
 
@@ -73,9 +77,13 @@ The curve passes through every point and makes no loop; a point with
 `Sharp = true` is a corner. A river runs at `FlowSpeed` where it is level and
 faster where it drops -- twice as fast down a slope of one in four -- and what
 floats in it is held up at the river's height there. A pool or a lake is at
-`SurfaceLevel`. Water is drawn only where it is: carve the ground out under
-it, and the ground hides whatever of it is not the basin
-(`examples/31-lake-and-river`).
+`SurfaceLevel`.
+
+`water:Carve()` cuts the water's bed into every terrain it lies over, as the
+editor's **Carve bed** does, and answers how many columns of ground it
+lowered: to the water's depth, with a bank `BankWidth` metres wide (2 unless
+it says otherwise). Water is drawn only where it is, so ground it has not
+been carved into hides whatever of it is under that ground.
 
 ## Waves
 

@@ -2661,6 +2661,11 @@ public:
     [[nodiscard]] static core::InstanceId waterInHand(const scene::World& world, const Inspector& inspector) noexcept;
     // Puts the river down: the next click starts another.
     void finishRiver(Inspector& inspector) noexcept;
+    // **Cuts the bed of the water in hand into the ground** (ADR 0146 section
+    // 4): every terrain under `root`, lowered under the water to its depth
+    // with a bank `Water.BankWidth` wide, as one undo step. Answers how many
+    // columns of ground it lowered, and says so; none, and there is no step.
+    core::u64 carveWater(scene::World& world, core::InstanceId root, Inspector& inspector);
 
     // What the viewport draws for the tool, made by `driveWater` each frame.
     struct WaterGuide

@@ -15,6 +15,7 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `BankWidth` | `number` | `2` | read/write | How wide the bank `Carve` cuts is, in metres: the bed slopes from the water's edge, where it is at the surface, down to the water's depth this far in. Zero is a wall. |
 | `Current` | `vector` | `vector.create(0, 0, 0)` | read/write | Metres a second the water flows, carrying what floats in it. A `River` adds `FlowSpeed` along its course. |
 | `Density` | `number` | `1` | read/write | Mass per cubic metre, in the units of `BasePart.Density`: a part less dense than the water floats, and one of half its density floats half under. |
 | `FlowSpeed` | `number` | `0` | read/write | How fast a river flows along its points, first to last, in metres a second -- where it is level. Where it drops it runs faster, by four times its slope: twice as fast down one in four. |
@@ -25,6 +26,10 @@ offers is on the base's page, which is what keeps one added member on
 | `Viscosity` | `number` | `1` | read/write | How much it drags what moves through it: 0 none, 1 a sea's, more a swamp's. |
 
 ## Methods
+
+### `Carve(): number`
+
+Cuts this water's bed into the terrain under it (ADR 0146): every column of ground it covers is lowered to the bed -- the surface at the water's edge, sloping to its depth `BankWidth` in -- and ground already lower is left alone. A river's bed follows it down. Answers how many columns it lowered; a sea carves nothing. Call it again after moving the water: it only ever digs.
 
 ### `GetHeightAt(position: vector): number?`
 

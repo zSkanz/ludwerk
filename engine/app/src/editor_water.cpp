@@ -196,6 +196,33 @@ void Editor::finishRiver(Inspector& inspector) noexcept
     inspector.select(core::InstanceId{});
 }
 
+core::u64 Editor::carveWater(scene::World& world, core::InstanceId root, Inspector& inspector)
+{
+    const core::InstanceId inHand = waterInHand(world, inspector);
+    if (!inHand.valid() || m_waterGesture.has_value())
+        return 0;
+    std::vector<core::InstanceId> terrains;
+    world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent&) {
+        if (!world.destroyed(id) && world.isAncestorOf(root, id))
+            terrains.push_back(id);
+    });
+    // The world as it was, kept only if something is cut: a carve that finds
+    // the ground already lower leaves nothing to undo.
+    scene::WorldSnapshot before = world.snapshot();
+    core::u64 lowered = 0;
+    for (const core::InstanceId terrain : terrains)
+        lowered += scene::carveWaterBed(world, inHand, terrain);
+    if (lowered == 0) {
+        m_status = EditorStatus{core::tr(ENG_TR("engine.editor.status.water_nothing_to_carve")), false};
+        return 0;
+    }
+    m_history.record(std::move(before), core::tr(ENG_TR("engine.editor.history.carve_water")));
+    m_sceneDirty = true;
+    m_status = EditorStatus{
+        core::tr(ENG_TR("engine.editor.status.water_carved"), {{"count", static_cast<core::i64>(lowered)}}), false};
+    return lowered;
+}
+
 bool Editor::driveWater(scene::World& world, core::InstanceId root, Inspector& inspector)
 {
     m_waterGuide = WaterGuide{};

@@ -6,6 +6,7 @@
 #include <numbers>
 #include <vector>
 
+#include "engine/asset/terrain.h"
 #include "engine/core/dmath.h"
 #include "engine/scene/components.h"
 #include "engine/scene/world.h"
@@ -242,9 +243,12 @@ WaterHere waterHere(const World& world, InstanceId water, f64 x, f64 z, const Wa
         return here;
     }
     if (waterIsPool(component->shape)) {
-        here.covered =
-            std::abs(x - static_cast<f64>(component->position.x)) <= 0.5 * static_cast<f64>(component->size.x) &&
-            std::abs(z - static_cast<f64>(component->position.z)) <= 0.5 * static_cast<f64>(component->size.z);
+        const f64 inX =
+            0.5 * static_cast<f64>(component->size.x) - std::abs(x - static_cast<f64>(component->position.x));
+        const f64 inZ =
+            0.5 * static_cast<f64>(component->size.z) - std::abs(z - static_cast<f64>(component->position.z));
+        here.covered = inX >= 0.0 && inZ >= 0.0;
+        here.inside = std::max(0.0, std::min(inX, inZ));
         return here;
     }
     WaterCourse made;
@@ -261,13 +265,23 @@ WaterHere waterHere(const World& world, InstanceId water, f64 x, f64 z, const Wa
         if (!course->closed)
             return here;
         bool inside = false;
+        f64 nearest = std::numeric_limits<f64>::max();
         for (usize at = 0, last = samples.size() - 1; at < samples.size(); last = at++) {
             const DVec3& a = samples[at].position;
             const DVec3& b = samples[last].position;
             if ((a.z > z) != (b.z > z) && x < (b.x - a.x) * (z - a.z) / (b.z - a.z) + a.x)
                 inside = !inside;
+            // And how far the outline is, for the bank.
+            const f64 dx = b.x - a.x;
+            const f64 dz = b.z - a.z;
+            const f64 length = dx * dx + dz * dz;
+            const f64 t = length > 1e-12 ? std::clamp(((x - a.x) * dx + (z - a.z) * dz) / length, 0.0, 1.0) : 0.0;
+            const f64 ox = x - (a.x + dx * t);
+            const f64 oz = z - (a.z + dz * t);
+            nearest = std::min(nearest, ox * ox + oz * oz);
         }
         here.covered = inside;
+        here.inside = inside ? std::sqrt(nearest) : 0.0;
         return here;
     }
 
@@ -291,6 +305,7 @@ WaterHere waterHere(const World& world, InstanceId water, f64 x, f64 z, const Wa
             continue;
         nearest = away;
         here.covered = true;
+        here.inside = reach - away;
         here.level = a.position.y + (b.position.y - a.position.y) * along;
         here.depth = a.depth + (b.depth - a.depth) * along;
         // Faster where it drops, never slower where it climbs.
@@ -300,6 +315,92 @@ WaterHere waterHere(const World& world, InstanceId water, f64 x, f64 z, const Wa
             Vec3{static_cast<core::f32>(dx / length * speed), 0.0f, static_cast<core::f32>(dz / length * speed)};
     }
     return here;
+}
+
+core::u64 carveWaterBed(World& world, InstanceId water, InstanceId terrainId)
+{
+    const WaterComponent* component = world.waters().find(water);
+    TerrainComponent* terrain = world.terrains().find(terrainId);
+    if (component == nullptr || terrain == nullptr || component->shape == water_shape::Ocean || terrain->field.empty())
+        return 0;
+    asset::TerrainField& field = terrain->field;
+    const WaterCourse course = courseOf(world, water);
+    // What the water covers across the ground, in the world's metres.
+    f64 minX = 0.0;
+    f64 maxX = 0.0;
+    f64 minZ = 0.0;
+    f64 maxZ = 0.0;
+    if (waterIsPool(component->shape)) {
+        minX = static_cast<f64>(component->position.x) - 0.5 * static_cast<f64>(component->size.x);
+        maxX = static_cast<f64>(component->position.x) + 0.5 * static_cast<f64>(component->size.x);
+        minZ = static_cast<f64>(component->position.z) - 0.5 * static_cast<f64>(component->size.z);
+        maxZ = static_cast<f64>(component->position.z) + 0.5 * static_cast<f64>(component->size.z);
+    }
+    else {
+        if (course.samples.size() < 2)
+            return 0;
+        minX = course.minX;
+        maxX = course.maxX;
+        minZ = course.minZ;
+        maxZ = course.maxZ;
+    }
+    // In the field's own space: a terrain is moved by its origin.
+    const core::i32 firstX = field.voxelIndex(minX - terrain->origin.x);
+    const core::i32 lastX = field.voxelIndex(maxX - terrain->origin.x);
+    const core::i32 firstZ = field.voxelIndex(minZ - terrain->origin.z);
+    const core::i32 lastZ = field.voxelIndex(maxZ - terrain->origin.z);
+    if (lastX < firstX || lastZ < firstZ)
+        return 0;
+    const f64 bank = std::max(component->bankWidth, 0.0);
+    constexpr f64 CarveSlack = 0.05;
+    const float skip = std::numeric_limits<float>::quiet_NaN();
+    core::u64 lowered = 0;
+    // A tile of columns at a time, so a river a kilometre long is not one
+    // table of a million heights -- and a tile the water misses is not laid.
+    constexpr core::i32 Tile = 128;
+    for (core::i32 tileZ = firstZ; tileZ <= lastZ; tileZ += Tile) {
+        for (core::i32 tileX = firstX; tileX <= lastX; tileX += Tile) {
+            const auto columns = static_cast<core::u32>(std::min(Tile, lastX - tileX + 1));
+            const auto rows = static_cast<core::u32>(std::min(Tile, lastZ - tileZ + 1));
+            std::vector<float> heights = asset::columnHeights(field, tileX, tileZ, columns, rows, skip);
+            core::u64 here = 0;
+            for (core::u32 row = 0; row < rows; ++row) {
+                for (core::u32 column = 0; column < columns; ++column) {
+                    float& height = heights[static_cast<usize>(row) * columns + column];
+                    // A column with no ground has nothing to cut.
+                    if (!(height == height))
+                        continue;
+                    const f64 x = field.voxelCenter(tileX + static_cast<core::i32>(column)) + terrain->origin.x;
+                    const f64 z = field.voxelCenter(tileZ + static_cast<core::i32>(row)) + terrain->origin.z;
+                    const WaterHere at = waterHere(world, water, x, z, &course);
+                    if (!at.covered) {
+                        height = skip;
+                        continue;
+                    }
+                    // At the surface along the edge, down to the depth a bank
+                    // in, by a curve with no corner at either end.
+                    const f64 t = bank > 0.0 ? std::clamp(at.inside / bank, 0.0, 1.0) : 1.0;
+                    const f64 bed = at.level - at.depth * (t * t * (3.0 - 2.0 * t)) - terrain->origin.y;
+                    // **Within what a column's height is stored to**: ground
+                    // laid at a height reads back a few millimetres off it, and
+                    // a carve of its own bed would cut those again for ever.
+                    if (static_cast<f64>(height) <= bed + CarveSlack) {
+                        height = skip;
+                        continue;
+                    }
+                    height = static_cast<float>(bed);
+                    ++here;
+                }
+            }
+            if (here == 0)
+                continue;
+            (void)asset::writeHeights(field, tileX, tileZ, columns, heights, core::u8{1});
+            lowered += here;
+        }
+    }
+    if (lowered > 0)
+        terrain->fieldRevision += 1;
+    return lowered;
 }
 
 bool waterCovers(const World& world, InstanceId water, f64 x, f64 z, Vec3* flow)

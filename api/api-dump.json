@@ -5775,6 +5775,11 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "BankWidth",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
           "Name": "Current",
           "Type": "vector",
           "Default": "vector.create(0, 0, 0)"
@@ -5816,6 +5821,12 @@
         }
       ],
       "Methods": [
+        {
+          "Name": "Carve",
+          "Parameters": [],
+          "Returns": ["number"],
+          "ThreadSafety": "Unsafe"
+        },
         {
           "Name": "GetHeightAt",
           "Parameters": [

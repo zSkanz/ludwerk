@@ -90,6 +90,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A water's bed, cut into the ground** (ADR 0146): `Water:Carve()` lowers
+  the terrain under a river, a lake or a pool to its depth, with a bank
+  `Water.BankWidth` wide sloping up to its edge, and answers how many columns
+  it lowered; a river's bed follows the river downhill. In the editor the
+  Water panel's **Carve bed** does it for the water in hand, as one undo step.
 - **Rivers that descend along a curve, and lakes of any outline** (ADR 0146):
   `Enum.WaterShape` gains `River` -- a ribbon along the smooth curve through
   its `WaterPoint` children, each point's height the surface's there --

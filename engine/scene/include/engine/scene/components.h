@@ -713,6 +713,8 @@ struct WaterComponent
     f64 viscosity = 1.0;
     core::Vec3 current{};
     f64 flowSpeed = 0.0;
+    // How wide the bank `carveWaterBed` cuts is, in metres.
+    f64 bankWidth = 2.0;
 };
 
 // One wave of a `Water`.

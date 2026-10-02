@@ -7464,3 +7464,36 @@ TEST_CASE("clicks with the Lake tool lay a lake's outline, level at the first, a
     REQUIRE(rig.editor.undo(rig.world, rig.inspector));
     CHECK_FALSE(scene::waterHere(rig.world, rig.waters().at(0), 14.0, 10.0).covered);
 }
+
+TEST_CASE("the bed of the river in hand is carved into the ground as one undo step (ADR 0146)")
+{
+    WaterRig rig;
+    rig.click({-12.0, 0.0, 0.0});
+    rig.click({12.0, 0.0, 0.0});
+    const core::InstanceId river = rig.waters().at(0);
+    const core::usize steps = rig.editor.history().depth();
+    const auto top = [&](core::i32 x, core::i32 z) {
+        const std::optional<float> height = rig.field().field.columnTop(x, z);
+        REQUIRE(height.has_value());
+        return static_cast<double>(*height);
+    };
+    CHECK(top(0, 0) == doctest::Approx(0.0).epsilon(0.05));
+
+    // Down the middle the ground goes to the river's depth under its surface.
+    CHECK(rig.editor.carveWater(rig.world, rig.root, rig.inspector) > 50);
+    const double depth = static_cast<double>(rig.editor.waterDepth());
+    CHECK(top(0, 0) == doctest::Approx(0.25 - depth).epsilon(0.05));
+    // Beside the river it is as it was.
+    CHECK(top(0, 12) == doctest::Approx(0.0).epsilon(0.05));
+    CHECK(rig.editor.history().depth() == steps + 1);
+    CHECK_FALSE(rig.editor.status().failed);
+
+    // Carved already: nothing to cut, and no step for it.
+    CHECK(rig.editor.carveWater(rig.world, rig.root, rig.inspector) == 0);
+    CHECK(rig.editor.history().depth() == steps + 1);
+
+    // One undo, and the ground is back -- the river still there.
+    REQUIRE(rig.editor.undo(rig.world, rig.inspector));
+    CHECK(top(0, 0) == doctest::Approx(0.0).epsilon(0.05));
+    CHECK(rig.world.alive(river));
+}
