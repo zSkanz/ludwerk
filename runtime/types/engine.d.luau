@@ -192,6 +192,21 @@ end
 declare extern type EnumPlatform extends EnumItem with
 end
 
+declare extern type EnumActuatorType extends EnumItem with
+end
+
+declare extern type EnumActuatorRelativeTo extends EnumItem with
+end
+
+declare extern type EnumVelocityConstraintMode extends EnumItem with
+end
+
+declare extern type EnumPositionAlignmentMode extends EnumItem with
+end
+
+declare extern type EnumOrientationAlignmentMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -1018,21 +1033,40 @@ declare extern type BasePart extends PVInstance with
     --- How much of an impact this surface gives back, 0 a dead stop and 1 a perfect bounce. Combined
     --- across a contact pair the same way Friction is.
     Restitution: number
-    --- Mass per cubic metre. Mass is this times the volume the Size and Shape describe, and there is no
-    --- Mass property precisely so that the two cannot be set to contradict each other.
+    --- Mass per cubic metre. Mass is this times the volume the Size and Shape describe, which is why
+    --- `Mass` can be read and not written: the two cannot be set to contradict each other.
     Density: number
-    --- How fast this part is moving, in metres per second, as of the last simulation tick. Read-only: a
-    --- velocity assignment is an impulse with the mass divided out, and `ApplyImpulse` is that
-    --- operation under a name that says what it does.
-    read LinearVelocity: vector
+    --- What the part weighs, in kilograms: `Density` times the volume of its shape, as the simulation
+    --- worked it out. An impulse is this times a change of speed.
+    read Mass: number
+    --- The mass of this part and of everything rigidly joined to it by welds and `FixedConstraint`s:
+    --- what has to be moved to move it.
+    read AssemblyMass: number
+    --- The share of its speed a part loses each second with nothing touching it. Zero keeps moving for
+    --- ever; one is thick air.
+    LinearDamping: number
+    --- The same for its spin.
+    AngularDamping: number
+    --- Whether `Collided` fires for this part. Off by default, so a world of scenery pays nothing for a
+    --- signal nobody listens to.
+    ContactDetails: boolean
+    --- How fast this part is moving, in metres per second, as of the last simulation tick. Writing it
+    --- sets the speed the next tick starts from: a ball served, a thing stopped dead. To push rather
+    --- than to set, `ApplyImpulse`.
+    LinearVelocity: vector
     --- How fast this part is spinning, in radians per second about each world axis, as of the last
-    --- simulation tick.
-    read AngularVelocity: vector
+    --- simulation tick. Writable, as `LinearVelocity` is.
+    AngularVelocity: vector
     --- Fires once when another part begins touching this one, with the part it touched. Deferred like
     --- every signal here (ADR 0015), so it arrives at the next resumption point rather than inside the
     --- solver. A pair that stays in contact fires once, not once per tick -- including across the
     --- moment the simulation puts both parts to sleep.
     read Touched: Signal<BasePart>
+    --- Fires with `Touched`, for a part whose `ContactDetails` is on, and says what the contact was:
+    --- where in the world, the direction from this part into the other, and how fast the two were
+    --- closing along it when they met, in metres a second -- before the simulation answered. How hard a
+    --- blow was is that speed times what was moving.
+    read Collided: Signal<BasePart, vector, vector, number>
     --- Fires when a pair that was touching stops. Destroying a part does NOT fire it for that part's
     --- contacts: the instance is gone, and a signal on an instance nobody can reach is a signal nobody
     --- can handle.
@@ -1166,6 +1200,25 @@ declare extern type Constraint extends Instance with
     --- arm and a lower arm overlap at the elbow by construction, and left colliding they shove each
     --- other apart every step -- a character that vibrates rather than falls.
     CollideConnected: boolean
+    --- Whether it is drawn. In the editor and under the debug overlay every constraint draws what it is
+    --- -- an arrow, a rail, a line. In a game only a rope, a rod and a spring are drawn, as a thin line
+    --- of their `Color` and `Thickness`.
+    Visible: boolean
+    --- The force, in newtons, past which the joint gives: it is disabled, and `Broken` fires. Zero
+    --- never breaks.
+    BreakForce: number
+    --- The same for the turning it resists, in newton-metres. Zero never breaks.
+    BreakTorque: number
+    --- Fires when the joint carried more than its `BreakForce` or `BreakTorque` and gave. It is
+    --- disabled, not destroyed: enabling it again mends it.
+    read Broken: Signal<()>
+    --- The force the joint carried over the last simulation tick to hold its two parts together, in
+    --- newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a joint that held
+    --- nothing.
+    function GetForce(self): number
+    --- The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to resist
+    --- a turn with -- a ball joint, a rope.
+    function GetTorque(self): number
 end
 
 declare extern type BallSocketConstraint extends Constraint with
@@ -1175,6 +1228,24 @@ declare extern type BallSocketConstraint extends Constraint with
     UpperAngle: number
     --- How far it may twist about that axis, in degrees, either way.
     TwistLimit: number
+    --- What the joint does of itself: nothing, or hold a pose (`Servo`). A ball joint has no axis to
+    --- spin about, so `Motor` is read as `None`.
+    ActuatorType: EnumActuatorType
+    --- Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. Only
+    --- the rotation is read. The identity is the pose the two were joined in.
+    TargetOrientation: CFrame
+    --- Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm is
+    --- pulled harder than this.
+    ServoMaxTorque: number
+    --- Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing.
+    AngularResponsiveness: number
+    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
+    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
+    --- both how firm and how bouncy.
+    Stiffness: number
+    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
+    --- arrives late and stays.
+    Damping: number
 end
 
 declare extern type HingeConstraint extends Constraint with
@@ -1184,9 +1255,229 @@ declare extern type HingeConstraint extends Constraint with
     LowerAngle: number
     --- How far it may turn the other, in degrees. A lower above the upper is unlimited.
     UpperAngle: number
+    --- What the hinge does of itself: nothing, turn at a speed (`Motor`), or go to an angle and hold it
+    --- (`Servo`).
+    ActuatorType: EnumActuatorType
+    --- Motor: the speed it turns at, in radians a second, about the hinge's own X. Negative turns the
+    --- other way.
+    AngularVelocity: number
+    --- Motor: the most torque it may use, in newton-metres. A load heavier than this stalls it.
+    MotorMaxTorque: number
+    --- Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds up.
+    MotorMaxAcceleration: number
+    --- Servo: the angle it goes to, in degrees, measured as the limits are.
+    TargetAngle: number
+    --- Servo: the fastest it turns on the way, in radians a second.
+    AngularSpeed: number
+    --- Servo: the most torque it may use to get there and to stay.
+    ServoMaxTorque: number
+    --- Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops harder.
+    AngularResponsiveness: number
+    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
+    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
+    --- both how firm and how bouncy.
+    Stiffness: number
+    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
+    --- arrives late and stays.
+    Damping: number
 end
 
 declare extern type FixedConstraint extends Constraint with
+end
+
+declare extern type PrismaticConstraint extends Constraint with
+    --- Whether the range below applies. Off, it slides as far as it is pushed.
+    LimitsEnabled: boolean
+    --- How far it may slide one way, in metres from where it was joined.
+    LowerLimit: number
+    --- How far it may slide the other. A lower above the upper is unlimited.
+    UpperLimit: number
+    --- What the rail does of itself: nothing, move at a speed (`Motor`), or go to a position and hold
+    --- it (`Servo`).
+    ActuatorType: EnumActuatorType
+    --- Motor: the speed it moves at, in metres a second along the rail.
+    Velocity: number
+    --- Motor: the most force it may use, in newtons.
+    MotorMaxForce: number
+    --- Motor: how fast its speed may change, in metres a second squared.
+    MotorMaxAcceleration: number
+    --- Servo: where it goes to, in metres along the rail from where it was joined.
+    TargetPosition: number
+    --- Servo: the fastest it moves on the way, in metres a second.
+    Speed: number
+    --- Servo: the most force it may use to get there and to stay. A lift that cannot raise more than
+    --- this does not.
+    ServoMaxForce: number
+    --- Servo: how eagerly it closes the last of the distance.
+    LinearResponsiveness: number
+    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
+    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
+    --- both how firm and how bouncy.
+    Stiffness: number
+    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
+    --- arrives late and stays.
+    Damping: number
+end
+
+declare extern type RopeConstraint extends Constraint with
+    --- The most the two ends may be apart, in metres. The winch changes it.
+    Length: number
+    --- Whether the winch is working `Length` towards `WinchTarget`.
+    WinchEnabled: boolean
+    --- The length the winch works towards, in metres.
+    WinchTarget: number
+    --- How fast the winch takes rope in or lets it out, in metres a second.
+    WinchSpeed: number
+    --- The most tension the winch can pull against, in newtons. A load heavier than this stays where it
+    --- is.
+    WinchForce: number
+    --- The colour of the line it is drawn as.
+    Color: Color3
+    --- How thick that line is, in metres.
+    Thickness: number
+end
+
+declare extern type RodConstraint extends Constraint with
+    --- How far apart the two ends are held, in metres.
+    Length: number
+    --- The colour of the line it is drawn as.
+    Color: Color3
+    --- How thick that line is, in metres.
+    Thickness: number
+end
+
+declare extern type SpringConstraint extends Constraint with
+    --- The length at which it neither pulls nor pushes, in metres.
+    FreeLength: number
+    --- The force for each metre it is away from `FreeLength`, in newtons a metre.
+    Stiffness: number
+    --- The force against each metre a second its length is changing, in newton-seconds a metre. None
+    --- and it bounces for ever; a lot and it creeps.
+    Damping: number
+    --- Whether the two lengths below are hard stops.
+    LimitsEnabled: boolean
+    --- The shortest it can be, in metres.
+    MinLength: number
+    --- The longest it can be, in metres.
+    MaxLength: number
+    --- The colour of the line it is drawn as.
+    Color: Color3
+    --- How thick that line is, in metres.
+    Thickness: number
+end
+
+declare extern type LinearVelocity extends Constraint with
+    --- Whether it holds the whole velocity, or only the part of it along a line or in a plane.
+    VelocityConstraintMode: EnumVelocityConstraintMode
+    --- Vector mode: the velocity held, in metres a second, in the frame `RelativeTo` names.
+    VectorVelocity: vector
+    --- Line mode: the line. Its length does not matter.
+    LineDirection: vector
+    --- Line mode: the speed held along the line, in metres a second.
+    LineVelocity: number
+    --- Plane mode: one direction in the plane.
+    PrimaryTangentAxis: vector
+    --- Plane mode: the other.
+    SecondaryTangentAxis: vector
+    --- Plane mode: the speed held along each of the two, in metres a second.
+    PlaneVelocity: Vector2
+    --- The most force it may use, in newtons.
+    MaxForce: number
+    --- The frame the velocities are written in: the world's, or an attachment's -- so "forwards"
+    --- follows the part as it turns.
+    RelativeTo: EnumActuatorRelativeTo
+end
+
+declare extern type AngularVelocity extends Constraint with
+    --- The spin held, in radians a second about each axis of the frame `RelativeTo` names.
+    AngularVelocity: vector
+    --- The most torque it may use, in newton-metres.
+    MaxTorque: number
+    --- The frame the spin is written in.
+    RelativeTo: EnumActuatorRelativeTo
+    --- Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists
+    --- what it is mounted on.
+    ReactionTorqueEnabled: boolean
+end
+
+declare extern type AlignPosition extends Constraint with
+    --- Whether the target is `Position` or `Attachment1`.
+    Mode: EnumPositionAlignmentMode
+    --- OneAttachment: the place in the world it pulls to.
+    Position: vector
+    --- The most force it may use, in newtons.
+    MaxForce: number
+    --- The fastest it may bring the attachment in, in metres a second.
+    MaxVelocity: number
+    --- How eagerly it closes the distance. Low drifts in; high snaps.
+    Responsiveness: number
+    --- Whether it gets there as fast as the simulation can take it, with no cap on force or speed.
+    RigidityEnabled: boolean
+    --- Whether the pull is at where the part balances rather than at the attachment. Off, a pull at a
+    --- corner also turns the part.
+    ApplyAtCenterOfMass: boolean
+    --- TwoAttachment: whether the part `Attachment1` is on is pulled back by as much. Off, the target
+    --- is not disturbed by what follows it; on, a hand pulling a crate is pulled by the crate.
+    ReactionForceEnabled: boolean
+    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
+    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
+    --- both how firm and how bouncy.
+    Stiffness: number
+    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
+    --- arrives late and stays.
+    Damping: number
+end
+
+declare extern type AlignOrientation extends Constraint with
+    --- Whether the target is `CFrame` or `Attachment1`.
+    Mode: EnumOrientationAlignmentMode
+    --- OneAttachment: the orientation in the world it turns to. Only the rotation is read.
+    CFrame: CFrame
+    --- The most torque it may use, in newton-metres.
+    MaxTorque: number
+    --- The fastest it may turn the part, in radians a second.
+    MaxAngularVelocity: number
+    --- How eagerly it closes the angle.
+    Responsiveness: number
+    --- Whether it gets there as fast as the simulation can take it, with no cap on torque or speed.
+    RigidityEnabled: boolean
+    --- TwoAttachment: whether the part `Attachment1` is on is turned back by as much. An arm aligned to
+    --- a chest then turns the chest, as a real one does.
+    ReactionTorqueEnabled: boolean
+    --- How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to
+    --- `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say
+    --- both how firm and how bouncy.
+    Stiffness: number
+    --- How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it
+    --- arrives late and stays.
+    Damping: number
+end
+
+declare extern type VectorForce extends Constraint with
+    --- The force, in newtons, in the frame `RelativeTo` names.
+    Force: vector
+    --- The frame the force is written in. `Attachment0`, the default, is a thruster: it pushes where
+    --- the part points.
+    RelativeTo: EnumActuatorRelativeTo
+    --- Whether it pushes at where the part balances rather than at the attachment. Off, a force
+    --- off-centre also turns the part.
+    ApplyAtCenterOfMass: boolean
+end
+
+declare extern type Torque extends Constraint with
+    --- The torque, in newton-metres about each axis of the frame `RelativeTo` names.
+    Torque: vector
+    --- The frame the torque is written in.
+    RelativeTo: EnumActuatorRelativeTo
+end
+
+declare extern type NoCollisionConstraint extends Instance with
+    --- One of the two.
+    Part0: BasePart?
+    --- The other.
+    Part1: BasePart?
+    --- Whether the two pass through each other. Off, they collide again.
+    Enabled: boolean
 end
 
 declare extern type Ragdoll extends Instance with
@@ -1415,8 +1706,20 @@ declare extern type CharacterBody extends BasePart with
     --- to Move is scaled by this, so a half-length direction walks at half speed.
     WalkSpeed: number
     --- The upward speed Jump imparts, in metres per second. How high that reaches depends on
-    --- `Workspace.Gravity`, which is the relationship a game tunes rather than a height.
+    --- `Workspace.Gravity`, which is the relationship a game tunes rather than a height. Negative is a
+    --- slam downwards.
     JumpSpeed: number
+    --- How much of `Workspace.Gravity` the character feels: 1 all of it, 0.5 a floaty jump, 0 none.
+    --- Negative falls upwards.
+    GravityScale: number
+    --- How fast `Move` takes it through a fluid, in metres per second, as `WalkSpeed` does on the
+    --- ground.
+    SwimSpeed: number
+    --- How fast `Move` takes it while `Flying`, in metres per second.
+    FlySpeed: number
+    --- Whether the character flies: no weight, and `Move` in three dimensions at `FlySpeed`. A creative
+    --- mode, a ghost, a jetpack held on.
+    Flying: boolean
     --- The steepest ground, in degrees from horizontal, the character can stand and walk on. Anything
     --- steeper is a wall it slides down rather than a floor it stands on.
     MaxSlopeAngle: number
@@ -1426,8 +1729,10 @@ declare extern type CharacterBody extends BasePart with
     --- Whether the character is standing on something walkable as of the last simulation tick. The same
     --- fact `State` reports, as the boolean a jump check actually wants.
     read Grounded: boolean
-    --- Grounded or Airborne. Ground too steep to walk on reads as Airborne, because the question this
-    --- answers is whether the character is supported.
+    --- What the character is doing: `Grounded` or `Airborne` on foot -- ground too steep to walk on
+    --- reads as Airborne, because the question is whether it is supported -- `Swimming` with its middle
+    --- under a `Water`'s surface or inside a fluid block, which it enters and leaves by itself, and
+    --- `Flying` while `Flying` is set.
     read State: EnumCharacterState
     --- Fires when the character becomes Grounded after being Airborne, with the part it landed on --
     --- nil when that is terrain no instance owns. Deferred like every signal here.
@@ -1435,16 +1740,20 @@ declare extern type CharacterBody extends BasePart with
     --- Sets the direction to walk in for the next simulation tick, in world space. Only the horizontal
     --- part is used -- vertical movement is gravity's and Jump's -- and the vector is scaled by
     --- WalkSpeed rather than normalised, so a shorter one walks slower. Call it every tick while
-    --- moving; a character told nothing stops.
+    --- moving; a character told nothing stops. Swimming and flying, all three axes are used -- up is up
+    --- -- at `SwimSpeed` and `FlySpeed`. A character is pushed as a part is: `ApplyImpulse` changes its
+    --- speed by the impulse over its `Mass`, and `LinearVelocity` can be written -- a knock back, a
+    --- launch pad. What it was pushed by fades, quickly on the ground and slowly in the air, and its
+    --- walk is added on top.
     function Move(self, direction: vector): ()
     --- Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. It does
-    --- NOT check Grounded, deliberately: `LinearVelocity` is read-only, so a mid-air check here would
-    --- make a double jump, a wall jump and a triple jump impossible to write at all. `if
-    --- character.Grounded then character:Jump() end` is the old behaviour in one line, in the game,
-    --- where a jump policy belongs -- and coyote time and jump buffering become counters beside it.
-    --- Calling it every frame is flying: that is the game's bug, and it is the same in every engine
-    --- that offers a mechanism rather than a policy. The TICK stays engine-side: the velocity is
-    --- applied at the next simulation step and never inside the call, or a replay diverges.
+    --- NOT check Grounded, deliberately: a mid-air check here would make a double jump, a wall jump and
+    --- a triple jump impossible to write as a jump at all. `if character.Grounded then character:Jump()
+    --- end` is the old behaviour in one line, in the game, where a jump policy belongs -- and coyote
+    --- time and jump buffering become counters beside it. Calling it every frame is flying: that is the
+    --- game's bug, and it is the same in every engine that offers a mechanism rather than a policy. The
+    --- TICK stays engine-side: the velocity is applied at the next simulation step and never inside the
+    --- call, or a replay diverges.
     function Jump(self): ()
 end
 
@@ -2432,6 +2741,14 @@ declare extern type Part2D extends Instance with
     ImageRectSize: Vector2
     --- Linear for painted art, Nearest for pixel art.
     Filter: EnumTextureFilter
+    --- **The colours on the screen are the colours in the picture.** A sprite is art somebody chose
+    --- every colour of, so by default it is drawn past everything the scene does to light: the
+    --- exposure, the tone curve, colour correction and bloom leave it alone, and a `Color` of
+    --- `Color3.fromRGB(200, 80, 40)` is that pixel, whatever `Lighting` holds. Off, the sprite is one
+    --- more thing in the lit picture -- exposed, tone-mapped, graded and glowing like a part beside it
+    --- -- which is what a sprite standing in a 3D scene wants. Either way it keeps its place: a part in
+    --- front hides it, and glass or a particle in front is drawn over it.
+    ExactColor: boolean
     --- Ground: it does not move, and what lands on it stays. A script may still move it.
     Anchored: boolean
     --- Whether other parts bump into it. A part that cannot collide is only a picture.
@@ -2481,6 +2798,9 @@ declare extern type Tilemap2D extends Instance with
     Color: Color3
     --- Nearest by default, because tiles are nearly always pixel art.
     Filter: EnumTextureFilter
+    --- The tiles' colours on the screen are the colours in the tileset, as `Part2D.ExactColor` says.
+    --- Off, the level is lit, exposed and graded with the rest of the scene.
+    ExactColor: boolean
     --- Whether its tiles are solid. Off, it is scenery: a background layer.
     Collides: boolean
     --- How much its tiles grip what slides on them.
@@ -2952,6 +3272,9 @@ declare extern type Workspace extends Instance with
     --- Every part overlapping an oriented box, as a fresh array in a stable order -- one entry per part
     --- however many of its surfaces are inside. `size` is the full extent, matching `BasePart.Size`.
     function GetBodiesInBox(self, cframe: CFrame, size: vector, params: RaycastParams?): {BasePart}
+    --- Every part overlapping a ball, as `GetBodiesInBox` answers for a box: what an explosion reaches,
+    --- what is within arm's length.
+    function GetBodiesInSphere(self, position: vector, radius: number, params: RaycastParams?): {BasePart}
 end
 
 declare extern type Lighting extends Instance with
@@ -3856,6 +4179,8 @@ declare Enum: {
     CharacterState: {
         Grounded: EnumCharacterState,
         Airborne: EnumCharacterState,
+        Swimming: EnumCharacterState,
+        Flying: EnumCharacterState,
         GetEnumItems: (self: any) -> { EnumCharacterState },
     },
     RotationOrder: {
@@ -4338,6 +4663,34 @@ declare Enum: {
         IOS: EnumPlatform,
         GetEnumItems: (self: any) -> { EnumPlatform },
     },
+    ActuatorType: {
+        None: EnumActuatorType,
+        Motor: EnumActuatorType,
+        Servo: EnumActuatorType,
+        GetEnumItems: (self: any) -> { EnumActuatorType },
+    },
+    ActuatorRelativeTo: {
+        Attachment0: EnumActuatorRelativeTo,
+        Attachment1: EnumActuatorRelativeTo,
+        World: EnumActuatorRelativeTo,
+        GetEnumItems: (self: any) -> { EnumActuatorRelativeTo },
+    },
+    VelocityConstraintMode: {
+        Line: EnumVelocityConstraintMode,
+        Plane: EnumVelocityConstraintMode,
+        Vector: EnumVelocityConstraintMode,
+        GetEnumItems: (self: any) -> { EnumVelocityConstraintMode },
+    },
+    PositionAlignmentMode: {
+        OneAttachment: EnumPositionAlignmentMode,
+        TwoAttachment: EnumPositionAlignmentMode,
+        GetEnumItems: (self: any) -> { EnumPositionAlignmentMode },
+    },
+    OrientationAlignmentMode: {
+        OneAttachment: EnumOrientationAlignmentMode,
+        TwoAttachment: EnumOrientationAlignmentMode,
+        GetEnumItems: (self: any) -> { EnumOrientationAlignmentMode },
+    },
 }
 
 declare Vector3: {
@@ -4598,6 +4951,17 @@ declare Instance: {
         & (("BallSocketConstraint") -> BallSocketConstraint)
         & (("HingeConstraint") -> HingeConstraint)
         & (("FixedConstraint") -> FixedConstraint)
+        & (("PrismaticConstraint") -> PrismaticConstraint)
+        & (("RopeConstraint") -> RopeConstraint)
+        & (("RodConstraint") -> RodConstraint)
+        & (("SpringConstraint") -> SpringConstraint)
+        & (("LinearVelocity") -> LinearVelocity)
+        & (("AngularVelocity") -> AngularVelocity)
+        & (("AlignPosition") -> AlignPosition)
+        & (("AlignOrientation") -> AlignOrientation)
+        & (("VectorForce") -> VectorForce)
+        & (("Torque") -> Torque)
+        & (("NoCollisionConstraint") -> NoCollisionConstraint)
         & (("Ragdoll") -> Ragdoll)
         & (("Weld") -> Weld)
         & (("Terrain") -> Terrain)

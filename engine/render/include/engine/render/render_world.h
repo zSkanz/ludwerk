@@ -514,6 +514,9 @@ struct RenderSprite
     // Invalid draws the colour alone.
     rhi::TextureHandle texture;
     bool nearest = false;
+    // Its colours reach the screen as authored (ADR 0153): the resolve passes
+    // these pixels through instead of exposing and tone-mapping them.
+    bool exact = true;
 };
 
 // One corner of a world-space UI quad (F3), as `ui_world.hlsl` reads it: the

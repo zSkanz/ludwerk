@@ -9858,10 +9858,18 @@ void pollExport(ExportUi& ui)
                                                             "-c", "android.intent.category.LAUNCHER", "1"});
             }
             else {
+                // **A game already on the phone under another key** is the one
+                // refusal worth saying in words (D465): the phone will not take
+                // an update signed differently, and the only way through is to
+                // uninstall, which deletes what the game saved there. Said, and
+                // left to the person: nothing here uninstalls anything.
+                const bool otherKey = ui.installOutput.find("INSTALL_FAILED_UPDATE_INCOMPATIBLE") != std::string::npos;
                 ui.installMessage =
-                    ok ? core::tr(ENG_TR("engine.editor.export_window.installed_on"), {{"phone", ui.phone}})
-                       : core::tr(ENG_TR("engine.editor.export_window.adb_could_not_install"),
-                                  {{"output", ui.installOutput}});
+                    ok         ? core::tr(ENG_TR("engine.editor.export_window.installed_on"), {{"phone", ui.phone}})
+                    : otherKey ? core::tr(ENG_TR("engine.editor.export_window.signed_with_another_key"),
+                                          {{"package", ui.installPackage}})
+                               : core::tr(ENG_TR("engine.editor.export_window.adb_could_not_install"),
+                                          {{"output", ui.installOutput}});
                 ui.installStage = 0;
             }
         }

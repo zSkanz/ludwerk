@@ -693,6 +693,136 @@ void appendPrompts(scene::World& world, const render::DrawPoses& poses, const re
     }
 }
 
+// **What a joint or a mover is doing, as lines** (ADR 0127): every one whose
+// `Visible` is on, and every one that is selected. A line between its two
+// ends; a hinge's or a rail's axis; where an `AlignPosition` pulls to; which
+// way a force, a velocity or a spin points. Enough to see that the hinge is
+// about the axis you meant and that the pull goes where you thought.
+//
+// Camera-relative, after the rebase, like the selection's box.
+void submitConstraints(const scene::World& world, const render::DrawPoses& poses,
+                       std::span<const core::InstanceId> selection, core::DVec3 cameraOrigin, render::DebugDraw& draw)
+{
+    if (world.constraints().size() == 0)
+        return;
+    const render::DebugColor link = render::DebugColor::fromLinear(0.95f, 0.85f, 0.25f);
+    const render::DebugColor axis = render::DebugColor::fromLinear(0.95f, 0.35f, 0.30f);
+    const render::DebugColor goal = render::DebugColor::fromLinear(0.35f, 0.85f, 0.95f);
+
+    struct End
+    {
+        core::CFrameD frame;
+        bool present = false;
+    };
+    const auto endOf = [&](core::InstanceId attachment) {
+        End end;
+        const scene::AttachmentComponent* frame = world.attachments().find(attachment);
+        const core::InstanceId part = world.parentOf(attachment);
+        if (frame == nullptr || world.parts().find(part) == nullptr)
+            return end;
+        end.frame = poses.part(part) * frame->cframe;
+        end.present = true;
+        return end;
+    };
+    const auto local = [&](core::DVec3 at) { return core::toVec3(at - cameraOrigin); };
+    // A line with a head, so a direction reads as one.
+    const auto arrow = [&](core::Vec3 from, core::Vec3 along, render::DebugColor color) {
+        const f32 length = core::length(along);
+        if (length < 1.0e-4f)
+            return;
+        const core::Vec3 to = from + along;
+        draw.line(from, to, color);
+        const core::Vec3 forward = along * (1.0f / length);
+        const core::Vec3 pick =
+            std::fabs(forward.y) < 0.9f ? core::Vec3{0.0f, 1.0f, 0.0f} : core::Vec3{1.0f, 0.0f, 0.0f};
+        const core::Vec3 side = core::normalize(core::cross(forward, pick)) * (0.15f * std::min(length, 2.0f));
+        const core::Vec3 back = forward * (0.3f * std::min(length, 2.0f));
+        draw.line(to, to - back + side, color);
+        draw.line(to, to - back - side, color);
+    };
+    // A direction drawn at a length a person can see, whatever its size.
+    const auto shown = [](core::Vec3 v) {
+        const f32 length = core::length(v);
+        return length > 1.0e-4f ? v * (std::min(std::max(length, 1.0f), 4.0f) / length) : v;
+    };
+
+    world.constraints().forEach([&](core::InstanceId id, const scene::ConstraintComponent& constraint) {
+        const bool selected = std::find(selection.begin(), selection.end(), id) != selection.end();
+        if (!constraint.visible && !selected)
+            return;
+        const End first = endOf(constraint.attachment0);
+        if (!first.present)
+            return;
+        const End second = endOf(constraint.attachment1);
+        const core::Vec3 from = local(first.frame.position);
+        const core::Vec3 along = core::transformDirection(first.frame, core::Vec3{1.0f, 0.0f, 0.0f});
+        if (second.present)
+            draw.line(from, local(second.frame.position), link);
+
+        const scene::MoverComponent* mover = world.movers().find(id);
+        if (mover == nullptr) {
+            // A hinge turns about its frame's X, and a rail runs along it.
+            if (constraint.kind == 2)
+                draw.line(from - along, from + along, axis);
+            else if (constraint.kind == 4) {
+                const f32 low = constraint.limitsEnabled ? constraint.limitLow : -2.0f;
+                const f32 high = constraint.limitsEnabled ? constraint.limitHigh : 2.0f;
+                draw.line(from + along * low, from + along * high, axis);
+            }
+            return;
+        }
+
+        const auto inFrame = [&](core::Vec3 v) {
+            if (mover->relativeTo == 0)
+                return core::transformDirection(first.frame, v);
+            if (mover->relativeTo == 1 && second.present)
+                return core::transformDirection(second.frame, v);
+            return v;
+        };
+        switch (constraint.kind) {
+        case scene::MoverKind::LinearVelocity:
+            arrow(
+                from,
+                shown(mover->mode == 0 ? inFrame(mover->lineDirection) * mover->lineVelocity : inFrame(mover->vector)),
+                goal);
+            break;
+        case scene::MoverKind::AngularVelocity:
+        case scene::MoverKind::Torque:
+            arrow(from, shown(inFrame(mover->vector)), axis);
+            break;
+        case scene::MoverKind::VectorForce:
+            arrow(from, shown(inFrame(mover->vector)), goal);
+            break;
+        case scene::MoverKind::AlignPosition: {
+            if (mover->mode != 0)
+                break;
+            const core::Vec3 target = local(mover->position);
+            draw.line(from, target, goal);
+            for (const core::Vec3 arm :
+                 {core::Vec3{0.3f, 0.0f, 0.0f}, core::Vec3{0.0f, 0.3f, 0.0f}, core::Vec3{0.0f, 0.0f, 0.3f}})
+                draw.line(target - arm, target + arm, goal);
+            break;
+        }
+        case scene::MoverKind::AlignOrientation: {
+            if (mover->mode != 0)
+                break;
+            // The three axes it turns to, at the attachment it turns.
+            const render::DebugColor colors[3] = {render::DebugColor::fromLinear(0.95f, 0.35f, 0.30f),
+                                                  render::DebugColor::fromLinear(0.40f, 0.90f, 0.35f),
+                                                  render::DebugColor::fromLinear(0.35f, 0.55f, 0.95f)};
+            for (u32 column = 0; column < 3; ++column) {
+                const core::Vec3 arm{mover->orientation.m[column][0], mover->orientation.m[column][1],
+                                     mover->orientation.m[column][2]};
+                draw.line(from, from + arm, colors[column]);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    });
+}
+
 // **How far a click, a prompt or a drag reaches** (ADR 0126), drawn round a
 // selected `ClickDetector`, `ProximityPrompt` or `DragDetector` -- or round the
 // part holding one -- at the part or attachment it hangs from.
@@ -1702,7 +1832,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // A project with no scene file is not an error and never logs one. Every
     // example before `06-scene` is exactly that.
     std::string sceneRelative;
-    if (options.editor)
+    if (options.editor && !options.startupSceneFromFlag)
         sceneRelative = Editor::recallOpenScene(options.scriptPath / ".engine");
     if (sceneRelative.empty() || !platform::fileExists(contentRoot / std::filesystem::path(sceneRelative)))
         sceneRelative = options.startupScene;
@@ -1840,6 +1970,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         .bootSceneText = bootSceneText,
         .bootGlobalText = bootGlobalText,
         .bootScenePath = sceneRelative,
+        .bootSceneData = options.startupSceneData,
         // A scene named at run time (ADR 0106), found as the boot scene is: a
         // file first, and the pack when there is none.
         .readContent = [contentRoot, packed](std::string_view relative) -> std::optional<std::string> {
@@ -5502,6 +5633,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // editor draws over the world goes here for the same reason -- and
             // none of it over the game's own view (`Editor::viewportIsGames`):
             // no box, no ring, no guide.
+            // **Under the overlay in a game, what is `Visible` is drawn** (ADR
+            // 0127): the same lines the editor draws, with nothing selected.
+            if (!(options.editor && !editor.viewportIsGames()) && overlayVisible)
+                submitConstraints(host->world(), framePoses, {}, snapshot.camera.origin, debugDraw);
             if (options.editor && !editor.viewportIsGames()) {
                 // **The wire box only when nothing else marks the selection.**
                 // The renderer outlines a selected part along its own
@@ -5519,6 +5654,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     submitLightVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
                     submitDetectorVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
                 }
+                submitConstraints(host->world(), framePoses, inspector.selectionSet(), snapshot.camera.origin,
+                                  debugDraw);
                 // The manipulator over the outline, because the outline says
                 // WHAT is selected and the manipulator is the thing being
                 // aimed at.

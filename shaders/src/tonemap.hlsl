@@ -40,6 +40,15 @@ SamplerState BloomSampler : register(s1, space2);
 Texture2D<float> ExposureTexture : register(t2, space2);
 SamplerState ExposureSampler : register(s2, space2);
 
+#ifdef ENG_TONEMAP_EXACT
+// **Which pixels are a sprite drawn in its own colours** (ADR 0153), one
+// channel, written by `sprite_exact.hlsl`. Declared only in the twins that
+// define the symbol -- `tonemap_exact.hlsl`, `tonemap_graded_exact.hlsl` --
+// so a frame without such a sprite resolves through the bytes it always did.
+Texture2D<float> ExactTexture : register(t3, space2);
+SamplerState ExactSampler : register(s3, space2);
+#endif
+
 struct Interpolants
 {
     float2 Uv : TEXCOORD0;
@@ -119,6 +128,20 @@ float3 ditherOutput(float3 encoded, float2 pixel)
     return encoded + (noise - 0.5f) / 255.0f;
 }
 
+#ifdef ENG_TONEMAP_EXACT
+// **A sprite's pixel is already a colour for a screen.** What the HDR target
+// holds there is the picture decoded from sRGB, so encoding it again gives the
+// bytes of the file: no exposure, no curve, no grade, no glow added, and no
+// dither -- half a step of noise is the difference between the colour and its
+// neighbour. Where a sprite half covers a pixel -- an anti-aliased edge, a
+// transparent texel -- the two answers mix by how much of it is sprite.
+float4 resolveExact(float4 resolved, float3 hdr, float2 uv)
+{
+    const float exact = ExactTexture.SampleLevel(ExactSampler, uv, 0.0f);
+    return float4(lerp(resolved.rgb, encodeSrgb(saturate(hdr)), exact), resolved.a);
+}
+#endif
+
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
     // SampleLevel because the HDR target has one mip and this pass is a 1:1
@@ -146,5 +169,10 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float exposure = (EngineExposureKey / measured) * exp2(ExposureBloom.x);
     const float3 exposed = max(scene * exposure, float3(0.0f, 0.0f, 0.0f));
 
+#ifdef ENG_TONEMAP_EXACT
+    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha), hdr,
+                        input.Uv);
+#else
     return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);
+#endif
 }

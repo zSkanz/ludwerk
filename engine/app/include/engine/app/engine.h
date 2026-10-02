@@ -165,6 +165,12 @@ struct EngineOptions
     // and falls back to this. Which scene a run starts with is the project's
     // decision; which scene an editor opens is the person's.
     std::string startupScene;
+    // **`--scene=` named it** (D468): this run starts there whatever the
+    // project file says and whatever an editor had open -- a level is tested
+    // without clicking through the menu. `startupSceneData` is `--scene-data=`,
+    // JSON, which the scene's `GetLoadData` answers.
+    bool startupSceneFromFlag = false;
+    std::string startupSceneData;
     // `[network] server` (ADR 0106): where `NetworkService:Join()` goes with no
     // address.
     std::string defaultServer;

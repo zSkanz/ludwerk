@@ -1504,6 +1504,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             sprite.color[2] = part.color.b;
             sprite.color[3] = 1.0f - part.transparency;
             sprite.nearest = part.filter == 1;
+            sprite.exact = part.exactColor;
             keyed.push_back(entry);
         });
 
@@ -1559,6 +1560,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                         sprite.color[1] = tilemap.color.g;
                         sprite.color[2] = tilemap.color.b;
                         sprite.nearest = tilemap.filter == 1;
+                        sprite.exact = tilemap.exactColor;
                         keyed.push_back(entry);
                     }
                 }
@@ -1705,6 +1707,110 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             .voxelBlock = false,
         });
     });
+
+    // --- Ropes, rods and springs (ADR 0127) -----------------------------------
+    //
+    // **A rope a game shows is a thing in the world**: a thin cylinder from
+    // one attachment to the other, of the constraint's `Color` and
+    // `Thickness`, lit and shadowed like the parts it joins. Only the distance
+    // family, and only when `Visible`: a world with none of them walks an empty
+    // list of looks and adds nothing.
+    {
+        struct LineLook
+        {
+            Color3 color;
+            u32 slot = 0;
+        };
+        std::vector<LineLook> lineLooks;
+        const MeshLibrary::Entry* cylinder = primitiveOf(2);
+        const core::i32 distanceKind = scene::MoverKind::DistanceJoint;
+        const auto endOf = [&](core::InstanceId attachment, DVec3& at) {
+            const scene::AttachmentComponent* frame = world.attachments().find(attachment);
+            const core::InstanceId part = world.parentOf(attachment);
+            if (frame == nullptr || world.parts().find(part) == nullptr)
+                return false;
+            // raw: where an attachment sits ON its part is authored; the part is the poses'.
+            at = (posed.part(part) * frame->cframe).position;
+            return true;
+        };
+        world.constraints().forEach([&](core::InstanceId id, const scene::ConstraintComponent& line) {
+            if (!line.visible || line.kind != distanceKind || cylinder == nullptr || line.thickness <= 0.0f ||
+                !inWorld(world, id, root))
+                return;
+            DVec3 from;
+            DVec3 to;
+            if (!endOf(line.attachment0, from) || !endOf(line.attachment1, to))
+                return;
+            const Vec3 span = core::toVec3(to - from);
+            const f32 length = core::length(span);
+            if (length < 1.0e-4f)
+                return;
+
+            // The cylinder's own axis is Y: turned onto the line, about any
+            // side that is not along it.
+            const Vec3 up = span * (1.0f / length);
+            const Vec3 pick = std::fabs(up.y) < 0.99f ? Vec3{0.0f, 1.0f, 0.0f} : Vec3{1.0f, 0.0f, 0.0f};
+            const Vec3 right = core::normalize(core::cross(up, pick));
+            const Vec3 back = core::cross(right, up);
+            CFrameD frame;
+            frame.position = DVec3{(from.x + to.x) * 0.5, (from.y + to.y) * 0.5, (from.z + to.z) * 0.5};
+            frame.rotation.m[0][0] = right.x, frame.rotation.m[0][1] = right.y, frame.rotation.m[0][2] = right.z;
+            frame.rotation.m[1][0] = up.x, frame.rotation.m[1][1] = up.y, frame.rotation.m[1][2] = up.z;
+            frame.rotation.m[2][0] = back.x, frame.rotation.m[2][1] = back.y, frame.rotation.m[2][2] = back.z;
+
+            const Mat4 transform =
+                core::toRenderMatrixScaled(frame, origin, Vec3{line.thickness, length, line.thickness});
+            const AABB worldBounds = core::transformed(transform, cylinder->bounds);
+            ++out.candidateDraws;
+            const bool visible = core::intersects(out.camera.frustum, worldBounds);
+            if (!visible) {
+                ++out.culledDraws;
+                if (core::length(core::center(worldBounds)) >
+                    shadowRadius + 0.5f * core::length(core::size(worldBounds)))
+                    return;
+            }
+
+            u32 slot = 0;
+            bool found = false;
+            for (const LineLook& look : lineLooks) {
+                if (look.color == line.color) {
+                    slot = look.slot;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                RenderMaterial material;
+                material.uniforms.baseColor[0] = 1.0f;
+                material.uniforms.baseColor[1] = 1.0f;
+                material.uniforms.baseColor[2] = 1.0f;
+                material.uniforms.baseColor[3] = 1.0f;
+                material.uniforms.metallicRoughnessNormalCutoff[0] = 0.0f;
+                material.uniforms.metallicRoughnessNormalCutoff[1] = 0.8f;
+                tintBy(material, line.color);
+                slot = addMaterial(material);
+                lineLooks.push_back(LineLook{line.color, slot});
+            }
+
+            out.draws.push_back(DrawItem{
+                .sortKey =
+                    drawSortKey(kOpaquePass, kStaticPipeline, out.familyOf(slot),
+                                drawGeometryKey(cylinder->mesh.index, 0), core::length(core::center(worldBounds))),
+                .transform = transform,
+                .mesh = cylinder->mesh,
+                .section = 0,
+                .material = slot,
+                .alpha = 1.0f,
+                .transparent = false,
+                .boundsCenter = core::center(worldBounds),
+                .boundsRadius = 0.5f * core::length(core::size(worldBounds)),
+                .inCameraFrustum = visible,
+                .outlined = isOutlined(id),
+                .terrain = false,
+                .voxelBlock = false,
+            });
+        });
+    }
 
     // `stable_sort`, and the stability is the contract: two draws with equal
     // keys keep their extraction order, which is the pool's dense order and

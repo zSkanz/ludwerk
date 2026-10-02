@@ -19,6 +19,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed -- BREAKING
 
+- **`BasePart.LinearVelocity` and `AngularVelocity` can be written** (ADR
+  0127): an assignment used to raise, and now sets the speed the next tick
+  starts from. A script that relied on the error to mean "read-only" no longer
+  gets one.
+- **A sprite is drawn in the colours it was painted in** (ADR 0153, D464):
+  `Part2D.ExactColor` and `Tilemap2D.ExactColor`, on by default, take a sprite
+  past the scene's exposure, tone curve, colour correction and bloom, so
+  `Color3.fromRGB(200, 80, 40)` is that pixel. A 2D game's colours change --
+  towards what its scripts say; set `ExactColor = false` for a sprite that
+  should be lit with a 3D scene. The wire protocol is 32.
+- **An Android debug build is signed with Android's own debug key** (D465),
+  `~/.android/debug.keystore`, not one under the engine's folder. **A game
+  already on a phone was signed with the old key and will not update**:
+  uninstall it from the phone once -- which deletes what it saved there -- and
+  install again. `[export.android] debug_keystore` names a key a team shares.
 - **What takes a press is what does something with it** (`UIObject.Active`,
   D452): a `TextLabel`, an `ImageLabel` and a `Frame` with no background no
   longer take the pointer, so a press on them goes to what is under them -- a
@@ -33,6 +48,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   overlay (D461); `[debug] overlay_key` moves it.
 - **The wire protocol is 31** (D460): `Lighting.ExposureMin` and `ExposureMax`
   travel.
+- **A screen the game's own code made is named when a scene takes it**
+  (D469): a warning, once, saying to set `KeepOnSceneLoad`.
+- **Something made where another thing was just destroyed is not shoved by
+  it** (D467): a character respawned at the place of death came out to one
+  side, or lost a jump.
 - **The documentation site builds again** (D463): it had written nothing since
   the rename, and the gate that builds it now looks for the page as well as
   the exit code.
@@ -132,6 +152,33 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
     instance, and the data model's services changed. The simulation did not.
 
 ### Added
+
+- **Movers and powered joints** (ADR 0127): a part turns, moves and is held in
+  place by instances, with no script running each tick. `LinearVelocity`,
+  `AngularVelocity`, `AlignPosition`, `AlignOrientation`, `VectorForce`,
+  `Torque`; `HingeConstraint.ActuatorType` with a motor and a servo;
+  `PrismaticConstraint` (a rail), `RopeConstraint` (with a winch),
+  `RodConstraint`, `SpringConstraint`, `NoCollisionConstraint`. `Visible` draws
+  any of them in the editor and under the overlay, and a rope, a rod and a
+  spring in the game.
+- **A joint does work and gives under load** (ADR 0127's amendments): a
+  `BallSocketConstraint` holds a pose (`ActuatorType = Servo`,
+  `TargetOrientation`); aligns and servos take `Stiffness` and `Damping`; an
+  align pulls back on what it follows (`ReactionForceEnabled`,
+  `ReactionTorqueEnabled`); every constraint has `BreakForce`, `BreakTorque`,
+  `Broken`, `GetForce()` and `GetTorque()`.
+- **A run starts in the scene it is told** (D468): `--scene=PATH` and
+  `--scene-data=JSON` on `engine-host` and on `ludwerk dev`; the JSON is what
+  the scene's `GetLoadData` answers.
+- **A character is pushed, floats, swims and flies** (D466): `ApplyImpulse` on
+  a `CharacterBody` does what it says and its `LinearVelocity` can be written;
+  `GravityScale`, `SwimSpeed`, `FlySpeed`, `Flying`; `Enum.CharacterState` gains
+  `Swimming` -- entered by itself in a `Water` and in a fluid block -- and
+  `Flying`. `@engine/camera.firstPerson`.
+- **`BasePart.Mass` and `AssemblyMass`** (read-only), **`LinearDamping` and
+  `AngularDamping`**, **`BasePart.Collided`** -- where, which way and how fast
+  two parts met, for a part whose `ContactDetails` is on -- and
+  **`Workspace:GetBodiesInSphere`**.
 
 - **Gestures** (D462): `InputService.TouchSwiped`, `TouchTapped`,
   `TouchLongPressed`, `TouchPinched`, `TouchPanned`, `SwipeThreshold`, and

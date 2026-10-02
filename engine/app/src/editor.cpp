@@ -4273,6 +4273,21 @@ namespace {
     if (const scene::Tilemap2DComponent* tilemap = world.tilemaps2d().find(id); tilemap != nullptr)
         return placedAt(
             core::DVec3{static_cast<core::f64>(tilemap->position.x), static_cast<core::f64>(tilemap->position.y), 0.0});
+    // **A mover's target is a place** (ADR 0127): where an `AlignPosition`
+    // pulls to, and which way an `AlignOrientation` turns to -- shown where
+    // the part it turns is, since an orientation is nowhere of its own.
+    if (const scene::MoverComponent* mover = world.movers().find(id); mover != nullptr) {
+        const scene::ConstraintComponent* ends = world.constraints().find(id);
+        if (ends != nullptr && ends->kind == scene::MoverKind::AlignPosition)
+            return placedAt(mover->position);
+        if (ends != nullptr && ends->kind == scene::MoverKind::AlignOrientation) {
+            core::CFrameD frame;
+            if (const scene::AttachmentComponent* held = world.attachments().find(ends->attachment0); held != nullptr)
+                frame.position = held->worldCFrame.position;
+            frame.rotation = mover->orientation;
+            return frame;
+        }
+    }
     return std::nullopt;
 }
 
@@ -6554,6 +6569,14 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
             }
             else if (world.waterPoints().find(id) != nullptr || world.terrains().find(id) != nullptr) {
                 kind = DragKind::Position;
+            }
+            else if (world.movers().find(id) != nullptr) {
+                // An `AlignPosition`'s target is its `Position`; an
+                // `AlignOrientation`'s is its `CFrame`, which a camera's kind
+                // writes whole and the property reads the turn of.
+                const scene::ConstraintComponent* ends = world.constraints().find(id);
+                kind = ends != nullptr && ends->kind == scene::MoverKind::AlignPosition ? DragKind::Position
+                                                                                        : DragKind::Camera;
             }
             else if (world.tilemaps2d().find(id) != nullptr) {
                 kind = DragKind::Position2D;

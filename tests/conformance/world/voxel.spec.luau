@@ -125,6 +125,25 @@ describe("voxel service", function()
         end):ToThrow()
     end)
 
+    it("a character in a fluid block swims, as it does in a sea", function()
+        -- D466. A stone basin, full, and a character in the middle of it.
+        local Water = voxels:RegisterBlock("Water", Color3.fromRGB(40, 90, 200))
+        voxels:SetBlockFluid(Water, 3, 1)
+        voxels:FillBlocks(vector.create(-5, 0, -5), vector.create(5, 12, 5), Stone)
+        voxels:FillBlocks(vector.create(-4, 1, -4), vector.create(4, 12, 4), Water)
+        local size = voxels.BlockSize
+        local body = Instance.new("CharacterBody")
+        body.Size = vector.create(2, 5, 2)
+        body.Position = vector.create(0.5 * size, 6 * size, 0.5 * size)
+        body.Parent = workspace
+        task.wait(1)
+        local state, height = body.State, body.Position.y
+        body:Destroy()
+        voxels:SetBlockFluid(Water, 0)
+        expect(state):ToBe(Enum.CharacterState.Swimming)
+        expect(height):ToBeCloseTo(6 * size, 0.1)
+    end)
+
     it("lets a fluid fall, spread its reach, and drain when its source is taken", function()
         local PhysicsService = game:GetService("PhysicsService")
         local Water = voxels:RegisterBlock("Water", Color3.fromRGB(40, 90, 200))

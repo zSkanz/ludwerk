@@ -162,13 +162,15 @@ local function main(): number
     end
 
     if parsed.command == "dev" then
-        if not rejectUnknownFlags(parsed, { "headless", "port" }) then
+        if not rejectUnknownFlags(parsed, { "headless", "port", "scene", "scene-data" }) then
             return 2
         end
         return dev.run({
             path = firstPositional(parsed, "."),
             headless = parsed.flags.headless ~= nil,
             port = if parsed.flags.port ~= nil then tonumber(parsed.flags.port) else nil,
+            scene = parsed.flags.scene,
+            sceneData = parsed.flags["scene-data"],
         })
     end
 

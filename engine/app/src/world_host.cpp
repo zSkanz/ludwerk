@@ -631,6 +631,11 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     if (options.networkTopology == scene::NetworkTopology::Replica)
         (void)replication::clearForReplica(*m_world, m_workspace, m_scriptTemplates.get());
 #endif
+    // Before the first script runs, so the scene's own `Start` reads it. Text
+    // that is not JSON was refused where it was typed; here it is ignored.
+    if (!options.bootSceneData.empty())
+        (void)script::setSceneLoadData(m_runtime->state(), options.bootSceneData);
+
     if (options.startScripts) {
         script::startScripts(m_runtime->state());
         warnScriptsInStorage();
@@ -1537,6 +1542,17 @@ std::optional<core::EngineError> WorldHost::loadScene(const std::string& path, s
         const scene::ScreenGuiComponent* screen = w.screenGuis().find(child);
         if (screen != nullptr && screen->keepOnSceneLoad)
             kept.push_back(child);
+        // **The game's code made this screen and the scene is taking it**
+        // (D469): the module that made it holds it still, and will find it
+        // destroyed a scene from now. Said once a name, at the moment it
+        // happens, with what to set.
+        else if (screen != nullptr && screen->parentedByGlobal) {
+            const std::string name{w.atoms().text(w.name(child))};
+            if (m_warnedGlobalScreens.insert(name).second) {
+                const std::array<I18nArg, 1> args{I18nArg{"name", name}};
+                core::log(core::LogLevel::Warn, ENG_TR("scene.warn.global_screen_goes"), args);
+            }
+        }
     }
     for (const core::InstanceId screen : kept)
         (void)w.setParent(screen, core::InstanceId{});

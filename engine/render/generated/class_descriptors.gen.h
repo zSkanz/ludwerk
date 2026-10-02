@@ -94,6 +94,11 @@ inline constexpr scene::EnumId FocusLossReasonEnumId = 51;
 inline constexpr scene::EnumId TextInputKeyboardEnumId = 52;
 inline constexpr scene::EnumId SwipeDirectionEnumId = 53;
 inline constexpr scene::EnumId PlatformEnumId = 54;
+inline constexpr scene::EnumId ActuatorTypeEnumId = 55;
+inline constexpr scene::EnumId ActuatorRelativeToEnumId = 56;
+inline constexpr scene::EnumId VelocityConstraintModeEnumId = 57;
+inline constexpr scene::EnumId PositionAlignmentModeEnumId = 58;
+inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
 
 } // namespace generated
 

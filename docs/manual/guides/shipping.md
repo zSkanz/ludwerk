@@ -70,7 +70,7 @@ buttons; clicking one opens its folder.
 |---|---|---|
 | Windows | `dist/windows/<Executable>.exe`, `content/`, `game/`, and a `.zip` beside the folder | No console window. The icon and the file properties (product, company, version, description) are in the executable. |
 | Linux | `dist/linux/<executable>`, `content/`, `game/`, `<executable>.desktop`, `icon.png`, and a `.tar.gz` beside the folder | The archive carries the execute bit, wherever it was made. |
-| Android | `dist/android/<name>-<version>.apk` | Signed with this machine's debug key, or your release key. |
+| Android | `dist/android/<name>-<version>.apk` | Signed with the debug key, or your release key. |
 
 The archive beside the folder is the thing to send somebody. It is named
 `<name>-<version>-<target>`.
@@ -105,9 +105,27 @@ package = "com.studio.skyhopper"  # default: [project] id
 version_code = 7                  # a store refuses an update whose code is not higher
 icon_background = "#1E90FF"       # the adaptive icon's background
 icon_foreground = "branding/foreground.png"  # optional: a foreground drawn for the safe zone
-release = false                   # false: this machine's debug key; true: the keystore below
+release = false                   # false: the debug key; true: the keystore below
 keystore = "keys/release.keystore"
 key_alias = "skyhopper"
+```
+
+**The debug key is Android's own**: `~/.android/debug.keystore`, the one the
+SDK's tools make and Android Studio signs a debug build with. A debug APK from
+this engine and one from any other tool on the machine therefore update one
+another, and the key does not move when the engine is updated or renamed. A
+machine that has none gets one made there the first time.
+
+Two machines have two debug keys, and a phone will not update a game across
+keys: it says the signatures do not match, and the Export window says what that
+means -- uninstall the game from the phone once (which deletes what it saved
+there) and install again. A team that passes test builds around shares one
+key instead:
+
+```toml
+[export.android]
+debug_keystore = "keys/team-debug.keystore"   # relative to the project
+debug_key_alias = "androiddebugkey"           # the default; passwords are "android"
 ```
 
 **Which way up the phone is held** is not a setting here: it is the start

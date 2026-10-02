@@ -60,8 +60,17 @@ cmake --build "$player" --target engine_host || exit /b 1
 
     if ($Install) {
         $adb = Join-Path $sdk 'platform-tools\adb.exe'
-        & $adb install -r $apk.FullName
-        if ($LASTEXITCODE -ne 0) { throw 'adb install failed -- is the phone connected, with USB debugging allowed?' }
+        # Read as well as shown: one refusal is worth saying in words (D465).
+        $installed = & $adb install -r $apk.FullName 2>&1 | Out-String
+        Write-Host $installed
+        if ($LASTEXITCODE -ne 0) {
+            if ($installed -match 'INSTALL_FAILED_UPDATE_INCOMPATIBLE') {
+                throw ('the phone already has this game signed with a different key, and Android will not update ' +
+                    'across keys. Uninstall it from the phone first (that deletes what it saved there), then run ' +
+                    'this again. Nothing was uninstalled.')
+            }
+            throw 'adb install failed -- is the phone connected, with USB debugging allowed?'
+        }
         # The package the APK says it is, read out of it rather than guessed
         # from project.toml: the export decided it, and this only starts it.
         $aapt = Join-Path $sdk 'build-tools\35.0.0\aapt2.exe'

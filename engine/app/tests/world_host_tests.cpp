@@ -4166,3 +4166,167 @@ TEST_CASE("a block size that narrows to nothing is refused, from a file and from
     CHECK(log.contains("read:1"));
     CHECK(log.contains("tiny:false huge:false now:1"));
 }
+
+TEST_CASE("ADR 0127: a world of movers and powered joints runs the same way twice")
+{
+    // "The traces reproduce": every mover is impulses worked out from the
+    // world as the step finds it, and nothing between ticks -- so two runs of
+    // one script end in one hash, with a winch half way in and a servo still
+    // travelling.
+    Captured log;
+    Project project;
+    project.write("src/client/main.luau", R"(
+        local function part(position: vector, anchored: boolean?): Part
+            local created = Instance.new("Part")
+            created.Size = vector.create(2, 2, 2)
+            created.Position = position
+            created.Anchored = anchored == true
+            created.Parent = workspace
+            return created
+        end
+        local function on(host: BasePart, offset: CFrame?): Attachment
+            local created = Instance.new("Attachment")
+            if offset then
+                created.CFrame = offset
+            end
+            created.Parent = host
+            return created
+        end
+
+        local alongZ = CFrame.fromEuler(0, -math.pi / 2, 0)
+        local post = part(vector.create(0, 20, 0), true)
+        local arm = part(vector.create(3, 20, 0))
+        local hinge = Instance.new("HingeConstraint")
+        hinge.Attachment0 = on(post, CFrame.new(1.5, 0, 0) * alongZ)
+        hinge.Attachment1 = on(arm, CFrame.new(-1.5, 0, 0) * alongZ)
+        hinge.CollideConnected = false
+        hinge.ActuatorType = Enum.ActuatorType.Servo
+        hinge.TargetAngle = 70
+        hinge.AngularSpeed = 0.4
+        hinge.Parent = workspace
+
+        local anchor = part(vector.create(10, 30, 0), true)
+        local bob = part(vector.create(11, 26, 0))
+        local rope = Instance.new("RopeConstraint")
+        rope.Attachment0 = on(anchor)
+        rope.Attachment1 = on(bob)
+        rope.Length = 5
+        rope.WinchEnabled = true
+        rope.WinchTarget = 2
+        rope.WinchSpeed = 0.5
+        rope.Parent = workspace
+
+        local pet = part(vector.create(20, 20, 0))
+        local pull = Instance.new("AlignPosition")
+        pull.Attachment0 = on(pet, CFrame.new(1, 1, 0))
+        pull.Position = vector.create(24, 25, 3)
+        pull.MaxVelocity = 3
+        pull.Parent = workspace
+        local turn = Instance.new("AlignOrientation")
+        turn.Attachment0 = on(pet)
+        turn.CFrame = CFrame.fromEuler(0.4, 1.2, 0)
+        turn.Stiffness = 300
+        turn.Damping = 20
+        turn.Parent = workspace
+
+        local weight = part(vector.create(30, 20, 0))
+        local spring = Instance.new("SpringConstraint")
+        spring.Attachment0 = on(part(vector.create(30, 26, 0), true))
+        spring.Attachment1 = on(weight)
+        spring.FreeLength = 4
+        spring.Parent = workspace
+
+        local thrown = part(vector.create(40, 20, 0))
+        thrown.LinearVelocity = vector.create(3, 6, 0)
+    )");
+
+    const auto runOnce = [&] {
+        app::WorldHost host;
+        REQUIRE_FALSE(host.boot(bootOptions(project.root, 99u)).has_value());
+        for (int index = 0; index < 150; ++index)
+            host.tick();
+        return host.world().worldHash();
+    };
+    const core::u64 first = runOnce();
+    CHECK(first == runOnce());
+    CHECK_FALSE(log.contains("[script.err."));
+
+    // And it is a world in which things moved: not two empty runs agreeing.
+    app::WorldHost still;
+    REQUIRE_FALSE(still.boot(bootOptions(project.root, 99u)).has_value());
+    still.tick();
+    CHECK(still.world().worldHash() != first);
+}
+
+TEST_CASE("D468: a run handed scene data answers it from GetLoadData, before the first script runs")
+{
+    // `--scene=` and `--scene-data=`: a level is started by name, with what a
+    // `LoadScene` from the menu would have handed it.
+    Captured log;
+    Project project;
+    project.write("src/client/main.luau", R"(
+        local data = game:GetService("SceneService"):GetLoadData()
+        print(`level:{data.level} hard:{tostring(data.hard)} first:{data.spawn[1]} n:{#data.spawn} who:{data.name}`)
+    )");
+
+    app::WorldHost host;
+    app::WorldHostOptions options = bootOptions(project.root, 1u);
+    options.bootSceneData = R"({"level": 3, "hard": true, "spawn": [10, 20, 30], "name": "arena"})";
+    REQUIRE_FALSE(host.boot(options).has_value());
+    host.tick();
+    CHECK(log.contains("level:3 hard:true first:10 n:3 who:arena"));
+    CHECK_FALSE(log.contains("[script.err."));
+}
+
+TEST_CASE("D468: with no scene data, GetLoadData is nil as it always was")
+{
+    Captured log;
+    Project project;
+    project.write("src/client/main.luau", R"(
+        print(`data:{tostring(game:GetService("SceneService"):GetLoadData())}`)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root, 1u)).has_value());
+    host.tick();
+    CHECK(log.contains("data:nil"));
+}
+
+TEST_CASE("D469: a screen the game's own code made is named when the scene takes it")
+{
+    // A module in `GlobalScriptService` built a HUD in `UIService` and kept the
+    // reference; the scene changed, the screen went with it, and the module
+    // raised `instance_dead` a scene later with nothing having said why.
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/client/game.luau", R"(
+        local ui = game:GetService("UIService")
+        local lost = Instance.new("ScreenGui")
+        lost.Name = "Hud"
+        lost.Parent = ui
+        -- Kept: this one is the game's and says so.
+        local kept = Instance.new("ScreenGui")
+        kept.Name = "Loading"
+        kept.KeepOnSceneLoad = true
+        kept.Parent = ui
+        task.defer(function()
+            game:GetService("SceneService"):LoadScene("scenes/b.scene.json")
+        end)
+    )");
+    // A scene's own screen goes with its scene, and that is nobody's mistake.
+    project.write("src/scenes/a/client/level.luau", R"(
+        local screen = Instance.new("ScreenGui")
+        screen.Name = "LevelMenu"
+        screen.Parent = game:GetService("UIService")
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 6; ++tick)
+        host.tick();
+    CHECK(log.contains("went with the scene"));
+    CHECK(log.contains("\"Hud\""));
+    CHECK_FALSE(log.contains("\"Loading\""));
+    CHECK_FALSE(log.contains("\"LevelMenu\""));
+    CHECK_FALSE(log.contains("[script.err."));
+}

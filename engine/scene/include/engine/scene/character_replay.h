@@ -28,6 +28,11 @@ struct CharacterCommand
     core::f32 walkSpeed = 0.0f;
     core::f32 jumpSpeed = 0.0f;
     core::f32 dt = 0.0f;
+    // How it was told to move when it is not on foot (D466).
+    core::f32 gravityScale = 1.0f;
+    core::f32 swimSpeed = 10.0f;
+    core::f32 flySpeed = 16.0f;
+    bool flying = false;
 };
 
 // Where a replay starts: the authority's word on the character at the tick it
@@ -39,6 +44,10 @@ struct CharacterReplayStart
     core::u64 tick = 0;
     core::CFrameD transform;
     core::f32 verticalVelocity = 0.0f;
+    // What an impulse or a written velocity gave it, as the authority had it:
+    // a replay that started without it would walk a knocked-back character
+    // home every snapshot.
+    core::Vec3 push{0.0f, 0.0f, 0.0f};
     bool grounded = false;
     // The speeds the authority steps this character with, when the snapshot
     // said. The commands a replay steps through are the ones the authority has

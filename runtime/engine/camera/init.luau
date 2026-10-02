@@ -265,6 +265,113 @@ function Camera.thirdPerson(options: Options): Rig
     return (rig :: any) :: Rig
 end
 
+local FirstImpl = {}
+FirstImpl.__index = FirstImpl
+
+-- Straight up and straight down are where a look flips over; a hair short of
+-- them is where it stops.
+local MaxPitch = math.rad(89)
+
+function FirstImpl.Turn(self: any, delta: Vector2, dt: number)
+    self.Yaw -= self.TurnRate * delta.X * dt
+    self.Pitch = math.clamp(self.Pitch + self.TurnRate * delta.Y * dt, -MaxPitch, MaxPitch)
+end
+
+function FirstImpl.Look(self: any, delta: Vector2)
+    self.Yaw -= self.LookSensitivity * delta.X
+    -- The pointer moved down the screen looks down.
+    self.Pitch = math.clamp(self.Pitch - self.LookSensitivity * delta.Y, -MaxPitch, MaxPitch)
+end
+
+FirstImpl.Basis = RigImpl.Basis
+
+-- Where the eyes are, looking where the rig looks: no easing, because an eye
+-- that lags its own head is a second of seasickness.
+local function placeFirst(self: any, at: vector)
+    self.Camera.CFrame = CFrame.new(at + vector.create(0, self.Height, 0))
+        * CFrame.fromEuler(self.Pitch, self.Yaw, 0, Enum.RotationOrder.YXZ)
+end
+
+local function frameFirst(self: any, dt: number)
+    self.Framed = true
+    if everyFrame(self.TurnAction) then
+        self:Turn(self.TurnAction:GetState() :: Vector2, dt)
+    end
+    if everyFrame(self.LookAction) and InputService.PointerLocked then
+        self:Look(self.LookAction:GetState() :: Vector2)
+    end
+    placeFirst(self, self.Subject:GetRenderCFrame().Position)
+end
+
+function FirstImpl.Update(self: any, _dt: number)
+    if self.Framed then
+        return
+    end
+    placeFirst(self, self.Subject.Position)
+end
+
+--- A first-person rig: the camera at the subject's eyes, looking where the
+--- pointer or the stick has turned it.
+---
+--- `Height` is how far above the subject's middle the eyes are, `Yaw` and
+--- `Pitch` are where it looks -- pitch positive is up -- and `Basis` is the
+--- ground-plane forward and right to move the character in, exactly as the
+--- third-person rig gives them.
+---
+--- ```lua
+--- local camera = require("@engine/camera")
+--- local rig = camera.firstPerson({ Subject = character, LookAction = Look })
+--- InputService.PointerLocked = true
+---
+--- RunService.Heartbeat:Connect(function(dt)
+---     local forward, right = rig:Basis()
+---     local move = Move:GetState() :: Vector2
+---     character:Move(forward * move.Y + right * move.X)
+---     rig:Update(dt)
+--- end)
+--- ```
+---
+--- The subject is not hidden: a game that shows no body sets its
+--- `Transparency`, and one that shows arms keeps them.
+function Camera.firstPerson(options: Options): Rig & { Pitch: number }
+    local existing = workspace.CurrentCamera
+    local instance = if existing ~= nil and existing:IsA("Camera") then existing else Instance.new("Camera")
+    if existing == nil then
+        instance.Name = "FirstPersonCamera"
+        instance.FieldOfView = options.FieldOfView or 75
+        instance.NearPlane = options.NearPlane or 0.1
+        instance.FarPlane = options.FarPlane or 1200
+        instance.Parent = workspace
+        workspace.CurrentCamera = instance
+    end
+
+    local rig = setmetatable({
+        Camera = instance,
+        Subject = options.Subject,
+        Yaw = 0,
+        Pitch = 0,
+        -- Nothing behind the eyes to be distant from.
+        Distance = 0,
+        -- A metre and a half above the middle of a character five tall.
+        Height = options.Height or 1.5,
+        TurnRate = options.TurnRate or 2.2,
+        LookSensitivity = options.LookSensitivity or 0.004,
+        TurnAction = options.TurnAction,
+        LookAction = options.LookAction,
+        Framed = false,
+    }, FirstImpl)
+
+    local rigAny = rig :: any
+    placeFirst(rigAny, options.Subject.Position)
+
+    Rigs += 1
+    RunService:BindToRenderStep(`engine.camera.rig{Rigs}`, Enum.RenderPriority.Camera.Value, function(dt: number)
+        frameFirst(rigAny, dt)
+    end)
+
+    return (rig :: any) :: Rig & { Pitch: number }
+end
+
 --- An orbit rig: the same framing, turning on its own at a fixed rate. What a
 --- menu background, a spectator view or a screenshot harness wants.
 function Camera.orbit(options: Options & { Speed: number? }): Rig

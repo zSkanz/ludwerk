@@ -67,17 +67,33 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F2 — movers and constraints (ADR 0127)
 
-- [ ] `LinearVelocity`, `AngularVelocity`, `AlignPosition`, `AlignOrientation`,
-  `VectorForce`, `Torque`, evaluated in the physics step.
-- [ ] `HingeConstraint.ActuatorType` with motor and servo.
-- [ ] `PrismaticConstraint`, `RopeConstraint` (with winch), `RodConstraint`,
+- [x] `LinearVelocity`, `AngularVelocity`, `AlignPosition`, `AlignOrientation`,
+  `VectorForce`, `Torque`, evaluated in the physics step
+  (`engine/scene/src/physics_movers.cpp`).
+- [x] `HingeConstraint.ActuatorType` with motor and servo.
+- [x] `PrismaticConstraint`, `RopeConstraint` (with winch), `RodConstraint`,
   `SpringConstraint`, `NoCollisionConstraint`.
-- [ ] State in the trace and the rollback snapshot; stable evaluation order.
-- [ ] `Visible` drawing in the editor and F3; ropes and rods drawable in a game.
-- [ ] Manual recipes: spinner, hovering pet, lift, rope bridge.
-- [ ] Tests: a motor reaches its speed under its torque cap; a servo settles at
+- [x] State in the trace and the rollback snapshot; stable evaluation order.
+  There is no mover state: each is a function of the world as the step finds
+  it. A winch's rope is the `Length` property; a written velocity not yet
+  handed to the solver is one bit of the snapshot.
+- [x] `Visible` drawing in the editor and F3; ropes and rods drawable in a game.
+- [x] Manual recipes: spinner, hovering pet, lift, rope bridge
+  (`docs/manual/physics/movers.md`).
+- [x] Tests: a motor reaches its speed under its torque cap; a servo settles at
   its angle; `AlignPosition` holds against gravity within `MaxForce` and sags
-  past it; a rope never exceeds its length; the traces reproduce.
+  past it; a rope never exceeds its length; the traces reproduce
+  (`tests/conformance/physics/movers.spec.luau`, 51 cases against the real
+  solver; `constraint_tests.cpp`; "ADR 0127:" in `world_host_tests.cpp`).
+- [x] The amendments of 2026-10-02 (the ADR's last section): A1 a ball socket
+  holds a pose; A2 reaction force and torque; A3 `Stiffness` and `Damping`; N1
+  `Mass` and `AssemblyMass`; N2 `Collided`; N3 `BreakForce`, `BreakTorque`,
+  `Broken`, `GetForce`, `GetTorque`; N4 damping; N5 writable velocity; N6
+  `GetBodiesInSphere`.
+- [ ] **Movers and joints on a body a replica predicts or owns.** They are not
+  on the wire (the authority simulates them), so a part a player's machine
+  predicts is not pushed by a mover there. Needs `Attachment` and these classes
+  to travel; built with the network's ledgers.
 
 ## Stage F3 — UI layouts, adaptation, gamepad (ADR 0128)
 

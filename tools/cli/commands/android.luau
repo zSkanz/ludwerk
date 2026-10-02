@@ -272,7 +272,7 @@ local function installPackages(sdk: string, sdkmanager: string, jdk: string, dow
 end
 
 local function run(): number
-    local folder = android.userFolder()
+    local folder = android.installFolder()
     local toolchains = projectlib.joined(folder, "toolchains")
     local downloads = projectlib.joined(toolchains, "dl")
     local sdk = android.userSdk()

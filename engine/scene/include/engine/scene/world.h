@@ -502,6 +502,8 @@ struct NameIndex
     X(WeldComponent, welds)                                                                                            \
     X(AttachmentComponent, attachments)                                                                                \
     X(ConstraintComponent, constraints)                                                                                \
+    X(MoverComponent, movers)                                                                                          \
+    X(NoCollisionComponent, noCollisions)                                                                              \
     X(RagdollComponent, ragdolls)                                                                                      \
     X(WorkspaceComponent, workspaces)                                                                                  \
     X(TerrainComponent, terrains)                                                                                      \
@@ -1192,6 +1194,10 @@ public:
     [[nodiscard]] const ComponentPool<AttachmentComponent>& attachments() const noexcept { return m_attachments; }
     [[nodiscard]] ComponentPool<ConstraintComponent>& constraints() noexcept { return m_constraints; }
     [[nodiscard]] const ComponentPool<ConstraintComponent>& constraints() const noexcept { return m_constraints; }
+    [[nodiscard]] ComponentPool<MoverComponent>& movers() noexcept { return m_movers; }
+    [[nodiscard]] const ComponentPool<MoverComponent>& movers() const noexcept { return m_movers; }
+    [[nodiscard]] ComponentPool<NoCollisionComponent>& noCollisions() noexcept { return m_noCollisions; }
+    [[nodiscard]] const ComponentPool<NoCollisionComponent>& noCollisions() const noexcept { return m_noCollisions; }
     [[nodiscard]] ComponentPool<RagdollComponent>& ragdolls() noexcept { return m_ragdolls; }
     [[nodiscard]] const ComponentPool<RagdollComponent>& ragdolls() const noexcept { return m_ragdolls; }
     [[nodiscard]] ComponentPool<CharacterBodyComponent>& characterBodies() noexcept { return m_characterBodies; }

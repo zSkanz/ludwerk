@@ -1165,6 +1165,20 @@ void enqueueSceneChanges(lua_State* L, std::span<const scene::Change> changes)
             break;
         }
 
+        case scene::ChangeKind::InstanceEventContact: {
+            const SignalId id = eventSignal(change.name);
+            if (!id.valid())
+                break;
+            const scene::ContactNote note = w.changes().drainedContact(change);
+            pushInstance(L, note.other);
+            pushVector3(L, core::toVec3(note.point));
+            pushVector3(L, note.normal);
+            lua_pushnumber(L, static_cast<double>(note.speed));
+            enqueueFire(L, id, lua_gettop(L) - 3, 4);
+            lua_pop(L, 4);
+            break;
+        }
+
         case scene::ChangeKind::FocusLost: {
             const SignalId id = eventSignal(change.name);
             if (!id.valid())

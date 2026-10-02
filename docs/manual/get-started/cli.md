@@ -28,13 +28,16 @@ ludwerk dev
 ludwerk dev examples/06-scene
 ludwerk dev --port=4700
 ludwerk dev --headless
+ludwerk dev --scene=scenes/arena.scene.json --scene-data='{"round": 3}'
 ```
 
 Runs the project with a watcher attached: a saved `.luau` file rebuilds the
 world. Defaults to the current directory.
 
 `--port` overrides `[dev] port`. `--headless` runs without a window, which is
-what a gate does.
+what a gate does. `--scene` starts the run in that scene instead of the
+project's, and `--scene-data` is JSON its `GetLoadData` answers: see
+[Scenes](manual:guides/scenes).
 
 A project that mounts **no entry scripts** is refused rather than started —
 otherwise it would attach, watch and reload an empty world forever while
@@ -193,6 +196,7 @@ a benchmark or a capture does:
 ```text
 engine-host [script.luau | project-dir]
   [--headless --frames=N --exit] [--width=N --height=N]
+  [--scene=PATH [--scene-data=JSON]]
   [--screenshot=FILE] [--frame-stats] [--rhi=NAME]
   [--quality=low|medium|high|ultra --render-scale=F
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
@@ -241,9 +245,10 @@ rather than beside it as a game does: headless frames run flat out, and the
 picture is of what the frames before it built, not of what a worker had
 finished by then.
 
-Four refusals worth knowing, all of them exit 2:
+Five refusals worth knowing, all of them exit 2:
 
 - `--headless` needs `--frames=N`, or nothing would ever stop it.
+- `--scene-data` needs JSON.
 - `--screenshot` needs `--headless`.
 - `--capture-out` needs the capture backend.
 - The editor needs a window.

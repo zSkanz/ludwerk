@@ -51,7 +51,9 @@ lives across scenes -- everything in the left column is new each time. A
 `ScreenGui` it made without `KeepOnSceneLoad` died with the scene; "I already
 registered the blocks" is false in the next one; a remote it kept a reference
 to is gone. Keep what the game owns on `game`, on a `Player`, or in the module
-itself, and build the rest again on `SceneLoaded`. It reads its file, mounts its own code from
+itself, and build the rest again on `SceneLoaded`. The engine says so when it
+happens: a `ScreenGui` a script in `GlobalScriptService` put in `UIService`,
+gone with the scene, is named in a warning with what to set. It reads its file, mounts its own code from
 `src/scenes/<scene>/`, and starts its scripts.
 
 **What stays** is the game's:
@@ -65,6 +67,22 @@ itself, and build the rest again on `SceneLoaded`. It reads its file, mounts its
   scene changes under it.
 - **`Player`s**, attributes included. Their characters were in the world and go
   with it; the new scene's server code makes new ones.
+
+## Starting in a scene
+
+A run starts in `[project] scene`. To work on a level without clicking through
+the menu, name the scene -- and, when the menu would have handed it something,
+hand it the same thing as JSON:
+
+```bash
+ludwerk dev --scene=scenes/arena.scene.json
+ludwerk dev --scene=scenes/arena.scene.json --scene-data='{"round": 3, "hard": true}'
+```
+
+The path is as the project file writes one, under `content/`. The JSON is what
+`SceneService:GetLoadData()` answers in that scene, exactly as if a `LoadScene`
+had passed the table: an object or an array is a table, the rest are the plain
+values they are. Text that is not JSON is refused before anything starts.
 
 ## When it happens
 

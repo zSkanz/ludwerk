@@ -7,6 +7,12 @@
 // into the HDR target before tone mapping, with the same sRGB decode the world
 // UI gives a colour written for a screen.
 //
+// **By default its colours are exact** (ADR 0153, `Part2D.ExactColor`): the
+// same shader through `sprite_exact.hlsl` also writes a one-channel mask of
+// the pixels it covered, and the resolve passes those through instead of
+// exposing and tone-mapping them. This file alone is the path of a frame in
+// which every sprite asked to be lit.
+//
 // A tile's corners are placed exactly as given. Everything else is turned
 // about its middle, and a circle or a capsule is cut out of the rectangle with
 // an anti-aliased edge, so what is drawn is the outline it collides as.
@@ -23,7 +29,8 @@ struct VertexInput
 {
     // Camera-relative low x, low y, high x, high y.
     float4 Rect : TEXCOORD0;
-    // x cosine, y sine, z the plane's depth, w the shape.
+    // x cosine, y sine, z the plane's depth, w the shape -- and four more when
+    // its colours are exact.
     float4 Turn : TEXCOORD1;
     // Left, top, right, bottom in texture space.
     float4 Uv : TEXCOORD2;
@@ -78,14 +85,15 @@ Interpolants VertexMain(VertexInput input)
     return output;
 }
 
-float4 FragmentMain(Interpolants input) : SV_Target0
+// The picture times its colour, and how much of the pixel it covers.
+float4 shade(Interpolants input)
 {
     // Distance outside the outline, in metres: a box has none, a circle is its
     // inscribed disc, and a capsule is a segment up the middle swept by half
     // the width.
     // Evaluated for every shape and then chosen, because a derivative inside a
     // branch is a derivative some drivers do not have.
-    const uint shape = uint(input.Shape + 0.5f);
+    const uint shape = uint(input.Shape + 0.5f) & 3u;
     const float radius = min(input.Half.x, input.Half.y);
     const float reach = shape == 2u ? max(input.Half.y - input.Half.x, 0.0f) : 0.0f;
     const float2 nearest = float2(input.Local.x, max(abs(input.Local.y) - reach, 0.0f));
@@ -99,3 +107,28 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         discard;
     return float4(picture.rgb * input.Color.rgb, alpha);
 }
+
+#ifdef ENG_SPRITE_EXACT
+struct SpriteTargets
+{
+    float4 Color : SV_Target0;
+    // One channel: 1 where an exact sprite is, 0 where a lit one covers it.
+    // Blended as the colour is, by this target's own alpha, so an edge that
+    // half covers a pixel marks half of it.
+    float4 Exact : SV_Target1;
+};
+
+SpriteTargets FragmentMain(Interpolants input)
+{
+    SpriteTargets output;
+    output.Color = shade(input);
+    const bool exact = (uint(input.Shape + 0.5f) & 4u) != 0u;
+    output.Exact = float4(exact ? 1.0f : 0.0f, 0.0f, 0.0f, output.Color.a);
+    return output;
+}
+#else
+float4 FragmentMain(Interpolants input) : SV_Target0
+{
+    return shade(input);
+}
+#endif

@@ -77,9 +77,9 @@ end
 
 `CharacterBody.Jump` launches the character upward at `CharacterBody.JumpSpeed`
 at the next simulation tick, **wherever it is**. It does not check
-`CharacterBody.Grounded`, and that is deliberate: `LinearVelocity` is read-only,
-so a check inside `Jump` would make a double jump, a wall jump and a triple jump
-impossible to write at all.
+`CharacterBody.Grounded`, and that is deliberate: a check inside `Jump` would
+make a double jump, a wall jump and a triple jump impossible to write as a jump
+at all.
 
 The line above is the old behaviour, in one line, in the game — where a jump
 policy belongs. Coyote time and jump buffering become counters beside it.
@@ -95,12 +95,12 @@ what a game tunes, rather than tuning a height.
 | Member | Type | Means |
 |---|---|---|
 | `CharacterBody.Grounded` | `boolean`, read-only | Standing on something walkable as of the last tick. |
-| `CharacterBody.State` | `Enum.CharacterState`, read-only | The same fact as `Grounded` or `Airborne`. |
+| `CharacterBody.State` | `Enum.CharacterState`, read-only | `Grounded` or `Airborne` on foot; `Swimming`; `Flying`. |
 | `CharacterBody.Landed` | `Signal<BasePart?>` | Fired on becoming grounded after being airborne. |
 
-`Enum.CharacterState` has two items and not three: ground too steep to walk on
-reads as `Airborne`, because the question a script asks this property is whether
-it may jump.
+On foot `Enum.CharacterState` has two answers and not three: ground too steep
+to walk on reads as `Airborne`, because the question a script asks this
+property is whether it may jump.
 
 ```luau
 character.Landed:Connect(function(groundPart: BasePart?)
@@ -127,14 +127,66 @@ the controller. A capsule, a slope limit and a step height are things it is
 constructed with, and a character that changes size mid-stride is a rare enough
 event to pay for.
 
+## Swimming and flying
+
+A character whose middle is under a `Water`'s surface, or inside a fluid block
+of a block world, is **swimming** -- by itself, and it stops by itself when it
+comes out. Swimming, it has no weight, and `Move` is read in all three
+dimensions at `CharacterBody.SwimSpeed`: up is up.
+
+```luau
+--!strict
+local function swimOrWalk(character: CharacterBody, forward: vector, right: vector, input: Vector2, rise: number)
+    local direction = forward * input.Y + right * input.X
+    if character.State == Enum.CharacterState.Swimming then
+        -- The jump key held swims up; a crouch key would swim down.
+        direction += vector.create(0, rise, 0)
+    end
+    character:Move(direction)
+end
+```
+
+`Jump` in a fluid is a kick upwards that carries: what takes a swimmer up
+through the surface and onto a bank.
+
+`CharacterBody.Flying = true` is the same for the air, asked for by the game:
+no weight, and `Move` in three dimensions at `FlySpeed`. A creative mode, a
+ghost, a jetpack held on.
+
+`CharacterBody.GravityScale` is how much of `Workspace.Gravity` the character
+feels: `0.5` is a floaty jump, `0` hangs where it is, a negative number falls
+upwards.
+
+## Pushing a character
+
+A character is pushed as a part is. `ApplyImpulse` changes its speed by the
+impulse over its `Mass` -- a controller's is 80 -- and `LinearVelocity` can be
+written, which is where it is thrown.
+
+```luau
+--!strict
+local function knockBack(character: CharacterBody, from: vector, speed: number)
+    local away = character.Position - from
+    local flat = vector.normalize(vector.create(away.x, 0, away.z))
+    character:ApplyImpulse((flat * speed + vector.create(0, speed * 0.5, 0)) * character.Mass)
+end
+```
+
+What pushed it is not its walk, and it fades: quickly on the ground, as
+friction would take it, slowly in the air, and as drag would in a fluid. `Move`
+is added on top, so a player knocked back can still steer.
+
+Up and down, an impulse joins what gravity already integrates: one that lifts a
+standing character is a launch, and it comes down as a jump does.
+
 ## Characters block, they do not push
 
 Two characters block each other and neither pushes the other. Walking into
 somebody standing still stops you and leaves them where they were, however fast
 you were going and however long you keep walking.
 
-Shoving, knockback and crowd flow are game rules, and a game writes them by
-moving the other character itself.
+Shoving, knockback and crowd flow are game rules, and a game writes them with
+`ApplyImpulse` on the other character.
 
 Whether two characters collide at all is decided by `BasePart.CollisionGroup`
 like any other pair.

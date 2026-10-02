@@ -19,6 +19,7 @@ offers is on the base's page, which is what keeps one added member on
 | `Collides` | `boolean` | `true` | read/write | Whether its tiles are solid. Off, it is scenery: a background layer. |
 | `CollisionGroup` | `string` | `"Default"` | read/write | The group its tiles collide as. |
 | `Color` | `Color3` | `Color3.new(1, 1, 1)` | read/write | Multiplies every tile. |
+| `ExactColor` | `boolean` | `true` | read/write | The tiles' colours on the screen are the colours in the tileset, as `Part2D.ExactColor` says. Off, the level is lit, exposed and graded with the rest of the scene. |
 | `Filter` | `Enum.TextureFilter` | `Enum.TextureFilter.Nearest` | read/write | Nearest by default, because tiles are nearly always pixel art. |
 | `Friction` | `number` | `0.3` | read/write | How much its tiles grip what slides on them. |
 | `Position` | `Vector2` | — | read/write | Where the bottom-left corner of cell (0, 0) is, in metres. |

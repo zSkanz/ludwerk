@@ -265,6 +265,14 @@ int instanceNewIndex(lua_State* L)
         // equality-filtered like every other property write (§3.1).
         if (w.parentOf(id) != previous)
             w.changes().push(scene::Change{scene::ChangeKind::PropertyChanged, id, {}, name});
+        // Who put a screen in `UIService` (D469): the game's own code, or a
+        // scene's. Remembered on the screen for the host to speak of.
+        if (scene::ScreenGuiComponent* screen = w.screenGuis().find(id); screen != nullptr) {
+            const core::InstanceId global = w.findFirstChildOfClass(
+                context(L).services->dataModel, w.classes().findId(w.atoms().lookup("GlobalScriptService")));
+            const core::InstanceId asking = scriptOfThread(L);
+            screen->parentedByGlobal = global.valid() && asking.valid() && w.isAncestorOf(global, asking);
+        }
         flushSceneChanges(L);
         return 0;
     }
@@ -1004,6 +1012,24 @@ int methodApplyAngularImpulse(lua_State* L)
     if (scene::RigidBodyComponent* body = world(L).rigidBodies().find(id); body != nullptr)
         body->pendingAngularImpulse = body->pendingAngularImpulse + impulse;
     return 0;
+}
+
+// What a joint carried over the last tick (ADR 0127, N3): written into the
+// component by the mirror after each step, read here.
+int methodConstraintGetForce(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::ConstraintComponent* constraint = world(L).constraints().find(id);
+    lua_pushnumber(L, constraint != nullptr ? static_cast<double>(constraint->lastForce) : 0.0);
+    return 1;
+}
+
+int methodConstraintGetTorque(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const scene::ConstraintComponent* constraint = world(L).constraints().find(id);
+    lua_pushnumber(L, constraint != nullptr ? static_cast<double>(constraint->lastTorque) : 0.0);
+    return 1;
 }
 
 // --- Where it is drawn (ADR 0136) ------------------------------------------------
@@ -2533,6 +2559,8 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"Camera", "ViewportPointToWorld2D", methodViewportPointToWorld2D},
     {"BasePart", "ApplyImpulseAtPosition", methodApplyImpulseAtPosition},
     {"BasePart", "ApplyAngularImpulse", methodApplyAngularImpulse},
+    {"Constraint", "GetForce", methodConstraintGetForce},
+    {"Constraint", "GetTorque", methodConstraintGetTorque},
     {"Water", "GetHeightAt", methodWaterGetHeightAt},
     {"Water", "GetNormalAt", methodWaterGetNormalAt},
     {"Water", "Carve", methodWaterCarve},

@@ -302,6 +302,26 @@ using generated::Source;
             setF32(out, body->autoStepHeight);
             return true;
         }
+        if (field.name == "PushVelocity") {
+            setVec3(out, body->push);
+            return true;
+        }
+        if (field.name == "GravityScale") {
+            setF32(out, body->gravityScale);
+            return true;
+        }
+        if (field.name == "SwimSpeed") {
+            setF32(out, body->swimSpeed);
+            return true;
+        }
+        if (field.name == "FlySpeed") {
+            setF32(out, body->flySpeed);
+            return true;
+        }
+        if (field.name == "Flying") {
+            setBool(out, body->flying);
+            return true;
+        }
         return false;
     }
 
@@ -984,6 +1004,8 @@ using generated::Source;
             setVec3(out, flat(sprite->imageRectSize));
         else if (field.name == "Filter")
             setI32(out, sprite->filter);
+        else if (field.name == "ExactColor")
+            setBool(out, sprite->exactColor);
         else
             return false;
         return true;
@@ -1015,6 +1037,8 @@ using generated::Source;
             setBool(out, tilemap->collides);
         else if (field.name == "Friction")
             setF32(out, tilemap->friction);
+        else if (field.name == "ExactColor")
+            setBool(out, tilemap->exactColor);
         else
             return false;
         return true;
@@ -1597,6 +1621,26 @@ using generated::Source;
             body->autoStepHeight = asF32(value);
             return true;
         }
+        if (field.name == "PushVelocity") {
+            body->push = asVec3(value);
+            return true;
+        }
+        if (field.name == "GravityScale") {
+            body->gravityScale = asF32(value);
+            return true;
+        }
+        if (field.name == "SwimSpeed") {
+            body->swimSpeed = asF32(value);
+            return true;
+        }
+        if (field.name == "FlySpeed") {
+            body->flySpeed = asF32(value);
+            return true;
+        }
+        if (field.name == "Flying") {
+            body->flying = asBool(value);
+            return true;
+        }
         return false;
     }
 
@@ -1848,6 +1892,8 @@ using generated::Source;
             sprite->imageRectSize = plane(value);
         else if (field.name == "Filter")
             sprite->filter = asI32(value);
+        else if (field.name == "ExactColor")
+            sprite->exactColor = asBool(value);
         else
             return false;
         return true;
@@ -1882,6 +1928,8 @@ using generated::Source;
             tilemap->collides = asBool(value);
         else if (field.name == "Friction")
             tilemap->friction = asF32(value);
+        else if (field.name == "ExactColor")
+            tilemap->exactColor = asBool(value);
         else
             return false;
         return true;

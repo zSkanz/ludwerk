@@ -4028,6 +4028,8 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                             continue;
                         if (motion->name == "VerticalVelocity")
                             start.verticalVelocity = asF32(entity.fields[other]);
+                        else if (motion->name == "PushVelocity")
+                            start.push = asVec3(entity.fields[other]);
                         else if (motion->name == "Grounded")
                             start.grounded = asBool(entity.fields[other]);
                         else if (motion->name == "WalkSpeed")
@@ -4043,7 +4045,8 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root, const Wo
                 // and a replica that kept its own predicted at the wrong speed
                 // and was corrected every snapshot (D205).
                 if (field != nullptr && field->pool == "characterBodies" &&
-                    (field->name == "VerticalVelocity" || field->name == "Grounded" || field->name == "State"))
+                    (field->name == "VerticalVelocity" || field->name == "Grounded" || field->name == "State" ||
+                     field->name == "PushVelocity"))
                     continue;
                 if (cframe)
                     continue;

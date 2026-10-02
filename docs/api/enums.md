@@ -6,6 +6,26 @@ Reached as `Enum.<Name>.<Item>`. Every enum-typed property is **total**:
 there is no nil member of an enumeration, so a value meaning `unset` is
 declared as an item rather than left to a nil (ADR 0039).
 
+## Enum.ActuatorRelativeTo
+
+The frame a mover's vector is written in.
+
+| Item | Value | Description |
+|---|---|---|
+| `Attachment0` | 0 | The first attachment's: it follows the part as it turns. |
+| `Attachment1` | 1 | The second attachment's. |
+| `World` | 2 | The world's. |
+
+## Enum.ActuatorType
+
+What a hinge, a rail or a ball joint does of itself.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | Nothing: it only holds. |
+| `Motor` | 1 | It moves at a speed. |
+| `Servo` | 2 | It goes to a target and holds it. |
+
 ## Enum.AlphaMode
 
 How a `Material` reads the alpha channel of its colour. glTF's three modes, kept because they are what a file says and translating them into something else here would only move the switch.
@@ -76,12 +96,14 @@ How a `Camera` turns the world into a picture.
 
 ## Enum.CharacterState
 
-Whether a `CharacterBody` is standing on something (§2.2). Two items and not three: ground too steep to walk on reads as `Airborne`, because the question a script asks this property is whether it may jump.
+What a `CharacterBody` is doing (§2.2). On foot there are two answers and not three: ground too steep to walk on reads as `Airborne`, because the question a script asks is whether it may jump.
 
 | Item | Value | Description |
 |---|---|---|
 | `Grounded` | 0 |  |
 | `Airborne` | 1 |  |
+| `Swimming` | 2 | Its middle is under a `Water`'s surface or inside a fluid block: no weight, and it moves in three dimensions. |
+| `Flying` | 3 | `CharacterBody.Flying` is set. |
 
 ## Enum.CollisionFidelity
 
@@ -445,6 +467,15 @@ Which of the four postures this process runs in (ADR 0070). Decided at start fro
 | `Dedicated` | 2 | The authority with no player of its own: a server with no window. |
 | `Replica` | 3 | A client of somebody else's authority. It shows the world it is sent and decides none of it. |
 
+## Enum.OrientationAlignmentMode
+
+What an `AlignOrientation` turns to.
+
+| Item | Value | Description |
+|---|---|---|
+| `OneAttachment` | 0 | Its own `CFrame`. |
+| `TwoAttachment` | 1 | Its `Attachment1`. |
+
 ## Enum.PartShape
 
 The solid a `Part` renders and collides as; `MeshPart` carries geometry instead (§2.2).
@@ -491,6 +522,15 @@ Where a `Tween` is in its life (§2.1). A state rather than a pair of booleans, 
 | `Paused` | 3 | Stopped where it was. `Play` resumes from there rather than restarting. |
 | `Completed` | 4 | Reached its end. The goal values have been written exactly, not approached: a tween that stopped at 0.9999 of the way would leave a property somebody has to explain. |
 | `Cancelled` | 5 | Stopped before its end by `Cancel`. The property keeps whatever value it had reached -- cancelling is not undoing. |
+
+## Enum.PositionAlignmentMode
+
+What an `AlignPosition` pulls to.
+
+| Item | Value | Description |
+|---|---|---|
+| `OneAttachment` | 0 | Its own `Position`. |
+| `TwoAttachment` | 1 | Its `Attachment1`. |
 
 ## Enum.PromiseState
 
@@ -710,6 +750,16 @@ The mouse buttons are separate items rather than one `Mouse` item plus a `KeyCod
 | `MouseWheel` | 6 | The wheel turned. `InputChanged`, with the amount in `Delta.z` -- one notch is 1. |
 | `Gamepad` | 7 | A pad button or stick. `KeyCode` says which, and a stick's deflection arrives as `InputChanged` with the axis value in `Position`. |
 | `Touch` | 8 | A finger on a touchscreen: `InputBegan` when it lands, `InputChanged` as it moves, `InputEnded` when it lifts, with `Position` in window pixels and `TouchId` saying which finger. A tap shorter than a frame still begins and ends. Never consumed by the interface, which follows one pointer: a game's own on-screen controls are what these are for, and they drive actions through `InputService:SetVirtualState`. |
+
+## Enum.VelocityConstraintMode
+
+How much of a velocity a `LinearVelocity` holds.
+
+| Item | Value | Description |
+|---|---|---|
+| `Line` | 0 | Only the speed along a line. |
+| `Plane` | 1 | Only the speed across a plane. |
+| `Vector` | 2 | All of it. |
 
 ## Enum.VerticalAlignment
 

@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -166,6 +167,10 @@ struct WorldHostOptions
     // **The boot scene's content-relative path** (ADR 0106), which is what
     // `SceneService.CurrentScene` says: `scenes/main.scene.json`.
     std::string bootScenePath = {};
+    // **What the boot scene's `GetLoadData` answers**, as JSON (D468): a run
+    // started in a scene by name is handed what a `LoadScene` would have.
+    // Empty hands it nothing.
+    std::string bootSceneData = {};
     // How a scene named at run time is read: a content-relative path in, its
     // text out, from a file or the pack. Absent, it is read from the
     // project's `content/` folder.
@@ -761,6 +766,8 @@ private:
     PreserveReport m_preserveReport;
     scene::SceneIoReport m_bootSceneReport;
     bool m_bootSceneApplied = false;
+    // Screens already warned about (D469), by name: once each.
+    std::set<std::string> m_warnedGlobalScreens;
     bool m_globalUnreadable = false;
     // How a scene named at run time is read, and its stamps (ADR 0106).
     std::function<std::optional<std::string>(std::string_view)> m_readContent;

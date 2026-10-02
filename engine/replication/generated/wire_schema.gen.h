@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 31;
+inline constexpr u32 ProtocolVersion = 32;
 
 // How a field's bytes are laid down. Every one is fixed-width and
 // little-endian, with no variable-length forms and no nesting -- a wire format
@@ -148,6 +148,11 @@ inline constexpr FieldDesc CharacterBodyFields[] = {
     {"JumpSpeed", 5, Encoding::F32, Source::Component, "characterBodies"},
     {"MaxSlopeAngle", 6, Encoding::F32, Source::Component, "characterBodies"},
     {"AutoStepHeight", 7, Encoding::F32, Source::Component, "characterBodies"},
+    {"PushVelocity", 8, Encoding::Vector3, Source::Component, "characterBodies"},
+    {"GravityScale", 9, Encoding::F32, Source::Component, "characterBodies"},
+    {"SwimSpeed", 10, Encoding::F32, Source::Component, "characterBodies"},
+    {"FlySpeed", 11, Encoding::F32, Source::Component, "characterBodies"},
+    {"Flying", 12, Encoding::Bool, Source::Component, "characterBodies"},
 };
 
 inline constexpr FieldDesc ModelFields[] = {
@@ -220,6 +225,7 @@ inline constexpr FieldDesc Part2DFields[] = {
     {"ImageRectOffset", 16, Encoding::Vector3, Source::Component, "parts2d"},
     {"ImageRectSize", 17, Encoding::Vector3, Source::Component, "parts2d"},
     {"Filter", 18, Encoding::I32, Source::Component, "parts2d"},
+    {"ExactColor", 19, Encoding::Bool, Source::Component, "parts2d"},
 };
 
 inline constexpr FieldDesc Tilemap2DFields[] = {
@@ -232,6 +238,7 @@ inline constexpr FieldDesc Tilemap2DFields[] = {
     {"Filter", 7, Encoding::I32, Source::Component, "tilemaps2d"},
     {"Collides", 8, Encoding::Bool, Source::Component, "tilemaps2d"},
     {"Friction", 9, Encoding::F32, Source::Component, "tilemaps2d"},
+    {"ExactColor", 10, Encoding::Bool, Source::Component, "tilemaps2d"},
 };
 
 inline constexpr FieldDesc ClickDetectorFields[] = {

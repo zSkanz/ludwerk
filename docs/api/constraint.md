@@ -22,5 +22,27 @@ offers is on the base's page, which is what keeps one added member on
 |---|---|---|---|---|
 | `Attachment0` | `Attachment?` | — | read/write | One end of the joint. The part it is on is the body the solver holds. |
 | `Attachment1` | `Attachment?` | — | read/write | The other end. The two frames are the same place when the constraint is built, which is what "this is where they are attached" means. |
+| `BreakForce` | `number` | `0` | read/write | The force, in newtons, past which the joint gives: it is disabled, and `Broken` fires. Zero never breaks. |
+| `BreakTorque` | `number` | `0` | read/write | The same for the turning it resists, in newton-metres. Zero never breaks. |
 | `CollideConnected` | `boolean` | `true` | read/write | Whether the two parts still collide with each other.<br><br>**False is what a ragdoll needs.** An upper arm and a lower arm overlap at the elbow by construction, and left colliding they shove each other apart every step -- a character that vibrates rather than falls. |
 | `Enabled` | `boolean` | `true` | read/write | Whether the joint holds. A disabled constraint stays in the world holding nothing, rather than being destroyed and rebuilt -- rebuilding would move it to the end of the solve order, and a ragdoll that switched itself off and on would simulate differently afterwards. |
+| `Visible` | `boolean` | `false` | read/write | Whether it is drawn. In the editor and under the debug overlay every constraint draws what it is -- an arrow, a rail, a line. In a game only a rope, a rod and a spring are drawn, as a thin line of their `Color` and `Thickness`. |
+
+## Methods
+
+### `GetForce(): number`
+
+The force the joint carried over the last simulation tick to hold its two parts together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a joint that held nothing.
+
+### `GetTorque(): number`
+
+The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to resist a turn with -- a ball joint, a rope.
+
+## Events
+
+Every signal here is **deferred** (ADR 0015): a handler runs at the next
+drain point, never inside the call that fired it.
+
+### `Broken()`
+
+Fires when the joint carried more than its `BreakForce` or `BreakTorque` and gave. It is disabled, not destroyed: enabling it again mends it.

@@ -15,6 +15,16 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `ActuatorType` | `Enum.ActuatorType` | `Enum.ActuatorType.None` | read/write | What the hinge does of itself: nothing, turn at a speed (`Motor`), or go to an angle and hold it (`Servo`). |
+| `AngularResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops harder. |
+| `AngularSpeed` | `number` | `100000` | read/write | Servo: the fastest it turns on the way, in radians a second. |
+| `AngularVelocity` | `number` | `0` | read/write | Motor: the speed it turns at, in radians a second, about the hinge's own X. Negative turns the other way. |
+| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
 | `LimitsEnabled` | `boolean` | `false` | read/write | Whether the range below applies. Off is a hinge that spins freely. |
 | `LowerAngle` | `number` | `-180` | read/write | How far it may turn one way, in degrees. |
+| `MotorMaxAcceleration` | `number` | `100000` | read/write | Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds up. |
+| `MotorMaxTorque` | `number` | `10000` | read/write | Motor: the most torque it may use, in newton-metres. A load heavier than this stalls it. |
+| `ServoMaxTorque` | `number` | `10000` | read/write | Servo: the most torque it may use to get there and to stay. |
+| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
+| `TargetAngle` | `number` | `0` | read/write | Servo: the angle it goes to, in degrees, measured as the limits are. |
 | `UpperAngle` | `number` | `180` | read/write | How far it may turn the other, in degrees. A lower above the upper is unlimited. |

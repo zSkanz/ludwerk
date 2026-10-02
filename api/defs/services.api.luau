@@ -277,6 +277,18 @@ local Classes: { Schema.Class } = {
                     .. "per part however many of its surfaces are inside. `size` is the full extent, matching "
                     .. "`BasePart.Size`.",
             },
+            {
+                Name = "GetBodiesInSphere",
+                Parameters = {
+                    { Name = "position", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                    { Name = "params", Type = "RaycastParams?", Default = "nil" },
+                },
+                Returns = { "{BasePart}" },
+                ThreadSafety = "Unsafe",
+                Doc = "Every part overlapping a ball, as `GetBodiesInBox` answers for a box: what an explosion "
+                    .. "reaches, what is within arm's length.",
+            },
         } :: { Schema.Method },
     },
     {

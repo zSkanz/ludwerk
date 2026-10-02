@@ -57,6 +57,9 @@ constexpr rhi::TextureFormat kShadowFormat = rhi::TextureFormat::D32Float;
 // classic double-encode.
 constexpr rhi::TextureFormat kLdrFormat = rhi::TextureFormat::Rgba8Unorm;
 constexpr rhi::TextureFormat kOcclusionFormat = rhi::TextureFormat::R8Unorm;
+// Which pixels are a sprite drawn in its own colours (ADR 0153): a fraction,
+// because an anti-aliased edge covers part of a pixel.
+constexpr rhi::TextureFormat kSpriteMaskFormat = rhi::TextureFormat::R8Unorm;
 
 // Contact shadows: how far each pixel marches towards the sun, how thick a
 // surface is assumed to be behind what the depth buffer shows, and where the
@@ -494,6 +497,10 @@ struct ViewState
     // One channel: which pixels belong to something a tool has selected. Only
     // ever written when a draw carries `outlined`, which no game does.
     rhi::TextureHandle outlineMask_{};
+    // One channel: which pixels are a sprite drawn in its own colours
+    // (ADR 0153). Made the first frame this view has one, and never for a view
+    // that has none.
+    rhi::TextureHandle spriteMask_{};
     rhi::TextureHandle occlusionBlur_{};
     // Full resolution, one channel: the sun's contact shadows. Full rather than
     // half like the occlusion term, because what it carries is the sharp line
@@ -964,6 +971,16 @@ private:
     bool spriteTried_ = false;
     std::vector<GpuSprite> spriteStaging_;
     u32 spriteCount_ = 0;
+    // **Sprites drawn in their own colours** (ADR 0153): the same instances
+    // through a pipeline with a second target -- the view's `spriteMask_` --
+    // which the bloom's first level and the resolve then read. Every piece is
+    // made the first frame a sprite asks for it, so a world without one builds
+    // none of them and draws through the command stream it always had.
+    rhi::PipelineHandle spriteExactPipeline_{};
+    bool spriteExactTried_ = false;
+    [[nodiscard]] bool ensureSpritesExact(rhi::IDevice& device);
+    // Whether THIS frame of this view wrote the mask.
+    bool spriteExactLive_ = false;
     // **Each terrain's layers** (ADR 0113): three arrays with a slice per
     // layer, built by blitting the layers' own textures when every one has
     // loaded, and rebuilt only when the set of textures changes; and the block
@@ -1004,6 +1021,13 @@ private:
     // The same, into the window (audit R2), for a frame that grades with
     // anti-aliasing off.
     LookPipeline gradedTonemapWindow_;
+    // The four resolves again, reading the sprites' mask (ADR 0153), and the
+    // bloom's first level leaving those pixels out.
+    LookPipeline exactTonemap_;
+    LookPipeline exactTonemapWindow_;
+    LookPipeline exactGradedTonemap_;
+    LookPipeline exactGradedTonemapWindow_;
+    LookPipeline bloomDownMasked_;
     // One direction of a separable Gaussian, and a filtered copy from one size
     // to another.
     LookPipeline blur_;
@@ -1029,11 +1053,26 @@ private:
     [[nodiscard]] bool ensureSkyLook(rhi::IDevice& device);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 13> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 18> lookPipelines() noexcept
     {
-        return {&gradedTonemap_, &gradedTonemapWindow_, &blur_,     &resample_,   &focusPrepare_,
-                &focusGather_,   &focusComposite_,      &raysMask_, &raysGather_, &raysAdd_,
-                &air_,           &surfaceSceneDepth_,   &skyLook_};
+        return {&gradedTonemap_,
+                &gradedTonemapWindow_,
+                &blur_,
+                &resample_,
+                &focusPrepare_,
+                &focusGather_,
+                &focusComposite_,
+                &raysMask_,
+                &raysGather_,
+                &raysAdd_,
+                &air_,
+                &surfaceSceneDepth_,
+                &skyLook_,
+                &exactTonemap_,
+                &exactTonemapWindow_,
+                &exactGradedTonemap_,
+                &exactGradedTonemapWindow_,
+                &bloomDownMasked_};
     }
 
     [[nodiscard]] bool lookTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
@@ -1710,8 +1749,9 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
             device.destroy(texture);
         texture = {};
     };
-    for (rhi::TextureHandle* texture : {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-                                        &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
+    for (rhi::TextureHandle* texture :
+         {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_, &spriteMask_, &luminance64_,
+          &luminance8_, &exposure_[0], &exposure_[1], &environmentMap_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -1753,7 +1793,7 @@ std::optional<core::EngineError> DefaultRenderer::ensureTargets(rhi::IDevice& de
     // has to remember to.
 
     for (rhi::TextureHandle* texture : {&hdr_, &depth_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-                                        &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
+                                        &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]}) {
         if (texture->valid())
             device.destroy(*texture);
         *texture = {};
@@ -1941,6 +1981,7 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                         &occlusionBlur_,
                                         &contact_,
                                         &outlineMask_,
+                                        &spriteMask_,
                                         &luminance64_,
                                         &luminance8_,
                                         &exposure_[0],
@@ -1977,11 +2018,13 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     for (rhi::PipelineHandle* pipeline :
          {&terrainPipeline_, &terrainShadowPipeline_, &terrainPrepassPipeline_, &terrainPackColorPipeline_,
           &terrainPackLinearPipeline_, &voxelPipeline_, &particlePipeline_, &voxelTilePipeline_, &voxelBlendPipeline_,
-          &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_, &worldUiOnTopPipeline_, &spritePipeline_}) {
+          &voxelShadowPipeline_, &decalPipeline_, &worldUiPipeline_, &worldUiOnTopPipeline_, &spritePipeline_,
+          &spriteExactPipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
     }
+    spriteExactTried_ = false;
     terrainTried_ = false;
     terrainValid_ = false;
     for (TerrainArrays& entry : terrainArrays_) {
@@ -3896,6 +3939,58 @@ void DefaultRenderer::drawFoliage(rhi::ICmdList& cmd, const RenderWorld& world, 
     }
 }
 
+// **The sprite pipeline again, with the mask as a second target** (ADR 0153).
+// Both targets blend the same way -- straight alpha, each by its own output's
+// alpha -- so no backend is asked for a blend state per target.
+bool DefaultRenderer::ensureSpritesExact(rhi::IDevice& device)
+{
+    if (spriteExactTried_)
+        return spriteExactPipeline_.valid();
+    spriteExactTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+
+    core::EngineError error;
+    const rhi::ShaderHandle vertex = shaderLibrary_->create(device, "sprite_exact", rhi::ShaderStage::Vertex, &error);
+    const rhi::ShaderHandle fragment =
+        shaderLibrary_->create(device, "sprite_exact", rhi::ShaderStage::Fragment, &error);
+    for (const rhi::ShaderHandle handle : {vertex, fragment}) {
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+    }
+    if (!vertex.valid() || !fragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    const std::array<rhi::VertexAttribute, 4> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
+    };
+    const std::array<rhi::VertexBufferLayout, 1> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(GpuSprite), .perInstance = true},
+    };
+    const std::array<rhi::ColorTargetDesc, 2> targets{
+        rhi::ColorTargetDesc{.format = kHdrFormat, .blend = {.enabled = true}},
+        rhi::ColorTargetDesc{.format = kSpriteMaskFormat, .blend = {.enabled = true}},
+    };
+    spriteExactPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::None},
+        // As the plain sprite pipeline's: tested, never written.
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = targets,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "sprite_exact",
+    });
+    return spriteExactPipeline_.valid();
+}
+
 bool DefaultRenderer::ensureSprites(rhi::IDevice& device)
 {
     if (spriteTried_)
@@ -4502,12 +4597,15 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // reason. Past `MaxSprites` the rest are not drawn: the order is ZIndex
     // first, so what goes is the front-most, which is loud rather than subtle.
     spriteCount_ = 0;
+    spriteExactLive_ = false;
     if (!world.sprites.empty() && ensureSprites(device)) {
         spriteStaging_.clear();
         const usize count = std::min<usize>(world.sprites.size(), MaxSprites);
         spriteStaging_.reserve(count);
+        bool anyExact = false;
         for (usize at = 0; at < count; ++at) {
             const RenderSprite& sprite = world.sprites[at];
+            anyExact = anyExact || sprite.exact;
             GpuSprite gpu;
             for (usize axis = 0; axis < 4; ++axis) {
                 gpu.rect[axis] = sprite.rect[axis];
@@ -4517,11 +4615,29 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             gpu.turn[0] = sprite.cosine;
             gpu.turn[1] = sprite.sine;
             gpu.turn[2] = sprite.z;
-            gpu.turn[3] = static_cast<f32>(sprite.shape);
+            // The shape, and four more for a sprite drawn in its own colours.
+            gpu.turn[3] = static_cast<f32>(sprite.shape + (sprite.exact ? 4 : 0));
             spriteStaging_.push_back(gpu);
         }
         cmd.upload(spriteBuffer_, asBytes(spriteStaging_.data(), spriteStaging_.size() * sizeof(GpuSprite)), 0);
         spriteCount_ = static_cast<u32>(count);
+
+        // **A frame with one exact sprite draws every sprite through the
+        // pipeline that writes the mask** (ADR 0153), so they keep their order
+        // among themselves. Where the pipeline or the mask cannot be made, the
+        // sprites are drawn lit, as they were before there was a choice.
+        if (anyExact && ensureSpritesExact(device)) {
+            if (!spriteMask_.valid()) {
+                spriteMask_ = device.createTexture({
+                    .format = kSpriteMaskFormat,
+                    .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                    .width = renderWidth_,
+                    .height = renderHeight_,
+                    .debugName = "sprite-mask",
+                });
+            }
+            spriteExactLive_ = spriteMask_.valid();
+        }
     }
 
     // This frame's world UI, up before any pass for the same reason (F3).
@@ -5285,9 +5401,31 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // in front of it, and a pane of glass in front of it is drawn over it.
         // In runs of one image and one filter, which a tilemap makes long.
         if (spriteCount_ > 0) {
+            // **With an exact sprite in the frame, a pass of their own**: the
+            // forward pass is closed, the sprites are drawn into the scene and
+            // the mask at once, and the forward pass is reopened for what
+            // blends over them -- as it is around the air and the decals.
+            if (spriteExactLive_) {
+                cmd.endRenderPass();
+                const std::array<rhi::ColorAttachment, 2> spriteTargets{
+                    rhi::ColorAttachment{.texture = hdr_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                    rhi::ColorAttachment{.texture = spriteMask_,
+                                         .loadOp = rhi::LoadOp::Clear,
+                                         .storeOp = rhi::StoreOp::Store,
+                                         .clearColor = rhi::ColorRgba{0.0f, 0.0f, 0.0f, 0.0f}},
+                };
+                cmd.beginRenderPass({
+                    .colorAttachments = spriteTargets,
+                    .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                    .debugName = "sprites-exact",
+                });
+                cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+                cmd.setScissor(
+                    {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+            }
             GpuWorldUiView spriteView;
             spriteView.viewProjection = world.camera.viewProjection;
-            cmd.setPipeline(spritePipeline_);
+            cmd.setPipeline(spriteExactLive_ ? spriteExactPipeline_ : spritePipeline_);
             cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&spriteView, sizeof(spriteView)));
             const std::array<rhi::BufferHandle, 1> spriteBuffers{spriteBuffer_};
             cmd.bindVertexBuffers(0, spriteBuffers);
@@ -5306,6 +5444,23 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 cmd.draw(6, end - first, 0, first);
                 stats_.drawCalls += 1;
                 first = end;
+            }
+            if (spriteExactLive_) {
+                cmd.endRenderPass();
+                const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
+                    .texture = hdr_,
+                    .loadOp = rhi::LoadOp::Load,
+                    .storeOp = rhi::StoreOp::Store,
+                }};
+                cmd.beginRenderPass({
+                    .colorAttachments = resumeTarget,
+                    .depthStencil = {.texture = depth_, .loadOp = rhi::LoadOp::Load, .storeOp = rhi::StoreOp::Store},
+                    .debugName = "forward-after-sprites",
+                });
+                cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+                cmd.setScissor(
+                    {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+                cmd.setPipeline(pbrBlendPipeline_);
             }
             // The frame block again, for the blended surfaces below.
             cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
@@ -5646,11 +5801,19 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // sampler repeats, and a kernel this wide at a coarse level reached
             // round the screen -- the ground's glow at the bottom edge drew a
             // band along the top.
-            const std::array<rhi::TextureBinding, 1> source{
-                rhi::TextureBinding{level == 0 ? sceneColor : bloom_[level - 1], environmentSampler_}};
+            // **A sprite drawn in its own colours starts no glow** (ADR 0153):
+            // the first level, in such a frame, reads the mask beside the scene
+            // and leaves those pixels out. The levels below read this one.
+            const bool masked = level == 0 && spriteExactLive_ &&
+                                ensureLookPipeline(device, bloomDownMasked_, "bloom_down_masked", kHdrFormat);
+            const std::array<rhi::TextureBinding, 2> source{
+                rhi::TextureBinding{level == 0 ? sceneColor : bloom_[level - 1], environmentSampler_},
+                rhi::TextureBinding{masked ? spriteMask_ : whitePixel_, environmentSampler_}};
             sourceWidth = bloomLevelSize(renderWidth_, level);
             sourceHeight = bloomLevelSize(renderHeight_, level);
-            fullscreenPass(cmd, bloomDownPipeline_, bloom_[level], sourceWidth, sourceHeight, "bloom-down", source,
+            fullscreenPass(cmd, masked ? bloomDownMasked_.handle : bloomDownPipeline_, bloom_[level], sourceWidth,
+                           sourceHeight, "bloom-down",
+                           std::span<const rhi::TextureBinding>{source.data(), masked ? usize{2} : usize{1}},
                            asBytes(&bloom, sizeof(bloom)));
         }
 
@@ -5710,9 +5873,24 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         }
         grade.count[0] = static_cast<f32>(stages);
     }
-    const std::array<rhi::TextureBinding, 3> tonemapBindings{
+    // **A frame with sprites drawn in their own colours resolves through the
+    // twin that reads their mask** (ADR 0153) -- plain or graded, into the
+    // texture or the window, four in all and each made when first needed. The
+    // mask is sampled as the scene is, so an upscale filters both alike.
+    LookPipeline* exactSlot = nullptr;
+    if (spriteExactLive_) {
+        LookPipeline& slot = graded ? (intoWindow ? exactGradedTonemapWindow_ : exactGradedTonemap_)
+                                    : (intoWindow ? exactTonemapWindow_ : exactTonemap_);
+        if (ensureLookPipeline(device, slot, graded ? "tonemap_graded_exact" : "tonemap_exact",
+                               intoWindow ? target.colorFormat : kLdrFormat))
+            exactSlot = &slot;
+    }
+    const std::array<rhi::TextureBinding, 4> tonemapTextures{
         rhi::TextureBinding{sceneColor, environmentSampler_}, rhi::TextureBinding{bloom_[0], environmentSampler_},
-        rhi::TextureBinding{exposure_[nextExposure], linearSampler_}};
+        rhi::TextureBinding{exposure_[nextExposure], linearSampler_},
+        rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, environmentSampler_}};
+    const std::span<const rhi::TextureBinding> tonemapBindings{tonemapTextures.data(),
+                                                               exactSlot != nullptr ? usize{4} : usize{3}};
 
     // With anti-aliasing on, this writes the LDR texture the resolve reads and
     // the resolve is what reaches the target. With it off, this IS the resolve
@@ -5722,9 +5900,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     cmd.pushDebugGroup("tonemap");
     const rhi::PipelineHandle plain =
         intoWindow && tonemapWindowPipeline_.valid() ? tonemapWindowPipeline_ : tonemapPipeline_;
-    fullscreenPass(cmd, graded ? gradedSlot.handle : plain, resolve ? ldr_ : target.color,
-                   resolve ? renderWidth_ : target.width, resolve ? renderHeight_ : target.height, "tonemap",
-                   tonemapBindings, asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
+    fullscreenPass(cmd,
+                   exactSlot != nullptr ? exactSlot->handle
+                   : graded             ? gradedSlot.handle
+                                        : plain,
+                   resolve ? ldr_ : target.color, resolve ? renderWidth_ : target.width,
+                   resolve ? renderHeight_ : target.height, "tonemap", tonemapBindings,
+                   asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
                    graded ? asBytes(&grade, sizeof(grade)) : std::span<const std::byte>{});
     cmd.popDebugGroup();
 

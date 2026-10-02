@@ -316,6 +316,49 @@ local CharacterBodyFields: { Schema.Field } = {
         Component = "characterBodies",
         Doc = "Which ledges the controller steps up, for the same reason as `MaxSlopeAngle`.",
     },
+    {
+        Name = "PushVelocity",
+        Id = 8,
+        Encoding = "Vector3",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "What an impulse or a written velocity gave the character that is not its walk (protocol "
+            .. "32): a knock sideways, fading. Sent for the reason `VerticalVelocity` is -- a replay that "
+            .. "started from a position alone would walk a knocked-back character home every snapshot.",
+    },
+    {
+        Name = "GravityScale",
+        Id = 9,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "A setting the character is stepped with, as `WalkSpeed` is: a replica that predicted with "
+            .. "its own would be corrected every snapshot.",
+    },
+    {
+        Name = "SwimSpeed",
+        Id = 10,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "The same.",
+    },
+    {
+        Name = "FlySpeed",
+        Id = 11,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "The same.",
+    },
+    {
+        Name = "Flying",
+        Id = 12,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "The same: whether it has weight is how it is stepped.",
+    },
 }
 
 --- **`moveDirection` is deliberately absent**, and it is worth saying why here
@@ -1200,6 +1243,15 @@ local Part2DFields: { Schema.Field } = {
         Component = "parts2d",
         Doc = "`Enum.TextureFilter`, raw: pixel art stays crisp on every screen.",
     },
+    {
+        Name = "ExactColor",
+        Id = 19,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts2d",
+        Doc = "Whether it is drawn past the tone curve (ADR 0153, protocol 32): a sprite the server made "
+            .. "lit is lit on every screen.",
+    },
 }
 
 --- A tilemap on the 2D plane (ADR 0103, protocol 15). Its properties are fields
@@ -1277,6 +1329,14 @@ local Tilemap2DFields: { Schema.Field } = {
         Source = "Component",
         Component = "tilemaps2d",
         Doc = "How the ground grips, for the same reason.",
+    },
+    {
+        Name = "ExactColor",
+        Id = 10,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "tilemaps2d",
+        Doc = "As a `Part2D`'s (ADR 0153, protocol 32).",
     },
 }
 
@@ -1882,6 +1942,67 @@ local Excluded: { Schema.Excluded } = {
     {
         Name = "FixedConstraint",
         Reason = "The same as `BallSocketConstraint`.",
+    },
+    {
+        Name = "PrismaticConstraint",
+        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
+            .. "replica is sent where the parts ended up.",
+    },
+    {
+        Name = "RopeConstraint",
+        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
+            .. "replica is sent where the parts ended up.",
+    },
+    {
+        Name = "RodConstraint",
+        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
+            .. "replica is sent where the parts ended up.",
+    },
+    {
+        Name = "SpringConstraint",
+        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
+            .. "replica is sent where the parts ended up.",
+    },
+    {
+        Name = "NoCollisionConstraint",
+        Reason = "The same as `BallSocketConstraint` (ADR 0127): the authority solves it, and the "
+            .. "replica is sent where the parts ended up.",
+    },
+    {
+        Name = "LinearVelocity",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
+    },
+    {
+        Name = "AngularVelocity",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
+    },
+    {
+        Name = "AlignPosition",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
+    },
+    {
+        Name = "AlignOrientation",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
+    },
+    {
+        Name = "VectorForce",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
+    },
+    {
+        Name = "Torque",
+        Reason = "A mover is forces on a body the authority simulates (ADR 0127), and the replica is "
+            .. "sent where that body went. On a body a replica predicts or owns it is not applied, which "
+            .. "the stage's ledger records as open: it needs `Attachment` on the wire first.",
     },
     {
         Name = "Ragdoll",

@@ -1864,3 +1864,68 @@ TEST_CASE("a water is drawn on the surface the simulation floats things on (ADR 
     render::extract(fixture.world, root, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
     CHECK(snapshot.draws.size() == 1);
 }
+
+TEST_CASE("ADR 0127: a visible rope is one cylinder from end to end, and one that is not visible is nothing")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+    render::MeshLibrary::Entry cylinder;
+    cylinder.mesh = render::MeshHandle{1, 1};
+    cylinder.bounds = core::AABB::fromCenterSize(core::Vec3{}, core::Vec3{1.0f, 1.0f, 1.0f});
+    cylinder.sectionCount = 1;
+    meshes.set(fixture.atoms.intern(render::primitiveContent(2)), cylinder);
+
+    // Two blocks four metres apart, an attachment at the middle of each.
+    const core::InstanceId left = blockAt(fixture, workspace, -2.0);
+    const core::InstanceId right = blockAt(fixture, workspace, 2.0);
+    const auto attachmentOn = [&](core::InstanceId part) {
+        const core::InstanceId id = fixture.world.create(fixture.instanceClass);
+        (void)fixture.world.setParent(id, part);
+        fixture.world.attachments().add(id, scene::AttachmentComponent{});
+        return id;
+    };
+    const core::InstanceId rope = fixture.world.create(fixture.instanceClass);
+    (void)fixture.world.setParent(rope, workspace);
+    scene::ConstraintComponent line;
+    line.kind = scene::MoverKind::DistanceJoint;
+    line.attachment0 = attachmentOn(left);
+    line.attachment1 = attachmentOn(right);
+    line.color = core::Color3{0.8f, 0.2f, 0.1f};
+    line.thickness = 0.2f;
+    fixture.world.constraints().add(rope, line);
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    CHECK(snapshot.draws.size() == 2);
+
+    fixture.world.constraints().find(rope)->visible = true;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    REQUIRE(snapshot.draws.size() == 3);
+    const render::DrawItem* drawn = nullptr;
+    for (const render::DrawItem& draw : snapshot.draws) {
+        if (draw.mesh == cylinder.mesh)
+            drawn = &draw;
+    }
+    REQUIRE(drawn != nullptr);
+    // Halfway between the two, and as long as they are apart: the cylinder's
+    // own axis, Y, turned onto the line and stretched along it.
+    CHECK(nearF(drawn->boundsCenter.x, 0.0f));
+    CHECK(nearF(drawn->boundsCenter.z, -10.0f));
+    const core::Vec3 end = core::transformPoint(drawn->transform, core::Vec3{0.0f, 0.5f, 0.0f});
+    CHECK(nearF(std::fabs(end.x), 2.0f));
+    CHECK(nearF(end.y, 0.0f));
+    // Its own colour, over the default's white.
+    CHECK(nearF(snapshot.materials[drawn->material].uniforms.baseColor[0], 0.8f));
+    CHECK(nearF(snapshot.materials[drawn->material].uniforms.baseColor[1], 0.2f));
+
+    // A hinge that is `Visible` is drawn by the editor's lines, not as a thing
+    // in the world.
+    fixture.world.constraints().find(rope)->kind = 2;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+    CHECK(snapshot.draws.size() == 2);
+}

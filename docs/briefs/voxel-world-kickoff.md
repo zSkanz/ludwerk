@@ -117,11 +117,11 @@ property of the process.
 
 ## B4 — a character in a block world
 
-- [ ] `ApplyImpulse` on a `CharacterBody` does what it says; its velocity can
-  be written; `GravityScale` in 3D as in 2D.
-- [ ] Movement modes -- walking, falling, swimming, flying -- with swimming
+- [x] `ApplyImpulse` on a `CharacterBody` does what it says; its velocity can
+  be written; `GravityScale` in 3D as in 2D (D466).
+- [x] Movement modes -- walking, falling, swimming, flying -- with swimming
   entered by itself in a `Water` and in a fluid block.
-- [ ] `@engine/camera.firstPerson`.
+- [x] `@engine/camera.firstPerson`.
 
 ## B5 — light
 

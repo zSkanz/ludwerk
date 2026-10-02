@@ -16,21 +16,29 @@ offers is on the base's page, which is what keeps one added member on
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `AutoStepHeight` | `number` | `0.5` | read/write | The tallest ledge, in metres, the character walks over rather than into. This is the single number that separates a character from a capsule: at zero, a kerb stops it. |
+| `FlySpeed` | `number` | `16` | read/write | How fast `Move` takes it while `Flying`, in metres per second. |
+| `Flying` | `boolean` | `false` | read/write | Whether the character flies: no weight, and `Move` in three dimensions at `FlySpeed`. A creative mode, a ghost, a jetpack held on. |
+| `GravityScale` | `number` | `1` | read/write | How much of `Workspace.Gravity` the character feels: 1 all of it, 0.5 a floaty jump, 0 none. Negative falls upwards. |
 | `Grounded` | `boolean` | — | read-only | Whether the character is standing on something walkable as of the last simulation tick. The same fact `State` reports, as the boolean a jump check actually wants. |
-| `JumpSpeed` | `number` | `8` | read/write | The upward speed Jump imparts, in metres per second. How high that reaches depends on `Workspace.Gravity`, which is the relationship a game tunes rather than a height. |
+| `JumpSpeed` | `number` | `8` | read/write | The upward speed Jump imparts, in metres per second. How high that reaches depends on `Workspace.Gravity`, which is the relationship a game tunes rather than a height. Negative is a slam downwards. |
 | `MaxSlopeAngle` | `number` | `46` | read/write | The steepest ground, in degrees from horizontal, the character can stand and walk on. Anything steeper is a wall it slides down rather than a floor it stands on. |
-| `State` | `Enum.CharacterState` | — | read-only | Grounded or Airborne. Ground too steep to walk on reads as Airborne, because the question this answers is whether the character is supported. |
+| `State` | `Enum.CharacterState` | — | read-only | What the character is doing: `Grounded` or `Airborne` on foot -- ground too steep to walk on reads as Airborne, because the question is whether it is supported -- `Swimming` with its middle under a `Water`'s surface or inside a fluid block, which it enters and leaves by itself, and `Flying` while `Flying` is set. |
+| `SwimSpeed` | `number` | `10` | read/write | How fast `Move` takes it through a fluid, in metres per second, as `WalkSpeed` does on the ground. |
 | `WalkSpeed` | `number` | `16` | read/write | How fast Move drives the character along the ground, in metres per second. The direction passed to Move is scaled by this, so a half-length direction walks at half speed. |
 
 ## Methods
 
 ### `Jump()`
 
-Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. It does NOT check Grounded, deliberately: `LinearVelocity` is read-only, so a mid-air check here would make a double jump, a wall jump and a triple jump impossible to write at all. `if character.Grounded then character:Jump() end` is the old behaviour in one line, in the game, where a jump policy belongs -- and coyote time and jump buffering become counters beside it. Calling it every frame is flying: that is the game's bug, and it is the same in every engine that offers a mechanism rather than a policy. The TICK stays engine-side: the velocity is applied at the next simulation step and never inside the call, or a replay diverges.
+Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. It does NOT check Grounded, deliberately: a mid-air check here would make a double jump, a wall jump and a triple jump impossible to write as a jump at all. `if character.Grounded then character:Jump() end` is the old behaviour in one line, in the game, where a jump policy belongs -- and coyote time and jump buffering become counters beside it. Calling it every frame is flying: that is the game's bug, and it is the same in every engine that offers a mechanism rather than a policy. The TICK stays engine-side: the velocity is applied at the next simulation step and never inside the call, or a replay diverges.
 
 ### `Move(direction: vector)`
 
 Sets the direction to walk in for the next simulation tick, in world space. Only the horizontal part is used -- vertical movement is gravity's and Jump's -- and the vector is scaled by WalkSpeed rather than normalised, so a shorter one walks slower. Call it every tick while moving; a character told nothing stops.
+
+Swimming and flying, all three axes are used -- up is up -- at `SwimSpeed` and `FlySpeed`.
+
+A character is pushed as a part is: `ApplyImpulse` changes its speed by the impulse over its `Mass`, and `LinearVelocity` can be written -- a knock back, a launch pad. What it was pushed by fades, quickly on the ground and slowly in the air, and its walk is added on top.
 
 ## Events
 

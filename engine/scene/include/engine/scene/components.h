@@ -153,6 +153,19 @@ struct RigidBodyComponent
     f32 friction = 0.3f;
     f32 restitution = 0.0f;
     f32 density = 1.0f;
+    // The share of a speed lost in a second with nothing touching it.
+    f32 linearDamping = 0.05f;
+    f32 angularDamping = 0.05f;
+    // `ContactDetails`: whether `Collided` is queued for this part.
+    bool contactDetails = false;
+
+    // Written by the MIRROR when the body is made or reshaped: what it weighs,
+    // as the solver worked it out from the shape and the density.
+    f32 mass = 0.0f;
+    // **A script wrote a velocity** (ADR 0127, N5): the two below are then what
+    // it wrote, and the mirror hands them to the solver at the start of the
+    // next tick instead of reading them from it.
+    bool velocityWritten = false;
 
     // Written by the MIRROR and read by scripts. Read-only in the API for the
     // reason the property's Doc gives: an assignment would be an impulse with
@@ -223,6 +236,26 @@ struct CharacterBodyComponent
     // gravity integrates here rather than in the solver, since a
     // `CharacterVirtual` is not a body the solver knows about.
     f32 verticalVelocity = 0.0f;
+
+    // --- A character that is pushed, floats, swims and flies (D466) ----------
+
+    // How much of the world's gravity it feels: 1 all of it, 0 none.
+    f32 gravityScale = 1.0f;
+    // What `Move` is scaled by in a fluid and in the air, as `walkSpeed` is on
+    // the ground.
+    f32 swimSpeed = 10.0f;
+    f32 flySpeed = 16.0f;
+    // Asked for by the game: no weight, and `Move` in three dimensions.
+    bool flying = false;
+    // **What an impulse or a written velocity gave it** that is not its walk:
+    // a knock sideways, a launch. Added to the walk each tick and faded --
+    // quickly on the ground, as friction would, slowly in the air. Horizontal
+    // while it walks or falls, where the vertical part is `verticalVelocity`'s;
+    // all three axes while it swims or flies.
+    core::Vec3 push{0.0f, 0.0f, 0.0f};
+    // What the last step moved it as: 0 on foot or falling, 2 swimming,
+    // 3 flying -- `Enum.CharacterState`'s values, which `state` then reports.
+    i32 mode = 0;
 };
 
 // `Weld` and `WeldConstraint` (M5, added to the milestone by human decision).
@@ -320,6 +353,113 @@ struct ConstraintComponent
     // ragdoll needs**: an upper arm and a lower arm overlap at the elbow by
     // construction, and left colliding they shove each other apart every step.
     bool collideConnected = true;
+
+    // --- ADR 0127: what a joint does of itself --------------------------------
+
+    // The distance family, which is one solver joint (`kind` Distance) and
+    // three classes: 0 a rope, 1 a rod, 2 a spring.
+    i32 flavor = 0;
+
+    // `Enum.ActuatorType`: 0 None, 1 Motor, 2 Servo. A hinge's is about its
+    // X, a prismatic's along it, and a ball socket's (Servo only) is a pose.
+    i32 actuatorType = 0;
+    // Motor: radians a second for a hinge, metres a second for a rail.
+    f32 motorVelocity = 0.0f;
+    f32 motorMaxForce = 10000.0f;
+    f32 motorMaxAcceleration = 100000.0f;
+    // Servo: DEGREES for a hinge, as authored, and metres for a rail.
+    f32 servoTarget = 0.0f;
+    f32 servoSpeed = 100000.0f;
+    f32 servoMaxForce = 10000.0f;
+    f32 responsiveness = 45.0f;
+    // A spring's two terms: a servo's (above zero, in place of the
+    // responsiveness), and a `SpringConstraint`'s own.
+    f32 stiffness = 0.0f;
+    f32 damping = 0.0f;
+    // Ball socket, Servo: `Attachment1`'s orientation in `Attachment0`'s.
+    core::Mat3 targetOrientation;
+
+    // Rope and rod: `Length`. Spring: `FreeLength`. **A rope's winch writes
+    // this**, so how much rope is out is a property like any other -- in the
+    // hash, in a snapshot, and readable.
+    f32 length = 5.0f;
+    // Spring: its hard stops, when `limitsEnabled`.
+    f32 minLength = 0.0f;
+    f32 maxLength = 5.0f;
+    bool winchEnabled = false;
+    f32 winchTarget = 5.0f;
+    f32 winchSpeed = 1.0f;
+    f32 winchForce = 10000.0f;
+
+    // Past either, the joint gives: disabled, and `Broken` fires. Zero never.
+    f32 breakForce = 0.0f;
+    f32 breakTorque = 0.0f;
+    // What it carried over the last tick, in newtons and newton-metres.
+    // Written by the mirror, read by `GetForce` and `GetTorque`.
+    f32 lastForce = 0.0f;
+    f32 lastTorque = 0.0f;
+
+    bool visible = false;
+    core::Color3 color{0.6f, 0.6f, 0.6f};
+    f32 thickness = 0.1f;
+};
+
+// What `ConstraintComponent::kind` holds for a class that is not a solver
+// joint: a mover (ADR 0127), evaluated by the mirror as forces before each
+// step. Past every `physics::ConstraintType`, so one field says which.
+namespace MoverKind {
+// The distance family's solver joint, for a module that draws a rope and may
+// not name the physics seam: `physics::ConstraintType::Distance`, and the
+// mirror asserts that it still is.
+inline constexpr i32 DistanceJoint = 5;
+inline constexpr i32 LinearVelocity = 16;
+inline constexpr i32 AngularVelocity = 17;
+inline constexpr i32 AlignPosition = 18;
+inline constexpr i32 AlignOrientation = 19;
+inline constexpr i32 VectorForce = 20;
+inline constexpr i32 Torque = 21;
+} // namespace MoverKind
+
+// A mover's own numbers, beside the `ConstraintComponent` every mover also
+// has (its two ends and whether it is on). One pool for the six, as the
+// joints share one: which fields a class reads is its class.
+struct MoverComponent
+{
+    // `LinearVelocity`: `Enum.VelocityConstraintMode` (0 Line, 1 Plane,
+    // 2 Vector). `AlignPosition` and `AlignOrientation`: 0 OneAttachment,
+    // 1 TwoAttachment.
+    i32 mode = 0;
+    // `Enum.ActuatorRelativeTo`: 0 Attachment0, 1 Attachment1, 2 World.
+    i32 relativeTo = 2;
+    // The velocity, the spin, the force or the torque.
+    core::Vec3 vector{0.0f, 0.0f, 0.0f};
+    core::Vec3 lineDirection{1.0f, 0.0f, 0.0f};
+    f32 lineVelocity = 0.0f;
+    core::Vec3 primaryTangentAxis{1.0f, 0.0f, 0.0f};
+    core::Vec3 secondaryTangentAxis{0.0f, 0.0f, 1.0f};
+    core::Vec2 planeVelocity{0.0f, 0.0f};
+    // `AlignPosition.Position` and `AlignOrientation.CFrame`'s rotation.
+    core::DVec3 position;
+    core::Mat3 orientation;
+    f32 maxForce = 10000.0f;
+    f32 maxTorque = 10000.0f;
+    f32 maxVelocity = 100000.0f;
+    f32 maxAngularVelocity = 100000.0f;
+    f32 responsiveness = 10.0f;
+    f32 stiffness = 0.0f;
+    f32 damping = 0.0f;
+    bool rigidityEnabled = false;
+    bool applyAtCenterOfMass = false;
+    // What it does to one body it does, reversed, to the other (amendment A2).
+    bool reactionEnabled = false;
+};
+
+// `NoCollisionConstraint`: two parts that pass through each other.
+struct NoCollisionComponent
+{
+    core::InstanceId part0;
+    core::InstanceId part1;
+    bool enabled = true;
 };
 
 // `Ragdoll`: the switch that makes a character's pose come from the simulation
@@ -975,6 +1115,9 @@ struct Part2DComponent
     core::Vec2 imageRectSize{0.0f, 0.0f};
     // `Enum.TextureFilter`: 0 Linear, 1 Nearest.
     i32 filter = 0;
+    // Drawn in the colours it was painted in, past the scene's exposure, tone
+    // curve, grade and bloom (ADR 0153). Off, it is one more lit thing.
+    bool exactColor = true;
     bool anchored = false;
     bool canCollide = true;
     bool sensor = false;
@@ -1017,6 +1160,8 @@ struct Tilemap2DComponent
     core::Color3 color{1.0f, 1.0f, 1.0f};
     // `Enum.TextureFilter`, Nearest by default: tiles are pixel art.
     i32 filter = 1;
+    // As a `Part2D`'s (ADR 0153).
+    bool exactColor = true;
     bool collides = true;
     f32 friction = 0.3f;
     core::NameAtom collisionGroup;
@@ -1471,6 +1616,11 @@ struct ScreenGuiComponent
     // Goes with the game to the next scene rather than with this one (ADR
     // 0106): a loading screen that stays up while the scene changes.
     bool keepOnSceneLoad = false;
+    // **A script of the game's -- one in `GlobalScriptService` -- put it in
+    // `UIService`** (D469). Such a script outlives the scene and such a screen
+    // does not, unless it is kept; the host says so, by name, when the scene
+    // takes it. Never saved, never hashed: it is about who asked.
+    bool parentedByGlobal = false;
     // Set by any layout-affecting write anywhere beneath this tree, cleared by
     // the layout that answers it. NOT a property: no script can read it, and a
     // script that could would be reading the engine's opinion of its own work.

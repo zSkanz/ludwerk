@@ -421,7 +421,11 @@ local ServiceNameExceptions = {
 --- `PromptShown` and `PromptHidden` are past participles the pattern cannot
 --- see, as `FocusLost` is. `DragStart`, `DragContinue` and `DragEnd` are the
 --- `DragDetector`'s, named in ADR 0126 for the same reason as the first four.
+---
+--- `Broken` is ADR 0127's, on a constraint that gave under load: a past
+--- participle the pattern cannot see, as `PromptShown` is.
 local EventNameExceptions = {
+    Broken = true,
     Heartbeat = true,
     MessageOut = true,
     FocusLost = true,

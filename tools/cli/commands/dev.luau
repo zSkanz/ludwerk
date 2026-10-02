@@ -27,6 +27,10 @@ export type Options = {
     path: string,
     headless: boolean,
     port: number?,
+    -- The scene to start in, and what its `GetLoadData` answers, as the host
+    -- takes them: a level is worked on without clicking through the menu.
+    scene: string?,
+    sceneData: string?,
 }
 
 local function run(options: Options): number
@@ -128,6 +132,12 @@ local function run(options: Options): number
     }
     if options.headless then
         table.insert(arguments, "--headless")
+    end
+    if options.scene ~= nil then
+        table.insert(arguments, `--scene={options.scene}`)
+    end
+    if options.sceneData ~= nil then
+        table.insert(arguments, `--scene-data={options.sceneData}`)
     end
 
     -- Yields rather than blocking, so the server and the watcher above keep

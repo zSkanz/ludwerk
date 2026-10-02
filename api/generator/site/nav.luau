@@ -104,12 +104,13 @@ local Sections: { Section } = {
     {
         Slug = "physics",
         Title = "Physics",
-        Summary = "Rigid bodies, collisions, queries, joints, and a character that walks.",
+        Summary = "Rigid bodies, collisions, queries, joints, movers, and a character that walks.",
         Pages = {
             { Slug = "bodies", Title = "Rigid bodies" },
             { Slug = "collisions", Title = "Collisions and contact" },
             { Slug = "queries", Title = "Raycasts and queries" },
             { Slug = "joints", Title = "Welds and constraints" },
+            { Slug = "movers", Title = "Movers and powered joints" },
             { Slug = "character", Title = "CharacterBody" },
             { Slug = "ragdoll", Title = "Ragdolls" },
         },

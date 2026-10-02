@@ -12,12 +12,30 @@
 local assert = require("@std/test/assert")
 local test = require("@std/test")
 
+local android = require("../export/android")
+local brand = require("../brand")
 local game = require("../export/game")
 local progress = require("../export/progress")
 local targets = require("../export/targets")
 local versionCode = require("../export/version_code")
 
 test.suite("export", function(suite)
+    -- D465: a package that had no brand file signed with one key and the
+    -- repository's CLI with another, and an APK from one would not install
+    -- over the other's. What a debug build is signed with, and where the
+    -- toolchains are, is no longer a function of what the engine is called.
+    suite:case("the debug key and the tools folder do not carry the brand's name", function()
+        local name = brand.read().Name
+        local key = string.gsub(android.debugKeystorePath(nil), "\\", "/")
+        assert.that(string.find(key, "/.android/debug.keystore", 1, true) ~= nil, key)
+        assert.eq(string.find(key, name, 1, true), nil)
+        assert.eq(android.DebugAlias, "androiddebugkey")
+        assert.eq(android.DebugPassword, "android")
+        local tools = string.gsub(android.toolsFolder(), "\\", "/")
+        assert.eq(string.find(tools, `/{name}`, 1, true), nil)
+        assert.eq(android.debugKeystorePath("keys/team.keystore"), "keys/team.keystore")
+    end)
+
     suite:case("the targets, and v1's name for the first", function()
         local names: { string } = {}
         for _, target in targets.All do

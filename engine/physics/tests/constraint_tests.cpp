@@ -8,6 +8,7 @@
 // missed: a constraint surviving `updateBody`, a constraint dropped by
 // `destroyBody`, an exclusion that really excludes, and two identically-built
 // worlds still agreeing after three hundred steps.
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -525,4 +526,239 @@ TEST_CASE("a joint under load reports the impulse holding it")
 
     rig.step(60);
     CHECK(rig.physics->constraintState(rig.world, joint).appliedImpulse > 0.0f);
+}
+
+// --- ADR 0127: what a joint does of itself ------------------------------------
+
+TEST_CASE("a motor is driven in place: told to turn, read, and told to stop")
+{
+    Rig rig;
+    const BodyHandle frame = rig.cube(core::DVec3{0.0, 5.0, 0.0}, MotionType::Static);
+    const BodyHandle door = rig.cube(core::DVec3{1.0, 5.0, 0.0});
+
+    ConstraintDesc desc = jointBetween(frame, door, ConstraintType::Hinge, 0.5);
+    desc.collideConnected = false;
+    const ConstraintHandle hinge = rig.physics->createConstraint(rig.world, desc);
+    REQUIRE(hinge.valid());
+
+    desc.motor = MotorMode::Velocity;
+    desc.motorTarget = 2.0f;
+    desc.motorMaxForce = 500.0f;
+    rig.physics->driveConstraint(rig.world, hinge, desc);
+    rig.step(30);
+
+    // The speed it was told, about the joint's own axis, and an angle that has
+    // been growing at it for half a second.
+    const ConstraintState turning = rig.physics->constraintState(rig.world, hinge);
+    CHECK(static_cast<f64>(turning.velocity) == doctest::Approx(2.0).epsilon(0.05));
+    CHECK(static_cast<f64>(turning.position) == doctest::Approx(1.0).epsilon(0.1));
+
+    // Held: the same motor at zero is a brake against gravity.
+    desc.motorTarget = 0.0f;
+    rig.physics->driveConstraint(rig.world, hinge, desc);
+    rig.step(30);
+    const ConstraintState held = rig.physics->constraintState(rig.world, hinge);
+    CHECK(std::fabs(held.velocity) < 0.05f);
+    CHECK(static_cast<f64>(held.position) == doctest::Approx(static_cast<f64>(turning.position)).epsilon(0.1));
+}
+
+TEST_CASE("a motor reaches its speed under its cap, and a cap too small loses to gravity")
+{
+    // One kilogram on a half-metre arm is 4.9 N m of gravity about the hinge.
+    const auto run = [](f32 cap) {
+        Rig rig;
+        const BodyHandle frame = rig.cube(core::DVec3{0.0, 5.0, 0.0}, MotionType::Static);
+        const BodyHandle door = rig.cube(core::DVec3{1.0, 5.0, 0.0});
+        ConstraintDesc desc = jointBetween(frame, door, ConstraintType::Hinge, 0.5);
+        desc.collideConnected = false;
+        desc.motor = MotorMode::Velocity;
+        desc.motorTarget = 1.0f;
+        desc.motorMaxForce = cap;
+        const ConstraintHandle hinge = rig.physics->createConstraint(rig.world, desc);
+        REQUIRE(hinge.valid());
+        rig.step(20);
+        return rig.physics->constraintState(rig.world, hinge);
+    };
+    CHECK(static_cast<f64>(run(100.0f).velocity) == doctest::Approx(1.0).epsilon(0.05));
+    // Asked to lift and unable to: it turns the other way, the way it falls.
+    CHECK(run(1.0f).velocity < 0.0f);
+}
+
+TEST_CASE("a position motor is a spring that settles at its angle")
+{
+    Rig rig;
+    const BodyHandle frame = rig.cube(core::DVec3{0.0, 5.0, 0.0}, MotionType::Static);
+    const BodyHandle door = rig.cube(core::DVec3{1.0, 5.0, 0.0});
+    ConstraintDesc desc = jointBetween(frame, door, ConstraintType::Hinge, 0.5);
+    desc.collideConnected = false;
+    desc.motor = MotorMode::Position;
+    desc.motorTarget = 0.5f;
+    desc.motorMaxForce = 500.0f;
+    desc.motorFrequency = 4.0f;
+    desc.motorDampingRatio = 1.0f;
+    const ConstraintHandle hinge = rig.physics->createConstraint(rig.world, desc);
+    REQUIRE(hinge.valid());
+
+    rig.step(240);
+    const ConstraintState state = rig.physics->constraintState(rig.world, hinge);
+    CHECK(static_cast<f64>(state.position) == doctest::Approx(0.5).epsilon(0.1));
+    CHECK(std::fabs(state.velocity) < 0.05f);
+}
+
+TEST_CASE("a ball joint with a drive holds a pose that gravity would take")
+{
+    // Amendment A1: a shoulder that holds an arm out.
+    const auto drop = [](bool driven) {
+        Rig rig;
+        const BodyHandle chest = rig.cube(core::DVec3{0.0, 5.0, 0.0}, MotionType::Static);
+        const BodyHandle arm = rig.cube(core::DVec3{1.0, 5.0, 0.0});
+        ConstraintDesc desc = jointBetween(chest, arm, ConstraintType::SwingTwist, 0.5);
+        desc.collideConnected = false;
+        if (driven) {
+            desc.motor = MotorMode::Position;
+            desc.motorMaxForce = 500.0f;
+            desc.motorFrequency = 6.0f;
+        }
+        REQUIRE(rig.physics->createConstraint(rig.world, desc).valid());
+        // The lowest it gets in two seconds: limp, it swings, and where it is
+        // at the end is wherever the swing happens to be.
+        f64 lowest = 0.0;
+        for (int tick = 0; tick < 120; ++tick) {
+            rig.step(1);
+            lowest = std::max(lowest, 5.0 - rig.positionOf(arm).y);
+        }
+        return lowest;
+    };
+    // Limp, it falls: the centre swings through most of the arm's length below.
+    CHECK(drop(false) > 0.3);
+    // Held, it sags a little under its own weight and no more.
+    CHECK(drop(true) < 0.1);
+}
+
+TEST_CASE("a distance joint's range changes in place: a winch takes in rope")
+{
+    Rig rig;
+    const BodyHandle anchor = rig.cube(core::DVec3{0.0, 10.0, 0.0}, MotionType::Static);
+    const BodyHandle hanging = rig.cube(core::DVec3{0.0, 7.0, 0.0});
+    ConstraintDesc desc;
+    desc.type = ConstraintType::Distance;
+    desc.first = anchor;
+    desc.second = hanging;
+    desc.minDistance = 0.0f;
+    desc.maxDistance = 3.0f;
+    const ConstraintHandle rope = rig.physics->createConstraint(rig.world, desc);
+    REQUIRE(rope.valid());
+    rig.step(60);
+    CHECK(static_cast<f64>(rig.physics->constraintState(rig.world, rope).position) ==
+          doctest::Approx(3.0).epsilon(0.02));
+
+    desc.maxDistance = 1.5f;
+    rig.physics->driveConstraint(rig.world, rope, desc);
+    rig.step(120);
+    CHECK(static_cast<f64>(rig.physics->constraintState(rig.world, rope).position) ==
+          doctest::Approx(1.5).epsilon(0.03));
+    CHECK(distanceBetween(rig, anchor, hanging) == doctest::Approx(1.5).epsilon(0.03));
+}
+
+TEST_CASE("a body says what it weighs, takes a push off its centre, and slows as it is told")
+{
+    Rig rig;
+    rig.physics->setGravity(rig.world, core::Vec3{0.0f, 0.0f, 0.0f});
+    const BodyHandle crate = rig.cube(core::DVec3{0.0, 5.0, 0.0});
+
+    // A metre cube at a density of one.
+    const BodyMassProperties mass = rig.physics->bodyMassProperties(rig.world, crate);
+    CHECK(static_cast<f64>(mass.mass) == doctest::Approx(1.0).epsilon(0.01));
+    CHECK(mass.centerOfMass.y == doctest::Approx(5.0));
+    // A cube of side one: a sixth of its mass about every axis.
+    CHECK(static_cast<f64>(mass.inverseInertia.m[0][0]) == doctest::Approx(6.0).epsilon(0.02));
+
+    // Pushed along X at a point above the centre: it moves, and it turns.
+    rig.physics->applyImpulseAt(rig.world, crate, core::Vec3{1.0f, 0.0f, 0.0f}, core::DVec3{0.0, 5.5, 0.0});
+    rig.step(1);
+    const BodyState pushed = rig.physics->bodyState(rig.world, crate);
+    CHECK(static_cast<f64>(pushed.linearVelocity.x) == doctest::Approx(1.0).epsilon(0.05));
+    CHECK(std::fabs(pushed.angularVelocity.z) > 1.0f);
+
+    // Left alone it keeps nearly all of that for a second; damped hard it does
+    // not.
+    rig.step(60);
+    const f32 coasting = rig.physics->bodyState(rig.world, crate).linearVelocity.x;
+    CHECK(coasting > 0.9f);
+    rig.physics->setBodyDamping(rig.world, crate, 3.0f, 3.0f);
+    rig.step(60);
+    CHECK(rig.physics->bodyState(rig.world, crate).linearVelocity.x < coasting * 0.2f);
+
+    // A body the solver does not move still weighs what it would, and has no
+    // inertia to give.
+    const BodyHandle wall = rig.cube(core::DVec3{9.0, 5.0, 0.0}, MotionType::Static);
+    const BodyMassProperties still = rig.physics->bodyMassProperties(rig.world, wall);
+    CHECK(static_cast<f64>(still.mass) == doctest::Approx(1.0).epsilon(0.01));
+    CHECK_FALSE(still.dynamic);
+    CHECK(still.inverseInertia.m[0][0] == 0.0f);
+}
+
+TEST_CASE("a pair told not to collide falls through, and told again it lands")
+{
+    Rig rig;
+    const BodyHandle floor = rig.cube(core::DVec3{0.0, 0.0, 0.0}, MotionType::Static);
+    const BodyHandle crate = rig.cube(core::DVec3{0.0, 1.5, 0.0});
+    rig.step(90);
+    CHECK(rig.positionOf(crate).y == doctest::Approx(1.0).epsilon(0.02));
+
+    rig.physics->setPairCollidable(rig.world, floor, crate, false);
+    rig.step(60);
+    CHECK(rig.positionOf(crate).y < 0.0);
+
+    // Put back above, and collidable: it lands as it did.
+    rig.physics->setPairCollidable(rig.world, floor, crate, true);
+    core::CFrameD above;
+    above.position = core::DVec3{0.0, 1.5, 0.0};
+    rig.physics->setBodyTransform(rig.world, crate, above);
+    rig.physics->setBodyVelocity(rig.world, crate, core::Vec3{0.0f, 0.0f, 0.0f}, core::Vec3{0.0f, 0.0f, 0.0f});
+    rig.step(90);
+    CHECK(rig.positionOf(crate).y == doctest::Approx(1.0).epsilon(0.02));
+}
+
+TEST_CASE("a ball finds what it touches, in a stable order")
+{
+    Rig rig;
+    (void)rig.cube(core::DVec3{0.0, 0.0, 0.0}, MotionType::Static, 11);
+    (void)rig.cube(core::DVec3{2.0, 0.0, 0.0}, MotionType::Static, 12);
+    (void)rig.cube(core::DVec3{9.0, 0.0, 0.0}, MotionType::Static, 13);
+
+    std::vector<u64> found;
+    rig.physics->overlapSphere(rig.world, core::DVec3{1.0, 0.0, 0.0}, 1.0f, QueryFilter{}, found);
+    REQUIRE(found.size() == 2);
+    CHECK(found[0] == 11);
+    CHECK(found[1] == 12);
+
+    found.clear();
+    rig.physics->overlapSphere(rig.world, core::DVec3{5.0, 0.0, 0.0}, 0.5f, QueryFilter{}, found);
+    CHECK(found.empty());
+}
+
+TEST_CASE("a contact that begins says where, which way and how fast")
+{
+    // N2: how hard a blow was. Dropped from rest with its underside 1.25 m
+    // above the floor's top, a body arrives at five metres a second.
+    Rig rig;
+    (void)rig.cube(core::DVec3{0.0, 0.0, 0.0}, MotionType::Static, 1);
+    (void)rig.cube(core::DVec3{0.0, 2.25, 0.0}, MotionType::Dynamic, 2);
+
+    bool met = false;
+    for (int tick = 0; tick < 90 && !met; ++tick) {
+        rig.step(1);
+        for (const ContactEvent& event : rig.physics->drainContacts(rig.world)) {
+            if (event.phase != ContactPhase::Began)
+                continue;
+            met = true;
+            REQUIRE(event.detailed);
+            CHECK(static_cast<f64>(event.speed) == doctest::Approx(4.95).epsilon(0.06));
+            CHECK(static_cast<f64>(std::fabs(event.normal.y)) == doctest::Approx(1.0).epsilon(0.01));
+            // On the floor's top face, give or take the solver's margin.
+            CHECK(event.point.y == doctest::Approx(0.5).epsilon(0.2));
+        }
+    }
+    CHECK(met);
 }

@@ -52,6 +52,9 @@ guided tour.
 
 | Class | Inherits | Summary |
 |---|---|---|
+| [`AlignOrientation`](alignorientation.md) | [`Constraint`](constraint.md) | Turns `Attachment0` towards an orientation and holds it there: something that stays upright, a turret that faces its target, a pet that looks where its owner looks. |
+| [`AlignPosition`](alignposition.md) | [`Constraint`](constraint.md) | Pulls `Attachment0` towards a place and holds it there: a pet that hovers at a shoulder, a platform that returns to its post, something carried. |
+| [`AngularVelocity`](angularvelocity.md) | [`Constraint`](constraint.md) | Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: a fan, a coin that turns, a planet. |
 | [`AnimationPlayer`](animationplayer.md) | [`Instance`](instance.md) | Plays a skinned mesh's animation clips (§2.2). |
 | [`Atmosphere`](atmosphere.md) | [`Instance`](instance.md) | The air between the camera and everything it sees. |
 | [`Attachment`](attachment.md) | [`Instance`](instance.md) | A named place on a part: a socket to weld something to, a joint frame for a constraint, a muzzle to spawn something at. |
@@ -87,12 +90,14 @@ guided tour.
 | [`InputBinding`](inputbinding.md) | [`Instance`](instance.md) | One physical input that drives its parent `InputAction` (§2.4). |
 | [`InputContext`](inputcontext.md) | [`Instance`](instance.md) | A group of `InputAction` children that are live together (§2.4, ADR 0029). |
 | [`Instance`](instance.md) | — | The root of the class hierarchy: a node in the tree, carrying a name, a parent, attributes and tags. |
+| [`LinearVelocity`](linearvelocity.md) | [`Constraint`](constraint.md) | Holds the part its `Attachment0` is on at a velocity, with as much force as `MaxForce` allows: a conveyor's crate, a platform that glides, a thrown thing that does not slow. |
 | [`MeshPart`](meshpart.md) | [`BasePart`](basepart.md) | A part whose geometry is an imported mesh rather than a primitive solid. |
 | [`Model`](model.md) | [`PVInstance`](pvinstance.md) | A group of parts handled as one object, with a pivot to move it by and an extents box to measure it with. |
 | [`ModuleScript`](modulescript.md) | [`BaseScript`](basescript.md) | Luau that is REQUIRED rather than run. |
 | [`NavigationAgent`](navigationagent.md) | [`Instance`](instance.md) | Walks its part to a point over the walkable ground, keeping clear of the other agents as it goes -- a crowd (ADR 0098). |
 | [`NavigationArea`](navigationarea.md) | [`Instance`](instance.md) | Marks the walkable ground inside its part's box with a `Label` (ADR 0098), which `NavigationService:SetAreaCost` prices: water an agent would rather go round, mud that is slow, a door that is shut. |
 | [`NavigationLink`](navigationlink.md) | [`Instance`](instance.md) | A way between two points the walkable ground does not join (ADR 0098): a gap to jump, a ladder, a drop. |
+| [`NoCollisionConstraint`](nocollisionconstraint.md) | [`Instance`](instance.md) | Two parts that pass through each other, and collide with everything else as they did. |
 | [`PVInstance`](pvinstance.md) | [`Instance`](instance.md) | The base of everything with a position and orientation in the world: a pivot to move it by, and an offset saying where that pivot sits. |
 | [`Part`](part.md) | [`BasePart`](basepart.md) | The primitive solid: a part whose geometry is one of a small set of shapes rather than an imported mesh. |
 | [`Part2D`](part2d.md) | [`Instance`](instance.md) | A sprite and a body in one, on the 2D plane (the 2D layer, phase 3): what a `Part` is to a 3D world. |
@@ -100,16 +105,20 @@ guided tour.
 | [`Player`](player.md) | [`Instance`](instance.md) | Somebody taking part in this world (N1). |
 | [`PointLight`](pointlight.md) | [`Instance`](instance.md) | A light radiating equally in every direction. |
 | [`PostEffect`](posteffect.md) | [`Instance`](instance.md) | The abstract base of the effects that change the finished picture rather than the world in it (ADR 0096). |
+| [`PrismaticConstraint`](prismaticconstraint.md) | [`Constraint`](constraint.md) | A joint free to slide along one line and to do nothing else: a lift, a drawer, a piston. |
 | [`ProximityPrompt`](proximityprompt.md) | [`Instance`](instance.md) | A prompt that appears when a player comes near the part, attachment or model it is in -- **Open**, **Talk**, **Pick up** -- and is triggered by a key, a gamepad button or a tap (ADR 0126). |
 | [`Ragdoll`](ragdoll.md) | [`Instance`](instance.md) | Makes a character's pose come from the simulation instead of from a clip. |
 | [`RemoteEvent`](remoteevent.md) | [`Instance`](instance.md) | A message a game sends between machines (ADR 0077): "I bought the sword" from a client to the server, "the round starts" from the server to everyone. |
 | [`RemoteFunction`](remotefunction.md) | [`Instance`](instance.md) | A question a client asks the server and waits for the answer to (ADR 0079): "what is in my inventory?", "may I open this door?". |
+| [`RodConstraint`](rodconstraint.md) | [`Constraint`](constraint.md) | Two attachments held exactly `Length` apart, free to turn about either end: a rod, a strut, the link of a mechanism. |
+| [`RopeConstraint`](ropeconstraint.md) | [`Constraint`](constraint.md) | Two attachments that can be no further apart than `Length`, and as close as they like: a rope, a chain, a leash. |
 | [`ScreenGui`](screengui.md) | [`Instance`](instance.md) | The root of one screen-space UI tree, parented to `UIService` (§2.2). |
 | [`Script`](script.md) | [`BaseScript`](basescript.md) | Luau that RUNS, exactly while it is live: enabled, in the world, under no storage, and its side running on this machine (ADR 0137). |
 | [`ScrollFrame`](scrollframe.md) | [`UIObject`](uiobject.md) | A `Frame` whose contents can be larger than it is (§2.2). |
 | [`Sky`](sky.md) | [`Instance`](instance.md) | What the sky shows: six images around the world, the sun's and the moon's look, stars and clouds. |
 | [`Sound`](sound.md) | [`Instance`](instance.md) | One sound, playing or not (§2.2). |
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light confined to a cone about its forward direction -- its holder's, turned by its own `CFrame`, or its own alone when nothing holds it (ADR 0095). |
+| [`SpringConstraint`](springconstraint.md) | [`Constraint`](constraint.md) | A spring between two attachments: it pulls them together when they are further apart than `FreeLength` and pushes them apart when they are closer, harder the further they are from it. |
 | [`SpringConstraint2D`](springconstraint2d.md) | [`Constraint2D`](constraint2d.md) | A distance between two points, held softly: a spring, a bungee, a suspension. |
 | [`SpriteAnimator`](spriteanimator.md) | [`Instance`](instance.md) | Plays frames of its parent `Part2D`'s sprite sheet on the simulation clock (ADR 0102), so a walk cycle is data instead of script. |
 | [`SubWorld`](subworld.md) | [`Instance`](instance.md) | A scene running beside this one (ADR 0107): an arcade cabinet you can play, a game on a computer inside the game, a snow globe with its own weather. |
@@ -121,12 +130,14 @@ guided tour.
 | [`TextInput`](textinput.md) | [`TextLabel`](textlabel.md) | An editable field (ADR 0139), on one line or on several: a chat box, a name, a server's address. |
 | [`TextLabel`](textlabel.md) | [`UIObject`](uiobject.md) | Text in a box (§2.2). |
 | [`Tilemap2D`](tilemap2d.md) | [`Instance`](instance.md) | A grid of tiles from one tileset image, on the 2D plane (the 2D layer, phase 3): a level you paint. |
+| [`Torque`](torque.md) | [`Constraint`](constraint.md) | A constant torque on the part its `Attachment0` is on: something that keeps being twisted. |
 | [`UICorner`](uicorner.md) | [`Instance`](instance.md) | Rounds its parent's corners (§2.2). |
 | [`UIGradient`](uigradient.md) | [`Instance`](instance.md) | Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its text -- is multiplied by `Color` and faded by `Transparency` along the gradient. |
 | [`UIListLayout`](uilistlayout.md) | [`Instance`](instance.md) | Stacks its parent's `UIObject` children in a line (§2.2). |
 | [`UIObject`](uiobject.md) | [`Instance`](instance.md) | Anything that occupies a rectangle on screen (§2.2). |
 | [`UIPadding`](uipadding.md) | [`Instance`](instance.md) | Insets its parent's content on each side (§2.2). |
 | [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
+| [`VectorForce`](vectorforce.md) | [`Constraint`](constraint.md) | A constant force on the part its `Attachment0` is on: a thruster, wind on one thing, lift. |
 | [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. |
 | [`Water`](water.md) | [`Instance`](instance.md) | Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU for the picture. |
 | [`WaterPoint`](waterpoint.md) | [`Instance`](instance.md) | A point a `River` runs through, or a `Lake`'s outline passes (ADR 0146), in order. |

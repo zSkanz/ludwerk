@@ -15,8 +15,12 @@
 	Windows means `cmd /c`, whose quoting a project path or a game name with a
 	space in it breaks.
 
-	The debug key is generated once per machine, under the user's Ludwerk folder,
-	and reused after that -- so an APK built today installs over yesterday's.
+	**The debug key is Android's own**: `~/.android/debug.keystore`, alias
+	`androiddebugkey`, the one the SDK's tools make and every other tool on the
+	machine signs a debug build with -- so an APK built today installs over
+	yesterday's, whichever program built either, and nothing about it depends
+	on what this engine is called (D465). Made there, the standard way, when
+	the machine has none.
 ]]
 
 local fs = require("@std/fs")
@@ -33,9 +37,9 @@ local projectlib = require("../project")
 local tr = catalog.tr
 
 -- The debug key's fixed secrets. Not secrets at all: a debug key signs a build
--- that installs anywhere and publishes nowhere, and Android's own tooling
--- spells its default the same way.
-local DebugAlias = "enginedebugkey"
+-- that installs anywhere and publishes nowhere, and these are the alias and
+-- the password Android's own tooling gives it.
+local DebugAlias = "androiddebugkey"
 local DebugPassword = "android"
 
 local Abi = "arm64-v8a"
@@ -51,8 +55,9 @@ local function localAppData(): string?
     return if platform.win32 and value ~= nil and value ~= "" then value else nil
 end
 
---- The user's Ludwerk folder: where the toolchains `ludwerk android install-tools`
---- installs live, and the debug key.
+--- The user's folder under the brand's name: the Gradle build's cache, and
+--- where toolchains were installed before D465. **Nothing a rename would
+--- orphan is put here any more** -- see `toolsFolder`.
 local function userFolder(): string
     local appData = localAppData()
     if appData ~= nil then
@@ -65,9 +70,34 @@ local function userFolder(): string
     return projectlib.joined(home(), ".local", "share", Brand.read().Name)
 end
 
+--- **Where `ludwerk android install-tools` installs, whatever the engine is
+--- called** (D465): `ENG_TOOLS_ROOT` when it is set, otherwise a folder beside
+--- Android's own per-user state, named by the code's neutral name (ADR 0109).
+--- The folder under the brand's name was the first home of these gigabytes,
+--- and a brand file that changed -- or was missing from a package -- left
+--- them behind and downloaded them again.
+local function toolsFolder(): string
+    local root = process.env.ENG_TOOLS_ROOT
+    if root ~= nil and root ~= "" then
+        return root
+    end
+    return projectlib.joined(home(), ".android", "engine")
+end
+
+--- Where an install goes: the neutral folder, unless this machine already has
+--- one under the brand's name -- which is then kept, and never downloaded twice.
+local function installFolder(): string
+    local neutral = toolsFolder()
+    local branded = userFolder()
+    local function holds(folder: string): boolean
+        return fs.exists(projectlib.joined(folder, "toolchains")) or fs.exists(projectlib.joined(folder, "android-sdk"))
+    end
+    return if not holds(neutral) and holds(branded) then branded else neutral
+end
+
 --- Where `ludwerk android install-tools` puts the SDK.
 local function userSdk(): string
-    return projectlib.joined(userFolder(), "android-sdk")
+    return projectlib.joined(installFolder(), "android-sdk")
 end
 
 --- Where the editor keeps its preferences: SDL's per-user folder for
@@ -160,6 +190,7 @@ local function toolchainRoots(): { string }
     if buildRoot ~= nil and buildRoot ~= "" then
         table.insert(roots, projectlib.joined(buildRoot, "toolchains"))
     end
+    table.insert(roots, projectlib.joined(toolsFolder(), "toolchains"))
     table.insert(roots, projectlib.joined(userFolder(), "toolchains"))
     local appData = localAppData()
     if appData ~= nil then
@@ -220,7 +251,10 @@ local function findSdk(): string?
             return value
         end
     end
-    local candidates: { string } = { userSdk() }
+    local candidates: { string } = {
+        projectlib.joined(toolsFolder(), "android-sdk"),
+        projectlib.joined(userFolder(), "android-sdk"),
+    }
     local appData = localAppData()
     if appData ~= nil then
         table.insert(candidates, projectlib.joined(appData, "Android", "Sdk"))
@@ -283,6 +317,9 @@ export type Settings = {
     release: boolean,
     keystore: string?,
     keyAlias: string?,
+    -- A debug key a team shares, in place of this machine's.
+    debugKeystore: string?,
+    debugKeyAlias: string?,
 }
 
 --- `Enum.ScreenOrientation`, by name and by number, as the manifest spells it.
@@ -368,6 +405,10 @@ local function settings(project: projectlib.Project): (Settings?, string?)
     if release and not fs.exists(keystore :: string) then
         return nil, tr("cli.build.err.android_no_keystore", { path = keystore :: string })
     end
+    local debugKeystore: string? = if typeof(section.debug_keystore) == "string"
+        then path.format(path.resolve(projectlib.joined(project.root, section.debug_keystore)))
+        else nil
+    local debugKeyAlias: string? = if typeof(section.debug_key_alias) == "string" then section.debug_key_alias else nil
     return {
         package = package,
         versionCode = versionCode,
@@ -377,6 +418,8 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         release = release,
         keystore = keystore,
         keyAlias = keyAlias,
+        debugKeystore = debugKeystore,
+        debugKeyAlias = debugKeyAlias,
     },
         nil
 end
@@ -490,26 +533,40 @@ local function newKeystore(tools: Tools, key: NewKey): string?
     return nil
 end
 
---- The per-machine debug key, made the first time.
-local function debugKeystore(tools: Tools): (string?, string?)
-    local folder = projectlib.joined(userFolder(), "android")
-    local keystore = projectlib.joined(folder, "debug.keystore")
+--- **Where the debug key is**: the project's own (`[export.android]
+--- debug_keystore`) when it names one, otherwise Android's -- which no name of
+--- this engine is part of, so a rename cannot change what a game is signed
+--- with (D465).
+local function debugKeystorePath(override: string?): string
+    return if override ~= nil then override else projectlib.joined(home(), ".android", "debug.keystore")
+end
+
+--- The debug key, and the alias it is under. Android's is made the first time,
+--- as the SDK's own tools make it: thirty years, `CN=Android Debug`.
+local function debugKeystore(tools: Tools, override: string?, overrideAlias: string?): (string?, string?, string?)
+    local keystore = debugKeystorePath(override)
+    local alias = if overrideAlias ~= nil then overrideAlias else DebugAlias
     if fs.exists(keystore) then
-        return keystore, nil
+        return keystore, alias, nil
     end
-    fs.createDirectory(folder, { makeParents = true })
+    -- A key the project names is the team's, and is never made here: one made
+    -- on this machine would be a different key under the shared one's name.
+    if override ~= nil then
+        return nil, nil, tr("cli.build.err.android_no_keystore", { path = keystore })
+    end
+    fs.createDirectory(projectlib.joined(home(), ".android"), { makeParents = true })
     local failed = newKeystore(tools, {
         keystore = keystore,
         alias = DebugAlias,
         storePassword = DebugPassword,
         keyPassword = DebugPassword,
-        commonName = "Ludwerk Debug",
-        days = 10000,
+        commonName = "Android Debug",
+        days = 10950,
     })
     if failed ~= nil then
-        return nil, failed
+        return nil, nil, failed
     end
-    return keystore, nil
+    return keystore, alias, nil
 end
 
 local function gradleBuildRoot(): string
@@ -624,7 +681,10 @@ end
 
 return {
     userFolder = userFolder,
+    toolsFolder = toolsFolder,
+    installFolder = installFolder,
     userSdk = userSdk,
+    debugKeystorePath = debugKeystorePath,
     findTools = findTools,
     settings = settings,
     stage = stage,

@@ -83,9 +83,22 @@ falls through the floor.
 crate.Density = 0.6   -- kilograms per cubic metre
 ```
 
-There is no `Mass` property, and its absence is deliberate: mass is
-`BasePart.Density` times the volume that `Size` and `Shape` describe, and the
-two cannot be set to contradict each other if only one of them exists.
+`BasePart.Mass` is read and never written: mass is `BasePart.Density` times the
+volume that `Size` and `Shape` describe, and the two cannot be set to
+contradict each other when only one of them can be set. `AssemblyMass` adds up
+everything rigidly joined to the part by welds and `FixedConstraint`s -- what
+has to be moved to move it. An impulse is a mass times a change of speed:
+
+```luau
+--!strict
+local function shove(part: BasePart, change: vector)
+    part:ApplyImpulse(change * part.AssemblyMass)
+end
+```
+
+`BasePart.LinearDamping` and `BasePart.AngularDamping` are the share of its
+speed and of its spin a part loses each second with nothing touching it: 0.05
+by default, zero for something that should coast for ever.
 
 `BasePart.Friction` defaults to 0.3 and `BasePart.Restitution` to 0. Both
 combine across a contact pair, so one slippery surface is enough to make a pair
@@ -93,17 +106,27 @@ slide.
 
 ## Moving a body
 
-`BasePart.LinearVelocity` and `BasePart.AngularVelocity` are **read-only** — they
-report the last simulation tick. A velocity assignment is an impulse with the
-mass divided out, and `BasePart.ApplyImpulse` is that operation under a name that
-says what it does.
+`BasePart.LinearVelocity` and `BasePart.AngularVelocity` report the last
+simulation tick. To push a body, `BasePart.ApplyImpulse`:
 
 ```luau
 crate:ApplyImpulse(vector.create(0, 0, 12))   -- kilogram-metres per second
 ```
 
-The impulse is applied at the **next** simulation tick, never inside the call.
-An anchored part ignores it: it has no momentum to change.
+To set where it is going rather than to push it, write the velocity: a ball
+served, a thing stopped dead.
+
+```luau
+ball.LinearVelocity = vector.create(0, 8, -20)
+ball.AngularVelocity = vector.zero
+```
+
+Either is applied at the **next** simulation tick, never inside the call --
+though a velocity written reads back at once. An anchored part ignores both: it
+has no momentum to change.
+
+To keep a part moving, turning or in place without writing anything each tick,
+see [Movers and powered joints](manual:physics/movers).
 
 To place a body rather than push it, write `BasePart.CFrame` or
 `BasePart.Position` directly — and remember that doing so to an anchored part is
@@ -154,9 +177,8 @@ back on top of it -- and so is a character the ground is raised round.
 
 ## What is not here
 
-- **No `Mass`, no `PhysicalProperties`.** `Density`, `Friction` and
+- **No writable `Mass`, no `PhysicalProperties`.** `Density`, `Friction` and
   `Restitution` are the three, directly and typed.
-- **No writable velocity.** `ApplyImpulse` is the operation.
 - **No sleep or wake API.** Sleeping is real internally; its only script-visible
   consequence is that a pair which stays in contact does not re-fire `Touched`
   across a sleep.

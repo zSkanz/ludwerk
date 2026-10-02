@@ -526,6 +526,12 @@ if(ENG_BUILD_TESTS)
     add_test(NAME host_unknown_backend COMMAND engine_host --rhi=nonesuch)
     set_tests_properties(host_unknown_backend PROPERTIES WILL_FAIL TRUE TIMEOUT 60)
 
+    # D468: what a scene is handed is JSON, and text that is not is refused
+    # where it was typed rather than read as nil by the scene.
+    add_test(NAME host_scene_data_must_be_json
+        COMMAND engine_host --headless --frames=1 --exit --rhi=null "--scene-data={level: 3")
+    set_tests_properties(host_scene_data_must_be_json PROPERTIES WILL_FAIL TRUE TIMEOUT 60)
+
     # **A host with no script used to refuse and now opens the project browser**
     # (ADR 0055), so what this asserts moved rather than disappeared: a path that
     # is not there is still a refusal, which is the case somebody reaches by
@@ -897,6 +903,19 @@ if(ENG_BUILD_TESTS)
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/ui-appearance.png
             -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_ui_appearance_gate.cmake)
     set_tests_properties(ui_appearance_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
+    # ADR 0153: a sprite's colours on the screen are the colours it was given,
+    # asked of the screenshot square by square, to within one step.
+    add_test(NAME sprite_color_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/spritecolor
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/sprite-color.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_sprite_color_gate.cmake)
+    set_tests_properties(sprite_color_gate PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
@@ -1537,7 +1556,7 @@ if(ENG_BUILD_TESTS)
     # no group is asked for.
     set(drawn_tests
         screenshot_gate screenshot_gate_contact screenshot_gate_ui screenshot_gate_instanced
-        screenshot_gate_sprites ui_appearance_gate views_gate mirrors_gate ortho_gate subworld_gate
+        screenshot_gate_sprites ui_appearance_gate sprite_color_gate views_gate mirrors_gate ortho_gate subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels

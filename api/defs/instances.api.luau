@@ -589,23 +589,57 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "1",
                 ErrorKey = "scene.err.number_above_zero",
-                Doc = "Mass per cubic metre. Mass is this times the volume the Size and Shape describe, and there "
-                    .. "is no Mass property precisely so that the two cannot be set to contradict each other.",
+                Doc = "Mass per cubic metre. Mass is this times the volume the Size and Shape describe, which "
+                    .. "is why `Mass` can be read and not written: the two cannot be set to contradict each other.",
+            },
+            {
+                Name = "Mass",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "What the part weighs, in kilograms: `Density` times the volume of its shape, as the "
+                    .. "simulation worked it out. An impulse is this times a change of speed.",
+            },
+            {
+                Name = "AssemblyMass",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The mass of this part and of everything rigidly joined to it by welds and "
+                    .. "`FixedConstraint`s: what has to be moved to move it.",
+            },
+            {
+                Name = "LinearDamping",
+                Type = "number",
+                Default = "0.05",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The share of its speed a part loses each second with nothing touching it. Zero keeps "
+                    .. "moving for ever; one is thick air.",
+            },
+            {
+                Name = "AngularDamping",
+                Type = "number",
+                Default = "0.05",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The same for its spin.",
+            },
+            {
+                Name = "ContactDetails",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether `Collided` fires for this part. Off by default, so a world of scenery pays "
+                    .. "nothing for a signal nobody listens to.",
             },
             {
                 Name = "LinearVelocity",
                 Type = "vector",
-                ReadOnly = true,
                 Doc = "How fast this part is moving, in metres per second, as of the last simulation tick. "
-                    .. "Read-only: a velocity assignment is an impulse with the mass divided out, and "
-                    .. "`ApplyImpulse` is that operation under a name that says what it does.",
+                    .. "Writing it sets the speed the next tick starts from: a ball served, a thing stopped "
+                    .. "dead. To push rather than to set, `ApplyImpulse`.",
             },
             {
                 Name = "AngularVelocity",
                 Type = "vector",
-                ReadOnly = true,
                 Doc = "How fast this part is spinning, in radians per second about each world axis, as of the "
-                    .. "last simulation tick.",
+                    .. "last simulation tick. Writable, as `LinearVelocity` is.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -709,6 +743,19 @@ local Classes: { Schema.Class } = {
                     .. "like every signal here (ADR 0015), so it arrives at the next resumption point rather than "
                     .. "inside the solver. A pair that stays in contact fires once, not once per tick -- including "
                     .. "across the moment the simulation puts both parts to sleep.",
+            },
+            {
+                Name = "Collided",
+                Parameters = {
+                    { Name = "otherPart", Type = "BasePart" },
+                    { Name = "position", Type = "vector" },
+                    { Name = "normal", Type = "vector" },
+                    { Name = "speed", Type = "number" },
+                },
+                Doc = "Fires with `Touched`, for a part whose `ContactDetails` is on, and says what the contact "
+                    .. "was: where in the world, the direction from this part into the other, and how fast the "
+                    .. "two were closing along it when they met, in metres a second -- before the simulation "
+                    .. "answered. How hard a blow was is that speed times what was moving.",
             },
             {
                 Name = "TouchEnded",
@@ -926,7 +973,55 @@ local Classes: { Schema.Class } = {
                     .. "construction, and left colliding they shove each other apart every step -- a "
                     .. "character that vibrates rather than falls.",
             },
+            {
+                Name = "Visible",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether it is drawn. In the editor and under the debug overlay every constraint draws what "
+                    .. "it is -- an arrow, a rail, a line. In a game only a rope, a rod and a spring are drawn, as a "
+                    .. "thin line of their `Color` and `Thickness`.",
+            },
+            {
+                Name = "BreakForce",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The force, in newtons, past which the joint gives: it is disabled, and `Broken` fires. Zero "
+                    .. "never breaks.",
+            },
+            {
+                Name = "BreakTorque",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The same for the turning it resists, in newton-metres. Zero never breaks.",
+            },
         },
+        Methods = {
+            {
+                Name = "GetForce",
+                Parameters = {},
+                Returns = { "number" },
+                Doc = "The force the joint carried over the last simulation tick to hold its two parts "
+                    .. "together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a "
+                    .. "joint that held nothing.",
+            },
+            {
+                Name = "GetTorque",
+                Parameters = {},
+                Returns = { "number" },
+                Doc = "The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to "
+                    .. "resist a turn with -- a ball joint, a rope.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "Broken",
+                Parameters = {},
+                Doc = "Fires when the joint carried more than its `BreakForce` or `BreakTorque` and gave. It "
+                    .. "is disabled, not destroyed: enabling it again mends it.",
+            },
+        } :: { Schema.Event },
     },
     {
         Name = "BallSocketConstraint",
@@ -962,6 +1057,52 @@ local Classes: { Schema.Class } = {
                 Default = "180",
                 Doc = "How far it may twist about that axis, in degrees, either way.",
             },
+            {
+                Name = "ActuatorType",
+                Type = "Enum.ActuatorType",
+                Default = "Enum.ActuatorType.None",
+                Doc = "What the joint does of itself: nothing, or hold a pose (`Servo`). A ball joint has no axis "
+                    .. "to spin about, so `Motor` is read as `None`.",
+            },
+            {
+                Name = "TargetOrientation",
+                Type = "CFrame",
+                Default = "CFrame.identity",
+                Doc = "Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. "
+                    .. "Only the rotation is read. The identity is the pose the two were joined in.",
+            },
+            {
+                Name = "ServoMaxTorque",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm "
+                    .. "is pulled harder than this.",
+            },
+            {
+                Name = "AngularResponsiveness",
+                Type = "number",
+                Default = "45",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
+                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
+                    .. "say both how firm and how bouncy.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
+                    .. "it arrives late and stays.",
+            },
         },
     },
     {
@@ -995,6 +1136,80 @@ local Classes: { Schema.Class } = {
                 Default = "180",
                 Doc = "How far it may turn the other, in degrees. A lower above the upper is unlimited.",
             },
+            {
+                Name = "ActuatorType",
+                Type = "Enum.ActuatorType",
+                Default = "Enum.ActuatorType.None",
+                Doc = "What the hinge does of itself: nothing, turn at a speed (`Motor`), or go to an angle and "
+                    .. "hold it (`Servo`).",
+            },
+            {
+                Name = "AngularVelocity",
+                Type = "number",
+                Default = "0",
+                Doc = "Motor: the speed it turns at, in radians a second, about the hinge's own X. Negative turns "
+                    .. "the other way.",
+            },
+            {
+                Name = "MotorMaxTorque",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Motor: the most torque it may use, in newton-metres. A load heavier than this stalls it.",
+            },
+            {
+                Name = "MotorMaxAcceleration",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds "
+                    .. "up.",
+            },
+            {
+                Name = "TargetAngle",
+                Type = "number",
+                Default = "0",
+                Doc = "Servo: the angle it goes to, in degrees, measured as the limits are.",
+            },
+            {
+                Name = "AngularSpeed",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Servo: the fastest it turns on the way, in radians a second.",
+            },
+            {
+                Name = "ServoMaxTorque",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Servo: the most torque it may use to get there and to stay.",
+            },
+            {
+                Name = "AngularResponsiveness",
+                Type = "number",
+                Default = "45",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops "
+                    .. "harder.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
+                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
+                    .. "say both how firm and how bouncy.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
+                    .. "it arrives late and stays.",
+            },
         },
     },
     {
@@ -1013,6 +1228,607 @@ local Classes: { Schema.Class } = {
             .. "force applied to either moves both. Use a weld to attach something to a character, and this "
             .. "to build an object out of parts.",
         Properties = {},
+    },
+    {
+        Name = "PrismaticConstraint",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "PrismaticConstraint",
+        Doc = "A joint free to slide along one line and to do nothing else: a lift, a drawer, a piston. The "
+            .. "line is the joint frame's own X, so pointing the attachment points the rail.\n\nWith an "
+            .. "actuator it moves by itself: a `Motor` holds a speed, a `Servo` goes to a place along the "
+            .. "rail and stays.",
+        Properties = {
+            {
+                Name = "LimitsEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the range below applies. Off, it slides as far as it is pushed.",
+            },
+            {
+                Name = "LowerLimit",
+                Type = "number",
+                Default = "0",
+                Doc = "How far it may slide one way, in metres from where it was joined.",
+            },
+            {
+                Name = "UpperLimit",
+                Type = "number",
+                Default = "5",
+                Doc = "How far it may slide the other. A lower above the upper is unlimited.",
+            },
+            {
+                Name = "ActuatorType",
+                Type = "Enum.ActuatorType",
+                Default = "Enum.ActuatorType.None",
+                Doc = "What the rail does of itself: nothing, move at a speed (`Motor`), or go to a position and "
+                    .. "hold it (`Servo`).",
+            },
+            {
+                Name = "Velocity",
+                Type = "number",
+                Default = "0",
+                Doc = "Motor: the speed it moves at, in metres a second along the rail.",
+            },
+            {
+                Name = "MotorMaxForce",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Motor: the most force it may use, in newtons.",
+            },
+            {
+                Name = "MotorMaxAcceleration",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Motor: how fast its speed may change, in metres a second squared.",
+            },
+            {
+                Name = "TargetPosition",
+                Type = "number",
+                Default = "0",
+                Doc = "Servo: where it goes to, in metres along the rail from where it was joined.",
+            },
+            {
+                Name = "Speed",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Servo: the fastest it moves on the way, in metres a second.",
+            },
+            {
+                Name = "ServoMaxForce",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Servo: the most force it may use to get there and to stay. A lift that cannot raise more "
+                    .. "than this does not.",
+            },
+            {
+                Name = "LinearResponsiveness",
+                Type = "number",
+                Default = "45",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "Servo: how eagerly it closes the last of the distance.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
+                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
+                    .. "say both how firm and how bouncy.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
+                    .. "it arrives late and stays.",
+            },
+        },
+    },
+    {
+        Name = "RopeConstraint",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "RopeConstraint",
+        Doc = "Two attachments that can be no further apart than `Length`, and as close as they like: a "
+            .. "rope, a chain, a leash. Slack, it does nothing.\n\nWith the winch on, `Length` itself moves "
+            .. "towards `WinchTarget` at `WinchSpeed` -- a crane taking in cable -- and stalls when that "
+            .. "would need more than `WinchForce`.",
+        Properties = {
+            {
+                Name = "Length",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most the two ends may be apart, in metres. The winch changes it.",
+            },
+            {
+                Name = "WinchEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the winch is working `Length` towards `WinchTarget`.",
+            },
+            {
+                Name = "WinchTarget",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The length the winch works towards, in metres.",
+            },
+            {
+                Name = "WinchSpeed",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How fast the winch takes rope in or lets it out, in metres a second.",
+            },
+            {
+                Name = "WinchForce",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most tension the winch can pull against, in newtons. A load heavier than this stays "
+                    .. "where it is.",
+            },
+            {
+                Name = "Color",
+                Type = "Color3",
+                Default = "Color3.new(0.6, 0.6, 0.6)",
+                Doc = "The colour of the line it is drawn as.",
+            },
+            {
+                Name = "Thickness",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How thick that line is, in metres.",
+            },
+        },
+    },
+    {
+        Name = "RodConstraint",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "RodConstraint",
+        Doc = "Two attachments held exactly `Length` apart, free to turn about either end: a rod, a strut, "
+            .. "the link of a mechanism.",
+        Properties = {
+            {
+                Name = "Length",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How far apart the two ends are held, in metres.",
+            },
+            {
+                Name = "Color",
+                Type = "Color3",
+                Default = "Color3.new(0.6, 0.6, 0.6)",
+                Doc = "The colour of the line it is drawn as.",
+            },
+            {
+                Name = "Thickness",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How thick that line is, in metres.",
+            },
+        },
+    },
+    {
+        Name = "SpringConstraint",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "SpringConstraint",
+        Doc = "A spring between two attachments: it pulls them together when they are further apart than "
+            .. "`FreeLength` and pushes them apart when they are closer, harder the further they are from "
+            .. "it. A suspension, a bouncy bridge, a door that closes by itself.",
+        Properties = {
+            {
+                Name = "FreeLength",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The length at which it neither pulls nor pushes, in metres.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "100",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The force for each metre it is away from `FreeLength`, in newtons a metre.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The force against each metre a second its length is changing, in newton-seconds a metre. "
+                    .. "None and it bounces for ever; a lot and it creeps.",
+            },
+            {
+                Name = "LimitsEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the two lengths below are hard stops.",
+            },
+            {
+                Name = "MinLength",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The shortest it can be, in metres.",
+            },
+            {
+                Name = "MaxLength",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The longest it can be, in metres.",
+            },
+            {
+                Name = "Color",
+                Type = "Color3",
+                Default = "Color3.new(0.6, 0.6, 0.6)",
+                Doc = "The colour of the line it is drawn as.",
+            },
+            {
+                Name = "Thickness",
+                Type = "number",
+                Default = "0.1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How thick that line is, in metres.",
+            },
+        },
+    },
+    {
+        Name = "LinearVelocity",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "LinearVelocity",
+        Doc = "Holds the part its `Attachment0` is on at a velocity, with as much force as `MaxForce` "
+            .. "allows: a conveyor's crate, a platform that glides, a thrown thing that does not slow. In "
+            .. "`Line` and `Plane` modes it holds only the speed along a line or across a plane and leaves "
+            .. "the rest to the world -- a puck held at a speed along a rail still falls.",
+        Properties = {
+            {
+                Name = "VelocityConstraintMode",
+                Type = "Enum.VelocityConstraintMode",
+                Default = "Enum.VelocityConstraintMode.Vector",
+                Doc = "Whether it holds the whole velocity, or only the part of it along a line or in a plane.",
+            },
+            {
+                Name = "VectorVelocity",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "Vector mode: the velocity held, in metres a second, in the frame `RelativeTo` names.",
+            },
+            {
+                Name = "LineDirection",
+                Type = "vector",
+                Default = "vector.create(1, 0, 0)",
+                Doc = "Line mode: the line. Its length does not matter.",
+            },
+            {
+                Name = "LineVelocity",
+                Type = "number",
+                Default = "0",
+                Doc = "Line mode: the speed held along the line, in metres a second.",
+            },
+            {
+                Name = "PrimaryTangentAxis",
+                Type = "vector",
+                Default = "vector.create(1, 0, 0)",
+                Doc = "Plane mode: one direction in the plane.",
+            },
+            {
+                Name = "SecondaryTangentAxis",
+                Type = "vector",
+                Default = "vector.create(0, 0, 1)",
+                Doc = "Plane mode: the other.",
+            },
+            {
+                Name = "PlaneVelocity",
+                Type = "Vector2",
+                Default = "Vector2.zero",
+                Doc = "Plane mode: the speed held along each of the two, in metres a second.",
+            },
+            {
+                Name = "MaxForce",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most force it may use, in newtons.",
+            },
+            {
+                Name = "RelativeTo",
+                Type = "Enum.ActuatorRelativeTo",
+                Default = "Enum.ActuatorRelativeTo.World",
+                Doc = "The frame the velocities are written in: the world's, or an attachment's -- so \"forwards\" "
+                    .. "follows the part as it turns.",
+            },
+        },
+    },
+    {
+        Name = "AngularVelocity",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "AngularVelocity",
+        Doc = "Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: "
+            .. "a fan, a coin that turns, a planet. For a wheel on an axle a `HingeConstraint` with a motor "
+            .. "is the better tool: this spins a free part.",
+        Properties = {
+            {
+                Name = "AngularVelocity",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "The spin held, in radians a second about each axis of the frame `RelativeTo` names.",
+            },
+            {
+                Name = "MaxTorque",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most torque it may use, in newton-metres.",
+            },
+            {
+                Name = "RelativeTo",
+                Type = "Enum.ActuatorRelativeTo",
+                Default = "Enum.ActuatorRelativeTo.World",
+                Doc = "The frame the spin is written in.",
+            },
+            {
+                Name = "ReactionTorqueEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists "
+                    .. "what it is mounted on.",
+            },
+        },
+    },
+    {
+        Name = "AlignPosition",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "AlignPosition",
+        Doc = "Pulls `Attachment0` towards a place and holds it there: a pet that hovers at a shoulder, a "
+            .. "platform that returns to its post, something carried. The place is `Position`, or "
+            .. "`Attachment1` when the mode is `TwoAttachment`.\n\nIt does not carry the part there at a "
+            .. "speed: it pulls, as hard as `MaxForce` allows and no faster than `MaxVelocity`, and a weight "
+            .. "heavier than the force sags.",
+        Properties = {
+            {
+                Name = "Mode",
+                Type = "Enum.PositionAlignmentMode",
+                Default = "Enum.PositionAlignmentMode.OneAttachment",
+                Doc = "Whether the target is `Position` or `Attachment1`.",
+            },
+            {
+                Name = "Position",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "OneAttachment: the place in the world it pulls to.",
+            },
+            {
+                Name = "MaxForce",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most force it may use, in newtons.",
+            },
+            {
+                Name = "MaxVelocity",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The fastest it may bring the attachment in, in metres a second.",
+            },
+            {
+                Name = "Responsiveness",
+                Type = "number",
+                Default = "10",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "How eagerly it closes the distance. Low drifts in; high snaps.",
+            },
+            {
+                Name = "RigidityEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on force or speed.",
+            },
+            {
+                Name = "ApplyAtCenterOfMass",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the pull is at where the part balances rather than at the attachment. Off, a pull at "
+                    .. "a corner also turns the part.",
+            },
+            {
+                Name = "ReactionForceEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "TwoAttachment: whether the part `Attachment1` is on is pulled back by as much. Off, the "
+                    .. "target is not disturbed by what follows it; on, a hand pulling a crate is pulled by the "
+                    .. "crate.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
+                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
+                    .. "say both how firm and how bouncy.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
+                    .. "it arrives late and stays.",
+            },
+        },
+    },
+    {
+        Name = "AlignOrientation",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "AlignOrientation",
+        Doc = "Turns `Attachment0` towards an orientation and holds it there: something that stays upright, "
+            .. "a turret that faces its target, a pet that looks where its owner looks. The orientation is "
+            .. "`CFrame`'s, or `Attachment1`'s when the mode is `TwoAttachment`.\n\nIt does not spin a part: "
+            .. "for that, an `AngularVelocity` or a hinge with a motor.",
+        Properties = {
+            {
+                Name = "Mode",
+                Type = "Enum.OrientationAlignmentMode",
+                Default = "Enum.OrientationAlignmentMode.OneAttachment",
+                Doc = "Whether the target is `CFrame` or `Attachment1`.",
+            },
+            {
+                Name = "CFrame",
+                Type = "CFrame",
+                Default = "CFrame.identity",
+                Doc = "OneAttachment: the orientation in the world it turns to. Only the rotation is read.",
+            },
+            {
+                Name = "MaxTorque",
+                Type = "number",
+                Default = "10000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most torque it may use, in newton-metres.",
+            },
+            {
+                Name = "MaxAngularVelocity",
+                Type = "number",
+                Default = "100000",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The fastest it may turn the part, in radians a second.",
+            },
+            {
+                Name = "Responsiveness",
+                Type = "number",
+                Default = "10",
+                ErrorKey = "scene.err.number_above_zero",
+                Doc = "How eagerly it closes the angle.",
+            },
+            {
+                Name = "RigidityEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether it gets there as fast as the simulation can take it, with no cap on torque or speed.",
+            },
+            {
+                Name = "ReactionTorqueEnabled",
+                Type = "boolean",
+                Default = "false",
+                Doc = "TwoAttachment: whether the part `Attachment1` is on is turned back by as much. An arm "
+                    .. "aligned to a chest then turns the chest, as a real one does.",
+            },
+            {
+                Name = "Stiffness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to "
+                    .. "`Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to "
+                    .. "say both how firm and how bouncy.",
+            },
+            {
+                Name = "Damping",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and "
+                    .. "it arrives late and stays.",
+            },
+        },
+    },
+    {
+        Name = "VectorForce",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "VectorForce",
+        Doc = "A constant force on the part its `Attachment0` is on: a thruster, wind on one thing, lift.",
+        Properties = {
+            {
+                Name = "Force",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "The force, in newtons, in the frame `RelativeTo` names.",
+            },
+            {
+                Name = "RelativeTo",
+                Type = "Enum.ActuatorRelativeTo",
+                Default = "Enum.ActuatorRelativeTo.Attachment0",
+                Doc = "The frame the force is written in. `Attachment0`, the default, is a thruster: it pushes "
+                    .. "where the part points.",
+            },
+            {
+                Name = "ApplyAtCenterOfMass",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether it pushes at where the part balances rather than at the attachment. Off, a force "
+                    .. "off-centre also turns the part.",
+            },
+        },
+    },
+    {
+        Name = "Torque",
+        Extends = "Constraint",
+        Module = "scene",
+        Storage = "Torque",
+        Doc = "A constant torque on the part its `Attachment0` is on: something that keeps being twisted.",
+        Properties = {
+            {
+                Name = "Torque",
+                Type = "vector",
+                Default = "vector.create(0, 0, 0)",
+                Doc = "The torque, in newton-metres about each axis of the frame `RelativeTo` names.",
+            },
+            {
+                Name = "RelativeTo",
+                Type = "Enum.ActuatorRelativeTo",
+                Default = "Enum.ActuatorRelativeTo.Attachment0",
+                Doc = "The frame the torque is written in.",
+            },
+        },
+    },
+    {
+        Name = "NoCollisionConstraint",
+        Extends = "Instance",
+        Module = "scene",
+        Parents = InTheWorld,
+        Storage = "NoCollisionConstraint",
+        Doc = "Two parts that pass through each other, and collide with everything else as they did. What "
+            .. "a collision group cannot say: a group is every part in it against every part in another, and "
+            .. "this is one part against one. A thing being carried and the one carrying it; a door and its "
+            .. "frame.",
+        Properties = {
+            {
+                Name = "Part0",
+                Type = "BasePart?",
+                Doc = "One of the two.",
+            },
+            {
+                Name = "Part1",
+                Type = "BasePart?",
+                Doc = "The other.",
+            },
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the two pass through each other. Off, they collide again.",
+            },
+        },
     },
     {
         Name = "Ragdoll",
@@ -1619,9 +2435,38 @@ local Classes: { Schema.Class } = {
                 Name = "JumpSpeed",
                 Type = "number",
                 Default = "8",
-                ErrorKey = "scene.err.number_at_least_zero",
                 Doc = "The upward speed Jump imparts, in metres per second. How high that reaches depends on "
-                    .. "`Workspace.Gravity`, which is the relationship a game tunes rather than a height.",
+                    .. "`Workspace.Gravity`, which is the relationship a game tunes rather than a height. "
+                    .. "Negative is a slam downwards.",
+            },
+            {
+                Name = "GravityScale",
+                Type = "number",
+                Default = "1",
+                Doc = "How much of `Workspace.Gravity` the character feels: 1 all of it, 0.5 a floaty jump, 0 "
+                    .. "none. Negative falls upwards.",
+            },
+            {
+                Name = "SwimSpeed",
+                Type = "number",
+                Default = "10",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How fast `Move` takes it through a fluid, in metres per second, as `WalkSpeed` does on "
+                    .. "the ground.",
+            },
+            {
+                Name = "FlySpeed",
+                Type = "number",
+                Default = "16",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How fast `Move` takes it while `Flying`, in metres per second.",
+            },
+            {
+                Name = "Flying",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the character flies: no weight, and `Move` in three dimensions at `FlySpeed`. A "
+                    .. "creative mode, a ghost, a jetpack held on.",
             },
             {
                 Name = "MaxSlopeAngle",
@@ -1650,8 +2495,10 @@ local Classes: { Schema.Class } = {
                 Name = "State",
                 Type = "Enum.CharacterState",
                 ReadOnly = true,
-                Doc = "Grounded or Airborne. Ground too steep to walk on reads as Airborne, because the question "
-                    .. "this answers is whether the character is supported.",
+                Doc = "What the character is doing: `Grounded` or `Airborne` on foot -- ground too steep to "
+                    .. "walk on reads as Airborne, because the question is whether it is supported -- `Swimming` "
+                    .. "with its middle under a `Water`'s surface or inside a fluid block, which it enters and "
+                    .. "leaves by itself, and `Flying` while `Flying` is set.",
             },
         } :: { Schema.Property },
         Methods = {
@@ -1663,7 +2510,13 @@ local Classes: { Schema.Class } = {
                 Doc = "Sets the direction to walk in for the next simulation tick, in world space. Only the "
                     .. "horizontal part is used -- vertical movement is gravity's and Jump's -- and the vector is "
                     .. "scaled by WalkSpeed rather than normalised, so a shorter one walks slower. Call it every "
-                    .. "tick while moving; a character told nothing stops.",
+                    .. "tick while moving; a character told nothing stops.\n\n"
+                    .. "Swimming and flying, all three axes are used -- up is up -- at `SwimSpeed` and "
+                    .. "`FlySpeed`.\n\n"
+                    .. "A character is pushed as a part is: `ApplyImpulse` changes its speed by the impulse over "
+                    .. "its `Mass`, and `LinearVelocity` can be written -- a knock back, a launch pad. What it was "
+                    .. "pushed by fades, quickly on the ground and slowly in the air, and its walk is added on "
+                    .. "top.",
             },
             {
                 Name = "Jump",
@@ -1671,9 +2524,9 @@ local Classes: { Schema.Class } = {
                 Returns = {},
                 ThreadSafety = "Unsafe",
                 Doc = "Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. "
-                    .. "It does NOT check Grounded, deliberately: `LinearVelocity` is read-only, so a mid-air "
-                    .. "check here would make a double jump, a wall jump and a triple jump impossible to write "
-                    .. "at all. `if character.Grounded then character:Jump() end` is the old behaviour in one "
+                    .. "It does NOT check Grounded, deliberately: a mid-air check here would make a double "
+                    .. "jump, a wall jump and a triple jump impossible to write as a jump at all. "
+                    .. "`if character.Grounded then character:Jump() end` is the old behaviour in one "
                     .. "line, in the game, where a jump policy belongs -- and coyote time and jump buffering "
                     .. "become counters beside it. Calling it every frame is flying: that is the game's bug, "
                     .. "and it is the same in every engine that offers a mechanism rather than a policy. The "
@@ -4263,6 +5116,19 @@ local Classes: { Schema.Class } = {
                 Doc = "Linear for painted art, Nearest for pixel art.",
             },
             {
+                Name = "ExactColor",
+                Type = "boolean",
+                Default = "true",
+                Doc = "**The colours on the screen are the colours in the picture.** A sprite is art somebody "
+                    .. "chose every colour of, so by default it is drawn past everything the scene does to light: "
+                    .. "the exposure, the tone curve, colour correction and bloom leave it alone, and a `Color` of "
+                    .. "`Color3.fromRGB(200, 80, 40)` is that pixel, whatever `Lighting` holds.\n\n"
+                    .. "Off, the sprite is one more thing in the lit picture -- exposed, tone-mapped, graded and "
+                    .. "glowing like a part beside it -- which is what a sprite standing in a 3D scene wants. "
+                    .. "Either way it keeps its place: a part in front hides it, and glass or a particle in front "
+                    .. "is drawn over it.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Doc = "Ground: it does not move, and what lands on it stays. A script may still move it.",
@@ -4406,6 +5272,13 @@ local Classes: { Schema.Class } = {
                 Type = "Enum.TextureFilter",
                 Default = "Enum.TextureFilter.Nearest",
                 Doc = "Nearest by default, because tiles are nearly always pixel art.",
+            },
+            {
+                Name = "ExactColor",
+                Type = "boolean",
+                Default = "true",
+                Doc = "The tiles' colours on the screen are the colours in the tileset, as `Part2D.ExactColor` "
+                    .. "says. Off, the level is lit, exposed and graded with the rest of the scene.",
             },
             {
                 Name = "Collides",

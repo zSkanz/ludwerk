@@ -22,6 +22,7 @@ offers is on the base's page, which is what keeps one added member on
 | `Color` | `Color3` | `Color3.new(1, 1, 1)` | read/write | Multiplies the image; with no image, the colour it is drawn in. |
 | `Density` | `number` | `1` | read/write | Kilograms per square metre: with `Size`, how heavy it is. |
 | `Elasticity` | `number` | — | read/write | How much of its speed a bounce gives back: 0 lands dead, 1 bounces for ever. |
+| `ExactColor` | `boolean` | `true` | read/write | **The colours on the screen are the colours in the picture.** A sprite is art somebody chose every colour of, so by default it is drawn past everything the scene does to light: the exposure, the tone curve, colour correction and bloom leave it alone, and a `Color` of `Color3.fromRGB(200, 80, 40)` is that pixel, whatever `Lighting` holds.<br><br>Off, the sprite is one more thing in the lit picture -- exposed, tone-mapped, graded and glowing like a part beside it -- which is what a sprite standing in a 3D scene wants. Either way it keeps its place: a part in front hides it, and glass or a particle in front is drawn over it. |
 | `Filter` | `Enum.TextureFilter` | — | read/write | Linear for painted art, Nearest for pixel art. |
 | `FixedRotation` | `boolean` | — | read/write | Never turns, whatever hits it: a character that stays upright. |
 | `FlipX` | `boolean` | — | read/write | Mirrors the picture left to right: a character facing the other way. |

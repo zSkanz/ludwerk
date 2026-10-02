@@ -151,7 +151,12 @@ The Export window asks for a password once and offers to remember it on this
 machine.
 
 **With `release = false`, the export signs with a debug key it generates on
-first use**, as Defold does. The first APK takes no setup. A **Create
+first use**, as Defold does. *(Amended 2026-10-02, D465: the key is Android's
+own, `~/.android/debug.keystore` with its standard alias and passwords, made
+there when the machine has none -- as Unity signs a debug build -- and
+`[export.android] debug_keystore` names another. It was first kept under the
+engine's per-user folder, whose name comes from the brand: a package without
+its brand file signed with one key and the repository with another.)* The first APK takes no setup. A **Create
 keystore...** button makes a release key: alias, validity, a name for the
 certificate, and a password. It warns once, plainly, that losing the file means
 never updating the app on the store again.

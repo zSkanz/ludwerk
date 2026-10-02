@@ -124,12 +124,23 @@ function(engine_add_shaders target)
         # graded one compiled from yesterday's text. Read at configure time,
         # so a NEW include line needs a reconfigure; an edit to the included
         # file does not.
+        #
+        # Followed through: `tonemap_graded_exact.hlsl` includes the graded
+        # twin, which includes the plain one, and depends on both.
         set(siblings "")
-        file(STRINGS "${source}" sibling_lines REGEX "^#include \"\\.\\./src/[^\"]+\"")
-        foreach(line IN LISTS sibling_lines)
-            string(REGEX REPLACE "^#include \"\\.\\./src/([^\"]+)\".*" "\\1" sibling "${line}")
-            list(APPEND siblings "${CMAKE_SOURCE_DIR}/shaders/src/${sibling}")
-        endforeach()
+        set(unread "${source}")
+        while(unread)
+            list(POP_FRONT unread reading)
+            file(STRINGS "${reading}" sibling_lines REGEX "^#include \"\\.\\./src/[^\"]+\"")
+            foreach(line IN LISTS sibling_lines)
+                string(REGEX REPLACE "^#include \"\\.\\./src/([^\"]+)\".*" "\\1" sibling "${line}")
+                set(sibling "${CMAKE_SOURCE_DIR}/shaders/src/${sibling}")
+                if(NOT sibling IN_LIST siblings)
+                    list(APPEND siblings "${sibling}")
+                    list(APPEND unread "${sibling}")
+                endif()
+            endforeach()
+        endwhile()
 
         # Output paths are flat per format, so two shaders sharing a stem in
         # different directories would silently overwrite each other's blobs.

@@ -1197,6 +1197,40 @@ int workspaceGetBodiesInBox(lua_State* L)
     return 1;
 }
 
+// The same for a ball (ADR 0127, N6).
+int workspaceGetBodiesInSphere(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 center = checkVector3(L, 2);
+    const double radius = luaL_checknumber(L, 3);
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) || !std::isfinite(radius) ||
+        radius < 0.0)
+        raise(L, ENG_TR("script.err.not_finite"));
+
+    scene::PhysicsSync* sync = services(L).physics;
+    if (sync == nullptr) {
+        lua_createtable(L, 0, 0);
+        return 1;
+    }
+
+    std::vector<u64> storage;
+    const physics::QueryFilter filter = buildFilter(L, 4, storage);
+
+    std::vector<u64> hits;
+    sync->backend().overlapSphere(sync->worldHandle(), core::toDVec3(center), static_cast<f32>(radius), filter, hits);
+
+    lua_createtable(L, static_cast<int>(hits.size()), 0);
+    int written = 0;
+    for (const u64 userData : hits) {
+        const core::InstanceId id = sync->instanceOf(userData);
+        if (!id.valid())
+            continue;
+        pushInstance(L, id);
+        lua_rawseti(L, -2, ++written);
+    }
+    return 1;
+}
+
 // --- InputService and InputAction (M6) ---------------------------------------
 
 int inputActionGetState(lua_State* L)
@@ -2237,6 +2271,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NavigationService", "BuildRegion", navigationBuildRegion},
     {"Workspace", "Spherecast", workspaceSpherecast},
     {"Workspace", "GetBodiesInBox", workspaceGetBodiesInBox},
+    {"Workspace", "GetBodiesInSphere", workspaceGetBodiesInSphere},
 
     {"PhysicsService", "RegisterCollisionGroup", physicsRegisterCollisionGroup},
     {"PhysicsService", "CollisionGroupSetCollidable", physicsCollisionGroupSetCollidable},

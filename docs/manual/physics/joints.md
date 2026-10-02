@@ -139,6 +139,8 @@ hinge.Parent = workspace
 | `HingeConstraint` | turns about one axis: a door, a lid, an elbow | `LowerAngle` to `UpperAngle`, in degrees |
 | `BallSocketConstraint` | turns every way about one point: a shoulder, a hip, a rope's end | a swing cone of `UpperAngle` and a twist of `TwistLimit` either way |
 | `FixedConstraint` | none: two bodies the solver treats as one | -- |
+| `PrismaticConstraint` | slides along one line: a lift, a drawer | `LowerLimit` to `UpperLimit`, in metres |
+| `RopeConstraint`, `RodConstraint`, `SpringConstraint` | the distance between the two ends | a length |
 
 Four things about the joint's frame that every one of them shares:
 
@@ -166,11 +168,15 @@ A constraint can be made and destroyed while the game runs, and one end may be
 on an anchored part. It cannot reach a `CharacterBody`: that is swept rather
 than solved, so there is no body for a joint to hold -- weld to it instead.
 
+A joint can also do work: a hinge or a rail with a motor or a servo, a ball
+socket that holds a pose, a rope with a winch -- and it can give under load
+(`BreakForce`, `BreakTorque`, `Broken`). Those, and the movers that push a part
+without a joint, are on [Movers and powered joints](manual:physics/movers).
+
 ## What is not here
 
-No motor and no spring yet: a joint holds and limits, and does no work of its
-own. No `SliderConstraint`, no rope, no `Motor6D`. Movers and powered joints
-are ADR 0127's, and not built.
+No `Motor6D`: a character is posed by its skeleton, and a jointed one by
+powered joints.
 
 ## Where to look next
 

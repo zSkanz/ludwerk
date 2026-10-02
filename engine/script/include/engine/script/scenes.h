@@ -161,6 +161,13 @@ void setDeveloperWarnings(lua_State* L, bool developer);
 // that yields is parked with the game's (`closeHandlersPending`).
 void runSceneCloseHandlers(lua_State* L);
 
+// **What `GetLoadData` answers, said as JSON** (D468): a run started in a
+// scene by name -- `--scene=`, `--scene-data=` -- hands the scene what a
+// `LoadScene` call would have. An object or an array becomes a table, the rest
+// the plain values they are. False, and nothing changed, when the text is not
+// JSON; `diagnostic` then says where.
+[[nodiscard]] bool setSceneLoadData(lua_State* L, std::string_view json, std::string* diagnostic = nullptr);
+
 // **The open scene is closed**, before its world is torn down: what its
 // scripts registered leaves both close lists and both mailboxes -- a
 // `game:BindToClose` of theirs dropped, with the editor's warning -- its own

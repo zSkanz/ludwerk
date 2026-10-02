@@ -454,7 +454,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 17> basePartProperties;
+    static std::array<PropertyDesc, 22> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -616,32 +616,87 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "Mass per cubic metre. Mass is this times the volume the Size and Shape describe, and there is no Mass property precisely so that the two cannot be set to contradict each other.",
+            .doc = "Mass per cubic metre. Mass is this times the volume the Size and Shape describe, which is why `Mass` can be read and not written: the two cannot be set to contradict each other.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
             .get = native::getBasePartDensity,
             .set = native::setBasePartDensity,
         },
         PropertyDesc{
-            .name = atoms.intern("LinearVelocity"),
-            .type = ValueType::Vector3,
+            .name = atoms.intern("Mass"),
+            .type = ValueType::Number,
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = true,
             .inert = false,
-            .doc = "How fast this part is moving, in metres per second, as of the last simulation tick. Read-only: a velocity assignment is an impulse with the mass divided out, and `ApplyImpulse` is that operation under a name that says what it does.",
+            .doc = "What the part weighs, in kilograms: `Density` times the volume of its shape, as the simulation worked it out. An impulse is this times a change of speed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getBasePartMass,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AssemblyMass"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "The mass of this part and of everything rigidly joined to it by welds and `FixedConstraint`s: what has to be moved to move it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getBasePartAssemblyMass,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LinearDamping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The share of its speed a part loses each second with nothing touching it. Zero keeps moving for ever; one is thick air.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBasePartLinearDamping,
+            .set = native::setBasePartLinearDamping,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AngularDamping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same for its spin.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBasePartAngularDamping,
+            .set = native::setBasePartAngularDamping,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ContactDetails"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether `Collided` fires for this part. Off by default, so a world of scenery pays nothing for a signal nobody listens to.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartContactDetails,
+            .set = native::setBasePartContactDetails,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LinearVelocity"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast this part is moving, in metres per second, as of the last simulation tick. Writing it sets the speed the next tick starts from: a ball served, a thing stopped dead. To push rather than to set, `ApplyImpulse`.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getBasePartLinearVelocity,
-            .set = nullptr,
+            .set = native::setBasePartLinearVelocity,
         },
         PropertyDesc{
             .name = atoms.intern("AngularVelocity"),
             .type = ValueType::Vector3,
             .threadSafety = ThreadSafety::Unsafe,
-            .readOnly = true,
+            .readOnly = false,
             .inert = false,
-            .doc = "How fast this part is spinning, in radians per second about each world axis, as of the last simulation tick.",
+            .doc = "How fast this part is spinning, in radians per second about each world axis, as of the last simulation tick. Writable, as `LinearVelocity` is.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
             .get = native::getBasePartAngularVelocity,
-            .set = nullptr,
+            .set = native::setBasePartAngularVelocity,
         },
     }};
     static std::array<MethodDesc, 9> basePartMethods;
@@ -701,7 +756,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "An instantaneous change of angular momentum, about the axis it points along, in kilogram-square-metres per second: a twist with no push. Applied at the next tick.",
         },
     }};
-    static std::array<EventDesc, 2> basePartEvents;
+    static std::array<EventDesc, 3> basePartEvents;
     basePartEvents = {{
         EventDesc{
             .name = atoms.intern("Touched"),
@@ -709,8 +764,13 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Fires once when another part begins touching this one, with the part it touched. Deferred like every signal here (ADR 0015), so it arrives at the next resumption point rather than inside the solver. A pair that stays in contact fires once, not once per tick -- including across the moment the simulation puts both parts to sleep.",
         },
         EventDesc{
-            .name = atoms.intern("TouchEnded"),
+            .name = atoms.intern("Collided"),
             .slot = 8,
+            .doc = "Fires with `Touched`, for a part whose `ContactDetails` is on, and says what the contact was: where in the world, the direction from this part into the other, and how fast the two were closing along it when they met, in metres a second -- before the simulation answered. How hard a blow was is that speed times what was moving.",
+        },
+        EventDesc{
+            .name = atoms.intern("TouchEnded"),
+            .slot = 9,
             .doc = "Fires when a pair that was touching stops. Destroying a part does NOT fire it for that part's contacts: the instance is gone, and a signal on an instance nobody can reach is a signal nobody can handle.",
         },
     }};
@@ -804,7 +864,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(attachmentDesc);
 
     // --- Constraint ---
-    static std::array<PropertyDesc, 4> constraintProperties;
+    static std::array<PropertyDesc, 7> constraintProperties;
     constraintProperties = {{
         PropertyDesc{
             .name = atoms.intern("Attachment0"),
@@ -852,6 +912,62 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getConstraintCollideConnected,
             .set = native::setConstraintCollideConnected,
         },
+        PropertyDesc{
+            .name = atoms.intern("Visible"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it is drawn. In the editor and under the debug overlay every constraint draws what it is -- an arrow, a rail, a line. In a game only a rope, a rod and a spring are drawn, as a thin line of their `Color` and `Thickness`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getConstraintVisible,
+            .set = native::setConstraintVisible,
+        },
+        PropertyDesc{
+            .name = atoms.intern("BreakForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The force, in newtons, past which the joint gives: it is disabled, and `Broken` fires. Zero never breaks.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getConstraintBreakForce,
+            .set = native::setConstraintBreakForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("BreakTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same for the turning it resists, in newton-metres. Zero never breaks.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getConstraintBreakTorque,
+            .set = native::setConstraintBreakTorque,
+        },
+    }};
+    static std::array<MethodDesc, 2> constraintMethods;
+    constraintMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetForce"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The force the joint carried over the last simulation tick to hold its two parts together, in newtons: what a `BreakForce` is a threshold on. Zero for a mover, and for a joint that held nothing.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetTorque"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The same for the turning it resisted, in newton-metres. Zero for a joint with nothing to resist a turn with -- a ball joint, a rope.",
+        },
+    }};
+    static std::array<EventDesc, 1> constraintEvents;
+    constraintEvents = {{
+        EventDesc{
+            .name = atoms.intern("Broken"),
+            .slot = 7,
+            .doc = "Fires when the joint carried more than its `BreakForce` or `BreakTorque` and gave. It is disabled, not destroyed: enabling it again mends it.",
+        },
     }};
     ClassDescriptor constraintDesc;
     constraintDesc.name = atoms.intern("Constraint");
@@ -862,12 +978,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     static constexpr std::array<std::string_view, 5> constraintParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
     constraintDesc.parents = constraintParents;
     constraintDesc.properties = constraintProperties;
+    constraintDesc.methods = constraintMethods;
+    constraintDesc.events = constraintEvents;
     constraintDesc.attachComponents = native::attachConstraintComponents;
     constraintDesc.detachComponents = native::detachConstraintComponents;
     const ClassId constraintClass = classes.registerClass(constraintDesc);
 
     // --- BallSocketConstraint ---
-    static std::array<PropertyDesc, 3> ballSocketConstraintProperties;
+    static std::array<PropertyDesc, 9> ballSocketConstraintProperties;
     ballSocketConstraintProperties = {{
         PropertyDesc{
             .name = atoms.intern("LimitsEnabled"),
@@ -902,6 +1020,73 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getBallSocketConstraintTwistLimit,
             .set = native::setBallSocketConstraintTwistLimit,
         },
+        PropertyDesc{
+            .name = atoms.intern("ActuatorType"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorType"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What the joint does of itself: nothing, or hold a pose (`Servo`). A ball joint has no axis to spin about, so `Motor` is read as `None`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getBallSocketConstraintActuatorType,
+            .set = native::setBallSocketConstraintActuatorType,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TargetOrientation"),
+            .type = ValueType::CFrame,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. Only the rotation is read. The identity is the pose the two were joined in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getBallSocketConstraintTargetOrientation,
+            .set = native::setBallSocketConstraintTargetOrientation,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ServoMaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm is pulled harder than this.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBallSocketConstraintServoMaxTorque,
+            .set = native::setBallSocketConstraintServoMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AngularResponsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getBallSocketConstraintAngularResponsiveness,
+            .set = native::setBallSocketConstraintAngularResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBallSocketConstraintStiffness,
+            .set = native::setBallSocketConstraintStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBallSocketConstraintDamping,
+            .set = native::setBallSocketConstraintDamping,
+        },
     }};
     ClassDescriptor ballSocketConstraintDesc;
     ballSocketConstraintDesc.name = atoms.intern("BallSocketConstraint");
@@ -915,7 +1100,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(ballSocketConstraintDesc);
 
     // --- HingeConstraint ---
-    static std::array<PropertyDesc, 3> hingeConstraintProperties;
+    static std::array<PropertyDesc, 13> hingeConstraintProperties;
     hingeConstraintProperties = {{
         PropertyDesc{
             .name = atoms.intern("LimitsEnabled"),
@@ -950,6 +1135,117 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getHingeConstraintUpperAngle,
             .set = native::setHingeConstraintUpperAngle,
         },
+        PropertyDesc{
+            .name = atoms.intern("ActuatorType"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorType"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What the hinge does of itself: nothing, turn at a speed (`Motor`), or go to an angle and hold it (`Servo`).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getHingeConstraintActuatorType,
+            .set = native::setHingeConstraintActuatorType,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AngularVelocity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: the speed it turns at, in radians a second, about the hinge's own X. Negative turns the other way.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getHingeConstraintAngularVelocity,
+            .set = native::setHingeConstraintAngularVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MotorMaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: the most torque it may use, in newton-metres. A load heavier than this stalls it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintMotorMaxTorque,
+            .set = native::setHingeConstraintMotorMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MotorMaxAcceleration"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: how fast its speed may change, in radians a second squared. Low is a fan that winds up.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintMotorMaxAcceleration,
+            .set = native::setHingeConstraintMotorMaxAcceleration,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TargetAngle"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the angle it goes to, in degrees, measured as the limits are.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getHingeConstraintTargetAngle,
+            .set = native::setHingeConstraintTargetAngle,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AngularSpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the fastest it turns on the way, in radians a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintAngularSpeed,
+            .set = native::setHingeConstraintAngularSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ServoMaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the most torque it may use to get there and to stay.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintServoMaxTorque,
+            .set = native::setHingeConstraintServoMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AngularResponsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: how eagerly it closes the last of the distance. Higher arrives sooner and stops harder.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getHingeConstraintAngularResponsiveness,
+            .set = native::setHingeConstraintAngularResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintStiffness,
+            .set = native::setHingeConstraintStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getHingeConstraintDamping,
+            .set = native::setHingeConstraintDamping,
+        },
     }};
     ClassDescriptor hingeConstraintDesc;
     hingeConstraintDesc.name = atoms.intern("HingeConstraint");
@@ -972,6 +1268,964 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     fixedConstraintDesc.attachComponents = native::attachFixedConstraintComponents;
     fixedConstraintDesc.detachComponents = native::detachFixedConstraintComponents;
     classes.registerClass(fixedConstraintDesc);
+
+    // --- PrismaticConstraint ---
+    static std::array<PropertyDesc, 13> prismaticConstraintProperties;
+    prismaticConstraintProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("LimitsEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the range below applies. Off, it slides as far as it is pushed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getPrismaticConstraintLimitsEnabled,
+            .set = native::setPrismaticConstraintLimitsEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LowerLimit"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far it may slide one way, in metres from where it was joined.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getPrismaticConstraintLowerLimit,
+            .set = native::setPrismaticConstraintLowerLimit,
+        },
+        PropertyDesc{
+            .name = atoms.intern("UpperLimit"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far it may slide the other. A lower above the upper is unlimited.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getPrismaticConstraintUpperLimit,
+            .set = native::setPrismaticConstraintUpperLimit,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ActuatorType"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorType"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What the rail does of itself: nothing, move at a speed (`Motor`), or go to a position and hold it (`Servo`).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getPrismaticConstraintActuatorType,
+            .set = native::setPrismaticConstraintActuatorType,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Velocity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: the speed it moves at, in metres a second along the rail.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getPrismaticConstraintVelocity,
+            .set = native::setPrismaticConstraintVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MotorMaxForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: the most force it may use, in newtons.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintMotorMaxForce,
+            .set = native::setPrismaticConstraintMotorMaxForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MotorMaxAcceleration"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Motor: how fast its speed may change, in metres a second squared.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintMotorMaxAcceleration,
+            .set = native::setPrismaticConstraintMotorMaxAcceleration,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TargetPosition"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: where it goes to, in metres along the rail from where it was joined.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getPrismaticConstraintTargetPosition,
+            .set = native::setPrismaticConstraintTargetPosition,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Speed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the fastest it moves on the way, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintSpeed,
+            .set = native::setPrismaticConstraintSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ServoMaxForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: the most force it may use to get there and to stay. A lift that cannot raise more than this does not.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintServoMaxForce,
+            .set = native::setPrismaticConstraintServoMaxForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LinearResponsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Servo: how eagerly it closes the last of the distance.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getPrismaticConstraintLinearResponsiveness,
+            .set = native::setPrismaticConstraintLinearResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintStiffness,
+            .set = native::setPrismaticConstraintStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPrismaticConstraintDamping,
+            .set = native::setPrismaticConstraintDamping,
+        },
+    }};
+    ClassDescriptor prismaticConstraintDesc;
+    prismaticConstraintDesc.name = atoms.intern("PrismaticConstraint");
+    prismaticConstraintDesc.super = constraintClass;
+    prismaticConstraintDesc.flags = ClassFlags::None;
+    prismaticConstraintDesc.defaultName = atoms.intern("PrismaticConstraint");
+    prismaticConstraintDesc.doc = "A joint free to slide along one line and to do nothing else: a lift, a drawer, a piston. The line is the joint frame's own X, so pointing the attachment points the rail.\012\012With an actuator it moves by itself: a `Motor` holds a speed, a `Servo` goes to a place along the rail and stays.";
+    prismaticConstraintDesc.properties = prismaticConstraintProperties;
+    prismaticConstraintDesc.attachComponents = native::attachPrismaticConstraintComponents;
+    prismaticConstraintDesc.detachComponents = native::detachPrismaticConstraintComponents;
+    classes.registerClass(prismaticConstraintDesc);
+
+    // --- RopeConstraint ---
+    static std::array<PropertyDesc, 7> ropeConstraintProperties;
+    ropeConstraintProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Length"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most the two ends may be apart, in metres. The winch changes it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRopeConstraintLength,
+            .set = native::setRopeConstraintLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WinchEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the winch is working `Length` towards `WinchTarget`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getRopeConstraintWinchEnabled,
+            .set = native::setRopeConstraintWinchEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WinchTarget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The length the winch works towards, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRopeConstraintWinchTarget,
+            .set = native::setRopeConstraintWinchTarget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WinchSpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast the winch takes rope in or lets it out, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRopeConstraintWinchSpeed,
+            .set = native::setRopeConstraintWinchSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WinchForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most tension the winch can pull against, in newtons. A load heavier than this stays where it is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRopeConstraintWinchForce,
+            .set = native::setRopeConstraintWinchForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = ValueType::Color3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The colour of the line it is drawn as.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getRopeConstraintColor,
+            .set = native::setRopeConstraintColor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How thick that line is, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRopeConstraintThickness,
+            .set = native::setRopeConstraintThickness,
+        },
+    }};
+    ClassDescriptor ropeConstraintDesc;
+    ropeConstraintDesc.name = atoms.intern("RopeConstraint");
+    ropeConstraintDesc.super = constraintClass;
+    ropeConstraintDesc.flags = ClassFlags::None;
+    ropeConstraintDesc.defaultName = atoms.intern("RopeConstraint");
+    ropeConstraintDesc.doc = "Two attachments that can be no further apart than `Length`, and as close as they like: a rope, a chain, a leash. Slack, it does nothing.\012\012With the winch on, `Length` itself moves towards `WinchTarget` at `WinchSpeed` -- a crane taking in cable -- and stalls when that would need more than `WinchForce`.";
+    ropeConstraintDesc.properties = ropeConstraintProperties;
+    ropeConstraintDesc.attachComponents = native::attachRopeConstraintComponents;
+    ropeConstraintDesc.detachComponents = native::detachRopeConstraintComponents;
+    classes.registerClass(ropeConstraintDesc);
+
+    // --- RodConstraint ---
+    static std::array<PropertyDesc, 3> rodConstraintProperties;
+    rodConstraintProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Length"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How far apart the two ends are held, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRodConstraintLength,
+            .set = native::setRodConstraintLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = ValueType::Color3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The colour of the line it is drawn as.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getRodConstraintColor,
+            .set = native::setRodConstraintColor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How thick that line is, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getRodConstraintThickness,
+            .set = native::setRodConstraintThickness,
+        },
+    }};
+    ClassDescriptor rodConstraintDesc;
+    rodConstraintDesc.name = atoms.intern("RodConstraint");
+    rodConstraintDesc.super = constraintClass;
+    rodConstraintDesc.flags = ClassFlags::None;
+    rodConstraintDesc.defaultName = atoms.intern("RodConstraint");
+    rodConstraintDesc.doc = "Two attachments held exactly `Length` apart, free to turn about either end: a rod, a strut, the link of a mechanism.";
+    rodConstraintDesc.properties = rodConstraintProperties;
+    rodConstraintDesc.attachComponents = native::attachRodConstraintComponents;
+    rodConstraintDesc.detachComponents = native::detachRodConstraintComponents;
+    classes.registerClass(rodConstraintDesc);
+
+    // --- SpringConstraint ---
+    static std::array<PropertyDesc, 8> springConstraintProperties;
+    springConstraintProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("FreeLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The length at which it neither pulls nor pushes, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintFreeLength,
+            .set = native::setSpringConstraintFreeLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The force for each metre it is away from `FreeLength`, in newtons a metre.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintStiffness,
+            .set = native::setSpringConstraintStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The force against each metre a second its length is changing, in newton-seconds a metre. None and it bounces for ever; a lot and it creeps.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintDamping,
+            .set = native::setSpringConstraintDamping,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LimitsEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the two lengths below are hard stops.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getSpringConstraintLimitsEnabled,
+            .set = native::setSpringConstraintLimitsEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MinLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The shortest it can be, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintMinLength,
+            .set = native::setSpringConstraintMinLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The longest it can be, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintMaxLength,
+            .set = native::setSpringConstraintMaxLength,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Color"),
+            .type = ValueType::Color3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The colour of the line it is drawn as.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getSpringConstraintColor,
+            .set = native::setSpringConstraintColor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How thick that line is, in metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSpringConstraintThickness,
+            .set = native::setSpringConstraintThickness,
+        },
+    }};
+    ClassDescriptor springConstraintDesc;
+    springConstraintDesc.name = atoms.intern("SpringConstraint");
+    springConstraintDesc.super = constraintClass;
+    springConstraintDesc.flags = ClassFlags::None;
+    springConstraintDesc.defaultName = atoms.intern("SpringConstraint");
+    springConstraintDesc.doc = "A spring between two attachments: it pulls them together when they are further apart than `FreeLength` and pushes them apart when they are closer, harder the further they are from it. A suspension, a bouncy bridge, a door that closes by itself.";
+    springConstraintDesc.properties = springConstraintProperties;
+    springConstraintDesc.attachComponents = native::attachSpringConstraintComponents;
+    springConstraintDesc.detachComponents = native::detachSpringConstraintComponents;
+    classes.registerClass(springConstraintDesc);
+
+    // --- LinearVelocity ---
+    static std::array<PropertyDesc, 9> linearVelocityProperties;
+    linearVelocityProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("VelocityConstraintMode"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("VelocityConstraintMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it holds the whole velocity, or only the part of it along a line or in a plane.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getLinearVelocityVelocityConstraintMode,
+            .set = native::setLinearVelocityVelocityConstraintMode,
+        },
+        PropertyDesc{
+            .name = atoms.intern("VectorVelocity"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Vector mode: the velocity held, in metres a second, in the frame `RelativeTo` names.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getLinearVelocityVectorVelocity,
+            .set = native::setLinearVelocityVectorVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LineDirection"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Line mode: the line. Its length does not matter.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getLinearVelocityLineDirection,
+            .set = native::setLinearVelocityLineDirection,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LineVelocity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Line mode: the speed held along the line, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getLinearVelocityLineVelocity,
+            .set = native::setLinearVelocityLineVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PrimaryTangentAxis"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Plane mode: one direction in the plane.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getLinearVelocityPrimaryTangentAxis,
+            .set = native::setLinearVelocityPrimaryTangentAxis,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SecondaryTangentAxis"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Plane mode: the other.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getLinearVelocitySecondaryTangentAxis,
+            .set = native::setLinearVelocitySecondaryTangentAxis,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PlaneVelocity"),
+            .type = ValueType::Vector2,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Plane mode: the speed held along each of the two, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getLinearVelocityPlaneVelocity,
+            .set = native::setLinearVelocityPlaneVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most force it may use, in newtons.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getLinearVelocityMaxForce,
+            .set = native::setLinearVelocityMaxForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RelativeTo"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorRelativeTo"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The frame the velocities are written in: the world's, or an attachment's -- so \"forwards\" follows the part as it turns.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getLinearVelocityRelativeTo,
+            .set = native::setLinearVelocityRelativeTo,
+        },
+    }};
+    ClassDescriptor linearVelocityDesc;
+    linearVelocityDesc.name = atoms.intern("LinearVelocity");
+    linearVelocityDesc.super = constraintClass;
+    linearVelocityDesc.flags = ClassFlags::None;
+    linearVelocityDesc.defaultName = atoms.intern("LinearVelocity");
+    linearVelocityDesc.doc = "Holds the part its `Attachment0` is on at a velocity, with as much force as `MaxForce` allows: a conveyor's crate, a platform that glides, a thrown thing that does not slow. In `Line` and `Plane` modes it holds only the speed along a line or across a plane and leaves the rest to the world -- a puck held at a speed along a rail still falls.";
+    linearVelocityDesc.properties = linearVelocityProperties;
+    linearVelocityDesc.attachComponents = native::attachLinearVelocityComponents;
+    linearVelocityDesc.detachComponents = native::detachLinearVelocityComponents;
+    classes.registerClass(linearVelocityDesc);
+
+    // --- AngularVelocity ---
+    static std::array<PropertyDesc, 4> angularVelocityProperties;
+    angularVelocityProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("AngularVelocity"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The spin held, in radians a second about each axis of the frame `RelativeTo` names.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getAngularVelocityAngularVelocity,
+            .set = native::setAngularVelocityAngularVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most torque it may use, in newton-metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAngularVelocityMaxTorque,
+            .set = native::setAngularVelocityMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RelativeTo"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorRelativeTo"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The frame the spin is written in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAngularVelocityRelativeTo,
+            .set = native::setAngularVelocityRelativeTo,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReactionTorqueEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the part `Attachment1` is on is turned the other way by as much: a motor that twists what it is mounted on.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAngularVelocityReactionTorqueEnabled,
+            .set = native::setAngularVelocityReactionTorqueEnabled,
+        },
+    }};
+    ClassDescriptor angularVelocityDesc;
+    angularVelocityDesc.name = atoms.intern("AngularVelocity");
+    angularVelocityDesc.super = constraintClass;
+    angularVelocityDesc.flags = ClassFlags::None;
+    angularVelocityDesc.defaultName = atoms.intern("AngularVelocity");
+    angularVelocityDesc.doc = "Holds the part its `Attachment0` is on at a spin, with as much torque as `MaxTorque` allows: a fan, a coin that turns, a planet. For a wheel on an axle a `HingeConstraint` with a motor is the better tool: this spins a free part.";
+    angularVelocityDesc.properties = angularVelocityProperties;
+    angularVelocityDesc.attachComponents = native::attachAngularVelocityComponents;
+    angularVelocityDesc.detachComponents = native::detachAngularVelocityComponents;
+    classes.registerClass(angularVelocityDesc);
+
+    // --- AlignPosition ---
+    static std::array<PropertyDesc, 10> alignPositionProperties;
+    alignPositionProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Mode"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("PositionAlignmentMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the target is `Position` or `Attachment1`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAlignPositionMode,
+            .set = native::setAlignPositionMode,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Position"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "OneAttachment: the place in the world it pulls to.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getAlignPositionPosition,
+            .set = native::setAlignPositionPosition,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxForce"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most force it may use, in newtons.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignPositionMaxForce,
+            .set = native::setAlignPositionMaxForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxVelocity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The fastest it may bring the attachment in, in metres a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignPositionMaxVelocity,
+            .set = native::setAlignPositionMaxVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Responsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How eagerly it closes the distance. Low drifts in; high snaps.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getAlignPositionResponsiveness,
+            .set = native::setAlignPositionResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RigidityEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it gets there as fast as the simulation can take it, with no cap on force or speed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAlignPositionRigidityEnabled,
+            .set = native::setAlignPositionRigidityEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ApplyAtCenterOfMass"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the pull is at where the part balances rather than at the attachment. Off, a pull at a corner also turns the part.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAlignPositionApplyAtCenterOfMass,
+            .set = native::setAlignPositionApplyAtCenterOfMass,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReactionForceEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "TwoAttachment: whether the part `Attachment1` is on is pulled back by as much. Off, the target is not disturbed by what follows it; on, a hand pulling a crate is pulled by the crate.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAlignPositionReactionForceEnabled,
+            .set = native::setAlignPositionReactionForceEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignPositionStiffness,
+            .set = native::setAlignPositionStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignPositionDamping,
+            .set = native::setAlignPositionDamping,
+        },
+    }};
+    ClassDescriptor alignPositionDesc;
+    alignPositionDesc.name = atoms.intern("AlignPosition");
+    alignPositionDesc.super = constraintClass;
+    alignPositionDesc.flags = ClassFlags::None;
+    alignPositionDesc.defaultName = atoms.intern("AlignPosition");
+    alignPositionDesc.doc = "Pulls `Attachment0` towards a place and holds it there: a pet that hovers at a shoulder, a platform that returns to its post, something carried. The place is `Position`, or `Attachment1` when the mode is `TwoAttachment`.\012\012It does not carry the part there at a speed: it pulls, as hard as `MaxForce` allows and no faster than `MaxVelocity`, and a weight heavier than the force sags.";
+    alignPositionDesc.properties = alignPositionProperties;
+    alignPositionDesc.attachComponents = native::attachAlignPositionComponents;
+    alignPositionDesc.detachComponents = native::detachAlignPositionComponents;
+    classes.registerClass(alignPositionDesc);
+
+    // --- AlignOrientation ---
+    static std::array<PropertyDesc, 9> alignOrientationProperties;
+    alignOrientationProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Mode"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("OrientationAlignmentMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the target is `CFrame` or `Attachment1`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAlignOrientationMode,
+            .set = native::setAlignOrientationMode,
+        },
+        PropertyDesc{
+            .name = atoms.intern("CFrame"),
+            .type = ValueType::CFrame,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "OneAttachment: the orientation in the world it turns to. Only the rotation is read.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getAlignOrientationCFrame,
+            .set = native::setAlignOrientationCFrame,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxTorque"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most torque it may use, in newton-metres.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignOrientationMaxTorque,
+            .set = native::setAlignOrientationMaxTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxAngularVelocity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The fastest it may turn the part, in radians a second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignOrientationMaxAngularVelocity,
+            .set = native::setAlignOrientationMaxAngularVelocity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Responsiveness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How eagerly it closes the angle.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getAlignOrientationResponsiveness,
+            .set = native::setAlignOrientationResponsiveness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RigidityEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it gets there as fast as the simulation can take it, with no cap on torque or speed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAlignOrientationRigidityEnabled,
+            .set = native::setAlignOrientationRigidityEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReactionTorqueEnabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "TwoAttachment: whether the part `Attachment1` is on is turned back by as much. An arm aligned to a chest then turns the chest, as a real one does.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAlignOrientationReactionTorqueEnabled,
+            .set = native::setAlignOrientationReactionTorqueEnabled,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Stiffness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignOrientationStiffness,
+            .set = native::setAlignOrientationStiffness,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Damping"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getAlignOrientationDamping,
+            .set = native::setAlignOrientationDamping,
+        },
+    }};
+    ClassDescriptor alignOrientationDesc;
+    alignOrientationDesc.name = atoms.intern("AlignOrientation");
+    alignOrientationDesc.super = constraintClass;
+    alignOrientationDesc.flags = ClassFlags::None;
+    alignOrientationDesc.defaultName = atoms.intern("AlignOrientation");
+    alignOrientationDesc.doc = "Turns `Attachment0` towards an orientation and holds it there: something that stays upright, a turret that faces its target, a pet that looks where its owner looks. The orientation is `CFrame`'s, or `Attachment1`'s when the mode is `TwoAttachment`.\012\012It does not spin a part: for that, an `AngularVelocity` or a hinge with a motor.";
+    alignOrientationDesc.properties = alignOrientationProperties;
+    alignOrientationDesc.attachComponents = native::attachAlignOrientationComponents;
+    alignOrientationDesc.detachComponents = native::detachAlignOrientationComponents;
+    classes.registerClass(alignOrientationDesc);
+
+    // --- VectorForce ---
+    static std::array<PropertyDesc, 3> vectorForceProperties;
+    vectorForceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Force"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The force, in newtons, in the frame `RelativeTo` names.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getVectorForceForce,
+            .set = native::setVectorForceForce,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RelativeTo"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorRelativeTo"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The frame the force is written in. `Attachment0`, the default, is a thruster: it pushes where the part points.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getVectorForceRelativeTo,
+            .set = native::setVectorForceRelativeTo,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ApplyAtCenterOfMass"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it pushes at where the part balances rather than at the attachment. Off, a force off-centre also turns the part.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVectorForceApplyAtCenterOfMass,
+            .set = native::setVectorForceApplyAtCenterOfMass,
+        },
+    }};
+    ClassDescriptor vectorForceDesc;
+    vectorForceDesc.name = atoms.intern("VectorForce");
+    vectorForceDesc.super = constraintClass;
+    vectorForceDesc.flags = ClassFlags::None;
+    vectorForceDesc.defaultName = atoms.intern("VectorForce");
+    vectorForceDesc.doc = "A constant force on the part its `Attachment0` is on: a thruster, wind on one thing, lift.";
+    vectorForceDesc.properties = vectorForceProperties;
+    vectorForceDesc.attachComponents = native::attachVectorForceComponents;
+    vectorForceDesc.detachComponents = native::detachVectorForceComponents;
+    classes.registerClass(vectorForceDesc);
+
+    // --- Torque ---
+    static std::array<PropertyDesc, 2> torqueProperties;
+    torqueProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Torque"),
+            .type = ValueType::Vector3,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The torque, in newton-metres about each axis of the frame `RelativeTo` names.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector"),
+            .get = native::getTorqueTorque,
+            .set = native::setTorqueTorque,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RelativeTo"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ActuatorRelativeTo"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The frame the torque is written in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getTorqueRelativeTo,
+            .set = native::setTorqueRelativeTo,
+        },
+    }};
+    ClassDescriptor torqueDesc;
+    torqueDesc.name = atoms.intern("Torque");
+    torqueDesc.super = constraintClass;
+    torqueDesc.flags = ClassFlags::None;
+    torqueDesc.defaultName = atoms.intern("Torque");
+    torqueDesc.doc = "A constant torque on the part its `Attachment0` is on: something that keeps being twisted.";
+    torqueDesc.properties = torqueProperties;
+    torqueDesc.attachComponents = native::attachTorqueComponents;
+    torqueDesc.detachComponents = native::detachTorqueComponents;
+    classes.registerClass(torqueDesc);
+
+    // --- NoCollisionConstraint ---
+    static std::array<PropertyDesc, 3> noCollisionConstraintProperties;
+    noCollisionConstraintProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Part0"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("BasePart"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "One of the two.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getNoCollisionConstraintPart0,
+            .set = native::setNoCollisionConstraintPart0,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Part1"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("BasePart"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The other.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getNoCollisionConstraintPart1,
+            .set = native::setNoCollisionConstraintPart1,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the two pass through each other. Off, they collide again.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getNoCollisionConstraintEnabled,
+            .set = native::setNoCollisionConstraintEnabled,
+        },
+    }};
+    ClassDescriptor noCollisionConstraintDesc;
+    noCollisionConstraintDesc.name = atoms.intern("NoCollisionConstraint");
+    noCollisionConstraintDesc.super = instanceClass;
+    noCollisionConstraintDesc.flags = ClassFlags::None;
+    noCollisionConstraintDesc.defaultName = atoms.intern("NoCollisionConstraint");
+    noCollisionConstraintDesc.doc = "Two parts that pass through each other, and collide with everything else as they did. What a collision group cannot say: a group is every part in it against every part in another, and this is one part against one. A thing being carried and the one carrying it; a door and its frame.";
+    static constexpr std::array<std::string_view, 5> noCollisionConstraintParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    noCollisionConstraintDesc.parents = noCollisionConstraintParents;
+    noCollisionConstraintDesc.properties = noCollisionConstraintProperties;
+    noCollisionConstraintDesc.attachComponents = native::attachNoCollisionConstraintComponents;
+    noCollisionConstraintDesc.detachComponents = native::detachNoCollisionConstraintComponents;
+    classes.registerClass(noCollisionConstraintDesc);
 
     // --- Ragdoll ---
     static std::array<PropertyDesc, 2> ragdollProperties;
@@ -1378,7 +2632,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(weldConstraintDesc);
 
     // --- CharacterBody ---
-    static std::array<PropertyDesc, 6> characterBodyProperties;
+    static std::array<PropertyDesc, 10> characterBodyProperties;
     characterBodyProperties = {{
         PropertyDesc{
             .name = atoms.intern("WalkSpeed"),
@@ -1397,10 +2651,54 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "The upward speed Jump imparts, in metres per second. How high that reaches depends on `Workspace.Gravity`, which is the relationship a game tunes rather than a height.",
-            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .doc = "The upward speed Jump imparts, in metres per second. How high that reaches depends on `Workspace.Gravity`, which is the relationship a game tunes rather than a height. Negative is a slam downwards.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getCharacterBodyJumpSpeed,
             .set = native::setCharacterBodyJumpSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("GravityScale"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much of `Workspace.Gravity` the character feels: 1 all of it, 0.5 a floaty jump, 0 none. Negative falls upwards.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getCharacterBodyGravityScale,
+            .set = native::setCharacterBodyGravityScale,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SwimSpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast `Move` takes it through a fluid, in metres per second, as `WalkSpeed` does on the ground.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCharacterBodySwimSpeed,
+            .set = native::setCharacterBodySwimSpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FlySpeed"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How fast `Move` takes it while `Flying`, in metres per second.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCharacterBodyFlySpeed,
+            .set = native::setCharacterBodyFlySpeed,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Flying"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the character flies: no weight, and `Move` in three dimensions at `FlySpeed`. A creative mode, a ghost, a jetpack held on.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getCharacterBodyFlying,
+            .set = native::setCharacterBodyFlying,
         },
         PropertyDesc{
             .name = atoms.intern("MaxSlopeAngle"),
@@ -1442,7 +2740,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .readOnly = true,
             .inert = false,
-            .doc = "Grounded or Airborne. Ground too steep to walk on reads as Airborne, because the question this answers is whether the character is supported.",
+            .doc = "What the character is doing: `Grounded` or `Airborne` on foot -- ground too steep to walk on reads as Airborne, because the question is whether it is supported -- `Swimming` with its middle under a `Water`'s surface or inside a fluid block, which it enters and leaves by itself, and `Flying` while `Flying` is set.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getCharacterBodyState,
             .set = nullptr,
@@ -1454,20 +2752,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("Move"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Sets the direction to walk in for the next simulation tick, in world space. Only the horizontal part is used -- vertical movement is gravity's and Jump's -- and the vector is scaled by WalkSpeed rather than normalised, so a shorter one walks slower. Call it every tick while moving; a character told nothing stops.",
+            .doc = "Sets the direction to walk in for the next simulation tick, in world space. Only the horizontal part is used -- vertical movement is gravity's and Jump's -- and the vector is scaled by WalkSpeed rather than normalised, so a shorter one walks slower. Call it every tick while moving; a character told nothing stops.\012\012Swimming and flying, all three axes are used -- up is up -- at `SwimSpeed` and `FlySpeed`.\012\012A character is pushed as a part is: `ApplyImpulse` changes its speed by the impulse over its `Mass`, and `LinearVelocity` can be written -- a knock back, a launch pad. What it was pushed by fades, quickly on the ground and slowly in the air, and its walk is added on top.",
         },
         MethodDesc{
             .name = atoms.intern("Jump"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. It does NOT check Grounded, deliberately: `LinearVelocity` is read-only, so a mid-air check here would make a double jump, a wall jump and a triple jump impossible to write at all. `if character.Grounded then character:Jump() end` is the old behaviour in one line, in the game, where a jump policy belongs -- and coyote time and jump buffering become counters beside it. Calling it every frame is flying: that is the game's bug, and it is the same in every engine that offers a mechanism rather than a policy. The TICK stays engine-side: the velocity is applied at the next simulation step and never inside the call, or a replay diverges.",
+            .doc = "Launches the character upward at JumpSpeed at the next simulation tick, wherever it is. It does NOT check Grounded, deliberately: a mid-air check here would make a double jump, a wall jump and a triple jump impossible to write as a jump at all. `if character.Grounded then character:Jump() end` is the old behaviour in one line, in the game, where a jump policy belongs -- and coyote time and jump buffering become counters beside it. Calling it every frame is flying: that is the game's bug, and it is the same in every engine that offers a mechanism rather than a policy. The TICK stays engine-side: the velocity is applied at the next simulation step and never inside the call, or a replay diverges.",
         },
     }};
     static std::array<EventDesc, 1> characterBodyEvents;
     characterBodyEvents = {{
         EventDesc{
             .name = atoms.intern("Landed"),
-            .slot = 9,
+            .slot = 10,
             .doc = "Fires when the character becomes Grounded after being Airborne, with the part it landed on -- nil when that is terrain no instance owns. Deferred like every signal here.",
         },
     }};
@@ -1485,7 +2783,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(characterBodyDesc);
 
     // --- Part2D ---
-    static std::array<PropertyDesc, 24> part2DProperties;
+    static std::array<PropertyDesc, 25> part2DProperties;
     part2DProperties = {{
         PropertyDesc{
             .name = atoms.intern("Position"),
@@ -1632,6 +2930,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getPart2DFilter,
             .set = native::setPart2DFilter,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ExactColor"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "**The colours on the screen are the colours in the picture.** A sprite is art somebody chose every colour of, so by default it is drawn past everything the scene does to light: the exposure, the tone curve, colour correction and bloom leave it alone, and a `Color` of `Color3.fromRGB(200, 80, 40)` is that pixel, whatever `Lighting` holds.\012\012Off, the sprite is one more thing in the lit picture -- exposed, tone-mapped, graded and glowing like a part beside it -- which is what a sprite standing in a 3D scene wants. Either way it keeps its place: a part in front hides it, and glass or a particle in front is drawn over it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getPart2DExactColor,
+            .set = native::setPart2DExactColor,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),
@@ -1793,7 +3102,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(part2DDesc);
 
     // --- Tilemap2D ---
-    static std::array<PropertyDesc, 10> tilemap2DProperties;
+    static std::array<PropertyDesc, 11> tilemap2DProperties;
     tilemap2DProperties = {{
         PropertyDesc{
             .name = atoms.intern("Position"),
@@ -1873,6 +3182,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getTilemap2DFilter,
             .set = native::setTilemap2DFilter,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ExactColor"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The tiles' colours on the screen are the colours in the tileset, as `Part2D.ExactColor` says. Off, the level is lit, exposed and graded with the rest of the scene.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getTilemap2DExactColor,
+            .set = native::setTilemap2DExactColor,
         },
         PropertyDesc{
             .name = atoms.intern("Collides"),
@@ -3335,7 +4655,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 5> workspaceMethods;
+    static std::array<MethodDesc, 6> workspaceMethods;
     workspaceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetWindAt"),
@@ -3366,6 +4686,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Every part overlapping an oriented box, as a fresh array in a stable order -- one entry per part however many of its surfaces are inside. `size` is the full extent, matching `BasePart.Size`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetBodiesInSphere"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Every part overlapping a ball, as `GetBodiesInBox` answers for a box: what an explosion reaches, what is within arm's length.",
         },
     }};
     ClassDescriptor workspaceDesc;
@@ -4897,7 +6223,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(raycastFilterTypeDesc);
 
     // --- CharacterState ---
-    static std::array<EnumItemDesc, 2> characterStateItems;
+    static std::array<EnumItemDesc, 4> characterStateItems;
     characterStateItems = {{
         EnumItemDesc{
             .name = atoms.intern("Grounded"),
@@ -4907,6 +6233,16 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
         EnumItemDesc{
             .name = atoms.intern("Airborne"),
             .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Swimming"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Flying"),
+            .value = 3,
             .docKey = {},
         },
     }};
@@ -7075,6 +8411,121 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     platformDesc.docKey = {};
     platformDesc.items = platformItems;
     enums.registerEnum(platformDesc);
+
+    // --- ActuatorType ---
+    static std::array<EnumItemDesc, 3> actuatorTypeItems;
+    actuatorTypeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Motor"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Servo"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor actuatorTypeDesc;
+    actuatorTypeDesc.name = atoms.intern("ActuatorType");
+    actuatorTypeDesc.docKey = {};
+    actuatorTypeDesc.items = actuatorTypeItems;
+    enums.registerEnum(actuatorTypeDesc);
+
+    // --- ActuatorRelativeTo ---
+    static std::array<EnumItemDesc, 3> actuatorRelativeToItems;
+    actuatorRelativeToItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Attachment0"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Attachment1"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("World"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor actuatorRelativeToDesc;
+    actuatorRelativeToDesc.name = atoms.intern("ActuatorRelativeTo");
+    actuatorRelativeToDesc.docKey = {};
+    actuatorRelativeToDesc.items = actuatorRelativeToItems;
+    enums.registerEnum(actuatorRelativeToDesc);
+
+    // --- VelocityConstraintMode ---
+    static std::array<EnumItemDesc, 3> velocityConstraintModeItems;
+    velocityConstraintModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Line"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Plane"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Vector"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor velocityConstraintModeDesc;
+    velocityConstraintModeDesc.name = atoms.intern("VelocityConstraintMode");
+    velocityConstraintModeDesc.docKey = {};
+    velocityConstraintModeDesc.items = velocityConstraintModeItems;
+    enums.registerEnum(velocityConstraintModeDesc);
+
+    // --- PositionAlignmentMode ---
+    static std::array<EnumItemDesc, 2> positionAlignmentModeItems;
+    positionAlignmentModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("OneAttachment"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TwoAttachment"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor positionAlignmentModeDesc;
+    positionAlignmentModeDesc.name = atoms.intern("PositionAlignmentMode");
+    positionAlignmentModeDesc.docKey = {};
+    positionAlignmentModeDesc.items = positionAlignmentModeItems;
+    enums.registerEnum(positionAlignmentModeDesc);
+
+    // --- OrientationAlignmentMode ---
+    static std::array<EnumItemDesc, 2> orientationAlignmentModeItems;
+    orientationAlignmentModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("OneAttachment"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TwoAttachment"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor orientationAlignmentModeDesc;
+    orientationAlignmentModeDesc.name = atoms.intern("OrientationAlignmentMode");
+    orientationAlignmentModeDesc.docKey = {};
+    orientationAlignmentModeDesc.items = orientationAlignmentModeItems;
+    enums.registerEnum(orientationAlignmentModeDesc);
 }
 
 } // namespace engine::scene::generated

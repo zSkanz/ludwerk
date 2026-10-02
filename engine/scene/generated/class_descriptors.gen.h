@@ -92,6 +92,11 @@ inline constexpr EnumId FocusLossReasonEnumId = 51;
 inline constexpr EnumId TextInputKeyboardEnumId = 52;
 inline constexpr EnumId SwipeDirectionEnumId = 53;
 inline constexpr EnumId PlatformEnumId = 54;
+inline constexpr EnumId ActuatorTypeEnumId = 55;
+inline constexpr EnumId ActuatorRelativeToEnumId = 56;
+inline constexpr EnumId VelocityConstraintModeEnumId = 57;
+inline constexpr EnumId PositionAlignmentModeEnumId = 58;
+inline constexpr EnumId OrientationAlignmentModeEnumId = 59;
 
 } // namespace generated
 
@@ -172,8 +177,18 @@ Value getBasePartRestitution(const World& world, core::InstanceId id);
 bool setBasePartRestitution(World& world, core::InstanceId id, const Value& value);
 Value getBasePartDensity(const World& world, core::InstanceId id);
 bool setBasePartDensity(World& world, core::InstanceId id, const Value& value);
+Value getBasePartMass(const World& world, core::InstanceId id);
+Value getBasePartAssemblyMass(const World& world, core::InstanceId id);
+Value getBasePartLinearDamping(const World& world, core::InstanceId id);
+bool setBasePartLinearDamping(World& world, core::InstanceId id, const Value& value);
+Value getBasePartAngularDamping(const World& world, core::InstanceId id);
+bool setBasePartAngularDamping(World& world, core::InstanceId id, const Value& value);
+Value getBasePartContactDetails(const World& world, core::InstanceId id);
+bool setBasePartContactDetails(World& world, core::InstanceId id, const Value& value);
 Value getBasePartLinearVelocity(const World& world, core::InstanceId id);
+bool setBasePartLinearVelocity(World& world, core::InstanceId id, const Value& value);
 Value getBasePartAngularVelocity(const World& world, core::InstanceId id);
+bool setBasePartAngularVelocity(World& world, core::InstanceId id, const Value& value);
 void attachPartComponents(World& world, core::InstanceId id);
 void detachPartComponents(World& world, core::InstanceId id);
 
@@ -197,6 +212,12 @@ Value getConstraintEnabled(const World& world, core::InstanceId id);
 bool setConstraintEnabled(World& world, core::InstanceId id, const Value& value);
 Value getConstraintCollideConnected(const World& world, core::InstanceId id);
 bool setConstraintCollideConnected(World& world, core::InstanceId id, const Value& value);
+Value getConstraintVisible(const World& world, core::InstanceId id);
+bool setConstraintVisible(World& world, core::InstanceId id, const Value& value);
+Value getConstraintBreakForce(const World& world, core::InstanceId id);
+bool setConstraintBreakForce(World& world, core::InstanceId id, const Value& value);
+Value getConstraintBreakTorque(const World& world, core::InstanceId id);
+bool setConstraintBreakTorque(World& world, core::InstanceId id, const Value& value);
 void attachConstraintComponents(World& world, core::InstanceId id);
 void detachConstraintComponents(World& world, core::InstanceId id);
 
@@ -207,6 +228,18 @@ Value getBallSocketConstraintUpperAngle(const World& world, core::InstanceId id)
 bool setBallSocketConstraintUpperAngle(World& world, core::InstanceId id, const Value& value);
 Value getBallSocketConstraintTwistLimit(const World& world, core::InstanceId id);
 bool setBallSocketConstraintTwistLimit(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintActuatorType(const World& world, core::InstanceId id);
+bool setBallSocketConstraintActuatorType(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintTargetOrientation(const World& world, core::InstanceId id);
+bool setBallSocketConstraintTargetOrientation(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintServoMaxTorque(const World& world, core::InstanceId id);
+bool setBallSocketConstraintServoMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintAngularResponsiveness(const World& world, core::InstanceId id);
+bool setBallSocketConstraintAngularResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintStiffness(const World& world, core::InstanceId id);
+bool setBallSocketConstraintStiffness(World& world, core::InstanceId id, const Value& value);
+Value getBallSocketConstraintDamping(const World& world, core::InstanceId id);
+bool setBallSocketConstraintDamping(World& world, core::InstanceId id, const Value& value);
 void attachBallSocketConstraintComponents(World& world, core::InstanceId id);
 void detachBallSocketConstraintComponents(World& world, core::InstanceId id);
 
@@ -217,12 +250,218 @@ Value getHingeConstraintLowerAngle(const World& world, core::InstanceId id);
 bool setHingeConstraintLowerAngle(World& world, core::InstanceId id, const Value& value);
 Value getHingeConstraintUpperAngle(const World& world, core::InstanceId id);
 bool setHingeConstraintUpperAngle(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintActuatorType(const World& world, core::InstanceId id);
+bool setHingeConstraintActuatorType(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintAngularVelocity(const World& world, core::InstanceId id);
+bool setHingeConstraintAngularVelocity(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintMotorMaxTorque(const World& world, core::InstanceId id);
+bool setHingeConstraintMotorMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintMotorMaxAcceleration(const World& world, core::InstanceId id);
+bool setHingeConstraintMotorMaxAcceleration(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintTargetAngle(const World& world, core::InstanceId id);
+bool setHingeConstraintTargetAngle(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintAngularSpeed(const World& world, core::InstanceId id);
+bool setHingeConstraintAngularSpeed(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintServoMaxTorque(const World& world, core::InstanceId id);
+bool setHingeConstraintServoMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintAngularResponsiveness(const World& world, core::InstanceId id);
+bool setHingeConstraintAngularResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintStiffness(const World& world, core::InstanceId id);
+bool setHingeConstraintStiffness(World& world, core::InstanceId id, const Value& value);
+Value getHingeConstraintDamping(const World& world, core::InstanceId id);
+bool setHingeConstraintDamping(World& world, core::InstanceId id, const Value& value);
 void attachHingeConstraintComponents(World& world, core::InstanceId id);
 void detachHingeConstraintComponents(World& world, core::InstanceId id);
 
 // FixedConstraint
 void attachFixedConstraintComponents(World& world, core::InstanceId id);
 void detachFixedConstraintComponents(World& world, core::InstanceId id);
+
+// PrismaticConstraint
+Value getPrismaticConstraintLimitsEnabled(const World& world, core::InstanceId id);
+bool setPrismaticConstraintLimitsEnabled(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintLowerLimit(const World& world, core::InstanceId id);
+bool setPrismaticConstraintLowerLimit(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintUpperLimit(const World& world, core::InstanceId id);
+bool setPrismaticConstraintUpperLimit(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintActuatorType(const World& world, core::InstanceId id);
+bool setPrismaticConstraintActuatorType(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintVelocity(const World& world, core::InstanceId id);
+bool setPrismaticConstraintVelocity(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintMotorMaxForce(const World& world, core::InstanceId id);
+bool setPrismaticConstraintMotorMaxForce(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintMotorMaxAcceleration(const World& world, core::InstanceId id);
+bool setPrismaticConstraintMotorMaxAcceleration(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintTargetPosition(const World& world, core::InstanceId id);
+bool setPrismaticConstraintTargetPosition(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintSpeed(const World& world, core::InstanceId id);
+bool setPrismaticConstraintSpeed(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintServoMaxForce(const World& world, core::InstanceId id);
+bool setPrismaticConstraintServoMaxForce(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintLinearResponsiveness(const World& world, core::InstanceId id);
+bool setPrismaticConstraintLinearResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintStiffness(const World& world, core::InstanceId id);
+bool setPrismaticConstraintStiffness(World& world, core::InstanceId id, const Value& value);
+Value getPrismaticConstraintDamping(const World& world, core::InstanceId id);
+bool setPrismaticConstraintDamping(World& world, core::InstanceId id, const Value& value);
+void attachPrismaticConstraintComponents(World& world, core::InstanceId id);
+void detachPrismaticConstraintComponents(World& world, core::InstanceId id);
+
+// RopeConstraint
+Value getRopeConstraintLength(const World& world, core::InstanceId id);
+bool setRopeConstraintLength(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintWinchEnabled(const World& world, core::InstanceId id);
+bool setRopeConstraintWinchEnabled(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintWinchTarget(const World& world, core::InstanceId id);
+bool setRopeConstraintWinchTarget(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintWinchSpeed(const World& world, core::InstanceId id);
+bool setRopeConstraintWinchSpeed(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintWinchForce(const World& world, core::InstanceId id);
+bool setRopeConstraintWinchForce(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintColor(const World& world, core::InstanceId id);
+bool setRopeConstraintColor(World& world, core::InstanceId id, const Value& value);
+Value getRopeConstraintThickness(const World& world, core::InstanceId id);
+bool setRopeConstraintThickness(World& world, core::InstanceId id, const Value& value);
+void attachRopeConstraintComponents(World& world, core::InstanceId id);
+void detachRopeConstraintComponents(World& world, core::InstanceId id);
+
+// RodConstraint
+Value getRodConstraintLength(const World& world, core::InstanceId id);
+bool setRodConstraintLength(World& world, core::InstanceId id, const Value& value);
+Value getRodConstraintColor(const World& world, core::InstanceId id);
+bool setRodConstraintColor(World& world, core::InstanceId id, const Value& value);
+Value getRodConstraintThickness(const World& world, core::InstanceId id);
+bool setRodConstraintThickness(World& world, core::InstanceId id, const Value& value);
+void attachRodConstraintComponents(World& world, core::InstanceId id);
+void detachRodConstraintComponents(World& world, core::InstanceId id);
+
+// SpringConstraint
+Value getSpringConstraintFreeLength(const World& world, core::InstanceId id);
+bool setSpringConstraintFreeLength(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintStiffness(const World& world, core::InstanceId id);
+bool setSpringConstraintStiffness(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintDamping(const World& world, core::InstanceId id);
+bool setSpringConstraintDamping(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintLimitsEnabled(const World& world, core::InstanceId id);
+bool setSpringConstraintLimitsEnabled(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintMinLength(const World& world, core::InstanceId id);
+bool setSpringConstraintMinLength(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintMaxLength(const World& world, core::InstanceId id);
+bool setSpringConstraintMaxLength(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintColor(const World& world, core::InstanceId id);
+bool setSpringConstraintColor(World& world, core::InstanceId id, const Value& value);
+Value getSpringConstraintThickness(const World& world, core::InstanceId id);
+bool setSpringConstraintThickness(World& world, core::InstanceId id, const Value& value);
+void attachSpringConstraintComponents(World& world, core::InstanceId id);
+void detachSpringConstraintComponents(World& world, core::InstanceId id);
+
+// LinearVelocity
+Value getLinearVelocityVelocityConstraintMode(const World& world, core::InstanceId id);
+bool setLinearVelocityVelocityConstraintMode(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityVectorVelocity(const World& world, core::InstanceId id);
+bool setLinearVelocityVectorVelocity(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityLineDirection(const World& world, core::InstanceId id);
+bool setLinearVelocityLineDirection(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityLineVelocity(const World& world, core::InstanceId id);
+bool setLinearVelocityLineVelocity(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityPrimaryTangentAxis(const World& world, core::InstanceId id);
+bool setLinearVelocityPrimaryTangentAxis(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocitySecondaryTangentAxis(const World& world, core::InstanceId id);
+bool setLinearVelocitySecondaryTangentAxis(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityPlaneVelocity(const World& world, core::InstanceId id);
+bool setLinearVelocityPlaneVelocity(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityMaxForce(const World& world, core::InstanceId id);
+bool setLinearVelocityMaxForce(World& world, core::InstanceId id, const Value& value);
+Value getLinearVelocityRelativeTo(const World& world, core::InstanceId id);
+bool setLinearVelocityRelativeTo(World& world, core::InstanceId id, const Value& value);
+void attachLinearVelocityComponents(World& world, core::InstanceId id);
+void detachLinearVelocityComponents(World& world, core::InstanceId id);
+
+// AngularVelocity
+Value getAngularVelocityAngularVelocity(const World& world, core::InstanceId id);
+bool setAngularVelocityAngularVelocity(World& world, core::InstanceId id, const Value& value);
+Value getAngularVelocityMaxTorque(const World& world, core::InstanceId id);
+bool setAngularVelocityMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getAngularVelocityRelativeTo(const World& world, core::InstanceId id);
+bool setAngularVelocityRelativeTo(World& world, core::InstanceId id, const Value& value);
+Value getAngularVelocityReactionTorqueEnabled(const World& world, core::InstanceId id);
+bool setAngularVelocityReactionTorqueEnabled(World& world, core::InstanceId id, const Value& value);
+void attachAngularVelocityComponents(World& world, core::InstanceId id);
+void detachAngularVelocityComponents(World& world, core::InstanceId id);
+
+// AlignPosition
+Value getAlignPositionMode(const World& world, core::InstanceId id);
+bool setAlignPositionMode(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionPosition(const World& world, core::InstanceId id);
+bool setAlignPositionPosition(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionMaxForce(const World& world, core::InstanceId id);
+bool setAlignPositionMaxForce(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionMaxVelocity(const World& world, core::InstanceId id);
+bool setAlignPositionMaxVelocity(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionResponsiveness(const World& world, core::InstanceId id);
+bool setAlignPositionResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionRigidityEnabled(const World& world, core::InstanceId id);
+bool setAlignPositionRigidityEnabled(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionApplyAtCenterOfMass(const World& world, core::InstanceId id);
+bool setAlignPositionApplyAtCenterOfMass(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionReactionForceEnabled(const World& world, core::InstanceId id);
+bool setAlignPositionReactionForceEnabled(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionStiffness(const World& world, core::InstanceId id);
+bool setAlignPositionStiffness(World& world, core::InstanceId id, const Value& value);
+Value getAlignPositionDamping(const World& world, core::InstanceId id);
+bool setAlignPositionDamping(World& world, core::InstanceId id, const Value& value);
+void attachAlignPositionComponents(World& world, core::InstanceId id);
+void detachAlignPositionComponents(World& world, core::InstanceId id);
+
+// AlignOrientation
+Value getAlignOrientationMode(const World& world, core::InstanceId id);
+bool setAlignOrientationMode(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationCFrame(const World& world, core::InstanceId id);
+bool setAlignOrientationCFrame(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationMaxTorque(const World& world, core::InstanceId id);
+bool setAlignOrientationMaxTorque(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationMaxAngularVelocity(const World& world, core::InstanceId id);
+bool setAlignOrientationMaxAngularVelocity(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationResponsiveness(const World& world, core::InstanceId id);
+bool setAlignOrientationResponsiveness(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationRigidityEnabled(const World& world, core::InstanceId id);
+bool setAlignOrientationRigidityEnabled(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationReactionTorqueEnabled(const World& world, core::InstanceId id);
+bool setAlignOrientationReactionTorqueEnabled(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationStiffness(const World& world, core::InstanceId id);
+bool setAlignOrientationStiffness(World& world, core::InstanceId id, const Value& value);
+Value getAlignOrientationDamping(const World& world, core::InstanceId id);
+bool setAlignOrientationDamping(World& world, core::InstanceId id, const Value& value);
+void attachAlignOrientationComponents(World& world, core::InstanceId id);
+void detachAlignOrientationComponents(World& world, core::InstanceId id);
+
+// VectorForce
+Value getVectorForceForce(const World& world, core::InstanceId id);
+bool setVectorForceForce(World& world, core::InstanceId id, const Value& value);
+Value getVectorForceRelativeTo(const World& world, core::InstanceId id);
+bool setVectorForceRelativeTo(World& world, core::InstanceId id, const Value& value);
+Value getVectorForceApplyAtCenterOfMass(const World& world, core::InstanceId id);
+bool setVectorForceApplyAtCenterOfMass(World& world, core::InstanceId id, const Value& value);
+void attachVectorForceComponents(World& world, core::InstanceId id);
+void detachVectorForceComponents(World& world, core::InstanceId id);
+
+// Torque
+Value getTorqueTorque(const World& world, core::InstanceId id);
+bool setTorqueTorque(World& world, core::InstanceId id, const Value& value);
+Value getTorqueRelativeTo(const World& world, core::InstanceId id);
+bool setTorqueRelativeTo(World& world, core::InstanceId id, const Value& value);
+void attachTorqueComponents(World& world, core::InstanceId id);
+void detachTorqueComponents(World& world, core::InstanceId id);
+
+// NoCollisionConstraint
+Value getNoCollisionConstraintPart0(const World& world, core::InstanceId id);
+bool setNoCollisionConstraintPart0(World& world, core::InstanceId id, const Value& value);
+Value getNoCollisionConstraintPart1(const World& world, core::InstanceId id);
+bool setNoCollisionConstraintPart1(World& world, core::InstanceId id, const Value& value);
+Value getNoCollisionConstraintEnabled(const World& world, core::InstanceId id);
+bool setNoCollisionConstraintEnabled(World& world, core::InstanceId id, const Value& value);
+void attachNoCollisionConstraintComponents(World& world, core::InstanceId id);
+void detachNoCollisionConstraintComponents(World& world, core::InstanceId id);
 
 // Ragdoll
 Value getRagdollEnabled(const World& world, core::InstanceId id);
@@ -276,6 +515,14 @@ Value getCharacterBodyWalkSpeed(const World& world, core::InstanceId id);
 bool setCharacterBodyWalkSpeed(World& world, core::InstanceId id, const Value& value);
 Value getCharacterBodyJumpSpeed(const World& world, core::InstanceId id);
 bool setCharacterBodyJumpSpeed(World& world, core::InstanceId id, const Value& value);
+Value getCharacterBodyGravityScale(const World& world, core::InstanceId id);
+bool setCharacterBodyGravityScale(World& world, core::InstanceId id, const Value& value);
+Value getCharacterBodySwimSpeed(const World& world, core::InstanceId id);
+bool setCharacterBodySwimSpeed(World& world, core::InstanceId id, const Value& value);
+Value getCharacterBodyFlySpeed(const World& world, core::InstanceId id);
+bool setCharacterBodyFlySpeed(World& world, core::InstanceId id, const Value& value);
+Value getCharacterBodyFlying(const World& world, core::InstanceId id);
+bool setCharacterBodyFlying(World& world, core::InstanceId id, const Value& value);
 Value getCharacterBodyMaxSlopeAngle(const World& world, core::InstanceId id);
 bool setCharacterBodyMaxSlopeAngle(World& world, core::InstanceId id, const Value& value);
 Value getCharacterBodyAutoStepHeight(const World& world, core::InstanceId id);
@@ -312,6 +559,8 @@ Value getPart2DImageRectSize(const World& world, core::InstanceId id);
 bool setPart2DImageRectSize(World& world, core::InstanceId id, const Value& value);
 Value getPart2DFilter(const World& world, core::InstanceId id);
 bool setPart2DFilter(World& world, core::InstanceId id, const Value& value);
+Value getPart2DExactColor(const World& world, core::InstanceId id);
+bool setPart2DExactColor(World& world, core::InstanceId id, const Value& value);
 Value getPart2DAnchored(const World& world, core::InstanceId id);
 bool setPart2DAnchored(World& world, core::InstanceId id, const Value& value);
 Value getPart2DCanCollide(const World& world, core::InstanceId id);
@@ -352,6 +601,8 @@ Value getTilemap2DColor(const World& world, core::InstanceId id);
 bool setTilemap2DColor(World& world, core::InstanceId id, const Value& value);
 Value getTilemap2DFilter(const World& world, core::InstanceId id);
 bool setTilemap2DFilter(World& world, core::InstanceId id, const Value& value);
+Value getTilemap2DExactColor(const World& world, core::InstanceId id);
+bool setTilemap2DExactColor(World& world, core::InstanceId id, const Value& value);
 Value getTilemap2DCollides(const World& world, core::InstanceId id);
 bool setTilemap2DCollides(World& world, core::InstanceId id, const Value& value);
 Value getTilemap2DFriction(const World& world, core::InstanceId id);

@@ -29,6 +29,10 @@ offers is on the base's page, which is what keeps one added member on
 
 Every part overlapping an oriented box, as a fresh array in a stable order -- one entry per part however many of its surfaces are inside. `size` is the full extent, matching `BasePart.Size`.
 
+### `GetBodiesInSphere(position: vector, radius: number, params: RaycastParams? = nil): {BasePart}`
+
+Every part overlapping a ball, as `GetBodiesInBox` answers for a box: what an explosion reaches, what is within arm's length.
+
 ### `GetWindAt(position: vector): vector`
 
 The wind at a point now, in metres per second: `GlobalWind` with its gusts and turbulence, at `RunService.SimTime`. It is the same function the renderer draws with, so a flag, a sail or a sound put where this says the wind is agrees with the picture.

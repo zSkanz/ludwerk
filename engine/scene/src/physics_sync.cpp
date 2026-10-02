@@ -16,6 +16,7 @@
 #include "engine/asset/voxel_mesher.h"
 #include "engine/jobs/jobs.h"
 #include "engine/scene/players.h"
+#include "engine/scene/voxel_fluid.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
 
@@ -264,6 +265,8 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     desc.friction = body.friction;
     desc.restitution = body.restitution;
     desc.density = body.density;
+    desc.linearDamping = body.linearDamping;
+    desc.angularDamping = body.angularDamping;
     desc.collidable = body.canCollide;
     desc.queryable = body.canQuery;
     // What this replica only follows (the multiplayer smoothness brief): its
@@ -322,10 +325,17 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
     // Everything the record keeps about a description, minus the span it may not
     // keep. One place, because a field written in one branch and forgotten in
     // the other is how the two paths below used to disagree.
+    // What it weighs, asked once when the body is made or reshaped: a mass is
+    // the shape's volume times the density, and only the solver has the volume.
+    const auto weigh = [this, &record, &body] {
+        body.mass = m_backend.bodyMassProperties(m_world, record.handle).mass;
+    };
     const auto remember = [&record, &desc, &part] {
         record.shape = withoutPoints(desc.shape);
         record.motion = desc.motion;
         record.density = desc.density;
+        record.linearDamping = desc.linearDamping;
+        record.angularDamping = desc.angularDamping;
         record.friction = desc.friction;
         record.restitution = desc.restitution;
         record.collidable = desc.collidable;
@@ -360,6 +370,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         record.live = true;
         record.backendMotion = desc.motion;
         ++m_bodyCount;
+        weigh();
         return;
     }
 
@@ -386,6 +397,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         record.live = true;
         record.backendMotion = desc.motion;
         ++m_bodyCount;
+        weigh();
         return;
     }
 
@@ -394,6 +406,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         if (applied) {
             remember();
             record.backendMotion = desc.motion;
+            weigh();
             // **A body that becomes simulated starts moving as it was**: a
             // rebuilt body is at rest, and a part a replica starts predicting
             // mid-flight would otherwise drop out of the air (ADR 0133).
@@ -437,6 +450,11 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
             m_backend.setBodyGroup(m_world, record.handle, desc.group);
             record.group = desc.group;
         }
+        if (record.linearDamping != desc.linearDamping || record.angularDamping != desc.angularDamping) {
+            m_backend.setBodyDamping(m_world, record.handle, desc.linearDamping, desc.angularDamping);
+            record.linearDamping = desc.linearDamping;
+            record.angularDamping = desc.angularDamping;
+        }
 
         // The one place a script's write is told apart from the mirror's own:
         // the component differs from what this mirror last wrote into it, so
@@ -461,6 +479,12 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         }
     }
 
+    // **A velocity a script wrote is where this tick starts from** (ADR 0127,
+    // N5), before the pushes queued beside it.
+    if (body.velocityWritten) {
+        m_backend.setBodyVelocity(m_world, record.handle, body.linearVelocity, body.angularVelocity);
+        body.velocityWritten = false;
+    }
     if (!(body.pendingImpulse == core::Vec3{0.0f, 0.0f, 0.0f})) {
         m_backend.applyImpulse(m_world, record.handle, body.pendingImpulse);
         body.pendingImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
@@ -501,6 +525,10 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
         desc.stepHeight = character.autoStepHeight;
         desc.group = group;
         desc.userData = key;
+
+        // What a controller weighs is the controller's: an impulse is this
+        // times a change of speed, and `Mass` says it.
+        body.mass = desc.mass;
 
         CharacterRecord record;
         record.handle = m_backend.createCharacter(m_world, desc);
@@ -544,15 +572,51 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
     const physics::CharacterState state = m_backend.characterState(m_world, record.handle);
     const bool grounded = state.ground == physics::CharacterGround::Grounded;
 
+    // **`ApplyImpulse` does what it says** (D466): a change of speed of the
+    // impulse over the controller's mass. Up and down it joins what gravity
+    // integrates; across, it is a push that fades. In a fluid or in flight all
+    // three axes are the push's, because nothing there is falling.
+    if (!(body.pendingImpulse == core::Vec3{0.0f, 0.0f, 0.0f})) {
+        const core::Vec3 change = body.pendingImpulse * (1.0f / std::max(body.mass, 1.0f));
+        if (character.mode >= 2) {
+            character.push = character.push + change;
+        }
+        else {
+            character.push.x += change.x;
+            character.push.z += change.z;
+            character.verticalVelocity += change.y;
+        }
+        body.pendingImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
+    }
+    // A controller does not spin: a twist has nothing to turn.
+    body.pendingAngularImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
+    // **A velocity written is the character's own momentum from here**: what
+    // it is thrown at. Its walk is still added on top by `Move`.
+    if (body.velocityWritten) {
+        const core::Vec3 written = body.linearVelocity;
+        character.push = core::Vec3{written.x, character.mode >= 2 ? written.y : 0.0f, written.z};
+        if (character.mode < 2)
+            character.verticalVelocity = written.y;
+        body.velocityWritten = false;
+    }
+
     CharacterCommand command;
     command.moveDirection = character.moveDirection;
     command.jump = character.jumpRequested;
     command.walkSpeed = character.walkSpeed;
     command.jumpSpeed = character.jumpSpeed;
     command.dt = fixedDt;
+    command.gravityScale = character.gravityScale;
+    command.swimSpeed = character.swimSpeed;
+    command.flySpeed = character.flySpeed;
+    command.flying = character.flying;
     record.last = command;
-    character.verticalVelocity =
-        stepController(record, command, character.verticalVelocity, grounded, state.groundNormal);
+    const CharacterMotion motion =
+        stepController(record, command, CharacterMotion{character.verticalVelocity, character.push, character.mode},
+                       grounded, state.groundNormal, state.transform.position);
+    character.verticalVelocity = motion.vertical;
+    character.push = motion.push;
+    character.mode = motion.mode;
     character.jumpRequested = false;
 
     // Cleared once consumed: a character told nothing stops, which is what
@@ -560,8 +624,32 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
     character.moveDirection = core::Vec3{0.0f, 0.0f, 0.0f};
 }
 
-f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCommand& command, f32 verticalVelocity,
-                                bool grounded, core::Vec3 groundNormal)
+bool PhysicsSync::inFluid(core::DVec3 at) const
+{
+    bool wet = false;
+    m_scene.waters().forEach([&](core::InstanceId id, const WaterComponent&) {
+        if (wet || !inWorld(id))
+            return;
+        const WaterHere here = waterHere(m_scene, id, at.x, at.z);
+        wet = here.covered && at.y < here.level;
+    });
+    // The block world is the service's, not something under the workspace: the
+    // one the mirror builds colliders for.
+    m_scene.voxels().forEach([&](core::InstanceId, const VoxelComponent& voxels) {
+        if (wet || !(voxels.blockSize > 0.0f) || voxels.grid.chunkCount() == 0)
+            return;
+        const auto block = [&](f64 along) {
+            return static_cast<core::i32>(std::floor(along / static_cast<f64>(voxels.blockSize)));
+        };
+        const asset::BlockId found = voxels.grid.get(block(at.x), block(at.y), block(at.z));
+        wet = found != asset::AirBlock && isFluidType(voxels, asset::blockTypeOf(found));
+    });
+    return wet;
+}
+
+PhysicsSync::CharacterMotion PhysicsSync::stepController(const CharacterRecord& record, const CharacterCommand& command,
+                                                         CharacterMotion motion, bool grounded, core::Vec3 groundNormal,
+                                                         core::DVec3 position)
 {
     // The movement model is the caller's and the sweeping is the backend's.
     // Gravity integrates here rather than in the solver because a character
@@ -570,9 +658,47 @@ f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCo
                                    ? m_scene.workspaces().find(m_workspace)->gravity
                                    : core::Vec3{0.0f, -9.81f, 0.0f};
 
-    if (grounded && verticalVelocity <= 0.0f)
-        verticalVelocity = 0.0f;
-    verticalVelocity += gravity.y * command.dt;
+    // **How it moves is where it is** (D466): flying when the game says so,
+    // swimming by itself with its middle under a `Water`'s surface or inside a
+    // fluid block, on foot or falling otherwise. Asked of the world at the
+    // start of the step, so a replay asks the same world the same question.
+    const bool swimming = !command.flying && inFluid(position);
+    motion.mode = command.flying ? 3 : swimming ? 2 : 0;
+
+    // A push fades: on the ground as friction would take it, in a fluid as
+    // drag would, and in the air hardly at all.
+    const f32 fade = motion.mode == 2 ? 3.0f : motion.mode == 3 ? 2.0f : grounded ? 10.0f : 0.5f;
+    const core::Vec3 push = motion.push;
+    motion.push = motion.push * std::max(0.0f, 1.0f - fade * command.dt);
+
+    if (motion.mode != 0) {
+        // **No weight, and `Move` in three dimensions**: up is up. The same
+        // direction-and-throttle rule as the walk -- never more than all of it.
+        core::Vec3 move = command.moveDirection;
+        if (const f32 length = std::sqrt(move.x * move.x + move.y * move.y + move.z * move.z); length > 1.0f)
+            move = move * (1.0f / length);
+        // A jump in a fluid is a kick upwards, and it carries like any other
+        // push: what takes a swimmer up through the surface and onto a bank.
+        // In flight there is nothing to jump from.
+        core::Vec3 carried = push;
+        if (command.jump && motion.mode == 2 && carried.y < command.jumpSpeed) {
+            carried.y = command.jumpSpeed;
+            motion.push.y = command.jumpSpeed * std::max(0.0f, 1.0f - fade * command.dt);
+        }
+        core::Vec3 velocity = move * (motion.mode == 3 ? command.flySpeed : command.swimSpeed) + carried;
+        // Left as its vertical speed, so the step it leaves the fluid in
+        // carries on upwards and then falls.
+        motion.vertical = velocity.y;
+        m_backend.moveCharacter(m_world, record.handle, velocity, command.dt);
+        return motion;
+    }
+    // On foot the push is across the ground; what there was of it up or down
+    // is the fall's.
+    motion.push.y = 0.0f;
+
+    if (grounded && motion.vertical <= 0.0f)
+        motion.vertical = 0.0f;
+    motion.vertical += gravity.y * command.gravityScale * command.dt;
 
     if (command.jump) {
         // Applied WHEREVER the character is, grounded or not (human decision,
@@ -591,7 +717,7 @@ f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCo
         // What stays engine-side is the TICK. The velocity is set here, at the
         // next simulation step, and never inside the call -- or a replay
         // diverges (R10).
-        verticalVelocity = command.jumpSpeed;
+        motion.vertical = command.jumpSpeed;
     }
 
     // Horizontal only -- vertical movement is gravity's and Jump's -- and
@@ -606,8 +732,8 @@ f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCo
     core::Vec3 move{command.moveDirection.x, 0.0f, command.moveDirection.z};
     if (const f32 length = std::sqrt(move.x * move.x + move.z * move.z); length > 1.0f)
         move = move * (1.0f / length);
-    const core::Vec3 horizontal = move * command.walkSpeed;
-    core::Vec3 velocity{horizontal.x, verticalVelocity, horizontal.z};
+    const core::Vec3 horizontal = move * command.walkSpeed + core::Vec3{push.x, 0.0f, push.z};
+    core::Vec3 velocity{horizontal.x, motion.vertical, horizontal.z};
 
     // **On ground it can walk, `WalkSpeed` is the HORIZONTAL speed, up a slope
     // and down it alike** (D439). The walk was handed over flat and the sweep
@@ -618,11 +744,14 @@ f32 PhysicsSync::stepController(const CharacterRecord& record, const CharacterCo
     // the ground, the rise or the fall that keeps its horizontal part whole;
     // gravity has nothing to add to a foot that is on the ground, and a jump
     // or a fall is as it was.
+    //
+    // Not while it is on its way UP: an impulse that lifts a standing
+    // character is a launch, and following the ground would cancel it.
     constexpr f32 Level = 1.0e-3f;
-    if (grounded && !command.jump && groundNormal.y > Level)
+    if (grounded && !command.jump && motion.vertical <= 0.0f && groundNormal.y > Level)
         velocity.y = -(horizontal.x * groundNormal.x + horizontal.z * groundNormal.z) / groundNormal.y;
     m_backend.moveCharacter(m_world, record.handle, velocity, command.dt);
-    return verticalVelocity;
+    return motion;
 }
 
 std::optional<CharacterCommand> PhysicsSync::lastCommand(core::InstanceId character) const
@@ -678,7 +807,9 @@ void PhysicsSync::remember(u64 tick)
                                                .groundPart = body->groundPart,
                                                .move = body->moveDirection,
                                                .jump = body->jumpRequested,
-                                               .vertical = body->verticalVelocity});
+                                               .vertical = body->verticalVelocity,
+                                               .push = body->push,
+                                               .mode = body->mode});
     }
     if (!m_backend.saveIsland(m_world, bodies, characters, island.solver))
         return;
@@ -727,6 +858,8 @@ bool PhysicsSync::restoreIsland(const Island& island)
             body->moveDirection = entity.move;
             body->jumpRequested = entity.jump;
             body->verticalVelocity = entity.vertical;
+            body->push = entity.push;
+            body->mode = entity.mode;
         }
     }
     return true;
@@ -782,6 +915,7 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
             part->cframe = start.transform;
             record.written = start.transform;
             body->verticalVelocity = start.verticalVelocity;
+            body->push = start.push;
             body->grounded = start.grounded;
             // And what it pushes, where the authority had it (ADR 0133) --
             // but only what the authority disagrees about. A body put back
@@ -832,21 +966,25 @@ std::vector<core::CFrameD> PhysicsSync::replay(core::InstanceId character, const
     // authority said what it was standing on. Every later step's is the one
     // the step before found, exactly as the simulation's own.
     m_backend.setCharacterTransform(m_world, record.handle, start.transform);
-    f32 verticalVelocity = start.verticalVelocity;
+    CharacterMotion motion{start.verticalVelocity, start.push, body->mode};
     bool grounded = start.grounded;
     // What it stands on now, as the simulation's own first step asks it.
     core::Vec3 groundNormal = m_backend.characterState(m_world, record.handle).groundNormal;
+    core::DVec3 position = start.transform.position;
     frames.reserve(commands.size());
     for (const CharacterCommand& command : commands) {
-        verticalVelocity = stepController(record, command, verticalVelocity, grounded, groundNormal);
+        motion = stepController(record, command, motion, grounded, groundNormal, position);
         const physics::CharacterState state = m_backend.characterState(m_world, record.handle);
         grounded = state.ground == physics::CharacterGround::Grounded;
         groundNormal = state.groundNormal;
+        position = state.transform.position;
         frames.push_back(state.transform);
     }
     part->cframe = frames.empty() ? start.transform : frames.back();
     record.written = part->cframe;
-    body->verticalVelocity = verticalVelocity;
+    body->verticalVelocity = motion.vertical;
+    body->push = motion.push;
+    body->mode = motion.mode;
     return frames;
 }
 
@@ -1497,6 +1635,7 @@ void PhysicsSync::applyScene()
     m_lastParent = core::InstanceId{};
     m_lastParentInWorld = false;
 
+    retireGone();
     for (BodyRecord& record : m_bodies)
         record.seen = false;
     for (auto& entry : m_characters)
@@ -1528,11 +1667,15 @@ void PhysicsSync::applyScene()
     // simulate differently (R10).
     for (ConstraintRecord& record : m_constraints)
         record.seen = false;
+    m_anySpring = false;
 
     m_scene.constraints().forEach(
         [&](core::InstanceId id, ConstraintComponent& constraint) { applyConstraint(id, constraint); });
 
     retireUnseen();
+    // After the sweep, so a pair is only ever excluded between bodies that
+    // exist.
+    applyNoCollisions();
 }
 
 bool PhysicsSync::isDriven(core::InstanceId id) const
@@ -1769,6 +1912,51 @@ void PhysicsSync::resolveWeld(core::InstanceId weldId, WeldComponent& weld)
     mark(m_drivenMarks, weld.part1);
 }
 
+// **What was destroyed leaves before anything is made** (D467).
+//
+// The sweep below runs after the walk that creates this tick's bodies, so a
+// thing made in the tick another was destroyed in was made beside the dead
+// one's body. A rigid body is gone again before the step and nothing came of
+// it -- but a character controller keeps the contacts it finds when it is
+// made, and its first step was resolved against a body that no longer existed:
+// a character respawned where the last one stood was shoved a metre and a half
+// sideways, or stood on nothing for a tick and lost the jump it was given.
+//
+// Only what is DESTROYED goes here, which is one flag an instance. What left
+// the world some other way -- reparented out, its class changed -- is still
+// the sweep's.
+void PhysicsSync::retireGone()
+{
+    const auto gone = [this](core::InstanceId id) { return !m_scene.alive(id) || m_scene.destroyed(id); };
+
+    // Constraints first, for the sweep's reason.
+    for (usize index = 0; index < m_constraints.size(); ++index) {
+        ConstraintRecord& record = m_constraints[index];
+        if (record.generation == 0 || !gone(core::InstanceId{static_cast<u32>(index), record.generation}))
+            continue;
+        m_backend.destroyConstraint(m_world, record.handle);
+        record = ConstraintRecord{};
+    }
+    for (usize index = 0; index < m_bodies.size(); ++index) {
+        BodyRecord& record = m_bodies[index];
+        if (record.generation == 0 || !gone(core::InstanceId{static_cast<u32>(index), record.generation}))
+            continue;
+        if (record.live) {
+            m_backend.destroyBody(m_world, record.handle);
+            --m_bodyCount;
+        }
+        record = BodyRecord{};
+    }
+    for (auto it = m_characters.begin(); it != m_characters.end();) {
+        if (!gone(unpackInstance(it->first))) {
+            ++it;
+            continue;
+        }
+        m_backend.destroyCharacter(m_world, it->second.handle);
+        it = m_characters.erase(it);
+    }
+}
+
 void PhysicsSync::retireUnseen()
 {
     // **Constraints first, and this is a contract rather than a tidiness.** A
@@ -1827,6 +2015,16 @@ physics::BodyHandle PhysicsSync::bodyHandleOf(core::InstanceId id) const
 
 void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& constraint)
 {
+    // **A mover is not a joint** (ADR 0127): it is forces, applied before the
+    // step, and the solver is never handed anything for it. Neither is a
+    // spring without its stops.
+    const auto distance = static_cast<i32>(physics::ConstraintType::Distance);
+    if (constraint.kind == distance && constraint.flavor == 2)
+        m_anySpring = true;
+    if (constraint.kind >= MoverKind::LinearVelocity ||
+        (constraint.kind == distance && constraint.flavor == 2 && !constraint.limitsEnabled))
+        return;
+
     // The two BODIES, through the parts the attachments sit on. A constraint
     // joins bodies; the attachments are where on them.
     const core::InstanceId body0 = m_scene.parentOf(constraint.attachment0);
@@ -1853,14 +2051,37 @@ void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& cons
         return;
     }
 
+    // **A ball joint that holds a pose is a swing-twist** (amendment A1): the
+    // free ball has no motor, so asking for one changes which solver joint is
+    // built, as switching its limits on does.
+    const auto point = static_cast<i32>(physics::ConstraintType::Point);
+    const i32 kind = constraint.kind == point && constraint.actuatorType == 2
+                         ? static_cast<i32>(physics::ConstraintType::SwingTwist)
+                         : constraint.kind;
+
     // A rebuild is needed when what the joint IS changed. Everything else --
     // a limit, the collide flag -- is an update the backend can take without
     // moving the constraint's place in the solve order.
-    const bool rebuild = record.generation != id.generation || record.body0 != body0 || record.body1 != body1 ||
-                         record.kind != constraint.kind;
+    const bool rebuild =
+        record.generation != id.generation || record.body0 != body0 || record.body1 != body1 || record.kind != kind;
+
+    const f32 fixedDt = static_cast<f32>(m_scene.engineState().fixedTimestep);
+    // **A winch takes in rope by shortening the rope** (ADR 0127): `Length`
+    // itself moves towards the target, and stalls when the last tick's tension
+    // was more than the winch can pull against.
+    if (constraint.kind == distance && constraint.flavor == 0 && constraint.winchEnabled && constraint.enabled) {
+        const f32 most = constraint.winchSpeed * fixedDt;
+        if (constraint.length > constraint.winchTarget) {
+            if (constraint.lastForce <= constraint.winchForce)
+                constraint.length = std::max(constraint.winchTarget, constraint.length - most);
+        }
+        else if (constraint.length < constraint.winchTarget) {
+            constraint.length = std::min(constraint.winchTarget, constraint.length + most);
+        }
+    }
 
     physics::ConstraintDesc desc;
-    desc.type = static_cast<physics::ConstraintType>(constraint.kind);
+    desc.type = static_cast<physics::ConstraintType>(kind);
     desc.first = bodyHandleOf(body0);
     desc.second = bodyHandleOf(body1);
     // In each body's OWN space, which is what the seam asks for and what makes a
@@ -1874,6 +2095,17 @@ void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& cons
         desc.swingLimit = constraint.swingLimit;
         desc.twistLimit = constraint.twistLimit;
     }
+    // The distance family: a rope may be as short as it likes and no longer
+    // than its length, a rod is exactly its length, and a spring's stops are
+    // its two lengths.
+    if (kind == distance) {
+        desc.minDistance = constraint.flavor == 1   ? constraint.length
+                           : constraint.flavor == 2 ? constraint.minLength
+                                                    : 0.0f;
+        desc.maxDistance =
+            constraint.flavor == 2 ? std::max(constraint.maxLength, constraint.minLength) : constraint.length;
+    }
+    motorOf(constraint, record, fixedDt, desc);
     desc.userData = packInstance(id);
 
     if (rebuild) {
@@ -1890,6 +2122,11 @@ void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& cons
              record.twistLimit != constraint.twistLimit || record.limitsEnabled != constraint.limitsEnabled) {
         m_backend.updateConstraint(m_world, record.handle, desc);
     }
+    else {
+        // What changes every tick, in place: the motor and the range. The
+        // backend does nothing when neither moved.
+        m_backend.driveConstraint(m_world, record.handle, desc);
+    }
 
     if (record.enabled != constraint.enabled) {
         m_backend.setConstraintEnabled(m_world, record.handle, constraint.enabled);
@@ -1899,7 +2136,7 @@ void PhysicsSync::applyConstraint(core::InstanceId id, ConstraintComponent& cons
     record.seen = true;
     record.body0 = body0;
     record.body1 = body1;
-    record.kind = constraint.kind;
+    record.kind = kind;
     record.collideConnected = constraint.collideConnected;
     record.limitLow = constraint.limitLow;
     record.limitHigh = constraint.limitHigh;
@@ -2019,7 +2256,9 @@ void PhysicsSync::writeCharacters()
         // platform needs to know which one.
 
         character->grounded = grounded;
-        character->state = grounded ? 0 : 1;
+        // Swimming and flying are what it IS doing; on foot, whether it is
+        // supported.
+        character->state = character->mode >= 2 ? character->mode : grounded ? 0 : 1;
         character->groundPart = ground;
         if (RigidBodyComponent* body = m_scene.rigidBodies().find(id); body != nullptr) {
             body->linearVelocity = state.linearVelocity;
@@ -2036,6 +2275,7 @@ void PhysicsSync::publishContacts()
     }
     const core::NameAtom touched = m_scene.atoms().intern("Touched");
     const core::NameAtom touchEnded = m_scene.atoms().intern("TouchEnded");
+    const core::NameAtom collided = m_scene.atoms().intern("Collided");
 
     // Both directions, because `Touched` is a fact about each part and a script
     // connects to one of them without knowing which side of the pair it is.
@@ -2069,6 +2309,17 @@ void PhysicsSync::publishContacts()
         change.subject = second;
         change.other = first;
         m_scene.changes().push(change);
+
+        // **What the contact was, for a part that asked** (ADR 0127, N2):
+        // after `Touched`, with the normal pointing from the part that hears
+        // it into the other one.
+        if (event.phase != physics::ContactPhase::Began || !event.detailed)
+            continue;
+        if (firstBody != nullptr && firstBody->contactDetails)
+            m_scene.changes().pushContact(first, collided, ContactNote{second, event.point, event.normal, event.speed});
+        if (secondBody != nullptr && secondBody->contactDetails)
+            m_scene.changes().pushContact(second, collided,
+                                          ContactNote{first, event.point, event.normal * -1.0f, event.speed});
     }
 }
 
@@ -2112,7 +2363,7 @@ namespace {
 
 // "LGSS": a saved simulation, and the version of its layout.
 constexpr u32 SimulationMagic = 0x5353474Cu;
-constexpr u32 SimulationVersion = 2;
+constexpr u32 SimulationVersion = 3;
 
 template <class T>
 void put(std::vector<u8>& out, const T& value)
@@ -2182,8 +2433,12 @@ bool PhysicsSync::saveSimulation(std::vector<u8>& out) const
         // snapshot of a world with none is the bytes it always was, and one
         // written before twists existed still reads.
         const bool twisted = body != nullptr && !(body->pendingAngularImpulse == core::Vec3{0.0f, 0.0f, 0.0f});
+        // **A velocity a script wrote and the mirror has not yet handed over**
+        // (ADR 0127, N5): bit 16, and only the bit -- the two velocities are
+        // saved either way, and this says which of them the solver is told.
+        const bool written = body != nullptr && body->velocityWritten;
         const u8 has = static_cast<u8>((part != nullptr ? 1 : 0) | (body != nullptr ? 2 : 0) |
-                                       (character != nullptr ? 4 : 0) | (twisted ? 8 : 0));
+                                       (character != nullptr ? 4 : 0) | (twisted ? 8 : 0) | (written ? 16 : 0));
         put(out, has);
         if (part != nullptr)
             put(out, part->cframe);
@@ -2208,6 +2463,8 @@ bool PhysicsSync::saveSimulation(std::vector<u8>& out) const
             put(out, character->moveDirection);
             put(out, static_cast<u8>(character->jumpRequested ? 1 : 0));
             put(out, character->verticalVelocity);
+            put(out, character->push);
+            put(out, character->mode);
         }
     }
     return true;
@@ -2246,6 +2503,8 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
         core::Vec3 move{};
         u8 jump = 0;
         f32 vertical = 0.0f;
+        core::Vec3 push{};
+        i32 mode = 0;
     };
     u32 count = 0;
     if (!take(bytes, at, count))
@@ -2265,7 +2524,8 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             return false;
         if ((entry.has & 4) != 0 &&
             (!take(bytes, at, entry.grounded) || !take(bytes, at, entry.state) || !take(bytes, at, entry.groundPart) ||
-             !take(bytes, at, entry.move) || !take(bytes, at, entry.jump) || !take(bytes, at, entry.vertical)))
+             !take(bytes, at, entry.move) || !take(bytes, at, entry.jump) || !take(bytes, at, entry.vertical) ||
+             !take(bytes, at, entry.push) || !take(bytes, at, entry.mode)))
             return false;
         entries.push_back(entry);
     }
@@ -2304,6 +2564,7 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             body->angularVelocity = entry.angular;
             body->pendingImpulse = entry.impulse;
             body->pendingAngularImpulse = entry.twist;
+            body->velocityWritten = (entry.has & 16) != 0;
             body->active = entry.active != 0;
             if (entry.id.index < m_bodies.size() && m_bodies[entry.id.index].generation == entry.id.generation)
                 m_bodies[entry.id.index].movingUntilTick = entry.movingUntil;
@@ -2315,6 +2576,8 @@ bool PhysicsSync::restoreSimulation(std::span<const u8> bytes)
             character->moveDirection = entry.move;
             character->jumpRequested = entry.jump != 0;
             character->verticalVelocity = entry.vertical;
+            character->push = entry.push;
+            character->mode = entry.mode;
         }
     }
     return true;
@@ -2351,10 +2614,15 @@ void PhysicsSync::step(f64 fixedDt)
     if (const WorkspaceComponent* workspace = m_scene.workspaces().find(m_workspace); workspace != nullptr)
         m_backend.setGravity(m_world, workspace->gravity);
 
+    // **The movers and the springs, as forces** (ADR 0127): after every body
+    // and joint is as the scene says, and before the solver takes the step.
+    applyMovers(static_cast<f32>(fixedDt));
+
     m_backend.step(m_world, static_cast<f32>(fixedDt));
     const auto stepped = std::chrono::steady_clock::now();
 
     writeBack();
+    readConstraints(static_cast<f32>(fixedDt));
     // After the writeback, so a driven part follows where its anchor ENDED UP
     // this tick rather than where it was at the start of it.
     resolveWelds();

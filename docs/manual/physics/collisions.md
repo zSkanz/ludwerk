@@ -63,6 +63,25 @@ That last one has a corollary worth holding on to: an anchored part whose
 `CFrame` is being written becomes kinematic and *does* collide — so a moving
 platform and a static wall do interact, while two static walls do not.
 
+## How hard
+
+`Touched` says that two parts met. `BasePart.Collided` says how: where in the
+world, the direction from this part into the other, and how fast the two were
+closing along it at the moment they met, in metres a second. It fires with
+`Touched`, and only for a part that asked -- `ContactDetails = true` -- so a
+world of scenery pays nothing for it.
+
+```luau
+--!strict
+local function listenForBlows(head: BasePart, onBlow: (strength: number) -> ())
+    head.ContactDetails = true
+    head.Collided:Connect(function(other: BasePart, position: vector, normal: vector, speed: number)
+        -- What was moving, times how fast: an impulse, in newton-seconds.
+        onBlow(speed * math.min(head.AssemblyMass, other.AssemblyMass))
+    end)
+end
+```
+
 ## Surfaces
 
 `BasePart.Friction` defaults to 0.3 and `BasePart.Restitution` to 0. Both are

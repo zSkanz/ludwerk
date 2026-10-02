@@ -311,6 +311,22 @@ struct ConstraintDesc
     f32 motorTarget = 0.0f;
     f32 motorMaxForce = 0.0f;
 
+    // SwingTwist under `MotorMode::Position` (ADR 0127, amendment A1): where
+    // the second frame is pulled to, as its orientation in the first's. A
+    // shoulder held up, a spine held straight -- the joint doing work.
+    core::Mat3 motorOrientation;
+
+    // **A position motor is a spring**, and one number cannot say both "soft
+    // and damped" and "stiff and bouncy" (amendment A3). A stiffness above zero
+    // is read with its damping, in the motor's own units -- newton-metres a
+    // radian and newton-metre-seconds a radian for a turn, newtons a metre and
+    // newton-seconds a metre along a line. At zero the frequency and the ratio
+    // are read instead, which do not depend on what is being moved.
+    f32 motorStiffness = 0.0f;
+    f32 motorDamping = 0.0f;
+    f32 motorFrequency = 2.0f;
+    f32 motorDampingRatio = 1.0f;
+
     // Whether the two bodies still collide with each other.
     //
     // **False is the case a ragdoll needs and the one that is not free.** An
@@ -334,6 +350,31 @@ struct ConstraintState
     // newton-seconds. A joint that is being pulled apart reports a large one,
     // which is what a breakable joint is a threshold on.
     f32 appliedImpulse = 0.0f;
+    // The same for what keeps it from turning, in newton-metre-seconds: zero
+    // for a joint with nothing to resist a turn with (a ball, a rope).
+    f32 appliedAngularImpulse = 0.0f;
+    // Hinge: the angle about the joint's X, in radians. Slider: how far along
+    // it, in metres. Distance: how far apart the two frames are. Zero for the
+    // rest.
+    f32 position = 0.0f;
+    // How fast that is changing: the second body against the first.
+    f32 velocity = 0.0f;
+};
+
+// What a mover needs to turn "this much faster" into an impulse (ADR 0127):
+// a body's mass, how hard it is to turn about each axis as it stands now, and
+// where it balances.
+struct BodyMassProperties
+{
+    // The shape's volume times the density, whatever moves the body: an
+    // anchored part weighs what it would if it were let go.
+    f32 mass = 0.0f;
+    // Whether the solver moves it. The inertia below is zero when it does not.
+    bool dynamic = false;
+    // World space: an angular impulse through this is a change of angular
+    // velocity.
+    core::Mat3 inverseInertia{{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}}};
+    core::DVec3 centerOfMass;
 };
 
 // A collision group is an index into the world's collidability matrix.
@@ -359,6 +400,11 @@ struct BodyDesc
     f32 friction = 0.3f;
     f32 restitution = 0.0f;
     f32 density = 1.0f;
+
+    // `BasePart.LinearDamping` and `.AngularDamping`: the share of a speed
+    // lost in a second with nothing touching it. The solver's own defaults.
+    f32 linearDamping = 0.05f;
+    f32 angularDamping = 0.05f;
 
     // `CanCollide`. A non-colliding body still reports contacts -- that is what
     // makes a trigger volume work, and it matches what a `Touched` on a
@@ -425,6 +471,16 @@ struct ContactEvent
     BodyHandle second;
     u64 firstUserData = 0;
     u64 secondUserData = 0;
+
+    // **What the contact was, for a pair that began** (ADR 0127, N2): where,
+    // which way -- from the first body towards the second -- and how fast the
+    // two were closing along that at the moment they met, before the solver
+    // answered. Enough to say how hard a blow was. `detailed` is false for an
+    // end, and for a beginning the backend had no manifold for.
+    bool detailed = false;
+    core::DVec3 point;
+    core::Vec3 normal{0.0f, 1.0f, 0.0f};
+    f32 speed = 0.0f;
 };
 
 // f64 origin because a ray is cast from a world position; f32 direction because

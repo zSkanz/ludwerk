@@ -444,7 +444,8 @@ local function run(options: Options): number
             android.writePayload(stage)
             -- A release is signed with the project's key and its passwords from
             -- the environment or the per-user store, never from `project.toml`
-            -- (ADR 0104 §3); anything else with this machine's debug key.
+            -- (ADR 0104 §3); anything else with the debug key -- Android's
+            -- own, or the one the project names (D465).
             local keystore: string
             local keyAlias: string
             local passwords
@@ -456,12 +457,13 @@ local function run(options: Options): number
                     return tr("cli.build.err.android_no_password", { path = keystore })
                 end
             else
-                local debugKey, keyError = android.debugKeystore(tools)
+                local debugKey, debugAlias, keyError =
+                    android.debugKeystore(tools, settings.debugKeystore, settings.debugKeyAlias)
                 if debugKey == nil then
                     return keyError
                 end
                 keystore = debugKey :: string
-                keyAlias = android.DebugAlias
+                keyAlias = debugAlias :: string
                 passwords = { store = android.DebugPassword, key = android.DebugPassword }
             end
             local built, buildError = android.assemble({

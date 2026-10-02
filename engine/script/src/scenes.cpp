@@ -12,6 +12,7 @@
 #include "class_descriptors.gen.h"
 #include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
+#include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/scene/world.h"
@@ -1009,6 +1010,74 @@ void sceneLoadDone(lua_State* L)
 {
     if (SceneLoadRecord* record = activeSceneLoad(L))
         finish(L, *record, SceneLoadStatus::Done);
+}
+
+namespace {
+
+// A JSON value as the Luau value it reads as. Bounded in depth: a document a
+// thousand arrays deep is not load data, it is a stack.
+void pushJson(lua_State* L, core::JsonValue value, int depth)
+{
+    lua_checkstack(L, 4);
+    switch (value.type()) {
+    case core::JsonType::Boolean:
+        lua_pushboolean(L, value.asBool() ? 1 : 0);
+        return;
+    case core::JsonType::Number:
+        lua_pushnumber(L, value.asNumber());
+        return;
+    case core::JsonType::String: {
+        const std::string_view text = value.asString();
+        lua_pushlstring(L, text.data(), text.size());
+        return;
+    }
+    case core::JsonType::Array: {
+        lua_createtable(L, static_cast<int>(value.size()), 0);
+        if (depth >= 32)
+            return;
+        for (core::usize index = 0; index < value.size(); ++index) {
+            pushJson(L, value.at(index), depth + 1);
+            lua_rawseti(L, -2, static_cast<int>(index + 1));
+        }
+        return;
+    }
+    case core::JsonType::Object: {
+        lua_createtable(L, 0, static_cast<int>(value.size()));
+        if (depth >= 32)
+            return;
+        for (core::usize index = 0; index < value.size(); ++index) {
+            const std::string_view key = value.keyAt(index);
+            lua_pushlstring(L, key.data(), key.size());
+            pushJson(L, value[key], depth + 1);
+            lua_rawset(L, -3);
+        }
+        return;
+    }
+    case core::JsonType::Null:
+        break;
+    }
+    lua_pushnil(L);
+}
+
+} // namespace
+
+bool setSceneLoadData(lua_State* L, std::string_view json, std::string* diagnostic)
+{
+    core::JsonDocument document;
+    const core::JsonDocument::ParseResult parsed = document.parse(json, "--scene-data");
+    if (!parsed) {
+        if (diagnostic != nullptr)
+            *diagnostic = parsed.diagnostic;
+        return false;
+    }
+    const int top = lua_gettop(L);
+    pushJson(L, document.root(), 0);
+    std::vector<core::u8> data;
+    std::vector<core::InstanceId> refs;
+    encodeRemoteArguments(L, top + 1, 1, data, refs);
+    lua_settop(L, top);
+    world(L).engineState().sceneLoadData = std::move(data);
+    return true;
 }
 
 } // namespace engine::script

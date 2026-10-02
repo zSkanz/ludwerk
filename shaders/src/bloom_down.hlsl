@@ -23,6 +23,12 @@
 
 Texture2D SourceTexture : register(t0, space2);
 SamplerState SourceSampler : register(s0, space2);
+#ifdef ENG_BLOOM_MASKED
+// Which pixels are a sprite drawn in its own colours (ADR 0153): light for a
+// screen, not light in the scene, so it starts no glow.
+Texture2D<float> ExactTexture : register(t1, space2);
+SamplerState ExactSampler : register(s1, space2);
+#endif
 
 struct Interpolants
 {
@@ -39,7 +45,15 @@ Interpolants VertexMain(uint vertexId : SV_VertexID)
 
 float3 tap(float2 uv, float2 offset)
 {
+#ifdef ENG_BLOOM_MASKED
+    // Per tap and not once at the centre: the filter reaches two texels out,
+    // and a white sprite beside a dark wall would otherwise still be gathered
+    // by the wall's pixels.
+    return SourceTexture.SampleLevel(SourceSampler, uv + offset, 0.0f).rgb *
+           (1.0f - ExactTexture.SampleLevel(ExactSampler, uv + offset, 0.0f));
+#else
     return SourceTexture.SampleLevel(SourceSampler, uv + offset, 0.0f).rgb;
+#endif
 }
 
 float4 FragmentMain(Interpolants input) : SV_Target0

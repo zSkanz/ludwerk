@@ -7,6 +7,7 @@ Three questions you can ask the world, all on `Workspace`:
 | `Workspace.Raycast` | What does a line hit first? |
 | `Workspace.Spherecast` | What does a sphere swept along a line hit first? |
 | `Workspace.GetBodiesInBox` | What overlaps this oriented box? |
+| `Workspace.GetBodiesInSphere` | What overlaps this ball? |
 
 ## The direction's length is the range
 

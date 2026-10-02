@@ -24,8 +24,10 @@
 #include "engine/app/script_sides.h"
 #include "engine/app/two_worlds.h"
 #include "engine/core/build_info.h"
+#include "engine/core/content_path.h"
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
+#include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/platform/console.h"
 #include "engine/platform/crash.h"
@@ -341,6 +343,32 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         // The render target's size. Windowed it is the window; headless it is the
         // offscreen texture. The M4 gate records a frame-time baseline at 1080p
         // and the host had no way to be asked for one.
+        // **Which scene the run starts in, and what it is handed** (D468):
+        // content-relative, as the project file names one, and JSON for the
+        // scene's `GetLoadData`. Checked here, where a mistake is a usage
+        // error, rather than found by a scene that reads nil.
+        if (arg.starts_with("--scene=")) {
+            const std::string named{arg.substr(std::string_view("--scene=").size())};
+            if (named.empty() || !engine::core::safeRelativePath(named).has_value()) {
+                const std::array<I18nArg, 2> badValue{I18nArg{"option", arg}, I18nArg{"value", named}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.startupScene = named;
+            options.startupSceneFromFlag = true;
+            continue;
+        }
+        if (arg.starts_with("--scene-data=")) {
+            const std::string_view text = arg.substr(std::string_view("--scene-data=").size());
+            engine::core::JsonDocument document;
+            if (const auto parsed = document.parse(text, "--scene-data"); !parsed) {
+                const std::array<I18nArg, 1> notJson{I18nArg{"reason", parsed.diagnostic}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.scene_data"), notJson);
+                return kExitUsage;
+            }
+            options.startupSceneData = std::string(text);
+            continue;
+        }
         if (arg.starts_with("--width=") || arg.starts_with("--height=")) {
             const std::string_view value = arg.substr(arg.find('=') + 1);
             engine::core::u64 parsed = 0;
@@ -891,7 +919,9 @@ int main(int argc, char** argv)
         options.graphics = config.graphics;
         options.pacing = engine::app::pacingWith(config.pacing, graphicsOverrides);
         options.windowTitle = config.windowTitle;
-        options.startupScene = config.scene;
+        // The project's, unless the run was told one (D468).
+        if (!options.startupSceneFromFlag)
+            options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
         options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
         options.maxViewsPerFrame = config.maxViewsPerFrame;

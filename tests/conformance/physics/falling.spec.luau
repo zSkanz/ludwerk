@@ -127,10 +127,14 @@ describe("a part under gravity", function()
         expect(crate.Density):ToBe(1)
     end)
 
-    it("refuses a velocity assignment, because ApplyImpulse is that operation named", function()
+    it("takes a velocity assignment, and reads it back at once", function()
+        -- Refused until ADR 0127 (N5): a velocity written is the speed the
+        -- next tick starts from, which is what serving a ball is.
         local crate = part("Crate", vector.create(0, 10, 0))
+        crate.LinearVelocity = vector.create(1, 0, 0)
+        expect(crate.LinearVelocity.x):ToBe(1)
         expect(function()
-            (crate :: any).LinearVelocity = vector.create(1, 0, 0)
+            (crate :: any).LinearVelocity = "fast"
         end):ToThrow()
     end)
 end)

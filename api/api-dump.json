@@ -2,6 +2,148 @@
   "Version": "0.0.1",
   "Classes": [
     {
+      "Name": "AlignOrientation",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "CFrame",
+          "Type": "CFrame",
+          "Default": "CFrame.identity"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxAngularVelocity",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "MaxTorque",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "Mode",
+          "Type": "Enum.OrientationAlignmentMode",
+          "Default": "Enum.OrientationAlignmentMode.OneAttachment"
+        },
+        {
+          "Name": "ReactionTorqueEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Responsiveness",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "RigidityEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "AlignPosition",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "ApplyAtCenterOfMass",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "MaxVelocity",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "Mode",
+          "Type": "Enum.PositionAlignmentMode",
+          "Default": "Enum.PositionAlignmentMode.OneAttachment"
+        },
+        {
+          "Name": "Position",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "ReactionForceEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Responsiveness",
+          "Type": "number",
+          "Default": "10"
+        },
+        {
+          "Name": "RigidityEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "AngularVelocity",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AngularVelocity",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "MaxTorque",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "ReactionTorqueEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "RelativeTo",
+          "Type": "Enum.ActuatorRelativeTo",
+          "Default": "Enum.ActuatorRelativeTo.World"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "AnimationPlayer",
       "Extends": "Instance",
       "Tags": [],
@@ -131,9 +273,39 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "ActuatorType",
+          "Type": "Enum.ActuatorType",
+          "Default": "Enum.ActuatorType.None"
+        },
+        {
+          "Name": "AngularResponsiveness",
+          "Type": "number",
+          "Default": "45"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "LimitsEnabled",
           "Type": "boolean",
           "Default": "false"
+        },
+        {
+          "Name": "ServoMaxTorque",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TargetOrientation",
+          "Type": "CFrame",
+          "Default": "CFrame.identity"
         },
         {
           "Name": "TwistLimit",
@@ -160,8 +332,17 @@
           "Default": "false"
         },
         {
+          "Name": "AngularDamping",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
           "Name": "AngularVelocity",
-          "Type": "vector",
+          "Type": "vector"
+        },
+        {
+          "Name": "AssemblyMass",
+          "Type": "number",
           "ReadOnly": true
         },
         {
@@ -194,6 +375,11 @@
           "Default": "\"Default\""
         },
         {
+          "Name": "ContactDetails",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
           "Name": "Density",
           "Type": "number",
           "Default": "1"
@@ -204,8 +390,17 @@
           "Default": "0.3"
         },
         {
+          "Name": "LinearDamping",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
           "Name": "LinearVelocity",
-          "Type": "vector",
+          "Type": "vector"
+        },
+        {
+          "Name": "Mass",
+          "Type": "number",
           "ReadOnly": true
         },
         {
@@ -334,6 +529,27 @@
         }
       ],
       "Events": [
+        {
+          "Name": "Collided",
+          "Parameters": [
+            {
+              "Name": "otherPart",
+              "Type": "BasePart"
+            },
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "normal",
+              "Type": "vector"
+            },
+            {
+              "Name": "speed",
+              "Type": "number"
+            }
+          ]
+        },
         {
           "Name": "TouchEnded",
           "Parameters": [
@@ -610,6 +826,21 @@
           "Default": "0.5"
         },
         {
+          "Name": "FlySpeed",
+          "Type": "number",
+          "Default": "16"
+        },
+        {
+          "Name": "Flying",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "GravityScale",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
           "Name": "Grounded",
           "Type": "boolean",
           "ReadOnly": true
@@ -628,6 +859,11 @@
           "Name": "State",
           "Type": "Enum.CharacterState",
           "ReadOnly": true
+        },
+        {
+          "Name": "SwimSpeed",
+          "Type": "number",
+          "Default": "10"
         },
         {
           "Name": "WalkSpeed",
@@ -774,6 +1010,16 @@
           "Type": "Attachment?"
         },
         {
+          "Name": "BreakForce",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "BreakTorque",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "CollideConnected",
           "Type": "boolean",
           "Default": "true"
@@ -782,10 +1028,31 @@
           "Name": "Enabled",
           "Type": "boolean",
           "Default": "true"
+        },
+        {
+          "Name": "Visible",
+          "Type": "boolean",
+          "Default": "false"
         }
       ],
-      "Methods": [],
-      "Events": []
+      "Methods": [
+        {
+          "Name": "GetForce",
+          "Parameters": [],
+          "Returns": ["number"]
+        },
+        {
+          "Name": "GetTorque",
+          "Parameters": [],
+          "Returns": ["number"]
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Broken",
+          "Parameters": []
+        }
+      ]
     },
     {
       "Name": "Constraint2D",
@@ -1574,6 +1841,31 @@
       "Tags": [],
       "Properties": [
         {
+          "Name": "ActuatorType",
+          "Type": "Enum.ActuatorType",
+          "Default": "Enum.ActuatorType.None"
+        },
+        {
+          "Name": "AngularResponsiveness",
+          "Type": "number",
+          "Default": "45"
+        },
+        {
+          "Name": "AngularSpeed",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "AngularVelocity",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "LimitsEnabled",
           "Type": "boolean",
           "Default": "false"
@@ -1582,6 +1874,31 @@
           "Name": "LowerAngle",
           "Type": "number",
           "Default": "-180"
+        },
+        {
+          "Name": "MotorMaxAcceleration",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "MotorMaxTorque",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "ServoMaxTorque",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TargetAngle",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "UpperAngle",
@@ -2442,6 +2759,60 @@
       "Events": []
     },
     {
+      "Name": "LinearVelocity",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LineDirection",
+          "Type": "vector",
+          "Default": "vector.create(1, 0, 0)"
+        },
+        {
+          "Name": "LineVelocity",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "PlaneVelocity",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        },
+        {
+          "Name": "PrimaryTangentAxis",
+          "Type": "vector",
+          "Default": "vector.create(1, 0, 0)"
+        },
+        {
+          "Name": "RelativeTo",
+          "Type": "Enum.ActuatorRelativeTo",
+          "Default": "Enum.ActuatorRelativeTo.World"
+        },
+        {
+          "Name": "SecondaryTangentAxis",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 1)"
+        },
+        {
+          "Name": "VectorVelocity",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "VelocityConstraintMode",
+          "Type": "Enum.VelocityConstraintMode",
+          "Default": "Enum.VelocityConstraintMode.Vector"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "MeshPart",
       "Extends": "BasePart",
       "Tags": [],
@@ -2865,6 +3236,28 @@
       ]
     },
     {
+      "Name": "NoCollisionConstraint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Part0",
+          "Type": "BasePart?"
+        },
+        {
+          "Name": "Part1",
+          "Type": "BasePart?"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "PVInstance",
       "Extends": "Instance",
       "Tags": ["Abstract", "NotCreatable"],
@@ -2942,6 +3335,11 @@
         {
           "Name": "Elasticity",
           "Type": "number"
+        },
+        {
+          "Name": "ExactColor",
+          "Type": "boolean",
+          "Default": "true"
         },
         {
           "Name": "Filter",
@@ -3295,6 +3693,80 @@
       "Events": []
     },
     {
+      "Name": "PrismaticConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "ActuatorType",
+          "Type": "Enum.ActuatorType",
+          "Default": "Enum.ActuatorType.None"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "LimitsEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "LinearResponsiveness",
+          "Type": "number",
+          "Default": "45"
+        },
+        {
+          "Name": "LowerLimit",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MotorMaxAcceleration",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "MotorMaxForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "ServoMaxForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "Speed",
+          "Type": "number",
+          "Default": "100000"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "TargetPosition",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "UpperLimit",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "Velocity",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "ProximityPrompt",
       "Extends": "Instance",
       "Tags": [],
@@ -3582,6 +4054,74 @@
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "RodConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(0.6, 0.6, 0.6)"
+        },
+        {
+          "Name": "Length",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "0.1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "RopeConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(0.6, 0.6, 0.6)"
+        },
+        {
+          "Name": "Length",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "0.1"
+        },
+        {
+          "Name": "WinchEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "WinchForce",
+          "Type": "number",
+          "Default": "10000"
+        },
+        {
+          "Name": "WinchSpeed",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "WinchTarget",
+          "Type": "number",
+          "Default": "5"
+        }
+      ],
       "Methods": [],
       "Events": []
     },
@@ -4201,6 +4741,55 @@
         {
           "Name": "Shadows",
           "Type": "boolean"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SpringConstraint",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Color",
+          "Type": "Color3",
+          "Default": "Color3.new(0.6, 0.6, 0.6)"
+        },
+        {
+          "Name": "Damping",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "FreeLength",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "LimitsEnabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "MaxLength",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "MinLength",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Stiffness",
+          "Type": "number",
+          "Default": "100"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "0.1"
         }
       ],
       "Methods": [],
@@ -5291,6 +5880,11 @@
           "Default": "Color3.new(1, 1, 1)"
         },
         {
+          "Name": "ExactColor",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
           "Name": "Filter",
           "Type": "Enum.TextureFilter",
           "Default": "Enum.TextureFilter.Nearest"
@@ -5387,6 +5981,25 @@
           "ThreadSafety": "Unsafe"
         }
       ],
+      "Events": []
+    },
+    {
+      "Name": "Torque",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "RelativeTo",
+          "Type": "Enum.ActuatorRelativeTo",
+          "Default": "Enum.ActuatorRelativeTo.Attachment0"
+        },
+        {
+          "Name": "Torque",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        }
+      ],
+      "Methods": [],
       "Events": []
     },
     {
@@ -5772,6 +6385,30 @@
           "Name": "ZIndex",
           "Type": "number",
           "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "VectorForce",
+      "Extends": "Constraint",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "ApplyAtCenterOfMass",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Force",
+          "Type": "vector",
+          "Default": "vector.create(0, 0, 0)"
+        },
+        {
+          "Name": "RelativeTo",
+          "Type": "Enum.ActuatorRelativeTo",
+          "Default": "Enum.ActuatorRelativeTo.Attachment0"
         }
       ],
       "Methods": [],
@@ -6300,6 +6937,26 @@
             {
               "Name": "size",
               "Type": "vector"
+            },
+            {
+              "Name": "params",
+              "Type": "RaycastParams?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["{BasePart}"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetBodiesInSphere",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "vector"
+            },
+            {
+              "Name": "radius",
+              "Type": "number"
             },
             {
               "Name": "params",
@@ -9223,6 +9880,40 @@
   ],
   "Enums": [
     {
+      "Name": "ActuatorRelativeTo",
+      "Items": [
+        {
+          "Name": "Attachment0",
+          "Value": 0
+        },
+        {
+          "Name": "Attachment1",
+          "Value": 1
+        },
+        {
+          "Name": "World",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ActuatorType",
+      "Items": [
+        {
+          "Name": "Motor",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Servo",
+          "Value": 2
+        }
+      ]
+    },
+    {
       "Name": "AlphaMode",
       "Items": [
         {
@@ -9341,8 +10032,16 @@
           "Value": 1
         },
         {
+          "Name": "Flying",
+          "Value": 3
+        },
+        {
           "Name": "Grounded",
           "Value": 0
+        },
+        {
+          "Name": "Swimming",
+          "Value": 2
         }
       ]
     },
@@ -10350,6 +11049,19 @@
       ]
     },
     {
+      "Name": "OrientationAlignmentMode",
+      "Items": [
+        {
+          "Name": "OneAttachment",
+          "Value": 0
+        },
+        {
+          "Name": "TwoAttachment",
+          "Value": 1
+        }
+      ]
+    },
+    {
       "Name": "PartShape",
       "Items": [
         {
@@ -10442,6 +11154,19 @@
         {
           "Name": "Playing",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "PositionAlignmentMode",
+      "Items": [
+        {
+          "Name": "OneAttachment",
+          "Value": 0
+        },
+        {
+          "Name": "TwoAttachment",
+          "Value": 1
         }
       ]
     },
@@ -10850,6 +11575,23 @@
         {
           "Name": "Touch",
           "Value": 8
+        }
+      ]
+    },
+    {
+      "Name": "VelocityConstraintMode",
+      "Items": [
+        {
+          "Name": "Line",
+          "Value": 0
+        },
+        {
+          "Name": "Plane",
+          "Value": 1
+        },
+        {
+          "Name": "Vector",
+          "Value": 2
         }
       ]
     },

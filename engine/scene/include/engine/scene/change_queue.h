@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "engine/core/id.h"
+#include "engine/core/math.h"
 #include "engine/core/name_atom.h"
 #include "engine/core/types.h"
 #include "engine/scene/types.h"
@@ -86,6 +87,20 @@ enum class ChangeKind : u8
     // `TextInput.FocusLost(submitted, reason)` (ADR 0139): `submitted` in
     // `other.index`, the `Enum.FocusLossReason` value in `other.generation`.
     FocusLost,
+
+    // `BasePart.Collided` (ADR 0127, N2): the other part, where, which way and
+    // how fast. The four are in the queue's own list, its index in
+    // `other.index` -- a change is sixteen bytes and this is forty.
+    InstanceEventContact,
+};
+
+// What an `InstanceEventContact` carries.
+struct ContactNote
+{
+    core::InstanceId other;
+    core::DVec3 point;
+    core::Vec3 normal{0.0f, 1.0f, 0.0f};
+    f32 speed = 0.0f;
 };
 
 // A boolean in the shape `InstanceEventBool` carries it.
@@ -123,6 +138,20 @@ public:
                                    core::InstanceId{static_cast<u32>(m_texts.size() - 1), 0}, name});
     }
 
+    // Pushes `InstanceEventContact` for `subject`'s event `name`.
+    void pushContact(core::InstanceId subject, core::NameAtom name, const ContactNote& note)
+    {
+        m_contacts.push_back(note);
+        m_entries.push_back(Change{ChangeKind::InstanceEventContact, subject,
+                                   core::InstanceId{static_cast<u32>(m_contacts.size() - 1), 0}, name});
+    }
+
+    // The contact an `InstanceEventContact` of the last `take` carries.
+    [[nodiscard]] ContactNote drainedContact(const Change& change) const noexcept
+    {
+        return change.other.index < m_drainedContacts.size() ? m_drainedContacts[change.other.index] : ContactNote{};
+    }
+
     // The text an `InstanceEventText` of the last `take` carries.
     [[nodiscard]] std::string_view drainedText(const Change& change) const noexcept
     {
@@ -139,6 +168,8 @@ public:
         m_entries.clear();
         m_drainedTexts.swap(m_texts);
         m_texts.clear();
+        m_drainedContacts.swap(m_contacts);
+        m_contacts.clear();
         return m_drained;
     }
 
@@ -151,6 +182,8 @@ public:
         m_drained.clear();
         m_texts.clear();
         m_drainedTexts.clear();
+        m_contacts.clear();
+        m_drainedContacts.clear();
     }
 
 private:
@@ -161,6 +194,9 @@ private:
     // `InstanceEventText`'s strings, swapped with the entries.
     std::vector<std::string> m_texts;
     std::vector<std::string> m_drainedTexts;
+    // `InstanceEventContact`'s notes, the same way.
+    std::vector<ContactNote> m_contacts;
+    std::vector<ContactNote> m_drainedContacts;
 };
 
 } // namespace engine::scene

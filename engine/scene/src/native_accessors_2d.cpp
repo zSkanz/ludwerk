@@ -243,6 +243,23 @@ bool setPart2DFlipY(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+// Part2D.ExactColor
+Value getPart2DExactColor(const World& world, core::InstanceId id)
+{
+    const Part2DComponent* c = world.parts2d().find(id);
+    return c == nullptr ? Value{} : Value{c->exactColor};
+}
+
+bool setPart2DExactColor(World& world, core::InstanceId id, const Value& value)
+{
+    Part2DComponent* c = world.parts2d().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (c == nullptr || flag == nullptr)
+        return false;
+    c->exactColor = *flag;
+    return true;
+}
+
 // Part2D.Image
 Value getPart2DImage(const World& world, core::InstanceId id)
 {
@@ -612,6 +629,23 @@ bool setTilemap2DFilter(World& world, core::InstanceId id, const Value& value)
         item->value > 1)
         return false;
     c->filter = item->value;
+    return true;
+}
+
+// Tilemap2D.ExactColor
+Value getTilemap2DExactColor(const World& world, core::InstanceId id)
+{
+    const Tilemap2DComponent* c = world.tilemaps2d().find(id);
+    return c == nullptr ? Value{} : Value{c->exactColor};
+}
+
+bool setTilemap2DExactColor(World& world, core::InstanceId id, const Value& value)
+{
+    Tilemap2DComponent* c = world.tilemaps2d().find(id);
+    const auto* flag = std::get_if<bool>(&value);
+    if (c == nullptr || flag == nullptr)
+        return false;
+    c->exactColor = *flag;
     return true;
 }
 

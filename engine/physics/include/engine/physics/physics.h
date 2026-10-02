@@ -77,6 +77,41 @@ public:
         (void)body;
         (void)impulse;
     }
+    // A push at a place in the world (ADR 0127): a turn as well, when the place
+    // is not where the body balances.
+    virtual void applyImpulseAt(WorldHandle world, BodyHandle body, core::Vec3 impulse, core::DVec3 point)
+    {
+        (void)world;
+        (void)body;
+        (void)impulse;
+        (void)point;
+    }
+    // Zero for a body the solver does not move, and from a backend with none
+    // to give.
+    [[nodiscard]] virtual BodyMassProperties bodyMassProperties(WorldHandle world, BodyHandle body) const
+    {
+        (void)world;
+        (void)body;
+        return {};
+    }
+    // No rebuild: how fast a body left alone slows down.
+    virtual void setBodyDamping(WorldHandle world, BodyHandle body, f32 linear, f32 angular)
+    {
+        (void)world;
+        (void)body;
+        (void)linear;
+        (void)angular;
+    }
+    // **Two bodies that pass through each other, with no joint between them**
+    // (`NoCollisionConstraint`). Counted, like a joint's own exclusion: asked
+    // twice, it takes two to undo.
+    virtual void setPairCollidable(WorldHandle world, BodyHandle first, BodyHandle second, bool collidable)
+    {
+        (void)world;
+        (void)first;
+        (void)second;
+        (void)collidable;
+    }
 
     // Changing the motion type or the shape is a recreate on Jolt's side, so it
     // is one call rather than a setter per field: a body that must be rebuilt
@@ -158,6 +193,18 @@ public:
     // the type may not. A caller that needs those rebuilds.
     virtual void updateConstraint(WorldHandle world, ConstraintHandle constraint, const ConstraintDesc& desc) = 0;
 
+    // **What changes every tick, changed in place** (ADR 0127): the motor --
+    // its mode, target, cap, spring and, for a swing-twist, its orientation --
+    // and a distance joint's range. `updateConstraint` builds the joint again,
+    // which costs it the solver's memory of the last step; a servo walking to
+    // an angle and a winch taking in rope would pay that sixty times a second.
+    virtual void driveConstraint(WorldHandle world, ConstraintHandle constraint, const ConstraintDesc& desc)
+    {
+        (void)world;
+        (void)constraint;
+        (void)desc;
+    }
+
     [[nodiscard]] virtual ConstraintState constraintState(WorldHandle world, ConstraintHandle constraint) const = 0;
 
     // --- Simulation ----------------------------------------------------------
@@ -192,6 +239,16 @@ public:
     // Appends.
     virtual void overlapBox(WorldHandle world, const core::CFrameD& transform, core::Vec3 size,
                             const QueryFilter& filter, std::vector<u64>& out) const = 0;
+    // The same for a ball (ADR 0127, N6).
+    virtual void overlapSphere(WorldHandle world, core::DVec3 center, f32 radius, const QueryFilter& filter,
+                               std::vector<u64>& out) const
+    {
+        (void)world;
+        (void)center;
+        (void)radius;
+        (void)filter;
+        (void)out;
+    }
 
     // --- Characters ----------------------------------------------------------
 

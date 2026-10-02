@@ -754,7 +754,7 @@ local CliDataLiterals: { [string]: boolean } = {
     ["type InstanceClasses = {"] = true,
     -- A folder's name on macOS, and the debug keystore's own.
     ["Application Support"] = true,
-    ["Ludwerk Debug"] = true,
+    ["Android Debug"] = true,
     -- What `ludwerk test` emits for a machine: TAP and JUnit, with the
     -- interpolations taken out as this lint reads them.
     ['<?xml version="1.0" encoding="UTF-8"?>'] = true,

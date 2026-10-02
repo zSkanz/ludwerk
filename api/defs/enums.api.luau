@@ -136,12 +136,19 @@ local Definition: Schema.Definition = {
         },
         {
             Name = "CharacterState",
-            Doc = "Whether a `CharacterBody` is standing on something (§2.2). Two items and not three: ground too "
-                .. "steep to walk on reads as `Airborne`, because the question a script asks this property is "
+            Doc = "What a `CharacterBody` is doing (§2.2). On foot there are two answers and not three: "
+                .. "ground too steep to walk on reads as `Airborne`, because the question a script asks is "
                 .. "whether it may jump.",
             Items = {
                 { Name = "Grounded", Value = 0 },
                 { Name = "Airborne", Value = 1 },
+                {
+                    Name = "Swimming",
+                    Value = 2,
+                    Doc = "Its middle is under a `Water`'s surface or inside a fluid block: no weight, and it "
+                        .. "moves in three dimensions.",
+                },
+                { Name = "Flying", Value = 3, Doc = "`CharacterBody.Flying` is set." },
             },
         },
         {
@@ -1333,6 +1340,49 @@ local Definition: Schema.Definition = {
                 { Name = "MacOS", Value = 2 },
                 { Name = "Android", Value = 3 },
                 { Name = "IOS", Value = 4 },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ActuatorType",
+            Doc = "What a hinge, a rail or a ball joint does of itself.",
+            Items = {
+                { Name = "None", Value = 0, Doc = "Nothing: it only holds." },
+                { Name = "Motor", Value = 1, Doc = "It moves at a speed." },
+                { Name = "Servo", Value = 2, Doc = "It goes to a target and holds it." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ActuatorRelativeTo",
+            Doc = "The frame a mover's vector is written in.",
+            Items = {
+                { Name = "Attachment0", Value = 0, Doc = "The first attachment's: it follows the part as it turns." },
+                { Name = "Attachment1", Value = 1, Doc = "The second attachment's." },
+                { Name = "World", Value = 2, Doc = "The world's." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "VelocityConstraintMode",
+            Doc = "How much of a velocity a `LinearVelocity` holds.",
+            Items = {
+                { Name = "Line", Value = 0, Doc = "Only the speed along a line." },
+                { Name = "Plane", Value = 1, Doc = "Only the speed across a plane." },
+                { Name = "Vector", Value = 2, Doc = "All of it." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "PositionAlignmentMode",
+            Doc = "What an `AlignPosition` pulls to.",
+            Items = {
+                { Name = "OneAttachment", Value = 0, Doc = "Its own `Position`." },
+                { Name = "TwoAttachment", Value = 1, Doc = "Its `Attachment1`." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "OrientationAlignmentMode",
+            Doc = "What an `AlignOrientation` turns to.",
+            Items = {
+                { Name = "OneAttachment", Value = 0, Doc = "Its own `CFrame`." },
+                { Name = "TwoAttachment", Value = 1, Doc = "Its `Attachment1`." },
             } :: { Schema.EnumItem },
         },
     },

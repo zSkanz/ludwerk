@@ -73,5 +73,10 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         graded = max(mixed + green.w, float3(0.0f, 0.0f, 0.0f));
     }
 
+#ifdef ENG_TONEMAP_EXACT
+    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha), hdr,
+                        input.Uv);
+#else
     return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha);
+#endif
 }

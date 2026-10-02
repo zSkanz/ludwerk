@@ -142,6 +142,36 @@ camera with it. `camera.orbit` is the same rig turning by itself.
 `rig:Basis()` returns the rig's forward and right vectors, flattened, which is
 what turns a two-axis input into a world-space movement direction.
 
+### First person
+
+`camera.firstPerson` puts the camera at the subject's eyes -- `Height` above
+its middle -- looking where the pointer or the stick has turned it. It takes
+the same actions and gives the same `Basis`; `rig.Pitch` is how far up it
+looks, and it stops a hair short of straight up and straight down.
+
+```luau
+--!strict
+local camera = require("@engine/camera")
+local InputService = game:GetService("InputService")
+local RunService = game:GetService("RunService")
+
+local function play(character: CharacterBody, move: InputAction, look: InputAction)
+    local rig = camera.firstPerson({ Subject = character, LookAction = look })
+    InputService.PointerLocked = true
+
+    RunService.Heartbeat:Connect(function(dt: number)
+        local forward, right = rig:Basis()
+        local input = move:GetState() :: Vector2
+        character:Move(forward * input.Y + right * input.X)
+        rig:Update(dt)
+    end)
+end
+```
+
+It does not hide the subject: a game that shows no body makes it transparent,
+and one that shows arms keeps them. Nothing is eased, either -- an eye that
+lags its own head is a second of seasickness.
+
 ## From the world to the screen, and back
 
 Three calls turn a place in the world into a pixel and a pixel into a place,

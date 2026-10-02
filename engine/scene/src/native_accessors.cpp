@@ -1581,7 +1581,8 @@ bool setCharacterBodyJumpSpeed(World& world, core::InstanceId id, const Value& v
 {
     const auto* number = std::get_if<f64>(&value);
     CharacterBodyComponent* character = world.characterBodies().find(id);
-    if (number == nullptr || character == nullptr || !finite(*number) || *number < 0.0)
+    // Any finite speed: a negative one is a slam downwards (D466).
+    if (number == nullptr || character == nullptr || !finite(*number))
         return false;
     character->jumpSpeed = static_cast<f32>(*number);
     return true;

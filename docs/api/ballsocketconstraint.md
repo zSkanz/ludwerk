@@ -17,6 +17,12 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `ActuatorType` | `Enum.ActuatorType` | `Enum.ActuatorType.None` | read/write | What the joint does of itself: nothing, or hold a pose (`Servo`). A ball joint has no axis to spin about, so `Motor` is read as `None`. |
+| `AngularResponsiveness` | `number` | `45` | read/write | Servo: how eagerly it pulls, when `Stiffness` is zero. It settles without ringing. |
+| `Damping` | `number` | `0` | read/write | How hard it resists moving, read with `Stiffness`. Low and it overshoots and rings; high and it arrives late and stays. |
 | `LimitsEnabled` | `boolean` | `false` | read/write | Whether the cone and twist below apply. Off is a free ball joint. |
+| `ServoMaxTorque` | `number` | `10000` | read/write | Servo: the most torque it may use. A shoulder that holds an arm out, and gives when the arm is pulled harder than this. |
+| `Stiffness` | `number` | `0` | read/write | How hard it pulls for each unit it is away, as a spring does. Zero leaves the pull to `Responsiveness`; above zero this and `Damping` decide it, and one number no longer has to say both how firm and how bouncy. |
+| `TargetOrientation` | `CFrame` | `CFrame.identity` | read/write | Servo: the orientation of `Attachment1` in `Attachment0`'s frame that the joint pulls to. Only the rotation is read. The identity is the pose the two were joined in. |
 | `TwistLimit` | `number` | `180` | read/write | How far it may twist about that axis, in degrees, either way. |
 | `UpperAngle` | `number` | `180` | read/write | The half-angle of the swing cone in degrees, measured from the joint's own X axis. |

@@ -172,7 +172,24 @@ cmake --build "$playerDir" --target engine_host || exit /b 1
     Write-Host "=== the archive ===" -ForegroundColor Cyan
     $archive = Join-Path $root "$($folder.Name).zip"
     Remove-Item $archive -ErrorAction SilentlyContinue
-    Compress-Archive -Path $folder.FullName -DestinationPath $archive
+    # The suite above has just run the folder's own programs, and a program
+    # that ended a moment ago can still be held -- by the process going away,
+    # or by a scanner reading a file it has not seen before. The archive then
+    # fails on that one file, and it used to say so and return zero with no
+    # archive at all. So: a few tries, and a failure that is one.
+    $written = $false
+    foreach ($attempt in 1..5) {
+        Remove-Item $archive -ErrorAction SilentlyContinue
+        try {
+            Compress-Archive -Path $folder.FullName -DestinationPath $archive -ErrorAction Stop
+            $written = $true
+            break
+        } catch {
+            Write-Host "package: the archive did not close (try $attempt): $($_.Exception.Message)" -ForegroundColor Yellow
+            Start-Sleep -Seconds 3
+        }
+    }
+    if (-not $written) { throw "the archive could not be written: something holds a file under $($folder.FullName)" }
     $megabytes = [math]::Round((Get-Item $archive).Length / 1MB, 1)
     Write-Host "package: $archive ($megabytes MiB)" -ForegroundColor Green
 } finally {

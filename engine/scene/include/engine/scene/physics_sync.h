@@ -275,6 +275,8 @@ private:
         f32 friction = 0.3f;
         f32 restitution = 0.0f;
         f32 density = 1.0f;
+        f32 linearDamping = 0.05f;
+        f32 angularDamping = 0.05f;
         // The transform this mirror last wrote INTO the component. A component
         // that differs from it now is a script's write.
         core::CFrameD written;
@@ -308,11 +310,25 @@ private:
         std::optional<CharacterCommand> last;
     };
 
-    // One step of the movement model: gravity, a jump, the walk, and the sweep.
-    // Answers the vertical velocity the step leaves.
-    // `groundNormal` is the ground's, where `grounded`.
-    [[nodiscard]] f32 stepController(const CharacterRecord& record, const CharacterCommand& command,
-                                     f32 verticalVelocity, bool grounded, core::Vec3 groundNormal);
+    // What a controller carries from one step to the next that its transform
+    // does not say.
+    struct CharacterMotion
+    {
+        f32 vertical = 0.0f;
+        core::Vec3 push{0.0f, 0.0f, 0.0f};
+        // 0 on foot or falling, 2 swimming, 3 flying.
+        i32 mode = 0;
+    };
+    // One step of the movement model: gravity, a jump, the walk -- or the swim
+    // or the flight -- what pushed it, and the sweep. Answers what the step
+    // leaves. `groundNormal` is the ground's, where `grounded`; `position` is
+    // where the character is as the step begins, which is what says whether it
+    // is in a fluid.
+    [[nodiscard]] CharacterMotion stepController(const CharacterRecord& record, const CharacterCommand& command,
+                                                 CharacterMotion motion, bool grounded, core::Vec3 groundNormal,
+                                                 core::DVec3 position);
+    // Whether a place is under a `Water`'s surface or inside a fluid block.
+    [[nodiscard]] bool inFluid(core::DVec3 at) const;
 
     void syncCollisionGroups();
     void applyScene();
@@ -320,6 +336,9 @@ private:
     void applyCharacter(core::InstanceId id, PartComponent& part, RigidBodyComponent& body,
                         CharacterBodyComponent& character, f32 fixedDt);
     void retireUnseen();
+    // What was destroyed, out of the simulation before anything new is put in
+    // (D467).
+    void retireGone();
     void resolveWelds();
     // One weld, and everything it hangs from, resolved once. Returns the
     // driven part's new transform.
@@ -389,9 +408,37 @@ private:
         f32 twistLimit = 0.0f;
         bool limitsEnabled = false;
         bool enabled = true;
+        // A distance joint's range, as it was last built or driven with.
+        f32 minDistance = 0.0f;
+        f32 maxDistance = 0.0f;
     };
 
     std::vector<ConstraintRecord> m_constraints;
+
+    // --- ADR 0127 (physics_movers.cpp) ---------------------------------------
+    //
+    // The six movers and the springs, as impulses, before the step.
+    void applyMovers(f32 fixedDt);
+    // A joint's actuator, into the description it is built or driven with.
+    void motorOf(const ConstraintComponent& constraint, const ConstraintRecord& record, f32 fixedDt,
+                 physics::ConstraintDesc& desc) const;
+    // `NoCollisionConstraint`: which pairs of bodies are told to pass through
+    // each other, and told to stop when the instance goes or changes.
+    void applyNoCollisions();
+    // After the step: what each joint carried, and whether it gave.
+    void readConstraints(f32 fixedDt);
+    struct NoCollisionRecord
+    {
+        core::u32 generation = 0;
+        physics::BodyHandle first;
+        physics::BodyHandle second;
+        bool applied = false;
+        bool seen = false;
+    };
+    std::vector<NoCollisionRecord> m_noCollisions;
+    // Whether this tick's walk over the joints found a spring: a world with
+    // no mover and no spring does not walk them a second time.
+    bool m_anySpring = false;
     void writeBack();
     void writeCharacters();
     void publishContacts();
@@ -511,6 +558,8 @@ private:
         core::Vec3 move{};
         bool jump = false;
         f32 vertical = 0.0f;
+        core::Vec3 push{};
+        i32 mode = 0;
     };
     struct Island
     {

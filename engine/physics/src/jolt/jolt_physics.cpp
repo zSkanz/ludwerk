@@ -257,6 +257,9 @@ struct BodyRecord
     MotionType motion = MotionType::Dynamic;
     CollisionGroup group = kDefaultCollisionGroup;
     u64 userData = 0;
+    // Volume times density, kept because a body the solver does not move has
+    // no mass of its own to be asked for.
+    f32 mass = 0.0f;
 };
 
 // A live joint, plus everything needed to rebuild it: `updateBody` destroys and
@@ -314,6 +317,17 @@ struct ContactPair
     {
         return first != other.first ? first < other.first : second < other.second;
     }
+};
+
+// What a pair's contact was when it began (ADR 0127, N2), in the simulation's
+// own space. Kept beside the pairs rather than in them: a pair is compared and
+// sorted every step, and none of this is part of what a pair IS.
+struct ContactDetail
+{
+    ContactPair pair;
+    JPH::RVec3 point;
+    JPH::Vec3 normal;
+    f32 speed = 0.0f;
 };
 
 // One contact between a CHARACTER and something else, for the tick.
@@ -671,10 +685,29 @@ class JoltWorld;
 class ContactRecorder final : public JPH::ContactListener
 {
 public:
-    void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold&,
+    void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                         JPH::ContactSettings&) override
     {
         record(first, second);
+        // **How the two met**, read here because here is the only place it
+        // exists: the bodies' velocities are still the ones they arrived with.
+        // The first contact point, the normal from the first body to the
+        // second, and how fast they were closing along it.
+        if (manifold.mRelativeContactPointsOn1.empty()) {
+            return;
+        }
+        ContactDetail detail;
+        detail.pair = ContactPair{first.GetUserData(), second.GetUserData()};
+        detail.point = manifold.GetWorldSpaceContactPointOn1(0);
+        detail.normal = manifold.mWorldSpaceNormal;
+        const JPH::Vec3 closing = first.GetPointVelocity(detail.point) - second.GetPointVelocity(detail.point);
+        detail.speed = std::max(closing.Dot(detail.normal), 0.0f);
+        if (detail.pair.second < detail.pair.first) {
+            std::swap(detail.pair.first, detail.pair.second);
+            detail.normal = -detail.normal;
+        }
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        m_details.push_back(detail);
     }
 
     void OnContactPersisted(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold&,
@@ -756,9 +789,11 @@ public:
     {
         // No lock: called between steps, from the simulation thread.
         m_pairs.clear();
+        m_details.clear();
     }
 
     [[nodiscard]] std::vector<ContactPair>& pairs() noexcept { return m_pairs; }
+    [[nodiscard]] std::vector<ContactDetail>& details() noexcept { return m_details; }
 
 private:
     void record(const JPH::Body& first, const JPH::Body& second)
@@ -773,6 +808,7 @@ private:
 
     std::mutex m_mutex;
     std::vector<ContactPair> m_pairs;
+    std::vector<ContactDetail> m_details;
     // Sorted, and read under the same lock: the validate hook runs on Jolt's
     // worker threads while nothing may be writing here, but a constraint created
     // between steps writes from the simulation thread and the lock is what makes
@@ -1246,6 +1282,77 @@ public:
         m_system.GetBodyInterface().AddAngularImpulse(record->id, toJolt(impulse));
     }
 
+    void applyImpulseAt(BodyHandle handle, core::Vec3 impulse, core::DVec3 point)
+    {
+        BodyRecord* record = resolve(handle);
+        if (record == nullptr || record->motion != MotionType::Dynamic) {
+            return;
+        }
+        m_system.GetBodyInterface().AddImpulse(record->id, toJolt(impulse), toLocal(point));
+    }
+
+    [[nodiscard]] BodyMassProperties bodyMassProperties(BodyHandle handle) const
+    {
+        BodyMassProperties out;
+        const BodyRecord* record = resolve(handle);
+        if (record == nullptr) {
+            return out;
+        }
+        out.mass = record->mass;
+        const JPH::BodyLockRead lock(m_system.GetBodyLockInterface(), record->id);
+        if (!lock.Succeeded()) {
+            return out;
+        }
+        const JPH::Body& body = lock.GetBody();
+        out.centerOfMass = toWorld(body.GetCenterOfMassPosition());
+        if (record->motion != MotionType::Dynamic) {
+            return out;
+        }
+        out.dynamic = true;
+        const f32 inverseMass = body.GetMotionProperties()->GetInverseMass();
+        out.mass = inverseMass > 0.0f ? 1.0f / inverseMass : 0.0f;
+        const JPH::Mat44 inertia = body.GetInverseInertia();
+        for (u32 column = 0; column < 3; ++column) {
+            for (u32 row = 0; row < 3; ++row) {
+                out.inverseInertia.m[column][row] = inertia(row, column);
+            }
+        }
+        return out;
+    }
+
+    void setBodyDamping(BodyHandle handle, f32 linear, f32 angular)
+    {
+        BodyRecord* record = resolve(handle);
+        if (record == nullptr || record->motion == MotionType::Static) {
+            return;
+        }
+        const JPH::BodyLockWrite lock(m_system.GetBodyLockInterface(), record->id);
+        if (!lock.Succeeded()) {
+            return;
+        }
+        if (JPH::MotionProperties* motion = lock.GetBody().GetMotionPropertiesUnchecked(); motion != nullptr) {
+            motion->SetLinearDamping(std::max(linear, 0.0f));
+            motion->SetAngularDamping(std::max(angular, 0.0f));
+        }
+    }
+
+    void setPairCollidable(BodyHandle first, BodyHandle second, bool collidable)
+    {
+        if (collidable) {
+            m_contacts.unexclude(packHandle(first), packHandle(second));
+        }
+        else {
+            m_contacts.exclude(packHandle(first), packHandle(second));
+        }
+        // A pair asleep against each other would otherwise stay as it was.
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        for (const BodyHandle handle : {first, second}) {
+            if (const BodyRecord* record = resolve(handle); record != nullptr && record->motion != MotionType::Static) {
+                bodies.ActivateBody(record->id);
+            }
+        }
+    }
+
     void setBodyMaterial(BodyHandle handle, f32 friction, f32 restitution)
     {
         BodyRecord* record = resolve(handle);
@@ -1667,6 +1774,31 @@ public:
         out.erase(std::unique(out.begin() + static_cast<std::ptrdiff_t>(first), out.end()), out.end());
     }
 
+    void overlapSphere(core::DVec3 center, f32 radius, const QueryFilter& filter, std::vector<u64>& out) const
+    {
+        const JPH::SphereShape ball(std::max(radius, 0.005f));
+        const JPH::RMat44 centerOfMass = JPH::RMat44::sTranslation(toLocal(center));
+        const BodyFilterAdapter bodyFilter(*this, filter);
+        const LayerFilterAdapter layerFilter(filter);
+
+        OverlapCollector collector;
+        m_system.GetNarrowPhaseQuery().CollideShape(&ball, JPH::Vec3::sOne(), centerOfMass, JPH::CollideShapeSettings{},
+                                                    JPH::RVec3::sZero(), collector, JPH::BroadPhaseLayerFilter{},
+                                                    layerFilter, bodyFilter);
+
+        const usize first = out.size();
+        for (const JPH::BodyID& id : collector.bodies) {
+            const BodyHandle handle = unpackHandle(m_system.GetBodyInterface().GetUserData(id));
+            const BodyRecord* record = resolve(handle);
+            if (record != nullptr) {
+                out.push_back(record->userData);
+            }
+        }
+        // As `overlapBox`: one entry a body, in an order the caller can rely on.
+        std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
+        out.erase(std::unique(out.begin() + static_cast<std::ptrdiff_t>(first), out.end()), out.end());
+    }
+
     // --- Characters -----------------------------------------------------------
 
     [[nodiscard]] CharacterHandle createCharacter(const CharacterDesc& desc)
@@ -2003,15 +2135,76 @@ public:
         wakeBoth(*record);
     }
 
+    // The motor and the distance, set on the joint that is there (see the
+    // interface). What it set is kept in the record, so a rebuild -- a resized
+    // limb -- builds the joint as it was last driven.
+    void driveConstraint(ConstraintHandle handle, const ConstraintDesc& desc)
+    {
+        ConstraintRecord* record = resolve(handle);
+        if (record == nullptr || record->constraint == nullptr) {
+            return;
+        }
+        ConstraintDesc& kept = record->desc;
+        const bool moved = kept.motor != desc.motor || kept.motorTarget != desc.motorTarget ||
+                           kept.motorMaxForce != desc.motorMaxForce || kept.motorStiffness != desc.motorStiffness ||
+                           kept.motorDamping != desc.motorDamping || kept.motorFrequency != desc.motorFrequency ||
+                           kept.motorDampingRatio != desc.motorDampingRatio ||
+                           !(kept.motorOrientation == desc.motorOrientation) || kept.minDistance != desc.minDistance ||
+                           kept.maxDistance != desc.maxDistance;
+        if (!moved) {
+            return;
+        }
+        kept.motor = desc.motor;
+        kept.motorTarget = desc.motorTarget;
+        kept.motorMaxForce = desc.motorMaxForce;
+        kept.motorStiffness = desc.motorStiffness;
+        kept.motorDamping = desc.motorDamping;
+        kept.motorFrequency = desc.motorFrequency;
+        kept.motorDampingRatio = desc.motorDampingRatio;
+        kept.motorOrientation = desc.motorOrientation;
+        kept.minDistance = desc.minDistance;
+        kept.maxDistance = desc.maxDistance;
+
+        JPH::TwoBodyConstraint* constraint = record->constraint.GetPtr();
+        switch (kept.type) {
+        case ConstraintType::Hinge: {
+            auto* hinge = static_cast<JPH::HingeConstraint*>(constraint);
+            applyMotor(hinge->GetMotorSettings(), kept);
+            driveMotor(hinge, kept);
+            break;
+        }
+        case ConstraintType::Slider: {
+            auto* slider = static_cast<JPH::SliderConstraint*>(constraint);
+            applyMotor(slider->GetMotorSettings(), kept);
+            driveMotor(slider, kept);
+            break;
+        }
+        case ConstraintType::SwingTwist:
+            driveSwingTwist(static_cast<JPH::SwingTwistConstraint*>(constraint), kept);
+            break;
+        case ConstraintType::Distance:
+            static_cast<JPH::DistanceConstraint*>(constraint)
+                ->SetDistance(std::min(kept.minDistance, kept.maxDistance),
+                              std::max(kept.minDistance, kept.maxDistance));
+            break;
+        case ConstraintType::Fixed:
+        case ConstraintType::Point:
+            break;
+        }
+        wakeBoth(*record);
+    }
+
     [[nodiscard]] ConstraintState constraintState(ConstraintHandle handle) const
     {
         ConstraintState state;
         const ConstraintRecord* record = resolve(handle);
-        if (record == nullptr) {
+        if (record == nullptr || record->constraint == nullptr) {
             return state;
         }
         state.enabled = record->constraint->GetEnabled();
         state.appliedImpulse = appliedImpulseOf(*record);
+        state.appliedAngularImpulse = appliedAngularImpulseOf(*record);
+        measure(*record, state);
         return state;
     }
 
@@ -2166,7 +2359,9 @@ private:
             settings.mPlaneHalfConeAngle = desc.swingLimit;
             settings.mTwistMinAngle = -desc.twistLimit;
             settings.mTwistMaxAngle = desc.twistLimit;
-            return settings.Create(*first, *second);
+            JPH::Ref<JPH::TwoBodyConstraint> made = settings.Create(*first, *second);
+            driveSwingTwist(static_cast<JPH::SwingTwistConstraint*>(made.GetPtr()), desc);
+            return made;
         }
         case ConstraintType::Slider: {
             JPH::SliderConstraintSettings settings;
@@ -2209,6 +2404,47 @@ private:
         }
         settings.SetForceLimit(desc.motorMaxForce);
         settings.SetTorqueLimit(desc.motorMaxForce);
+        // The spring a position motor pulls with (see `ConstraintDesc`).
+        if (desc.motorStiffness > 0.0f) {
+            settings.mSpringSettings.mMode = JPH::ESpringMode::StiffnessAndDamping;
+            settings.mSpringSettings.mStiffness = desc.motorStiffness;
+            settings.mSpringSettings.mDamping = std::max(desc.motorDamping, 0.0f);
+        }
+        else {
+            settings.mSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+            settings.mSpringSettings.mFrequency = std::max(desc.motorFrequency, 0.01f);
+            settings.mSpringSettings.mDamping = std::max(desc.motorDampingRatio, 0.0f);
+        }
+    }
+
+    // **A ball joint that holds a pose** (amendment A1): both of the
+    // swing-twist's motors pulling to one orientation of the second frame in
+    // the first's, as a spring under a torque cap.
+    static void driveSwingTwist(JPH::SwingTwistConstraint* constraint, const ConstraintDesc& desc)
+    {
+        if (constraint == nullptr) {
+            return;
+        }
+        if (desc.motor != MotorMode::Position) {
+            constraint->SetSwingMotorState(JPH::EMotorState::Off);
+            constraint->SetTwistMotorState(JPH::EMotorState::Off);
+            return;
+        }
+        applyMotor(constraint->GetSwingMotorSettings(), desc);
+        applyMotor(constraint->GetTwistMotorSettings(), desc);
+        constraint->SetSwingMotorState(JPH::EMotorState::Position);
+        constraint->SetTwistMotorState(JPH::EMotorState::Position);
+        // **The solver's constraint space is not the joint frame.** Its X is
+        // the twist axis -- the frame's X -- but its Z is the PLANE axis, which
+        // is the frame's Y, and its Y is what is left: the frame's -Z. A pose
+        // written in the frame and handed over as it is raises an arm when it
+        // was told to swing it forwards. So: the same turn, said in the
+        // solver's axes.
+        core::Mat3 axes;
+        axes.m[0][0] = 1.0f, axes.m[0][1] = 0.0f, axes.m[0][2] = 0.0f;
+        axes.m[1][0] = 0.0f, axes.m[1][1] = 0.0f, axes.m[1][2] = -1.0f;
+        axes.m[2][0] = 0.0f, axes.m[2][1] = 1.0f, axes.m[2][2] = 0.0f;
+        constraint->SetTargetOrientationCS(toJolt(core::transpose(axes) * desc.motorOrientation * axes));
     }
 
     static void setMotorVelocity(JPH::HingeConstraint* c, f32 target) { c->SetTargetAngularVelocity(target); }
@@ -2219,7 +2455,11 @@ private:
     template <typename T>
     static void driveMotor(T* constraint, const ConstraintDesc& desc)
     {
-        if (constraint == nullptr || desc.motor == MotorMode::Off) {
+        if (constraint == nullptr) {
+            return;
+        }
+        if (desc.motor == MotorMode::Off) {
+            constraint->SetMotorState(JPH::EMotorState::Off);
             return;
         }
         if (desc.motor == MotorMode::Velocity) {
@@ -2255,6 +2495,78 @@ private:
             return std::fabs(static_cast<const JPH::DistanceConstraint*>(constraint)->GetTotalLambdaPosition());
         }
         return 0.0f;
+    }
+
+    // What resists a TURN, as a magnitude in newton-metre-seconds: the parts of
+    // each joint that hold an axis, and nothing for a joint that holds none.
+    [[nodiscard]] static f32 appliedAngularImpulseOf(const ConstraintRecord& record)
+    {
+        const JPH::TwoBodyConstraint* constraint = record.constraint.GetPtr();
+        if (constraint == nullptr) {
+            return 0.0f;
+        }
+        switch (record.desc.type) {
+        case ConstraintType::Fixed:
+            return static_cast<const JPH::FixedConstraint*>(constraint)->GetTotalLambdaRotation().Length();
+        case ConstraintType::Hinge: {
+            const auto* hinge = static_cast<const JPH::HingeConstraint*>(constraint);
+            const JPH::Vector<2> held = hinge->GetTotalLambdaRotation();
+            return std::sqrt(held[0] * held[0] + held[1] * held[1]) + std::fabs(hinge->GetTotalLambdaRotationLimits());
+        }
+        case ConstraintType::SwingTwist: {
+            const auto* joint = static_cast<const JPH::SwingTwistConstraint*>(constraint);
+            const f32 twist = joint->GetTotalLambdaTwist();
+            const f32 swingY = joint->GetTotalLambdaSwingY();
+            const f32 swingZ = joint->GetTotalLambdaSwingZ();
+            return std::sqrt(twist * twist + swingY * swingY + swingZ * swingZ);
+        }
+        case ConstraintType::Slider:
+            return static_cast<const JPH::SliderConstraint*>(constraint)->GetTotalLambdaRotation().Length();
+        case ConstraintType::Point:
+        case ConstraintType::Distance:
+            return 0.0f;
+        }
+        return 0.0f;
+    }
+
+    // Where a joint is along what it leaves free, and how fast it is going.
+    void measure(const ConstraintRecord& record, ConstraintState& state) const
+    {
+        const JPH::TwoBodyConstraint* constraint = record.constraint.GetPtr();
+        const JPH::Body* first = constraint->GetBody1();
+        const JPH::Body* second = constraint->GetBody2();
+        switch (record.desc.type) {
+        case ConstraintType::Hinge: {
+            state.position = static_cast<const JPH::HingeConstraint*>(constraint)->GetCurrentAngle();
+            // About the hinge's axis as the first body carries it.
+            const JPH::Vec3 axis =
+                first->GetRotation() * toJolt(record.desc.firstFrame.rotation * core::Vec3{1.0f, 0.0f, 0.0f});
+            state.velocity = (second->GetAngularVelocity() - first->GetAngularVelocity()).Dot(axis);
+            break;
+        }
+        case ConstraintType::Slider: {
+            state.position = static_cast<const JPH::SliderConstraint*>(constraint)->GetCurrentPosition();
+            const JPH::Vec3 axis =
+                first->GetRotation() * toJolt(record.desc.firstFrame.rotation * core::Vec3{1.0f, 0.0f, 0.0f});
+            state.velocity = (second->GetLinearVelocity() - first->GetLinearVelocity()).Dot(axis);
+            break;
+        }
+        case ConstraintType::Distance: {
+            const JPH::RVec3 one = first->GetWorldTransform() * toJoltPosition(record.desc.firstFrame.position);
+            const JPH::RVec3 two = second->GetWorldTransform() * toJoltPosition(record.desc.secondFrame.position);
+            const JPH::Vec3 apart = JPH::Vec3(two - one);
+            state.position = apart.Length();
+            if (state.position > 1.0e-5f) {
+                state.velocity =
+                    (second->GetPointVelocity(two) - first->GetPointVelocity(one)).Dot(apart / state.position);
+            }
+            break;
+        }
+        case ConstraintType::Fixed:
+        case ConstraintType::Point:
+        case ConstraintType::SwingTwist:
+            break;
+        }
     }
 
     // Removed from the world, exclusion dropped, reference released. Separate
@@ -2349,6 +2661,8 @@ private:
                                            toJoltMotion(motion), encodeLayer(desc.group, motion != MotionType::Static));
         settings.mFriction = desc.friction;
         settings.mRestitution = desc.restitution;
+        settings.mLinearDamping = std::max(desc.linearDamping, 0.0f);
+        settings.mAngularDamping = std::max(desc.angularDamping, 0.0f);
         settings.mIsSensor = !desc.collidable;
         // **A moving body removes the ghost edges it meets** (ADR 0143): a ball
         // rolled over any triangulated ground -- one mesh, no seam -- struck the
@@ -2373,6 +2687,7 @@ private:
         // and a light large one behaving differently under a torque.
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         settings.mMassPropertiesOverride.mMass = std::max(shape->GetVolume() * std::max(desc.density, 0.0001f), 0.001f);
+        record.mass = settings.mMassPropertiesOverride.mMass;
 
         JPH::BodyInterface& bodies = m_system.GetBodyInterface();
         record.id = bodies.CreateAndAddBody(settings, motion == MotionType::Static ? JPH::EActivation::DontActivate
@@ -2444,6 +2759,16 @@ private:
         std::vector<ContactPair>& current = m_contacts.pairs();
         std::sort(current.begin(), current.end());
         current.erase(std::unique(current.begin(), current.end()), current.end());
+
+        // One detail a pair, the hardest: the listener's order is the job
+        // system's, and two manifolds of one pair may arrive either way round.
+        std::vector<ContactDetail>& details = m_contacts.details();
+        std::sort(details.begin(), details.end(), [](const ContactDetail& a, const ContactDetail& b) {
+            return a.pair == b.pair ? a.speed > b.speed : a.pair < b.pair;
+        });
+        details.erase(std::unique(details.begin(), details.end(),
+                                  [](const ContactDetail& a, const ContactDetail& b) { return a.pair == b.pair; }),
+                      details.end());
 
         m_carried.clear();
         usize i = 0;
@@ -2637,7 +2962,25 @@ private:
         if (firstRecord == nullptr || secondRecord == nullptr) {
             return;
         }
-        m_events.push_back(ContactEvent{phase, first, second, firstRecord->userData, secondRecord->userData});
+        ContactEvent event;
+        event.phase = phase;
+        event.first = first;
+        event.second = second;
+        event.firstUserData = firstRecord->userData;
+        event.secondUserData = secondRecord->userData;
+        if (phase == ContactPhase::Began) {
+            const std::vector<ContactDetail>& details = m_contacts.details();
+            const auto found = std::lower_bound(
+                details.begin(), details.end(), pair,
+                [](const ContactDetail& detail, const ContactPair& wanted) { return detail.pair < wanted; });
+            if (found != details.end() && found->pair == pair) {
+                event.detailed = true;
+                event.point = toWorld(found->point);
+                event.normal = fromJolt(found->normal);
+                event.speed = found->speed;
+            }
+        }
+        m_events.push_back(event);
     }
 
     // Filters translating a `QueryFilter` into the two things Jolt asks for.
@@ -2981,6 +3324,13 @@ public:
         }
     }
 
+    void driveConstraint(WorldHandle handle, ConstraintHandle constraint, const ConstraintDesc& desc) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->driveConstraint(constraint, desc);
+        }
+    }
+
     [[nodiscard]] ConstraintState constraintState(WorldHandle handle, ConstraintHandle constraint) const override
     {
         const JoltWorld* world = resolve(handle);
@@ -3012,6 +3362,33 @@ public:
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->applyAngularImpulse(body, impulse);
+        }
+    }
+
+    void applyImpulseAt(WorldHandle handle, BodyHandle body, core::Vec3 impulse, core::DVec3 point) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->applyImpulseAt(body, impulse, point);
+        }
+    }
+
+    [[nodiscard]] BodyMassProperties bodyMassProperties(WorldHandle handle, BodyHandle body) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr ? world->bodyMassProperties(body) : BodyMassProperties{};
+    }
+
+    void setBodyDamping(WorldHandle handle, BodyHandle body, f32 linear, f32 angular) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->setBodyDamping(body, linear, angular);
+        }
+    }
+
+    void setPairCollidable(WorldHandle handle, BodyHandle first, BodyHandle second, bool collidable) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->setPairCollidable(first, second, collidable);
         }
     }
 
@@ -3100,6 +3477,14 @@ public:
     {
         if (const JoltWorld* world = resolve(handle); world != nullptr) {
             world->overlapBox(transform, size, filter, out);
+        }
+    }
+
+    void overlapSphere(WorldHandle handle, core::DVec3 center, f32 radius, const QueryFilter& filter,
+                       std::vector<u64>& out) const override
+    {
+        if (const JoltWorld* world = resolve(handle); world != nullptr) {
+            world->overlapSphere(center, radius, filter, out);
         }
     }
 

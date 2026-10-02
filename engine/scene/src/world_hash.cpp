@@ -32,6 +32,7 @@
 #include <array>
 
 #include "../generated/class_descriptors.gen.h"
+#include "engine/physics/types.h"
 #include "engine/scene/world.h"
 
 // Header-only: everything xxHash needs is inlined into this translation unit,
@@ -400,6 +401,11 @@ u64 World::worldHash() const
             hasher.flag(character->jumpRequested);
             hasher.number(character->verticalVelocity);
             hasher.pod(character->groundPart);
+            // What pushed it (D466): state, and on the wire. Hashed only while
+            // there is some, so every trace recorded before a character could
+            // be pushed still agrees.
+            if (!(character->push == core::Vec3{0.0f, 0.0f, 0.0f}))
+                hasher.vec3(character->push);
         }
         // An action's resolved value is simulation state and no property
         // exposes it -- `GetState` is a METHOD, so the walk below cannot see it.
@@ -592,11 +598,77 @@ bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc&
         const UIObjectComponent* object = world.uiObjects().find(id);
         return object != nullptr && object->active < 0;
     }
+    if (name == "ExactColor") {
+        const auto* flag = std::get_if<bool>(&value);
+        return flag != nullptr && *flag;
+    }
+    // **ADR 0127's additions to classes that already existed**: a part's
+    // damping and its mass, a joint's actuator and its breaking point. A world
+    // made before them says nothing about them, and at their defaults neither
+    // does one made after -- so its hash and its file are the ones it had. A
+    // part's mass is never said at all: it is its size and its density again.
+    if (name == "Mass" || name == "AssemblyMass")
+        return world.rigidBodies().find(id) != nullptr;
+    // A character's ways of moving that are not walking (D466), the same.
+    if (const CharacterBodyComponent* character = world.characterBodies().find(id); character != nullptr) {
+        const CharacterBodyComponent fresh;
+        if (name == "Flying") {
+            const auto* flag = std::get_if<bool>(&value);
+            return flag != nullptr && !*flag;
+        }
+        if (const auto* amount = std::get_if<core::f64>(&value); amount != nullptr) {
+            if (name == "GravityScale")
+                return *amount == static_cast<core::f64>(fresh.gravityScale);
+            if (name == "SwimSpeed")
+                return *amount == static_cast<core::f64>(fresh.swimSpeed);
+            if (name == "FlySpeed")
+                return *amount == static_cast<core::f64>(fresh.flySpeed);
+        }
+    }
+    if (name == "ContactDetails") {
+        const auto* flag = std::get_if<bool>(&value);
+        return flag != nullptr && !*flag && world.rigidBodies().find(id) != nullptr;
+    }
+    if (const ConstraintComponent* joint = world.constraints().find(id);
+        joint != nullptr && joint->kind <= static_cast<i32>(physics::ConstraintType::SwingTwist)) {
+        const ConstraintComponent fresh;
+        if (name == "Visible") {
+            const auto* flag = std::get_if<bool>(&value);
+            return flag != nullptr && !*flag;
+        }
+        if (name == "ActuatorType") {
+            const auto* item = std::get_if<EnumValue>(&value);
+            return item != nullptr && item->value == 0;
+        }
+        if (name == "TargetOrientation") {
+            const auto* frame = std::get_if<core::CFrameD>(&value);
+            return frame != nullptr && frame->rotation == core::Mat3{};
+        }
+        if (const auto* amount = std::get_if<core::f64>(&value); amount != nullptr) {
+            const auto is = [&](f32 standard) { return *amount == static_cast<core::f64>(standard); };
+            if (name == "BreakForce" || name == "BreakTorque" || name == "AngularVelocity" || name == "TargetAngle" ||
+                name == "Stiffness" || name == "Damping")
+                return *amount == 0.0;
+            if (name == "MotorMaxTorque")
+                return is(fresh.motorMaxForce);
+            if (name == "MotorMaxAcceleration")
+                return is(fresh.motorMaxAcceleration);
+            if (name == "AngularSpeed")
+                return is(fresh.servoSpeed);
+            if (name == "ServoMaxTorque")
+                return is(fresh.servoMaxForce);
+            if (name == "AngularResponsiveness")
+                return is(fresh.responsiveness);
+        }
+    }
     const auto* number = std::get_if<core::f64>(&value);
     if (number == nullptr)
         return false;
     if (name == "ImageTransparency")
         return world.imageLabels().find(id) != nullptr && *number == 0.0;
+    if (name == "LinearDamping" || name == "AngularDamping")
+        return world.rigidBodies().find(id) != nullptr &&
+               *number == static_cast<core::f64>(RigidBodyComponent{}.linearDamping);
     if (name == "ExposureMin")
         return world.lighting().find(id) != nullptr &&
                *number == static_cast<core::f64>(LightingComponent{}.exposureMin);
