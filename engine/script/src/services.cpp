@@ -20,6 +20,7 @@
 #include "engine/core/content_path.h"
 #include "engine/input/input.h"
 #include "engine/platform/event.h"
+#include "engine/platform/window.h"
 #include "engine/scene/players.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/scene/wind.h"
@@ -1825,6 +1826,179 @@ int hapticServiceVibrate(lua_State* L)
     return 0;
 }
 
+// --- GraphicsService (ADR 0147) -----------------------------------------------
+//
+// The settings are `scene::GraphicsModel`'s, in the world's engine state: a
+// property is one of them, and these are the ones that are more than one.
+
+[[nodiscard]] scene::GraphicsModel& graphicsModel(lua_State* L)
+{
+    return world(L).engineState().graphics;
+}
+
+// A write, on a machine with a display to apply it to.
+void requireDisplay(lua_State* L)
+{
+    if (!world(L).engineState().graphicsDisplay)
+        raise(L, ENG_TR("script.err.graphics_no_display"));
+}
+
+[[nodiscard]] core::i32 checkEnumOf(lua_State* L, int index, scene::EnumId enumId, const char* name)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != enumId)
+        luaL_argerror(L, index, name);
+    return item.value;
+}
+
+[[nodiscard]] scene::GraphicsSetting checkGraphicsSetting(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    const std::string_view name{text, length};
+    // `Resolution` is two numbers in the model and one property to a script.
+    if (name == "Resolution")
+        return scene::GraphicsSetting::ResolutionWidth;
+    const std::optional<scene::GraphicsSetting> setting = scene::graphicsSettingNamed(name);
+    if (!setting.has_value() || *setting == scene::GraphicsSetting::ResolutionWidth ||
+        *setting == scene::GraphicsSetting::ResolutionHeight) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"name", name}};
+        raise(L, ENG_TR("script.err.graphics_unknown_setting"), args);
+    }
+    return *setting;
+}
+
+int graphicsServiceApplyPreset(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::i32 level = checkEnumOf(L, 2, scene::generated::GraphicsQualityEnumId, "Enum.GraphicsQuality");
+    if (level == scene::kQualityCustom)
+        luaL_argerror(L, 2, "a level other than Custom");
+    requireDisplay(L);
+    graphicsModel(L).applyPreset(level);
+    return 0;
+}
+
+int graphicsServiceResetToDefaults(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireDisplay(L);
+    graphicsModel(L).resetToDefaults();
+    return 0;
+}
+
+int graphicsServiceGetSource(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::GraphicsSetting setting = checkGraphicsSetting(L, 2);
+    pushEnumItem(L, scene::EnumValue{scene::generated::SettingSourceEnumId,
+                                     static_cast<core::i32>(graphicsModel(L).source(setting))});
+    return 1;
+}
+
+int graphicsServiceIsApplied(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    lua_pushboolean(L, scene::graphicsSettingInfo(checkGraphicsSetting(L, 2)).applied ? 1 : 0);
+    return 1;
+}
+
+[[nodiscard]] scene::GraphicsGroup checkGraphicsGroup(lua_State* L, int index)
+{
+    const core::i32 value = checkEnumOf(L, index, scene::generated::GraphicsGroupEnumId, "Enum.GraphicsGroup");
+    return static_cast<scene::GraphicsGroup>(
+        std::clamp(value, 0, static_cast<core::i32>(scene::GraphicsGroup::Count) - 1));
+}
+
+int graphicsServiceGetGroupLevel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::optional<core::i32> level = graphicsModel(L).groupLevel(checkGraphicsGroup(L, 2));
+    if (level.has_value())
+        pushEnumItem(L, scene::EnumValue{scene::generated::GraphicsLevelEnumId, *level});
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+int graphicsServiceSetGroupLevel(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::GraphicsGroup group = checkGraphicsGroup(L, 2);
+    const core::i32 level = checkEnumOf(L, 3, scene::generated::GraphicsLevelEnumId, "Enum.GraphicsLevel");
+    requireDisplay(L);
+    graphicsModel(L).setGroupLevel(group, level);
+    return 0;
+}
+
+int graphicsServiceGetSupportedResolutions(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::f64 monitor = graphicsModel(L).effective(scene::GraphicsSetting::Monitor);
+    const std::vector<platform::DisplayMode> modes = platform::displayModes(static_cast<usize>(monitor));
+    lua_createtable(L, static_cast<int>(modes.size()), 0);
+    for (usize index = 0; index < modes.size(); ++index) {
+        pushVector2(L, core::Vec2{static_cast<f32>(modes[index].width), static_cast<f32>(modes[index].height)});
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int graphicsServiceGetMonitors(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<platform::DisplayInfo> found = platform::displays();
+    lua_createtable(L, static_cast<int>(found.size()), 0);
+    for (usize index = 0; index < found.size(); ++index) {
+        lua_createtable(L, 0, 3);
+        lua_pushlstring(L, found[index].name.data(), found[index].name.size());
+        lua_setfield(L, -2, "Name");
+        pushVector2(L, core::Vec2{static_cast<f32>(found[index].width), static_cast<f32>(found[index].height)});
+        lua_setfield(L, -2, "Size");
+        lua_pushnumber(L, static_cast<double>(found[index].refreshRate));
+        lua_setfield(L, -2, "RefreshRate");
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
+int graphicsServiceGetRefreshRate(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    // The display the settings name: the one the window is on, once applied.
+    const std::vector<platform::DisplayInfo> found = platform::displays();
+    const auto monitor = static_cast<usize>(graphicsModel(L).effective(scene::GraphicsSetting::Monitor));
+    lua_pushnumber(L, monitor < found.size() ? static_cast<double>(found[monitor].refreshRate) : 0.0);
+    return 1;
+}
+
+// Both park the caller and ask the host: the player's file is the host's.
+int graphicsServiceFileAsync(lua_State* L, bool load)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, load ? "LoadAsync" : "SaveAsync");
+    scene::GraphicsModel& model = graphicsModel(L);
+    (load ? model.loadRequested : model.saveRequested) = true;
+
+    ServiceState::GraphicsWaiter waiter;
+    waiter.load = load;
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services(L).graphicsWaiters.push_back(waiter);
+    return lua_yield(L, 0);
+}
+
+int graphicsServiceSaveAsync(lua_State* L)
+{
+    return graphicsServiceFileAsync(L, false);
+}
+
+int graphicsServiceLoadAsync(lua_State* L)
+{
+    return graphicsServiceFileAsync(L, true);
+}
+
 // --- Sound and AudioService (M6) ---------------------------------------------
 
 int soundPlay(lua_State* L)
@@ -2353,6 +2527,17 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
     {"HapticService", "SetMotor", hapticServiceSetMotor},
     {"HapticService", "Vibrate", hapticServiceVibrate},
+    {"GraphicsService", "ApplyPreset", graphicsServiceApplyPreset},
+    {"GraphicsService", "ResetToDefaults", graphicsServiceResetToDefaults},
+    {"GraphicsService", "GetSource", graphicsServiceGetSource},
+    {"GraphicsService", "IsApplied", graphicsServiceIsApplied},
+    {"GraphicsService", "GetGroupLevel", graphicsServiceGetGroupLevel},
+    {"GraphicsService", "SetGroupLevel", graphicsServiceSetGroupLevel},
+    {"GraphicsService", "GetSupportedResolutions", graphicsServiceGetSupportedResolutions},
+    {"GraphicsService", "GetMonitors", graphicsServiceGetMonitors},
+    {"GraphicsService", "GetRefreshRate", graphicsServiceGetRefreshRate},
+    {"GraphicsService", "SaveAsync", graphicsServiceSaveAsync},
+    {"GraphicsService", "LoadAsync", graphicsServiceLoadAsync},
     {"InputService", "GetPointerPosition", inputServiceGetPointerPosition},
     {"InputService", "IsKeyDown", inputServiceIsKeyDown},
     {"InputService", "SetVirtualState", inputServiceSetVirtualState},
@@ -2692,6 +2877,32 @@ void fireAreaLoaded(lua_State* L, core::Vec3 position, f64 radius)
     lua_pushnumber(L, radius);
     fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - 1, 2);
     lua_pop(L, 2);
+}
+
+void resumeGraphicsWaiters(lua_State* L, bool load, bool done)
+{
+    ServiceState& state = services(L);
+    // Collected first: a resumed coroutine may ask again, and would push onto
+    // the vector being walked.
+    std::vector<ServiceState::GraphicsWaiter> ready;
+    for (usize index = 0; index < state.graphicsWaiters.size();) {
+        if (state.graphicsWaiters[index].load != load) {
+            ++index;
+            continue;
+        }
+        ready.push_back(state.graphicsWaiters[index]);
+        state.graphicsWaiters.erase(state.graphicsWaiters.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    for (const ServiceState::GraphicsWaiter& waiter : ready) {
+        lua_getref(L, waiter.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        if (co != nullptr) {
+            lua_pushboolean(co, done ? 1 : 0);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, waiter.threadRef);
+    }
 }
 
 void resumeAreaWaiters(lua_State* L, const std::function<bool(core::DVec3, f64)>& resident)

@@ -110,6 +110,14 @@ inline constexpr scene::EnumId AspectTypeEnumId = 67;
 inline constexpr scene::EnumId DominantAxisEnumId = 68;
 inline constexpr scene::EnumId UIDragDetectorDragStyleEnumId = 69;
 inline constexpr scene::EnumId UIDragDetectorResponseStyleEnumId = 70;
+inline constexpr scene::EnumId GraphicsQualityEnumId = 71;
+inline constexpr scene::EnumId GraphicsLevelEnumId = 72;
+inline constexpr scene::EnumId GraphicsGroupEnumId = 73;
+inline constexpr scene::EnumId ShadowQualityEnumId = 74;
+inline constexpr scene::EnumId AntiAliasingModeEnumId = 75;
+inline constexpr scene::EnumId TextureQualityEnumId = 76;
+inline constexpr scene::EnumId WindowModeEnumId = 77;
+inline constexpr scene::EnumId SettingSourceEnumId = 78;
 
 } // namespace generated
 

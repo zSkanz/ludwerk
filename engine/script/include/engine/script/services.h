@@ -245,6 +245,17 @@ public:
     };
     std::vector<AreaWaiter> areaWaiters;
 
+    // `GraphicsService:SaveAsync` and `LoadAsync` (ADR 0147), parked the same
+    // way: the player's file is the host's to write and read, at the end of
+    // the frame, and the caller is given whether it did.
+    struct GraphicsWaiter
+    {
+        int threadRef = -1;
+        // Waiting on a load rather than a save.
+        bool load = false;
+    };
+    std::vector<GraphicsWaiter> graphicsWaiters;
+
     // `@std/net.request` (api-design.md 7), the same parking shape as the two
     // waiters above and for the same reason -- except that what satisfies it is
     // a socket rather than the world, so the condition is a TICKET rather than a
@@ -414,6 +425,10 @@ void fireSubWorldMessages(lua_State* L);
 // 0106), fired by the host when the connection it manages changes; the last
 // two carry a readable reason.
 void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason);
+
+// Wakes every `GraphicsService:SaveAsync` (or, with `load`, `LoadAsync`) with
+// whether the host did it (ADR 0147).
+void resumeGraphicsWaiters(lua_State* L, bool load, bool done);
 
 // Wakes every `LoadAreaAsync` whose area is now resident and fires
 // `AreaLoaded` for it. `resident` is the host's answer, because whether a

@@ -1649,6 +1649,255 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "GraphicsQuality",
+            Doc = "A quality level of `GraphicsService` (ADR 0147): a preset, or one of the two readings that "
+                .. "are not one.",
+            Items = {
+                {
+                    Name = "Low",
+                    Value = 0,
+                    Doc = "The least: three quarters of the resolution, short soft shadows, no bloom or occlusion.",
+                },
+                {
+                    Name = "Medium",
+                    Value = 1,
+                    Doc = "What a handheld starts at.",
+                },
+                {
+                    Name = "High",
+                    Value = 2,
+                    Doc = "What a desktop starts at, and what every reference picture of the engine is drawn at.",
+                },
+                {
+                    Name = "Ultra",
+                    Value = 3,
+                    Doc = "The most the renderer has.",
+                },
+                {
+                    Name = "Custom",
+                    Value = 4,
+                    Doc = "What `QualityLevel` reads as when any quality setting is not the preset's. Never written.",
+                },
+                {
+                    Name = "Auto",
+                    Value = 5,
+                    Doc = "The preset this machine was measured for.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "GraphicsLevel",
+            Doc = "How far one group of graphics settings is turned up.",
+            Items = {
+                {
+                    Name = "Low",
+                    Value = 0,
+                    Doc = "The least.",
+                },
+                {
+                    Name = "Medium",
+                    Value = 1,
+                    Doc = "A step up.",
+                },
+                {
+                    Name = "High",
+                    Value = 2,
+                    Doc = "The default.",
+                },
+                {
+                    Name = "Ultra",
+                    Value = 3,
+                    Doc = "The most.",
+                },
+                {
+                    Name = "Cinematic",
+                    Value = 4,
+                    Doc = "For a recorded shot rather than a played frame. `Ultra`, until something is finer.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "GraphicsGroup",
+            Doc = "The coarse groups a player's options menu shows, each set to a level at once.",
+            Items = {
+                {
+                    Name = "ViewDistance",
+                    Value = 0,
+                    Doc = "How far things are drawn and how fine distant ground is.",
+                },
+                {
+                    Name = "AntiAliasing",
+                    Value = 1,
+                    Doc = "How edges are smoothed.",
+                },
+                {
+                    Name = "PostProcessing",
+                    Value = 2,
+                    Doc = "Bloom, depth of field, sun rays, automatic exposure, motion blur.",
+                },
+                {
+                    Name = "Shadows",
+                    Value = 3,
+                    Doc = "Their resolution, cascades, distance and the contact shadows.",
+                },
+                {
+                    Name = "GlobalIllumination",
+                    Value = 4,
+                    Doc = "Ambient occlusion now; indirect light when it lands.",
+                },
+                {
+                    Name = "Reflections",
+                    Value = 5,
+                    Doc = "Reflection quality, when reflections land.",
+                },
+                {
+                    Name = "Textures",
+                    Value = 6,
+                    Doc = "Texture size, filtering and streaming.",
+                },
+                {
+                    Name = "Effects",
+                    Value = 7,
+                    Doc = "Particles.",
+                },
+                {
+                    Name = "Foliage",
+                    Value = 8,
+                    Doc = "How dense grown foliage is.",
+                },
+                {
+                    Name = "Shading",
+                    Value = 9,
+                    Doc = "How many lights a frame carries, and shading detail.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ShadowQuality",
+            Doc = "How good the sun's shadow is: its resolution and how many cascades it is cast into.",
+            Items = {
+                {
+                    Name = "Off",
+                    Value = 0,
+                    Doc = "No sun shadow.",
+                },
+                {
+                    Name = "Low",
+                    Value = 1,
+                    Doc = "512 texels, two cascades.",
+                },
+                {
+                    Name = "Medium",
+                    Value = 2,
+                    Doc = "1024 texels, three cascades.",
+                },
+                {
+                    Name = "High",
+                    Value = 3,
+                    Doc = "2048 texels, four cascades.",
+                },
+                {
+                    Name = "Ultra",
+                    Value = 4,
+                    Doc = "The same map, cast further.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "AntiAliasingMode",
+            Doc = "How edges are smoothed.",
+            Items = {
+                {
+                    Name = "Off",
+                    Value = 0,
+                    Doc = "Not at all.",
+                },
+                {
+                    Name = "FXAA",
+                    Value = 1,
+                    Doc = "A pass over the finished picture.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "TextureQuality",
+            Doc = "How much of a texture is kept in memory.",
+            Items = {
+                {
+                    Name = "Low",
+                    Value = 0,
+                    Doc = "A quarter of each side.",
+                },
+                {
+                    Name = "Medium",
+                    Value = 1,
+                    Doc = "Half.",
+                },
+                {
+                    Name = "High",
+                    Value = 2,
+                    Doc = "All of it.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "WindowMode",
+            Doc = "How a game's window sits on the display.",
+            Items = {
+                {
+                    Name = "Windowed",
+                    Value = 0,
+                    Doc = "A window, with its border.",
+                },
+                {
+                    Name = "Borderless",
+                    Value = 1,
+                    Doc = "The whole display, as a window with no border: other windows are a key away.",
+                },
+                {
+                    Name = "Fullscreen",
+                    Value = 2,
+                    Doc = "The whole display, the game's alone.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "SettingSource",
+            Doc = "Who said a graphics setting's value (`GraphicsService:GetSource`).",
+            Items = {
+                {
+                    Name = "CommandLine",
+                    Value = 0,
+                    Doc = "A flag the game was started with. Nothing a script or a player says changes it.",
+                },
+                {
+                    Name = "Player",
+                    Value = 1,
+                    Doc = "The player's saved choice.",
+                },
+                {
+                    Name = "Script",
+                    Value = 2,
+                    Doc = "A script wrote it this session, and it has not been saved.",
+                },
+                {
+                    Name = "Project",
+                    Value = 3,
+                    Doc = "The game's own `project.toml`.",
+                },
+                {
+                    Name = "Preset",
+                    Value = 4,
+                    Doc = "The quality level in force.",
+                },
+                {
+                    Name = "Engine",
+                    Value = 5,
+                    Doc = "Nobody: the engine's default.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

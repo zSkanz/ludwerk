@@ -1346,8 +1346,10 @@ key nothing reads is not a default: a project that sets one is setting nothing.
 **`[graphics]` — the quality family (M8, ADR 0044).** These are *engine*
 settings and not `Lighting` properties: `Lighting` describes the world and
 travels with the scene, while these describe the machine it is being shown on.
-A script cannot write them, deliberately — a scene must not decide the player's
-GPU budget.
+A scene must not decide the player's GPU budget: the keys below are the game's
+*defaults*, and what is over them is the player's choice -- saved in their own
+folder, and made through `GraphicsService` by whatever options menu a game
+offers (ADR 0147). None of it is saved with a scene or reaches the simulation.
 
 ```toml
 [graphics]

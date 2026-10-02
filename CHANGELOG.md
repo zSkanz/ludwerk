@@ -153,6 +153,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **`GraphicsService`** (ADR 0147): a script reads and writes the machine's
+  graphics and display settings -- `QualityLevel`, the shadow, post and
+  detail settings, `WindowMode`, `Resolution`, `Monitor`, `VSync`,
+  `MaxFrameRate`, `BackgroundFrameRate` -- with `ApplyPreset`,
+  `ResetToDefaults`, `GetSource`, `IsApplied`, `GetGroupLevel` and
+  `SetGroupLevel`, `GetMonitors`, `GetSupportedResolutions`, `GetRefreshRate`
+  and `QualityChanged`. `SaveAsync` keeps the player's choices in
+  `settings.json` in their folder, and a game starts in them. Eight enums with
+  it. In `project.toml` any setting is a key, as its name in snake case, and
+  `[display]` gains `window_mode`, `resolution`, `monitor` and
+  `remember_player_settings`.
+
 - **UI that lays out in grids and pages, fits any screen, and is driven by a
   gamepad** (ADR 0128). `UIGridLayout`; `UIPageLayout` with `Next`, `Previous`,
   `JumpTo`, `JumpToIndex`, `CurrentPage`, `PageEnter`, `PageLeave` and
@@ -744,6 +756,11 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `--surface-cache=DIR` moves the compiled-surface cache.
 
 ### Changed
+
+- **A quality level sets how much foliage is drawn** (ADR 0147): half at low,
+  three quarters at medium, all of it from high. A project at low or medium,
+  and every handheld -- which starts at medium -- draws less than it did;
+  `[graphics] foliage_density = 1.0` puts it back.
 
 - **A child that is not `Visible` keeps no room in a layout** (D478): a hidden
   child of a `UIListLayout` left a gap where it had been, and a parent with

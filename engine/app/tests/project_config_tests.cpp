@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "engine/app/project_config.h"
 #include "engine/core/toml_edit.h"
@@ -443,4 +444,212 @@ TEST_CASE("D461: a project names the key that opens the overlay, or says there i
     // No key: the overlay is opened from the menu, and every key is the game's.
     CHECK(keyOf("[debug]\noverlay_key = 'None'\n") == platform::Key::Unknown);
     CHECK(keyOf("[debug]\noverlay_key = 'not a key'\n") == platform::Key::Unknown);
+}
+
+// --- The same settings, as a model's layers (ADR 0147) ---------------------------
+
+namespace {
+
+// Field by field: the model resolves to the settings the loader resolved.
+void checkSameSettings(const render::GraphicsSettings& left, const render::GraphicsSettings& right)
+{
+    CHECK(left.quality == right.quality);
+    CHECK(sameMetres(left.renderScale, right.renderScale));
+    CHECK(left.renderResolutionCap == right.renderResolutionCap);
+    CHECK(left.shadowTileResolution == right.shadowTileResolution);
+    CHECK(left.shadowCascades == right.shadowCascades);
+    CHECK(sameMetres(left.shadowDistance, right.shadowDistance));
+    CHECK(left.lightBudget == right.lightBudget);
+    CHECK(left.bloom == right.bloom);
+    CHECK(left.ambientOcclusion == right.ambientOcclusion);
+    CHECK(left.contactShadows == right.contactShadows);
+    CHECK(sameMetres(left.terrainPixelError, right.terrainPixelError));
+    CHECK(left.antiAliasing == right.antiAliasing);
+    CHECK(left.depthOfField == right.depthOfField);
+    CHECK(left.sunRays == right.sunRays);
+    CHECK(left.autoExposure == right.autoExposure);
+}
+
+} // namespace
+
+TEST_CASE("the model's layers resolve to exactly what the loader resolved")
+{
+    // Every way the three sources meet: no file, a file that refines its
+    // level, a level from the command line, flags, a platform's own table,
+    // values past what the renderer honours -- on a desktop and in the hand.
+    const std::array<const char*, 5> files{
+        "",
+        kAuthoredHigh,
+        "[graphics]\nquality = \"low\"\nbloom = true\nrender_scale = 0.3\nshadow_resolution = 3000\n"
+        "light_budget = 9999\nanti_aliasing = false\ncontact_shadows = true\n",
+        "[graphics]\nquality = \"ultra\"\nshadow_cascades = 2\ndepth_of_field = false\nsun_rays = false\n"
+        "auto_exposure = false\nambient_occlusion = false\n\n[graphics.android]\nquality = \"low\"\nrender_cap = 600\n",
+        "[graphics]\nshadow_distance = 5\nrender_cap = 100\n\n[display]\nvsync = false\nmax_frame_rate = 90\n",
+    };
+    std::array<app::GraphicsOverrides, 3> overrides;
+    overrides[1].quality = render::QualityLevel::Medium;
+    overrides[1].shadowResolution = 1024;
+    overrides[2].bloom = false;
+    overrides[2].renderScale = 0.8f;
+    overrides[2].antiAliasing = false;
+    overrides[2].vsync = true;
+    overrides[2].maxFrameRate = 30;
+
+    for (const char* file : files) {
+        const ProjectDir project(file);
+        for (const app::GraphicsOverrides& flags : overrides) {
+            for (const bool handheld : {false, true}) {
+                std::string diagnostic;
+                const app::ProjectConfig config = app::loadProjectConfig(
+                    file[0] == '\0' ? std::filesystem::path{} : project.path, flags, &diagnostic, handheld);
+                CAPTURE(file);
+                CAPTURE(handheld);
+                checkSameSettings(app::graphicsSettingsOf(config.graphicsModel, handheld), config.graphics);
+
+                const app::FramePacing pacing = app::pacingOf(config.graphicsModel, false);
+                const app::FramePacing expected = app::pacingWith(config.pacing, flags);
+                CHECK(pacing.vsync == expected.vsync);
+                CHECK(pacing.maxFrameRate == expected.maxFrameRate);
+                CHECK(pacing.backgroundFrameRate == expected.backgroundFrameRate);
+                // In the hand the display's sync is on whatever anybody says.
+                CHECK(app::pacingOf(config.graphicsModel, true).vsync);
+            }
+        }
+    }
+}
+
+TEST_CASE("the model says whose each value is: the flag's, the file's, the level's")
+{
+    const ProjectDir project(kAuthoredHigh);
+    app::GraphicsOverrides flags;
+    flags.bloom = false;
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, flags);
+    const scene::GraphicsModel& model = config.graphicsModel;
+
+    CHECK(model.source(scene::GraphicsSetting::Bloom) == scene::GraphicsSource::CommandLine);
+    CHECK(model.source(scene::GraphicsSetting::ShadowDistance) == scene::GraphicsSource::Project);
+    CHECK(model.source(scene::GraphicsSetting::QualityLevel) == scene::GraphicsSource::Project);
+    CHECK(model.source(scene::GraphicsSetting::ShadowCascades) == scene::GraphicsSource::Preset);
+    CHECK(model.source(scene::GraphicsSetting::MaxFrameRate) == scene::GraphicsSource::Engine);
+    // High, with a flag and a refinement over it.
+    CHECK(model.preset() == scene::kQualityHigh);
+    CHECK(model.qualityLevel() == scene::kQualityCustom);
+}
+
+TEST_CASE("a project file names any setting by its name in snake case")
+{
+    const ProjectDir project("[graphics]\nshadow_quality = \"low\"\nterrain_detail = 2.0\nfoliage_density = 0.25\n"
+                             "texture_quality = \"medium\"\nmaximum_lod_level = 2\nanisotropic_filtering = 4\n"
+                             "anti_aliasing = \"off\"\n\n"
+                             "[display]\nwindow_mode = \"fullscreen\"\nmonitor = 1\nresolution = [1920, 1080]\n"
+                             "brightness = 0.25\nbackground_frame_rate = 0\nremember_player_settings = false\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
+    const scene::GraphicsModel& model = config.graphicsModel;
+    const auto value = [&model](scene::GraphicsSetting setting) { return model.effective(setting); };
+
+    CHECK(value(scene::GraphicsSetting::ShadowQuality) == doctest::Approx(1.0));
+    CHECK(value(scene::GraphicsSetting::TerrainDetail) == doctest::Approx(2.0));
+    CHECK(value(scene::GraphicsSetting::FoliageDensity) == doctest::Approx(0.25));
+    CHECK(value(scene::GraphicsSetting::TextureQuality) == doctest::Approx(1.0));
+    CHECK(value(scene::GraphicsSetting::MaximumLODLevel) == doctest::Approx(2.0));
+    CHECK(value(scene::GraphicsSetting::AnisotropicFiltering) == doctest::Approx(4.0));
+    CHECK(value(scene::GraphicsSetting::AntiAliasing) == doctest::Approx(0.0));
+    CHECK(value(scene::GraphicsSetting::WindowMode) == doctest::Approx(2.0));
+    CHECK(value(scene::GraphicsSetting::Monitor) == doctest::Approx(1.0));
+    CHECK(value(scene::GraphicsSetting::ResolutionWidth) == doctest::Approx(1920.0));
+    CHECK(value(scene::GraphicsSetting::ResolutionHeight) == doctest::Approx(1080.0));
+    CHECK(value(scene::GraphicsSetting::Brightness) == doctest::Approx(0.25));
+    CHECK(value(scene::GraphicsSetting::BackgroundFrameRate) == doctest::Approx(0.0));
+    CHECK_FALSE(config.rememberPlayerSettings);
+    // Twice the detail is half the pixels a cell may cover.
+    CHECK(sameMetres(app::graphicsSettingsOf(model, false).terrainPixelError, 1.0f));
+
+    // `[window] fullscreen` is the whole display as a window.
+    const ProjectDir old("[window]\nfullscreen = true\n");
+    CHECK(app::loadProjectConfig(old.path, {}).graphicsModel.effective(scene::GraphicsSetting::WindowMode) ==
+          doctest::Approx(1.0));
+}
+
+TEST_CASE("each level gives every group something, and the levels are in order")
+{
+    const app::ProjectConfig config = app::loadProjectConfig({}, {});
+    const scene::GraphicsModel& model = config.graphicsModel;
+    for (core::i32 level = scene::kQualityLow; level < scene::kQualityUltra; ++level) {
+        CAPTURE(level);
+        CHECK(model.presetValue(scene::GraphicsSetting::ShadowDistance, level) <
+              model.presetValue(scene::GraphicsSetting::ShadowDistance, level + 1));
+        CHECK(model.presetValue(scene::GraphicsSetting::TerrainDetail, level) <
+              model.presetValue(scene::GraphicsSetting::TerrainDetail, level + 1));
+        CHECK(model.presetValue(scene::GraphicsSetting::FoliageDensity, level) <=
+              model.presetValue(scene::GraphicsSetting::FoliageDensity, level + 1));
+        CHECK(model.presetValue(scene::GraphicsSetting::ShadowQuality, level) == doctest::Approx(level + 1.0));
+    }
+    // A machine with nothing said is at its own level, and it is that level.
+    CHECK(model.qualityLevel() == scene::kQualityHigh);
+    const app::ProjectConfig phone = app::loadProjectConfig({}, {}, nullptr, true);
+    CHECK(phone.graphicsModel.qualityLevel() == scene::kQualityMedium);
+}
+
+TEST_CASE("the player's choices are written to their file and read back, and what cannot be used is named")
+{
+    const std::filesystem::path folder =
+        std::filesystem::temp_directory_path() / ("engine-player-settings-" + std::to_string(platform::nowNs()));
+    const std::filesystem::path file = folder / "settings.json";
+
+    scene::GraphicsLayer choices;
+    choices.put(scene::GraphicsSetting::QualityLevel, 1.0);
+    choices.put(scene::GraphicsSetting::VSync, 0.0);
+    choices.put(scene::GraphicsSetting::MaxFrameRate, 144.0);
+    choices.put(scene::GraphicsSetting::RenderScale, 0.75);
+    choices.put(scene::GraphicsSetting::WindowMode, 2.0);
+    REQUIRE(app::writePlayerGraphics(file, choices));
+
+    scene::GraphicsLayer read;
+    std::vector<std::string> refused;
+    REQUIRE(app::readPlayerGraphics(file, read, &refused));
+    CHECK(refused.empty());
+    CHECK(read.said == choices.said);
+    CHECK(read.at(scene::GraphicsSetting::RenderScale) == doctest::Approx(0.75));
+    CHECK(read.at(scene::GraphicsSetting::MaxFrameRate) == doctest::Approx(144.0));
+    CHECK(read.at(scene::GraphicsSetting::VSync) == doctest::Approx(0.0));
+
+    // Only what was chosen is in the file.
+    std::string text;
+    {
+        std::ifstream in(file, std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    CHECK(text.find("\"VSync\": false") != std::string::npos);
+    CHECK(text.find("ShadowDistance") == std::string::npos);
+
+    // A hand-edited file: a setting of another build, a value of the wrong
+    // kind, a choice that is not one, a level nobody may choose. Each is left
+    // out and named; the rest is taken.
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "{\"version\": 1, \"settings\": {\"VSync\": false, \"Teleport\": 3, \"Bloom\": 1, "
+               "\"WindowMode\": 9, \"QualityLevel\": 4, \"MaxFrameRate\": 59.5, \"ShadowDistance\": 5000}}";
+    }
+    refused.clear();
+    REQUIRE(app::readPlayerGraphics(file, read, &refused));
+    CHECK(read.says(scene::GraphicsSetting::VSync));
+    CHECK_FALSE(read.says(scene::GraphicsSetting::Bloom));
+    CHECK_FALSE(read.says(scene::GraphicsSetting::WindowMode));
+    CHECK_FALSE(read.says(scene::GraphicsSetting::QualityLevel));
+    CHECK_FALSE(read.says(scene::GraphicsSetting::MaxFrameRate));
+    // In range after all: clamped, as a script's write is.
+    CHECK(read.at(scene::GraphicsSetting::ShadowDistance) == doctest::Approx(1000.0));
+    CHECK(refused.size() == 5);
+
+    // No file, and a file that is not one: nothing read, nothing changed.
+    CHECK_FALSE(app::readPlayerGraphics(folder / "absent.json", read));
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << "not json";
+    }
+    CHECK_FALSE(app::readPlayerGraphics(file, read));
+    CHECK(read.said.none());
+
+    std::error_code ignored;
+    std::filesystem::remove_all(folder, ignored);
 }

@@ -50,11 +50,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## G1 — the model (§1–2)
 
-- [ ] The five layers, one effective-settings structure read by the renderer
-  and the window; every §2 setting wired, the new ones (`ViewDistance`,
-  `TerrainDetail`, `FoliageDensity`, `TextureQuality`, `ShadowQuality` as a
-  level, window mode, monitor, brightness) included.
-- [ ] Changes that rebuild GPU resources batched and budgeted.
+- [x] The layers, one effective-settings structure read by the renderer and
+  the window: `scene::GraphicsModel`, resolving to exactly what the project's
+  file resolved to before. Wired: `TerrainDetail`, `FoliageDensity`,
+  `ShadowQuality` as a level, window mode, monitor, resolution.
+- [ ] `ViewDistance`, `TextureQuality` and `Brightness` are kept and not drawn
+  by yet (with the settings whose features do not exist): the first waits on
+  the far plane's fade below, the second on a sampler bias the RHI has no word
+  for, the third on a term in the final resolve.
+- [x] Changes batched: applied once a frame, whole.
+- [ ] And budgeted: a change of shadow resolution reallocates the atlas in the
+  frame it lands in.
 - [ ] **The far plane's cut is never seen** (from the terrain-editing
   ledger's P5, with `ViewDistance`): what is drawn fades into what is behind
   it over the last tenth before the plane -- in the terrain's and the parts'
@@ -69,15 +75,19 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## G2 — the script API (§3)
 
-- [ ] `GraphicsService`, client-side; properties, signals, `ApplyPreset`,
-  `ResetToDefaults`, `GetSource`, `GetSupportedResolutions`, `GetMonitors`,
-  `GetRefreshRate`; conformance specs per property.
+- [x] `GraphicsService`, client-side; properties, `QualityChanged`,
+  `ApplyPreset`, `ResetToDefaults`, `GetSource`, `IsApplied`, `GetGroupLevel`,
+  `SetGroupLevel`, `GetSupportedResolutions`, `GetMonitors`, `GetRefreshRate`;
+  `graphics.spec.luau`, and `graphics_runtime_differential` -- a level set by
+  a script at run time is, to the pixel, a game started at that level.
 
 ## G3 — saved per player, and Auto (§4–5)
 
-- [ ] `SaveAsync`/`LoadAsync`, `settings.json` in the player's folder, loaded
-  before the first frame; `remember_player_settings`; fallback for unsupported.
-- [ ] `Auto`: the first-start probe, cached; the picked preset saved.
+- [x] `SaveAsync`/`LoadAsync`, `settings.json` in the player's folder, loaded
+  before the window is made; `remember_player_settings`; a setting this build
+  or this machine cannot use is left out and logged.
+- [ ] `Auto`: the first-start probe, cached; the picked preset saved. Until
+  then `Auto` is the machine's own starting level.
 
 ## G4 — the editor (§6)
 
@@ -111,3 +121,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   holds it. `SyncWatch` is the answer that does not need to know: thirty frames
   in a row faster than the display could have let through, and the refresh is
   the cap.
+- **G1: the order of two layers is the other way round from the ADR's
+  list.** A script's write is over the player's saved choice: a menu whose
+  change waited under the saved value until it was saved would do nothing.
+- **G1: a level had no foliage in it**, so the Foliage group's four levels
+  were one. Low and medium now draw half and three quarters of it -- which
+  changes what a handheld draws, since it starts at medium.
+- **G2: a script's first line ran before the frame had given the world its
+  layers**, and read a model with no levels in it: `ShadowDistance` was the
+  engine's default with nobody's name on it. The world is given the layers
+  when it is made; the conformance spec found it.
+- **G2: `renderer->setSettings` at run time is exact.** The renderer sizes its
+  targets from its settings each frame, so nothing had to be taught to
+  rebuild: 0 differing pixels against a run started at the level.

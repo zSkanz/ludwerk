@@ -1,5 +1,7 @@
 #include "engine/app/project_config.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <span>
@@ -17,6 +19,7 @@ using core::f32;
 using core::f64;
 using core::i32;
 using core::u32;
+using core::usize;
 using render::GraphicsSettings;
 
 [[nodiscard]] bool readFile(const std::filesystem::path& path, std::string& out)
@@ -156,7 +159,266 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
     }
 }
 
+// --- The same, as a model's layers (ADR 0147) ----------------------------------
+
+using scene::GraphicsLayer;
+using scene::GraphicsSetting;
+
+// A value as its setting holds it: inside the setting's range.
+void say(GraphicsLayer& layer, GraphicsSetting setting, f64 value)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    layer.put(setting, std::clamp(value, info.lowest, info.highest));
+}
+
+// Everything a `GraphicsSettings` holds, said to a layer.
+void saySettings(GraphicsLayer& layer, const GraphicsSettings& settings)
+{
+    say(layer, GraphicsSetting::RenderScale, static_cast<f64>(settings.renderScale));
+    say(layer, GraphicsSetting::ShadowResolution, static_cast<f64>(settings.shadowTileResolution));
+    say(layer, GraphicsSetting::ShadowCascades, static_cast<f64>(settings.shadowCascades));
+    say(layer, GraphicsSetting::ShadowDistance, static_cast<f64>(settings.shadowDistance));
+    say(layer, GraphicsSetting::LightBudget, static_cast<f64>(settings.lightBudget));
+    say(layer, GraphicsSetting::Bloom, settings.bloom ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::AmbientOcclusion, settings.ambientOcclusion ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::ContactShadows, settings.contactShadows ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::AntiAliasing, settings.antiAliasing ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::AutoExposure, settings.autoExposure ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::DepthOfField, settings.depthOfField ? 1.0 : 0.0);
+    say(layer, GraphicsSetting::SunRays, settings.sunRays ? 1.0 : 0.0);
+    // The ground's detail is a scale on `High`'s two pixels a cell.
+    say(layer, GraphicsSetting::TerrainDetail, 2.0 / static_cast<f64>(settings.terrainPixelError));
+    say(layer, GraphicsSetting::RenderResolutionCap, static_cast<f64>(settings.renderResolutionCap));
+}
+
+// What each level gives the settings the renderer has no number for yet, and
+// the two it has that a preset never varied.
+struct LevelExtras
+{
+    f64 foliageDensity;
+    f64 textureQuality;
+    f64 anisotropicFiltering;
+    f64 lodBias;
+    f64 maximumLodLevel;
+    f64 particleBudget;
+    f64 softParticles;
+    f64 skinWeights;
+    f64 level;
+};
+constexpr std::array<LevelExtras, scene::kQualityPresets> Extras{{
+    {0.5, 0.0, 2.0, 0.5, 1.0, 16384.0, 0.0, 2.0, 0.0},
+    {0.75, 1.0, 4.0, 0.75, 0.0, 32768.0, 1.0, 4.0, 1.0},
+    {1.0, 2.0, 8.0, 1.0, 0.0, 65536.0, 1.0, 4.0, 2.0},
+    {1.0, 2.0, 16.0, 1.5, 0.0, 131072.0, 1.0, 4.0, 3.0},
+}};
+
+void seedPresets(scene::GraphicsModel& model, bool handheld)
+{
+    for (usize index = 0; index < scene::kQualityPresets; ++index) {
+        GraphicsLayer& layer = model.presets[index];
+        layer = GraphicsLayer{};
+        saySettings(layer, render::clampSettings(presetFor(static_cast<render::QualityLevel>(index), handheld)));
+        const LevelExtras& extras = Extras[index];
+        // A shadow quality is one past the level: zero is off.
+        say(layer, GraphicsSetting::ShadowQuality, static_cast<f64>(index) + 1.0);
+        say(layer, GraphicsSetting::FoliageDensity, extras.foliageDensity);
+        say(layer, GraphicsSetting::TextureQuality, extras.textureQuality);
+        say(layer, GraphicsSetting::AnisotropicFiltering, extras.anisotropicFiltering);
+        say(layer, GraphicsSetting::LODBias, extras.lodBias);
+        say(layer, GraphicsSetting::MaximumLODLevel, extras.maximumLodLevel);
+        say(layer, GraphicsSetting::ParticleBudget, extras.particleBudget);
+        say(layer, GraphicsSetting::SoftParticles, extras.softParticles);
+        say(layer, GraphicsSetting::SkinWeights, extras.skinWeights);
+        say(layer, GraphicsSetting::FogQuality, extras.level);
+        say(layer, GraphicsSetting::GlobalIllumination, extras.level);
+        say(layer, GraphicsSetting::Reflections, extras.level);
+    }
+    model.defaultLevel = static_cast<core::i32>(render::defaultQuality(handheld));
+    model.autoLevel = model.defaultLevel;
+}
+
+void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overrides)
+{
+    GraphicsLayer& layer = model.commandLine;
+    layer = GraphicsLayer{};
+    if (overrides.quality)
+        say(layer, GraphicsSetting::QualityLevel, static_cast<f64>(*overrides.quality));
+    if (overrides.renderScale)
+        say(layer, GraphicsSetting::RenderScale, static_cast<f64>(*overrides.renderScale));
+    if (overrides.shadowResolution)
+        say(layer, GraphicsSetting::ShadowResolution, static_cast<f64>(*overrides.shadowResolution));
+    if (overrides.shadowCascades)
+        say(layer, GraphicsSetting::ShadowCascades, static_cast<f64>(*overrides.shadowCascades));
+    if (overrides.shadowDistance)
+        say(layer, GraphicsSetting::ShadowDistance, static_cast<f64>(*overrides.shadowDistance));
+    if (overrides.lightBudget)
+        say(layer, GraphicsSetting::LightBudget, static_cast<f64>(*overrides.lightBudget));
+    if (overrides.bloom)
+        say(layer, GraphicsSetting::Bloom, *overrides.bloom ? 1.0 : 0.0);
+    if (overrides.ambientOcclusion)
+        say(layer, GraphicsSetting::AmbientOcclusion, *overrides.ambientOcclusion ? 1.0 : 0.0);
+    if (overrides.antiAliasing)
+        say(layer, GraphicsSetting::AntiAliasing, *overrides.antiAliasing ? 1.0 : 0.0);
+    if (overrides.autoExposure)
+        say(layer, GraphicsSetting::AutoExposure, *overrides.autoExposure ? 1.0 : 0.0);
+    if (overrides.contactShadows)
+        say(layer, GraphicsSetting::ContactShadows, *overrides.contactShadows ? 1.0 : 0.0);
+    if (overrides.vsync)
+        say(layer, GraphicsSetting::VSync, *overrides.vsync ? 1.0 : 0.0);
+    if (overrides.maxFrameRate)
+        say(layer, GraphicsSetting::MaxFrameRate, static_cast<f64>(*overrides.maxFrameRate));
+    if (overrides.backgroundFrameRate)
+        say(layer, GraphicsSetting::BackgroundFrameRate, static_cast<f64>(*overrides.backgroundFrameRate));
+}
+
+// A setting's key in `project.toml`: its name in snake case, a run of capitals
+// one word -- `MaximumLODLevel` is `maximum_lod_level`.
+[[nodiscard]] std::string keyOf(std::string_view name)
+{
+    std::string key;
+    for (usize index = 0; index < name.size(); ++index) {
+        const char c = name[index];
+        const bool upper = c >= 'A' && c <= 'Z';
+        if (upper && index > 0) {
+            const bool previousLower = name[index - 1] >= 'a' && name[index - 1] <= 'z';
+            const bool nextLower = index + 1 < name.size() && name[index + 1] >= 'a' && name[index + 1] <= 'z';
+            const bool previousUpper = name[index - 1] >= 'A' && name[index - 1] <= 'Z';
+            if (previousLower || (previousUpper && nextLower))
+                key += '_';
+        }
+        key += upper ? static_cast<char>(c - 'A' + 'a') : c;
+    }
+    return key;
+}
+
+// The items of the enums a setting is one of, lowercase, as a file names them.
+[[nodiscard]] std::span<const std::string_view> choicesOf(GraphicsSetting setting) noexcept
+{
+    static constexpr std::array<std::string_view, 5> Shadow{"off", "low", "medium", "high", "ultra"};
+    static constexpr std::array<std::string_view, 2> Smoothing{"off", "fxaa"};
+    static constexpr std::array<std::string_view, 3> Texture{"low", "medium", "high"};
+    static constexpr std::array<std::string_view, 3> Window{"windowed", "borderless", "fullscreen"};
+    static constexpr std::array<std::string_view, 5> Level{"low", "medium", "high", "ultra", "cinematic"};
+    switch (setting) {
+    case GraphicsSetting::ShadowQuality:
+        return Shadow;
+    case GraphicsSetting::AntiAliasing:
+        return Smoothing;
+    case GraphicsSetting::TextureQuality:
+        return Texture;
+    case GraphicsSetting::WindowMode:
+        return Window;
+    case GraphicsSetting::FogQuality:
+    case GraphicsSetting::GlobalIllumination:
+    case GraphicsSetting::Reflections:
+        return Level;
+    default:
+        return {};
+    }
+}
+
+// What a table of the file says about one setting, as the setting's value.
+[[nodiscard]] std::optional<f64> fileValue(const core::TomlDocument& document, const std::string& key,
+                                           GraphicsSetting setting)
+{
+    const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+    if (info.kind == scene::GraphicsValueKind::Flag) {
+        if (const std::optional<bool> value = document.boolean(key))
+            return *value ? 1.0 : 0.0;
+        return std::nullopt;
+    }
+    if (info.kind == scene::GraphicsValueKind::Choice) {
+        // By name; and a switch where the choice is off or the first way on,
+        // which is how `anti_aliasing = true` has always been written.
+        if (const std::optional<std::string_view> named = document.string(key)) {
+            const std::span<const std::string_view> names = choicesOf(setting);
+            for (usize index = 0; index < names.size(); ++index) {
+                if (names[index] == *named)
+                    return static_cast<f64>(index);
+            }
+            return std::nullopt;
+        }
+        if (const std::optional<bool> value = document.boolean(key))
+            return *value ? 1.0 : 0.0;
+        return std::nullopt;
+    }
+    const std::optional<f64> value = document.number(key);
+    if (!value.has_value() || !std::isfinite(*value))
+        return std::nullopt;
+    return value;
+}
+
+// One table of the file -- `graphics`, a platform's own, or `display` -- into
+// the project's layer: the quality settings from the first two, the display's
+// from the third.
+void sayTable(const core::TomlDocument& document, std::string_view table, bool display, GraphicsLayer& layer)
+{
+    for (usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
+        const auto setting = static_cast<GraphicsSetting>(index);
+        const scene::GraphicsSettingInfo& info = scene::graphicsSettingInfo(setting);
+        if (info.quality == display || setting == GraphicsSetting::QualityLevel ||
+            setting == GraphicsSetting::ResolutionWidth || setting == GraphicsSetting::ResolutionHeight)
+            continue;
+        std::string key(table);
+        key += '.';
+        // Three keys are older than the rule.
+        if (setting == GraphicsSetting::VSync)
+            key += "vsync";
+        else if (setting == GraphicsSetting::RenderResolutionCap)
+            key += "render_cap";
+        else
+            key += keyOf(info.name);
+        if (const std::optional<f64> value = fileValue(document, key, setting))
+            say(layer, setting, *value);
+    }
+}
+
 } // namespace
+
+void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& overrides, bool handheld)
+{
+    seedPresets(model, handheld);
+    seedCommandLine(model, overrides);
+}
+
+render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, bool handheld,
+                                            const render::GraphicsSettings* instruments)
+{
+    GraphicsSettings settings = presetFor(static_cast<render::QualityLevel>(model.preset()), handheld);
+    const auto value = [&model](GraphicsSetting setting) { return model.effective(setting); };
+    settings.renderScale = static_cast<f32>(value(GraphicsSetting::RenderScale));
+    settings.shadowTileResolution = static_cast<u32>(value(GraphicsSetting::ShadowResolution));
+    settings.shadowCascades = static_cast<u32>(value(GraphicsSetting::ShadowCascades));
+    settings.shadowDistance = static_cast<f32>(value(GraphicsSetting::ShadowDistance));
+    settings.lightBudget = static_cast<u32>(value(GraphicsSetting::LightBudget));
+    settings.bloom = value(GraphicsSetting::Bloom) != 0.0;
+    settings.ambientOcclusion = value(GraphicsSetting::AmbientOcclusion) != 0.0;
+    settings.contactShadows = value(GraphicsSetting::ContactShadows) != 0.0;
+    settings.antiAliasing = value(GraphicsSetting::AntiAliasing) != 0.0;
+    settings.autoExposure = value(GraphicsSetting::AutoExposure) != 0.0;
+    settings.depthOfField = value(GraphicsSetting::DepthOfField) != 0.0;
+    settings.sunRays = value(GraphicsSetting::SunRays) != 0.0;
+    settings.terrainPixelError = static_cast<f32>(2.0 / value(GraphicsSetting::TerrainDetail));
+    settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
+    if (instruments != nullptr) {
+        GraphicsOverrides carried;
+        if (!instruments->forcedSurface.empty())
+            carried.forcedSurface = instruments->forcedSurface;
+        if (instruments->debugView != render::DebugView::None)
+            carried.debugView = instruments->debugView;
+        applyOverrides(carried, settings);
+    }
+    return render::clampSettings(settings);
+}
+
+FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld) noexcept
+{
+    FramePacing pacing;
+    pacing.vsync = handheld || model.effective(GraphicsSetting::VSync) != 0.0;
+    pacing.maxFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::MaxFrameRate));
+    pacing.backgroundFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::BackgroundFrameRate));
+    return pacing;
+}
 
 render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides, bool handheld)
 {
@@ -202,6 +464,7 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
                                 std::string* diagnostic, bool handheld)
 {
     ProjectConfig config;
+    seedGraphicsModel(config.graphicsModel, overrides, handheld);
 
     std::string text;
     if (projectRoot.empty() || !readFile(projectRoot / "project.toml", text)) {
@@ -340,6 +603,30 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     }
     applyOverrides(overrides, config.graphics);
     config.graphics = render::clampSettings(config.graphics);
+
+    // **The same, as the project's layer of the model** (ADR 0147): the level
+    // the file names and each key it gives -- its refinements left out under a
+    // command line's level, by the rule above -- and what `[display]` says.
+    {
+        GraphicsLayer& layer = config.graphicsModel.project;
+        if (document.string("graphics.quality").has_value() || document.string(platformQuality).has_value())
+            say(layer, GraphicsSetting::QualityLevel, static_cast<f64>(level));
+        if (!overrides.quality) {
+            sayTable(document, "graphics", false, layer);
+            sayTable(document, platform, false, layer);
+        }
+        sayTable(document, "display", true, layer);
+        // `[window] fullscreen` is the whole display as a window: borderless.
+        if (config.fullscreen && !layer.says(GraphicsSetting::WindowMode))
+            say(layer, GraphicsSetting::WindowMode, 1.0);
+        const std::span<const f64> resolution = document.numbers("display.resolution");
+        if (resolution.size() == 2 && side(resolution[0]) && side(resolution[1])) {
+            say(layer, GraphicsSetting::ResolutionWidth, std::floor(resolution[0]));
+            say(layer, GraphicsSetting::ResolutionHeight, std::floor(resolution[1]));
+        }
+        if (const std::optional<bool> value = document.boolean("display.remember_player_settings"))
+            config.rememberPlayerSettings = *value;
+    }
     return config;
 }
 

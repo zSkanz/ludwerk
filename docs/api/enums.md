@@ -36,6 +36,15 @@ How a `Material` reads the alpha channel of its colour. glTF's three modes, kept
 | `Mask` | 1 | Alpha is a coverage TEST against `AlphaCutoff`, not a blend: a pixel is drawn or it is not. Leaves and chain-link fences want this -- it stays in the opaque pass, so it writes depth and needs no sorting. |
 | `Blend` | 2 | Alpha blends. Glass and smoke want this, and it costs what every transparent surface costs: a sorted pass and no depth writes. |
 
+## Enum.AntiAliasingMode
+
+How edges are smoothed.
+
+| Item | Value | Description |
+|---|---|---|
+| `Off` | 0 | Not at all. |
+| `FXAA` | 1 | A pass over the finished picture. |
+
 ## Enum.ApplyStrokeMode
 
 What a `UIStroke` outlines.
@@ -237,6 +246,48 @@ The shape of a `UIGradient`.
 | `Linear` | 0 | Across the element, in the direction `Rotation` points; `Offset` moves where it is centred. |
 | `Radial` | 1 | Out from the element's centre (plus `Offset`) to a radius of (width + height) / 4. `Rotation` does nothing. |
 | `Conical` | 2 | Clockwise round the element's centre (plus `Offset`), a whole turn, starting where `Rotation` points. |
+
+## Enum.GraphicsGroup
+
+The coarse groups a player's options menu shows, each set to a level at once.
+
+| Item | Value | Description |
+|---|---|---|
+| `ViewDistance` | 0 | How far things are drawn and how fine distant ground is. |
+| `AntiAliasing` | 1 | How edges are smoothed. |
+| `PostProcessing` | 2 | Bloom, depth of field, sun rays, automatic exposure, motion blur. |
+| `Shadows` | 3 | Their resolution, cascades, distance and the contact shadows. |
+| `GlobalIllumination` | 4 | Ambient occlusion now; indirect light when it lands. |
+| `Reflections` | 5 | Reflection quality, when reflections land. |
+| `Textures` | 6 | Texture size, filtering and streaming. |
+| `Effects` | 7 | Particles. |
+| `Foliage` | 8 | How dense grown foliage is. |
+| `Shading` | 9 | How many lights a frame carries, and shading detail. |
+
+## Enum.GraphicsLevel
+
+How far one group of graphics settings is turned up.
+
+| Item | Value | Description |
+|---|---|---|
+| `Low` | 0 | The least. |
+| `Medium` | 1 | A step up. |
+| `High` | 2 | The default. |
+| `Ultra` | 3 | The most. |
+| `Cinematic` | 4 | For a recorded shot rather than a played frame. `Ultra`, until something is finer. |
+
+## Enum.GraphicsQuality
+
+A quality level of `GraphicsService` (ADR 0147): a preset, or one of the two readings that are not one.
+
+| Item | Value | Description |
+|---|---|---|
+| `Low` | 0 | The least: three quarters of the resolution, short soft shadows, no bloom or occlusion. |
+| `Medium` | 1 | What a handheld starts at. |
+| `High` | 2 | What a desktop starts at, and what every reference picture of the engine is drawn at. |
+| `Ultra` | 3 | The most the renderer has. |
+| `Custom` | 4 | What `QualityLevel` reads as when any quality setting is not the preset's. Never written. |
+| `Auto` | 5 | The preset this machine was measured for. |
 
 ## Enum.HighlightDepthMode
 
@@ -690,6 +741,31 @@ Which ways up a game may be held, on a device that turns (`UIService.ScreenOrien
 | `Portrait` | 3 | Upright. |
 | `Sensor` | 4 | Any way up, following the device -- and the player's own rotation lock. |
 
+## Enum.SettingSource
+
+Who said a graphics setting's value (`GraphicsService:GetSource`).
+
+| Item | Value | Description |
+|---|---|---|
+| `CommandLine` | 0 | A flag the game was started with. Nothing a script or a player says changes it. |
+| `Player` | 1 | The player's saved choice. |
+| `Script` | 2 | A script wrote it this session, and it has not been saved. |
+| `Project` | 3 | The game's own `project.toml`. |
+| `Preset` | 4 | The quality level in force. |
+| `Engine` | 5 | Nobody: the engine's default. |
+
+## Enum.ShadowQuality
+
+How good the sun's shadow is: its resolution and how many cascades it is cast into.
+
+| Item | Value | Description |
+|---|---|---|
+| `Off` | 0 | No sun shadow. |
+| `Low` | 1 | 512 texels, two cascades. |
+| `Medium` | 2 | 1024 texels, three cascades. |
+| `High` | 3 | 2048 texels, four cascades. |
+| `Ultra` | 4 | The same map, cast further. |
+
 ## Enum.Shape2D
 
 The outline a `Part2D` is drawn and collides as (the 2D layer, phase 3).
@@ -792,6 +868,16 @@ How a `Beam`'s or a `Trail`'s texture is laid along it.
 | `Stretch` | 0 | Once over the whole length, however long that is. |
 | `Wrap` | 1 | Repeated every `TextureLength` metres, measured from the start: on a trail the picture slides along as the trail moves. |
 | `Static` | 2 | Repeated every `TextureLength` metres and fixed where it was laid: a trail's picture stays on the ground it was drawn over, as a tyre mark does. A beam's does not run. |
+
+## Enum.TextureQuality
+
+How much of a texture is kept in memory.
+
+| Item | Value | Description |
+|---|---|---|
+| `Low` | 0 | A quarter of each side. |
+| `Medium` | 1 | Half. |
+| `High` | 2 | All of it. |
 
 ## Enum.UIDragDetectorDragStyle
 
@@ -911,3 +997,13 @@ Where a `Water` is (ADR 0118).
 | `Lake` | 3 | The area inside the closed curve through its `WaterPoint` children, level at `SurfaceLevel` (ADR 0146). It needs three points. |
 | `River` | 4 | A ribbon along the curve through its `WaterPoint` children, first to last (ADR 0146). Each point's height is the surface's there, so a river descends; its `Width` and `Depth` are the river's there. |
 | `Pool` | 5 | A rectangle: `Size` across, centred on `Position`. |
+
+## Enum.WindowMode
+
+How a game's window sits on the display.
+
+| Item | Value | Description |
+|---|---|---|
+| `Windowed` | 0 | A window, with its border. |
+| `Borderless` | 1 | The whole display, as a window with no border: other windows are a key away. |
+| `Fullscreen` | 2 | The whole display, the game's alone. |

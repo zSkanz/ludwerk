@@ -27,6 +27,7 @@ guided tour.
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | What a game keeps a secret with, and tells one player from another by (ADR 0151): chance that nobody can predict, two hashes, and a hash meant for passwords. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | The debug overlay and the engine's own instrumentation. |
 | [`GlobalScriptService`](globalscriptservice.md) | [`Instance`](instance.md) | The game's code, for every scene (ADR 0105). |
+| [`GraphicsService`](graphicsservice.md) | [`Instance`](instance.md) | The machine's graphics and display settings (ADR 0147): how good the picture is, how the window sits on the display and how fast frames are made. |
 | [`HapticService`](hapticservice.md) | [`Instance`](instance.md) | What a player feels in their hands (ADR 0131): a gamepad's motors, and a phone's own vibration. |
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | The hot-reload loop as a script can see it (ADR 0024). |
 | [`InputService`](inputservice.md) | [`Instance`](instance.md) | The host of the Input Action System (§2.4, ADR 0029) and the only place device-wide state is readable. |

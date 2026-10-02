@@ -240,6 +240,30 @@ end
 declare extern type EnumUIDragDetectorResponseStyle extends EnumItem with
 end
 
+declare extern type EnumGraphicsQuality extends EnumItem with
+end
+
+declare extern type EnumGraphicsLevel extends EnumItem with
+end
+
+declare extern type EnumGraphicsGroup extends EnumItem with
+end
+
+declare extern type EnumShadowQuality extends EnumItem with
+end
+
+declare extern type EnumAntiAliasingMode extends EnumItem with
+end
+
+declare extern type EnumTextureQuality extends EnumItem with
+end
+
+declare extern type EnumWindowMode extends EnumItem with
+end
+
+declare extern type EnumSettingSource extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -3656,6 +3680,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
+    function GetService(self, name: "GraphicsService"): GraphicsService
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CryptoService"): CryptoService
     function GetService(self, name: "TeamService"): TeamService
@@ -3855,6 +3880,147 @@ declare extern type SaveService extends Instance with
     function ListSlots(self): { string }
     --- Removes a slot and its backup. A `SaveSlot` already handed out is emptied.
     function DeleteSlot(self, name: string): ()
+end
+
+declare extern type GraphicsService extends Instance with
+    --- The quality level. Writing one is `ApplyPreset`: every quality setting becomes that level's. It
+    --- reads `Custom` when any of them is not the level's -- a script, the player or the project said
+    --- otherwise -- and `Custom` cannot be written.
+    QualityLevel: EnumGraphicsQuality
+    --- The fraction of the window's resolution the world is drawn at, 0.5 to 1. The interface is drawn
+    --- at the window's own, whatever this is.
+    RenderScale: number
+    --- The sun's shadow, as a level. Writing one writes `ShadowResolution` and `ShadowCascades` as that
+    --- level has them; `Off` is no cascades.
+    ShadowQuality: EnumShadowQuality
+    --- One shadow cascade's side in texels, 256 to 2048, rounded down to a power of two.
+    ShadowResolution: number
+    --- How many cascades the sun casts into, 0 to 4. Zero is no sun shadow.
+    ShadowCascades: number
+    --- How far from the camera the sun casts, in metres, 10 to 1000.
+    ShadowDistance: number
+    --- How edges are smoothed.
+    AntiAliasing: EnumAntiAliasingMode
+    --- Whether creases and corners are darkened.
+    AmbientOcclusion: boolean
+    --- Whether the sun's shadow is drawn right up to what casts it.
+    ContactShadows: boolean
+    --- Whether bright things glow.
+    Bloom: boolean
+    --- Whether a world's `DepthOfFieldEffect` is drawn. The machine wins over the world: off, a scene
+    --- that asks for focus is sharp.
+    DepthOfField: boolean
+    --- Whether a world's `SunRaysEffect` is drawn, by the same rule.
+    SunRays: boolean
+    --- Whether the picture's brightness follows the scene. Off, the exposure is held.
+    AutoExposure: boolean
+    --- How many lights one frame may carry.
+    LightBudget: number
+    --- How fine distant ground is, as a scale on the level's own: 2 refines it at twice the distance,
+    --- 0.5 at half.
+    TerrainDetail: number
+    --- How much of the foliage a `FoliageLayer` grows is drawn, 0 to 1, over the project's own density.
+    FoliageDensity: number
+    --- A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn by
+    --- yet**: it applies when that part of the renderer lands.
+    ViewDistance: number
+    --- How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it applies
+    --- when that part of the renderer lands.
+    TextureQuality: EnumTextureQuality
+    --- How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not drawn
+    --- by yet**: it applies when that part of the renderer lands.
+    AnisotropicFiltering: number
+    --- A scale on the distance a mesh's levels of detail change at. **Kept, saved and reported, and not
+    --- drawn by yet**: it applies when that part of the renderer lands.
+    LODBias: number
+    --- The finest level of detail a mesh may be drawn at; 0 is its finest. **Kept, saved and reported,
+    --- and not drawn by yet**: it applies when that part of the renderer lands.
+    MaximumLODLevel: number
+    --- The most particles alive at once. **Kept, saved and reported, and not drawn by yet**: it applies
+    --- when that part of the renderer lands.
+    ParticleBudget: number
+    --- Whether particles fade where they meet a surface. **Kept, saved and reported, and not drawn by
+    --- yet**: it applies when that part of the renderer lands.
+    SoftParticles: boolean
+    --- How many bones may move one vertex, 1 to 4. **Kept, saved and reported, and not drawn by yet**:
+    --- it applies when that part of the renderer lands.
+    SkinWeights: number
+    --- The memory textures may keep resident, in mebibytes; 0 is no limit. **Kept, saved and reported,
+    --- and not drawn by yet**: it applies when that part of the renderer lands.
+    TextureStreamingBudget: number
+    --- The milliseconds a frame may spend sending data to the GPU. **Kept, saved and reported, and not
+    --- drawn by yet**: it applies when that part of the renderer lands.
+    AsyncUploadBudget: number
+    --- Whether motion is blurred. **Kept, saved and reported, and not drawn by yet**: it applies when
+    --- that part of the renderer lands.
+    MotionBlur: boolean
+    --- How fog is drawn. **Kept, saved and reported, and not drawn by yet**: it applies when that part
+    --- of the renderer lands.
+    FogQuality: EnumGraphicsLevel
+    --- Indirect light. **Kept, saved and reported, and not drawn by yet**: it applies when that part of
+    --- the renderer lands.
+    GlobalIllumination: EnumGraphicsLevel
+    --- Reflections. **Kept, saved and reported, and not drawn by yet**: it applies when that part of
+    --- the renderer lands.
+    Reflections: EnumGraphicsLevel
+    --- The most pixels the world's shorter side is drawn at; 0 is no limit. A handheld's levels set it:
+    --- a phone's display has more pixels than an eye resolves or a battery pays for.
+    RenderResolutionCap: number
+    --- How the window sits on the display. A handheld has the whole display whatever this says.
+    WindowMode: EnumWindowMode
+    --- The window's size in pixels when it is windowed, and the display mode when it is fullscreen.
+    --- Zero is "the project's window size", or the display's own when fullscreen.
+    Resolution: Vector2
+    --- Which display the window is on, as an index into `GetMonitors()`.
+    Monitor: number
+    --- Whether a frame waits for the display. On by default; a handheld is always on.
+    VSync: boolean
+    --- The most frames a second; 0 is no cap. With `VSync` off it is the only limit, and with it on it
+    --- caps below the display's rate.
+    MaxFrameRate: number
+    --- The cap while the window is not in front or is minimised; 0 is no throttle.
+    BackgroundFrameRate: number
+    --- An offset on the picture's gamma, -1 to 1. **Kept, saved and reported, and not drawn by yet**:
+    --- it applies when that part of the renderer lands.
+    Brightness: number
+    --- The quality level or any quality setting changed, whoever changed it. Once a frame at most.
+    read QualityChanged: Signal<()>
+    --- Makes every quality setting what `level` has, whatever a script, the player or the project said
+    --- before. `Auto` is the level this machine was measured for; `Custom` is refused. The display
+    --- settings -- the window, `VSync`, the frame caps -- are not part of a level and stay.
+    function ApplyPreset(self, level: EnumGraphicsQuality): ()
+    --- Forgets what a script wrote and what the player saved, so the project's defaults stand. The
+    --- player's file is not touched until `SaveAsync`.
+    function ResetToDefaults(self): ()
+    --- Who said the value of the setting named `setting` -- a property's name, as `"VSync"`. A name
+    --- that is no setting raises.
+    function GetSource(self, setting: string): EnumSettingSource
+    --- Whether anything draws by the setting named `setting` yet. A few are kept, saved and reported
+    --- ahead of the renderer that reads them, so a menu does not change shape; a menu can leave those
+    --- out, or grey them, by asking.
+    function IsApplied(self, setting: string): boolean
+    --- The level a group is at: the one whose values every setting of the group has. Nil when they are
+    --- no one level's -- somebody set one by itself.
+    function GetGroupLevel(self, group: EnumGraphicsGroup): EnumGraphicsLevel?
+    --- Sets every setting of `group` to what `level` has.
+    function SetGroupLevel(self, group: EnumGraphicsGroup, level: EnumGraphicsLevel): ()
+    --- The fullscreen sizes the window's display offers, largest first. Empty where there is no display
+    --- to ask.
+    function GetSupportedResolutions(self): { Vector2 }
+    --- The displays, in the order `Monitor` counts them.
+    function GetMonitors(self): { { Name: string, Size: Vector2, RefreshRate: number } }
+    --- The rate of the display the window is on, in hertz; 0 when it will not say.
+    function GetRefreshRate(self): number
+    --- Keeps the player's choices -- what was saved before, under what a script has written since -- in
+    --- their own folder, as `settings.json`. Yields until the file is written, at the end of the frame,
+    --- and returns whether it was; from then on `GetSource` says `Player` for them. False where there
+    --- is nowhere to write: a game that turned `[display] remember_player_settings` off, or a run with
+    --- no folder of its own.
+    function SaveAsync(self): boolean
+    --- Reads the player's saved choices again, and forgets what a script wrote since: what a menu's
+    --- Revert does. Yields until it is done, at the end of the frame, and returns whether there was a
+    --- file to read.
+    function LoadAsync(self): boolean
 end
 
 declare extern type HapticService extends Instance with
@@ -5280,6 +5446,70 @@ declare Enum: {
         CustomOffset: EnumUIDragDetectorResponseStyle,
         CustomScale: EnumUIDragDetectorResponseStyle,
         GetEnumItems: (self: any) -> { EnumUIDragDetectorResponseStyle },
+    },
+    GraphicsQuality: {
+        Low: EnumGraphicsQuality,
+        Medium: EnumGraphicsQuality,
+        High: EnumGraphicsQuality,
+        Ultra: EnumGraphicsQuality,
+        Custom: EnumGraphicsQuality,
+        Auto: EnumGraphicsQuality,
+        GetEnumItems: (self: any) -> { EnumGraphicsQuality },
+    },
+    GraphicsLevel: {
+        Low: EnumGraphicsLevel,
+        Medium: EnumGraphicsLevel,
+        High: EnumGraphicsLevel,
+        Ultra: EnumGraphicsLevel,
+        Cinematic: EnumGraphicsLevel,
+        GetEnumItems: (self: any) -> { EnumGraphicsLevel },
+    },
+    GraphicsGroup: {
+        ViewDistance: EnumGraphicsGroup,
+        AntiAliasing: EnumGraphicsGroup,
+        PostProcessing: EnumGraphicsGroup,
+        Shadows: EnumGraphicsGroup,
+        GlobalIllumination: EnumGraphicsGroup,
+        Reflections: EnumGraphicsGroup,
+        Textures: EnumGraphicsGroup,
+        Effects: EnumGraphicsGroup,
+        Foliage: EnumGraphicsGroup,
+        Shading: EnumGraphicsGroup,
+        GetEnumItems: (self: any) -> { EnumGraphicsGroup },
+    },
+    ShadowQuality: {
+        Off: EnumShadowQuality,
+        Low: EnumShadowQuality,
+        Medium: EnumShadowQuality,
+        High: EnumShadowQuality,
+        Ultra: EnumShadowQuality,
+        GetEnumItems: (self: any) -> { EnumShadowQuality },
+    },
+    AntiAliasingMode: {
+        Off: EnumAntiAliasingMode,
+        FXAA: EnumAntiAliasingMode,
+        GetEnumItems: (self: any) -> { EnumAntiAliasingMode },
+    },
+    TextureQuality: {
+        Low: EnumTextureQuality,
+        Medium: EnumTextureQuality,
+        High: EnumTextureQuality,
+        GetEnumItems: (self: any) -> { EnumTextureQuality },
+    },
+    WindowMode: {
+        Windowed: EnumWindowMode,
+        Borderless: EnumWindowMode,
+        Fullscreen: EnumWindowMode,
+        GetEnumItems: (self: any) -> { EnumWindowMode },
+    },
+    SettingSource: {
+        CommandLine: EnumSettingSource,
+        Player: EnumSettingSource,
+        Script: EnumSettingSource,
+        Project: EnumSettingSource,
+        Preset: EnumSettingSource,
+        Engine: EnumSettingSource,
+        GetEnumItems: (self: any) -> { EnumSettingSource },
     },
 }
 

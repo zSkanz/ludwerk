@@ -8,9 +8,10 @@
 // laptop spends its frame.
 //
 // Three sources, each overriding the one before: a quality preset, the
-// project's `[graphics]` table, and the host's own flags. What is deliberately
-// NOT a source is a running script -- see ADR 0044 for why, and for what would
-// have to be true for that to change.
+// project's `[graphics]` table, and the host's own flags -- and, since ADR
+// 0147, a script's write and the player's saved choice between the last two.
+// Those two are not this module's: `scene::GraphicsModel` holds every layer,
+// the host resolves it, and what arrives here is still one `GraphicsSettings`.
 //
 // **Nothing here reaches the simulation.** A world hashes identically at every
 // quality level, which is asserted rather than asserted-in-prose: the M8 gate

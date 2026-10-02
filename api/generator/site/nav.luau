@@ -99,6 +99,7 @@ local Sections: { Section } = {
             { Slug = "post", Title = "Post effects" },
             { Slug = "surface-shaders", Title = "Surface shaders" },
             { Slug = "views", Title = "Views: cameras on screens" },
+            { Slug = "settings", Title = "Graphics and display settings" },
             { Slug = "quality", Title = "Graphics quality settings" },
         },
     },

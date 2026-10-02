@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -389,7 +390,7 @@ private:
 //
 // A copy per frame over a few hundred quads, and it is what keeps the layering
 // honest: `render` is L4 and `ui` is L5, so the renderer cannot see a
-// `ui::DrawQuad` and does not need to (architecture.md §2 rule 3).
+// `ui::DrawQuad` and does not need to (architecture.md Â§2 rule 3).
 //
 // Six vertices a quad rather than four and an index buffer. The geometry is the
 // smallest thing in the frame; an index buffer would save a third of its
@@ -1164,7 +1165,7 @@ void submitWorld(const render::RenderWorld& snapshot, render::DebugDraw& draw)
 // rather than the wall clock, which is what makes a headless capture
 // reproducible -- the same frame number gives the same colour, on any machine,
 // at any speed. That property is what allows a golden gate to exist at all
-// (R10, architecture.md §9).
+// (R10, architecture.md Â§9).
 [[nodiscard]] rhi::ColorRgba pulseColor(u64 tick, f64 fixedDt) noexcept
 {
     const f64 t = static_cast<f64>(tick) * fixedDt;
@@ -1242,6 +1243,82 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     if (const auto error = platform::init({.headless = options.headless}); error.has_value())
         return error;
 
+    // **The graphics settings, as their layers** (ADR 0147). The command
+    // line's, the project's and the presets' came in with the options; the
+    // player's own are read here, before a window exists, so a game starts in
+    // the window mode and the quality they chose rather than in the project's
+    // for a second. What a script writes while the game runs is in the world's
+    // own copy of the model, and the frame applies whatever changed.
+    scene::GraphicsModel graphicsHost = options.graphicsModel;
+    // A run that built its options by hand has no layers: the presets, at
+    // least, are always there.
+    if (graphicsHost.presets[0].said.none())
+        seedGraphicsModel(graphicsHost, GraphicsOverrides{});
+    const bool graphicsDisplay = options.network.topology != replication::Topology::Dedicated;
+    // Beside the saves folder -- `settings.json` next to `saves/` -- and inside
+    // it where the folder is a run's own (a test's, one of a match's windows).
+    const std::filesystem::path playerSettingsFile =
+        !options.rememberPlayerSettings || options.saveDirectory.empty() ? std::filesystem::path{}
+        : options.saveDirectory.filename() == "saves" ? options.saveDirectory.parent_path() / "settings.json"
+                                                      : options.saveDirectory / "settings.json";
+    render::GraphicsSettings liveGraphics = options.graphics;
+    FramePacing livePacing = options.pacing;
+    {
+        const core::u64 before = graphicsHost.revision();
+        std::vector<std::string> refused;
+        scene::GraphicsLayer saved;
+        if (graphicsDisplay && readPlayerGraphics(playerSettingsFile, saved, &refused)) {
+            // A display that is not there any more is not gone to: the
+            // project's default stands, and the log says so.
+            if (saved.says(scene::GraphicsSetting::Monitor) &&
+                static_cast<usize>(saved.at(scene::GraphicsSetting::Monitor)) >= platform::displays().size()) {
+                saved.clear(scene::GraphicsSetting::Monitor);
+                refused.emplace_back("Monitor");
+            }
+            graphicsHost.player = saved;
+        }
+        for (const std::string& name : refused) {
+            const std::array<I18nArg, 1> args{I18nArg{"setting", name}};
+            core::log(LogLevel::Warn, ENG_TR("app.warn.player_setting_refused"), args);
+        }
+        if (graphicsHost.revision() != before) {
+            liveGraphics = graphicsSettingsOf(graphicsHost, Handheld, &options.graphics);
+            livePacing = pacingOf(graphicsHost);
+        }
+    }
+    // What the window was last put in, so only a change moves it.
+    struct WindowChoice
+    {
+        core::i32 mode = 0;
+        core::i32 monitor = 0;
+        core::i32 width = 0;
+        core::i32 height = 0;
+        [[nodiscard]] bool operator==(const WindowChoice&) const = default;
+    };
+    const auto windowChoiceOf = [](const scene::GraphicsModel& model) {
+        return WindowChoice{static_cast<core::i32>(model.effective(scene::GraphicsSetting::WindowMode)),
+                            static_cast<core::i32>(model.effective(scene::GraphicsSetting::Monitor)),
+                            static_cast<core::i32>(model.effective(scene::GraphicsSetting::ResolutionWidth)),
+                            static_cast<core::i32>(model.effective(scene::GraphicsSetting::ResolutionHeight))};
+    };
+    // Every quality setting in force, hashed: what `QualityChanged` watches.
+    const auto qualityRevisionOf = [](const scene::GraphicsModel& model) {
+        core::u64 hash = static_cast<core::u64>(model.qualityLevel()) + 1469598103934665603ull;
+        for (usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
+            const auto setting = static_cast<scene::GraphicsSetting>(index);
+            if (!scene::graphicsSettingInfo(setting).quality)
+                continue;
+            const f64 value = model.effective(setting);
+            core::u64 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            hash = (hash ^ bits) * 1099511628211ull;
+        }
+        return hash;
+    };
+    WindowChoice appliedWindow = windowChoiceOf(graphicsHost);
+    core::u64 appliedGraphicsRevision = graphicsHost.revision();
+    core::u64 appliedQualityRevision = qualityRevisionOf(graphicsHost);
+
     // **A windowless run that serves or measures asks to be scheduled ahead**
     // (D193). A windowed game already is, by owning the foreground window; a
     // headless one that nobody is waiting on -- a test, a capture -- has no frame
@@ -1289,7 +1366,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             options.windowPlacement.has_value()
                 ? options.windowPlacement
                 : (options.editor ? Editor::recallWindow(options.scriptPath / ".engine") : std::nullopt);
-        // One of a match's windows says which it is (ADR 0106 §5).
+        // One of a match's windows says which it is (ADR 0106 Â§5).
         const std::string labelled =
             options.windowLabel.empty()
                 ? options.windowTitle
@@ -1308,9 +1385,20 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             &error);
         if (window == nullptr)
             return error;
-        // `[window] fullscreen` (ADR 0104 §1): the game's, never the editor's.
+        // `[window] fullscreen` (ADR 0104 Â§1): the game's, never the editor's.
         if (options.fullscreen && !options.editor && !options.windowPlacement.has_value())
             platform::setWindowFullscreen(*window, true);
+        // **And the player's own window** (ADR 0147 section 4), where they
+        // saved one: the mode, the display and the size they chose, before the
+        // first frame. A handheld's window is its display whatever was saved.
+        if (!Handheld && !options.editor && !options.windowPlacement.has_value() &&
+            (graphicsHost.player.says(scene::GraphicsSetting::WindowMode) ||
+             graphicsHost.player.says(scene::GraphicsSetting::Monitor) ||
+             graphicsHost.player.says(scene::GraphicsSetting::ResolutionWidth))) {
+            platform::setWindowMode(*window, static_cast<platform::WindowMode>(appliedWindow.mode),
+                                    static_cast<usize>(appliedWindow.monitor), appliedWindow.width,
+                                    appliedWindow.height);
+        }
         if (placement.has_value())
             platform::setWindowPlacement(*window, *placement);
 
@@ -1354,7 +1442,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 #if defined(__ANDROID__)
         (void)device->setVSync(*window, true);
 #else
-        (void)device->setVSync(*window, options.pacing.vsync);
+        (void)device->setVSync(*window, livePacing.vsync);
 #endif
     }
 
@@ -1414,7 +1502,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // inert unless `--edit` asked for them, and the target is not created until
     // a panel has said how big it is.
     Editor editor;
-    // The editor's Play with players (ADR 0106 §5): a match of separate
+    // The editor's Play with players (ADR 0106 Â§5): a match of separate
     // processes, their output drained into this process's log every frame.
     MatchLauncher match;
     // The open scripts (ADR 0057). Beside the `Editor` rather than inside it
@@ -1599,7 +1687,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // Reused from frame to frame, so a view's extraction allocates once.
     render::RenderWorld viewSnapshot;
     viewSnapshot.maxHighlights = options.maxHighlights;
-    // **What the frame keeps for each sub-world it draws** (ADR 0107 §3): its
+    // **What the frame keeps for each sub-world it draws** (ADR 0107 Â§3): its
     // own meshes and textures. A cache is keyed by one world's instances and
     // atoms, which mean nothing in another's -- the two-worlds proof's lesson.
     // Keyed by the run's serial, so a world loaded again starts clean.
@@ -1645,7 +1733,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // **Beside the project where a save takes the cache's files** -- the
     // editor, an import: they are moved into the scene's folder, and on one
     // disk a move is a rename. **In the machine's temporary folder for a game
-    // that is running** (ADR 0150 §7): nothing of it is saved by moving, and
+    // that is running** (ADR 0150 Â§7): nothing of it is saved by moving, and
     // its project may be where nothing can be written -- an installed game --
     // or where writing tens of thousands of files is slow: a source tree
     // mounted into a container took thirteen minutes over what the container's
@@ -1868,8 +1956,10 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     render::RibbonSystem ribbons;
     // Foliage over terrain (ADR 0116), grown per tile around the camera.
     render::FoliageSystem foliage;
-    foliage.setSettings(
-        {.density = options.foliageDensity, .shadowDistance = options.foliageShadowDistance, .growthsPerSync = 8});
+    foliage.setSettings({.density = options.foliageDensity *
+                                    static_cast<f32>(graphicsHost.effective(scene::GraphicsSetting::FoliageDensity)),
+                         .shadowDistance = options.foliageShadowDistance,
+                         .growthsPerSync = 8});
     // **A `Sky`'s six pictures** (ADR 0096), read and resampled off the frame
     // thread; the previous sky draws until a new one is ready. A headless run
     // waits for it instead, for the reason the texture loader does: a capture
@@ -1970,7 +2060,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // Before `create`, because the shadow atlas is sized by the settings and
         // building it twice on the first frame would be a wasted allocation the
         // size of the whole map.
-        renderer->setSettings(options.graphics);
+        renderer->setSettings(liveGraphics);
         if (auto error = renderer->create(*device, shaders, colorFormat); error.has_value()) {
             core::logText(LogLevel::Warn, error->message);
             renderer.reset();
@@ -2159,7 +2249,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             std::string text;
             if (platform::readTextFile(*file, text))
                 return text;
-            // **A conformance run's own stamps** (ADR 0137 §4): the specs take
+            // **A conformance run's own stamps** (ADR 0137 Â§4): the specs take
             // a script's code from a stamp, since a script cannot write
             // `Source`, and the suite's content is not the project's.
             if (!specContent.empty()) {
@@ -2224,6 +2314,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                    return meshLoader.warmed(world.atoms().intern(name), meshLibrary, textureLibrary);
                                },
     };
+    worldOptions.graphics = graphicsHost;
+    worldOptions.graphicsDisplay = graphicsDisplay;
 
     auto host = std::make_unique<WorldHost>();
     // **Before `boot`, and that is load-bearing.** `syncSkeletons` runs at the
@@ -2310,7 +2402,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     }
 
     // **The husk contract's one question**, asked of whichever world is live
-    // when something leaves (architecture.md §4): through the reference to
+    // when something leaves (architecture.md Â§4): through the reference to
     // `host` rather than the object, because a reload replaces the host.
     const auto held = [&host](core::InstanceId id) { return host != nullptr && host->instanceHeld(id); };
     streaming.setReferenceProbe(held);
@@ -2357,7 +2449,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     if (authoring && host->bootSceneApplied())
         editor.adoptOpenScene(sceneRelative);
     editor.setGlobalUnreadable(host->globalUnreadable());
-    // **Ground from a Luau function** (ADR 0149 §2) is compiled here, where
+    // **Ground from a Luau function** (ADR 0149 Â§2) is compiled here, where
     // the VM is: the editor is handed heights and never a state.
     editor.setHeightFunctionLoader([&host](const std::filesystem::path& file, core::DVec3 origin, f32 voxel,
                                            std::string& error) -> std::unique_ptr<HeightSource> {
@@ -2370,7 +2462,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     });
 
     // **`--import-terrain`: the terrain laid, the scene saved, and nothing
-    // else** (ADR 0149 §2). The verbs are the editor's own, so what a project
+    // else** (ADR 0149 Â§2). The verbs are the editor's own, so what a project
     // gets from the command line is what its Create tab would have made; the
     // loop is the frame's, less the frame -- a tile, then the ground behind it
     // written out, round the tile rather than a camera.
@@ -2544,7 +2636,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             break;
 
         // The FrameStart safe point for `PhysicsService.FixedTimestep`
-        // (api-design.md §2.1). Here and nowhere else: the accumulator below,
+        // (api-design.md Â§2.1). Here and nowhere else: the accumulator below,
         // the `task` timer wheel and the solver all read the tick, and a value
         // that changed between two of those reads inside one frame is a class of
         // bug worth designing out rather than debugging. A script's write lands
@@ -2637,7 +2729,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     return reportFrameMs[std::min(index, count - 1)];
                 };
                 const render::QualityLevel quality =
-                    renderer != nullptr ? renderer->settings().quality : options.graphics.quality;
+                    renderer != nullptr ? renderer->settings().quality : liveGraphics.quality;
                 const std::array<I18nArg, 10> report{
                     I18nArg{"seconds", std::round(elapsed * 10.0) / 10.0},
                     I18nArg{"fps", std::round(static_cast<f64>(count) / elapsed * 10.0) / 10.0},
@@ -2743,12 +2835,93 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             if (pacedFrameNs != 0 && framePresented && state.focused)
                 syncWatch.sample(now - pacedFrameNs, state.refreshRate);
             state.syncHeld = syncWatch.held();
-            const core::u32 cap = frameCapFor(options.pacing, state);
+            const core::u32 cap = frameCapFor(livePacing, state);
             if (const core::u64 wait = frameLimiter.waitNs(now, cap); wait > 0)
                 platform::sleepNs(wait);
             pacedFrameNs = platform::nowNs();
             // A frame held to ten a second owes six ticks, not four.
             scheduler.setMaxCatchUpTicks(catchUpTicksFor(baseCatchUpTicks, scheduler.timing().fixedDt, cap));
+        }
+
+        // **The graphics settings, once a frame** (ADR 0147). The host's
+        // layers are put back into the world's model -- a world restored to an
+        // earlier tick does not bring back an old command line -- a script's
+        // asks for the player's file are answered, and whatever is now in
+        // force and was not is applied: ten writes in a frame, once.
+        if (host != nullptr) {
+            scene::EngineState& graphicsState = host->world().engineState();
+            scene::GraphicsModel& live = graphicsState.graphics;
+            graphicsState.graphicsDisplay = graphicsDisplay;
+            if (live.forgetPlayer) {
+                live.forgetPlayer = false;
+                graphicsHost.player = scene::GraphicsLayer{};
+            }
+            live.takeHostLayers(graphicsHost);
+            if (live.saveRequested) {
+                live.saveRequested = false;
+                const scene::GraphicsLayer choices = live.playerChoices();
+                const bool done = !playerSettingsFile.empty() && writePlayerGraphics(playerSettingsFile, choices);
+                if (done) {
+                    // From here they are the player's, and nothing a script
+                    // has yet to save.
+                    graphicsHost.player = choices;
+                    live.player = choices;
+                    live.script = scene::GraphicsLayer{};
+                }
+                script::resumeGraphicsWaiters(host->runtime().state(), false, done);
+            }
+            if (live.loadRequested) {
+                live.loadRequested = false;
+                scene::GraphicsLayer saved;
+                const bool done = readPlayerGraphics(playerSettingsFile, saved);
+                if (done) {
+                    graphicsHost.player = saved;
+                    live.player = saved;
+                    live.script = scene::GraphicsLayer{};
+                }
+                script::resumeGraphicsWaiters(host->runtime().state(), true, done);
+            }
+
+            if (const core::u64 revision = live.revision(); revision != appliedGraphicsRevision) {
+                appliedGraphicsRevision = revision;
+                liveGraphics = graphicsSettingsOf(live, Handheld, &options.graphics);
+                if (renderer != nullptr)
+                    renderer->setSettings(liveGraphics);
+                foliage.setSettings({.density = options.foliageDensity * static_cast<f32>(live.effective(
+                                                                             scene::GraphicsSetting::FoliageDensity)),
+                                     .shadowDistance = options.foliageShadowDistance,
+                                     .growthsPerSync = 8});
+
+                // The display's part is the game's window's, never the
+                // editor's: a game's options menu tried in Play does not put
+                // the editor fullscreen or take its frame rate.
+                if (!options.editor) {
+                    const FramePacing pacing = pacingOf(live);
+                    if (window != nullptr && device != nullptr && pacing.vsync != livePacing.vsync)
+                        (void)device->setVSync(*window, pacing.vsync);
+                    livePacing = pacing;
+                    const WindowChoice choice = windowChoiceOf(live);
+                    if (window != nullptr && !Handheld && !options.windowPlacement.has_value() &&
+                        !(choice == appliedWindow)) {
+                        platform::setWindowMode(*window, static_cast<platform::WindowMode>(choice.mode),
+                                                static_cast<usize>(choice.monitor), choice.width, choice.height);
+                    }
+                    appliedWindow = choice;
+                }
+
+                if (const core::u64 quality = qualityRevisionOf(live); quality != appliedQualityRevision) {
+                    appliedQualityRevision = quality;
+                    scene::World& world = host->world();
+                    const core::InstanceId service = world.findFirstChildOfClass(
+                        host->dataModel(), world.classes().findId(world.atoms().lookup("GraphicsService")));
+                    if (service.valid()) {
+                        world.changes().push(scene::Change{scene::ChangeKind::InstanceEventNoArgs,
+                                                           service,
+                                                           {},
+                                                           world.atoms().intern("QualityChanged")});
+                    }
+                }
+            }
         }
 
         // The FrameStart safe point. Overlay edits are applied HERE and not
@@ -2892,7 +3065,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                             if (overlay.has_value())
                                 overlay->clearConsole();
                             // **What was edited, numbered as the saved file
-                            // reads** (ADR 0138 §6): a client that joins a
+                            // reads** (ADR 0138 Â§6): a client that joins a
                             // match hosted from here reads the file.
                             scene::renumberOrigins(host->world());
                             script::startScripts(host->runtime().state());
@@ -2911,7 +3084,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                         }
                     }
                     else {
-                        // **Stop is the game closing** (ADR 0124 §4), as it is for a
+                        // **Stop is the game closing** (ADR 0124 Â§4), as it is for a
                         // player: the open scene's `scene:BindToClose` handlers, then the
                         // game's, the grace period, the saves -- in the world that played,
                         // before the restore replaces it. Not from a breakpoint: the VM is
@@ -2955,7 +3128,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 if (editorCommands.pause.has_value())
                     editor.setPaused(*editorCommands.pause);
 
-                // --- Play with players (ADR 0106 §5) ---------------------
+                // --- Play with players (ADR 0106 Â§5) ---------------------
                 //
                 // The scene is saved first: every window of the match loads
                 // the project from disk, and a match of yesterday's scene is
@@ -4357,7 +4530,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
         // The streamed world advances at the SAME safe point, and for the same
         // reason: materialising instances mid-tick is the mutation the reload
-        // below is forbidden for. Two milliseconds is architecture.md §10's
+        // below is forbidden for. Two milliseconds is architecture.md Â§10's
         // budget, and it is denominated in time rather than in chunks because
         // a chunk's cost varies with what is in it.
         //
@@ -4373,13 +4546,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         host->world().setGroundLoader(
             [&fields](core::DVec3 low, core::DVec3 high, core::u32 cells) { return fields.loadNow(low, high, cells); });
         // **Changed ground goes to the session cache only where no undo could
-        // want it back** (ADR 0149 §1.6): a cell changed by hand in the editor
+        // want it back** (ADR 0149 Â§1.6): a cell changed by hand in the editor
         // stays in memory until it is saved, because the history is the world
         // as it was and the cache is not in it. Play writes to a layer of its
         // own, which Stop drops -- after the world was put back, and before
         // the streamer is told it was, which is the line below.
         //
-        // **An import is the third** (ADR 0149 §2): laid a few tiles a frame
+        // **An import is the third** (ADR 0149 Â§2): laid a few tiles a frame
         // here, under a layer that is kept when it finishes and dropped when
         // it is cancelled or refused.
         if (editor.terrainImportRunning())
@@ -4412,7 +4585,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                                                      !fields.minimumRingResident()));
         const f64 streamBudget = groundHeld ? 8.0 : (streaming.active() && fields.active() ? 1.0 : 2.0);
         // In a match the ground's replication reads what changed from memory
-        // (ADR 0149 §1.8). Pumped whether or not anything streams yet: a
+        // (ADR 0149 Â§1.8). Pumped whether or not anything streams yet: a
         // world no file describes becomes a streamed one when its far ground
         // is first written out.
         fields.setSpillAllowed(!network.active() && !editingByHand);
@@ -4471,7 +4644,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // the one the dev server has given `ludwerk dev` since M3.
         // The only place a reload happens, and for the same reason: a world
         // swapped mid-tick would break within-run determinism, which is the
-        // rule architecture.md §4 states (and the reason the connection hands
+        // rule architecture.md Â§4 states (and the reason the connection hands
         // its messages over here rather than acting on them itself).
         if (!options.devControlUrl.empty()) {
             control.takeCommands(commands);
@@ -5647,8 +5820,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // handheld's cap, a cell covers that many fewer -- and ground
                 // refined for pixels nobody draws is built, uploaded and
                 // drawn for nothing.
-                const render::GraphicsSettings& graphics =
-                    renderer != nullptr ? renderer->settings() : options.graphics;
+                const render::GraphicsSettings& graphics = renderer != nullptr ? renderer->settings() : liveGraphics;
                 const f32 worldScale = render::effectiveRenderScale(graphics, targetWidth, targetHeight);
                 reportRenderWidth = static_cast<core::u32>(static_cast<f32>(targetWidth) * worldScale + 0.5f);
                 reportRenderHeight = static_cast<core::u32>(static_cast<f32>(targetHeight) * worldScale + 0.5f);
@@ -6025,7 +6197,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // a camera that sees its own texture sees the last picture.
             if (useRenderer && stageOf() == nullptr) {
                 // **Each running sub-world's content, loaded as the game's
-                // is** (ADR 0107 §3), whether or not its picture is drawn this
+                // is** (ADR 0107 Â§3), whether or not its picture is drawn this
                 // frame: a mesh that lands also tells its physics what it
                 // collides as. What unloaded gives its GPU state back.
                 std::erase_if(subWorldGpu, [&](const std::unique_ptr<SubWorldGpu>& gpu) {
@@ -6075,7 +6247,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
 
                 for (ViewHost::View* view : viewHost.due(host->world(), frame.index, subWorldRunning)) {
                     const scene::World& world = host->world();
-                    // **A `SubWorld`** (ADR 0107 §3): its world, from its own
+                    // **A `SubWorld`** (ADR 0107 Â§3): its world, from its own
                     // current camera, with its own meshes -- between its ticks,
                     // which are this world's (ADR 0134).
                     if (view->subWorld) {
@@ -6276,7 +6448,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // The UI, in its own pass that LOADS: it is drawn over the finished
             // frame whatever produced it, so a project with no camera still has
             // a menu. Before the debug overlay and after everything else, which
-            // is the order api-design.md §2.2 implies -- game UI is part of the
+            // is the order api-design.md Â§2.2 implies -- game UI is part of the
             // game, and the ImGui overlay is on top of the game.
             if (uiRenderer.valid() && !uiVertices.empty()) {
                 // The groups' pictures first, each in a pass of its own.
@@ -6688,7 +6860,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             core::logText(LogLevel::Error, failure.message);
         }
         // Loud, and not fatal. A quarantined check that stopped saying anything
-        // would be a deleted check with extra steps (D066, §12).
+        // would be a deleted check with extra steps (D066, Â§12).
         for (const core::EngineError& quarantined : verdict.quarantined) {
             core::logText(LogLevel::Warn, quarantined.message);
         }

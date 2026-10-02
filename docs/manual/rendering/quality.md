@@ -1,13 +1,13 @@
 # Graphics quality settings
 
-Graphics settings are **engine settings, not `Lighting` properties**, and a
-script cannot write them. `Lighting` describes the world and travels with the
-scene; these describe the machine it is being shown on. A scene must not decide
-a stranger's GPU budget.
+Graphics settings are **engine settings, not `Lighting` properties**.
+`Lighting` describes the world and travels with the scene; these describe the
+machine it is being shown on. A scene must not decide a stranger's GPU budget.
 
-There is no settings service and no in-game quality slider. The name is not
-reserved either — declaring a class nothing implements is exactly what the API
-definition forbids.
+This page is the project's side of them: the keys of `[graphics]`, their
+ranges, and what each level sets. A player's choice and a script's --
+`GraphicsService`, an options menu -- are
+[Graphics and display settings](manual:rendering/settings).
 
 ## The table
 
@@ -112,12 +112,19 @@ which is the whole reason a render scale is worth having.
 The floor is 0.5 because below that the world is upscaled by more than two and
 the crisp UI drawn over it makes the difference impossible to ignore.
 
-## Three layers
+## Three layers, of six
+
+Before a player or a script has said anything, a setting is the last of these
+that says it:
 
 1. **The preset** — a named set of every field.
 2. **`project.toml`'s `[graphics]`** — the game author's default.
 3. **The host's own flags** — what a person debugging, a benchmark or a
    capture uses.
+
+A script's write and the player's saved choice go between the last two: over
+the project's file, under a flag
+([Graphics and display settings](manual:rendering/settings)).
 
 Each is expressed as an *override* rather than as a value, so that "nobody said
 anything" and "somebody asked for the default" stay different answers. The
@@ -167,9 +174,18 @@ Values are clamped rather than refused, once, at the last door:
 a power of two; `shadow_cascades` to at most 4; `shadow_distance` to 10–1000;
 `light_budget` to at most 256.
 
+## More than the old keys
+
+Any setting `GraphicsService` has is a key here, as its name in snake case:
+`shadow_quality = "medium"`, `terrain_detail = 1.5`, `foliage_density = 0.5`.
+A level also sets how much foliage is drawn -- half at low, three quarters at
+medium, all of it from high -- over the project's own `[render]
+foliage_density`.
+
 ## What a script can see
 
-Not the settings — but the frame they produced:
+The settings, through `GraphicsService`. And, to adapt what the game does
+rather than what it shows, the frame they produced:
 
 ```luau
 --!strict
@@ -181,6 +197,7 @@ print(DebugService:GetStat("DrawCalls"), DebugService:GetStat("VisibleObjects"))
 
 ## Where to look next
 
+- [Graphics and display settings](manual:rendering/settings) — a player's choice, by script
 - [The post chain](manual:rendering/post) — what each toggle switches
 - [Shadows](manual:rendering/shadows) — what the three shadow dials do
 - [The debug overlay](manual:guides/debug-overlay) — reading those numbers live

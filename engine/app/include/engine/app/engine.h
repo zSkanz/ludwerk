@@ -14,6 +14,7 @@
 #include "engine/render/settings.h"
 #include "engine/replication/types.h"
 #include "engine/rhi/types.h"
+#include "engine/scene/graphics_model.h"
 
 namespace engine::app {
 
@@ -323,6 +324,15 @@ struct EngineOptions
     // it gets here (project_config.h): a preset, the project file, the flags.
     // The host applies it to the renderer and never re-derives it.
     render::GraphicsSettings graphics;
+    // **The same, as the layers it came from** (ADR 0147), for what is put
+    // between them while the game runs: a script's writes through
+    // `GraphicsService`, and the player's saved choices. `graphics` and
+    // `pacing` are what these resolve to before either has spoken.
+    scene::GraphicsModel graphicsModel;
+    // `[display] remember_player_settings`: the player's choices are read from
+    // `settings.json` beside the saves before the first frame, and
+    // `GraphicsService:SaveAsync` writes them there.
+    bool rememberPlayerSettings = true;
 
     // The game's own window title, passed through rather than translated -- it
     // is the game's string and not the engine's (R3, and the split

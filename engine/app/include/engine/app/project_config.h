@@ -16,10 +16,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine/app/frame_pacing.h"
 #include "engine/core/types.h"
 #include "engine/render/settings.h"
+#include "engine/scene/graphics_model.h"
 
 namespace engine::app {
 
@@ -169,6 +171,16 @@ struct ProjectConfig
     bool resizable = true;
 
     render::GraphicsSettings graphics;
+
+    // **The same, as the layers they came from** (ADR 0147): what each preset
+    // gives, what the file said and what the command line said, apart -- so a
+    // script's write and a player's saved choice can be put between them, and
+    // `GraphicsService:GetSource` can say whose a value is. `graphics` above
+    // is what these resolve to before either has spoken.
+    scene::GraphicsModel graphicsModel;
+    // `[display] remember_player_settings`: whether the player's choices are
+    // kept in their folder and read at start. On unless a game manages its own.
+    bool rememberPlayerSettings = true;
 };
 
 // Whether this is a device held in the hand: a phone or a tablet, where a game
@@ -231,6 +243,29 @@ inline constexpr bool Handheld = false;
 // dialog turning a working project into one the engine refuses to open.
 [[nodiscard]] bool writeProjectSetting(const std::filesystem::path& projectRoot, std::string_view key,
                                        std::string_view rendered, std::string* diagnostic = nullptr);
+
+// **What the model's values are to the renderer** (ADR 0147): the preset in
+// force with every setting the layers say over it, clamped. `instruments`
+// carries what is no setting -- a forced surface, a debug view -- from the
+// run's own start. For a model as `loadProjectConfig` seeded it this is
+// `ProjectConfig::graphics` exactly, which a test holds.
+[[nodiscard]] render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, bool handheld = Handheld,
+                                                          const render::GraphicsSettings* instruments = nullptr);
+// And to the frame's pacing. A handheld's sync is always on.
+[[nodiscard]] FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld = Handheld) noexcept;
+
+// The host's layers of a model with no project file: the presets and the
+// command line's.
+void seedGraphicsModel(scene::GraphicsModel& model, const GraphicsOverrides& overrides, bool handheld = Handheld);
+
+// **The player's own choices, in their folder** (ADR 0147 section 4):
+// `settings.json`, a setting's name to its value, holding only what they
+// changed. Writing replaces the file whole. Reading takes what it understands:
+// a name that is no setting, or a value that is not that setting's kind, is
+// left out and named in `refused` -- reported, not applied.
+[[nodiscard]] bool writePlayerGraphics(const std::filesystem::path& file, const scene::GraphicsLayer& choices);
+[[nodiscard]] bool readPlayerGraphics(const std::filesystem::path& file, scene::GraphicsLayer& choices,
+                                      std::vector<std::string>* refused = nullptr);
 
 // The same resolution without a file, for a bare script or a project that has
 // none.

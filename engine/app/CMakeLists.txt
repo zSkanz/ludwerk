@@ -49,6 +49,7 @@ engine_add_module(app
         src/picking.cpp
         src/preview_renderer.cpp
         src/pointer_ownership.cpp
+        src/graphics_settings_file.cpp
         src/ui_navigation.cpp
         src/ui_pointer.cpp
         src/chunk_overlay.cpp
@@ -1067,6 +1068,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # ADR 0147: a quality level a script sets through `GraphicsService` while
+    # the game runs draws what a game started at that level draws, and a level
+    # the command line names stands over a script's.
+    add_test(NAME graphics_runtime_differential
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/graphicsruntime
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/graphics-runtime
+            -DFRAMES=150
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_graphics_runtime.cmake)
+    set_tests_properties(graphics_runtime_differential PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 180)
+
     # Local shadows, as a differential and for exactly the same reason -- see
     # the driver. `SpotLight.Shadows` and `PointLight.Shadows` were accepted,
     # read back and plumbed to `RenderLight::shadows` for three milestones while
@@ -1595,7 +1611,8 @@ if(ENG_BUILD_TESTS)
         screenshot_gate_sprites ui_appearance_gate ui_layouts_gate sprite_color_gate views_gate mirrors_gate ortho_gate
         subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
-        graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
+        graphics_settings_differential graphics_runtime_differential local_shadow_differential
+        terrain_gallery_holes terrain_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived)

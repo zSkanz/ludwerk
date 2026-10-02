@@ -100,6 +100,12 @@ clean-up).
 
 ## The repository
 
+- [ ] **Two lanes of the gate write one file**: `openworld_soak` packs
+  `examples/10-open-world/.engine/content.lpack` in the source tree, and the
+  Windows and Linux lanes run at once. On 2026-10-02, once, under load, the
+  Linux lane's `assetc` could not open it for writing while the Windows soak
+  held it; the lane alone was green. The soak wants a pack of its own under
+  the build tree, as every other test's output is.
 - [x] **A windowed game does not pay 95 ms for gamepads at start** (D476):
   the joystick subsystem is started by the event pump after the first frame is
   presented, and never by a run with no hands. `platform_tests.cpp` times the

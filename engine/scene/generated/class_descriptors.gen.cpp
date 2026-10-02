@@ -4786,6 +4786,600 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     saveServiceDesc.methods = saveServiceMethods;
     classes.registerClass(saveServiceDesc);
 
+    // --- GraphicsService ---
+    static std::array<PropertyDesc, 38> graphicsServiceProperties;
+    graphicsServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("QualityLevel"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("GraphicsQuality"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The quality level. Writing one is `ApplyPreset`: every quality setting becomes that level's. It reads `Custom` when any of them is not the level's -- a script, the player or the project said otherwise -- and `Custom` cannot be written.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceQualityLevel,
+            .set = native::setGraphicsServiceQualityLevel,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RenderScale"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The fraction of the window's resolution the world is drawn at, 0.5 to 1. The interface is drawn at the window's own, whatever this is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceRenderScale,
+            .set = native::setGraphicsServiceRenderScale,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowQuality"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("ShadowQuality"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The sun's shadow, as a level. Writing one writes `ShadowResolution` and `ShadowCascades` as that level has them; `Off` is no cascades.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceShadowQuality,
+            .set = native::setGraphicsServiceShadowQuality,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowResolution"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "One shadow cascade's side in texels, 256 to 2048, rounded down to a power of two.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceShadowResolution,
+            .set = native::setGraphicsServiceShadowResolution,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowCascades"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many cascades the sun casts into, 0 to 4. Zero is no sun shadow.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceShadowCascades,
+            .set = native::setGraphicsServiceShadowCascades,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far from the camera the sun casts, in metres, 10 to 1000.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceShadowDistance,
+            .set = native::setGraphicsServiceShadowDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AntiAliasing"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("AntiAliasingMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How edges are smoothed.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAntiAliasing,
+            .set = native::setGraphicsServiceAntiAliasing,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AmbientOcclusion"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether creases and corners are darkened.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAmbientOcclusion,
+            .set = native::setGraphicsServiceAmbientOcclusion,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ContactShadows"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the sun's shadow is drawn right up to what casts it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceContactShadows,
+            .set = native::setGraphicsServiceContactShadows,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Bloom"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether bright things glow.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceBloom,
+            .set = native::setGraphicsServiceBloom,
+        },
+        PropertyDesc{
+            .name = atoms.intern("DepthOfField"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a world's `DepthOfFieldEffect` is drawn. The machine wins over the world: off, a scene that asks for focus is sharp.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceDepthOfField,
+            .set = native::setGraphicsServiceDepthOfField,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SunRays"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a world's `SunRaysEffect` is drawn, by the same rule.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSunRays,
+            .set = native::setGraphicsServiceSunRays,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AutoExposure"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the picture's brightness follows the scene. Off, the exposure is held.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAutoExposure,
+            .set = native::setGraphicsServiceAutoExposure,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LightBudget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many lights one frame may carry.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceLightBudget,
+            .set = native::setGraphicsServiceLightBudget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TerrainDetail"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How fine distant ground is, as a scale on the level's own: 2 refines it at twice the distance, 0.5 at half.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceTerrainDetail,
+            .set = native::setGraphicsServiceTerrainDetail,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FoliageDensity"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much of the foliage a `FoliageLayer` grows is drawn, 0 to 1, over the project's own density.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceFoliageDensity,
+            .set = native::setGraphicsServiceFoliageDensity,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ViewDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceViewDistance,
+            .set = native::setGraphicsServiceViewDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TextureQuality"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("TextureQuality"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceTextureQuality,
+            .set = native::setGraphicsServiceTextureQuality,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AnisotropicFiltering"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAnisotropicFiltering,
+            .set = native::setGraphicsServiceAnisotropicFiltering,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LODBias"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "A scale on the distance a mesh's levels of detail change at. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceLODBias,
+            .set = native::setGraphicsServiceLODBias,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaximumLODLevel"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The finest level of detail a mesh may be drawn at; 0 is its finest. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceMaximumLODLevel,
+            .set = native::setGraphicsServiceMaximumLODLevel,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ParticleBudget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The most particles alive at once. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceParticleBudget,
+            .set = native::setGraphicsServiceParticleBudget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SoftParticles"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether particles fade where they meet a surface. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSoftParticles,
+            .set = native::setGraphicsServiceSoftParticles,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SkinWeights"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many bones may move one vertex, 1 to 4. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSkinWeights,
+            .set = native::setGraphicsServiceSkinWeights,
+        },
+        PropertyDesc{
+            .name = atoms.intern("TextureStreamingBudget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The memory textures may keep resident, in mebibytes; 0 is no limit. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceTextureStreamingBudget,
+            .set = native::setGraphicsServiceTextureStreamingBudget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AsyncUploadBudget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The milliseconds a frame may spend sending data to the GPU. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAsyncUploadBudget,
+            .set = native::setGraphicsServiceAsyncUploadBudget,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MotionBlur"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether motion is blurred. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceMotionBlur,
+            .set = native::setGraphicsServiceMotionBlur,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FogQuality"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("GraphicsLevel"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How fog is drawn. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceFogQuality,
+            .set = native::setGraphicsServiceFogQuality,
+        },
+        PropertyDesc{
+            .name = atoms.intern("GlobalIllumination"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("GraphicsLevel"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Indirect light. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceGlobalIllumination,
+            .set = native::setGraphicsServiceGlobalIllumination,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Reflections"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("GraphicsLevel"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Reflections. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceReflections,
+            .set = native::setGraphicsServiceReflections,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RenderResolutionCap"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The most pixels the world's shorter side is drawn at; 0 is no limit. A handheld's levels set it: a phone's display has more pixels than an eye resolves or a battery pays for.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceRenderResolutionCap,
+            .set = native::setGraphicsServiceRenderResolutionCap,
+        },
+        PropertyDesc{
+            .name = atoms.intern("WindowMode"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("WindowMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How the window sits on the display. A handheld has the whole display whatever this says.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceWindowMode,
+            .set = native::setGraphicsServiceWindowMode,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Resolution"),
+            .type = ValueType::Vector2,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The window's size in pixels when it is windowed, and the display mode when it is fullscreen. Zero is \"the project's window size\", or the display's own when fullscreen.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceResolution,
+            .set = native::setGraphicsServiceResolution,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Monitor"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Which display the window is on, as an index into `GetMonitors()`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceMonitor,
+            .set = native::setGraphicsServiceMonitor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("VSync"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a frame waits for the display. On by default; a handheld is always on.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceVSync,
+            .set = native::setGraphicsServiceVSync,
+        },
+        PropertyDesc{
+            .name = atoms.intern("MaxFrameRate"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The most frames a second; 0 is no cap. With `VSync` off it is the only limit, and with it on it caps below the display's rate.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceMaxFrameRate,
+            .set = native::setGraphicsServiceMaxFrameRate,
+        },
+        PropertyDesc{
+            .name = atoms.intern("BackgroundFrameRate"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The cap while the window is not in front or is minimised; 0 is no throttle.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceBackgroundFrameRate,
+            .set = native::setGraphicsServiceBackgroundFrameRate,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Brightness"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "An offset on the picture's gamma, -1 to 1. **Kept, saved and reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceBrightness,
+            .set = native::setGraphicsServiceBrightness,
+        },
+    }};
+    static std::array<MethodDesc, 11> graphicsServiceMethods;
+    graphicsServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("ApplyPreset"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes every quality setting what `level` has, whatever a script, the player or the project said before. `Auto` is the level this machine was measured for; `Custom` is refused. The display settings -- the window, `VSync`, the frame caps -- are not part of a level and stay.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ResetToDefaults"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Forgets what a script wrote and what the player saved, so the project's defaults stand. The player's file is not touched until `SaveAsync`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetSource"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Who said the value of the setting named `setting` -- a property's name, as `\"VSync\"`. A name that is no setting raises.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsApplied"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether anything draws by the setting named `setting` yet. A few are kept, saved and reported ahead of the renderer that reads them, so a menu does not change shape; a menu can leave those out, or grey them, by asking.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetGroupLevel"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The level a group is at: the one whose values every setting of the group has. Nil when they are no one level's -- somebody set one by itself.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetGroupLevel"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sets every setting of `group` to what `level` has.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetSupportedResolutions"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The fullscreen sizes the window's display offers, largest first. Empty where there is no display to ask.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetMonitors"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The displays, in the order `Monitor` counts them.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetRefreshRate"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The rate of the display the window is on, in hertz; 0 when it will not say.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SaveAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Keeps the player's choices -- what was saved before, under what a script has written since -- in their own folder, as `settings.json`. Yields until the file is written, at the end of the frame, and returns whether it was; from then on `GetSource` says `Player` for them. False where there is nowhere to write: a game that turned `[display] remember_player_settings` off, or a run with no folder of its own.",
+        },
+        MethodDesc{
+            .name = atoms.intern("LoadAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Reads the player's saved choices again, and forgets what a script wrote since: what a menu's Revert does. Yields until it is done, at the end of the frame, and returns whether there was a file to read.",
+        },
+    }};
+    static std::array<EventDesc, 1> graphicsServiceEvents;
+    graphicsServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("QualityChanged"),
+            .slot = 7,
+            .doc = "The quality level or any quality setting changed, whoever changed it. Once a frame at most.",
+        },
+    }};
+    ClassDescriptor graphicsServiceDesc;
+    graphicsServiceDesc.name = atoms.intern("GraphicsService");
+    graphicsServiceDesc.super = instanceClass;
+    graphicsServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    graphicsServiceDesc.defaultName = atoms.intern("GraphicsService");
+    graphicsServiceDesc.doc = "The machine's graphics and display settings (ADR 0147): how good the picture is, how the window sits on the display and how fast frames are made. What an options menu is built on.\012\012**A setting's value is the first of these that says it**: a flag the game was started with, what a script wrote this session, the player's saved choice, the project's `project.toml`, the quality level in force, and the engine's own default. `GetSource` says which. A write takes effect at the next frame, and ten writes in one frame are applied once.\012\012**Nothing here is the world's.** The settings describe the machine the world is shown on: they are not saved with a scene, do not travel to other players, and the simulation is the same at every one of them. `SaveAsync` keeps them for this player, in their own folder; a game starts in what they chose. A dedicated server has no display: it reads the defaults, and a write there raises.";
+    graphicsServiceDesc.properties = graphicsServiceProperties;
+    graphicsServiceDesc.methods = graphicsServiceMethods;
+    graphicsServiceDesc.events = graphicsServiceEvents;
+    classes.registerClass(graphicsServiceDesc);
+
     // --- HapticService ---
     static std::array<MethodDesc, 4> hapticServiceMethods;
     hapticServiceMethods = {{
@@ -8906,6 +9500,286 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     uIDragDetectorResponseStyleDesc.docKey = {};
     uIDragDetectorResponseStyleDesc.items = uIDragDetectorResponseStyleItems;
     enums.registerEnum(uIDragDetectorResponseStyleDesc);
+
+    // --- GraphicsQuality ---
+    static std::array<EnumItemDesc, 6> graphicsQualityItems;
+    graphicsQualityItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Low"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Medium"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("High"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ultra"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Custom"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Auto"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor graphicsQualityDesc;
+    graphicsQualityDesc.name = atoms.intern("GraphicsQuality");
+    graphicsQualityDesc.docKey = {};
+    graphicsQualityDesc.items = graphicsQualityItems;
+    enums.registerEnum(graphicsQualityDesc);
+
+    // --- GraphicsLevel ---
+    static std::array<EnumItemDesc, 5> graphicsLevelItems;
+    graphicsLevelItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Low"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Medium"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("High"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ultra"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Cinematic"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor graphicsLevelDesc;
+    graphicsLevelDesc.name = atoms.intern("GraphicsLevel");
+    graphicsLevelDesc.docKey = {};
+    graphicsLevelDesc.items = graphicsLevelItems;
+    enums.registerEnum(graphicsLevelDesc);
+
+    // --- GraphicsGroup ---
+    static std::array<EnumItemDesc, 10> graphicsGroupItems;
+    graphicsGroupItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("ViewDistance"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("AntiAliasing"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("PostProcessing"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Shadows"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("GlobalIllumination"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Reflections"),
+            .value = 5,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Textures"),
+            .value = 6,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Effects"),
+            .value = 7,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Foliage"),
+            .value = 8,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Shading"),
+            .value = 9,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor graphicsGroupDesc;
+    graphicsGroupDesc.name = atoms.intern("GraphicsGroup");
+    graphicsGroupDesc.docKey = {};
+    graphicsGroupDesc.items = graphicsGroupItems;
+    enums.registerEnum(graphicsGroupDesc);
+
+    // --- ShadowQuality ---
+    static std::array<EnumItemDesc, 5> shadowQualityItems;
+    shadowQualityItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Off"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Low"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Medium"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("High"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ultra"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor shadowQualityDesc;
+    shadowQualityDesc.name = atoms.intern("ShadowQuality");
+    shadowQualityDesc.docKey = {};
+    shadowQualityDesc.items = shadowQualityItems;
+    enums.registerEnum(shadowQualityDesc);
+
+    // --- AntiAliasingMode ---
+    static std::array<EnumItemDesc, 2> antiAliasingModeItems;
+    antiAliasingModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Off"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("FXAA"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor antiAliasingModeDesc;
+    antiAliasingModeDesc.name = atoms.intern("AntiAliasingMode");
+    antiAliasingModeDesc.docKey = {};
+    antiAliasingModeDesc.items = antiAliasingModeItems;
+    enums.registerEnum(antiAliasingModeDesc);
+
+    // --- TextureQuality ---
+    static std::array<EnumItemDesc, 3> textureQualityItems;
+    textureQualityItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Low"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Medium"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("High"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor textureQualityDesc;
+    textureQualityDesc.name = atoms.intern("TextureQuality");
+    textureQualityDesc.docKey = {};
+    textureQualityDesc.items = textureQualityItems;
+    enums.registerEnum(textureQualityDesc);
+
+    // --- WindowMode ---
+    static std::array<EnumItemDesc, 3> windowModeItems;
+    windowModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Windowed"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Borderless"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Fullscreen"),
+            .value = 2,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor windowModeDesc;
+    windowModeDesc.name = atoms.intern("WindowMode");
+    windowModeDesc.docKey = {};
+    windowModeDesc.items = windowModeItems;
+    enums.registerEnum(windowModeDesc);
+
+    // --- SettingSource ---
+    static std::array<EnumItemDesc, 6> settingSourceItems;
+    settingSourceItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("CommandLine"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Player"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Script"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Project"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Preset"),
+            .value = 4,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Engine"),
+            .value = 5,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor settingSourceDesc;
+    settingSourceDesc.name = atoms.intern("SettingSource");
+    settingSourceDesc.docKey = {};
+    settingSourceDesc.items = settingSourceItems;
+    enums.registerEnum(settingSourceDesc);
 }
 
 } // namespace engine::scene::generated

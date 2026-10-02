@@ -1,6 +1,6 @@
 # 0147 — Graphics and display settings are one model: the project sets them, the player chooses, a script reads and writes them
 
-- Status: accepted (to be built; see `docs/briefs/settings-kickoff.md`)
+- Status: accepted; G0 to G3 built, G4 and G5 to build (`docs/briefs/settings-kickoff.md`; "As built" below)
 - Date: 2026-10-01
 - Decided by: the owner, on 2026-10-01: *"scripts têm que ser acessíveis também
   ... pra alterar presets de qualidade, por exemplo gráfico, limitação de FPS
@@ -213,3 +213,66 @@ same API.
 - Audio and input settings: their own services (audio volumes and key
   rebinding have their own APIs already); a unified options screen may gather
   them later.
+
+## As built, 2026-10-02 (G1 to G3)
+
+- **The model is `scene::GraphicsModel`**, in the world's engine state: a
+  layer of plain numbers each for the command line, a script, the player, the
+  project and each of the four presets, and the rule for which is read. In
+  `scene` because a script writes it and a script reaches a world. The host
+  keeps its own layers and puts them back every frame, so a world restored to
+  an earlier tick does not bring back an old command line -- and the editor's
+  Stop undoes what a game's menu did in Play, for nothing.
+- **A script's write is over the player's saved choice**, where section 1
+  lists them the other way. A menu's change that waited under the saved value
+  until `SaveAsync` would be a menu that does nothing; the newest word is the
+  one in force, and `GetSource` says `Script` until it is saved and `Player`
+  after. The command line is over both.
+- **`project.toml` is read as before and resolves to the same settings**:
+  `ProjectConfig::graphics` and the model's own resolution are asserted equal,
+  field by field, over files, flags and both kinds of machine
+  (`project_config_tests.cpp`). Any setting is now a key, as its name in snake
+  case; a choice takes its item's name in lower case.
+- **A level sets foliage density too**: 0.5 at low, 0.75 at medium, 1 from
+  high. It set nothing there before, so a project at low or medium -- and
+  every handheld, which starts at medium -- draws less foliage than it did.
+- **`QualityLevel` written is `ApplyPreset`**: every quality setting becomes
+  the level's. It reads `Custom` when one is not; `Custom` cannot be written.
+  `Auto` is the machine's own starting level until the probe of section 5 is
+  built.
+- **`ShadowQuality` is a level over two numbers**: writing it writes
+  `ShadowResolution` and `ShadowCascades`.
+- **`TerrainDetail` is a scale on the two pixels a cell `High` allows**, so the
+  four levels are 0.5, 0.67, 1 and 1.33 and the numbers of ADR 0140 are what
+  they were.
+- **Applied once a frame**: the host compares a hash of every value in force,
+  and when it moves gives the renderer its settings whole, the foliage its
+  density, the swapchain its sync, the limiter its caps and the window its
+  mode. A level set by a script while a game runs draws, to the pixel, what a
+  game started at that level draws (`graphics_runtime_differential`: 0
+  differing pixels against `--quality=low`, 51 187 against a pinned `ultra`).
+  **No budget is held on what a change rebuilds**, which G1 asked for: a
+  change of shadow resolution reallocates the atlas in the frame it lands in.
+- **Kept and not drawn by yet**, as section 2 allows for what does not exist:
+  `ViewDistance`, `TextureQuality`, `AnisotropicFiltering`, `LODBias`,
+  `MaximumLODLevel`, `ParticleBudget`, `SoftParticles`, `SkinWeights`,
+  `TextureStreamingBudget`, `AsyncUploadBudget`, `MotionBlur`, `FogQuality`,
+  `GlobalIllumination`, `Reflections`, `Brightness`. `IsApplied` says which,
+  so a menu need not know this list. `ViewDistance` waits on the far plane's
+  fade and `Brightness` on a term in the final resolve.
+- **The window**: `platform::displays`, `displayModes`, `windowDisplay` and
+  `setWindowMode`. Borderless is the desktop's own mode on the display the
+  window is on; fullscreen is the display's nearest mode to `Resolution`. The
+  editor's own window, sync and caps are never a game's to set.
+- **The player's file is `settings.json` beside the saves folder** -- under
+  `.engine/` for a project being made -- holding only what was chosen, read
+  before the window is made. A name this build does not know, a value of the
+  wrong kind and a `Monitor` that is not plugged in are left out and logged.
+- **`SaveAsync` and `LoadAsync` yield** to the frame's end and return whether
+  the host did it, since the suffix is a promise (api-design section 9).
+  `IsApplied` is one method more than the ADR listed.
+- **A dedicated server has no display**: it reads the defaults and a write
+  raises. The script-side lint counts `GraphicsService` as the player's.
+- **A new service is a new instance in every world**: the determinism traces
+  were recorded again, as for the two services before it. No property of it is
+  hashed, saved with a scene or sent.

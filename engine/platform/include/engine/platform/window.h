@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
@@ -166,6 +168,56 @@ void setWindowPlacement(Window& window, const WindowPlacement& placement);
 
 // Fills the display with the window, or gives it back its frame.
 void setWindowFullscreen(Window& window, bool fullscreen);
+
+// --- Displays, and how a window sits on one (ADR 0147) ------------------------
+
+// One display, as the system describes it: its name, its desktop size in
+// pixels and its rate in hertz -- 0 when it will not say.
+struct DisplayInfo
+{
+    std::string name;
+    i32 width = 0;
+    i32 height = 0;
+    f32 refreshRate = 0.0f;
+};
+
+// Every display, in the system's own order: the order `GraphicsService.Monitor`
+// counts them in. Empty on a run with no video.
+[[nodiscard]] std::vector<DisplayInfo> displays();
+
+// A size a display can be driven at, fullscreen.
+struct DisplayMode
+{
+    i32 width = 0;
+    i32 height = 0;
+    f32 refreshRate = 0.0f;
+};
+
+// The fullscreen sizes display `index` offers, largest first and each size
+// once, at its highest rate. Empty for a display that is not there.
+[[nodiscard]] std::vector<DisplayMode> displayModes(core::usize index);
+
+// Which of `displays()` the window is on.
+[[nodiscard]] core::usize windowDisplay(const Window& window);
+
+// How a window sits on its display.
+enum class WindowMode : core::u8
+{
+    // A window, with its border.
+    Windowed,
+    // The whole display, as a window with no border: the desktop's own mode,
+    // so another window is a key away.
+    Borderless,
+    // The whole display, in a mode of its own.
+    Fullscreen,
+};
+
+// Puts the window on display `display` in `mode`. `width` and `height` are the
+// window's size when windowed and the display mode's when fullscreen -- the
+// nearest the display has; zero keeps the window's size, and is the desktop's
+// own mode fullscreen. A display that is not there is the one the window is
+// on. On a handheld the window is the display whatever is asked.
+void setWindowMode(Window& window, WindowMode mode, core::usize display, i32 width, i32 height);
 
 // The primary display's usable area -- the desktop less its taskbar -- in
 // logical units, or an empty placement when there is no display. What the

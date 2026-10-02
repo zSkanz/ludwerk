@@ -34,6 +34,7 @@
 #include "engine/scene/component_pool.h"
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/graphics_model.h"
 #include "engine/scene/types.h"
 #include "engine/scene/value.h"
 
@@ -334,6 +335,13 @@ struct EngineState
     // `UIService.ScreenOrientation`: `Enum.ScreenOrientation`'s value, which the
     // host applies to the window whenever it changes. 2 is LandscapeSensor.
     i32 screenOrientation = 2;
+    // **`GraphicsService`'s settings** (ADR 0147): the layers and what a
+    // script wrote into them. The host puts its own layers back every frame
+    // and applies what changed. `graphicsDisplay` is whether there is a
+    // display to apply them to -- a dedicated server has none, and a write
+    // there is refused. `graphicsQualityChanged` asks for `QualityChanged`.
+    GraphicsModel graphics;
+    bool graphicsDisplay = true;
     // `UIService.SelectedObject` and `AutoSelect` (ADR 0128): what a gamepad
     // or the arrow keys have selected. Here rather than beside the hover and
     // the focus because a script writes it.

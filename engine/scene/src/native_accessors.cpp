@@ -2090,6 +2090,439 @@ bool setStreamingServicePauseOutsideLoadedArea(World& world, core::InstanceId, c
     return true;
 }
 
+// --- GraphicsService (ADR 0147) -----------------------------------------------
+//
+// Every property is one setting of `scene::GraphicsModel`: read as the value in
+// force, written into the script's layer.
+
+namespace {
+
+[[nodiscard]] f64 graphicsValue(const World& world, GraphicsSetting setting)
+{
+    return world.engineState().graphics.effective(setting);
+}
+
+// A script's write, on a machine that has a display to apply it to.
+[[nodiscard]] bool writeGraphics(World& world, GraphicsSetting setting, f64 value)
+{
+    GraphicsModel& model = world.engineState().graphics;
+    return world.engineState().graphicsDisplay && model.write(setting, value);
+}
+
+[[nodiscard]] bool writeGraphicsFlag(World& world, GraphicsSetting setting, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    return flag != nullptr && writeGraphics(world, setting, *flag ? 1.0 : 0.0);
+}
+
+[[nodiscard]] bool writeGraphicsNumber(World& world, GraphicsSetting setting, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    return number != nullptr && writeGraphics(world, setting, *number);
+}
+
+[[nodiscard]] bool writeGraphicsChoice(World& world, GraphicsSetting setting, EnumId enumId, const Value& value)
+{
+    const auto* item = std::get_if<EnumValue>(&value);
+    return item != nullptr && item->enumId == enumId && writeGraphics(world, setting, static_cast<f64>(item->value));
+}
+
+} // namespace
+
+Value getGraphicsServiceQualityLevel(const World& world, core::InstanceId)
+{
+    // As it reads: `Custom` when any quality setting is not the level's.
+    return Value{EnumValue{generated::GraphicsQualityEnumId, world.engineState().graphics.qualityLevel()}};
+}
+
+bool setGraphicsServiceQualityLevel(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::QualityLevel, generated::GraphicsQualityEnumId, value);
+}
+
+Value getGraphicsServiceRenderScale(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::RenderScale)};
+}
+
+bool setGraphicsServiceRenderScale(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::RenderScale, value);
+}
+
+Value getGraphicsServiceShadowQuality(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::ShadowQualityEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::ShadowQuality))}};
+}
+
+bool setGraphicsServiceShadowQuality(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::ShadowQuality, generated::ShadowQualityEnumId, value);
+}
+
+Value getGraphicsServiceShadowResolution(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ShadowResolution)};
+}
+
+bool setGraphicsServiceShadowResolution(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::ShadowResolution, value);
+}
+
+Value getGraphicsServiceShadowCascades(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ShadowCascades)};
+}
+
+bool setGraphicsServiceShadowCascades(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::ShadowCascades, value);
+}
+
+Value getGraphicsServiceShadowDistance(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ShadowDistance)};
+}
+
+bool setGraphicsServiceShadowDistance(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::ShadowDistance, value);
+}
+
+Value getGraphicsServiceAntiAliasing(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::AntiAliasingModeEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::AntiAliasing))}};
+}
+
+bool setGraphicsServiceAntiAliasing(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::AntiAliasing, generated::AntiAliasingModeEnumId, value);
+}
+
+Value getGraphicsServiceAmbientOcclusion(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::AmbientOcclusion) != 0.0};
+}
+
+bool setGraphicsServiceAmbientOcclusion(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::AmbientOcclusion, value);
+}
+
+Value getGraphicsServiceContactShadows(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ContactShadows) != 0.0};
+}
+
+bool setGraphicsServiceContactShadows(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::ContactShadows, value);
+}
+
+Value getGraphicsServiceBloom(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::Bloom) != 0.0};
+}
+
+bool setGraphicsServiceBloom(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::Bloom, value);
+}
+
+Value getGraphicsServiceDepthOfField(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::DepthOfField) != 0.0};
+}
+
+bool setGraphicsServiceDepthOfField(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::DepthOfField, value);
+}
+
+Value getGraphicsServiceSunRays(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::SunRays) != 0.0};
+}
+
+bool setGraphicsServiceSunRays(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::SunRays, value);
+}
+
+Value getGraphicsServiceAutoExposure(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::AutoExposure) != 0.0};
+}
+
+bool setGraphicsServiceAutoExposure(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::AutoExposure, value);
+}
+
+Value getGraphicsServiceLightBudget(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::LightBudget)};
+}
+
+bool setGraphicsServiceLightBudget(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::LightBudget, value);
+}
+
+Value getGraphicsServiceTerrainDetail(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::TerrainDetail)};
+}
+
+bool setGraphicsServiceTerrainDetail(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::TerrainDetail, value);
+}
+
+Value getGraphicsServiceFoliageDensity(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::FoliageDensity)};
+}
+
+bool setGraphicsServiceFoliageDensity(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::FoliageDensity, value);
+}
+
+Value getGraphicsServiceViewDistance(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ViewDistance)};
+}
+
+bool setGraphicsServiceViewDistance(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::ViewDistance, value);
+}
+
+Value getGraphicsServiceTextureQuality(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::TextureQualityEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::TextureQuality))}};
+}
+
+bool setGraphicsServiceTextureQuality(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::TextureQuality, generated::TextureQualityEnumId, value);
+}
+
+Value getGraphicsServiceAnisotropicFiltering(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::AnisotropicFiltering)};
+}
+
+bool setGraphicsServiceAnisotropicFiltering(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::AnisotropicFiltering, value);
+}
+
+Value getGraphicsServiceLODBias(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::LODBias)};
+}
+
+bool setGraphicsServiceLODBias(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::LODBias, value);
+}
+
+Value getGraphicsServiceMaximumLODLevel(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::MaximumLODLevel)};
+}
+
+bool setGraphicsServiceMaximumLODLevel(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::MaximumLODLevel, value);
+}
+
+Value getGraphicsServiceParticleBudget(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::ParticleBudget)};
+}
+
+bool setGraphicsServiceParticleBudget(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::ParticleBudget, value);
+}
+
+Value getGraphicsServiceSoftParticles(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::SoftParticles) != 0.0};
+}
+
+bool setGraphicsServiceSoftParticles(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::SoftParticles, value);
+}
+
+Value getGraphicsServiceSkinWeights(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::SkinWeights)};
+}
+
+bool setGraphicsServiceSkinWeights(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::SkinWeights, value);
+}
+
+Value getGraphicsServiceTextureStreamingBudget(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::TextureStreamingBudget)};
+}
+
+bool setGraphicsServiceTextureStreamingBudget(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::TextureStreamingBudget, value);
+}
+
+Value getGraphicsServiceAsyncUploadBudget(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::AsyncUploadBudget)};
+}
+
+bool setGraphicsServiceAsyncUploadBudget(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::AsyncUploadBudget, value);
+}
+
+Value getGraphicsServiceMotionBlur(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::MotionBlur) != 0.0};
+}
+
+bool setGraphicsServiceMotionBlur(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::MotionBlur, value);
+}
+
+Value getGraphicsServiceFogQuality(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::GraphicsLevelEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::FogQuality))}};
+}
+
+bool setGraphicsServiceFogQuality(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::FogQuality, generated::GraphicsLevelEnumId, value);
+}
+
+Value getGraphicsServiceGlobalIllumination(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::GraphicsLevelEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::GlobalIllumination))}};
+}
+
+bool setGraphicsServiceGlobalIllumination(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::GlobalIllumination, generated::GraphicsLevelEnumId, value);
+}
+
+Value getGraphicsServiceReflections(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::GraphicsLevelEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::Reflections))}};
+}
+
+bool setGraphicsServiceReflections(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::Reflections, generated::GraphicsLevelEnumId, value);
+}
+
+Value getGraphicsServiceRenderResolutionCap(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::RenderResolutionCap)};
+}
+
+bool setGraphicsServiceRenderResolutionCap(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::RenderResolutionCap, value);
+}
+
+Value getGraphicsServiceWindowMode(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::WindowModeEnumId,
+                           static_cast<core::i32>(graphicsValue(world, GraphicsSetting::WindowMode))}};
+}
+
+bool setGraphicsServiceWindowMode(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsChoice(world, GraphicsSetting::WindowMode, generated::WindowModeEnumId, value);
+}
+
+Value getGraphicsServiceResolution(const World& world, core::InstanceId)
+{
+    return Value{core::Vec2{static_cast<core::f32>(graphicsValue(world, GraphicsSetting::ResolutionWidth)),
+                            static_cast<core::f32>(graphicsValue(world, GraphicsSetting::ResolutionHeight))}};
+}
+
+bool setGraphicsServiceResolution(World& world, core::InstanceId, const Value& value)
+{
+    const auto* size = std::get_if<core::Vec2>(&value);
+    if (size == nullptr || !std::isfinite(size->x) || !std::isfinite(size->y) || size->x < 0.0f || size->y < 0.0f)
+        return false;
+    // Whole pixels, both or neither: half a resolution is not one.
+    return writeGraphics(world, GraphicsSetting::ResolutionWidth, std::floor(static_cast<f64>(size->x))) &&
+           writeGraphics(world, GraphicsSetting::ResolutionHeight, std::floor(static_cast<f64>(size->y)));
+}
+
+Value getGraphicsServiceMonitor(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::Monitor)};
+}
+
+bool setGraphicsServiceMonitor(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::Monitor, value);
+}
+
+Value getGraphicsServiceVSync(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::VSync) != 0.0};
+}
+
+bool setGraphicsServiceVSync(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::VSync, value);
+}
+
+Value getGraphicsServiceMaxFrameRate(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::MaxFrameRate)};
+}
+
+bool setGraphicsServiceMaxFrameRate(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::MaxFrameRate, value);
+}
+
+Value getGraphicsServiceBackgroundFrameRate(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::BackgroundFrameRate)};
+}
+
+bool setGraphicsServiceBackgroundFrameRate(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::BackgroundFrameRate, value);
+}
+
+Value getGraphicsServiceBrightness(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::Brightness)};
+}
+
+bool setGraphicsServiceBrightness(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::Brightness, value);
+}
+
 Value getDebugServiceOverlayVisible(const World& world, core::InstanceId)
 {
     return world.engineState().overlayVisible;

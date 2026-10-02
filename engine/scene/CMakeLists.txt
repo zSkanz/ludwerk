@@ -19,6 +19,7 @@ engine_add_module(scene
         src/class_registry.cpp
         src/enum_registry.cpp
         src/world.cpp
+        src/graphics_model.cpp
         src/ui_pages.cpp
         src/world_hash.cpp
         src/wind.cpp
@@ -79,6 +80,7 @@ engine_add_module_tests(scene
         tests/class_registry_tests.cpp
         tests/enum_registry_tests.cpp
         tests/world_tests.cpp
+        tests/graphics_model_tests.cpp
         tests/camera_view_tests.cpp
         tests/world_snapshot_tests.cpp
         tests/material_world_tests.cpp

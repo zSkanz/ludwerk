@@ -2101,6 +2101,337 @@
       "Events": []
     },
     {
+      "Name": "GraphicsService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "AmbientOcclusion",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "AnisotropicFiltering",
+          "Type": "number",
+          "Default": "8",
+          "Transient": true
+        },
+        {
+          "Name": "AntiAliasing",
+          "Type": "Enum.AntiAliasingMode",
+          "Default": "Enum.AntiAliasingMode.FXAA",
+          "Transient": true
+        },
+        {
+          "Name": "AsyncUploadBudget",
+          "Type": "number",
+          "Default": "2",
+          "Transient": true
+        },
+        {
+          "Name": "AutoExposure",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "BackgroundFrameRate",
+          "Type": "number",
+          "Default": "10",
+          "Transient": true
+        },
+        {
+          "Name": "Bloom",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "Brightness",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "ContactShadows",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "DepthOfField",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "FogQuality",
+          "Type": "Enum.GraphicsLevel",
+          "Default": "Enum.GraphicsLevel.High",
+          "Transient": true
+        },
+        {
+          "Name": "FoliageDensity",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "GlobalIllumination",
+          "Type": "Enum.GraphicsLevel",
+          "Default": "Enum.GraphicsLevel.High",
+          "Transient": true
+        },
+        {
+          "Name": "LODBias",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "LightBudget",
+          "Type": "number",
+          "Default": "256",
+          "Transient": true
+        },
+        {
+          "Name": "MaxFrameRate",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "MaximumLODLevel",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "Monitor",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "MotionBlur",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
+          "Name": "ParticleBudget",
+          "Type": "number",
+          "Default": "65536",
+          "Transient": true
+        },
+        {
+          "Name": "QualityLevel",
+          "Type": "Enum.GraphicsQuality",
+          "Default": "Enum.GraphicsQuality.High",
+          "Transient": true
+        },
+        {
+          "Name": "Reflections",
+          "Type": "Enum.GraphicsLevel",
+          "Default": "Enum.GraphicsLevel.High",
+          "Transient": true
+        },
+        {
+          "Name": "RenderResolutionCap",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "RenderScale",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "Resolution",
+          "Type": "Vector2",
+          "Default": "Vector2.zero",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowCascades",
+          "Type": "number",
+          "Default": "4",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowDistance",
+          "Type": "number",
+          "Default": "120",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowQuality",
+          "Type": "Enum.ShadowQuality",
+          "Default": "Enum.ShadowQuality.High",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowResolution",
+          "Type": "number",
+          "Default": "2048",
+          "Transient": true
+        },
+        {
+          "Name": "SkinWeights",
+          "Type": "number",
+          "Default": "4",
+          "Transient": true
+        },
+        {
+          "Name": "SoftParticles",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "SunRays",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "TerrainDetail",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "TextureQuality",
+          "Type": "Enum.TextureQuality",
+          "Default": "Enum.TextureQuality.High",
+          "Transient": true
+        },
+        {
+          "Name": "TextureStreamingBudget",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "VSync",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
+          "Name": "ViewDistance",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "WindowMode",
+          "Type": "Enum.WindowMode",
+          "Default": "Enum.WindowMode.Windowed",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "ApplyPreset",
+          "Parameters": [
+            {
+              "Name": "level",
+              "Type": "Enum.GraphicsQuality"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "GetGroupLevel",
+          "Parameters": [
+            {
+              "Name": "group",
+              "Type": "Enum.GraphicsGroup"
+            }
+          ],
+          "Returns": ["Enum.GraphicsLevel?"]
+        },
+        {
+          "Name": "GetMonitors",
+          "Parameters": [],
+          "Returns": ["{ { Name: string, Size: Vector2, RefreshRate: number } }"]
+        },
+        {
+          "Name": "GetRefreshRate",
+          "Parameters": [],
+          "Returns": ["number"]
+        },
+        {
+          "Name": "GetSource",
+          "Parameters": [
+            {
+              "Name": "setting",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["Enum.SettingSource"]
+        },
+        {
+          "Name": "GetSupportedResolutions",
+          "Parameters": [],
+          "Returns": ["{ Vector2 }"]
+        },
+        {
+          "Name": "IsApplied",
+          "Parameters": [
+            {
+              "Name": "setting",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "LoadAsync",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ResetToDefaults",
+          "Parameters": [],
+          "Returns": []
+        },
+        {
+          "Name": "SaveAsync",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetGroupLevel",
+          "Parameters": [
+            {
+              "Name": "group",
+              "Type": "Enum.GraphicsGroup"
+            },
+            {
+              "Name": "level",
+              "Type": "Enum.GraphicsLevel"
+            }
+          ],
+          "Returns": []
+        }
+      ],
+      "Events": [
+        {
+          "Name": "QualityChanged",
+          "Parameters": []
+        }
+      ]
+    },
+    {
       "Name": "HapticService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -10989,6 +11320,19 @@
       ]
     },
     {
+      "Name": "AntiAliasingMode",
+      "Items": [
+        {
+          "Name": "FXAA",
+          "Value": 1
+        },
+        {
+          "Name": "Off",
+          "Value": 0
+        }
+      ]
+    },
+    {
       "Name": "ApplyStrokeMode",
       "Items": [
         {
@@ -11356,6 +11700,105 @@
         {
           "Name": "Radial",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "GraphicsGroup",
+      "Items": [
+        {
+          "Name": "AntiAliasing",
+          "Value": 1
+        },
+        {
+          "Name": "Effects",
+          "Value": 7
+        },
+        {
+          "Name": "Foliage",
+          "Value": 8
+        },
+        {
+          "Name": "GlobalIllumination",
+          "Value": 4
+        },
+        {
+          "Name": "PostProcessing",
+          "Value": 2
+        },
+        {
+          "Name": "Reflections",
+          "Value": 5
+        },
+        {
+          "Name": "Shading",
+          "Value": 9
+        },
+        {
+          "Name": "Shadows",
+          "Value": 3
+        },
+        {
+          "Name": "Textures",
+          "Value": 6
+        },
+        {
+          "Name": "ViewDistance",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "GraphicsLevel",
+      "Items": [
+        {
+          "Name": "Cinematic",
+          "Value": 4
+        },
+        {
+          "Name": "High",
+          "Value": 2
+        },
+        {
+          "Name": "Low",
+          "Value": 0
+        },
+        {
+          "Name": "Medium",
+          "Value": 1
+        },
+        {
+          "Name": "Ultra",
+          "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "GraphicsQuality",
+      "Items": [
+        {
+          "Name": "Auto",
+          "Value": 5
+        },
+        {
+          "Name": "Custom",
+          "Value": 4
+        },
+        {
+          "Name": "High",
+          "Value": 2
+        },
+        {
+          "Name": "Low",
+          "Value": 0
+        },
+        {
+          "Name": "Medium",
+          "Value": 1
+        },
+        {
+          "Name": "Ultra",
+          "Value": 3
         }
       ]
     },
@@ -12516,6 +12959,60 @@
       ]
     },
     {
+      "Name": "SettingSource",
+      "Items": [
+        {
+          "Name": "CommandLine",
+          "Value": 0
+        },
+        {
+          "Name": "Engine",
+          "Value": 5
+        },
+        {
+          "Name": "Player",
+          "Value": 1
+        },
+        {
+          "Name": "Preset",
+          "Value": 4
+        },
+        {
+          "Name": "Project",
+          "Value": 3
+        },
+        {
+          "Name": "Script",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ShadowQuality",
+      "Items": [
+        {
+          "Name": "High",
+          "Value": 3
+        },
+        {
+          "Name": "Low",
+          "Value": 1
+        },
+        {
+          "Name": "Medium",
+          "Value": 2
+        },
+        {
+          "Name": "Off",
+          "Value": 0
+        },
+        {
+          "Name": "Ultra",
+          "Value": 4
+        }
+      ]
+    },
+    {
       "Name": "Shape2D",
       "Items": [
         {
@@ -12693,6 +13190,23 @@
         },
         {
           "Name": "Wrap",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "TextureQuality",
+      "Items": [
+        {
+          "Name": "High",
+          "Value": 2
+        },
+        {
+          "Name": "Low",
+          "Value": 0
+        },
+        {
+          "Name": "Medium",
           "Value": 1
         }
       ]
@@ -12932,6 +13446,23 @@
         {
           "Name": "Spline",
           "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "WindowMode",
+      "Items": [
+        {
+          "Name": "Borderless",
+          "Value": 1
+        },
+        {
+          "Name": "Fullscreen",
+          "Value": 2
+        },
+        {
+          "Name": "Windowed",
+          "Value": 0
         }
       ]
     }

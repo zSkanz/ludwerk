@@ -348,6 +348,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().engineVersion = ENG_VERSION_STRING;
     m_world->engineState().luauVersion = ENG_LUAU_VERSION;
     m_world->engineState().networkTopology = options.networkTopology;
+    m_world->engineState().graphics.takeHostLayers(options.graphics);
+    m_world->engineState().graphicsDisplay = options.graphicsDisplay;
     // **Started to join** (`--join`, D433): the join is under way from the
     // first line any script runs. `State` reads `Connecting`, not `Offline`
     // -- "about to join" and "alone" looked the same -- and the scene's

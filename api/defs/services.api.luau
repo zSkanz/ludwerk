@@ -525,6 +525,490 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Callback },
     },
     {
+        Name = "GraphicsService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Doc = "The machine's graphics and display settings (ADR 0147): how good the picture is, how the window "
+            .. "sits on the display and how fast frames are made. What an options menu is built on.\n\n"
+            .. "**A setting's value is the first of these that says it**: a flag the game was started with, "
+            .. "what a script wrote this session, the player's saved choice, the project's `project.toml`, "
+            .. "the quality level in force, and the engine's own default. `GetSource` says which. A write "
+            .. "takes effect at the next frame, and ten writes in one frame are applied once.\n\n"
+            .. "**Nothing here is the world's.** The settings describe the machine the world is shown on: "
+            .. "they are not saved with a scene, do not travel to other players, and the simulation is the "
+            .. "same at every one of them. `SaveAsync` keeps them for this player, in their own folder; a "
+            .. "game starts in what they chose. A dedicated server has no display: it reads the defaults, "
+            .. "and a write there raises.",
+        Properties = {
+            {
+                Name = "QualityLevel",
+                Type = "Enum.GraphicsQuality",
+                Default = "Enum.GraphicsQuality.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The quality level. Writing one is `ApplyPreset`: every quality setting becomes that "
+                    .. "level's. It reads `Custom` when any of them is not the level's -- a script, the player or "
+                    .. "the project said otherwise -- and `Custom` cannot be written.",
+            },
+            {
+                Name = "RenderScale",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The fraction of the window's resolution the world is drawn at, 0.5 to 1. The interface is "
+                    .. "drawn at the window's own, whatever this is.",
+            },
+            {
+                Name = "ShadowQuality",
+                Type = "Enum.ShadowQuality",
+                Default = "Enum.ShadowQuality.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The sun's shadow, as a level. Writing one writes `ShadowResolution` and `ShadowCascades` "
+                    .. "as that level has them; `Off` is no cascades.",
+            },
+            {
+                Name = "ShadowResolution",
+                Type = "number",
+                Default = "2048",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "One shadow cascade's side in texels, 256 to 2048, rounded down to a power of two.",
+            },
+            {
+                Name = "ShadowCascades",
+                Type = "number",
+                Default = "4",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How many cascades the sun casts into, 0 to 4. Zero is no sun shadow.",
+            },
+            {
+                Name = "ShadowDistance",
+                Type = "number",
+                Default = "120",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How far from the camera the sun casts, in metres, 10 to 1000.",
+            },
+            {
+                Name = "AntiAliasing",
+                Type = "Enum.AntiAliasingMode",
+                Default = "Enum.AntiAliasingMode.FXAA",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How edges are smoothed.",
+            },
+            {
+                Name = "AmbientOcclusion",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether creases and corners are darkened.",
+            },
+            {
+                Name = "ContactShadows",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether the sun's shadow is drawn right up to what casts it.",
+            },
+            {
+                Name = "Bloom",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether bright things glow.",
+            },
+            {
+                Name = "DepthOfField",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a world's `DepthOfFieldEffect` is drawn. The machine wins over the world: off, a "
+                    .. "scene that asks for focus is sharp.",
+            },
+            {
+                Name = "SunRays",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a world's `SunRaysEffect` is drawn, by the same rule.",
+            },
+            {
+                Name = "AutoExposure",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether the picture's brightness follows the scene. Off, the exposure is held.",
+            },
+            {
+                Name = "LightBudget",
+                Type = "number",
+                Default = "256",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How many lights one frame may carry.",
+            },
+            {
+                Name = "TerrainDetail",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How fine distant ground is, as a scale on the level's own: 2 refines it at twice the "
+                    .. "distance, 0.5 at half.",
+            },
+            {
+                Name = "FoliageDensity",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How much of the foliage a `FoliageLayer` grows is drawn, 0 to 1, over the project's own "
+                    .. "density.",
+            },
+            {
+                Name = "ViewDistance",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "A scale on how far things are drawn, 0.25 to 4. **Kept, saved and reported, and not drawn "
+                    .. "by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "TextureQuality",
+                Type = "Enum.TextureQuality",
+                Default = "Enum.TextureQuality.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How much of each texture is kept. **Kept, saved and reported, and not drawn by yet**: it "
+                    .. "applies when that part of the renderer lands.",
+            },
+            {
+                Name = "AnisotropicFiltering",
+                Type = "number",
+                Default = "8",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How sharp a texture stays at a grazing angle, 1 to 16. **Kept, saved and reported, and not "
+                    .. "drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "LODBias",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "A scale on the distance a mesh's levels of detail change at. **Kept, saved and reported, "
+                    .. "and not drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "MaximumLODLevel",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The finest level of detail a mesh may be drawn at; 0 is its finest. **Kept, saved and "
+                    .. "reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "ParticleBudget",
+                Type = "number",
+                Default = "65536",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The most particles alive at once. **Kept, saved and reported, and not drawn by yet**: it "
+                    .. "applies when that part of the renderer lands.",
+            },
+            {
+                Name = "SoftParticles",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether particles fade where they meet a surface. **Kept, saved and reported, and not "
+                    .. "drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "SkinWeights",
+                Type = "number",
+                Default = "4",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How many bones may move one vertex, 1 to 4. **Kept, saved and reported, and not drawn by "
+                    .. "yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "TextureStreamingBudget",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The memory textures may keep resident, in mebibytes; 0 is no limit. **Kept, saved and "
+                    .. "reported, and not drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "AsyncUploadBudget",
+                Type = "number",
+                Default = "2",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The milliseconds a frame may spend sending data to the GPU. **Kept, saved and reported, "
+                    .. "and not drawn by yet**: it applies when that part of the renderer lands.",
+            },
+            {
+                Name = "MotionBlur",
+                Type = "boolean",
+                Default = "false",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether motion is blurred. **Kept, saved and reported, and not drawn by yet**: it applies "
+                    .. "when that part of the renderer lands.",
+            },
+            {
+                Name = "FogQuality",
+                Type = "Enum.GraphicsLevel",
+                Default = "Enum.GraphicsLevel.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How fog is drawn. **Kept, saved and reported, and not drawn by yet**: it applies when that "
+                    .. "part of the renderer lands.",
+            },
+            {
+                Name = "GlobalIllumination",
+                Type = "Enum.GraphicsLevel",
+                Default = "Enum.GraphicsLevel.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Indirect light. **Kept, saved and reported, and not drawn by yet**: it applies when that "
+                    .. "part of the renderer lands.",
+            },
+            {
+                Name = "Reflections",
+                Type = "Enum.GraphicsLevel",
+                Default = "Enum.GraphicsLevel.High",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Reflections. **Kept, saved and reported, and not drawn by yet**: it applies when that part "
+                    .. "of the renderer lands.",
+            },
+            {
+                Name = "RenderResolutionCap",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The most pixels the world's shorter side is drawn at; 0 is no limit. A handheld's levels "
+                    .. "set it: a phone's display has more pixels than an eye resolves or a battery pays for.",
+            },
+            {
+                Name = "WindowMode",
+                Type = "Enum.WindowMode",
+                Default = "Enum.WindowMode.Windowed",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How the window sits on the display. A handheld has the whole display whatever this says.",
+            },
+            {
+                Name = "Resolution",
+                Type = "Vector2",
+                Default = "Vector2.zero",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The window's size in pixels when it is windowed, and the display mode when it is "
+                    .. "fullscreen. Zero is \"the project's window size\", or the display's own when fullscreen.",
+            },
+            {
+                Name = "Monitor",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Which display the window is on, as an index into `GetMonitors()`.",
+            },
+            {
+                Name = "VSync",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a frame waits for the display. On by default; a handheld is always on.",
+            },
+            {
+                Name = "MaxFrameRate",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The most frames a second; 0 is no cap. With `VSync` off it is the only limit, and with it "
+                    .. "on it caps below the display's rate.",
+            },
+            {
+                Name = "BackgroundFrameRate",
+                Type = "number",
+                Default = "10",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The cap while the window is not in front or is minimised; 0 is no throttle.",
+            },
+            {
+                Name = "Brightness",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "An offset on the picture's gamma, -1 to 1. **Kept, saved and reported, and not drawn by "
+                    .. "yet**: it applies when that part of the renderer lands.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "ApplyPreset",
+                Parameters = { { Name = "level", Type = "Enum.GraphicsQuality" } },
+                Returns = {},
+                Doc = "Makes every quality setting what `level` has, whatever a script, the player or the "
+                    .. "project said before. `Auto` is the level this machine was measured for; `Custom` is "
+                    .. "refused. The display settings -- the window, `VSync`, the frame caps -- are not part "
+                    .. "of a level and stay.",
+            },
+            {
+                Name = "ResetToDefaults",
+                Parameters = {},
+                Returns = {},
+                Doc = "Forgets what a script wrote and what the player saved, so the project's defaults "
+                    .. "stand. The player's file is not touched until `SaveAsync`.",
+            },
+            {
+                Name = "GetSource",
+                Parameters = { { Name = "setting", Type = "string" } },
+                Returns = { "Enum.SettingSource" },
+                Doc = "Who said the value of the setting named `setting` -- a property's name, as "
+                    .. '`"VSync"`. A name that is no setting raises.',
+            },
+            {
+                Name = "IsApplied",
+                Parameters = { { Name = "setting", Type = "string" } },
+                Returns = { "boolean" },
+                Doc = "Whether anything draws by the setting named `setting` yet. A few are kept, saved and "
+                    .. "reported ahead of the renderer that reads them, so a menu does not change shape; a "
+                    .. "menu can leave those out, or grey them, by asking.",
+            },
+            {
+                Name = "GetGroupLevel",
+                Parameters = { { Name = "group", Type = "Enum.GraphicsGroup" } },
+                Returns = { "Enum.GraphicsLevel?" },
+                Doc = "The level a group is at: the one whose values every setting of the group has. Nil "
+                    .. "when they are no one level's -- somebody set one by itself.",
+            },
+            {
+                Name = "SetGroupLevel",
+                Parameters = {
+                    { Name = "group", Type = "Enum.GraphicsGroup" },
+                    { Name = "level", Type = "Enum.GraphicsLevel" },
+                },
+                Returns = {},
+                Doc = "Sets every setting of `group` to what `level` has.",
+            },
+            {
+                Name = "GetSupportedResolutions",
+                Parameters = {},
+                Returns = { "{ Vector2 }" },
+                Doc = "The fullscreen sizes the window's display offers, largest first. Empty where there is "
+                    .. "no display to ask.",
+            },
+            {
+                Name = "GetMonitors",
+                Parameters = {},
+                Returns = { "{ { Name: string, Size: Vector2, RefreshRate: number } }" },
+                Doc = "The displays, in the order `Monitor` counts them.",
+            },
+            {
+                Name = "GetRefreshRate",
+                Parameters = {},
+                Returns = { "number" },
+                Doc = "The rate of the display the window is on, in hertz; 0 when it will not say.",
+            },
+            {
+                Name = "SaveAsync",
+                Parameters = {},
+                Returns = { "boolean" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Keeps the player's choices -- what was saved before, under what a script has written "
+                    .. "since -- in their own folder, as `settings.json`. Yields until the file is written, "
+                    .. "at the end of the frame, and returns whether it was; from then on `GetSource` says "
+                    .. "`Player` for them. False where there is nowhere to write: a game that turned "
+                    .. "`[display] remember_player_settings` off, or a run with no folder of its own.",
+            },
+            {
+                Name = "LoadAsync",
+                Parameters = {},
+                Returns = { "boolean" },
+                Yields = true,
+                ThreadSafety = "Unsafe",
+                Doc = "Reads the player's saved choices again, and forgets what a script wrote since: what "
+                    .. "a menu's Revert does. Yields until it is done, at the end of the frame, and returns "
+                    .. "whether there was a file to read.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "QualityChanged",
+                Parameters = {},
+                Doc = "The quality level or any quality setting changed, whoever changed it. Once a frame at "
+                    .. "most.",
+            },
+        } :: { Schema.Event },
+    },
+    {
         Name = "HapticService",
         Extends = "Instance",
         Module = "scene",

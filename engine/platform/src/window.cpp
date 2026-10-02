@@ -6,6 +6,7 @@
 #include <SDL3/SDL_rect.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_video.h>
+#include <algorithm>
 
 #include "engine/core/i18n.h"
 #include "engine/core/text_key.h"
@@ -212,6 +213,130 @@ void setWindowPlacement(Window& window, const WindowPlacement& placement)
 void setWindowFullscreen(Window& window, bool fullscreen)
 {
     (void)SDL_SetWindowFullscreen(window.handle(), fullscreen);
+}
+
+std::vector<DisplayInfo> displays()
+{
+    std::vector<DisplayInfo> found;
+    int count = 0;
+    SDL_DisplayID* ids = SDL_GetDisplays(&count);
+    if (ids == nullptr)
+        return found;
+    for (int index = 0; index < count; ++index) {
+        DisplayInfo info;
+        if (const char* name = SDL_GetDisplayName(ids[index]); name != nullptr)
+            info.name = name;
+        if (const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(ids[index]); mode != nullptr) {
+            // In pixels: a doubled display's desktop mode is in points.
+            info.width = static_cast<i32>(static_cast<f32>(mode->w) * mode->pixel_density);
+            info.height = static_cast<i32>(static_cast<f32>(mode->h) * mode->pixel_density);
+            info.refreshRate = mode->refresh_rate;
+        }
+        found.push_back(std::move(info));
+    }
+    SDL_free(ids);
+    return found;
+}
+
+namespace {
+
+// The system's id of display `index`, or zero.
+[[nodiscard]] SDL_DisplayID displayAt(core::usize index)
+{
+    int count = 0;
+    SDL_DisplayID* ids = SDL_GetDisplays(&count);
+    if (ids == nullptr)
+        return 0;
+    const SDL_DisplayID id = index < static_cast<core::usize>(count) ? ids[index] : 0;
+    SDL_free(ids);
+    return id;
+}
+
+} // namespace
+
+std::vector<DisplayMode> displayModes(core::usize index)
+{
+    std::vector<DisplayMode> found;
+    const SDL_DisplayID display = displayAt(index);
+    if (display == 0)
+        return found;
+    int count = 0;
+    SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(display, &count);
+    if (modes == nullptr)
+        return found;
+    // The library lists them largest first, and a size once per rate and
+    // format: the first of each size is its best.
+    for (int at = 0; at < count; ++at) {
+        const SDL_DisplayMode& mode = *modes[at];
+        DisplayMode entry;
+        entry.width = static_cast<i32>(static_cast<f32>(mode.w) * mode.pixel_density);
+        entry.height = static_cast<i32>(static_cast<f32>(mode.h) * mode.pixel_density);
+        entry.refreshRate = mode.refresh_rate;
+        bool listed = false;
+        for (DisplayMode& earlier : found) {
+            if (earlier.width == entry.width && earlier.height == entry.height) {
+                earlier.refreshRate = std::max(earlier.refreshRate, entry.refreshRate);
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+            found.push_back(entry);
+    }
+    SDL_free(modes);
+    return found;
+}
+
+core::usize windowDisplay(const Window& window)
+{
+    const SDL_DisplayID current = SDL_GetDisplayForWindow(window.handle());
+    int count = 0;
+    SDL_DisplayID* ids = SDL_GetDisplays(&count);
+    core::usize index = 0;
+    if (ids != nullptr) {
+        for (int at = 0; at < count; ++at) {
+            if (ids[at] == current)
+                index = static_cast<core::usize>(at);
+        }
+        SDL_free(ids);
+    }
+    return index;
+}
+
+void setWindowMode(Window& window, WindowMode mode, core::usize display, i32 width, i32 height)
+{
+    SDL_Window* handle = window.handle();
+    SDL_DisplayID target = displayAt(display);
+    if (target == 0)
+        target = SDL_GetDisplayForWindow(handle);
+
+    if (mode == WindowMode::Windowed) {
+        (void)SDL_SetWindowFullscreen(handle, false);
+        if (width > 0 && height > 0)
+            (void)SDL_SetWindowSize(handle, width, height);
+        // On the display that was asked for, when it is another.
+        if (target != 0 && target != SDL_GetDisplayForWindow(handle)) {
+            (void)SDL_SetWindowPosition(handle, static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(target)),
+                                        static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(target)));
+        }
+        return;
+    }
+
+    // A window goes fullscreen on the display it is on: moved first.
+    if (target != 0 && target != SDL_GetDisplayForWindow(handle)) {
+        (void)SDL_SetWindowFullscreen(handle, false);
+        (void)SDL_SetWindowPosition(handle, static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(target)),
+                                    static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(target)));
+    }
+
+    SDL_DisplayMode closest{};
+    const bool exclusive = mode == WindowMode::Fullscreen && width > 0 && height > 0 && target != 0 &&
+                           SDL_GetClosestFullscreenDisplayMode(target, width, height, 0.0f, true, &closest);
+    // No mode of its own is the desktop's: the borderless kind, and what
+    // fullscreen falls back to when the display has nothing near what was
+    // asked.
+    (void)SDL_SetWindowFullscreenMode(handle, exclusive ? &closest : nullptr);
+    (void)SDL_SetWindowFullscreen(handle, true);
 }
 
 WindowPlacement usableDisplayArea() noexcept

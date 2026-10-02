@@ -244,6 +244,14 @@ struct WorldHostOptions
     // Where one warmed name stands: nothing while it is on its way, then
     // whether it arrived (ADR 0131 §3 asks this of each name).
     std::function<std::optional<bool>(scene::World&, std::string_view)> warmedContent = nullptr;
+
+    // **The graphics settings' layers** (ADR 0147): what the command line, the
+    // project, the player's file and each preset say, given to the world when
+    // it is made so that a script's first line reads them -- the frame puts
+    // them back from then on. And whether there is a display to apply a
+    // script's write to: a dedicated server has none.
+    scene::GraphicsModel graphics{};
+    bool graphicsDisplay = true;
 };
 
 // What the conformance run reported. Read after the loop, because the run ends

@@ -1,6 +1,6 @@
 # 0044 — Graphics settings are host settings, in three layers
 
-- Status: accepted
+- Status: accepted; amended by [ADR 0147](0147-graphics-and-display-settings-are-one-model-the-project-sets-the-player-chooses-a-script-reads-and-writes.md) -- a script and the player's saved choice are sources too
 - Date: 2026-08-22
 - Supersedes nothing. Delivers ADR 0038 §3's deferred item.
 
