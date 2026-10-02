@@ -276,6 +276,26 @@ if [[ -n "$brandHits" ]]; then
     status=1
 fi
 
+# **Text read as one encoding and written as another.** A tool that reads a
+# UTF-8 file as the system's code page and writes it back as UTF-8 turns every
+# character past ASCII into two: a section sign into an A with a circumflex and
+# a section sign, a dash into three letters. It compiles, it runs, and 24
+# comments in `engine.cpp` said it for two commits before anybody read one.
+# The bytes are named in hex so that this file does not contain what it looks
+# for, and matched as fixed strings in the C locale: `grep -P` refuses the
+# locale Git Bash runs in on Windows, and with its complaint thrown away the
+# first version of this check passed a file it was written to catch.
+echo "== encoding (no text encoded twice) =="
+twice="$(git ls-files -z -- engine runtime tools api templates examples scripts cmake tests platforms i18n docs \
+        CMakeLists.txt CHANGELOG.md \
+    | LC_ALL=C xargs -0 grep -I -l -F -e $'\xc3\x82\xc2' -e $'\xc3\xa2\xe2\x82\xac' -e $'\xc3\x83\xc2' || true)"
+if [[ -n "$twice" ]]; then
+    printf '%s\n' "$twice" | head -50 | while IFS= read -r file; do
+        err "has text that was encoded twice (read as a code page, written as UTF-8); write the characters again" "$file"
+    done
+    status=1
+fi
+
 if [[ $status -eq 0 ]]; then
     echo "docs-lint: ok"
 fi

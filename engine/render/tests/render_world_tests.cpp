@@ -668,7 +668,7 @@ TEST_CASE("a MeshPart's wire box appears only while its mesh has not loaded")
     }
 }
 
-// --- Render interpolation (D047, architecture.md Â§3) -------------------------
+// --- Render interpolation (D047, architecture.md §3) -------------------------
 //
 // The simulation is a fixed 60 Hz and a display is not, so a frame between two
 // ticks has to be drawn between two states or the world steps while the camera
@@ -887,7 +887,7 @@ TEST_CASE("clearing the history is what makes a restored world stop interpolatin
 // can hold; what the mask and the dilate then make of it needs a device and, in
 // the end, a person looking at it.
 //
-// The differential is the point (MASTER_PROMPT.md Â§8): extracting the same world
+// The differential is the point (MASTER_PROMPT.md §8): extracting the same world
 // twice, once with a selection and once without, must not produce the same draw
 // list.
 TEST_CASE("a selected instance comes out marked, and nothing else does")

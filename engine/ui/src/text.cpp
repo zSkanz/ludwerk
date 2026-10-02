@@ -32,7 +32,8 @@
 // A codepoint the face in hand cannot draw gets a **visible replacement box**
 // rather than nothing, a question mark, or the mojibake that reading the bytes
 // one at a time would produce. A player seeing boxes knows the font is missing
-// glyphs; a player seeing `Ã¡` learns nothing.
+// glyphs; a player seeing two strange letters where one accented one should
+// be learns nothing.
 //
 // The seam is `measureText` and `buildTextGeometry`, and it held: the real face
 // arrived without moving either signature, the cache's key or its miss path.

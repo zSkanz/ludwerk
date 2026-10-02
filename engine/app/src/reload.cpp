@@ -77,7 +77,7 @@ ReloadReport reloadWorld(std::unique_ptr<WorldHost>& host, const WorldHostOption
     WorldHostOptions freshOptions = options;
     freshOptions.isReload = true;
     freshOptions.preserved = &preserved;
-    // **The topology and the scene it is in NOW** (S0.7, ADR 0137 Â§6), not the
+    // **The topology and the scene it is in NOW** (S0.7, ADR 0137 §6), not the
     // ones it booted with: after a run-time `Join` or `LoadScene`, a reload
     // came back solo, or as the host, in the first scene.
     if (host)
