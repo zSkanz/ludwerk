@@ -39,6 +39,10 @@ next resumption point, not inside the click.
 that started on a button and released elsewhere is a cancelled press — which is
 what every UI in the world does, and what people rely on to change their mind.
 
+**A press that became something else is not a press either.** A press that
+dragged an element by its `UIDragDetector`, scrolled a `ScrollFrame`, or swiped
+a page fires no `Activated` on what was under it.
+
 ## What answers a click
 
 Hit-testing walks every enabled `ScreenGui`, ordered by
@@ -103,7 +107,7 @@ device:
 | Mouse | the pointer is over an element that takes it (`Active`), for the buttons, the wheel and motion |
 | Touch | that finger came down on such an element -- for its whole press, wherever it is dragged |
 | Keyboard | a `TextInput` has the focus |
-| Gamepad | never: nothing in the interface takes a gamepad yet |
+| Gamepad | never: the interface takes only what the game has not bound -- see [A gamepad and the arrow keys](manual:ui/selection) |
 
 A gesture (`TouchSwiped` and the rest) is not started by a press the interface
 took.
@@ -122,6 +126,69 @@ Two consequences worth knowing:
 - `InputService.IsKeyDown` deliberately **ignores** what the UI consumed. A poll
   asks what the hardware is doing; an event asks what happened to the game. The
   raw events carry a `uiConsumed` flag so a handler can tell.
+
+## Scrolling
+
+A `ScrollFrame` is scrolled by hand:
+
+- **the wheel**, over it: three lines a notch. A frame that cannot move that
+  way -- it is at its end, or its canvas fits -- hands the wheel to the scroll
+  frame it is inside, and failing that to a `UIPageLayout` under the pointer;
+- **a drag**, by a finger or a held mouse: the content follows the pointer. The
+  row under the finger is not pressed when the list moved; in a list with
+  nowhere to scroll, it is.
+
+`CanvasPosition` is a property like any other: write it to scroll from a
+script, and read it to know where the player is.
+
+## Dragging
+
+A `UIDragDetector` under an element makes it something a pointer drags -- a
+window by its title bar, a slider's thumb, a dial:
+
+```luau
+local thumb = Instance.new("TextButton")
+thumb.Size = UDim2.new(0, 40, 1, 0)
+thumb.Parent = track
+
+local drag = Instance.new("UIDragDetector")
+drag.DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine
+drag.ResponseStyle = Enum.UIDragDetectorResponseStyle.Scale
+drag.BoundingUI = track -- it stays on its track
+drag.Parent = thumb
+
+drag.DragContinue:Connect(function()
+	volume = thumb.Position.X.Scale / (1 - thumb.Size.X.Offset / track.AbsoluteSize.X)
+end)
+```
+
+A press on the element, or on anything inside it, that then moves more than a
+few pixels is a drag. One that does not move is still a press.
+
+| `DragStyle` | The element |
+|---|---|
+| `TranslatePlane` | Follows the pointer on both axes. |
+| `TranslateLine` | Slides along `DragAxis` -- `(1, 0)` across, `(0, 1)` down -- and nowhere else. |
+| `Rotate` | Turns about its own middle as the pointer goes round it. |
+| `Scriptable` | Does not move: the signals say where the pointer is. |
+
+| `ResponseStyle` | What is written |
+|---|---|
+| `Offset` | The offset of the element's `Position`, in its units. |
+| `Scale` | The scale of its `Position`, a fraction of its parent: the same place at any size. |
+| `CustomOffset`, `CustomScale` | Nothing. `DragUDim2` and `DragRotation` say how far, and a script applies it. |
+
+**Limits.** `BoundingUI` keeps the element inside another. `MinDragTranslation`
+and `MaxDragTranslation` bound how far it may go from where the drag began, and
+`MinDragAngle` and `MaxDragAngle` how far it may turn; a pair that is equal --
+as a new detector's are -- is no limit.
+
+**Signals.** `DragStart(position)`, `DragContinue(position)` and
+`DragEnd(position)`, the pointer's place in pixels.
+
+The detector writes `Position`, so an element placed by a layout -- which has
+no position of its own -- is not moved; use `CustomOffset` there and apply
+`DragUDim2` yourself.
 
 ## Driving an action from a button
 
@@ -152,6 +219,8 @@ anything between for a slider or a thumbstick axis. Bound to a boolean action it
 counts as pressed past half deflection.
 
 ## Where to look next
+
+- [A gamepad and the arrow keys](manual:ui/selection) -- the same buttons, with no pointer
 
 - [Actions, bindings and contexts](manual:input/actions)
 - [The UI tree](manual:ui/tree)

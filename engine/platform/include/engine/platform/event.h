@@ -459,7 +459,13 @@ struct VirtualRumble
 [[nodiscard]] VirtualRumble virtualGamepadRumble() noexcept;
 
 // Whether the platform library was built with a joystick subsystem at all.
+// Starts it if nothing has.
 [[nodiscard]] bool gamepadsAvailable() noexcept;
+
+// Whether this run looks for gamepads (`InitOptions::gamepads`), and whether
+// it has begun to: the pump starts the subsystem the second time it runs.
+void setGamepadsWanted(bool wanted) noexcept;
+[[nodiscard]] bool gamepadsStarted() noexcept;
 
 // Whether the platform layer delivers `TextInput` events for this window.
 //

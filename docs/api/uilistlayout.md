@@ -17,9 +17,13 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `AbsoluteContentSize` | `Vector2` | — | read-only | How much room the children take, in pixels, as the last layout found it. What a `ScrollFrame`'s `CanvasSize` is set from. |
 | `FillDirection` | `Enum.FillDirection` | `Enum.FillDirection.Vertical` | read/write | Which way the line runs. |
 | `HorizontalAlignment` | `Enum.HorizontalAlignment` | `Enum.HorizontalAlignment.Left` | read/write | Where the line sits across the parent. |
+| `HorizontalFlex` | `Enum.UIFlexAlignment` | `Enum.UIFlexAlignment.None` | read/write | What happens to room left over across the parent: nothing, the children grow into it, or it is shared out as space between them. |
+| `ItemLineAlignment` | `Enum.ItemLineAlignment` | `Enum.ItemLineAlignment.Automatic` | read/write | Where each child sits across its line; `Stretch` makes them all as tall as a row or as wide as a column. A child's own `UIFlexItem` can say otherwise. |
 | `Padding` | `UDim` | `UDim.new()` | read/write | The gap BETWEEN children, not around them -- `UIPadding` is what puts space around the outside. Scale is a fraction of the parent along the fill direction. |
 | `SortOrder` | `Enum.SortOrder` | `Enum.SortOrder.LayoutOrder` | read/write | What order the children go in. |
 | `VerticalAlignment` | `Enum.VerticalAlignment` | `Enum.VerticalAlignment.Top` | read/write | Where it sits down the parent. |
+| `VerticalFlex` | `Enum.UIFlexAlignment` | `Enum.UIFlexAlignment.None` | read/write | The same, down the parent. |
 | `Wraps` | `boolean` | `false` | read/write | Whether the line breaks into a second one when it runs out of room, rather than overflowing. |

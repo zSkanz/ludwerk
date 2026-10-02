@@ -19,6 +19,7 @@
 #include "engine/scene/players.h"
 #include "engine/scene/ragdoll_build.h"
 #include "engine/scene/scene_file.h"
+#include "engine/scene/ui_pages.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
 #include "engine/script/content_provider.h"
@@ -1273,6 +1274,44 @@ int methodTextInputIsFocused(lua_State* L)
     const scene::TextInputComponent* field = world(L).textInputs().find(id);
     lua_pushboolean(L, field != nullptr && field->focused ? 1 : 0);
     return 1;
+}
+
+// `UIPageLayout`'s four ways to turn the page (ADR 0128). `CurrentPage` has
+// changed by the time each returns.
+int methodPageLayoutNext(lua_State* L)
+{
+    (void)scene::stepPage(world(L), liveInstance(L, 1), 1);
+    return 0;
+}
+
+int methodPageLayoutPrevious(lua_State* L)
+{
+    (void)scene::stepPage(world(L), liveInstance(L, 1), -1);
+    return 0;
+}
+
+int methodPageLayoutJumpTo(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const core::InstanceId page = liveInstance(L, 2);
+    World& w = world(L);
+    std::vector<core::InstanceId> pages;
+    scene::pagesOf(w, id, pages);
+    const auto found = std::find(pages.begin(), pages.end(), page);
+    if (found == pages.end())
+        raise(L, ENG_TR("script.err.not_a_page"));
+    (void)scene::turnPage(w, id, static_cast<core::i32>(found - pages.begin()));
+    return 0;
+}
+
+int methodPageLayoutJumpToIndex(lua_State* L)
+{
+    const core::InstanceId id = liveInstance(L, 1);
+    const double index = luaL_checknumber(L, 2);
+    if (!std::isfinite(index))
+        raise(L, ENG_TR("script.err.not_a_page"));
+    (void)scene::turnPage(world(L), id, static_cast<core::i32>(std::floor(index)));
+    return 0;
 }
 
 int methodSetMaterialParameter(lua_State* L)
@@ -2588,6 +2627,10 @@ constexpr InstanceMethodBinding InstanceMethods[] = {
     {"TextInput", "CaptureFocus", methodTextInputCaptureFocus},
     {"TextInput", "ReleaseFocus", methodTextInputReleaseFocus},
     {"TextInput", "IsFocused", methodTextInputIsFocused},
+    {"UIPageLayout", "Next", methodPageLayoutNext},
+    {"UIPageLayout", "Previous", methodPageLayoutPrevious},
+    {"UIPageLayout", "JumpTo", methodPageLayoutJumpTo},
+    {"UIPageLayout", "JumpToIndex", methodPageLayoutJumpToIndex},
     {"BasePart", "GetMaterialParameter", methodGetMaterialParameter},
     {"BasePart", "ClearMaterialParameter", methodClearMaterialParameter},
     {"Part2D", "ApplyImpulse", methodPart2DApplyImpulse},

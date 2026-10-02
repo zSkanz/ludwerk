@@ -70,6 +70,7 @@ guided tour.
 | [`Bone`](bone.md) | [`Attachment`](attachment.md) | An attachment that follows a joint of the `MeshPart` it is parented to. |
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is rendered from. |
 | [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | A camera drawing into a texture (ADR 0107): whatever `Camera` sees is drawn into `view://` followed by `ViewName`, and anything that takes a texture -- an `ImageLabel` on a `SurfaceGui`, a `Decal`, a material's map -- can show it. |
+| [`CanvasGroup`](canvasgroup.md) | [`Frame`](frame.md) | A `Frame` whose descendants are drawn together and then shown as one picture (ADR 0128): a window that fades as a whole, instead of its parts fading through each other. |
 | [`CharacterBody`](characterbody.md) | [`BasePart`](basepart.md) | A capsule that walks: the player, or anything that should climb a ramp and step over a kerb instead of tumbling. |
 | [`ChorusSoundEffect`](chorussoundeffect.md) | [`SoundEffect`](soundeffect.md) | A copy of the sound that drifts a little out of time and tune with it: one voice as several, a shimmer. |
 | [`ClickDetector`](clickdetector.md) | [`Instance`](instance.md) | Makes the part or model it is in something a player clicks (ADR 0126). |
@@ -145,12 +146,20 @@ guided tour.
 | [`Tilemap2D`](tilemap2d.md) | [`Instance`](instance.md) | A grid of tiles from one tileset image, on the 2D plane (the 2D layer, phase 3): a level you paint. |
 | [`Torque`](torque.md) | [`Constraint`](constraint.md) | A constant torque on the part its `Attachment0` is on: something that keeps being twisted. |
 | [`Trail`](trail.md) | [`Instance`](instance.md) | The ribbon two attachments leave behind as they move: a sword's swing, a tyre's mark, the wake of something fast. |
+| [`UIAspectRatioConstraint`](uiaspectratioconstraint.md) | [`Instance`](instance.md) | Keeps its parent a fixed shape (ADR 0128): a square slot, a 16:9 picture, whatever the window does. |
 | [`UICorner`](uicorner.md) | [`Instance`](instance.md) | Rounds its parent's corners (§2.2). |
+| [`UIDragDetector`](uidragdetector.md) | [`Instance`](instance.md) | Makes its parent something a pointer drags (ADR 0128): a window by its title bar, a slider's thumb, a dial. |
+| [`UIFlexItem`](uiflexitem.md) | [`Instance`](instance.md) | Says how its parent behaves as a child of a `UIListLayout` (ADR 0128): whether it grows into room that is left over, whether it shrinks when the line is too long, and where it sits across the line. |
 | [`UIGradient`](uigradient.md) | [`Instance`](instance.md) | Colours and fades its parent (ADR 0110): what the parent draws -- its background, its picture, its text -- is multiplied by `Color` and faded by `Transparency` along the gradient. |
+| [`UIGridLayout`](uigridlayout.md) | [`Instance`](instance.md) | Arranges its parent's `UIObject` children in a grid of equal cells (ADR 0128): an inventory, a shop, a level select. |
 | [`UIListLayout`](uilistlayout.md) | [`Instance`](instance.md) | Stacks its parent's `UIObject` children in a line (§2.2). |
 | [`UIObject`](uiobject.md) | [`Instance`](instance.md) | Anything that occupies a rectangle on screen (§2.2). |
 | [`UIPadding`](uipadding.md) | [`Instance`](instance.md) | Insets its parent's content on each side (§2.2). |
+| [`UIPageLayout`](uipagelayout.md) | [`Instance`](instance.md) | Lays its parent's `UIObject` children side by side as pages and shows one (ADR 0128): a tutorial, a set of tabs, a carousel. |
+| [`UIScale`](uiscale.md) | [`Instance`](instance.md) | Scales its parent and everything inside it (ADR 0128): what is drawn, and where a press lands. |
+| [`UISizeConstraint`](uisizeconstraint.md) | [`Instance`](instance.md) | Keeps its parent between two sizes (ADR 0128): a panel that is a third of the window and never under 240 units wide. |
 | [`UIStroke`](uistroke.md) | [`Instance`](instance.md) | An outline on its parent's text or border (ADR 0110). |
+| [`UITextSizeConstraint`](uitextsizeconstraint.md) | [`Instance`](instance.md) | Keeps scaled text between two sizes (ADR 0128): a `TextScaled` label that never falls under what can be read nor grows past what looks right. |
 | [`VectorForce`](vectorforce.md) | [`Constraint`](constraint.md) | A constant force on the part its `Attachment0` is on: a thruster, wind on one thing, lift. |
 | [`ViewportFrame`](viewportframe.md) | [`UIObject`](uiobject.md) | A UI element that draws the parts and models inside it (ADR 0107): an item turning in an inventory slot, a character preview, a 3D icon. |
 | [`Water`](water.md) | [`Instance`](instance.md) | Water (ADR 0118): a sea, a lake or a river, drawn and floated from **one wave definition** -- its `WaterWave` children -- evaluated the same on the CPU for the simulation and on the GPU for the picture. |

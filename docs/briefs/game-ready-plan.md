@@ -51,7 +51,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 6 | **B8** water, and the ocean example rewritten | world | Fixes an example that exists; any game with a boat |
 | [ ] 6b | **F2** movers and constraints (motor, servo, align, rope, rod, spring) | toolkit | Builds on B8's impulses at a point; a part moves without code |
 | [ ] 7 | **C1** `Request` and WebSocket in `NetworkService` | network | What people ask of a network first |
-| [ ] 7b | **F3** UI grids, pages, flex, scale, size constraints, `CanvasGroup`, `UIDragDetector`, gamepad selection | toolkit | UI for every screen and a controller |
+| [x] 7b | **F3** UI grids, pages, flex, scale, size constraints, `CanvasGroup`, `UIDragDetector`, gamepad selection | toolkit | UI for every screen and a controller |
 | [x] 7c | **F4** `Highlight`, `Beam`, `Trail` | toolkit | — |
 | [x] 8 | **A3** bytecode in the export | foundation | The shipped game stops carrying its source |
 | [x] 9 | **B7** friction and footsteps | world | — |

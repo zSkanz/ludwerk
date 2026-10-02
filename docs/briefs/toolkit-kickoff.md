@@ -97,19 +97,27 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## Stage F3 — UI layouts, adaptation, gamepad (ADR 0128)
 
-- [ ] `UIGridLayout`, `UIPageLayout`, flex in `UIListLayout` and `UIFlexItem`.
-- [ ] `UIScale`, `UIAspectRatioConstraint`, `UISizeConstraint`,
+- [x] `UIGridLayout`, `UIPageLayout`, flex in `UIListLayout` and `UIFlexItem`.
+- [x] `UIScale`, `UIAspectRatioConstraint`, `UISizeConstraint`,
   `UITextSizeConstraint`.
-- [ ] `CanvasGroup` through the view texture registry, redrawn when dirty.
-- [ ] `UIDragDetector`.
-- [ ] Selection: `Selectable`, `NextSelection*`, `UIService.SelectedObject`,
+- [x] `CanvasGroup`, redrawn when dirty -- in a registry of its own beside the
+  view textures', for the reason ADR 0128's "As built" gives.
+- [x] `UIDragDetector`. `DragRelativity` and `DragSpace` are not built (they
+  describe a drag function there is none of); a box in the leftovers.
+- [x] Selection: `Selectable`, `NextSelection*`, `UIService.SelectedObject`,
   `AutoSelect`, `SelectionChanged`; d-pad, stick and arrows; the default look.
-- [ ] The UI appearance gate gains cases for each.
-- [ ] An example: an inventory grid, a paged tutorial, and a menu driven by a
-  gamepad, at three screen sizes.
-- [ ] Tests: layouts against hand-computed positions; constraints clamp; a
+  A game's own bindings come first, so nothing is selected by accident.
+- [x] The appearance gate gains cases for each: a gate of its own,
+  `ui_layouts_gate`, twenty-four probes of `tests/screenshots/uilayouts`.
+- [x] An example: `examples/32-menus` -- an inventory grid, a paged tutorial,
+  and a menu driven by a gamepad -- looked at at 1280 by 720, 640 by 960 and
+  1920 by 1080.
+- [x] Tests: layouts against hand-computed positions; constraints clamp; a
   `CanvasGroup` at 0.5 draws its children as one; selection moves to the nearest
   element in each direction.
+- [x] Found on the way: a `ScrollFrame` scrolled by the wheel and a finger
+  (D477), a hidden child keeps no room (D478), and a canvas never smaller than
+  its frame (D479).
 
 ## Stage F4 — Highlight, Beam, Trail (ADR 0129)
 

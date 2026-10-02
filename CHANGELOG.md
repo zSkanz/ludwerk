@@ -153,6 +153,21 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **UI that lays out in grids and pages, fits any screen, and is driven by a
+  gamepad** (ADR 0128). `UIGridLayout`; `UIPageLayout` with `Next`, `Previous`,
+  `JumpTo`, `JumpToIndex`, `CurrentPage`, `PageEnter`, `PageLeave` and
+  `Stopped`, turned by a swipe, the wheel and a gamepad's shoulder buttons;
+  flex in `UIListLayout` (`HorizontalFlex`, `VerticalFlex`,
+  `ItemLineAlignment`, `AbsoluteContentSize`) and `UIFlexItem`; `UIScale`,
+  `UIAspectRatioConstraint`, `UISizeConstraint` and `UITextSizeConstraint`;
+  `CanvasGroup`, a frame drawn as one picture with `GroupTransparency` and
+  `GroupColor`; `UIDragDetector`; and selection -- `UIObject.Selectable`,
+  `NextSelectionUp`/`Down`/`Left`/`Right`, `SelectionImageObject`,
+  `SelectionGained`, `SelectionLost`, and `UIService.SelectedObject`,
+  `AutoSelect` and `SelectionChanged`, moved by the d-pad, the left stick and
+  the arrows and pressed by `ButtonA` or Enter. Eight enums with them.
+  `examples/32-menus`.
+
 - **`Highlight`, `Beam` and `Trail`** (ADR 0129): an outline and a tint over a
   part or a model, through walls or not, in the colours it is given; a band
   between two attachments, straight or curved, with a texture that can run;
@@ -730,6 +745,18 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **A child that is not `Visible` keeps no room in a layout** (D478): a hidden
+  child of a `UIListLayout` left a gap where it had been, and a parent with
+  `AutomaticSize` stayed as large as what was hidden. An interface that hid a
+  row and relied on the gap changes.
+- **A `ScrollFrame`'s canvas is never smaller than the frame** (D479): with
+  `CanvasSize` zero on an axis, a child sized as a fraction of its parent was
+  nothing long on that axis, and is now as long as the frame.
+- **A gamepad is connected a frame after a game starts** (D476): the platform
+  looks for gamepads once the first frame is on the screen, so a window is
+  never later for it. `InputService.GamepadAvailable` at a script's first line
+  is false; connect to its changed signal.
+
 - **Protocol 30**: a part's `Shape` and a mesh part's mesh travel (D424). A
   client and a server must be of the same build.
 - **`ColorCorrectionEffect.Contrast` is a power about the frame's average**,
@@ -880,6 +907,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A `ScrollFrame` is scrolled by the wheel and by a finger** (D477): it moved
+  only when a script wrote `CanvasPosition`. The wheel over it moves its canvas,
+  and a press that is then dragged scrolls it without pressing the row under
+  the finger.
 - **A gamepad works** (D476): the platform library was built without its
   joystick support, so no gamepad, in any build, ever reached the Input Action
   System. It is built with it now -- with haptics and the HID layer a modern

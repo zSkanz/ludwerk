@@ -8671,6 +8671,241 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     textureModeDesc.docKey = {};
     textureModeDesc.items = textureModeItems;
     enums.registerEnum(textureModeDesc);
+
+    // --- StartCorner ---
+    static std::array<EnumItemDesc, 4> startCornerItems;
+    startCornerItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("TopLeft"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TopRight"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("BottomLeft"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("BottomRight"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor startCornerDesc;
+    startCornerDesc.name = atoms.intern("StartCorner");
+    startCornerDesc.docKey = {};
+    startCornerDesc.items = startCornerItems;
+    enums.registerEnum(startCornerDesc);
+
+    // --- UIFlexAlignment ---
+    static std::array<EnumItemDesc, 5> uIFlexAlignmentItems;
+    uIFlexAlignmentItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Fill"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SpaceAround"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SpaceBetween"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("SpaceEvenly"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor uIFlexAlignmentDesc;
+    uIFlexAlignmentDesc.name = atoms.intern("UIFlexAlignment");
+    uIFlexAlignmentDesc.docKey = {};
+    uIFlexAlignmentDesc.items = uIFlexAlignmentItems;
+    enums.registerEnum(uIFlexAlignmentDesc);
+
+    // --- UIFlexMode ---
+    static std::array<EnumItemDesc, 5> uIFlexModeItems;
+    uIFlexModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Grow"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Shrink"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Fill"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Custom"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor uIFlexModeDesc;
+    uIFlexModeDesc.name = atoms.intern("UIFlexMode");
+    uIFlexModeDesc.docKey = {};
+    uIFlexModeDesc.items = uIFlexModeItems;
+    enums.registerEnum(uIFlexModeDesc);
+
+    // --- ItemLineAlignment ---
+    static std::array<EnumItemDesc, 5> itemLineAlignmentItems;
+    itemLineAlignmentItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Start"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Center"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("End"),
+            .value = 3,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Stretch"),
+            .value = 4,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor itemLineAlignmentDesc;
+    itemLineAlignmentDesc.name = atoms.intern("ItemLineAlignment");
+    itemLineAlignmentDesc.docKey = {};
+    itemLineAlignmentDesc.items = itemLineAlignmentItems;
+    enums.registerEnum(itemLineAlignmentDesc);
+
+    // --- AspectType ---
+    static std::array<EnumItemDesc, 2> aspectTypeItems;
+    aspectTypeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("FitWithinMaxSize"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("ScaleWithParentSize"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor aspectTypeDesc;
+    aspectTypeDesc.name = atoms.intern("AspectType");
+    aspectTypeDesc.docKey = {};
+    aspectTypeDesc.items = aspectTypeItems;
+    enums.registerEnum(aspectTypeDesc);
+
+    // --- DominantAxis ---
+    static std::array<EnumItemDesc, 2> dominantAxisItems;
+    dominantAxisItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Width"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Height"),
+            .value = 1,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor dominantAxisDesc;
+    dominantAxisDesc.name = atoms.intern("DominantAxis");
+    dominantAxisDesc.docKey = {};
+    dominantAxisDesc.items = dominantAxisItems;
+    enums.registerEnum(dominantAxisDesc);
+
+    // --- UIDragDetectorDragStyle ---
+    static std::array<EnumItemDesc, 4> uIDragDetectorDragStyleItems;
+    uIDragDetectorDragStyleItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("TranslatePlane"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("TranslateLine"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Rotate"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Scriptable"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor uIDragDetectorDragStyleDesc;
+    uIDragDetectorDragStyleDesc.name = atoms.intern("UIDragDetectorDragStyle");
+    uIDragDetectorDragStyleDesc.docKey = {};
+    uIDragDetectorDragStyleDesc.items = uIDragDetectorDragStyleItems;
+    enums.registerEnum(uIDragDetectorDragStyleDesc);
+
+    // --- UIDragDetectorResponseStyle ---
+    static std::array<EnumItemDesc, 4> uIDragDetectorResponseStyleItems;
+    uIDragDetectorResponseStyleItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Offset"),
+            .value = 0,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Scale"),
+            .value = 1,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("CustomOffset"),
+            .value = 2,
+            .docKey = {},
+        },
+        EnumItemDesc{
+            .name = atoms.intern("CustomScale"),
+            .value = 3,
+            .docKey = {},
+        },
+    }};
+    EnumDescriptor uIDragDetectorResponseStyleDesc;
+    uIDragDetectorResponseStyleDesc.name = atoms.intern("UIDragDetectorResponseStyle");
+    uIDragDetectorResponseStyleDesc.docKey = {};
+    uIDragDetectorResponseStyleDesc.items = uIDragDetectorResponseStyleItems;
+    enums.registerEnum(uIDragDetectorResponseStyleDesc);
 }
 
 } // namespace engine::scene::generated

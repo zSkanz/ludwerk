@@ -2181,6 +2181,15 @@ local Excluded: { Schema.Excluded } = {
     { Name = "UIStroke", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIListLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
     { Name = "UIPadding", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIGridLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIPageLayout", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIFlexItem", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIScale", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIAspectRatioConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UISizeConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UITextSizeConstraint", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "UIDragDetector", Reason = "Screen-space UI. The same as `ScreenGui`." },
+    { Name = "CanvasGroup", Reason = "Screen-space UI. The same as `ScreenGui`." },
 
     {
         Name = "AnimationPlayer",

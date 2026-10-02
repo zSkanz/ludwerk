@@ -1,0 +1,17 @@
+# Menus (ADR 0128): an inventory grid, a paged tutorial and an options page in
+# one window that fits any screen and is driven by a mouse, a finger, a gamepad
+# or the arrow keys.
+#
+# No scene file: the script builds the screen, because how each part is made is
+# the subject.
+
+[project]
+name = "Ludwerk Menus"
+id = "dev.ludwerk.menus"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Menus"
+width = 1280
+height = 720

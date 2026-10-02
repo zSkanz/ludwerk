@@ -424,6 +424,12 @@ local ServiceNameExceptions = {
 ---
 --- `Broken` is ADR 0127's, on a constraint that gave under load: a past
 --- participle the pattern cannot see, as `PromptShown` is.
+---
+--- ADR 0128's are the same two cases. `PageEnter` and `PageLeave` are the
+--- names a person arriving reaches for on a `UIPageLayout`, named in the ADR
+--- as `MouseHoverEnter` and `MouseHoverLeave` were in theirs. `SelectionLost`
+--- is `FocusLost`'s case exactly: a past participle the pattern cannot see,
+--- beside a `SelectionGained` it can.
 local EventNameExceptions = {
     Broken = true,
     Heartbeat = true,
@@ -441,6 +447,9 @@ local EventNameExceptions = {
     DragStart = true,
     DragContinue = true,
     DragEnd = true,
+    PageEnter = true,
+    PageLeave = true,
+    SelectionLost = true,
 }
 
 local function isPascalCase(name: string): boolean
@@ -678,9 +687,10 @@ function Schema.validate(definition: Definition): { string }
         end
         -- Singular, because `Enum.EasingStyles.Quad` reads as a set of styles
         -- rather than one style.
-        -- `Status` is singular, like `Class`: `-us` and `-ss` are not plurals.
+        -- `Status` is singular, like `Class` and `Axis`: `-us`, `-ss` and
+        -- `-is` are not plurals.
         local ending = string.sub(enum.Name, -2)
-        if string.sub(enum.Name, -1) == "s" and ending ~= "ss" and ending ~= "us" then
+        if string.sub(enum.Name, -1) == "s" and ending ~= "ss" and ending ~= "us" and ending ~= "is" then
             table.insert(errors, `Enum.{enum.Name}: enum names are singular (§9)`)
         end
         local seenValues: { [number]: string } = {}

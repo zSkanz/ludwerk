@@ -100,6 +100,14 @@ inline constexpr EnumId OrientationAlignmentModeEnumId = 59;
 inline constexpr EnumId VibrationMotorEnumId = 60;
 inline constexpr EnumId HighlightDepthModeEnumId = 61;
 inline constexpr EnumId TextureModeEnumId = 62;
+inline constexpr EnumId StartCornerEnumId = 63;
+inline constexpr EnumId UIFlexAlignmentEnumId = 64;
+inline constexpr EnumId UIFlexModeEnumId = 65;
+inline constexpr EnumId ItemLineAlignmentEnumId = 66;
+inline constexpr EnumId AspectTypeEnumId = 67;
+inline constexpr EnumId DominantAxisEnumId = 68;
+inline constexpr EnumId UIDragDetectorDragStyleEnumId = 69;
+inline constexpr EnumId UIDragDetectorResponseStyleEnumId = 70;
 
 } // namespace generated
 

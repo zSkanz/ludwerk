@@ -27,6 +27,7 @@
 #include "engine/core/text_key.h"
 #include "engine/platform/async_io.h"
 #include "engine/platform/console.h"
+#include "engine/platform/event.h"
 #include "engine/platform/sdl_interop.h"
 
 #if defined(_WIN32)
@@ -224,7 +225,14 @@ std::optional<core::EngineError> init(const InitOptions& options)
     // which is exactly what having no gamepad means.
     if (!SDL_Init(SDL_INIT_VIDEO))
         return core::makeError(ENG_TR("platform.err.init_failed"), {}, SDL_GetError());
-    (void)SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    // **Gamepads are not started here** (D476; see `InitOptions::gamepads`):
+    // starting the library's joystick subsystem costs about 95 ms on Windows
+    // -- measured, and not a cost any one of its drivers' hints removes. A run
+    // with hands starts it from the event pump, after its first frame; a run
+    // without -- a dedicated server, a conformance run, a tool, a test --
+    // never does. A virtual gamepad (`attachVirtualGamepad`) starts it for
+    // itself.
+    setGamepadsWanted(options.gamepads.value_or(!options.headless));
 
     resolvePaths();
     g_initialized = true;

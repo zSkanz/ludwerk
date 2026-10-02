@@ -1116,3 +1116,67 @@ TEST_CASE("the device itself shakes for as long as it is told, up to five second
     pumpVibration();
     CHECK(rig.fake.rumbles == before);
 }
+
+// --- Gamepads start after the first frame (D476) -----------------------------------
+//
+// Starting the platform library's joystick subsystem is the slowest thing a
+// start does that a player cannot see. So a run that wants gamepads does not
+// start it in `init`, nor in the pump before the first frame: the second pump
+// does, which is the one after the first frame was presented.
+
+namespace {
+
+struct TimedPlatform
+{
+    double toFirstFrame = 0.0;
+    bool startedBeforeFirstFrame = false;
+    bool startedAfterFirstFrame = false;
+};
+
+// One start of the platform with or without gamepads: how long until the
+// pump before the first frame has returned, and when the subsystem began.
+[[nodiscard]] TimedPlatform timedStart(bool gamepads)
+{
+    using Clock = std::chrono::steady_clock;
+    TimedPlatform out;
+    const auto begin = Clock::now();
+    const auto error = engine::platform::init({.headless = true, .gamepads = gamepads});
+    REQUIRE_MESSAGE(!error.has_value(), (error ? error->detail : std::string{}));
+    (void)engine::platform::pumpEvents();
+    out.toFirstFrame = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    out.startedBeforeFirstFrame = engine::platform::gamepadsStarted();
+    // The frame is drawn and presented here; then the next pump.
+    (void)engine::platform::pumpEvents();
+    out.startedAfterFirstFrame = engine::platform::gamepadsStarted();
+    engine::platform::shutdown();
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("D476: gamepads are started by the pump after the first frame, and not before it")
+{
+    const TimedPlatform with = timedStart(true);
+    CHECK_FALSE(with.startedBeforeFirstFrame);
+    CHECK(with.startedAfterFirstFrame);
+
+    // A run with no hands never starts them.
+    const TimedPlatform without = timedStart(false);
+    CHECK_FALSE(without.startedBeforeFirstFrame);
+    CHECK_FALSE(without.startedAfterFirstFrame);
+}
+
+TEST_CASE("D476: wanting gamepads does not make the first frame later")
+{
+    // The best of five each, so one slow start of the video driver is not
+    // what is compared. The subsystem itself takes about 95 ms on Windows:
+    // within ten means it is not in here.
+    double with = 1.0e9;
+    double without = 1.0e9;
+    for (int run = 0; run < 5; ++run) {
+        without = (std::min)(without, timedStart(false).toFirstFrame);
+        with = (std::min)(with, timedStart(true).toFirstFrame);
+    }
+    MESSAGE("to the first frame: ", without, " ms without gamepads, ", with, " ms with");
+    CHECK(with - without < 10.0);
+}

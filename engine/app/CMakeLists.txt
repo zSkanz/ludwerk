@@ -49,6 +49,7 @@ engine_add_module(app
         src/picking.cpp
         src/preview_renderer.cpp
         src/pointer_ownership.cpp
+        src/ui_navigation.cpp
         src/ui_pointer.cpp
         src/chunk_overlay.cpp
         src/reference_grid.cpp
@@ -302,6 +303,7 @@ add_custom_command(TARGET engine_host POST_BUILD
 engine_add_module_tests(app
     SOURCES
         tests/pointer_ownership_tests.cpp
+        tests/ui_navigation_tests.cpp
         tests/ui_pointer_tests.cpp
         tests/frame_pacing_tests.cpp
         tests/frame_scheduler_tests.cpp
@@ -907,6 +909,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # ADR 0128: a grid, pages, flex, a scale, a shape, a size limit, a canvas
+    # group and the selection's outline, each asked what colour it is where it
+    # should be and where it should not.
+    add_test(NAME ui_layouts_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROBE=$<TARGET_FILE:imgprobe>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/uilayouts
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/ui-layouts.png
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_ui_layouts_gate.cmake)
+    set_tests_properties(ui_layouts_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # ADR 0153: a sprite's colours on the screen are the colours it was given,
     # asked of the screenshot square by square, to within one step.
     add_test(NAME sprite_color_gate
@@ -1253,7 +1269,7 @@ if(ENG_BUILD_TESTS)
     foreach(example 01-instances 02-meshes 03-physics-playground 06-scene 11-ocean 12-ragdoll 20-platformer
                     21-navigation 22-atmosphere 23-surfaces 24-scenes 25-gradients-and-strokes
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
-                    30-interactions 31-lake-and-river)
+                    30-interactions 31-lake-and-river 32-menus)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
@@ -1576,7 +1592,8 @@ if(ENG_BUILD_TESTS)
     # no group is asked for.
     set(drawn_tests
         screenshot_gate screenshot_gate_contact screenshot_gate_ui screenshot_gate_instanced
-        screenshot_gate_sprites ui_appearance_gate sprite_color_gate views_gate mirrors_gate ortho_gate subworld_gate
+        screenshot_gate_sprites ui_appearance_gate ui_layouts_gate sprite_color_gate views_gate mirrors_gate ortho_gate
+        subworld_gate
         surface_contract_proof_meshes surface_contract_proof_specular user_surface_proof
         graphics_settings_differential local_shadow_differential terrain_gallery_holes terrain_shadow_acne
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels

@@ -71,7 +71,9 @@ property was read in. Layout runs once per rendered frame, and only for a
 - An element created this frame has whatever the last layout wrote, which for a
   brand-new element is zero, until the next frame.
 - **An invisible element is skipped entirely**, so its absolutes are stale
-  rather than updated.
+  rather than updated -- and it keeps no room: a hidden child of a list leaves
+  no gap, and a parent that sizes to its content is not as large as what is
+  hidden.
 
 `AbsolutePosition` is always the unrotated top-left: `UIObject.Rotation` affects
 drawing and neither layout nor hit-testing.
@@ -175,11 +177,22 @@ whatever the box's proportions.
 It changes the drawing and not the layout or the hit test: a rounded button is
 still a rectangle to the solver and to the pointer.
 
-## What is not here
+## More than a list
 
-No `UIGridLayout`, `UIScale` or `UIAspectRatioConstraint`. A border is a
-`UIStroke`, and a gradient a `UIGradient`: see
+A grid of equal cells, pages, and flex -- what a list does with room left over
+-- are [Grids, pages and flex](manual:ui/layouts). Keeping an element between
+two sizes, one shape, or scaled whole is [Fitting any screen](manual:ui/adapting).
+A border is a `UIStroke`, and a gradient a `UIGradient`: see
 [Gradients and strokes](manual:ui/gradients-and-strokes).
+
+## A ScrollFrame's canvas
+
+A `ScrollFrame`'s children are laid out against its **canvas**, `CanvasSize`,
+moved by `CanvasPosition`. **The canvas is never smaller than the frame**: an
+axis left at zero is as long as the frame is, so a list that scrolls down says
+`CanvasSize = UDim2.fromOffset(0, 400)` and its rows are still as wide as it
+is. The wheel and a dragging finger scroll it; see
+[Buttons and interaction](manual:ui/interaction).
 
 ## Where to look next
 

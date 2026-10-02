@@ -669,6 +669,23 @@ bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc&
         const auto* flag = std::get_if<bool>(&value);
         return flag != nullptr && !*flag && world.rigidBodies().find(id) != nullptr;
     }
+    // **ADR 0128's additions to classes that already existed**, the same way:
+    // an interface made before them says nothing about selection or flex, and
+    // at their defaults neither does one made after.
+    if (const UIObjectComponent* object = world.uiObjects().find(id); object != nullptr) {
+        if (name == "Selectable")
+            return object->selectable < 0;
+        if (name == "NextSelectionUp" || name == "NextSelectionDown" || name == "NextSelectionLeft" ||
+            name == "NextSelectionRight" || name == "SelectionImageObject") {
+            const auto* target = std::get_if<core::InstanceId>(&value);
+            return target != nullptr && !target->valid();
+        }
+    }
+    if (world.listLayouts().find(id) != nullptr &&
+        (name == "HorizontalFlex" || name == "VerticalFlex" || name == "ItemLineAlignment")) {
+        const auto* item = std::get_if<EnumValue>(&value);
+        return item != nullptr && item->value == 0;
+    }
     if (const ConstraintComponent* joint = world.constraints().find(id);
         joint != nullptr && joint->kind <= static_cast<i32>(physics::ConstraintType::SwingTwist)) {
         const ConstraintComponent fresh;

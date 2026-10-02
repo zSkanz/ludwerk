@@ -40,6 +40,9 @@ engine_add_module_tests(ui
         ui
     SOURCES
         tests/layout_tests.cpp
+        tests/adaptive_layout_tests.cpp
+        tests/canvas_group_tests.cpp
+        tests/selection_tests.cpp
         tests/appearance_tests.cpp
         tests/glyph_tests.cpp
         tests/rich_text_tests.cpp

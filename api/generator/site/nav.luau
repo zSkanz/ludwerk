@@ -131,13 +131,16 @@ local Sections: { Section } = {
     {
         Slug = "ui",
         Title = "User interface",
-        Summary = "The screen tree, the layout arithmetic, text, images and interaction.",
+        Summary = "The screen tree, the layout arithmetic, grids and pages, text, images, interaction and a gamepad.",
         Pages = {
             { Slug = "tree", Title = "The UI tree" },
             { Slug = "layout", Title = "Layout with UDim2" },
+            { Slug = "layouts", Title = "Grids, pages and flex" },
+            { Slug = "adapting", Title = "Fitting any screen" },
             { Slug = "text-and-images", Title = "Text and images" },
             { Slug = "gradients-and-strokes", Title = "Gradients and strokes" },
             { Slug = "interaction", Title = "Buttons and interaction" },
+            { Slug = "selection", Title = "A gamepad and the arrow keys" },
             { Slug = "text-input", Title = "Text input" },
             { Slug = "world-space", Title = "UI in the world" },
         },

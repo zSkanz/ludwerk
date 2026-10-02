@@ -45,6 +45,15 @@ What a `UIStroke` outlines.
 | `Contextual` | 0 | The text of a text object; the border of anything else. |
 | `Border` | 1 | The element's border, even on a text object. |
 
+## Enum.AspectType
+
+What a `UIAspectRatioConstraint` measures its element against.
+
+| Item | Value | Description |
+|---|---|---|
+| `FitWithinMaxSize` | 0 | The largest box of that shape inside the element's own size. |
+| `ScaleWithParentSize` | 1 | The dominant axis takes the parent's whole extent and the other follows from the shape, whatever that makes it. |
+
 ## Enum.AssetFetchStatus
 
 How an item of `ContentProvider:PreloadAsync` ended.
@@ -115,6 +124,15 @@ How closely a `MeshPart`'s collision shape follows the geometry it renders (§2.
 | `Hull` | 1 | One convex hull around the whole mesh. |
 | `Box` | 2 | The mesh's bounding box, which is the cheapest shape there is and the least faithful. |
 | `Precise` | 3 | The triangles themselves. Accepted and not yet implemented: this release collides against a hull and says so through this property reading back `Precise` while behaving as `Hull`. A triangle-mesh collider is work the asset pipeline has yet to do. |
+
+## Enum.DominantAxis
+
+Which axis a `UIAspectRatioConstraint` keeps when it scales with its parent.
+
+| Item | Value | Description |
+|---|---|---|
+| `Width` | 0 | As wide as the parent; the height follows. |
+| `Height` | 1 | As tall as the parent; the width follows. |
 
 ## Enum.DragDetectorDragStyle
 
@@ -269,6 +287,18 @@ Which clock an `InputContext` is dispatched on (ADR 0039). It is a property of t
 |---|---|---|
 | `Simulation` | 0 | The sim tick, with the fixed timestep. The default, because it is the safe one: an action nobody thought about fires where determinism holds and where a replay can see it. Everything a game DECIDES with should be here. |
 | `Render` | 1 | The render frame, with a variable dt. For camera look and for UI, where a tick of latency is visible. A gameplay decision taken from a render-rate action is frame-rate-dependent by construction, and it is not recorded by the input replay -- a render frame is not a unit the replay has. |
+
+## Enum.ItemLineAlignment
+
+Where a child of a `UIListLayout` sits across its line.
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | On a `UIFlexItem`: as the layout says. On the layout: by its own alignment across the line. |
+| `Start` | 1 | At the line's near edge: the top of a row, the left of a column. |
+| `Center` | 2 | In the middle of the line. |
+| `End` | 3 | At the line's far edge. |
+| `Stretch` | 4 | As tall as a row, or as wide as a column. |
 
 ## Enum.KeyCode
 
@@ -679,6 +709,17 @@ What order a `UIListLayout` lays its children out in (§2.2).
 | `Name` | 0 | By `Name`, ordinal by code point. Stable across runs, which document order also is -- the difference is that this one survives the children being rebuilt in a different order. |
 | `LayoutOrder` | 1 | By each child's `LayoutOrder`, ties broken by document order. The usual choice, and the only one that lets a list be reordered without renaming anything. |
 
+## Enum.StartCorner
+
+Which corner a `UIGridLayout` starts filling from.
+
+| Item | Value | Description |
+|---|---|---|
+| `TopLeft` | 0 | Left to right, top to bottom. How a page of text is read. |
+| `TopRight` | 1 | Right to left, top to bottom. |
+| `BottomLeft` | 2 | Left to right, bottom to top. |
+| `BottomRight` | 3 | Right to left, bottom to top. |
+
 ## Enum.StreamingMode
 
 How a `Model` behaves when the streaming system reaches it. The grid decides WHEN something becomes eligible and this decides WHAT comes with it, which is the whole of what a person has to say about a world they built by hand (ADR 0053).
@@ -751,6 +792,52 @@ How a `Beam`'s or a `Trail`'s texture is laid along it.
 | `Stretch` | 0 | Once over the whole length, however long that is. |
 | `Wrap` | 1 | Repeated every `TextureLength` metres, measured from the start: on a trail the picture slides along as the trail moves. |
 | `Static` | 2 | Repeated every `TextureLength` metres and fixed where it was laid: a trail's picture stays on the ground it was drawn over, as a tyre mark does. A beam's does not run. |
+
+## Enum.UIDragDetectorDragStyle
+
+How a `UIDragDetector` turns the pointer's motion into its element's (ADR 0128).
+
+| Item | Value | Description |
+|---|---|---|
+| `TranslatePlane` | 0 | The element follows the pointer on both axes. |
+| `TranslateLine` | 1 | The element slides along `DragAxis` and nowhere else: a slider's thumb. |
+| `Rotate` | 2 | The element turns about its own middle as the pointer goes round it: a dial. |
+| `Scriptable` | 3 | Nothing moves: the signals say where the pointer is, and a script does the rest. |
+
+## Enum.UIDragDetectorResponseStyle
+
+What a `UIDragDetector` writes when its element is dragged.
+
+| Item | Value | Description |
+|---|---|---|
+| `Offset` | 0 | The offset of the element's `Position`, in its own units. |
+| `Scale` | 1 | The scale of the element's `Position`, as a fraction of its parent. |
+| `CustomOffset` | 2 | Nothing: `DragUDim2` and `DragRotation` say how far, as an offset, and a script applies it. |
+| `CustomScale` | 3 | Nothing: the same, with `DragUDim2` as a fraction of the parent. |
+
+## Enum.UIFlexAlignment
+
+What a `UIListLayout` does with the room its children leave over, along one axis.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | Nothing: the children sit where the alignment puts them. |
+| `Fill` | 1 | The children grow by equal amounts until the room is used. |
+| `SpaceAround` | 2 | The room goes around each child: a whole share between two, half a share at each end. |
+| `SpaceBetween` | 3 | The room goes between the children, and none at the ends. |
+| `SpaceEvenly` | 4 | The room goes in equal shares between the children and at both ends. |
+
+## Enum.UIFlexMode
+
+How one child of a `UIListLayout` takes room that is left over, or gives up room that is short.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | It keeps its size. |
+| `Grow` | 1 | It grows into room that is left over, and never shrinks. |
+| `Shrink` | 2 | It shrinks when the line is too long, and never grows. |
+| `Fill` | 3 | Both: it grows and it shrinks. |
+| `Custom` | 4 | By `GrowRatio` and `ShrinkRatio`, each as it is written. |
 
 ## Enum.UserInputType
 

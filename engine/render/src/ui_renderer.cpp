@@ -20,19 +20,8 @@ constexpr core::u32 kInitialVertices = 4096;
 
 } // namespace
 
-std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const ShaderLibrary& shaders,
-                                                    rhi::TextureFormat colorFormat)
+rhi::PipelineHandle UiRenderer::makePipeline(rhi::IDevice& device, bool premultiplied)
 {
-    core::EngineError error;
-
-    vertexShader_ = shaders.create(device, "ui2d", rhi::ShaderStage::Vertex, &error);
-    if (!vertexShader_.valid())
-        return error;
-
-    fragmentShader_ = shaders.create(device, "ui2d", rhi::ShaderStage::Fragment, &error);
-    if (!fragmentShader_.valid())
-        return error;
-
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = kVertexStride}};
 
@@ -99,14 +88,20 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
     };
 
     const std::array<rhi::ColorTargetDesc, 1> targets{rhi::ColorTargetDesc{
-        .format = colorFormat,
+        .format = colorFormat_,
         // Alpha blending, because `BackgroundTransparency` is a real property
         // and a HUD is mostly translucent panels. The UI is drawn OVER the
         // world, never into it.
-        .blend = {.enabled = true},
+        //
+        // **For a picture drawn by this same pipeline** (ADR 0128), one times
+        // the source instead. Drawing with alpha blending into a clear target
+        // leaves colour times alpha in it, so showing it with the blend above
+        // would multiply by alpha twice -- a dark fringe on every soft edge
+        // and a half-transparent panel twice as dark as it is.
+        .blend = {.enabled = true, .srcColor = premultiplied ? rhi::BlendFactor::One : rhi::BlendFactor::SrcAlpha},
     }};
 
-    pipeline_ = device.createGraphicsPipeline({
+    return device.createGraphicsPipeline({
         .vertexShader = vertexShader_,
         .fragmentShader = fragmentShader_,
         .vertexBuffers = buffers,
@@ -117,9 +112,25 @@ std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const 
         // more thing to get backwards.
         .rasterizer = {.cullMode = rhi::CullMode::None},
         .colorTargets = targets,
-        .debugName = "ui2d",
+        .debugName = premultiplied ? "ui2d-picture" : "ui2d",
     });
+}
 
+std::optional<core::EngineError> UiRenderer::create(rhi::IDevice& device, const ShaderLibrary& shaders,
+                                                    rhi::TextureFormat colorFormat)
+{
+    core::EngineError error;
+
+    vertexShader_ = shaders.create(device, "ui2d", rhi::ShaderStage::Vertex, &error);
+    if (!vertexShader_.valid())
+        return error;
+
+    fragmentShader_ = shaders.create(device, "ui2d", rhi::ShaderStage::Fragment, &error);
+    if (!fragmentShader_.valid())
+        return error;
+
+    colorFormat_ = colorFormat;
+    pipeline_ = makePipeline(device, false);
     if (!pipeline_.valid())
         return core::makeError(ENG_TR("render.err.ui_pipeline_failed"));
 
@@ -181,6 +192,9 @@ void UiRenderer::destroy(rhi::IDevice& device)
         device.destroy(vertices_);
     if (pipeline_.valid())
         device.destroy(pipeline_);
+    if (premultipliedPipeline_.valid())
+        device.destroy(premultipliedPipeline_);
+    premultipliedPipeline_ = {};
     if (fragmentShader_.valid())
         device.destroy(fragmentShader_);
     if (vertexShader_.valid())
@@ -209,6 +223,12 @@ void UiRenderer::upload(rhi::IDevice& device, rhi::ICmdList& cmd, std::span<cons
 
     pendingVertices_ = static_cast<core::u32>(vertices.size());
     runs_.assign(runs.begin(), runs.end());
+    // **The picture pipeline, the first time a picture is shown** (ADR 0128),
+    // and not at start: a pipeline made at start is a call in every run's
+    // command stream, for a thing most interfaces never draw.
+    if (!premultipliedPipeline_.valid() && pipeline_.valid() &&
+        std::any_of(runs_.begin(), runs_.end(), [](const UiScissorRun& run) { return run.premultiplied; }))
+        premultipliedPipeline_ = makePipeline(device, true);
     if (pendingVertices_ == 0)
         return;
 
@@ -260,7 +280,7 @@ void UiRenderer::uploadGradients(rhi::ICmdList& cmd, std::span<const core::u8> r
     gradientsUploaded_ = true;
 }
 
-void UiRenderer::render(rhi::ICmdList& cmd, core::Vec2 viewport)
+void UiRenderer::render(rhi::ICmdList& cmd, core::Vec2 viewport, core::u32 group)
 {
     if (pendingVertices_ == 0 || !pipeline_.valid() || !vertices_.valid())
         return;
@@ -268,21 +288,31 @@ void UiRenderer::render(rhi::ICmdList& cmd, core::Vec2 viewport)
         return;
 
     cmd.pushDebugGroup("ui2d");
-    cmd.setPipeline(pipeline_);
 
     // Pixels to clip space. The negative y is the whole of the UI's y-down
     // convention meeting the API's y-up one, and it happens here rather than in
     // the layout so that `AbsolutePosition` means what a script expects.
     const std::array<core::f32, 4> screenToClip{2.0f / viewport.x, -2.0f / viewport.y, -1.0f, 1.0f};
-    cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, std::as_bytes(std::span{screenToClip}));
-
     const std::array<rhi::BufferHandle, 1> buffers{vertices_};
-    cmd.bindVertexBuffers(0, buffers);
 
     rhi::TextureHandle bound{};
+    rhi::PipelineHandle pipeline{};
     for (const UiScissorRun& run : runs_) {
-        if (run.vertexCount == 0)
+        if (run.vertexCount == 0 || run.group != group)
             continue;
+
+        // The pipeline, and with it everything bound through it: a run that
+        // shows a picture blends differently (ADR 0128), and those are rare
+        // enough that the switch is paid a handful of times a frame.
+        const rhi::PipelineHandle wanted =
+            run.premultiplied && premultipliedPipeline_.valid() ? premultipliedPipeline_ : pipeline_;
+        if (!(wanted == pipeline)) {
+            cmd.setPipeline(wanted);
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, std::as_bytes(std::span{screenToClip}));
+            cmd.bindVertexBuffers(0, buffers);
+            pipeline = wanted;
+            bound = {};
+        }
 
         // Rebound only when it CHANGES. Most frames are one texture -- white for
         // the panels, the atlas for the text -- so this is two binds rather than

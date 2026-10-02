@@ -1154,6 +1154,16 @@ void enqueueSceneChanges(lua_State* L, std::span<const scene::Change> changes)
             break;
         }
 
+        case scene::ChangeKind::InstanceEventVector2: {
+            const SignalId id = eventSignal(change.name);
+            if (!id.valid())
+                break;
+            pushVector2(L, scene::eventPoint(change.other));
+            enqueueFire(L, id, lua_gettop(L), 1);
+            lua_pop(L, 1);
+            break;
+        }
+
         case scene::ChangeKind::InstanceEventText: {
             const SignalId id = eventSignal(change.name);
             if (!id.valid())

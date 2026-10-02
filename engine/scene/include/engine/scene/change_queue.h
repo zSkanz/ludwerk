@@ -13,6 +13,7 @@
 // Luau values, live entirely on the `script` side of the same drain.
 #pragma once
 
+#include <bit>
 #include <span>
 #include <string>
 #include <string_view>
@@ -92,6 +93,11 @@ enum class ChangeKind : u8
     // how fast. The four are in the queue's own list, its index in
     // `other.index` -- a change is sixteen bytes and this is forty.
     InstanceEventContact,
+
+    // The same as `InstanceEventNoArgs`, carrying one point: a
+    // `UIDragDetector`'s three signals (ADR 0128). The two floats ride in
+    // `other`, bit for bit -- see `eventPoint`.
+    InstanceEventVector2,
 };
 
 // What an `InstanceEventContact` carries.
@@ -107,6 +113,16 @@ struct ContactNote
 [[nodiscard]] constexpr core::InstanceId eventFlag(bool value) noexcept
 {
     return core::InstanceId{value ? 1u : 0u, 0u};
+}
+
+// A point in the shape `InstanceEventVector2` carries it, and back.
+[[nodiscard]] inline core::InstanceId eventPoint(core::Vec2 point) noexcept
+{
+    return core::InstanceId{std::bit_cast<u32>(point.x), std::bit_cast<u32>(point.y)};
+}
+[[nodiscard]] inline core::Vec2 eventPoint(core::InstanceId carried) noexcept
+{
+    return core::Vec2{std::bit_cast<f32>(carried.index), std::bit_cast<f32>(carried.generation)};
 }
 
 // 16 bytes, trivially copyable, and deliberately not a variant: one shape means

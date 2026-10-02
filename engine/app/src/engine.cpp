@@ -67,6 +67,7 @@
 #include "engine/app/terrain_overlay.h"
 #include "engine/app/text_input_focus.h"
 #include "engine/app/thumbnails.h"
+#include "engine/app/ui_navigation.h"
 #include "engine/app/ui_pointer.h"
 #include "engine/app/ui_text.h"
 #include "engine/app/view_host.h"
@@ -393,12 +394,27 @@ private:
 // Six vertices a quad rather than four and an index buffer. The geometry is the
 // smallest thing in the frame; an index buffer would save a third of its
 // bandwidth and cost a second upload.
+//
+// **A `CanvasGroup`'s quads go into its picture** (ADR 0128): moved by the
+// picture's corner, clipped in its pixels, and in a run of its own target.
+// `pictures` holds a texture for each of `list.groups`; a group with none --
+// too large, over the budget, no device -- is drawn where it would have gone,
+// into the nearest group above it that has one, and its own quad is left out.
 void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<render::UiVertex>& vertices,
                      std::vector<render::UiScissorRun>& runs, std::span<const rhi::TextureHandle> textures,
-                     UiGradientRows& gradients)
+                     UiGradientRows& gradients, std::span<const rhi::TextureHandle> pictures = {})
 {
     vertices.clear();
     runs.clear();
+
+    const auto pictured = [&](core::u32 group) {
+        return group != 0 && group <= pictures.size() && pictures[group - 1].valid();
+    };
+    const auto targetOf = [&](core::u32 group) {
+        while (group != 0 && !pictured(group))
+            group = group <= list.groups.size() ? list.groups[group - 1].parent : 0;
+        return group;
+    };
 
     const auto toByte = [](f32 value) {
         const f32 clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
@@ -411,17 +427,36 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
     // buckets.
     core::u32 currentScissor = 0xffffffffu;
     core::u32 currentTexture = 0xffffffffu;
+    core::u32 currentTarget = 0xffffffffu;
+    core::u32 currentPicture = 0xffffffffu;
     for (const ui::DrawQuad& quad : list.quads) {
-        if (quad.scissor != currentScissor || quad.texture != currentTexture) {
+        // The quad that shows a group with no picture: the group's own quads
+        // were drawn in its place.
+        if (quad.groupPicture != 0 && !pictured(quad.groupPicture))
+            continue;
+        const core::u32 target = targetOf(quad.group);
+        // Where the target's own pixels begin, and how many it has.
+        core::Vec2 origin{};
+        core::Vec2 extent = viewport;
+        if (target != 0) {
+            const core::Rect& box = list.groups[target - 1].box;
+            origin = box.min;
+            extent = core::Vec2{std::ceil(box.max.x - box.min.x), std::ceil(box.max.y - box.min.y)};
+        }
+
+        if (quad.scissor != currentScissor || quad.texture != currentTexture || target != currentTarget ||
+            quad.groupPicture != currentPicture) {
             currentScissor = quad.scissor;
             currentTexture = quad.texture;
+            currentTarget = target;
+            currentPicture = quad.groupPicture;
             const core::Rect& clip = list.scissors[currentScissor];
             // Clamped to the target, because a scissor outside it is a
             // validation error on every backend rather than an empty draw.
-            const f32 left = std::fmax(0.0f, clip.min.x);
-            const f32 top = std::fmax(0.0f, clip.min.y);
-            const f32 right = std::fmin(viewport.x, clip.max.x);
-            const f32 bottom = std::fmin(viewport.y, clip.max.y);
+            const f32 left = std::fmax(0.0f, clip.min.x - origin.x);
+            const f32 top = std::fmax(0.0f, clip.min.y - origin.y);
+            const f32 right = std::fmin(extent.x, clip.max.x - origin.x);
+            const f32 bottom = std::fmin(extent.y, clip.max.y - origin.y);
             runs.push_back(render::UiScissorRun{
                 .scissor = {static_cast<core::i32>(left), static_cast<core::i32>(top),
                             static_cast<core::i32>(std::fmax(0.0f, right - left)),
@@ -431,9 +466,16 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
                 // Index zero is "no texture" and resolves to the renderer's own
                 // white pixel, so an out-of-range index degrades to an untinted
                 // quad rather than to an unbound read.
-                .texture = currentTexture < textures.size() ? textures[currentTexture] : rhi::TextureHandle{},
+                .texture = quad.groupPicture != 0             ? pictures[quad.groupPicture - 1]
+                           : currentTexture < textures.size() ? textures[currentTexture]
+                                                              : rhi::TextureHandle{},
+                .group = target,
+                .premultiplied = quad.groupPicture != 0,
             });
         }
+        // A picture's colour is already multiplied by its alpha, so the tint
+        // that shows it is too: `GroupColor` times how solid the group is.
+        const f32 tint = quad.groupPicture != 0 ? quad.alpha : 1.0f;
 
         // The quad's own frame, so the fragment stage can measure a corner
         // without knowing where on screen the quad is (D030).
@@ -459,11 +501,11 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
             const f32 placedX = x + shift;
             const f32 turnedX = quad.turn.x * placedX - quad.turn.y * y + quad.turnOffset.x;
             const f32 turnedY = quad.turn.y * placedX + quad.turn.x * y + quad.turnOffset.y;
-            render::UiVertex vertex{turnedX,
-                                    turnedY,
-                                    toByte(quad.color.r),
-                                    toByte(quad.color.g),
-                                    toByte(quad.color.b),
+            render::UiVertex vertex{turnedX - origin.x,
+                                    turnedY - origin.y,
+                                    toByte(quad.color.r * tint),
+                                    toByte(quad.color.g * tint),
+                                    toByte(quad.color.b * tint),
                                     toByte(quad.alpha),
                                     x - (quad.min.x + halfX),
                                     y - (quad.min.y + halfY),
@@ -486,6 +528,153 @@ void buildUiGeometry(const ui::DrawList& list, core::Vec2 viewport, std::vector<
         runs.back().vertexCount += 6;
     }
 }
+
+// **The pictures `CanvasGroup`s are drawn into** (ADR 0128): one texture a
+// group, kept from frame to frame and drawn again only when what is in it
+// changed -- its quads' signature moved, it holds something that changes by
+// itself, or a group inside it was drawn again.
+//
+// A registry of its own beside the view textures' rather than rows in it: a
+// view is a camera's and is paced by the view budget, and a group's picture
+// is the interface's and must be this frame's or the interface is wrong. It
+// has the same two limits -- a side no larger than a view's, and a count.
+class UiGroupPictures
+{
+public:
+    // A side past this is no picture: the group draws as a frame.
+    static constexpr core::u32 MaxSide = 4096;
+    static constexpr usize MaxPictures = 32;
+
+    // Once a frame, before the geometry is built: a texture for each of the
+    // list's groups, in `textures()`, and which of them are to be drawn.
+    void prepare(rhi::IDevice* device, const ui::DrawList& list, rhi::TextureFormat format, core::u64 frame)
+    {
+        textures_.assign(list.groups.size(), rhi::TextureHandle{});
+        redraw_.assign(list.groups.size(), false);
+        slots_.assign(list.groups.size(), 0);
+        if (device == nullptr || format == rhi::TextureFormat::Undefined)
+            return;
+        for (usize index = 0; index < list.groups.size(); ++index) {
+            const ui::DrawGroup& group = list.groups[index];
+            const auto width = static_cast<core::u32>(std::ceil(group.box.max.x - group.box.min.x));
+            const auto height = static_cast<core::u32>(std::ceil(group.box.max.y - group.box.min.y));
+            if (width == 0 || height == 0 || width > MaxSide || height > MaxSide)
+                continue;
+            auto found = std::find_if(pictures_.begin(), pictures_.end(),
+                                      [&group](const Picture& picture) { return picture.owner == group.owner; });
+            if (found == pictures_.end()) {
+                if (pictures_.size() >= MaxPictures)
+                    continue;
+                Picture fresh;
+                fresh.owner = group.owner;
+                pictures_.push_back(fresh);
+                found = pictures_.end() - 1;
+            }
+            if (!found->texture.valid() || found->width != width || found->height != height) {
+                if (found->texture.valid())
+                    device->destroy(found->texture);
+                found->texture = device->createTexture({
+                    .format = format,
+                    .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                    .width = width,
+                    .height = height,
+                    .debugName = "ui-group",
+                });
+                found->width = width;
+                found->height = height;
+                found->drawn = false;
+            }
+            if (!found->texture.valid())
+                continue;
+            found->lastUsed = frame;
+            textures_[index] = found->texture;
+            slots_[index] = static_cast<usize>(found - pictures_.begin());
+            redraw_[index] = !found->drawn || found->signature != group.signature || group.live;
+        }
+        // A group drawn again changes the picture of the one it is in. Inner
+        // groups are listed after the one they are in, so last to first carries
+        // it all the way out.
+        for (usize index = list.groups.size(); index-- > 0;) {
+            const core::u32 parent = list.groups[index].parent;
+            if (redraw_[index] && parent != 0 && textures_[parent - 1].valid())
+                redraw_[parent - 1] = true;
+        }
+        // A picture nothing has shown for two seconds of frames goes back.
+        for (usize index = pictures_.size(); index-- > 0;) {
+            if (pictures_[index].lastUsed + 120 >= frame)
+                continue;
+            if (pictures_[index].texture.valid())
+                device->destroy(pictures_[index].texture);
+            pictures_.erase(pictures_.begin() + static_cast<std::ptrdiff_t>(index));
+            // The slots of this frame's groups point past the one removed.
+            for (usize group = 0; group < slots_.size(); ++group) {
+                if (textures_[group].valid() && slots_[group] > index)
+                    --slots_[group];
+            }
+        }
+    }
+
+    [[nodiscard]] std::span<const rhi::TextureHandle> textures() const noexcept { return textures_; }
+
+    // The passes, after the geometry is uploaded and before the screen's own:
+    // last to first, so a group inside a group is drawn before the one that
+    // shows it.
+    void draw(rhi::ICmdList& cmd, render::UiRenderer& renderer, const ui::DrawList& list)
+    {
+        for (usize index = std::min(list.groups.size(), textures_.size()); index-- > 0;) {
+            if (!textures_[index].valid() || !redraw_[index])
+                continue;
+            Picture& picture = pictures_[slots_[index]];
+            const std::array<rhi::ColorAttachment, 1> colors{rhi::ColorAttachment{
+                .texture = picture.texture,
+                .loadOp = rhi::LoadOp::Clear,
+                .storeOp = rhi::StoreOp::Store,
+                .clearColor = rhi::ColorRgba{0.0f, 0.0f, 0.0f, 0.0f},
+            }};
+            cmd.beginRenderPass({.colorAttachments = colors, .debugName = "ui-group"});
+            cmd.setViewport({.width = static_cast<f32>(picture.width), .height = static_cast<f32>(picture.height)});
+            renderer.render(cmd, core::Vec2{static_cast<f32>(picture.width), static_cast<f32>(picture.height)},
+                            static_cast<core::u32>(index) + 1);
+            cmd.endRenderPass();
+            picture.drawn = true;
+            picture.signature = list.groups[index].signature;
+            ++drawnThisFrame_;
+        }
+    }
+
+    void destroy(rhi::IDevice& device)
+    {
+        for (Picture& picture : pictures_) {
+            if (picture.texture.valid())
+                device.destroy(picture.texture);
+        }
+        pictures_.clear();
+        textures_.clear();
+    }
+
+    // How many pictures there are, and how many passes have been drawn.
+    [[nodiscard]] usize count() const noexcept { return pictures_.size(); }
+    [[nodiscard]] core::u64 drawn() const noexcept { return drawnThisFrame_; }
+
+private:
+    struct Picture
+    {
+        core::InstanceId owner;
+        rhi::TextureHandle texture{};
+        core::u32 width = 0;
+        core::u32 height = 0;
+        core::u64 signature = 0;
+        bool drawn = false;
+        core::u64 lastUsed = 0;
+    };
+    std::vector<Picture> pictures_;
+    // Per group of this frame's list: its texture, whether it is drawn again,
+    // and which picture it is.
+    std::vector<rhi::TextureHandle> textures_;
+    std::vector<bool> redraw_;
+    std::vector<usize> slots_;
+    core::u64 drawnThisFrame_ = 0;
+};
 
 // The selected instances, outlined in the viewport.
 //
@@ -1512,6 +1701,14 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     // went down, and the UI needs the edge to tell a click from a hold. The
     // pointer's are `UiPointer`'s, which also says WHERE (D430).
     UiPointer uiPointer;
+    // The d-pad, the stick, the arrows and the wheel, the same way (ADR 0128).
+    UiNavigation uiNavigation;
+    // `CanvasGroup`s' pictures, and a count of frames to age them by.
+    UiGroupPictures uiGroupPictures;
+    core::u64 uiFrame = 0;
+    rhi::TextureFormat uiColorFormat = rhi::TextureFormat::Undefined;
+    // When the interface was last advanced, for what in it moves by itself.
+    core::u64 uiAdvancedNs = platform::nowNs();
     std::string uiTypedText;
     bool uiBackspace = false;
     // The caret's own keys (S6.7). One flag per key rather than a state, because
@@ -1758,6 +1955,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
         // start.
         if (auto error = uiRenderer.create(*device, shaders, colorFormat); error.has_value())
             core::logText(LogLevel::Warn, error->message);
+        else
+            uiColorFormat = colorFormat;
 
         // The real renderer is built beside the debug one and neither is
         // required. A machine whose content directory has the debug shader and
@@ -4959,6 +5158,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     // Nothing pressed in the editor is a press in the game's
                     // interface, and nothing it held stays held.
                     uiPointer.letGo();
+                    uiNavigation.letGo();
                 }
                 heard = viewportEvents;
             }
@@ -5004,9 +5204,12 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             uiCommandTexts.clear();
             uiCompositionChanged = false;
             uiPointer.beginFrame();
+            uiNavigation.beginFrame();
             for (const platform::Event& event : heard) {
                 // The pointer's own events: where it is, and its presses.
                 uiPointer.feed(event);
+                // The d-pad, the stick, the arrows and the wheel (ADR 0128).
+                uiNavigation.feed(event);
                 // **A finger that comes down on the interface is the
                 // interface's, and the game is told** (D444). Asked here, of
                 // the rectangles the last frame laid out, because the tick
@@ -5467,6 +5670,15 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                     [](core::InstanceId, scene::ScreenGuiComponent& screen) { screen.layoutDirty = true; });
                 lastUiViewport = uiViewport;
             }
+            // What moves by itself -- a page that is sliding -- by the time
+            // since it last did, in real seconds: drawn, never simulated. No
+            // more than a tenth at once, so a stall is not a jump.
+            {
+                const core::u64 uiNowNs = platform::nowNs();
+                const f64 elapsed = static_cast<f64>(uiNowNs - uiAdvancedNs) / 1.0e9;
+                uiAdvancedNs = uiNowNs;
+                ui::advance(host->world(), static_cast<f32>(std::clamp(elapsed, 0.0, 0.1)));
+            }
             ui::layout(host->world(), host->uiService(), uiViewport);
 
             // Interaction reads the rectangles the layout just produced, and it
@@ -5491,6 +5703,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             interaction.compositionCursor = uiCompositionCursor;
             interaction.compositionChanged = uiCompositionChanged;
             interaction.time = static_cast<f64>(platform::nowNs()) / 1.0e9;
+            uiNavigation.fill(host->world(), interaction, interaction.time);
             interaction.readClipboard = []() { return platform::clipboardText(); };
             interaction.writeClipboard = [](std::string_view text) { (void)platform::setClipboardText(text); };
             // **A button printed on a wall is a button** (F3): the pointer's ray
@@ -5577,7 +5790,11 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             for (const rhi::TextureHandle image : uiText.images())
                 uiTextures.push_back(image);
             uiGradients.clear();
-            buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients);
+            // A picture for each `CanvasGroup`, before the geometry that is
+            // drawn into them (ADR 0128).
+            uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat, ++uiFrame);
+            buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
+                            uiGroupPictures.textures());
 
             // **The world's UI, into the picture the renderer is about to
             // draw** (F3): laid out and drawn by the same code as the screen's,
@@ -6062,6 +6279,8 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             // is the order api-design.md §2.2 implies -- game UI is part of the
             // game, and the ImGui overlay is on top of the game.
             if (uiRenderer.valid() && !uiVertices.empty()) {
+                // The groups' pictures first, each in a pass of its own.
+                uiGroupPictures.draw(*cmd, uiRenderer, uiDrawList);
                 const std::array<rhi::ColorAttachment, 1> uiColors{rhi::ColorAttachment{
                     .texture = target,
                     .loadOp = rhi::LoadOp::Load,
@@ -6488,6 +6707,7 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     subWorldGpu.clear();
     viewHost.destroy(*device, textureLibrary, renderer.get());
     uiText.destroy(*device);
+    uiGroupPictures.destroy(*device);
     uiRenderer.destroy(*device);
     debugRenderer.destroy(*device);
     iconAtlas.destroy(*device);

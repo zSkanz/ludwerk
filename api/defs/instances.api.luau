@@ -4502,6 +4502,43 @@ local Classes: { Schema.Class } = {
                 Transient = true,
                 Doc = "The size the solver gave it, in window pixels.",
             },
+            {
+                Name = "Selectable",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether a gamepad or the arrow keys can select this object (ADR 0128). **Until you "
+                    .. "write it, it is what the object is**: a button and a `TextInput` are, and nothing "
+                    .. "else is. The selected object is `UIService.SelectedObject`; the button that "
+                    .. "activates fires its `Activated`.",
+            },
+            {
+                Name = "NextSelectionUp",
+                Type = "UIObject?",
+                Doc = "What is selected when the selection moves up from this object. Nothing means the nearest "
+                    .. "selectable object above it, found from where they are.",
+            },
+            {
+                Name = "NextSelectionDown",
+                Type = "UIObject?",
+                Doc = "The same, moving down.",
+            },
+            {
+                Name = "NextSelectionLeft",
+                Type = "UIObject?",
+                Doc = "The same, moving left.",
+            },
+            {
+                Name = "NextSelectionRight",
+                Type = "UIObject?",
+                Doc = "The same, moving right.",
+            },
+            {
+                Name = "SelectionImageObject",
+                Type = "UIObject?",
+                Doc = "What is drawn over this object while it is selected, in place of the default outline: its "
+                    .. "background, picture, corners, gradient and strokes, at this object's box. Its children are "
+                    .. "not drawn.",
+            },
         } :: { Schema.Property },
         Events = {
             {
@@ -4521,6 +4558,16 @@ local Classes: { Schema.Class } = {
                 Name = "PointerExited",
                 Parameters = {},
                 Doc = "Fired when the pointer moves off it.",
+            },
+            {
+                Name = "SelectionGained",
+                Parameters = {},
+                Doc = "This object became `UIService.SelectedObject`.",
+            },
+            {
+                Name = "SelectionLost",
+                Parameters = {},
+                Doc = "It stopped being it.",
             },
         } :: { Schema.Event },
     },
@@ -5020,6 +5067,537 @@ local Classes: { Schema.Class } = {
                 Default = "false",
                 Doc = "Whether the line breaks into a second one when it runs out of room, rather than "
                     .. "overflowing.",
+            },
+            {
+                Name = "HorizontalFlex",
+                Type = "Enum.UIFlexAlignment",
+                Default = "Enum.UIFlexAlignment.None",
+                Doc = "What happens to room left over across the parent: nothing, the children grow into it, or "
+                    .. "it is shared out as space between them.",
+            },
+            {
+                Name = "VerticalFlex",
+                Type = "Enum.UIFlexAlignment",
+                Default = "Enum.UIFlexAlignment.None",
+                Doc = "The same, down the parent.",
+            },
+            {
+                Name = "ItemLineAlignment",
+                Type = "Enum.ItemLineAlignment",
+                Default = "Enum.ItemLineAlignment.Automatic",
+                Doc = "Where each child sits across its line; `Stretch` makes them all as tall as a row or as "
+                    .. "wide as a column. A child's own `UIFlexItem` can say otherwise.",
+            },
+            {
+                Name = "AbsoluteContentSize",
+                Type = "Vector2",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "How much room the children take, in pixels, as the last layout found it. What a "
+                    .. "`ScrollFrame`'s `CanvasSize` is set from.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIGridLayout",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = InAUi,
+        Storage = "UIGridLayout",
+        Doc = "Arranges its parent's `UIObject` children in a grid of equal cells (ADR 0128): an "
+            .. "inventory, a shop, a level select. A modifier, like `UIListLayout`: parented beside what "
+            .. "it arranges.\n\n"
+            .. "A child laid out by one loses its `Position` and its `Size` -- every cell is `CellSize`. "
+            .. "The cells fill a line until the next would not fit, or until `FillDirectionMaxCells`, and "
+            .. "then start another.",
+        Properties = {
+            {
+                Name = "CellSize",
+                Type = "UDim2",
+                Default = "UDim2.new(0, 100, 0, 100)",
+                Doc = "The size of every cell. Scale is a fraction of the parent, so `UDim2.fromScale(0.25, "
+                    .. "0.25)` is four across at any window size.",
+            },
+            {
+                Name = "CellPadding",
+                Type = "UDim2",
+                Default = "UDim2.new(0, 5, 0, 5)",
+                Doc = "The gap between cells, across and down. Between, not around: `UIPadding` puts space around "
+                    .. "the outside.",
+            },
+            {
+                Name = "FillDirection",
+                Type = "Enum.FillDirection",
+                Default = "Enum.FillDirection.Horizontal",
+                Doc = "Which way a line runs: `Horizontal` fills rows, `Vertical` fills columns.",
+            },
+            {
+                Name = "FillDirectionMaxCells",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.whole_number_at_least_zero",
+                Doc = "The most cells in one line; zero means as many as fit. A line never holds more than fit, "
+                    .. "whatever this says.",
+            },
+            {
+                Name = "StartCorner",
+                Type = "Enum.StartCorner",
+                Default = "Enum.StartCorner.TopLeft",
+                Doc = "The corner the first cell goes in, and so which way the lines run.",
+            },
+            {
+                Name = "SortOrder",
+                Type = "Enum.SortOrder",
+                Default = "Enum.SortOrder.LayoutOrder",
+                Doc = "What order the children go in.",
+            },
+            {
+                Name = "HorizontalAlignment",
+                Type = "Enum.HorizontalAlignment",
+                Default = "Enum.HorizontalAlignment.Left",
+                Doc = "Where the whole grid sits across the parent.",
+            },
+            {
+                Name = "VerticalAlignment",
+                Type = "Enum.VerticalAlignment",
+                Default = "Enum.VerticalAlignment.Top",
+                Doc = "Where it sits down the parent.",
+            },
+            {
+                Name = "AbsoluteContentSize",
+                Type = "Vector2",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "How much room the cells take, in pixels, as the last layout found it. What a "
+                    .. "`ScrollFrame`'s `CanvasSize` is set from.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIPageLayout",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = InAUi,
+        Storage = "UIPageLayout",
+        Doc = "Lays its parent's `UIObject` children side by side as pages and shows one (ADR 0128): a "
+            .. "tutorial, a set of tabs, a carousel. The others are beside it, out of the parent's box -- "
+            .. "turn `ClipsDescendants` on, or they show.\n\n"
+            .. "A page keeps its `Size` and loses its `Position`. `Next`, `Previous`, `JumpTo` and "
+            .. "`JumpToIndex` turn the page, and so do a swipe, the wheel and a gamepad's shoulder buttons "
+            .. "unless they are turned off. `CurrentPage` changes at once; the pages slide for `TweenTime` "
+            .. "when `Animated`.",
+        Properties = {
+            {
+                Name = "Animated",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a page turn slides. Off, the new page is there at once.",
+            },
+            {
+                Name = "Circular",
+                Type = "boolean",
+                Default = "false",
+                Doc = "Whether the page after the last is the first, and the one before the first the last.",
+            },
+            {
+                Name = "EasingStyle",
+                Type = "Enum.EasingStyle",
+                Default = "Enum.EasingStyle.Quad",
+                Doc = "The shape of the slide.",
+            },
+            {
+                Name = "EasingDirection",
+                Type = "Enum.EasingDirection",
+                Default = "Enum.EasingDirection.Out",
+                Doc = "Which end of the slide is eased.",
+            },
+            {
+                Name = "TweenTime",
+                Type = "number",
+                Default = "0.3",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How long a slide takes, in seconds.",
+            },
+            {
+                Name = "Padding",
+                Type = "UDim",
+                Default = "UDim.new()",
+                Doc = "The gap between pages. Scale is a fraction of the parent along the fill direction.",
+            },
+            {
+                Name = "FillDirection",
+                Type = "Enum.FillDirection",
+                Default = "Enum.FillDirection.Horizontal",
+                Doc = "Which way the pages run, and so which way they slide.",
+            },
+            {
+                Name = "SortOrder",
+                Type = "Enum.SortOrder",
+                Default = "Enum.SortOrder.LayoutOrder",
+                Doc = "What order the children go in.",
+            },
+            {
+                Name = "HorizontalAlignment",
+                Type = "Enum.HorizontalAlignment",
+                Default = "Enum.HorizontalAlignment.Center",
+                Doc = "Where the page that is shown sits across the parent.",
+            },
+            {
+                Name = "VerticalAlignment",
+                Type = "Enum.VerticalAlignment",
+                Default = "Enum.VerticalAlignment.Center",
+                Doc = "Where it sits down the parent.",
+            },
+            {
+                Name = "ScrollWheelInputEnabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether the wheel over the pages turns them.",
+            },
+            {
+                Name = "TouchInputEnabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a swipe across the pages turns them -- a finger's, or a mouse dragged.",
+            },
+            {
+                Name = "GamepadInputEnabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a gamepad's shoulder buttons turn them.",
+            },
+            {
+                Name = "CurrentPage",
+                Type = "UIObject?",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "The page that is shown, or the one being slid to. Nothing when there are no pages.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Next",
+                Parameters = {},
+                Returns = {},
+                Doc = "Turns to the page after `CurrentPage`. At the last page it does nothing, unless "
+                    .. "`Circular`.",
+            },
+            {
+                Name = "Previous",
+                Parameters = {},
+                Returns = {},
+                Doc = "Turns to the page before `CurrentPage`. At the first it does nothing, unless `Circular`.",
+            },
+            {
+                Name = "JumpTo",
+                Parameters = { { Name = "page", Type = "UIObject" } },
+                Returns = {},
+                Doc = "Turns to `page`. An object that is not one of the pages is refused.",
+            },
+            {
+                Name = "JumpToIndex",
+                Parameters = { { Name = "index", Type = "number" } },
+                Returns = {},
+                Doc = "Turns to the page at `index`, counted from 0 in the layout's order. Past either end it "
+                    .. "stops at that end, or goes round when `Circular`.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "PageEnter",
+                Parameters = { { Name = "page", Type = "UIObject" } },
+                Doc = "`page` became `CurrentPage`: it is being turned to.",
+            },
+            {
+                Name = "PageLeave",
+                Parameters = { { Name = "page", Type = "UIObject" } },
+                Doc = "`page` stopped being `CurrentPage`.",
+            },
+            {
+                Name = "Stopped",
+                Parameters = { { Name = "page", Type = "UIObject" } },
+                Doc = "The slide ended with `page` shown. At once when the layout is not `Animated`.",
+            },
+        } :: { Schema.Event },
+    },
+    {
+        Name = "UIFlexItem",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UIFlexItem",
+        Doc = "Says how its parent behaves as a child of a `UIListLayout` (ADR 0128): whether it grows "
+            .. "into room that is left over, whether it shrinks when the line is too long, and where it "
+            .. "sits across the line. Parented to the child it is about, not beside it.",
+        Properties = {
+            {
+                Name = "FlexMode",
+                Type = "Enum.UIFlexMode",
+                Default = "Enum.UIFlexMode.None",
+                Doc = "Whether it grows, shrinks, or both.",
+            },
+            {
+                Name = "GrowRatio",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Its share of the room left over, against the other children that grow, when `FlexMode` is "
+                    .. "`Custom`: one at 2 beside one at 1 takes two thirds.",
+            },
+            {
+                Name = "ShrinkRatio",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "Its share of what the line is short by, against the others that shrink, when `FlexMode` is "
+                    .. "`Custom`.",
+            },
+            {
+                Name = "ItemLineAlignment",
+                Type = "Enum.ItemLineAlignment",
+                Default = "Enum.ItemLineAlignment.Automatic",
+                Doc = "Where it sits across its line; `Automatic` is as the layout says.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIScale",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UIScale",
+        Doc = "Scales its parent and everything inside it (ADR 0128): what is drawn, and where a press "
+            .. "lands. A window that pops open, a HUD a player can make larger.\n\n"
+            .. "The element takes `Scale` times its size -- a list it is in makes room for that -- and "
+            .. "everything inside it is laid out as if nothing had changed and then scaled with it: "
+            .. "offsets, text, corners and strokes alike. A tween can drive it.",
+        Properties = {
+            {
+                Name = "Scale",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "What the element and its descendants are multiplied by.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIAspectRatioConstraint",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UIAspectRatioConstraint",
+        Doc = "Keeps its parent a fixed shape (ADR 0128): a square slot, a 16:9 picture, whatever the "
+            .. "window does. Applied after the element's own `Size` and before its children are laid out.",
+        Properties = {
+            {
+                Name = "AspectRatio",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_positive",
+                Doc = "Width over height: 1 is a square, 2 is twice as wide as tall.",
+            },
+            {
+                Name = "AspectType",
+                Type = "Enum.AspectType",
+                Default = "Enum.AspectType.FitWithinMaxSize",
+                Doc = "What it is measured against: the element's own size, or its parent's.",
+            },
+            {
+                Name = "DominantAxis",
+                Type = "Enum.DominantAxis",
+                Default = "Enum.DominantAxis.Width",
+                Doc = "Which axis takes the parent's extent under `ScaleWithParentSize`.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UISizeConstraint",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UISizeConstraint",
+        Doc = "Keeps its parent between two sizes (ADR 0128): a panel that is a third of the window and "
+            .. "never under 240 units wide. A clamp, applied after the element's own `Size` and before its "
+            .. "children are laid out.",
+        Properties = {
+            {
+                Name = "MinSize",
+                Type = "Vector2",
+                Default = "Vector2.zero",
+                Doc = "The least it may be, in the element's units.",
+            },
+            {
+                Name = "MaxSize",
+                Type = "Vector2",
+                Default = "Vector2.zero",
+                Doc = "The most it may be. **Zero on an axis is no limit**, which is what a new one has; "
+                    .. "`math.huge` is taken as the same and reads back as zero.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UITextSizeConstraint",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UITextSizeConstraint",
+        Doc = "Keeps scaled text between two sizes (ADR 0128): a `TextScaled` label that never falls "
+            .. "under what can be read nor grows past what looks right. Nothing on a label whose text is "
+            .. "not scaled -- that one is `TextSize`, as written.",
+        Properties = {
+            {
+                Name = "MinTextSize",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The least the text may be, in the element's units.",
+            },
+            {
+                Name = "MaxTextSize",
+                Type = "number",
+                Default = "100",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "The most it may be.",
+            },
+        } :: { Schema.Property },
+    },
+    {
+        Name = "UIDragDetector",
+        Extends = "Instance",
+        Module = "ui",
+        Parents = under("UIObject"),
+        Storage = "UIDragDetector",
+        Doc = "Makes its parent something a pointer drags (ADR 0128): a window by its title bar, a "
+            .. "slider's thumb, a dial. A press on the parent or anything inside it that is then moved "
+            .. "drags it, by mouse or by finger; a press that does not move is still a press.\n\n"
+            .. "`DragStyle` says how it moves and `ResponseStyle` what is written. The detector writes the "
+            .. "parent's `Position` (or `Rotation`), so a parent inside a layout, which has no position of "
+            .. "its own, is not moved.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "true",
+                Doc = "Whether a press starts a drag.",
+            },
+            {
+                Name = "DragStyle",
+                Type = "Enum.UIDragDetectorDragStyle",
+                Default = "Enum.UIDragDetectorDragStyle.TranslatePlane",
+                Doc = "How the pointer's motion becomes the element's.",
+            },
+            {
+                Name = "ResponseStyle",
+                Type = "Enum.UIDragDetectorResponseStyle",
+                Default = "Enum.UIDragDetectorResponseStyle.Offset",
+                Doc = "What is written as it is dragged.",
+            },
+            {
+                Name = "DragAxis",
+                Type = "Vector2",
+                Default = "Vector2.new(1, 0)",
+                Doc = "The line a `TranslateLine` drag slides along, y down: `(1, 0)` is across, `(0, 1)` is "
+                    .. "down.",
+            },
+            {
+                Name = "BoundingUI",
+                Type = "UIObject?",
+                Doc = "An element the dragged one stays inside. Nothing is no bound.",
+            },
+            {
+                Name = "MinDragTranslation",
+                Type = "UDim2",
+                Default = "UDim2.new()",
+                Doc = "The least the element may be moved from where the drag began. Not applied while it equals "
+                    .. "`MaxDragTranslation`, which is how a new detector has no limit.",
+            },
+            {
+                Name = "MaxDragTranslation",
+                Type = "UDim2",
+                Default = "UDim2.new()",
+                Doc = "The most it may be moved.",
+            },
+            {
+                Name = "MinDragAngle",
+                Type = "number",
+                Default = "0",
+                Doc = "The least a `Rotate` drag may turn it, in degrees. Not applied while it equals "
+                    .. "`MaxDragAngle`.",
+            },
+            {
+                Name = "MaxDragAngle",
+                Type = "number",
+                Default = "0",
+                Doc = "The most it may turn it.",
+            },
+            {
+                Name = "DragUDim2",
+                Type = "UDim2",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "How far the drag has moved the element from where it began, as `ResponseStyle` measures "
+                    .. "it.",
+            },
+            {
+                Name = "DragRotation",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                -- What the interface found, not what the world is.
+                HostFact = true,
+                Doc = "How far a `Rotate` drag has turned it from where it began, in degrees.",
+            },
+        } :: { Schema.Property },
+        Events = {
+            {
+                Name = "DragStart",
+                Parameters = { { Name = "position", Type = "Vector2" } },
+                Doc = "A press on the element began to move it. `position` is the pointer's, in pixels.",
+            },
+            {
+                Name = "DragContinue",
+                Parameters = { { Name = "position", Type = "Vector2" } },
+                Doc = "The pointer moved while dragging.",
+            },
+            {
+                Name = "DragEnd",
+                Parameters = { { Name = "position", Type = "Vector2" } },
+                Doc = "The press was released, or the element or the detector went away.",
+            },
+        } :: { Schema.Event },
+    },
+    {
+        Name = "CanvasGroup",
+        Extends = "Frame",
+        Module = "ui",
+        Storage = "CanvasGroup",
+        Doc = "A `Frame` whose descendants are drawn together and then shown as one picture (ADR 0128): a "
+            .. "window that fades as a whole, instead of its parts fading through each other. "
+            .. "`GroupTransparency` and `GroupColor` apply to the picture.\n\n"
+            .. "The picture is redrawn only when something inside it changes, and it clips: nothing inside "
+            .. "a group is drawn outside its box.",
+        Properties = {
+            {
+                Name = "GroupTransparency",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How see-through the group is, as one: 0 is solid and 1 is not drawn.",
+            },
+            {
+                Name = "GroupColor",
+                Type = "Color3",
+                Default = "Color3.new(1, 1, 1)",
+                Doc = "A colour the whole picture is multiplied by. White changes nothing.",
             },
         } :: { Schema.Property },
     },

@@ -970,15 +970,36 @@ bool SDLCALL virtualRumbleTriggers(void*, Uint16 left, Uint16 right)
 
 } // namespace
 
+namespace {
+
+// Whether this run looks for gamepads, and how many times the pump has run.
+bool g_gamepadsWanted = false;
+u32 g_pumps = 0;
+
+} // namespace
+
+void setGamepadsWanted(bool wanted) noexcept
+{
+    g_gamepadsWanted = wanted;
+    g_pumps = 0;
+}
+
+bool gamepadsStarted() noexcept
+{
+    return (SDL_WasInit(SDL_INIT_GAMEPAD) & SDL_INIT_GAMEPAD) != 0;
+}
+
 bool gamepadsAvailable() noexcept
 {
-    // The dummy driver the library is built with when it has no joystick
-    // support cannot host a virtual device; a real build always can.
-    return (SDL_WasInit(SDL_INIT_GAMEPAD) & SDL_INIT_GAMEPAD) != 0;
+    // Started here if nothing has yet -- a headless run does not start it by
+    // itself. A library built with no joystick support refuses.
+    return (SDL_WasInit(SDL_INIT_GAMEPAD) & SDL_INIT_GAMEPAD) != 0 || SDL_InitSubSystem(SDL_INIT_GAMEPAD);
 }
 
 u32 attachVirtualGamepad() noexcept
 {
+    if (!gamepadsAvailable())
+        return 0;
     SDL_VirtualJoystickDesc desc;
     SDL_INIT_INTERFACE(&desc);
     desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
@@ -1188,6 +1209,12 @@ std::span<const Event> pumpEvents()
     g_rawEvents.clear();
     g_events.clear();
     g_droppedFiles.clear();
+    // **Gamepads, after the first frame** (D476): the first pump is the one
+    // before the first frame is drawn, and the second is the one after it was
+    // presented. Starting the subsystem makes the library announce what is
+    // plugged in, so those arrive in this pump as connected.
+    if (g_gamepadsWanted && ++g_pumps == 2 && !gamepadsStarted())
+        (void)SDL_InitSubSystem(SDL_INIT_GAMEPAD);
     // The motors' levels, sent on for another half second (ADR 0131).
     pumpVibration();
 

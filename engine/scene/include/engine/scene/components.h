@@ -1756,6 +1756,15 @@ struct UIObjectComponent
     // a scroll frame do, a label does not, and a frame does when it draws a
     // background. 0 and 1 are a script's or the editor's own word, and win.
     core::i8 active = -1;
+    // **`Selectable`** (ADR 0128), the same way: -1 is "as what it is" -- a
+    // button and a text input are, nothing else is.
+    core::i8 selectable = -1;
+    // Where the selection goes from here; invalid is "the nearest that way".
+    core::InstanceId nextSelectionUp;
+    core::InstanceId nextSelectionDown;
+    core::InstanceId nextSelectionLeft;
+    core::InstanceId nextSelectionRight;
+    core::InstanceId selectionImageObject;
 };
 
 struct TextLabelComponent
@@ -1876,6 +1885,14 @@ struct UIListLayoutComponent
     // `Enum.SortOrder`: 0 Name, 1 LayoutOrder.
     i32 sortOrder = 1;
     bool wraps = false;
+    // Flex (ADR 0128). `Enum.UIFlexAlignment`: 0 None, 1 Fill, 2 SpaceAround,
+    // 3 SpaceBetween, 4 SpaceEvenly. `Enum.ItemLineAlignment`: 0 Automatic,
+    // 1 Start, 2 Center, 3 End, 4 Stretch.
+    i32 horizontalFlex = 0;
+    i32 verticalFlex = 0;
+    i32 itemLineAlignment = 0;
+    // The layout's output: how much room the children take, in pixels.
+    core::Vec2 absoluteContentSize;
 };
 
 struct UIPaddingComponent
@@ -1884,6 +1901,133 @@ struct UIPaddingComponent
     core::UDim paddingBottom;
     core::UDim paddingLeft;
     core::UDim paddingRight;
+};
+
+// `UIGridLayout` (ADR 0128): equal cells in lines. `absoluteContentSize` is the
+// layout's output, as `UIObjectComponent`'s rectangle is.
+struct UIGridLayoutComponent
+{
+    core::UDim2 cellSize{core::UDim{0.0f, 100.0f}, core::UDim{0.0f, 100.0f}};
+    core::UDim2 cellPadding{core::UDim{0.0f, 5.0f}, core::UDim{0.0f, 5.0f}};
+    // `Enum.FillDirection`.
+    i32 fillDirection = 0;
+    i32 fillDirectionMaxCells = 0;
+    // `Enum.StartCorner`.
+    i32 startCorner = 0;
+    // `Enum.SortOrder`.
+    i32 sortOrder = 1;
+    // `Enum.HorizontalAlignment`.
+    i32 horizontalAlignment = 0;
+    // `Enum.VerticalAlignment`.
+    i32 verticalAlignment = 0;
+    core::Vec2 absoluteContentSize;
+};
+
+// `UIPageLayout` (ADR 0128): pages side by side, one shown.
+struct UIPageLayoutComponent
+{
+    bool animated = true;
+    bool circular = false;
+    // `Enum.EasingStyle`.
+    i32 easingStyle = 2;
+    // `Enum.EasingDirection`.
+    i32 easingDirection = 1;
+    f32 tweenTime = 0.3f;
+    core::UDim padding;
+    // `Enum.FillDirection`.
+    i32 fillDirection = 0;
+    // `Enum.SortOrder`.
+    i32 sortOrder = 1;
+    // `Enum.HorizontalAlignment`.
+    i32 horizontalAlignment = 1;
+    // `Enum.VerticalAlignment`.
+    i32 verticalAlignment = 1;
+    bool scrollWheelInputEnabled = true;
+    bool touchInputEnabled = true;
+    bool gamepadInputEnabled = true;
+    core::InstanceId currentPage;
+
+    // --- Where the pages are, which no property says ---------------------------
+    //
+    // `index` is the page shown, among the children in the layout's order.
+    // `position` is where the view is, in pages: 1.5 is half way from the
+    // second to the third. A turn slides it from `slideFrom` to `slideTo` over
+    // `tweenTime`, and `slideTo` may be one past the last page when the pages
+    // go round. Written by `ui::turnPage` and `ui::advance`.
+    i32 index = 0;
+    f32 position = 0.0f;
+    f32 slideFrom = 0.0f;
+    f32 slideTo = 0.0f;
+    f32 slideElapsed = 0.0f;
+    bool sliding = false;
+};
+
+// `UIFlexItem` (ADR 0128): how its parent takes or gives room in a list.
+struct UIFlexItemComponent
+{
+    // `Enum.UIFlexMode`.
+    i32 flexMode = 0;
+    f32 growRatio = 1.0f;
+    f32 shrinkRatio = 1.0f;
+    // `Enum.ItemLineAlignment`.
+    i32 itemLineAlignment = 0;
+};
+
+// `UIScale` (ADR 0128): its parent and everything in it, multiplied.
+struct UIScaleComponent
+{
+    f32 scale = 1.0f;
+};
+
+// `UIAspectRatioConstraint` (ADR 0128): its parent kept one shape.
+struct UIAspectRatioConstraintComponent
+{
+    f32 aspectRatio = 1.0f;
+    // `Enum.AspectType`.
+    i32 aspectType = 0;
+    // `Enum.DominantAxis`.
+    i32 dominantAxis = 0;
+};
+
+// `UISizeConstraint` (ADR 0128): its parent kept between two sizes. A
+// `maxSize` axis of zero is no limit.
+struct UISizeConstraintComponent
+{
+    core::Vec2 minSize;
+    core::Vec2 maxSize;
+};
+
+// `UITextSizeConstraint` (ADR 0128): scaled text kept between two sizes.
+struct UITextSizeConstraintComponent
+{
+    f32 minTextSize = 1.0f;
+    f32 maxTextSize = 100.0f;
+};
+
+// `UIDragDetector` (ADR 0128): its parent dragged by a pointer. The last two
+// are the interaction's output.
+struct UIDragDetectorComponent
+{
+    bool enabled = true;
+    // `Enum.UIDragDetectorDragStyle`.
+    i32 dragStyle = 0;
+    // `Enum.UIDragDetectorResponseStyle`.
+    i32 responseStyle = 0;
+    core::Vec2 dragAxis{1.0f, 0.0f};
+    core::InstanceId boundingUI;
+    core::UDim2 minDragTranslation;
+    core::UDim2 maxDragTranslation;
+    f32 minDragAngle = 0.0f;
+    f32 maxDragAngle = 0.0f;
+    core::UDim2 dragUDim2;
+    f32 dragRotation = 0.0f;
+};
+
+// `CanvasGroup` (ADR 0128): a frame whose descendants are drawn as one picture.
+struct CanvasGroupComponent
+{
+    f32 groupTransparency = 0.0f;
+    core::Color3 groupColor{1.0f, 1.0f, 1.0f};
 };
 
 struct UICornerComponent

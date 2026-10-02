@@ -42,7 +42,8 @@ HTTP client and your own server: see [Talking to a backend](manual:guides/backen
 
 | Missing | State |
 |---|---|
-| `UIGridLayout`, `UIScale`, `UIStroke`, `UIGradient`, `UIAspectRatioConstraint` | **Not scheduled.** Three modifiers is the set: list layout, padding, corner. |
+| A table layout; UI shapes drawn from a path | **Not scheduled.** Grids, pages, flex, scale and the constraints are here ([Grids, pages and flex](manual:ui/layouts), [Fitting any screen](manual:ui/adapting)). |
+| A drag detector's `DragRelativity`, `DragSpace` and a drag function | **Absent.** `Scriptable` and the two custom responses say where the pointer is and how far; a script does the rest. |
 | Borders | **Absent**, deliberately. |
 | Selection, clipboard, undo in a text field | **Not present.** Typed text, backspace and a caret. |
 | A reactive UI framework | **Not the engine's.** The engine ships the instance tree. |

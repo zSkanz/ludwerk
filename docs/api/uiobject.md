@@ -27,8 +27,14 @@ offers is on the base's page, which is what keeps one added member on
 | `BackgroundTransparency` | `number` | `0` | read/write | 0 opaque, 1 invisible. A fully transparent background still lays out; whether it takes the pointer is `Active`'s to say. |
 | `ClipsDescendants` | `boolean` | `false` | read/write | Whether descendants are clipped to this object's rectangle. What a scrolling list needs and what a drop shadow must not have. |
 | `LayoutOrder` | `number` | `0` | read/write | Where this child sits in a `UIListLayout` whose `SortOrder` is `LayoutOrder`. Ignored otherwise. |
+| `NextSelectionDown` | `UIObject?` | — | read/write | The same, moving down. |
+| `NextSelectionLeft` | `UIObject?` | — | read/write | The same, moving left. |
+| `NextSelectionRight` | `UIObject?` | — | read/write | The same, moving right. |
+| `NextSelectionUp` | `UIObject?` | — | read/write | What is selected when the selection moves up from this object. Nothing means the nearest selectable object above it, found from where they are. |
 | `Position` | `UDim2` | `UDim2.new()` | read/write | Where this object's `AnchorPoint` sits inside its parent. |
 | `Rotation` | `number` | `0` | read/write | Degrees clockwise about the anchor point. It rotates the DRAWING and not the layout: a rotated element still occupies its unrotated rectangle, which is what stops one spinning icon reflowing a list every frame.<br><br>**Descendants turn with it**, and a descendant's own `Rotation` composes on top -- a dial rotated 30 degrees with a needle rotated 90 draws the needle at 120, about the dial's anchor and then its own.<br><br>Three things the turn does not reach, all for the reason `UICorner` gives: layout, which never sees it; the hit test, which stays the unrotated rectangle, because a button you could see in one place and click in another is worse than one that does not turn; and `ClipsDescendants`, whose rectangle stays axis-aligned, so a turned child of a clipping parent is clipped by the parent's upright box. |
+| `Selectable` | `boolean` | `false` | read/write | Whether a gamepad or the arrow keys can select this object (ADR 0128). **Until you write it, it is what the object is**: a button and a `TextInput` are, and nothing else is. The selected object is `UIService.SelectedObject`; the button that activates fires its `Activated`. |
+| `SelectionImageObject` | `UIObject?` | — | read/write | What is drawn over this object while it is selected, in place of the default outline: its background, picture, corners, gradient and strokes, at this object's box. Its children are not drawn. |
 | `Size` | `UDim2` | `UDim2.new()` | read/write | How big it is, relative to its parent plus an offset. Overridden on an axis that `AutomaticSize` covers. |
 | `Visible` | `boolean` | `true` | read/write | Whether this object and its descendants are laid out, drawn and hit-tested. All three together: an invisible element that still swallowed clicks is the defect this sentence exists to rule out. |
 | `ZIndex` | `number` | `0` | read/write | Draw order within this ScreenGui, highest last, ties broken by document order. It does not affect layout and does not nest: one flat ordering across the tree, because a per-parent stacking context is the part of CSS nobody can hold in their head. |
@@ -49,3 +55,11 @@ Fired when the pointer moves onto this object. Replaces `MouseEnter`, and is nam
 ### `PointerExited()`
 
 Fired when the pointer moves off it.
+
+### `SelectionGained()`
+
+This object became `UIService.SelectedObject`.
+
+### `SelectionLost()`
+
+It stopped being it.

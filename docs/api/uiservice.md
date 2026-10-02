@@ -16,9 +16,11 @@ offers is on the base's page, which is what keeps one added member on
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `AutoSelect` | `boolean` | `true` | read/write | Whether the engine manages the selection when the game does not: with nothing selected, the first move of a d-pad, a stick or an arrow selects the first selectable object on the topmost screen, and a press of the pointer clears the selection -- a player who picks up the mouse sees no outline. Off, the selection is what a script last wrote. |
 | `DisplayScale` | `number` | — | read-only | The window's pixel density relative to its logical size: 2 on a doubled display. UI coordinates are in PIXELS, so this is what a game multiplies by when it wants a measurement to mean the same physical size on two screens. |
 | `SafeAreaInsets` | `Rect` | — | read-only | How far in from each window edge it is safe to draw, in pixels -- what a notch, a rounded corner or a system gesture bar takes away. Zero on a desktop window, which is why a HUD that ignores it looks fine until it does not. |
 | `ScreenOrientation` | `Enum.ScreenOrientation` | `Enum.ScreenOrientation.LandscapeSensor` | read/write | Which ways up the game may be held on a phone or a tablet. **Takes effect at once**: a script that sets it turns the screen then and there, and the value saved with the scene is where the game starts. A layout reads the new `AbsoluteSize` on the next frame. Nothing on a desktop, whose window does not turn. |
+| `SelectedObject` | `UIObject?` | — | read/write | The object a gamepad or the arrow keys have selected (ADR 0128), or nothing. The d-pad, the left stick and the arrows move it -- to `NextSelection*` where that is set, to the nearest selectable object in that direction where it is not -- and `ButtonA` or Enter fires its `Activated`. Write it to put the selection somewhere: a menu that opens selects its first button. An object that is not `Selectable` is refused. |
 | `ViewportSize` | `Vector2` | — | read-only | The size of what the interface is drawn into, in pixels: the window in a game, the Viewport panel in the editor. What `AbsolutePosition` and the pointer are measured in, and what a `ScreenGui.ReferenceHeight` is scaled to. |
 
 ## Methods
@@ -31,6 +33,10 @@ The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey ask
 
 Every signal here is **deferred** (ADR 0015): a handler runs at the next
 drain point, never inside the call that fired it.
+
+### `SelectionChanged(selected: UIObject?)`
+
+`SelectedObject` changed, to `selected` or to nothing.
 
 ### `TextInputFocusReleased(input: TextInput)`
 

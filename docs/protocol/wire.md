@@ -964,4 +964,13 @@ Every other concrete class is deliberately off the wire, and this is why.
 | UIStroke | Screen-space UI. The same as `ScreenGui`. |
 | UIListLayout | Screen-space UI. The same as `ScreenGui`. |
 | UIPadding | Screen-space UI. The same as `ScreenGui`. |
+| UIGridLayout | Screen-space UI. The same as `ScreenGui`. |
+| UIPageLayout | Screen-space UI. The same as `ScreenGui`. |
+| UIFlexItem | Screen-space UI. The same as `ScreenGui`. |
+| UIScale | Screen-space UI. The same as `ScreenGui`. |
+| UIAspectRatioConstraint | Screen-space UI. The same as `ScreenGui`. |
+| UISizeConstraint | Screen-space UI. The same as `ScreenGui`. |
+| UITextSizeConstraint | Screen-space UI. The same as `ScreenGui`. |
+| UIDragDetector | Screen-space UI. The same as `ScreenGui`. |
+| CanvasGroup | Screen-space UI. The same as `ScreenGui`. |
 | AnimationPlayer | **The first candidate for protocol 2, and out of N1 on purpose.** What an animation needs is which clip, at what time, at what weight -- three fields whose meaning is a blend tree the wire would have to describe. N1 replicates where bodies are, which is what a player sees; making the limbs move the same way needs a design of its own and would double this milestone. |

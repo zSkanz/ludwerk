@@ -36,6 +36,19 @@ struct InitOptions
     // variable precedence over a hint set this way, which is how a developer
     // overrides the choice without a rebuild.
     bool headless = false;
+
+    // Whether this run has hands: gamepads are looked for. On unless the run
+    // is headless -- a server, a tool and a test have none -- and said apart
+    // from `headless` so a test can ask for them with no window.
+    //
+    // **Started after the first frame, not here** (D476): the library's
+    // joystick subsystem takes about 95 ms to start on Windows, and a window
+    // that is up 95 ms later is a slower start for every game, with or without
+    // a controller. So `init` does not start it; the event pump does, the
+    // second time it runs -- which is after the first frame was presented.
+    // Until then no gamepad is connected, and the ones that are plugged in
+    // arrive as connected a frame later.
+    std::optional<bool> gamepads = std::nullopt;
 };
 
 // Brings up the subsystems the engine delegates to SDL. Idempotent: a second

@@ -86,8 +86,26 @@ clean-up).
   manipulators are tested and the stage is signed off, and the row still says
   "pending". (`e2-kickoff.md`)
 
+- [ ] **A drag detector's `DragRelativity`, `DragSpace` and a drag function**
+  (ADR 0128): `Scriptable` and the custom responses hand a script the numbers;
+  the three that shape a function's answer are not built.
+- [ ] **A scroll frame that coasts**: a dragged list stops where the finger
+  lets go. Inertia and an elastic end are what a phone's own lists do.
+- [ ] **A `CanvasGroup` on a world canvas** is a frame (ADR 0128): the world's
+  UI pass has no pictures to draw into.
+- [ ] **The raw input events do not say `uiConsumed`** for a key or button the
+  selection used: the interface only takes what the game has not bound, so
+  nothing is taken from an action, and `InputBegan` still reports the key as
+  the game's.
+
 ## The repository
 
+- [x] **A windowed game does not pay 95 ms for gamepads at start** (D476):
+  the joystick subsystem is started by the event pump after the first frame is
+  presented, and never by a run with no hands. `platform_tests.cpp` times the
+  way to the first frame with and without, and they are within ten
+  milliseconds; `GamepadAvailable` at a script's first line is false, and the
+  manual says so.
 - [x] **Gamepads work** (D476, P1): the vendored SDL's joystick, haptic and
   HID support are on, and `gamepad_tests.cpp` goes from a virtual device's
   button to an `InputAction`.
@@ -100,6 +118,10 @@ clean-up).
 Nothing here can be built: each is a look with his eyes, a device in his hand,
 or a decision that is his.
 
+- [ ] **A menu in a hand** (ADR 0128): `examples/32-menus` with a mouse, a
+  finger on the phone and a controller -- the swipe between pages, the list
+  under a thumb, the slider, the selection walking the buttons. Every one is
+  tested by made events and looked at in a still frame; nobody has used it.
 - [ ] **A real controller in a real hand** (D476): a gamepad's buttons and
   sticks in a game, its rumble through `HapticService:SetMotor`, and a phone
   that shakes on `HapticService:Vibrate`. The tests go through a virtual

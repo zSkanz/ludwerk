@@ -296,7 +296,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(surfaceGuiDesc);
 
     // --- UIObject ---
-    static std::array<scene::PropertyDesc, 14> uIObjectProperties;
+    static std::array<scene::PropertyDesc, 20> uIObjectProperties;
     uIObjectProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Position"),
@@ -455,8 +455,79 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getUIObjectAbsoluteSize,
             .set = nullptr,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("Selectable"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a gamepad or the arrow keys can select this object (ADR 0128). **Until you write it, it is what the object is**: a button and a `TextInput` are, and nothing else is. The selected object is `UIService.SelectedObject`; the button that activates fires its `Activated`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIObjectSelectable,
+            .set = native::setUIObjectSelectable,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("NextSelectionUp"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What is selected when the selection moves up from this object. Nothing means the nearest selectable object above it, found from where they are.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIObjectNextSelectionUp,
+            .set = native::setUIObjectNextSelectionUp,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("NextSelectionDown"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same, moving down.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIObjectNextSelectionDown,
+            .set = native::setUIObjectNextSelectionDown,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("NextSelectionLeft"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same, moving left.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIObjectNextSelectionLeft,
+            .set = native::setUIObjectNextSelectionLeft,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("NextSelectionRight"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same, moving right.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIObjectNextSelectionRight,
+            .set = native::setUIObjectNextSelectionRight,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SelectionImageObject"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What is drawn over this object while it is selected, in place of the default outline: its background, picture, corners, gradient and strokes, at this object's box. Its children are not drawn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIObjectSelectionImageObject,
+            .set = native::setUIObjectSelectionImageObject,
+        },
     }};
-    static std::array<scene::EventDesc, 3> uIObjectEvents;
+    static std::array<scene::EventDesc, 5> uIObjectEvents;
     uIObjectEvents = {{
         scene::EventDesc{
             .name = atoms.intern("Activated"),
@@ -472,6 +543,16 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("PointerExited"),
             .slot = 9,
             .doc = "Fired when the pointer moves off it.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("SelectionGained"),
+            .slot = 10,
+            .doc = "This object became `UIService.SelectedObject`.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("SelectionLost"),
+            .slot = 11,
+            .doc = "It stopped being it.",
         },
     }};
     scene::ClassDescriptor uIObjectDesc;
@@ -495,7 +576,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     frameDesc.flags = scene::ClassFlags::None;
     frameDesc.defaultName = atoms.intern("Frame");
     frameDesc.doc = "A rectangle and nothing else: a background, a border of children, and the layout it imposes on them. The element every UI is mostly made of.";
-    classes.registerClass(frameDesc);
+    const scene::ClassId frameClass = classes.registerClass(frameDesc);
 
     // --- ViewportFrame ---
     static std::array<scene::PropertyDesc, 4> viewportFrameProperties;
@@ -880,27 +961,27 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     textInputEvents = {{
         scene::EventDesc{
             .name = atoms.intern("Focused"),
-            .slot = 10,
+            .slot = 12,
             .doc = "Fired when this field starts receiving keystrokes. Focus is taken by a press and released by a press elsewhere; there is deliberately no settable `Focused` property beside this, because two fields could then both believe they had it.",
         },
         scene::EventDesc{
             .name = atoms.intern("FocusLost"),
-            .slot = 11,
+            .slot = 13,
             .doc = "Fired when it stops. `submitted` is true when the field was left by pressing Return rather than by clicking away -- the difference between \"the player finished\" and \"the player went somewhere else\"; `reason` says which of the four ways it was.",
         },
         scene::EventDesc{
             .name = atoms.intern("Submitted"),
-            .slot = 12,
+            .slot = 14,
             .doc = "Return was pressed, with the text as it was -- whether or not the field lets go (`ReleaseFocusOnSubmit`).",
         },
         scene::EventDesc{
             .name = atoms.intern("TextChanged"),
-            .slot = 13,
+            .slot = 15,
             .doc = "The player changed the text -- typing, a paste, a cut, an undo -- with the text now. A script's own write to `Text` does not fire it; `GetPropertyChangedSignal(\"Text\")` fires for both.",
         },
         scene::EventDesc{
             .name = atoms.intern("InputRejected"),
-            .slot = 14,
+            .slot = 16,
             .doc = "What `MaxLength` kept out of an edit.",
         },
     }};
@@ -1069,7 +1150,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(scrollFrameDesc);
 
     // --- UIListLayout ---
-    static std::array<scene::PropertyDesc, 6> uIListLayoutProperties;
+    static std::array<scene::PropertyDesc, 10> uIListLayoutProperties;
     uIListLayoutProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("FillDirection"),
@@ -1141,6 +1222,55 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getUIListLayoutWraps,
             .set = native::setUIListLayoutWraps,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("HorizontalFlex"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("UIFlexAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What happens to room left over across the parent: nothing, the children grow into it, or it is shared out as space between them.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIListLayoutHorizontalFlex,
+            .set = native::setUIListLayoutHorizontalFlex,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("VerticalFlex"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("UIFlexAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The same, down the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIListLayoutVerticalFlex,
+            .set = native::setUIListLayoutVerticalFlex,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ItemLineAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ItemLineAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where each child sits across its line; `Stretch` makes them all as tall as a row or as wide as a column. A child's own `UIFlexItem` can say otherwise.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIListLayoutItemLineAlignment,
+            .set = native::setUIListLayoutItemLineAlignment,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AbsoluteContentSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much room the children take, in pixels, as the last layout found it. What a `ScrollFrame`'s `CanvasSize` is set from.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUIListLayoutAbsoluteContentSize,
+            .set = nullptr,
+        },
     }};
     scene::ClassDescriptor uIListLayoutDesc;
     uIListLayoutDesc.name = atoms.intern("UIListLayout");
@@ -1154,6 +1284,778 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     uIListLayoutDesc.attachComponents = native::attachUIListLayoutComponents;
     uIListLayoutDesc.detachComponents = native::detachUIListLayoutComponents;
     classes.registerClass(uIListLayoutDesc);
+
+    // --- UIGridLayout ---
+    static std::array<scene::PropertyDesc, 9> uIGridLayoutProperties;
+    uIGridLayoutProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("CellSize"),
+            .type = scene::ValueType::UDim2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The size of every cell. Scale is a fraction of the parent, so `UDim2.fromScale(0.25, 0.25)` is four across at any window size.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim2"),
+            .get = native::getUIGridLayoutCellSize,
+            .set = native::setUIGridLayoutCellSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("CellPadding"),
+            .type = scene::ValueType::UDim2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The gap between cells, across and down. Between, not around: `UIPadding` puts space around the outside.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim2"),
+            .get = native::getUIGridLayoutCellPadding,
+            .set = native::setUIGridLayoutCellPadding,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FillDirection"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("FillDirection"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which way a line runs: `Horizontal` fills rows, `Vertical` fills columns.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGridLayoutFillDirection,
+            .set = native::setUIGridLayoutFillDirection,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FillDirectionMaxCells"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most cells in one line; zero means as many as fit. A line never holds more than fit, whatever this says.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.whole_number_at_least_zero"),
+            .get = native::getUIGridLayoutFillDirectionMaxCells,
+            .set = native::setUIGridLayoutFillDirectionMaxCells,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("StartCorner"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("StartCorner"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The corner the first cell goes in, and so which way the lines run.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGridLayoutStartCorner,
+            .set = native::setUIGridLayoutStartCorner,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SortOrder"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("SortOrder"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What order the children go in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGridLayoutSortOrder,
+            .set = native::setUIGridLayoutSortOrder,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("HorizontalAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("HorizontalAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where the whole grid sits across the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGridLayoutHorizontalAlignment,
+            .set = native::setUIGridLayoutHorizontalAlignment,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("VerticalAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("VerticalAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where it sits down the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIGridLayoutVerticalAlignment,
+            .set = native::setUIGridLayoutVerticalAlignment,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AbsoluteContentSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much room the cells take, in pixels, as the last layout found it. What a `ScrollFrame`'s `CanvasSize` is set from.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUIGridLayoutAbsoluteContentSize,
+            .set = nullptr,
+        },
+    }};
+    scene::ClassDescriptor uIGridLayoutDesc;
+    uIGridLayoutDesc.name = atoms.intern("UIGridLayout");
+    uIGridLayoutDesc.super = instanceClass;
+    uIGridLayoutDesc.flags = scene::ClassFlags::None;
+    uIGridLayoutDesc.defaultName = atoms.intern("UIGridLayout");
+    uIGridLayoutDesc.doc = "Arranges its parent's `UIObject` children in a grid of equal cells (ADR 0128): an inventory, a shop, a level select. A modifier, like `UIListLayout`: parented beside what it arranges.\012\012A child laid out by one loses its `Position` and its `Size` -- every cell is `CellSize`. The cells fill a line until the next would not fit, or until `FillDirectionMaxCells`, and then start another.";
+    static constexpr std::array<std::string_view, 6> uIGridLayoutParents{{"ScreenGui", "BillboardGui", "SurfaceGui", "UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIGridLayoutDesc.parents = uIGridLayoutParents;
+    uIGridLayoutDesc.properties = uIGridLayoutProperties;
+    uIGridLayoutDesc.attachComponents = native::attachUIGridLayoutComponents;
+    uIGridLayoutDesc.detachComponents = native::detachUIGridLayoutComponents;
+    classes.registerClass(uIGridLayoutDesc);
+
+    // --- UIPageLayout ---
+    static std::array<scene::PropertyDesc, 14> uIPageLayoutProperties;
+    uIPageLayoutProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Animated"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a page turn slides. Off, the new page is there at once.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIPageLayoutAnimated,
+            .set = native::setUIPageLayoutAnimated,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Circular"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the page after the last is the first, and the one before the first the last.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIPageLayoutCircular,
+            .set = native::setUIPageLayoutCircular,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("EasingStyle"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("EasingStyle"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The shape of the slide.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutEasingStyle,
+            .set = native::setUIPageLayoutEasingStyle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("EasingDirection"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("EasingDirection"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which end of the slide is eased.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutEasingDirection,
+            .set = native::setUIPageLayoutEasingDirection,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TweenTime"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How long a slide takes, in seconds.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUIPageLayoutTweenTime,
+            .set = native::setUIPageLayoutTweenTime,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Padding"),
+            .type = scene::ValueType::UDim,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The gap between pages. Scale is a fraction of the parent along the fill direction.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim"),
+            .get = native::getUIPageLayoutPadding,
+            .set = native::setUIPageLayoutPadding,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FillDirection"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("FillDirection"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which way the pages run, and so which way they slide.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutFillDirection,
+            .set = native::setUIPageLayoutFillDirection,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SortOrder"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("SortOrder"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What order the children go in.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutSortOrder,
+            .set = native::setUIPageLayoutSortOrder,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("HorizontalAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("HorizontalAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where the page that is shown sits across the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutHorizontalAlignment,
+            .set = native::setUIPageLayoutHorizontalAlignment,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("VerticalAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("VerticalAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where it sits down the parent.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIPageLayoutVerticalAlignment,
+            .set = native::setUIPageLayoutVerticalAlignment,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ScrollWheelInputEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the wheel over the pages turns them.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIPageLayoutScrollWheelInputEnabled,
+            .set = native::setUIPageLayoutScrollWheelInputEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("TouchInputEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a swipe across the pages turns them -- a finger's, or a mouse dragged.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIPageLayoutTouchInputEnabled,
+            .set = native::setUIPageLayoutTouchInputEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GamepadInputEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a gamepad's shoulder buttons turn them.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIPageLayoutGamepadInputEnabled,
+            .set = native::setUIPageLayoutGamepadInputEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("CurrentPage"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The page that is shown, or the one being slid to. Nothing when there are no pages.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIPageLayoutCurrentPage,
+            .set = nullptr,
+        },
+    }};
+    static std::array<scene::MethodDesc, 4> uIPageLayoutMethods;
+    uIPageLayoutMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("Next"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Turns to the page after `CurrentPage`. At the last page it does nothing, unless `Circular`.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("Previous"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Turns to the page before `CurrentPage`. At the first it does nothing, unless `Circular`.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("JumpTo"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Turns to `page`. An object that is not one of the pages is refused.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("JumpToIndex"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Turns to the page at `index`, counted from 0 in the layout's order. Past either end it stops at that end, or goes round when `Circular`.",
+        },
+    }};
+    static std::array<scene::EventDesc, 3> uIPageLayoutEvents;
+    uIPageLayoutEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("PageEnter"),
+            .slot = 7,
+            .doc = "`page` became `CurrentPage`: it is being turned to.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("PageLeave"),
+            .slot = 8,
+            .doc = "`page` stopped being `CurrentPage`.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("Stopped"),
+            .slot = 9,
+            .doc = "The slide ended with `page` shown. At once when the layout is not `Animated`.",
+        },
+    }};
+    scene::ClassDescriptor uIPageLayoutDesc;
+    uIPageLayoutDesc.name = atoms.intern("UIPageLayout");
+    uIPageLayoutDesc.super = instanceClass;
+    uIPageLayoutDesc.flags = scene::ClassFlags::None;
+    uIPageLayoutDesc.defaultName = atoms.intern("UIPageLayout");
+    uIPageLayoutDesc.doc = "Lays its parent's `UIObject` children side by side as pages and shows one (ADR 0128): a tutorial, a set of tabs, a carousel. The others are beside it, out of the parent's box -- turn `ClipsDescendants` on, or they show.\012\012A page keeps its `Size` and loses its `Position`. `Next`, `Previous`, `JumpTo` and `JumpToIndex` turn the page, and so do a swipe, the wheel and a gamepad's shoulder buttons unless they are turned off. `CurrentPage` changes at once; the pages slide for `TweenTime` when `Animated`.";
+    static constexpr std::array<std::string_view, 6> uIPageLayoutParents{{"ScreenGui", "BillboardGui", "SurfaceGui", "UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIPageLayoutDesc.parents = uIPageLayoutParents;
+    uIPageLayoutDesc.properties = uIPageLayoutProperties;
+    uIPageLayoutDesc.methods = uIPageLayoutMethods;
+    uIPageLayoutDesc.events = uIPageLayoutEvents;
+    uIPageLayoutDesc.attachComponents = native::attachUIPageLayoutComponents;
+    uIPageLayoutDesc.detachComponents = native::detachUIPageLayoutComponents;
+    classes.registerClass(uIPageLayoutDesc);
+
+    // --- UIFlexItem ---
+    static std::array<scene::PropertyDesc, 4> uIFlexItemProperties;
+    uIFlexItemProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("FlexMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("UIFlexMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether it grows, shrinks, or both.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIFlexItemFlexMode,
+            .set = native::setUIFlexItemFlexMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GrowRatio"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Its share of the room left over, against the other children that grow, when `FlexMode` is `Custom`: one at 2 beside one at 1 takes two thirds.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUIFlexItemGrowRatio,
+            .set = native::setUIFlexItemGrowRatio,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ShrinkRatio"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Its share of what the line is short by, against the others that shrink, when `FlexMode` is `Custom`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUIFlexItemShrinkRatio,
+            .set = native::setUIFlexItemShrinkRatio,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ItemLineAlignment"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ItemLineAlignment"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Where it sits across its line; `Automatic` is as the layout says.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIFlexItemItemLineAlignment,
+            .set = native::setUIFlexItemItemLineAlignment,
+        },
+    }};
+    scene::ClassDescriptor uIFlexItemDesc;
+    uIFlexItemDesc.name = atoms.intern("UIFlexItem");
+    uIFlexItemDesc.super = instanceClass;
+    uIFlexItemDesc.flags = scene::ClassFlags::None;
+    uIFlexItemDesc.defaultName = atoms.intern("UIFlexItem");
+    uIFlexItemDesc.doc = "Says how its parent behaves as a child of a `UIListLayout` (ADR 0128): whether it grows into room that is left over, whether it shrinks when the line is too long, and where it sits across the line. Parented to the child it is about, not beside it.";
+    static constexpr std::array<std::string_view, 3> uIFlexItemParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIFlexItemDesc.parents = uIFlexItemParents;
+    uIFlexItemDesc.properties = uIFlexItemProperties;
+    uIFlexItemDesc.attachComponents = native::attachUIFlexItemComponents;
+    uIFlexItemDesc.detachComponents = native::detachUIFlexItemComponents;
+    classes.registerClass(uIFlexItemDesc);
+
+    // --- UIScale ---
+    static std::array<scene::PropertyDesc, 1> uIScaleProperties;
+    uIScaleProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Scale"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What the element and its descendants are multiplied by.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUIScaleScale,
+            .set = native::setUIScaleScale,
+        },
+    }};
+    scene::ClassDescriptor uIScaleDesc;
+    uIScaleDesc.name = atoms.intern("UIScale");
+    uIScaleDesc.super = instanceClass;
+    uIScaleDesc.flags = scene::ClassFlags::None;
+    uIScaleDesc.defaultName = atoms.intern("UIScale");
+    uIScaleDesc.doc = "Scales its parent and everything inside it (ADR 0128): what is drawn, and where a press lands. A window that pops open, a HUD a player can make larger.\012\012The element takes `Scale` times its size -- a list it is in makes room for that -- and everything inside it is laid out as if nothing had changed and then scaled with it: offsets, text, corners and strokes alike. A tween can drive it.";
+    static constexpr std::array<std::string_view, 3> uIScaleParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIScaleDesc.parents = uIScaleParents;
+    uIScaleDesc.properties = uIScaleProperties;
+    uIScaleDesc.attachComponents = native::attachUIScaleComponents;
+    uIScaleDesc.detachComponents = native::detachUIScaleComponents;
+    classes.registerClass(uIScaleDesc);
+
+    // --- UIAspectRatioConstraint ---
+    static std::array<scene::PropertyDesc, 3> uIAspectRatioConstraintProperties;
+    uIAspectRatioConstraintProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("AspectRatio"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Width over height: 1 is a square, 2 is twice as wide as tall.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getUIAspectRatioConstraintAspectRatio,
+            .set = native::setUIAspectRatioConstraintAspectRatio,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AspectType"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("AspectType"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What it is measured against: the element's own size, or its parent's.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIAspectRatioConstraintAspectType,
+            .set = native::setUIAspectRatioConstraintAspectType,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DominantAxis"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("DominantAxis"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Which axis takes the parent's extent under `ScaleWithParentSize`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIAspectRatioConstraintDominantAxis,
+            .set = native::setUIAspectRatioConstraintDominantAxis,
+        },
+    }};
+    scene::ClassDescriptor uIAspectRatioConstraintDesc;
+    uIAspectRatioConstraintDesc.name = atoms.intern("UIAspectRatioConstraint");
+    uIAspectRatioConstraintDesc.super = instanceClass;
+    uIAspectRatioConstraintDesc.flags = scene::ClassFlags::None;
+    uIAspectRatioConstraintDesc.defaultName = atoms.intern("UIAspectRatioConstraint");
+    uIAspectRatioConstraintDesc.doc = "Keeps its parent a fixed shape (ADR 0128): a square slot, a 16:9 picture, whatever the window does. Applied after the element's own `Size` and before its children are laid out.";
+    static constexpr std::array<std::string_view, 3> uIAspectRatioConstraintParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIAspectRatioConstraintDesc.parents = uIAspectRatioConstraintParents;
+    uIAspectRatioConstraintDesc.properties = uIAspectRatioConstraintProperties;
+    uIAspectRatioConstraintDesc.attachComponents = native::attachUIAspectRatioConstraintComponents;
+    uIAspectRatioConstraintDesc.detachComponents = native::detachUIAspectRatioConstraintComponents;
+    classes.registerClass(uIAspectRatioConstraintDesc);
+
+    // --- UISizeConstraint ---
+    static std::array<scene::PropertyDesc, 2> uISizeConstraintProperties;
+    uISizeConstraintProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("MinSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The least it may be, in the element's units.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUISizeConstraintMinSize,
+            .set = native::setUISizeConstraintMinSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxSize"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most it may be. **Zero on an axis is no limit**, which is what a new one has; `math.huge` is taken as the same and reads back as zero.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUISizeConstraintMaxSize,
+            .set = native::setUISizeConstraintMaxSize,
+        },
+    }};
+    scene::ClassDescriptor uISizeConstraintDesc;
+    uISizeConstraintDesc.name = atoms.intern("UISizeConstraint");
+    uISizeConstraintDesc.super = instanceClass;
+    uISizeConstraintDesc.flags = scene::ClassFlags::None;
+    uISizeConstraintDesc.defaultName = atoms.intern("UISizeConstraint");
+    uISizeConstraintDesc.doc = "Keeps its parent between two sizes (ADR 0128): a panel that is a third of the window and never under 240 units wide. A clamp, applied after the element's own `Size` and before its children are laid out.";
+    static constexpr std::array<std::string_view, 3> uISizeConstraintParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uISizeConstraintDesc.parents = uISizeConstraintParents;
+    uISizeConstraintDesc.properties = uISizeConstraintProperties;
+    uISizeConstraintDesc.attachComponents = native::attachUISizeConstraintComponents;
+    uISizeConstraintDesc.detachComponents = native::detachUISizeConstraintComponents;
+    classes.registerClass(uISizeConstraintDesc);
+
+    // --- UITextSizeConstraint ---
+    static std::array<scene::PropertyDesc, 2> uITextSizeConstraintProperties;
+    uITextSizeConstraintProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("MinTextSize"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The least the text may be, in the element's units.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUITextSizeConstraintMinTextSize,
+            .set = native::setUITextSizeConstraintMinTextSize,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxTextSize"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most it may be.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getUITextSizeConstraintMaxTextSize,
+            .set = native::setUITextSizeConstraintMaxTextSize,
+        },
+    }};
+    scene::ClassDescriptor uITextSizeConstraintDesc;
+    uITextSizeConstraintDesc.name = atoms.intern("UITextSizeConstraint");
+    uITextSizeConstraintDesc.super = instanceClass;
+    uITextSizeConstraintDesc.flags = scene::ClassFlags::None;
+    uITextSizeConstraintDesc.defaultName = atoms.intern("UITextSizeConstraint");
+    uITextSizeConstraintDesc.doc = "Keeps scaled text between two sizes (ADR 0128): a `TextScaled` label that never falls under what can be read nor grows past what looks right. Nothing on a label whose text is not scaled -- that one is `TextSize`, as written.";
+    static constexpr std::array<std::string_view, 3> uITextSizeConstraintParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uITextSizeConstraintDesc.parents = uITextSizeConstraintParents;
+    uITextSizeConstraintDesc.properties = uITextSizeConstraintProperties;
+    uITextSizeConstraintDesc.attachComponents = native::attachUITextSizeConstraintComponents;
+    uITextSizeConstraintDesc.detachComponents = native::detachUITextSizeConstraintComponents;
+    classes.registerClass(uITextSizeConstraintDesc);
+
+    // --- UIDragDetector ---
+    static std::array<scene::PropertyDesc, 11> uIDragDetectorProperties;
+    uIDragDetectorProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether a press starts a drag.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIDragDetectorEnabled,
+            .set = native::setUIDragDetectorEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DragStyle"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("UIDragDetectorDragStyle"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How the pointer's motion becomes the element's.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIDragDetectorDragStyle,
+            .set = native::setUIDragDetectorDragStyle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ResponseStyle"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("UIDragDetectorResponseStyle"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "What is written as it is dragged.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getUIDragDetectorResponseStyle,
+            .set = native::setUIDragDetectorResponseStyle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DragAxis"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The line a `TranslateLine` drag slides along, y down: `(1, 0)` is across, `(0, 1)` is down.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_vector2"),
+            .get = native::getUIDragDetectorDragAxis,
+            .set = native::setUIDragDetectorDragAxis,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("BoundingUI"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "An element the dragged one stays inside. Nothing is no bound.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIDragDetectorBoundingUI,
+            .set = native::setUIDragDetectorBoundingUI,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MinDragTranslation"),
+            .type = scene::ValueType::UDim2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The least the element may be moved from where the drag began. Not applied while it equals `MaxDragTranslation`, which is how a new detector has no limit.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim2"),
+            .get = native::getUIDragDetectorMinDragTranslation,
+            .set = native::setUIDragDetectorMinDragTranslation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxDragTranslation"),
+            .type = scene::ValueType::UDim2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most it may be moved.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim2"),
+            .get = native::getUIDragDetectorMaxDragTranslation,
+            .set = native::setUIDragDetectorMaxDragTranslation,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MinDragAngle"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The least a `Rotate` drag may turn it, in degrees. Not applied while it equals `MaxDragAngle`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIDragDetectorMinDragAngle,
+            .set = native::setUIDragDetectorMinDragAngle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("MaxDragAngle"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The most it may turn it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIDragDetectorMaxDragAngle,
+            .set = native::setUIDragDetectorMaxDragAngle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DragUDim2"),
+            .type = scene::ValueType::UDim2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far the drag has moved the element from where it began, as `ResponseStyle` measures it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_udim2"),
+            .get = native::getUIDragDetectorDragUDim2,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("DragRotation"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far a `Rotate` drag has turned it from where it began, in degrees.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getUIDragDetectorDragRotation,
+            .set = nullptr,
+        },
+    }};
+    static std::array<scene::EventDesc, 3> uIDragDetectorEvents;
+    uIDragDetectorEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("DragStart"),
+            .slot = 7,
+            .doc = "A press on the element began to move it. `position` is the pointer's, in pixels.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("DragContinue"),
+            .slot = 8,
+            .doc = "The pointer moved while dragging.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("DragEnd"),
+            .slot = 9,
+            .doc = "The press was released, or the element or the detector went away.",
+        },
+    }};
+    scene::ClassDescriptor uIDragDetectorDesc;
+    uIDragDetectorDesc.name = atoms.intern("UIDragDetector");
+    uIDragDetectorDesc.super = instanceClass;
+    uIDragDetectorDesc.flags = scene::ClassFlags::None;
+    uIDragDetectorDesc.defaultName = atoms.intern("UIDragDetector");
+    uIDragDetectorDesc.doc = "Makes its parent something a pointer drags (ADR 0128): a window by its title bar, a slider's thumb, a dial. A press on the parent or anything inside it that is then moved drags it, by mouse or by finger; a press that does not move is still a press.\012\012`DragStyle` says how it moves and `ResponseStyle` what is written. The detector writes the parent's `Position` (or `Rotation`), so a parent inside a layout, which has no position of its own, is not moved.";
+    static constexpr std::array<std::string_view, 3> uIDragDetectorParents{{"UIObject", "ReplicatedStorage", "ServerStorage"}};
+    uIDragDetectorDesc.parents = uIDragDetectorParents;
+    uIDragDetectorDesc.properties = uIDragDetectorProperties;
+    uIDragDetectorDesc.events = uIDragDetectorEvents;
+    uIDragDetectorDesc.attachComponents = native::attachUIDragDetectorComponents;
+    uIDragDetectorDesc.detachComponents = native::detachUIDragDetectorComponents;
+    classes.registerClass(uIDragDetectorDesc);
+
+    // --- CanvasGroup ---
+    static std::array<scene::PropertyDesc, 2> canvasGroupProperties;
+    canvasGroupProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("GroupTransparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How see-through the group is, as one: 0 is solid and 1 is not drawn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCanvasGroupGroupTransparency,
+            .set = native::setCanvasGroupGroupTransparency,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("GroupColor"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "A colour the whole picture is multiplied by. White changes nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getCanvasGroupGroupColor,
+            .set = native::setCanvasGroupGroupColor,
+        },
+    }};
+    scene::ClassDescriptor canvasGroupDesc;
+    canvasGroupDesc.name = atoms.intern("CanvasGroup");
+    canvasGroupDesc.super = frameClass;
+    canvasGroupDesc.flags = scene::ClassFlags::None;
+    canvasGroupDesc.defaultName = atoms.intern("CanvasGroup");
+    canvasGroupDesc.doc = "A `Frame` whose descendants are drawn together and then shown as one picture (ADR 0128): a window that fades as a whole, instead of its parts fading through each other. `GroupTransparency` and `GroupColor` apply to the picture.\012\012The picture is redrawn only when something inside it changes, and it clips: nothing inside a group is drawn outside its box.";
+    canvasGroupDesc.properties = canvasGroupProperties;
+    canvasGroupDesc.attachComponents = native::attachCanvasGroupComponents;
+    canvasGroupDesc.detachComponents = native::detachCanvasGroupComponents;
+    classes.registerClass(canvasGroupDesc);
 
     // --- UIPadding ---
     static std::array<scene::PropertyDesc, 4> uIPaddingProperties;
@@ -1483,7 +2385,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(uIStrokeDesc);
 
     // --- UIService ---
-    static std::array<scene::PropertyDesc, 4> uIServiceProperties;
+    static std::array<scene::PropertyDesc, 6> uIServiceProperties;
     uIServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("SafeAreaInsets"),
@@ -1537,6 +2439,32 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getUIServiceScreenOrientation,
             .set = native::setUIServiceScreenOrientation,
         },
+        scene::PropertyDesc{
+            .name = atoms.intern("SelectedObject"),
+            .type = scene::ValueType::Instance,
+            .instanceClass = atoms.intern("UIObject"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The object a gamepad or the arrow keys have selected (ADR 0128), or nothing. The d-pad, the left stick and the arrows move it -- to `NextSelection*` where that is set, to the nearest selectable object in that direction where it is not -- and `ButtonA` or Enter fires its `Activated`. Write it to put the selection somewhere: a menu that opens selects its first button. An object that is not `Selectable` is refused.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getUIServiceSelectedObject,
+            .set = native::setUIServiceSelectedObject,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AutoSelect"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the engine manages the selection when the game does not: with nothing selected, the first move of a d-pad, a stick or an arrow selects the first selectable object on the topmost screen, and a press of the pointer clears the selection -- a player who picks up the mouse sees no outline. Off, the selection is what a script last wrote.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getUIServiceAutoSelect,
+            .set = native::setUIServiceAutoSelect,
+        },
     }};
     static std::array<scene::MethodDesc, 1> uIServiceMethods;
     uIServiceMethods = {{
@@ -1547,7 +2475,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks before it opens the box.",
         },
     }};
-    static std::array<scene::EventDesc, 2> uIServiceEvents;
+    static std::array<scene::EventDesc, 3> uIServiceEvents;
     uIServiceEvents = {{
         scene::EventDesc{
             .name = atoms.intern("TextInputFocused"),
@@ -1558,6 +2486,11 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("TextInputFocusReleased"),
             .slot = 8,
             .doc = "A `TextInput` let go of it.",
+        },
+        scene::EventDesc{
+            .name = atoms.intern("SelectionChanged"),
+            .slot = 9,
+            .doc = "`SelectedObject` changed, to `selected` or to nothing.",
         },
     }};
     scene::ClassDescriptor uIServiceDesc;

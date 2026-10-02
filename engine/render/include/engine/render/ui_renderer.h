@@ -88,6 +88,16 @@ struct UiScissorRun
     // A run breaks on a texture change as well as on a scissor change: a draw
     // binds one texture, so two textures is two draws whatever the clip does.
     rhi::TextureHandle texture{};
+
+    // **Which target the run is drawn into** (ADR 0128): 0 is the screen, and
+    // anything else is a `CanvasGroup`'s picture -- `render` draws the runs of
+    // one target and leaves the rest. A run's vertices and its scissor are in
+    // its own target's pixels.
+    core::u32 group = 0;
+    // The run SHOWS a group's picture: its texture holds colour already
+    // multiplied by its alpha, which is what drawing into a clear target
+    // leaves, and is blended as that.
+    bool premultiplied = false;
 };
 
 class UiRenderer
@@ -122,15 +132,25 @@ public:
     //
     // `viewport` is the target's full size in pixels; the projection is derived
     // from it, and the scissor is restored to it afterwards so that a later pass
-    // does not inherit a UI element's clip.
-    void render(rhi::ICmdList& cmd, core::Vec2 viewport);
+    // does not inherit a UI element's clip. `group` is which target's runs to
+    // draw (`UiScissorRun::group`): the screen's, or one picture's.
+    void render(rhi::ICmdList& cmd, core::Vec2 viewport, core::u32 group = 0);
 
     [[nodiscard]] bool valid() const noexcept { return pipeline_.valid(); }
 
 private:
+    // The pipeline, with the blend a quad is drawn by: the screen's, or the
+    // one that shows a picture (`UiScissorRun::premultiplied`).
+    [[nodiscard]] rhi::PipelineHandle makePipeline(rhi::IDevice& device, bool premultiplied);
+
+    rhi::TextureFormat colorFormat_ = rhi::TextureFormat::Undefined;
     rhi::ShaderHandle vertexShader_{};
     rhi::ShaderHandle fragmentShader_{};
     rhi::PipelineHandle pipeline_{};
+    // The same, blending a source whose colour is already multiplied by its
+    // alpha: what shows a `CanvasGroup`'s picture (ADR 0128). Made by `upload`
+    // the first time a run asks for it.
+    rhi::PipelineHandle premultipliedPipeline_{};
     rhi::BufferHandle vertices_{};
 
     // Grown, never shrunk, like the debug renderer's. A HUD's vertex count is

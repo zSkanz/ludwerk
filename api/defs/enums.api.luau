@@ -1442,6 +1442,213 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "StartCorner",
+            Doc = "Which corner a `UIGridLayout` starts filling from.",
+            Items = {
+                {
+                    Name = "TopLeft",
+                    Value = 0,
+                    Doc = "Left to right, top to bottom. How a page of text is read.",
+                },
+                {
+                    Name = "TopRight",
+                    Value = 1,
+                    Doc = "Right to left, top to bottom.",
+                },
+                {
+                    Name = "BottomLeft",
+                    Value = 2,
+                    Doc = "Left to right, bottom to top.",
+                },
+                {
+                    Name = "BottomRight",
+                    Value = 3,
+                    Doc = "Right to left, bottom to top.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "UIFlexAlignment",
+            Doc = "What a `UIListLayout` does with the room its children leave over, along one axis.",
+            Items = {
+                {
+                    Name = "None",
+                    Value = 0,
+                    Doc = "Nothing: the children sit where the alignment puts them.",
+                },
+                {
+                    Name = "Fill",
+                    Value = 1,
+                    Doc = "The children grow by equal amounts until the room is used.",
+                },
+                {
+                    Name = "SpaceAround",
+                    Value = 2,
+                    Doc = "The room goes around each child: a whole share between two, half a share at each end.",
+                },
+                {
+                    Name = "SpaceBetween",
+                    Value = 3,
+                    Doc = "The room goes between the children, and none at the ends.",
+                },
+                {
+                    Name = "SpaceEvenly",
+                    Value = 4,
+                    Doc = "The room goes in equal shares between the children and at both ends.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "UIFlexMode",
+            Doc = "How one child of a `UIListLayout` takes room that is left over, or gives up room that is "
+                .. "short.",
+            Items = {
+                {
+                    Name = "None",
+                    Value = 0,
+                    Doc = "It keeps its size.",
+                },
+                {
+                    Name = "Grow",
+                    Value = 1,
+                    Doc = "It grows into room that is left over, and never shrinks.",
+                },
+                {
+                    Name = "Shrink",
+                    Value = 2,
+                    Doc = "It shrinks when the line is too long, and never grows.",
+                },
+                {
+                    Name = "Fill",
+                    Value = 3,
+                    Doc = "Both: it grows and it shrinks.",
+                },
+                {
+                    Name = "Custom",
+                    Value = 4,
+                    Doc = "By `GrowRatio` and `ShrinkRatio`, each as it is written.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "ItemLineAlignment",
+            Doc = "Where a child of a `UIListLayout` sits across its line.",
+            Items = {
+                {
+                    Name = "Automatic",
+                    Value = 0,
+                    Doc = "On a `UIFlexItem`: as the layout says. On the layout: by its own alignment across the "
+                        .. "line.",
+                },
+                {
+                    Name = "Start",
+                    Value = 1,
+                    Doc = "At the line's near edge: the top of a row, the left of a column.",
+                },
+                {
+                    Name = "Center",
+                    Value = 2,
+                    Doc = "In the middle of the line.",
+                },
+                {
+                    Name = "End",
+                    Value = 3,
+                    Doc = "At the line's far edge.",
+                },
+                {
+                    Name = "Stretch",
+                    Value = 4,
+                    Doc = "As tall as a row, or as wide as a column.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "AspectType",
+            Doc = "What a `UIAspectRatioConstraint` measures its element against.",
+            Items = {
+                {
+                    Name = "FitWithinMaxSize",
+                    Value = 0,
+                    Doc = "The largest box of that shape inside the element's own size.",
+                },
+                {
+                    Name = "ScaleWithParentSize",
+                    Value = 1,
+                    Doc = "The dominant axis takes the parent's whole extent and the other follows from the shape, "
+                        .. "whatever that makes it.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "DominantAxis",
+            Doc = "Which axis a `UIAspectRatioConstraint` keeps when it scales with its parent.",
+            Items = {
+                {
+                    Name = "Width",
+                    Value = 0,
+                    Doc = "As wide as the parent; the height follows.",
+                },
+                {
+                    Name = "Height",
+                    Value = 1,
+                    Doc = "As tall as the parent; the width follows.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "UIDragDetectorDragStyle",
+            Doc = "How a `UIDragDetector` turns the pointer's motion into its element's (ADR 0128).",
+            Items = {
+                {
+                    Name = "TranslatePlane",
+                    Value = 0,
+                    Doc = "The element follows the pointer on both axes.",
+                },
+                {
+                    Name = "TranslateLine",
+                    Value = 1,
+                    Doc = "The element slides along `DragAxis` and nowhere else: a slider's thumb.",
+                },
+                {
+                    Name = "Rotate",
+                    Value = 2,
+                    Doc = "The element turns about its own middle as the pointer goes round it: a dial.",
+                },
+                {
+                    Name = "Scriptable",
+                    Value = 3,
+                    Doc = "Nothing moves: the signals say where the pointer is, and a script does the rest.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "UIDragDetectorResponseStyle",
+            Doc = "What a `UIDragDetector` writes when its element is dragged.",
+            Items = {
+                {
+                    Name = "Offset",
+                    Value = 0,
+                    Doc = "The offset of the element's `Position`, in its own units.",
+                },
+                {
+                    Name = "Scale",
+                    Value = 1,
+                    Doc = "The scale of the element's `Position`, as a fraction of its parent.",
+                },
+                {
+                    Name = "CustomOffset",
+                    Value = 2,
+                    Doc = "Nothing: `DragUDim2` and `DragRotation` say how far, as an offset, and a script applies "
+                        .. "it.",
+                },
+                {
+                    Name = "CustomScale",
+                    Value = 3,
+                    Doc = "Nothing: the same, with `DragUDim2` as a fraction of the parent.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

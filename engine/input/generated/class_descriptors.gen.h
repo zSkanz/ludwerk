@@ -102,6 +102,14 @@ inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
 inline constexpr scene::EnumId VibrationMotorEnumId = 60;
 inline constexpr scene::EnumId HighlightDepthModeEnumId = 61;
 inline constexpr scene::EnumId TextureModeEnumId = 62;
+inline constexpr scene::EnumId StartCornerEnumId = 63;
+inline constexpr scene::EnumId UIFlexAlignmentEnumId = 64;
+inline constexpr scene::EnumId UIFlexModeEnumId = 65;
+inline constexpr scene::EnumId ItemLineAlignmentEnumId = 66;
+inline constexpr scene::EnumId AspectTypeEnumId = 67;
+inline constexpr scene::EnumId DominantAxisEnumId = 68;
+inline constexpr scene::EnumId UIDragDetectorDragStyleEnumId = 69;
+inline constexpr scene::EnumId UIDragDetectorResponseStyleEnumId = 70;
 
 } // namespace generated
 

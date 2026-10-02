@@ -167,6 +167,36 @@ struct DrawQuad
     // A glyph's outline (a text stroke) rather than the glyph: coloured by the
     // stroke's own gradient, never by the element's.
     bool outline = false;
+
+    // --- A `CanvasGroup` (ADR 0128) -------------------------------------------
+    //
+    // `group` is which of `DrawList::groups` this quad is drawn INTO, plus one;
+    // 0 is the screen, and is every quad outside a group. `groupPicture` is
+    // which group's picture this quad SHOWS, plus one: the one quad a group is
+    // on the screen, carrying the group's colour and transparency.
+    u32 group = 0;
+    u32 groupPicture = 0;
+};
+
+// One `CanvasGroup` of a frame (ADR 0128): a picture its quads are drawn into
+// and one quad shows. A host that cannot make the picture draws the group's
+// quads where they would have gone -- into `parent` -- and the group is then
+// an ordinary frame.
+struct DrawGroup
+{
+    core::InstanceId owner;
+    // What the picture covers, in window pixels. Its quads are in the same
+    // pixels: the host moves them by `-box.min` on the way in.
+    core::Rect box;
+    // The group this one is inside, plus one; 0 is the screen. A group inside
+    // a group is listed AFTER it, so pictures are drawn last to first.
+    u32 parent = 0;
+    // Everything that is drawn into the picture, hashed: the picture is drawn
+    // again when this moves, and not otherwise.
+    u64 signature = 0;
+    // Something in it changes without its quads changing -- a `ViewportFrame`,
+    // a gradient -- so it is drawn every frame.
+    bool live = false;
 };
 
 // One distinct gradient of a frame (ADR 0110): its two sequences, which is
@@ -209,12 +239,15 @@ struct DrawList
     std::vector<core::Rect> scissors;
     // Every distinct gradient the quads name, in the order first named.
     std::vector<DrawGradient> gradients;
+    // Every `CanvasGroup` that draws this frame.
+    std::vector<DrawGroup> groups;
 
     void clear()
     {
         quads.clear();
         scissors.clear();
         gradients.clear();
+        groups.clear();
     }
 
     // The index plus one a quad names `gradient` by: an existing entry when an
@@ -401,6 +434,17 @@ void layoutCanvas(scene::World& world, core::InstanceId root, core::Vec2 canvasS
 [[nodiscard]] const LayoutStats& layoutStats() noexcept;
 void resetLayoutStats() noexcept;
 
+// --- Pages (ADR 0128) --------------------------------------------------------
+
+// Turning a page is `scene::turnPage` (`engine/scene/ui_pages.h`), since a
+// script turns one too.
+//
+// **What moves by itself, moved by `seconds`**: the slide of every page layout
+// that is turning. Once a frame, before `layout`; a tree something slid in is
+// laid out again. Frame time rather than simulation time -- a page turn is
+// drawn, not simulated, and `CurrentPage` already changed when it was asked.
+void advance(scene::World& world, f32 seconds);
+
 // --- Interaction -------------------------------------------------------------
 
 // What the UI needs to know about the pointer and the keyboard this frame.
@@ -498,6 +542,20 @@ struct InteractionInput
     // the world. A screen element under the pointer wins over it: the screen is
     // drawn in front of the world.
     core::InstanceId worldOver;
+
+    // --- A gamepad, the arrow keys and the wheel (ADR 0128) --------------------
+    //
+    // One step of the selection, as the host read it off the d-pad, the left
+    // stick and the arrows: -1, 0 or 1 on each axis, y down, on the frame it
+    // was pressed and again each time it repeats while held.
+    core::i8 navigateX = 0;
+    core::i8 navigateY = 0;
+    // `ButtonA` or Enter went down: the selected object is activated.
+    bool navigateActivate = false;
+    // A shoulder button went down: -1 turns a page back, 1 forwards.
+    core::i8 pageStep = 0;
+    // The wheel this frame, in notches; positive y is away from the hand.
+    core::Vec2 wheel;
 };
 
 // The answer the host needs back: whether the UI took the pointer.
@@ -531,6 +589,14 @@ struct InteractionResult
     bool masked = false;
     bool multiLine = false;
     core::Rect caret;
+
+    // **An object is selected** (ADR 0128): the d-pad, the left stick, the
+    // arrows, `ButtonA` and Enter are the interface's this frame, the same
+    // claim as the two above for the codes a selection is driven by.
+    bool selectionActive = false;
+    // The wheel was used by something under the pointer -- a scroll frame or
+    // a page layout -- so it is not also the game's zoom.
+    bool wheelTaken = false;
 };
 
 // Fires `Activated`, `PointerEntered` and `PointerExited`, moves focus between
@@ -553,6 +619,11 @@ void resetInteraction() noexcept;
 // pointer: what an editor's click selects. A label is not pressed in a game
 // and is very much something a person arranging the interface points at.
 [[nodiscard]] core::InstanceId elementAt(const scene::World& world, core::InstanceId uiService, core::Vec2 point);
+
+// **Whether a gamepad or the arrow keys can select an element**
+// (`UIObject.Selectable`, ADR 0128). What it was told, or -- told nothing --
+// what it is: a button and a text input are, and nothing else is.
+[[nodiscard]] bool isSelectable(const scene::World& world, core::InstanceId id);
 
 // **Whether an element takes the pointer** (`UIObject.Active`, D452): what a
 // press lands on, what the pointer is "over", and what makes a press the

@@ -216,6 +216,30 @@ end
 declare extern type EnumTextureMode extends EnumItem with
 end
 
+declare extern type EnumStartCorner extends EnumItem with
+end
+
+declare extern type EnumUIFlexAlignment extends EnumItem with
+end
+
+declare extern type EnumUIFlexMode extends EnumItem with
+end
+
+declare extern type EnumItemLineAlignment extends EnumItem with
+end
+
+declare extern type EnumAspectType extends EnumItem with
+end
+
+declare extern type EnumDominantAxis extends EnumItem with
+end
+
+declare extern type EnumUIDragDetectorDragStyle extends EnumItem with
+end
+
+declare extern type EnumUIDragDetectorResponseStyle extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. Lowercase because it is a field of the VM primitive itself, like a string's
     --- length, and not a member of a type this project defines -- the one documented exception to the
@@ -2523,6 +2547,23 @@ declare extern type UIObject extends Instance with
     read AbsolutePosition: Vector2
     --- The size the solver gave it, in window pixels.
     read AbsoluteSize: Vector2
+    --- Whether a gamepad or the arrow keys can select this object (ADR 0128). **Until you write it, it
+    --- is what the object is**: a button and a `TextInput` are, and nothing else is. The selected
+    --- object is `UIService.SelectedObject`; the button that activates fires its `Activated`.
+    Selectable: boolean
+    --- What is selected when the selection moves up from this object. Nothing means the nearest
+    --- selectable object above it, found from where they are.
+    NextSelectionUp: UIObject?
+    --- The same, moving down.
+    NextSelectionDown: UIObject?
+    --- The same, moving left.
+    NextSelectionLeft: UIObject?
+    --- The same, moving right.
+    NextSelectionRight: UIObject?
+    --- What is drawn over this object while it is selected, in place of the default outline: its
+    --- background, picture, corners, gradient and strokes, at this object's box. Its children are not
+    --- drawn.
+    SelectionImageObject: UIObject?
     --- Fired when a pointer press and release both land on this object. Device-neutral by design
     --- (§2.5, divergence #17): a click, a tap and a bound gamepad button all produce it, which is why
     --- there is no `MouseButton1Click`.
@@ -2532,6 +2573,10 @@ declare extern type UIObject extends Instance with
     read PointerEntered: Signal<()>
     --- Fired when the pointer moves off it.
     read PointerExited: Signal<()>
+    --- This object became `UIService.SelectedObject`.
+    read SelectionGained: Signal<()>
+    --- It stopped being it.
+    read SelectionLost: Signal<()>
 end
 
 declare extern type Frame extends UIObject with
@@ -2731,6 +2776,169 @@ declare extern type UIListLayout extends Instance with
     SortOrder: EnumSortOrder
     --- Whether the line breaks into a second one when it runs out of room, rather than overflowing.
     Wraps: boolean
+    --- What happens to room left over across the parent: nothing, the children grow into it, or it is
+    --- shared out as space between them.
+    HorizontalFlex: EnumUIFlexAlignment
+    --- The same, down the parent.
+    VerticalFlex: EnumUIFlexAlignment
+    --- Where each child sits across its line; `Stretch` makes them all as tall as a row or as wide as a
+    --- column. A child's own `UIFlexItem` can say otherwise.
+    ItemLineAlignment: EnumItemLineAlignment
+    --- How much room the children take, in pixels, as the last layout found it. What a `ScrollFrame`'s
+    --- `CanvasSize` is set from.
+    read AbsoluteContentSize: Vector2
+end
+
+declare extern type UIGridLayout extends Instance with
+    --- The size of every cell. Scale is a fraction of the parent, so `UDim2.fromScale(0.25, 0.25)` is
+    --- four across at any window size.
+    CellSize: UDim2
+    --- The gap between cells, across and down. Between, not around: `UIPadding` puts space around the
+    --- outside.
+    CellPadding: UDim2
+    --- Which way a line runs: `Horizontal` fills rows, `Vertical` fills columns.
+    FillDirection: EnumFillDirection
+    --- The most cells in one line; zero means as many as fit. A line never holds more than fit,
+    --- whatever this says.
+    FillDirectionMaxCells: number
+    --- The corner the first cell goes in, and so which way the lines run.
+    StartCorner: EnumStartCorner
+    --- What order the children go in.
+    SortOrder: EnumSortOrder
+    --- Where the whole grid sits across the parent.
+    HorizontalAlignment: EnumHorizontalAlignment
+    --- Where it sits down the parent.
+    VerticalAlignment: EnumVerticalAlignment
+    --- How much room the cells take, in pixels, as the last layout found it. What a `ScrollFrame`'s
+    --- `CanvasSize` is set from.
+    read AbsoluteContentSize: Vector2
+end
+
+declare extern type UIPageLayout extends Instance with
+    --- Whether a page turn slides. Off, the new page is there at once.
+    Animated: boolean
+    --- Whether the page after the last is the first, and the one before the first the last.
+    Circular: boolean
+    --- The shape of the slide.
+    EasingStyle: EnumEasingStyle
+    --- Which end of the slide is eased.
+    EasingDirection: EnumEasingDirection
+    --- How long a slide takes, in seconds.
+    TweenTime: number
+    --- The gap between pages. Scale is a fraction of the parent along the fill direction.
+    Padding: UDim
+    --- Which way the pages run, and so which way they slide.
+    FillDirection: EnumFillDirection
+    --- What order the children go in.
+    SortOrder: EnumSortOrder
+    --- Where the page that is shown sits across the parent.
+    HorizontalAlignment: EnumHorizontalAlignment
+    --- Where it sits down the parent.
+    VerticalAlignment: EnumVerticalAlignment
+    --- Whether the wheel over the pages turns them.
+    ScrollWheelInputEnabled: boolean
+    --- Whether a swipe across the pages turns them -- a finger's, or a mouse dragged.
+    TouchInputEnabled: boolean
+    --- Whether a gamepad's shoulder buttons turn them.
+    GamepadInputEnabled: boolean
+    --- The page that is shown, or the one being slid to. Nothing when there are no pages.
+    read CurrentPage: UIObject?
+    --- `page` became `CurrentPage`: it is being turned to.
+    read PageEnter: Signal<UIObject>
+    --- `page` stopped being `CurrentPage`.
+    read PageLeave: Signal<UIObject>
+    --- The slide ended with `page` shown. At once when the layout is not `Animated`.
+    read Stopped: Signal<UIObject>
+    --- Turns to the page after `CurrentPage`. At the last page it does nothing, unless `Circular`.
+    function Next(self): ()
+    --- Turns to the page before `CurrentPage`. At the first it does nothing, unless `Circular`.
+    function Previous(self): ()
+    --- Turns to `page`. An object that is not one of the pages is refused.
+    function JumpTo(self, page: UIObject): ()
+    --- Turns to the page at `index`, counted from 0 in the layout's order. Past either end it stops at
+    --- that end, or goes round when `Circular`.
+    function JumpToIndex(self, index: number): ()
+end
+
+declare extern type UIFlexItem extends Instance with
+    --- Whether it grows, shrinks, or both.
+    FlexMode: EnumUIFlexMode
+    --- Its share of the room left over, against the other children that grow, when `FlexMode` is
+    --- `Custom`: one at 2 beside one at 1 takes two thirds.
+    GrowRatio: number
+    --- Its share of what the line is short by, against the others that shrink, when `FlexMode` is
+    --- `Custom`.
+    ShrinkRatio: number
+    --- Where it sits across its line; `Automatic` is as the layout says.
+    ItemLineAlignment: EnumItemLineAlignment
+end
+
+declare extern type UIScale extends Instance with
+    --- What the element and its descendants are multiplied by.
+    Scale: number
+end
+
+declare extern type UIAspectRatioConstraint extends Instance with
+    --- Width over height: 1 is a square, 2 is twice as wide as tall.
+    AspectRatio: number
+    --- What it is measured against: the element's own size, or its parent's.
+    AspectType: EnumAspectType
+    --- Which axis takes the parent's extent under `ScaleWithParentSize`.
+    DominantAxis: EnumDominantAxis
+end
+
+declare extern type UISizeConstraint extends Instance with
+    --- The least it may be, in the element's units.
+    MinSize: Vector2
+    --- The most it may be. **Zero on an axis is no limit**, which is what a new one has; `math.huge` is
+    --- taken as the same and reads back as zero.
+    MaxSize: Vector2
+end
+
+declare extern type UITextSizeConstraint extends Instance with
+    --- The least the text may be, in the element's units.
+    MinTextSize: number
+    --- The most it may be.
+    MaxTextSize: number
+end
+
+declare extern type UIDragDetector extends Instance with
+    --- Whether a press starts a drag.
+    Enabled: boolean
+    --- How the pointer's motion becomes the element's.
+    DragStyle: EnumUIDragDetectorDragStyle
+    --- What is written as it is dragged.
+    ResponseStyle: EnumUIDragDetectorResponseStyle
+    --- The line a `TranslateLine` drag slides along, y down: `(1, 0)` is across, `(0, 1)` is down.
+    DragAxis: Vector2
+    --- An element the dragged one stays inside. Nothing is no bound.
+    BoundingUI: UIObject?
+    --- The least the element may be moved from where the drag began. Not applied while it equals
+    --- `MaxDragTranslation`, which is how a new detector has no limit.
+    MinDragTranslation: UDim2
+    --- The most it may be moved.
+    MaxDragTranslation: UDim2
+    --- The least a `Rotate` drag may turn it, in degrees. Not applied while it equals `MaxDragAngle`.
+    MinDragAngle: number
+    --- The most it may turn it.
+    MaxDragAngle: number
+    --- How far the drag has moved the element from where it began, as `ResponseStyle` measures it.
+    read DragUDim2: UDim2
+    --- How far a `Rotate` drag has turned it from where it began, in degrees.
+    read DragRotation: number
+    --- A press on the element began to move it. `position` is the pointer's, in pixels.
+    read DragStart: Signal<Vector2>
+    --- The pointer moved while dragging.
+    read DragContinue: Signal<Vector2>
+    --- The press was released, or the element or the detector went away.
+    read DragEnd: Signal<Vector2>
+end
+
+declare extern type CanvasGroup extends Frame with
+    --- How see-through the group is, as one: 0 is solid and 1 is not drawn.
+    GroupTransparency: number
+    --- A colour the whole picture is multiplied by. White changes nothing.
+    GroupColor: Color3
 end
 
 declare extern type UIPadding extends Instance with
@@ -4299,10 +4507,23 @@ declare extern type UIService extends Instance with
     --- game starts. A layout reads the new `AbsoluteSize` on the next frame. Nothing on a desktop,
     --- whose window does not turn.
     ScreenOrientation: EnumScreenOrientation
+    --- The object a gamepad or the arrow keys have selected (ADR 0128), or nothing. The d-pad, the left
+    --- stick and the arrows move it -- to `NextSelection*` where that is set, to the nearest selectable
+    --- object in that direction where it is not -- and `ButtonA` or Enter fires its `Activated`. Write
+    --- it to put the selection somewhere: a menu that opens selects its first button. An object that is
+    --- not `Selectable` is refused.
+    SelectedObject: UIObject?
+    --- Whether the engine manages the selection when the game does not: with nothing selected, the
+    --- first move of a d-pad, a stick or an arrow selects the first selectable object on the topmost
+    --- screen, and a press of the pointer clears the selection -- a player who picks up the mouse sees
+    --- no outline. Off, the selection is what a script last wrote.
+    AutoSelect: boolean
     --- A `TextInput` took the keyboard.
     read TextInputFocused: Signal<TextInput>
     --- A `TextInput` let go of it.
     read TextInputFocusReleased: Signal<TextInput>
+    --- `SelectedObject` changed, to `selected` or to nothing.
+    read SelectionChanged: Signal<UIObject?>
     --- The `TextInput` that has the keyboard, or nil (ADR 0139): what a chat hotkey asks before it
     --- opens the box.
     function GetFocusedTextInput(self): TextInput?
@@ -5005,6 +5226,61 @@ declare Enum: {
         Static: EnumTextureMode,
         GetEnumItems: (self: any) -> { EnumTextureMode },
     },
+    StartCorner: {
+        TopLeft: EnumStartCorner,
+        TopRight: EnumStartCorner,
+        BottomLeft: EnumStartCorner,
+        BottomRight: EnumStartCorner,
+        GetEnumItems: (self: any) -> { EnumStartCorner },
+    },
+    UIFlexAlignment: {
+        None: EnumUIFlexAlignment,
+        Fill: EnumUIFlexAlignment,
+        SpaceAround: EnumUIFlexAlignment,
+        SpaceBetween: EnumUIFlexAlignment,
+        SpaceEvenly: EnumUIFlexAlignment,
+        GetEnumItems: (self: any) -> { EnumUIFlexAlignment },
+    },
+    UIFlexMode: {
+        None: EnumUIFlexMode,
+        Grow: EnumUIFlexMode,
+        Shrink: EnumUIFlexMode,
+        Fill: EnumUIFlexMode,
+        Custom: EnumUIFlexMode,
+        GetEnumItems: (self: any) -> { EnumUIFlexMode },
+    },
+    ItemLineAlignment: {
+        Automatic: EnumItemLineAlignment,
+        Start: EnumItemLineAlignment,
+        Center: EnumItemLineAlignment,
+        End: EnumItemLineAlignment,
+        Stretch: EnumItemLineAlignment,
+        GetEnumItems: (self: any) -> { EnumItemLineAlignment },
+    },
+    AspectType: {
+        FitWithinMaxSize: EnumAspectType,
+        ScaleWithParentSize: EnumAspectType,
+        GetEnumItems: (self: any) -> { EnumAspectType },
+    },
+    DominantAxis: {
+        Width: EnumDominantAxis,
+        Height: EnumDominantAxis,
+        GetEnumItems: (self: any) -> { EnumDominantAxis },
+    },
+    UIDragDetectorDragStyle: {
+        TranslatePlane: EnumUIDragDetectorDragStyle,
+        TranslateLine: EnumUIDragDetectorDragStyle,
+        Rotate: EnumUIDragDetectorDragStyle,
+        Scriptable: EnumUIDragDetectorDragStyle,
+        GetEnumItems: (self: any) -> { EnumUIDragDetectorDragStyle },
+    },
+    UIDragDetectorResponseStyle: {
+        Offset: EnumUIDragDetectorResponseStyle,
+        Scale: EnumUIDragDetectorResponseStyle,
+        CustomOffset: EnumUIDragDetectorResponseStyle,
+        CustomScale: EnumUIDragDetectorResponseStyle,
+        GetEnumItems: (self: any) -> { EnumUIDragDetectorResponseStyle },
+    },
 }
 
 declare Vector3: {
@@ -5313,6 +5589,15 @@ declare Instance: {
         & (("ImageButton") -> ImageButton)
         & (("ScrollFrame") -> ScrollFrame)
         & (("UIListLayout") -> UIListLayout)
+        & (("UIGridLayout") -> UIGridLayout)
+        & (("UIPageLayout") -> UIPageLayout)
+        & (("UIFlexItem") -> UIFlexItem)
+        & (("UIScale") -> UIScale)
+        & (("UIAspectRatioConstraint") -> UIAspectRatioConstraint)
+        & (("UISizeConstraint") -> UISizeConstraint)
+        & (("UITextSizeConstraint") -> UITextSizeConstraint)
+        & (("UIDragDetector") -> UIDragDetector)
+        & (("CanvasGroup") -> CanvasGroup)
         & (("UIPadding") -> UIPadding)
         & (("UICorner") -> UICorner)
         & (("UIGradient") -> UIGradient)

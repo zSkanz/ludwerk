@@ -30,6 +30,19 @@ struct Entry
     // itself alone.
     Vec2 turn{1.0f, 0.0f};
     Vec2 turnOffset{0.0f, 0.0f};
+    // **A `CanvasGroup`** (ADR 0128): which list of `Collected::groups` holds
+    // its descendants, plus one, and the clip they are drawn under inside its
+    // picture. Zero is every other element.
+    u32 ownsGroup = 0;
+    u32 innerScissor = 0;
+};
+
+// A tree's entries: its own, and each canvas group's descendants apart --
+// `ZIndex` orders a group's contents among themselves, inside its picture.
+struct Collected
+{
+    std::vector<Entry> entries;
+    std::vector<std::vector<Entry>> groups;
 };
 
 // `Rotation` is degrees CLOCKWISE, and screen Y points down, so the ordinary
@@ -411,7 +424,7 @@ void appendScrollBar(core::Rect box, ScrollAxis axis, f32 thickness, bool vertic
 }
 
 void collect(const scene::World& world, core::InstanceId id, u32 scissor, Vec2 turn, Vec2 turnOffset,
-             std::vector<Entry>& entries, std::vector<Rect>& scissors)
+             std::vector<Entry>& entries, std::vector<Rect>& scissors, std::vector<std::vector<Entry>>* groups)
 {
     const scene::UIObjectComponent* self = world.uiObjects().find(id);
     if (self == nullptr || !self->visible)
@@ -432,7 +445,30 @@ void collect(const scene::World& world, core::InstanceId id, u32 scissor, Vec2 t
         turnOffset = ownOffset;
     }
 
-    entries.push_back(Entry{id, self->zIndex, static_cast<u32>(entries.size()), scissor, turn, turnOffset});
+    entries.push_back(Entry{id, self->zIndex, static_cast<u32>(entries.size()), scissor, turn, turnOffset, 0, 0});
+
+    // **A `CanvasGroup`** (ADR 0128): what is inside is drawn into its picture,
+    // upright and clipped to its box alone -- the turn and the clip it is under
+    // are the picture's, applied once when the picture is shown.
+    //
+    // **On the screen only.** A world canvas -- a `SurfaceGui`, a
+    // `BillboardGui` -- is itself drawn in the world's pass, which has no
+    // pictures to draw into: `groups` is null there, and a group is a frame.
+    if (groups != nullptr && world.canvasGroups().find(id) != nullptr && self->absoluteSize.x >= 1.0f &&
+        self->absoluteSize.y >= 1.0f) {
+        scissors.push_back(Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize});
+        const u32 inner = static_cast<u32>(scissors.size() - 1);
+        // Into a list of its own first: `groups` grows while a group inside
+        // this one is collected.
+        std::vector<Entry> inside;
+        for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
+            collect(world, child, inner, Vec2{1.0f, 0.0f}, Vec2{}, inside, scissors, groups);
+        groups->push_back(std::move(inside));
+        Entry& own = entries.back();
+        own.ownsGroup = static_cast<u32>(groups->size());
+        own.innerScissor = inner;
+        return;
+    }
 
     u32 childScissor = scissor;
     // A ScrollFrame clips whatever `ClipsDescendants` says: a scrolling region
@@ -450,7 +486,7 @@ void collect(const scene::World& world, core::InstanceId id, u32 scissor, Vec2 t
     }
 
     for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child))
-        collect(world, child, childScissor, turn, turnOffset, entries, scissors);
+        collect(world, child, childScissor, turn, turnOffset, entries, scissors, groups);
 }
 
 // **A text field** (ADR 0139): its text as the field shows it -- masked,
@@ -548,7 +584,9 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
     }
 }
 
-void emit(const scene::World& world, const Entry& entry, DrawList& out)
+// `over` draws the element over another box than its own: a selection image,
+// which has no place of its own.
+void emit(const scene::World& world, const Entry& entry, DrawList& out, const Rect* over = nullptr)
 {
     const scene::UIObjectComponent* self = world.uiObjects().find(entry.id);
     if (self == nullptr)
@@ -579,7 +617,8 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
     // early returns and three of them are past the first quad it pushed.
     const TurnStamp stamp{out, entry, out.quads.size()};
 
-    const Rect box{self->absolutePosition, self->absolutePosition + self->absoluteSize};
+    const Rect box =
+        over != nullptr ? *over : Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize};
     const f32 backgroundAlpha = 1.0f - self->backgroundTransparency;
 
     // A fully transparent background still lays out and still hit-tests; it
@@ -735,6 +774,17 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
                     100.0f * std::fmin(self->absoluteSize.x / unit.size.x, self->absoluteSize.y / unit.size.y);
                 size = scaledTextSize(fits);
             }
+            // **Between two sizes, when a `UITextSizeConstraint` says so**
+            // (ADR 0128), in the element's units like `TextSize` itself.
+            for (core::InstanceId child = world.firstChild(entry.id); child.valid(); child = world.nextSibling(child)) {
+                if (const scene::UITextSizeConstraintComponent* limits = world.uiTextSizeConstraints().find(child);
+                    limits != nullptr) {
+                    const f32 least = limits->minTextSize * self->unitScale;
+                    const f32 most = std::fmax(least, limits->maxTextSize * self->unitScale);
+                    size = std::clamp(size, least, most);
+                    break;
+                }
+            }
         }
 
         if (rich)
@@ -746,6 +796,200 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out)
                               label->horizontalAlignment, label->verticalAlignment, color, textAlpha, entry.scissor,
                               out.quads, textStroke);
     }
+}
+
+// --- Canvas groups and the selection (ADR 0128) -------------------------------
+
+// FNV-1a over the fields that decide what a quad draws. Field by field: a
+// struct's padding is whatever was in memory (D474).
+struct Signature
+{
+    u64 value = 1469598103934665603ull;
+
+    template <typename T>
+    void add(const T& field) noexcept
+    {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&field);
+        for (usize index = 0; index < sizeof(T); ++index) {
+            value ^= bytes[index];
+            value *= 1099511628211ull;
+        }
+    }
+
+    void add(Vec2 point) noexcept
+    {
+        add(point.x);
+        add(point.y);
+    }
+
+    void add(const Rect& rect) noexcept
+    {
+        add(rect.min);
+        add(rect.max);
+    }
+};
+
+[[nodiscard]] u64 signatureOf(const DrawList& list, usize first, usize end)
+{
+    Signature signature;
+    signature.add(glyphAtlas().version);
+    for (usize index = first; index < end; ++index) {
+        const DrawQuad& quad = list.quads[index];
+        signature.add(quad.min);
+        signature.add(quad.max);
+        signature.add(quad.uvMin);
+        signature.add(quad.uvMax);
+        signature.add(quad.color.r);
+        signature.add(quad.color.g);
+        signature.add(quad.color.b);
+        signature.add(quad.alpha);
+        signature.add(quad.texture);
+        signature.add(list.scissors[quad.scissor]);
+        signature.add(quad.cornerRadius);
+        signature.add(quad.turn);
+        signature.add(quad.turnOffset);
+        signature.add(quad.slant);
+        signature.add(quad.gradient);
+        signature.add(quad.borderStroke);
+        signature.add(quad.strokeBox);
+        signature.add(quad.strokeInner);
+        signature.add(quad.strokeOuter);
+        signature.add(quad.strokeJoin);
+        signature.add(quad.outline);
+        signature.add(quad.group);
+        signature.add(quad.groupPicture);
+    }
+    return signature.value;
+}
+
+// Every entry of one list, in `ZIndex` then document order, stably: one flat
+// ordering, and the tie-break is what makes it total -- two elements at ZIndex
+// 0 draw in the order they were built, on every run. `into` is the group whose
+// picture they are drawn into, plus one; 0 is the screen.
+void emitAll(const scene::World& world, std::vector<Entry>& entries, std::vector<std::vector<Entry>>& groups, u32 into,
+             DrawList& out)
+{
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const Entry& a, const Entry& b) { return a.zIndex < b.zIndex; });
+
+    for (const Entry& entry : entries) {
+        const usize first = out.quads.size();
+        if (entry.ownsGroup == 0) {
+            emit(world, entry, out);
+            for (usize index = first; index < out.quads.size(); ++index) {
+                out.quads[index].group = into;
+                // A gradient's colours are not in its quads: a row of the
+                // frame's table is, and the row can change under them.
+                if (into != 0 && out.quads[index].gradient != 0)
+                    out.groups[into - 1].live = true;
+            }
+            if (into != 0 && world.viewportFrames().find(entry.id) != nullptr)
+                out.groups[into - 1].live = true;
+            continue;
+        }
+
+        const scene::UIObjectComponent* self = world.uiObjects().find(entry.id);
+        const scene::CanvasGroupComponent* canvas = world.canvasGroups().find(entry.id);
+        if (self == nullptr || canvas == nullptr)
+            continue;
+        DrawGroup group;
+        group.owner = entry.id;
+        group.box = Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize};
+        group.parent = into;
+        out.groups.push_back(group);
+        const u32 index = static_cast<u32>(out.groups.size());
+
+        // The frame itself is in its picture, so a window fades with its
+        // background and not in front of it.
+        Entry inside = entry;
+        inside.scissor = entry.innerScissor;
+        inside.turn = Vec2{1.0f, 0.0f};
+        inside.turnOffset = Vec2{};
+        emit(world, inside, out);
+        for (usize at = first; at < out.quads.size(); ++at) {
+            out.quads[at].group = index;
+            if (out.quads[at].gradient != 0)
+                out.groups[index - 1].live = true;
+        }
+        emitAll(world, groups[entry.ownsGroup - 1], groups, index, out);
+        out.groups[index - 1].signature = signatureOf(out, first, out.quads.size());
+
+        // The picture, where the group is: one quad, with the group's colour
+        // and transparency, under the clip and the turn the group is under.
+        const f32 alpha = 1.0f - std::clamp(canvas->groupTransparency, 0.0f, 1.0f);
+        if (alpha <= 0.0f)
+            continue;
+        DrawQuad picture;
+        picture.min = group.box.min;
+        picture.max = group.box.max;
+        picture.uvMin = Vec2{0.0f, 0.0f};
+        picture.uvMax = Vec2{1.0f, 1.0f};
+        picture.color = canvas->groupColor;
+        picture.alpha = alpha;
+        picture.scissor = entry.scissor;
+        picture.turn = entry.turn;
+        picture.turnOffset = entry.turnOffset;
+        picture.group = into;
+        picture.groupPicture = index;
+        out.quads.push_back(picture);
+    }
+}
+
+// **What shows which object is selected** (ADR 0128), over everything else on
+// its screen: the object's own `SelectionImageObject` at its box, or the
+// default -- an outline a little outside it, following its corners.
+void emitSelection(const scene::World& world, core::InstanceId screen, DrawList& out)
+{
+    const core::InstanceId selected = world.engineState().uiSelected;
+    const scene::UIObjectComponent* object = world.alive(selected) ? world.uiObjects().find(selected) : nullptr;
+    if (object == nullptr)
+        return;
+    // On this screen, and shown all the way up to it.
+    bool here = false;
+    for (core::InstanceId current = selected; current.valid(); current = world.parentOf(current)) {
+        if (current == screen) {
+            here = true;
+            break;
+        }
+        if (const scene::UIObjectComponent* above = world.uiObjects().find(current);
+            above != nullptr && !above->visible)
+            return;
+    }
+    if (!here)
+        return;
+
+    const Rect box{object->absolutePosition, object->absolutePosition + object->absoluteSize};
+    if (world.alive(object->selectionImageObject) && world.uiObjects().find(object->selectionImageObject) != nullptr) {
+        emit(world, Entry{object->selectionImageObject, 0.0f, 0, 0, Vec2{1.0f, 0.0f}, Vec2{}, 0, 0}, out, &box);
+        return;
+    }
+
+    f32 cornerRadius = 0.0f;
+    const f32 shorter = std::fmin(box.max.x - box.min.x, box.max.y - box.min.y);
+    for (core::InstanceId child = world.firstChild(selected); child.valid(); child = world.nextSibling(child)) {
+        if (const scene::UICornerComponent* corner = world.uiCorners().find(child); corner != nullptr) {
+            const f32 radius = corner->cornerRadius.scale * shorter + corner->cornerRadius.offset * object->unitScale;
+            cornerRadius = std::fmax(0.0f, std::fmin(radius, shorter * 0.5f));
+            break;
+        }
+    }
+    // Two units out and three thick, in the one colour a HUD is least likely
+    // to be: the outline has to read over a button of any colour.
+    const f32 inner = 2.0f * object->unitScale;
+    const f32 outer = inner + 3.0f * object->unitScale;
+    const f32 grow = outer + 1.0f;
+    DrawQuad band;
+    band.min = Vec2{box.min.x - grow, box.min.y - grow};
+    band.max = Vec2{box.max.x + grow, box.max.y + grow};
+    band.color = core::Color3{0.25f, 0.62f, 1.0f};
+    band.alpha = 1.0f;
+    band.scissor = 0;
+    band.cornerRadius = cornerRadius;
+    band.borderStroke = true;
+    band.strokeBox = box;
+    band.strokeInner = inner;
+    band.strokeOuter = outer;
+    out.quads.push_back(band);
 }
 
 } // namespace
@@ -771,22 +1015,16 @@ void buildDrawList(const scene::World& world, core::InstanceId uiService, DrawLi
     }
     std::stable_sort(screens.begin(), screens.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
-    std::vector<Entry> entries;
+    Collected collected;
     for (const auto& [order, screen] : screens) {
-        entries.clear();
+        collected.entries.clear();
+        collected.groups.clear();
         for (core::InstanceId element = world.firstChild(screen); element.valid();
              element = world.nextSibling(element)) {
-            collect(world, element, 0, Vec2{1.0f, 0.0f}, Vec2{}, entries, out.scissors);
+            collect(world, element, 0, Vec2{1.0f, 0.0f}, Vec2{}, collected.entries, out.scissors, &collected.groups);
         }
-
-        // `ZIndex` then document order, stably. One flat ordering per tree, and
-        // the tie-break is what makes it total: two elements at ZIndex 0 draw in
-        // the order they were built, on every run.
-        std::stable_sort(entries.begin(), entries.end(),
-                         [](const Entry& a, const Entry& b) { return a.zIndex < b.zIndex; });
-
-        for (const Entry& entry : entries)
-            emit(world, entry, out);
+        emitAll(world, collected.entries, collected.groups, 0, out);
+        emitSelection(world, screen, out);
     }
 }
 
@@ -796,13 +1034,10 @@ void buildCanvasDrawList(const scene::World& world, core::InstanceId root, DrawL
     out.scissors.push_back(Rect{Vec2{-1.0e9f, -1.0e9f}, Vec2{1.0e9f, 1.0e9f}});
     if (!root.valid())
         return;
-    std::vector<Entry> entries;
+    Collected collected;
     for (core::InstanceId element = world.firstChild(root); element.valid(); element = world.nextSibling(element))
-        collect(world, element, 0, Vec2{1.0f, 0.0f}, Vec2{}, entries, out.scissors);
-    std::stable_sort(entries.begin(), entries.end(),
-                     [](const Entry& a, const Entry& b) { return a.zIndex < b.zIndex; });
-    for (const Entry& entry : entries)
-        emit(world, entry, out);
+        collect(world, element, 0, Vec2{1.0f, 0.0f}, Vec2{}, collected.entries, out.scissors, nullptr);
+    emitAll(world, collected.entries, collected.groups, 0, out);
 }
 
 u32 DrawList::gradientSlot(const DrawGradient& gradient)

@@ -19,6 +19,7 @@ engine_add_module(scene
         src/class_registry.cpp
         src/enum_registry.cpp
         src/world.cpp
+        src/ui_pages.cpp
         src/world_hash.cpp
         src/wind.cpp
         src/camera_view.cpp

@@ -187,6 +187,13 @@ things that differ by system. What a game shows should follow what the machine
 has, not what it is called: a tablet with a keyboard and a laptop with a
 touchscreen are both real.
 
+**A gamepad that was plugged in before the game started is connected a frame
+after it starts**, not at the first line of a script: the engine looks for
+gamepads once its first frame is on the screen, so that a window is never
+later for it. `GamepadAvailable` read at a script's first line is false, and
+its changed signal says when that is no longer so -- connect to it rather
+than read it once.
+
 **A touch's `Position` is in window pixels**, and a `ScreenGui` with
 `ScreenInsets` on starts at the safe area. Something a game places at a finger
 inside such a screen is off by the inset: subtract the `AbsolutePosition` of a

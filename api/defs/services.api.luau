@@ -2234,6 +2234,30 @@ local Classes: { Schema.Class } = {
                     .. "scene is where the game starts. A layout reads the new `AbsoluteSize` on the next "
                     .. "frame. Nothing on a desktop, whose window does not turn.",
             },
+            {
+                Name = "SelectedObject",
+                Type = "UIObject?",
+                Transient = true,
+                -- Where a hand has the interface, like the focus: not the world's.
+                HostFact = true,
+                Doc = "The object a gamepad or the arrow keys have selected (ADR 0128), or nothing. The "
+                    .. "d-pad, the left stick and the arrows move it -- to `NextSelection*` where that is "
+                    .. "set, to the nearest selectable object in that direction where it is not -- and "
+                    .. "`ButtonA` or Enter fires its `Activated`. Write it to put the selection somewhere: "
+                    .. "a menu that opens selects its first button. An object that is not `Selectable` is "
+                    .. "refused.",
+            },
+            {
+                Name = "AutoSelect",
+                Type = "boolean",
+                Default = "true",
+                HostFact = true,
+                Doc = "Whether the engine manages the selection when the game does not: with nothing "
+                    .. "selected, the first move of a d-pad, a stick or an arrow selects the first "
+                    .. "selectable object on the topmost screen, and a press of the pointer clears the "
+                    .. "selection -- a player who picks up the mouse sees no outline. Off, the selection "
+                    .. "is what a script last wrote.",
+            },
         } :: { Schema.Property },
         Methods = {
             {
@@ -2254,6 +2278,11 @@ local Classes: { Schema.Class } = {
                 Name = "TextInputFocusReleased",
                 Parameters = { { Name = "input", Type = "TextInput" } },
                 Doc = "A `TextInput` let go of it.",
+            },
+            {
+                Name = "SelectionChanged",
+                Parameters = { { Name = "selected", Type = "UIObject?" } },
+                Doc = "`SelectedObject` changed, to `selected` or to nothing.",
             },
         } :: { Schema.Event },
     },

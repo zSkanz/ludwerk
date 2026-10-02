@@ -912,6 +912,25 @@
       "Events": []
     },
     {
+      "Name": "CanvasGroup",
+      "Extends": "Frame",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "GroupColor",
+          "Type": "Color3",
+          "Default": "Color3.new(1, 1, 1)"
+        },
+        {
+          "Name": "GroupTransparency",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "CharacterBody",
       "Extends": "BasePart",
       "Tags": [],
@@ -6599,6 +6618,30 @@
       "Events": []
     },
     {
+      "Name": "UIAspectRatioConstraint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AspectRatio",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "AspectType",
+          "Type": "Enum.AspectType",
+          "Default": "Enum.AspectType.FitWithinMaxSize"
+        },
+        {
+          "Name": "DominantAxis",
+          "Type": "Enum.DominantAxis",
+          "Default": "Enum.DominantAxis.Width"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "UICorner",
       "Extends": "Instance",
       "Tags": [],
@@ -6607,6 +6650,128 @@
           "Name": "CornerRadius",
           "Type": "UDim",
           "Default": "UDim.new(0, 8)"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UIDragDetector",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "BoundingUI",
+          "Type": "UIObject?"
+        },
+        {
+          "Name": "DragAxis",
+          "Type": "Vector2",
+          "Default": "Vector2.new(1, 0)"
+        },
+        {
+          "Name": "DragRotation",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "DragStyle",
+          "Type": "Enum.UIDragDetectorDragStyle",
+          "Default": "Enum.UIDragDetectorDragStyle.TranslatePlane"
+        },
+        {
+          "Name": "DragUDim2",
+          "Type": "UDim2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "MaxDragAngle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MaxDragTranslation",
+          "Type": "UDim2",
+          "Default": "UDim2.new()"
+        },
+        {
+          "Name": "MinDragAngle",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "MinDragTranslation",
+          "Type": "UDim2",
+          "Default": "UDim2.new()"
+        },
+        {
+          "Name": "ResponseStyle",
+          "Type": "Enum.UIDragDetectorResponseStyle",
+          "Default": "Enum.UIDragDetectorResponseStyle.Offset"
+        }
+      ],
+      "Methods": [],
+      "Events": [
+        {
+          "Name": "DragContinue",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "Vector2"
+            }
+          ]
+        },
+        {
+          "Name": "DragEnd",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "Vector2"
+            }
+          ]
+        },
+        {
+          "Name": "DragStart",
+          "Parameters": [
+            {
+              "Name": "position",
+              "Type": "Vector2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "UIFlexItem",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "FlexMode",
+          "Type": "Enum.UIFlexMode",
+          "Default": "Enum.UIFlexMode.None"
+        },
+        {
+          "Name": "GrowRatio",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ItemLineAlignment",
+          "Type": "Enum.ItemLineAlignment",
+          "Default": "Enum.ItemLineAlignment.Automatic"
+        },
+        {
+          "Name": "ShrinkRatio",
+          "Type": "number",
+          "Default": "1"
         }
       ],
       "Methods": [],
@@ -6662,10 +6827,71 @@
       "Events": []
     },
     {
+      "Name": "UIGridLayout",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "AbsoluteContentSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "CellPadding",
+          "Type": "UDim2",
+          "Default": "UDim2.new(0, 5, 0, 5)"
+        },
+        {
+          "Name": "CellSize",
+          "Type": "UDim2",
+          "Default": "UDim2.new(0, 100, 0, 100)"
+        },
+        {
+          "Name": "FillDirection",
+          "Type": "Enum.FillDirection",
+          "Default": "Enum.FillDirection.Horizontal"
+        },
+        {
+          "Name": "FillDirectionMaxCells",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "HorizontalAlignment",
+          "Type": "Enum.HorizontalAlignment",
+          "Default": "Enum.HorizontalAlignment.Left"
+        },
+        {
+          "Name": "SortOrder",
+          "Type": "Enum.SortOrder",
+          "Default": "Enum.SortOrder.LayoutOrder"
+        },
+        {
+          "Name": "StartCorner",
+          "Type": "Enum.StartCorner",
+          "Default": "Enum.StartCorner.TopLeft"
+        },
+        {
+          "Name": "VerticalAlignment",
+          "Type": "Enum.VerticalAlignment",
+          "Default": "Enum.VerticalAlignment.Top"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "UIListLayout",
       "Extends": "Instance",
       "Tags": [],
       "Properties": [
+        {
+          "Name": "AbsoluteContentSize",
+          "Type": "Vector2",
+          "ReadOnly": true,
+          "Transient": true
+        },
         {
           "Name": "FillDirection",
           "Type": "Enum.FillDirection",
@@ -6675,6 +6901,16 @@
           "Name": "HorizontalAlignment",
           "Type": "Enum.HorizontalAlignment",
           "Default": "Enum.HorizontalAlignment.Left"
+        },
+        {
+          "Name": "HorizontalFlex",
+          "Type": "Enum.UIFlexAlignment",
+          "Default": "Enum.UIFlexAlignment.None"
+        },
+        {
+          "Name": "ItemLineAlignment",
+          "Type": "Enum.ItemLineAlignment",
+          "Default": "Enum.ItemLineAlignment.Automatic"
         },
         {
           "Name": "Padding",
@@ -6690,6 +6926,11 @@
           "Name": "VerticalAlignment",
           "Type": "Enum.VerticalAlignment",
           "Default": "Enum.VerticalAlignment.Top"
+        },
+        {
+          "Name": "VerticalFlex",
+          "Type": "Enum.UIFlexAlignment",
+          "Default": "Enum.UIFlexAlignment.None"
         },
         {
           "Name": "Wraps",
@@ -6753,6 +6994,22 @@
           "Default": "0"
         },
         {
+          "Name": "NextSelectionDown",
+          "Type": "UIObject?"
+        },
+        {
+          "Name": "NextSelectionLeft",
+          "Type": "UIObject?"
+        },
+        {
+          "Name": "NextSelectionRight",
+          "Type": "UIObject?"
+        },
+        {
+          "Name": "NextSelectionUp",
+          "Type": "UIObject?"
+        },
+        {
           "Name": "Position",
           "Type": "UDim2",
           "Default": "UDim2.new()"
@@ -6761,6 +7018,15 @@
           "Name": "Rotation",
           "Type": "number",
           "Default": "0"
+        },
+        {
+          "Name": "Selectable",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "SelectionImageObject",
+          "Type": "UIObject?"
         },
         {
           "Name": "Size",
@@ -6790,6 +7056,14 @@
         },
         {
           "Name": "PointerExited",
+          "Parameters": []
+        },
+        {
+          "Name": "SelectionGained",
+          "Parameters": []
+        },
+        {
+          "Name": "SelectionLost",
           "Parameters": []
         }
       ]
@@ -6824,10 +7098,168 @@
       "Events": []
     },
     {
+      "Name": "UIPageLayout",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Animated",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Circular",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "CurrentPage",
+          "Type": "UIObject?",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "EasingDirection",
+          "Type": "Enum.EasingDirection",
+          "Default": "Enum.EasingDirection.Out"
+        },
+        {
+          "Name": "EasingStyle",
+          "Type": "Enum.EasingStyle",
+          "Default": "Enum.EasingStyle.Quad"
+        },
+        {
+          "Name": "FillDirection",
+          "Type": "Enum.FillDirection",
+          "Default": "Enum.FillDirection.Horizontal"
+        },
+        {
+          "Name": "GamepadInputEnabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "HorizontalAlignment",
+          "Type": "Enum.HorizontalAlignment",
+          "Default": "Enum.HorizontalAlignment.Center"
+        },
+        {
+          "Name": "Padding",
+          "Type": "UDim",
+          "Default": "UDim.new()"
+        },
+        {
+          "Name": "ScrollWheelInputEnabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "SortOrder",
+          "Type": "Enum.SortOrder",
+          "Default": "Enum.SortOrder.LayoutOrder"
+        },
+        {
+          "Name": "TouchInputEnabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "TweenTime",
+          "Type": "number",
+          "Default": "0.3"
+        },
+        {
+          "Name": "VerticalAlignment",
+          "Type": "Enum.VerticalAlignment",
+          "Default": "Enum.VerticalAlignment.Center"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "JumpTo",
+          "Parameters": [
+            {
+              "Name": "page",
+              "Type": "UIObject"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "JumpToIndex",
+          "Parameters": [
+            {
+              "Name": "index",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "Next",
+          "Parameters": [],
+          "Returns": []
+        },
+        {
+          "Name": "Previous",
+          "Parameters": [],
+          "Returns": []
+        }
+      ],
+      "Events": [
+        {
+          "Name": "PageEnter",
+          "Parameters": [
+            {
+              "Name": "page",
+              "Type": "UIObject"
+            }
+          ]
+        },
+        {
+          "Name": "PageLeave",
+          "Parameters": [
+            {
+              "Name": "page",
+              "Type": "UIObject"
+            }
+          ]
+        },
+        {
+          "Name": "Stopped",
+          "Parameters": [
+            {
+              "Name": "page",
+              "Type": "UIObject"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Name": "UIScale",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Scale",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "UIService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
+        {
+          "Name": "AutoSelect",
+          "Type": "boolean",
+          "Default": "true"
+        },
         {
           "Name": "DisplayScale",
           "Type": "number",
@@ -6846,6 +7278,11 @@
           "Default": "Enum.ScreenOrientation.LandscapeSensor"
         },
         {
+          "Name": "SelectedObject",
+          "Type": "UIObject?",
+          "Transient": true
+        },
+        {
           "Name": "ViewportSize",
           "Type": "Vector2",
           "ReadOnly": true,
@@ -6860,6 +7297,15 @@
         }
       ],
       "Events": [
+        {
+          "Name": "SelectionChanged",
+          "Parameters": [
+            {
+              "Name": "selected",
+              "Type": "UIObject?"
+            }
+          ]
+        },
         {
           "Name": "TextInputFocusReleased",
           "Parameters": [
@@ -6879,6 +7325,25 @@
           ]
         }
       ]
+    },
+    {
+      "Name": "UISizeConstraint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "MaxSize",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        },
+        {
+          "Name": "MinSize",
+          "Type": "Vector2",
+          "Default": "Vector2.zero"
+        }
+      ],
+      "Methods": [],
+      "Events": []
     },
     {
       "Name": "UIStroke",
@@ -6932,6 +7397,25 @@
         },
         {
           "Name": "ZIndex",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "UITextSizeConstraint",
+      "Extends": "Instance",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "MaxTextSize",
+          "Type": "number",
+          "Default": "100"
+        },
+        {
+          "Name": "MinTextSize",
           "Type": "number",
           "Default": "1"
         }
@@ -10518,6 +11002,19 @@
       ]
     },
     {
+      "Name": "AspectType",
+      "Items": [
+        {
+          "Name": "FitWithinMaxSize",
+          "Value": 0
+        },
+        {
+          "Name": "ScaleWithParentSize",
+          "Value": 1
+        }
+      ]
+    },
+    {
       "Name": "AssetFetchStatus",
       "Items": [
         {
@@ -10637,6 +11134,19 @@
         {
           "Name": "Precise",
           "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "DominantAxis",
+      "Items": [
+        {
+          "Name": "Height",
+          "Value": 1
+        },
+        {
+          "Name": "Width",
+          "Value": 0
         }
       ]
     },
@@ -10931,6 +11441,31 @@
         {
           "Name": "Simulation",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "ItemLineAlignment",
+      "Items": [
+        {
+          "Name": "Automatic",
+          "Value": 0
+        },
+        {
+          "Name": "Center",
+          "Value": 2
+        },
+        {
+          "Name": "End",
+          "Value": 3
+        },
+        {
+          "Name": "Start",
+          "Value": 1
+        },
+        {
+          "Name": "Stretch",
+          "Value": 4
         }
       ]
     },
@@ -12011,6 +12546,27 @@
       ]
     },
     {
+      "Name": "StartCorner",
+      "Items": [
+        {
+          "Name": "BottomLeft",
+          "Value": 2
+        },
+        {
+          "Name": "BottomRight",
+          "Value": 3
+        },
+        {
+          "Name": "TopLeft",
+          "Value": 0
+        },
+        {
+          "Name": "TopRight",
+          "Value": 1
+        }
+      ]
+    },
+    {
       "Name": "StreamingMode",
       "Items": [
         {
@@ -12138,6 +12694,98 @@
         {
           "Name": "Wrap",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "UIDragDetectorDragStyle",
+      "Items": [
+        {
+          "Name": "Rotate",
+          "Value": 2
+        },
+        {
+          "Name": "Scriptable",
+          "Value": 3
+        },
+        {
+          "Name": "TranslateLine",
+          "Value": 1
+        },
+        {
+          "Name": "TranslatePlane",
+          "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "UIDragDetectorResponseStyle",
+      "Items": [
+        {
+          "Name": "CustomOffset",
+          "Value": 2
+        },
+        {
+          "Name": "CustomScale",
+          "Value": 3
+        },
+        {
+          "Name": "Offset",
+          "Value": 0
+        },
+        {
+          "Name": "Scale",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "UIFlexAlignment",
+      "Items": [
+        {
+          "Name": "Fill",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "SpaceAround",
+          "Value": 2
+        },
+        {
+          "Name": "SpaceBetween",
+          "Value": 3
+        },
+        {
+          "Name": "SpaceEvenly",
+          "Value": 4
+        }
+      ]
+    },
+    {
+      "Name": "UIFlexMode",
+      "Items": [
+        {
+          "Name": "Custom",
+          "Value": 4
+        },
+        {
+          "Name": "Fill",
+          "Value": 3
+        },
+        {
+          "Name": "Grow",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Shrink",
+          "Value": 2
         }
       ]
     },

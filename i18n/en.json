@@ -458,6 +458,7 @@
   "script.err.material_value_type": "A material's {property} does not take that kind of value.",
   "script.err.material_parameter_unknown": "{name} is not a material parameter. A part can override Color, Transparency, Emissive, Metalness, Roughness, NormalScale and AlphaCutoff, and a surface shader parameter its material declares.",
   "script.err.material_parameter_undeclared": "The material {content} does not let a part override {name}. Declare it in the material's instanceParameters, or clone the material and change the copy.",
+  "script.err.not_a_page": "A UIPageLayout turns to one of its pages: a visible UIObject beside it, under the same parent, or an index that is a number.",
   "script.err.not_a_camera": "This is a Camera's method, and what it was called on is not a Camera.",
   "script.err.material_parameter_undeclared_default": "The default material lets a part override only Color, Transparency and Emissive, not {name}. Give the part a material that declares {name}.",
   "script.err.material_parameter_type": "{name} takes a Color3 for Color and Emissive, and a number for every other built-in parameter; a surface shader parameter takes a number, a boolean, a Vector2, a vector or Color3, or four numbers in a table.",

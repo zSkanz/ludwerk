@@ -102,6 +102,14 @@ inline constexpr scene::EnumId OrientationAlignmentModeEnumId = 59;
 inline constexpr scene::EnumId VibrationMotorEnumId = 60;
 inline constexpr scene::EnumId HighlightDepthModeEnumId = 61;
 inline constexpr scene::EnumId TextureModeEnumId = 62;
+inline constexpr scene::EnumId StartCornerEnumId = 63;
+inline constexpr scene::EnumId UIFlexAlignmentEnumId = 64;
+inline constexpr scene::EnumId UIFlexModeEnumId = 65;
+inline constexpr scene::EnumId ItemLineAlignmentEnumId = 66;
+inline constexpr scene::EnumId AspectTypeEnumId = 67;
+inline constexpr scene::EnumId DominantAxisEnumId = 68;
+inline constexpr scene::EnumId UIDragDetectorDragStyleEnumId = 69;
+inline constexpr scene::EnumId UIDragDetectorResponseStyleEnumId = 70;
 
 } // namespace generated
 
@@ -191,6 +199,18 @@ scene::Value getUIObjectClipsDescendants(const scene::World& world, core::Instan
 bool setUIObjectClipsDescendants(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getUIObjectAbsolutePosition(const scene::World& world, core::InstanceId id);
 scene::Value getUIObjectAbsoluteSize(const scene::World& world, core::InstanceId id);
+scene::Value getUIObjectSelectable(const scene::World& world, core::InstanceId id);
+bool setUIObjectSelectable(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectNextSelectionUp(const scene::World& world, core::InstanceId id);
+bool setUIObjectNextSelectionUp(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectNextSelectionDown(const scene::World& world, core::InstanceId id);
+bool setUIObjectNextSelectionDown(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectNextSelectionLeft(const scene::World& world, core::InstanceId id);
+bool setUIObjectNextSelectionLeft(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectNextSelectionRight(const scene::World& world, core::InstanceId id);
+bool setUIObjectNextSelectionRight(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIObjectSelectionImageObject(const scene::World& world, core::InstanceId id);
+bool setUIObjectSelectionImageObject(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachUIObjectComponents(scene::World& world, core::InstanceId id);
 void detachUIObjectComponents(scene::World& world, core::InstanceId id);
 
@@ -303,8 +323,143 @@ scene::Value getUIListLayoutSortOrder(const scene::World& world, core::InstanceI
 bool setUIListLayoutSortOrder(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getUIListLayoutWraps(const scene::World& world, core::InstanceId id);
 bool setUIListLayoutWraps(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIListLayoutHorizontalFlex(const scene::World& world, core::InstanceId id);
+bool setUIListLayoutHorizontalFlex(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIListLayoutVerticalFlex(const scene::World& world, core::InstanceId id);
+bool setUIListLayoutVerticalFlex(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIListLayoutItemLineAlignment(const scene::World& world, core::InstanceId id);
+bool setUIListLayoutItemLineAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIListLayoutAbsoluteContentSize(const scene::World& world, core::InstanceId id);
 void attachUIListLayoutComponents(scene::World& world, core::InstanceId id);
 void detachUIListLayoutComponents(scene::World& world, core::InstanceId id);
+
+// UIGridLayout
+scene::Value getUIGridLayoutCellSize(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutCellSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutCellPadding(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutCellPadding(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutFillDirection(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutFillDirection(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutFillDirectionMaxCells(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutFillDirectionMaxCells(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutStartCorner(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutStartCorner(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutSortOrder(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutSortOrder(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutHorizontalAlignment(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutHorizontalAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutVerticalAlignment(const scene::World& world, core::InstanceId id);
+bool setUIGridLayoutVerticalAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIGridLayoutAbsoluteContentSize(const scene::World& world, core::InstanceId id);
+void attachUIGridLayoutComponents(scene::World& world, core::InstanceId id);
+void detachUIGridLayoutComponents(scene::World& world, core::InstanceId id);
+
+// UIPageLayout
+scene::Value getUIPageLayoutAnimated(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutAnimated(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutCircular(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutCircular(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutEasingStyle(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutEasingStyle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutEasingDirection(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutEasingDirection(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutTweenTime(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutTweenTime(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutPadding(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutPadding(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutFillDirection(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutFillDirection(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutSortOrder(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutSortOrder(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutHorizontalAlignment(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutHorizontalAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutVerticalAlignment(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutVerticalAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutScrollWheelInputEnabled(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutScrollWheelInputEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutTouchInputEnabled(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutTouchInputEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutGamepadInputEnabled(const scene::World& world, core::InstanceId id);
+bool setUIPageLayoutGamepadInputEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIPageLayoutCurrentPage(const scene::World& world, core::InstanceId id);
+void attachUIPageLayoutComponents(scene::World& world, core::InstanceId id);
+void detachUIPageLayoutComponents(scene::World& world, core::InstanceId id);
+
+// UIFlexItem
+scene::Value getUIFlexItemFlexMode(const scene::World& world, core::InstanceId id);
+bool setUIFlexItemFlexMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIFlexItemGrowRatio(const scene::World& world, core::InstanceId id);
+bool setUIFlexItemGrowRatio(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIFlexItemShrinkRatio(const scene::World& world, core::InstanceId id);
+bool setUIFlexItemShrinkRatio(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIFlexItemItemLineAlignment(const scene::World& world, core::InstanceId id);
+bool setUIFlexItemItemLineAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUIFlexItemComponents(scene::World& world, core::InstanceId id);
+void detachUIFlexItemComponents(scene::World& world, core::InstanceId id);
+
+// UIScale
+scene::Value getUIScaleScale(const scene::World& world, core::InstanceId id);
+bool setUIScaleScale(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUIScaleComponents(scene::World& world, core::InstanceId id);
+void detachUIScaleComponents(scene::World& world, core::InstanceId id);
+
+// UIAspectRatioConstraint
+scene::Value getUIAspectRatioConstraintAspectRatio(const scene::World& world, core::InstanceId id);
+bool setUIAspectRatioConstraintAspectRatio(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIAspectRatioConstraintAspectType(const scene::World& world, core::InstanceId id);
+bool setUIAspectRatioConstraintAspectType(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIAspectRatioConstraintDominantAxis(const scene::World& world, core::InstanceId id);
+bool setUIAspectRatioConstraintDominantAxis(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUIAspectRatioConstraintComponents(scene::World& world, core::InstanceId id);
+void detachUIAspectRatioConstraintComponents(scene::World& world, core::InstanceId id);
+
+// UISizeConstraint
+scene::Value getUISizeConstraintMinSize(const scene::World& world, core::InstanceId id);
+bool setUISizeConstraintMinSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUISizeConstraintMaxSize(const scene::World& world, core::InstanceId id);
+bool setUISizeConstraintMaxSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUISizeConstraintComponents(scene::World& world, core::InstanceId id);
+void detachUISizeConstraintComponents(scene::World& world, core::InstanceId id);
+
+// UITextSizeConstraint
+scene::Value getUITextSizeConstraintMinTextSize(const scene::World& world, core::InstanceId id);
+bool setUITextSizeConstraintMinTextSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUITextSizeConstraintMaxTextSize(const scene::World& world, core::InstanceId id);
+bool setUITextSizeConstraintMaxTextSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachUITextSizeConstraintComponents(scene::World& world, core::InstanceId id);
+void detachUITextSizeConstraintComponents(scene::World& world, core::InstanceId id);
+
+// UIDragDetector
+scene::Value getUIDragDetectorEnabled(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorDragStyle(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorDragStyle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorResponseStyle(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorResponseStyle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorDragAxis(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorDragAxis(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorBoundingUI(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorBoundingUI(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorMinDragTranslation(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorMinDragTranslation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorMaxDragTranslation(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorMaxDragTranslation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorMinDragAngle(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorMinDragAngle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorMaxDragAngle(const scene::World& world, core::InstanceId id);
+bool setUIDragDetectorMaxDragAngle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIDragDetectorDragUDim2(const scene::World& world, core::InstanceId id);
+scene::Value getUIDragDetectorDragRotation(const scene::World& world, core::InstanceId id);
+void attachUIDragDetectorComponents(scene::World& world, core::InstanceId id);
+void detachUIDragDetectorComponents(scene::World& world, core::InstanceId id);
+
+// CanvasGroup
+scene::Value getCanvasGroupGroupTransparency(const scene::World& world, core::InstanceId id);
+bool setCanvasGroupGroupTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCanvasGroupGroupColor(const scene::World& world, core::InstanceId id);
+bool setCanvasGroupGroupColor(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachCanvasGroupComponents(scene::World& world, core::InstanceId id);
+void detachCanvasGroupComponents(scene::World& world, core::InstanceId id);
 
 // UIPadding
 scene::Value getUIPaddingPaddingTop(const scene::World& world, core::InstanceId id);
@@ -374,6 +529,10 @@ scene::Value getUIServiceViewportSize(const scene::World& world, core::InstanceI
 scene::Value getUIServiceDisplayScale(const scene::World& world, core::InstanceId id);
 scene::Value getUIServiceScreenOrientation(const scene::World& world, core::InstanceId id);
 bool setUIServiceScreenOrientation(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIServiceSelectedObject(const scene::World& world, core::InstanceId id);
+bool setUIServiceSelectedObject(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getUIServiceAutoSelect(const scene::World& world, core::InstanceId id);
+bool setUIServiceAutoSelect(scene::World& world, core::InstanceId id, const scene::Value& value);
 
 } // namespace native
 

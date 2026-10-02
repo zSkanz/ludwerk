@@ -334,6 +334,11 @@ struct EngineState
     // `UIService.ScreenOrientation`: `Enum.ScreenOrientation`'s value, which the
     // host applies to the window whenever it changes. 2 is LandscapeSensor.
     i32 screenOrientation = 2;
+    // `UIService.SelectedObject` and `AutoSelect` (ADR 0128): what a gamepad
+    // or the arrow keys have selected. Here rather than beside the hover and
+    // the focus because a script writes it.
+    core::InstanceId uiSelected;
+    bool uiAutoSelect = true;
     // `Camera.ViewportSize`: what the world is drawn into this frame, in pixels
     // -- the window, or the editor's Viewport panel. Written by the host.
     core::Vec2 viewportSize;
@@ -528,6 +533,15 @@ struct NameIndex
     X(UICornerComponent, uiCorners)                                                                                    \
     X(UIGradientComponent, uiGradients)                                                                                \
     X(UIStrokeComponent, uiStrokes)                                                                                    \
+    X(UIGridLayoutComponent, uiGridLayouts)                                                                            \
+    X(UIPageLayoutComponent, uiPageLayouts)                                                                            \
+    X(UIFlexItemComponent, uiFlexItems)                                                                                \
+    X(UIScaleComponent, uiScales)                                                                                      \
+    X(UIAspectRatioConstraintComponent, uiAspectRatioConstraints)                                                      \
+    X(UISizeConstraintComponent, uiSizeConstraints)                                                                    \
+    X(UITextSizeConstraintComponent, uiTextSizeConstraints)                                                            \
+    X(UIDragDetectorComponent, uiDragDetectors)                                                                        \
+    X(CanvasGroupComponent, canvasGroups)                                                                              \
     X(InputContextComponent, inputContexts)                                                                            \
     X(InputActionComponent, inputActions)                                                                              \
     X(InputBindingComponent, inputBindings)                                                                            \
@@ -1379,6 +1393,42 @@ public:
     [[nodiscard]] const ComponentPool<UIGradientComponent>& uiGradients() const noexcept { return m_uiGradients; }
     [[nodiscard]] ComponentPool<UIStrokeComponent>& uiStrokes() noexcept { return m_uiStrokes; }
     [[nodiscard]] const ComponentPool<UIStrokeComponent>& uiStrokes() const noexcept { return m_uiStrokes; }
+    [[nodiscard]] ComponentPool<UIGridLayoutComponent>& uiGridLayouts() noexcept { return m_uiGridLayouts; }
+    [[nodiscard]] const ComponentPool<UIGridLayoutComponent>& uiGridLayouts() const noexcept { return m_uiGridLayouts; }
+    [[nodiscard]] ComponentPool<UIPageLayoutComponent>& uiPageLayouts() noexcept { return m_uiPageLayouts; }
+    [[nodiscard]] const ComponentPool<UIPageLayoutComponent>& uiPageLayouts() const noexcept { return m_uiPageLayouts; }
+    [[nodiscard]] ComponentPool<UIFlexItemComponent>& uiFlexItems() noexcept { return m_uiFlexItems; }
+    [[nodiscard]] const ComponentPool<UIFlexItemComponent>& uiFlexItems() const noexcept { return m_uiFlexItems; }
+    [[nodiscard]] ComponentPool<UIScaleComponent>& uiScales() noexcept { return m_uiScales; }
+    [[nodiscard]] const ComponentPool<UIScaleComponent>& uiScales() const noexcept { return m_uiScales; }
+    [[nodiscard]] ComponentPool<UIAspectRatioConstraintComponent>& uiAspectRatioConstraints() noexcept
+    {
+        return m_uiAspectRatioConstraints;
+    }
+    [[nodiscard]] const ComponentPool<UIAspectRatioConstraintComponent>& uiAspectRatioConstraints() const noexcept
+    {
+        return m_uiAspectRatioConstraints;
+    }
+    [[nodiscard]] ComponentPool<UISizeConstraintComponent>& uiSizeConstraints() noexcept { return m_uiSizeConstraints; }
+    [[nodiscard]] const ComponentPool<UISizeConstraintComponent>& uiSizeConstraints() const noexcept
+    {
+        return m_uiSizeConstraints;
+    }
+    [[nodiscard]] ComponentPool<UITextSizeConstraintComponent>& uiTextSizeConstraints() noexcept
+    {
+        return m_uiTextSizeConstraints;
+    }
+    [[nodiscard]] const ComponentPool<UITextSizeConstraintComponent>& uiTextSizeConstraints() const noexcept
+    {
+        return m_uiTextSizeConstraints;
+    }
+    [[nodiscard]] ComponentPool<UIDragDetectorComponent>& uiDragDetectors() noexcept { return m_uiDragDetectors; }
+    [[nodiscard]] const ComponentPool<UIDragDetectorComponent>& uiDragDetectors() const noexcept
+    {
+        return m_uiDragDetectors;
+    }
+    [[nodiscard]] ComponentPool<CanvasGroupComponent>& canvasGroups() noexcept { return m_canvasGroups; }
+    [[nodiscard]] const ComponentPool<CanvasGroupComponent>& canvasGroups() const noexcept { return m_canvasGroups; }
 
     // The audio module's classes (M6).
     [[nodiscard]] ComponentPool<SoundComponent>& sounds() noexcept { return m_sounds; }
