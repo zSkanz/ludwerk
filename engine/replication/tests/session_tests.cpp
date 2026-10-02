@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <doctest/doctest.h>
 #include <limits>
 #include <span>
@@ -2795,7 +2796,214 @@ TEST_CASE("D480: a press made in the ticks before the stream is anchored again i
     }
 }
 
-TEST_CASE("D480: what stands in for a silent replica is let go after a quarter of a second")
+namespace {
+
+// A replica as a machine runs one, sent by hand: a frame steps some ticks and
+// sends an intent message for each -- the tick and the three before it, as
+// `ReplicaSession::sendIntent` does -- and the authority ticks once for every
+// tick of wall time, whatever the replica managed.
+struct FramedReplica
+{
+    PlayedMatch& match;
+    const scene::PlayerComponent* player = nullptr;
+    core::u64 tick = 0;
+    struct Sent
+    {
+        core::u64 tick = 0;
+        float x = 0.0f;
+        bool jump = false;
+    };
+    std::deque<Sent> sent;
+
+    explicit FramedReplica(PlayedMatch& played) : match(played), tick(played.tick)
+    {
+        (void)match.server.atoms.intern("Move");
+        (void)match.server.atoms.intern("Jump");
+        player = match.server.world.players().find(match.remote());
+        REQUIRE(player != nullptr);
+    }
+
+    // The replica steps one tick holding `x` -- and `Jump` down when `jump`
+    // says -- and sends it.
+    void step(float x, bool jump = false)
+    {
+        sent.push_back(Sent{++tick, x, jump});
+        while (sent.size() > IntentRedundancy)
+            sent.pop_front();
+        Bytes intent;
+        intent.u8v(7).u8v(static_cast<core::u8>(sent.size()));
+        for (const Sent& each : sent) {
+            intent.u64v(each.tick);
+            intent.u16v(2).text("Move").u8v(2).f32v(each.x).f32v(0.0f).f32v(0.0f).u8v(0);
+            intent.text("Jump").u8v(0).f32v(0.0f).f32v(0.0f).f32v(0.0f).u8v(each.jump ? 1 : 0);
+        }
+        REQUIRE_FALSE(
+            match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+    }
+
+    void authorityTick() { match.authority->receive(match.server.world, match.server.workspace); }
+
+    [[nodiscard]] bool jumping() const
+    {
+        return std::any_of(player->intents.begin(), player->intents.end(),
+                           [&](const scene::PlayerIntent& intent) { return intent.pressed; });
+    }
+
+    [[nodiscard]] float moving() const
+    {
+        for (const scene::PlayerIntent& intent : player->intents) {
+            if (intent.axis.x != 0.0f)
+                return intent.axis.x;
+        }
+        return 0.0f;
+    }
+
+    // `wallTicks` of time in frames `frameTicks` long: each frame the replica
+    // steps what the frame owes, all at once, and the authority ticks through
+    // it. Returns how many of the authority's ticks did NOT hold `x`.
+    int run(int wallTicks, int frameTicks, float x)
+    {
+        int deaf = 0;
+        for (int at = 0; at < wallTicks; ++at) {
+            if (at % frameTicks == 0) {
+                for (int owed = 0; owed < frameTicks; ++owed)
+                    step(x);
+            }
+            authorityTick();
+            deaf += moving() == x ? 0 : 1;
+        }
+        return deaf;
+    }
+
+    // A frame `wallTicks` long of which the replica steps only `stepped` at its
+    // end and drops the rest.
+    void longFrame(int wallTicks, int stepped, float x)
+    {
+        for (int at = 0; at < wallTicks; ++at)
+            authorityTick();
+        for (int owed = 0; owed < stepped; ++owed)
+            step(x);
+    }
+};
+
+} // namespace
+
+TEST_CASE("D480: a replica that drops seventeen ticks, twice, is followed after each (a frame a tick)")
+{
+    // The owner's own client: frames of 309, 336 and 412 ms. A frame of 400 ms
+    // is 24 ticks, of which the replica steps seven and drops seventeen -- more
+    // than the sixteen stand-ins the authority remembers.
+    PlayedMatch match;
+    match.run(10);
+    FramedReplica replica(match);
+
+    CHECK(replica.run(120, 1, 1.0f) <= static_cast<int>(MaxIntentDelay + 2));
+    for (int hitch = 0; hitch < 2; ++hitch) {
+        CAPTURE(hitch);
+        replica.longFrame(24, 7, 1.0f);
+        // 2.3 seconds, a direction held throughout: deaf for the few ticks it
+        // takes to see the clock moved, and no longer.
+        const int deaf = replica.run(138, 1, 1.0f);
+        CHECK(deaf <= static_cast<int>(MaxIntentDelay + 2));
+        CHECK(replica.moving() == 1.0f);
+    }
+    // And the other way when the key is let go.
+    replica.longFrame(24, 7, 0.0f);
+    replica.run(60, 1, 0.0f);
+    CHECK(replica.moving() == 0.0f);
+}
+
+TEST_CASE("D480: a button tapped in the ticks a long frame stepped is applied once, however it was anchored")
+{
+    // ludwerk-08's audit of the follow-up: anchored at once on the newest
+    // tick, a tap in an older one of the same burst -- down in the third tick
+    // the frame stepped, up again by the seventh -- was erased with that tick.
+    for (int frameTicks : {1, 6}) {
+        CAPTURE(frameTicks);
+        PlayedMatch match;
+        match.run(10);
+        FramedReplica replica(match);
+        replica.run(60, frameTicks, 0.0f);
+        for (int at = 0; at < 24; ++at)
+            replica.authorityTick();
+        for (int owed = 0; owed < 7; ++owed)
+            replica.step(0.0f, owed == 2);
+        int jumped = 0;
+        for (int at = 0; at < 30; ++at) {
+            if (at % frameTicks == 0) {
+                for (int owed = 0; owed < frameTicks; ++owed)
+                    replica.step(0.0f);
+            }
+            replica.authorityTick();
+            jumped += replica.jumping() ? 1 : 0;
+        }
+        CHECK(jumped == 1);
+    }
+}
+
+TEST_CASE("D480: a key held through a long frame is held on the authority for the whole of it")
+{
+    // The client says nothing for 400 ms. What it held stands in all that
+    // time: let go part of the way through, the authority's character stops
+    // and the replica is corrected for a frame it simply did not draw.
+    PlayedMatch match;
+    match.run(10);
+    FramedReplica replica(match);
+    replica.run(60, 1, 1.0f);
+    int released = 0;
+    for (int at = 0; at < 24; ++at) {
+        replica.authorityTick();
+        released += replica.moving() == 1.0f ? 0 : 1;
+    }
+    CHECK(released == 0);
+}
+
+TEST_CASE("D480: a press in ticks the queue catches up over is carried, not skipped")
+{
+    // A stalled replica sends a burst far ahead of the delay; the authority
+    // jumps to the newest less the delay, and a button pressed in what it
+    // jumped over was lost.
+    PlayedMatch match;
+    match.run(10);
+    FramedReplica replica(match);
+    replica.run(60, 1, 0.0f);
+    for (int owed = 0; owed < 20; ++owed)
+        replica.step(0.0f, owed == 1);
+    int jumped = 0;
+    for (int at = 0; at < 30; ++at) {
+        replica.step(0.0f);
+        replica.authorityTick();
+        jumped += replica.jumping() ? 1 : 0;
+    }
+    CHECK(jumped == 1);
+}
+
+TEST_CASE("D480: the same from a window in the background, six ticks a frame")
+{
+    // A window behind another runs ten frames a second: six ticks stepped at
+    // once and their six intents sent together, then nothing for a tenth of a
+    // second. The authority hears from it one tick in six.
+    PlayedMatch match;
+    match.run(10);
+    FramedReplica replica(match);
+
+    replica.run(120, 6, 1.0f);
+    CHECK(replica.moving() == 1.0f);
+    for (int hitch = 0; hitch < 2; ++hitch) {
+        CAPTURE(hitch);
+        replica.longFrame(24, 7, 1.0f);
+        const int deaf = replica.run(138, 6, 1.0f);
+        // Heard on the first frame after: the seven ticks it stepped are
+        // seventeen late, which no slow packet is.
+        CHECK(deaf <= static_cast<int>(MaxIntentDelay + 2));
+        CHECK(replica.moving() == 1.0f);
+    }
+    replica.longFrame(24, 7, 0.0f);
+    replica.run(60, 6, 0.0f);
+    CHECK(replica.moving() == 0.0f);
+}
+
+TEST_CASE("D480: what stands in for a silent replica is let go after half a second")
 {
     PlayedMatch match;
     match.run(10);
@@ -2966,6 +3174,84 @@ TEST_CASE("D480: a replica that had a long frame while walking is corrected for 
     CHECK(match.server.world.parts().find(racer)->cframe.position.x == stoppedAt);
     CHECK(std::abs(match.client.world.parts().find(mine)->cframe.position.x - stoppedAt) < 1e-6);
     CHECK(match.replica->stats().corrections == settled);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("D480: both sessions real, a stick held through two frames of 400 ms from a window in the background")
+{
+    // What was measured on a real window (ludwerk-08, 2026-10-02): the client
+    // behind another window, so ten frames a second and six ticks a frame; a
+    // stick held; a frame of 400 ms every 2.3 s, of which seven ticks are
+    // stepped and seventeen dropped. After the second the authority's
+    // character stood still for the rest of the run.
+    PlayedMatch match;
+    const core::InstanceId racer =
+        match.server.world.create(match.server.classes.findId(match.server.atoms.intern("CharacterBody")));
+    REQUIRE(racer.valid());
+    match.server.world.setName(racer, match.server.atoms.intern("Racer"));
+    match.server.world.parts().find(racer)->cframe.position = core::DVec3{0.0, 1.0, 0.0};
+    REQUIRE_FALSE(match.server.world.setParent(racer, match.server.workspace).has_value());
+    match.server.world.characterBodies().find(racer)->walkSpeed = 8.0f;
+    match.server.world.players().find(match.remote())->character = racer;
+    match.run(10);
+    core::InstanceId mine = match.copyOf(racer);
+    REQUIRE(mine.valid());
+    FlatReplay replay(match.client.world, mine);
+    match.replica->setCharacterReplay(&replay);
+
+    const core::NameAtom move = match.client.atoms.intern("Move");
+    (void)match.server.atoms.intern("Move");
+    // `Enum.InputActionType.Direction2D`, pushed to +x.
+    match.client.world.players().find(match.me)->intents = {
+        scene::PlayerIntent{move, 2, core::Vec3{1.0f, 0.0f, 0.0f}, false}};
+
+    core::u64 replicaTick = match.tick;
+    int still = 0;
+    const auto authorityTick = [&](bool measure) {
+        match.tick += 1;
+        match.authority->receive(match.server.world, match.server.workspace);
+        bool walking = false;
+        for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents)
+            walking = walking || intent.axis.x != 0.0f;
+        if (walking)
+            walk(match.server.world, racer);
+        else if (measure)
+            ++still;
+        match.authority->send(match.server.world, match.server.workspace, match.tick);
+    };
+    // A frame of the replica: every tick it steps is received for, stepped and
+    // sent, one after another, as `runDrawnTick` does.
+    const auto replicaFrame = [&](int ticks) {
+        for (int at = 0; at < ticks; ++at) {
+            match.replica->receive(match.client.world, match.client.workspace);
+            walk(match.client.world, mine);
+            replicaTick += 1;
+            match.replica->sendIntent(match.client.world, replicaTick);
+        }
+    };
+    // `wall` ticks of time in frames of six.
+    const auto run = [&](int wall, bool measure) {
+        for (int at = 0; at < wall; ++at) {
+            if (at % 6 == 0)
+                replicaFrame(6);
+            authorityTick(measure);
+        }
+    };
+
+    run(120, false);
+    for (int hitch = 0; hitch < 3; ++hitch) {
+        CAPTURE(hitch);
+        for (int at = 0; at < 24; ++at)
+            authorityTick(false);
+        replicaFrame(7);
+        // Half a second to be heard again, and then 1.8 s in which the
+        // authority's character walks every tick.
+        run(30, false);
+        still = 0;
+        run(108, true);
+        CHECK(still == 0);
+    }
+    CHECK(match.authority->stats().intentReanchors >= 1);
     CHECK(match.replica->checksumFailures() == 0);
 }
 

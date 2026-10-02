@@ -97,11 +97,14 @@ inline constexpr u32 IntentDelayRelaxTicks = 600;
 // replica that stalled and then sent a burst is not replayed a second late.
 inline constexpr u32 IntentCatchUp = 8;
 inline constexpr usize MaxQueuedIntents = 64;
-// **How long the last intent stands in for one that has not come** (D480): a
-// quarter of a second. A lost packet or two is a tick the last one covers, and
-// nothing is corrected; a peer that has said nothing for longer is a player
-// nobody is holding a key for, and its character stops.
-inline constexpr u32 StandInLifetimeTicks = 15;
+// **How long the last intent stands in while the peer says nothing** (D480):
+// half a second of ticks in which no intent message came at all. Counted by
+// silence, not by ticks without a real intent: a client's long frame is
+// silence of its own length -- the owner's logs have frames of 400 ms -- and a
+// key held through it is still held, where a quarter of a second released it
+// in every such frame and corrected the replica each time. Longer than that,
+// it is a player nobody is holding a key for, and its character stops.
+inline constexpr u32 StandInLifetimeTicks = 30;
 
 // The visual slide of a correction: what is left of it after each tick, and
 // the distance past which a correction is a teleport and drawn as one.
@@ -276,6 +279,14 @@ private:
         // clock and not its packets.
         u32 lateIntentTicks = 0;
         bool lateIntentCounted = false;
+        // The stream was anchored again and has not been started since: the
+        // next start is on the newest tick queued, not the oldest, and a tick
+        // at or below `anchorFloor` -- seen before the clock moved -- is not
+        // queued again by the messages that arrive with it.
+        bool anchoredAgain = false;
+        u64 anchorFloor = 0;
+        // Ticks since an intent message last came from this peer.
+        u32 silentTicks = 0;
         // The newest tick this peer has sent: a late tick past it is one the
         // authority has never seen, and a press in it has never been applied.
         u64 newestIntentSeen = 0;

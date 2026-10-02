@@ -1373,29 +1373,44 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // What that newest intent holds stands in until then -- it is
                 // the newest thing the player is known to be doing.
                 //
-                // Counted by tick and not by message: a burst that a slow
-                // route delivers at once is one late tick, and the packets
-                // sent after it are on time again.
+                // **Two ways to tell.** The newest tick of a message late by
+                // more than the redundancy window is past what uneven arrival
+                // explains -- a packet that slow would have been overtaken by
+                // the three sent after it -- and the stream is anchored again
+                // at once. A window in the background runs ten frames a
+                // second and sends six ticks together, so waiting for late
+                // ticks in a row there was waiting four frames: measured on a
+                // real window, 18 to 47 ticks without one real intent after
+                // each long frame, and the character stood still for up to 26
+                // of them. Late by less -- a replica that runs a little slow,
+                // a route a little longer -- is counted by tick, four in a
+                // row, so that a burst a slow route delivers at once is one
+                // late tick and the packets sent after it are on time again.
                 u64 newestCarried = 0;
                 for (const auto& [tick, intents] : carried)
                     newestCarried = std::max(newestCarried, tick);
-                if (!peer->intentStarted || newestCarried > peer->appliedTick) {
+                peer->silentTicks = 0;
+                const bool late = peer->intentStarted && newestCarried <= peer->appliedTick;
+                if (!late) {
                     peer->lateIntentTicks = 0;
                 }
                 else if (!peer->lateIntentCounted) {
                     peer->lateIntentCounted = true;
                     peer->lateIntentTicks += 1;
                 }
-                if (peer->lateIntentTicks >= IntentRedundancy) {
+                if (late && (peer->lateIntentTicks >= IntentRedundancy ||
+                             peer->appliedTick - newestCarried >= IntentRedundancy)) {
                     peer->lateIntentTicks = 0;
                     peer->intentQueue.clear();
                     peer->standIns.clear();
+                    peer->anchoredAgain = true;
+                    // Every tick of this message that was never seen, not only
+                    // its newest: a button tapped in one of them and let go by
+                    // the newest is a press the start carries forward.
+                    peer->anchorFloor = peer->newestIntentSeen;
                     for (auto& [tick, intents] : carried) {
-                        if (tick != newestCarried)
-                            continue;
-                        peer->lastIntents = intents;
-                        peer->intentQueue.emplace(tick, std::move(intents));
-                        break;
+                        if (tick > peer->anchorFloor)
+                            peer->intentQueue.emplace(tick, std::move(intents));
                     }
                     peer->intentStarted = false;
                     // The ticks that ran dry were the clock moving: they say
@@ -1443,6 +1458,10 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                         continue;
                     }
                     if (peer->intentQueue.contains(tick))
+                        continue;
+                    // Waiting to be anchored again: what was seen before the
+                    // clock moved has been applied or stood in for already.
+                    if (peer->anchoredAgain && tick <= peer->anchorFloor)
                         continue;
                     peer->intentQueue.emplace(tick, std::move(intents));
                 }
@@ -1726,11 +1745,33 @@ void AuthoritySession::applyIntents(scene::World& world)
         peer.carriedPresses.clear();
         return applied;
     };
+    // **A press in a tick that is passed over is carried, not lost**: the
+    // buttons down in `skipped` that the tick taking over from them does not
+    // have down, and that were not already down before, go down for one tick.
+    // What `target` has down goes down at its own tick, once.
+    const auto carryPresses = [](Peer& peer, const std::vector<scene::PlayerIntent>& skipped,
+                                 const std::vector<scene::PlayerIntent>* target) {
+        const auto down = [](const std::vector<scene::PlayerIntent>& intents, core::NameAtom action) {
+            return std::any_of(intents.begin(), intents.end(), [&](const scene::PlayerIntent& intent) {
+                return intent.action == action && intent.type == 0 && intent.pressed;
+            });
+        };
+        for (const scene::PlayerIntent& intent : skipped) {
+            if (intent.type != 0 || !intent.pressed || down(peer.lastIntents, intent.action) ||
+                (target != nullptr && down(*target, intent.action)))
+                continue;
+            if (std::find(peer.carriedPresses.begin(), peer.carriedPresses.end(), intent.action) ==
+                peer.carriedPresses.end())
+                peer.carriedPresses.push_back(intent.action);
+        }
+    };
     for (Peer& peer : m_peers) {
         scene::PlayerComponent* player =
             peer.welcomed && peer.player.valid() ? world.players().find(peer.player) : nullptr;
         if (player == nullptr)
             continue;
+        if (peer.intentStarted)
+            peer.silentTicks += 1;
         if (!peer.intentStarted) {
             if (peer.intentQueue.empty())
                 continue;
@@ -1738,6 +1779,33 @@ void AuthoritySession::applyIntents(scene::World& world)
             // holds that many when the first is applied -- the room arrival
             // jitter needs.
             peer.intentStarted = true;
+            if (peer.anchoredAgain) {
+                // **Anchored again on the NEWEST tick that has come**: the
+                // messages that arrived with the one that showed the clock had
+                // moved each carry the three ticks before theirs, and
+                // anchoring on the oldest of those would start the stream that
+                // much further behind what the player is doing now.
+                peer.anchoredAgain = false;
+                for (auto at = peer.intentQueue.begin(); at != std::prev(peer.intentQueue.end()); ++at)
+                    carryPresses(peer, at->second, &peer.intentQueue.rbegin()->second);
+                peer.intentQueue.erase(peer.intentQueue.begin(), std::prev(peer.intentQueue.end()));
+                // **What stands in until that tick's own turn is what the
+                // player is doing now, less what only just began**: the
+                // directions as the newest intent has them, a button still
+                // held if it was held before, and a button newly down not yet
+                // -- it goes down at its own tick, so one pressed for a tick
+                // is pressed for a tick and not for the whole wait.
+                std::vector<scene::PlayerIntent> standing = peer.intentQueue.begin()->second;
+                for (scene::PlayerIntent& intent : standing) {
+                    if (intent.type != 0 || !intent.pressed)
+                        continue;
+                    intent.pressed = std::any_of(peer.lastIntents.begin(), peer.lastIntents.end(),
+                                                 [&](const scene::PlayerIntent& before) {
+                                                     return before.action == intent.action && before.pressed;
+                                                 });
+                }
+                peer.lastIntents = std::move(standing);
+            }
             peer.firstIntentTick = peer.intentQueue.begin()->first;
             peer.appliedTick = peer.firstIntentTick - std::min<u64>(peer.firstIntentTick, 1u + peer.intentDelay);
             // **Anchored again, the answer is in the peer's own ticks again**
@@ -1768,12 +1836,16 @@ void AuthoritySession::applyIntents(scene::World& world)
         u64 next = peer.appliedTick + 1;
         if (depth > static_cast<u64>(peer.intentDelay) + IntentCatchUp ||
             (resting && depth > static_cast<u64>(peer.intentDelay) + 1)) {
-            // Too far behind the newest: caught up, what is skipped dropped.
+            // Too far behind the newest: caught up, what is skipped dropped --
+            // but not a button pressed in it (D480).
             next = newest - peer.intentDelay;
         }
         std::vector<scene::PlayerIntent>* found = nullptr;
         if (const auto at = peer.intentQueue.find(next); at != peer.intentQueue.end())
             found = &at->second;
+        for (auto at = peer.intentQueue.upper_bound(peer.appliedTick); at != peer.intentQueue.end() && at->first < next;
+             ++at)
+            carryPresses(peer, at->second, found);
         if (found != nullptr) {
             peer.lastIntents = std::move(*found);
             peer.standInRun = 0;
@@ -1798,7 +1870,7 @@ void AuthoritySession::applyIntents(scene::World& world)
             // to be holding anything. A player whose connection is up and
             // silent -- a window being dragged, a phone in a pocket -- stops,
             // rather than running on what it held when it went quiet.
-            if (peer.standInRun > StandInLifetimeTicks) {
+            if (peer.silentTicks > StandInLifetimeTicks) {
                 for (scene::PlayerIntent& intent : peer.lastIntents) {
                     intent.pressed = false;
                     // `Enum.InputActionType.ViewportPosition`: where the
