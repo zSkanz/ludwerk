@@ -96,8 +96,48 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
     return settings;
 }
 
+QualityLevel defaultQuality(bool handheld) noexcept
+{
+    return handheld ? QualityLevel::Medium : QualityLevel::High;
+}
+
+GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
+{
+    switch (settings.quality) {
+    case QualityLevel::Low:
+        settings.renderResolutionCap = 720;
+        break;
+    case QualityLevel::Medium:
+        settings.renderResolutionCap = 900;
+        break;
+    case QualityLevel::High:
+        settings.renderResolutionCap = 1080;
+        break;
+    case QualityLevel::Ultra:
+        settings.renderResolutionCap = 0;
+        break;
+    }
+    return settings;
+}
+
+f32 effectiveRenderScale(const GraphicsSettings& settings, u32 width, u32 height) noexcept
+{
+    f32 scale = settings.renderScale;
+    const u32 shorter = width < height ? width : height;
+    if (settings.renderResolutionCap > 0 && shorter > 0) {
+        const f32 capped = static_cast<f32>(settings.renderResolutionCap) / static_cast<f32>(shorter);
+        if (capped < scale)
+            scale = capped;
+    }
+    return scale;
+}
+
 GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
 {
+    // A cap below 360 is a picture of blocks; zero is "none".
+    if (settings.renderResolutionCap != 0)
+        settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);
+
     // A floor of a half rather than a quarter: below that the world image is
     // upscaled by more than two and the UI drawn crisply on top of it makes the
     // difference impossible to ignore.

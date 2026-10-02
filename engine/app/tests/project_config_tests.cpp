@@ -329,3 +329,77 @@ TEST_CASE("numbers no setting can hold are ignored before they are converted (au
     CHECK(config.windowWidth == defaults.windowWidth);
     CHECK(config.windowHeight == defaults.windowHeight);
 }
+
+TEST_CASE("a handheld starts a level lower and renders the world under a cap (ADR 0147, the mobile ledger)")
+{
+    // The owner's phone ran the desktop's `High` at every one of its 1440
+    // rows, and the frame rate halved inside a minute as it warmed.
+    const ProjectDir project("[project]\nname = \"Silent\"\n");
+    const app::ProjectConfig phone = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, true);
+    CHECK(phone.graphics.quality == render::QualityLevel::Medium);
+    CHECK(phone.graphics.renderResolutionCap == 900u);
+    // 3120 by 1440: rendered at 900 rows, the same shape.
+    CHECK(sameMetres(render::effectiveRenderScale(phone.graphics, 3120u, 1440u), 900.0f / 1440.0f));
+    // Held upright the shorter side is the width, and the cap is on that.
+    CHECK(sameMetres(render::effectiveRenderScale(phone.graphics, 1440u, 3120u), 900.0f / 1440.0f));
+    // A display already under the cap is rendered whole.
+    CHECK(sameMetres(render::effectiveRenderScale(phone.graphics, 1280u, 720u), 1.0f));
+
+    // A desktop is what it was: `High`, every pixel.
+    const app::ProjectConfig desktop = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK(desktop.graphics.quality == render::QualityLevel::High);
+    CHECK(desktop.graphics.renderResolutionCap == 0u);
+    CHECK(sameMetres(render::effectiveRenderScale(desktop.graphics, 3840u, 2160u), 1.0f));
+
+    // No project at all: the same two answers.
+    CHECK(app::resolveGraphics(app::GraphicsOverrides{}, true).quality == render::QualityLevel::Medium);
+    CHECK(app::resolveGraphics(app::GraphicsOverrides{}, true).renderResolutionCap == 900u);
+    CHECK(app::resolveGraphics(app::GraphicsOverrides{}, false).quality == render::QualityLevel::High);
+
+    // A level somebody named is that level, with the handheld's cap for it.
+    app::GraphicsOverrides low;
+    low.quality = render::QualityLevel::Low;
+    CHECK(app::resolveGraphics(low, true).renderResolutionCap == 720u);
+    app::GraphicsOverrides ultra;
+    ultra.quality = render::QualityLevel::Ultra;
+    CHECK(app::resolveGraphics(ultra, true).renderResolutionCap == 0u);
+}
+
+TEST_CASE("a platform has a table of its own, over the project's (ADR 0147)")
+{
+    const ProjectDir project("[graphics]\n"
+                             "quality = \"high\"\n"
+                             "shadow_distance = 140.0\n"
+                             "\n"
+                             "[graphics.android]\n"
+                             "quality = \"low\"\n"
+                             "render_cap = 600\n"
+                             "bloom = true\n");
+    // On a phone: the platform's level, the project's refinement, the
+    // platform's own on top.
+    const app::ProjectConfig phone = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, true);
+    CHECK(phone.graphics.quality == render::QualityLevel::Low);
+    CHECK(sameMetres(phone.graphics.shadowDistance, 140.0f));
+    CHECK(phone.graphics.renderResolutionCap == 600u);
+    CHECK(phone.graphics.bloom);
+
+    // On a desktop the phone's table is not read.
+    const app::ProjectConfig desktop = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK(desktop.graphics.quality == render::QualityLevel::High);
+    CHECK(desktop.graphics.renderResolutionCap == 0u);
+
+    // A cap is a project's to give a desktop too, and zero takes a phone's away.
+    const ProjectDir capped("[graphics]\nrender_cap = 1080\n\n[graphics.android]\nrender_cap = 0\n");
+    CHECK(app::loadProjectConfig(capped.path, app::GraphicsOverrides{}, nullptr, false).graphics.renderResolutionCap ==
+          1080u);
+    CHECK(app::loadProjectConfig(capped.path, app::GraphicsOverrides{}, nullptr, true).graphics.renderResolutionCap ==
+          0u);
+}
+
+TEST_CASE("a project asks for a line about its frames every few seconds")
+{
+    const ProjectDir silent("[project]\nname = \"Silent\"\n");
+    CHECK(app::loadProjectConfig(silent.path, app::GraphicsOverrides{}).frameReportSeconds == 0.0);
+    const ProjectDir reporting("[debug]\nframe_report_seconds = 10\n");
+    CHECK(app::loadProjectConfig(reporting.path, app::GraphicsOverrides{}).frameReportSeconds == 10.0);
+}

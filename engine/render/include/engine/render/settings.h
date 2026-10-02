@@ -89,6 +89,17 @@ struct GraphicsSettings
     // it, which is the whole reason a render scale is worth having at all.
     f32 renderScale = 1.0f;
 
+    // **The most pixels the world's shorter side is rendered at**, or zero for
+    // no limit (the mobile ledger). A phone's display is 1440 pixels tall at
+    // five hundred to the inch: a world rendered at every one of them is four
+    // and a half million pixels through every per-pixel pass, for detail no
+    // eye resolves at that density -- and the heat of it halves the frame
+    // rate inside a minute. The world is rendered at this height and resolved
+    // up, exactly as `renderScale` does; the interface is drawn at the
+    // display's own resolution on top. Zero on a desktop, where a pixel is a
+    // pixel somebody can see; set by `handheldSettings` on a handheld.
+    u32 renderResolutionCap = 0;
+
     // One cascade's tile, in texels. The atlas is always two tiles by two, so
     // this squares: 512 costs 4 MiB, 1024 costs 16, 2048 costs 64. 2048 is the
     // default -- the High preset's, and the size a reference renderer gives its
@@ -165,6 +176,24 @@ struct GraphicsSettings
 // Returns the corrected copy rather than mutating, because the caller wants to
 // report what it changed.
 [[nodiscard]] GraphicsSettings clampSettings(GraphicsSettings settings) noexcept;
+
+// **The level a machine starts at when nobody named one**: `High` on a
+// desktop, and one step lower on a handheld (ADR 0147 section 2), where the
+// same frame is paid for in heat and battery.
+[[nodiscard]] QualityLevel defaultQuality(bool handheld) noexcept;
+
+// What a handheld adds to a preset: the cap on the world's resolution, by
+// level -- 720, 900 and 1080 pixels on the shorter side for low, medium and
+// high, and the display's own for ultra. Applied under the project's file, so
+// `[graphics] render_cap` and the per-platform table still decide.
+[[nodiscard]] GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept;
+
+// **The fraction of a target the world is rendered at**: `renderScale`, and
+// less where that would still be more than `renderResolutionCap` on the
+// target's shorter side. One answer for the renderer, which sizes its images
+// by it, and for whoever measures the picture in pixels (the terrain's level
+// of detail).
+[[nodiscard]] f32 effectiveRenderScale(const GraphicsSettings& settings, u32 width, u32 height) noexcept;
 
 [[nodiscard]] std::optional<QualityLevel> parseQuality(std::string_view name) noexcept;
 [[nodiscard]] std::optional<DebugView> parseDebugView(std::string_view name) noexcept;

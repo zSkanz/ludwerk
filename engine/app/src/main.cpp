@@ -230,6 +230,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.frameStats = true;
             continue;
         }
+        if (arg.starts_with("--frame-report=")) {
+            engine::core::u64 seconds = 0;
+            if (!numericValue(arg.substr(15), seconds) || seconds > 3600) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.frameReportSeconds = static_cast<engine::core::f64>(seconds);
+            continue;
+        }
         if (arg.starts_with("--pace=")) {
             engine::core::u64 hz = 0;
             if (!numericValue(arg.substr(7), hz) || hz == 0 || hz > 1000) {
@@ -900,6 +910,9 @@ int main(int argc, char** argv)
         options.saveMaxSlots = config.saveMaxSlots;
         options.sceneCloseGrace = config.sceneCloseGrace;
         options.scriptMemoryMb = config.scriptMemoryMb;
+        // The flag beats the file, as every other one does.
+        if (options.frameReportSeconds <= 0.0)
+            options.frameReportSeconds = config.frameReportSeconds;
         options.developerWarnings =
             isProject && (options.editor || !options.devControlUrl.empty() || !options.windowLabel.empty());
         if (!options.conformanceRoot.empty()) {

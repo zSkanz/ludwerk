@@ -144,6 +144,11 @@ struct ProjectConfig
     core::u32 scriptMemoryMb = 1024;
 #endif
 
+    // `[debug] frame_report_seconds`: a line in the log every so many seconds
+    // saying how the frames went -- for a machine nobody is sitting at with a
+    // profiler, a phone above all. Zero, the default, says nothing.
+    core::f64 frameReportSeconds = 0.0;
+
     // **The game's identity** (ADR 0104 §1): what every export stamps.
     // `[project] version` is `X.Y.Z` or empty -- anything else is reported and
     // left empty rather than stamped wrong -- and `[project] company` is who
@@ -193,8 +198,12 @@ inline constexpr bool Handheld = false;
 // beats `[display]`, key by key.
 [[nodiscard]] FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noexcept;
 
+//
+// `handheld` is what the build is (`Handheld`); a test says otherwise to ask
+// what a phone would be given.
 [[nodiscard]] ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot,
-                                              const GraphicsOverrides& overrides, std::string* diagnostic = nullptr);
+                                              const GraphicsOverrides& overrides, std::string* diagnostic = nullptr,
+                                              bool handheld = Handheld);
 
 // Writes one setting into `<projectRoot>/project.toml`, leaving the rest of the
 // file byte for byte (S5.7).
@@ -217,6 +226,6 @@ inline constexpr bool Handheld = false;
 
 // The same resolution without a file, for a bare script or a project that has
 // none.
-[[nodiscard]] render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides);
+[[nodiscard]] render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides, bool handheld = Handheld);
 
 } // namespace engine::app

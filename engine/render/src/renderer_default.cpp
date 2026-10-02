@@ -4381,8 +4381,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // writes `target`, so a reduced scale costs every per-pixel pass at once
     // and costs the 2D pass -- which the host draws afterwards, at the target's
     // own size -- nothing at all.
+    // The scale, and the cap on a handheld's resolution (`effectiveRenderScale`).
+    const f32 worldScale = effectiveRenderScale(settings_, target.width, target.height);
     const auto scaled = [&](u32 value) {
-        const auto result = static_cast<u32>(static_cast<f32>(value) * settings_.renderScale + 0.5f);
+        const auto result = static_cast<u32>(static_cast<f32>(value) * worldScale + 0.5f);
         return result > 0 ? result : 1u;
     };
     renderWidth_ = scaled(target.width);

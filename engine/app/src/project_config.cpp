@@ -46,34 +46,73 @@ using render::GraphicsSettings;
     return value;
 }
 
-void applyFile(const core::TomlDocument& document, GraphicsSettings& settings)
+// `table` is `graphics`, or a platform's own: `graphics.android`.
+void applyFile(const core::TomlDocument& document, std::string_view table, GraphicsSettings& settings)
 {
-    if (const std::optional<f64> value = numberIn(document, "graphics.render_scale", 0.05, 4.0))
+    const auto key = [table](std::string_view name) {
+        std::string full(table);
+        full += '.';
+        full += name;
+        return full;
+    };
+    const auto number = [&](std::string_view name, f64 lowest, f64 highest) {
+        return numberIn(document, key(name).c_str(), lowest, highest);
+    };
+    const auto flag = [&](std::string_view name) { return document.boolean(key(name)); };
+
+    if (const std::optional<f64> value = number("render_scale", 0.05, 4.0))
         settings.renderScale = static_cast<f32>(*value);
-    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_resolution", 0.0, 16384.0))
+    // Zero is "no cap": the display's own resolution.
+    if (const std::optional<f64> value = number("render_cap", 0.0, 16384.0))
+        settings.renderResolutionCap = static_cast<u32>(*value);
+    if (const std::optional<f64> value = number("shadow_resolution", 0.0, 16384.0))
         settings.shadowTileResolution = static_cast<u32>(*value);
-    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_cascades", 0.0, 16.0))
+    if (const std::optional<f64> value = number("shadow_cascades", 0.0, 16.0))
         settings.shadowCascades = static_cast<u32>(*value);
-    if (const std::optional<f64> value = numberIn(document, "graphics.shadow_distance", 0.0, 1.0e6))
+    if (const std::optional<f64> value = number("shadow_distance", 0.0, 1.0e6))
         settings.shadowDistance = static_cast<f32>(*value);
-    if (const std::optional<f64> value = numberIn(document, "graphics.light_budget", 0.0, 65536.0))
+    if (const std::optional<f64> value = number("light_budget", 0.0, 65536.0))
         settings.lightBudget = static_cast<u32>(*value);
-    if (const std::optional<bool> value = document.boolean("graphics.bloom"))
+    if (const std::optional<bool> value = flag("bloom"))
         settings.bloom = *value;
-    if (const std::optional<bool> value = document.boolean("graphics.ambient_occlusion"))
+    if (const std::optional<bool> value = flag("ambient_occlusion"))
         settings.ambientOcclusion = *value;
-    if (const std::optional<bool> value = document.boolean("graphics.anti_aliasing"))
+    if (const std::optional<bool> value = flag("anti_aliasing"))
         settings.antiAliasing = *value;
     // So each of the audit's suspects for the dots on distant terrain can be
     // turned off alone (terrain audit T0).
-    if (const std::optional<bool> value = document.boolean("graphics.contact_shadows"))
+    if (const std::optional<bool> value = flag("contact_shadows"))
         settings.contactShadows = *value;
-    if (const std::optional<bool> value = document.boolean("graphics.auto_exposure"))
+    if (const std::optional<bool> value = flag("auto_exposure"))
         settings.autoExposure = *value;
-    if (const std::optional<bool> value = document.boolean("graphics.depth_of_field"))
+    if (const std::optional<bool> value = flag("depth_of_field"))
         settings.depthOfField = *value;
-    if (const std::optional<bool> value = document.boolean("graphics.sun_rays"))
+    if (const std::optional<bool> value = flag("sun_rays"))
         settings.sunRays = *value;
+}
+
+// **The table a platform has to itself** (ADR 0147 section 2): `[graphics.android]`
+// over `[graphics]`, as those engines' quality matrices give each platform
+// its own column. A handheld is Android; a desktop is the system it was built
+// for.
+[[nodiscard]] std::string_view platformTable(bool handheld) noexcept
+{
+    if (handheld)
+        return "graphics.android";
+#if defined(_WIN32)
+    return "graphics.windows";
+#elif defined(__APPLE__)
+    return "graphics.macos";
+#else
+    return "graphics.linux";
+#endif
+}
+
+// A preset, and what the machine's kind adds to it.
+[[nodiscard]] GraphicsSettings presetFor(render::QualityLevel level, bool handheld) noexcept
+{
+    const GraphicsSettings settings = render::settingsFor(level);
+    return handheld ? render::handheldSettings(settings) : settings;
 }
 
 void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settings)
@@ -119,9 +158,9 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
 
 } // namespace
 
-render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides)
+render::GraphicsSettings resolveGraphics(const GraphicsOverrides& overrides, bool handheld)
 {
-    GraphicsSettings settings = render::settingsFor(overrides.quality.value_or(render::QualityLevel::High));
+    GraphicsSettings settings = presetFor(overrides.quality.value_or(render::defaultQuality(handheld)), handheld);
     applyOverrides(overrides, settings);
     return render::clampSettings(settings);
 }
@@ -160,13 +199,13 @@ FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noe
 }
 
 ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const GraphicsOverrides& overrides,
-                                std::string* diagnostic)
+                                std::string* diagnostic, bool handheld)
 {
     ProjectConfig config;
 
     std::string text;
     if (projectRoot.empty() || !readFile(projectRoot / "project.toml", text)) {
-        config.graphics = resolveGraphics(overrides);
+        config.graphics = resolveGraphics(overrides, handheld);
         return config;
     }
 
@@ -175,7 +214,7 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     if (!parsed) {
         if (diagnostic != nullptr)
             *diagnostic = parsed.diagnostic;
-        config.graphics = resolveGraphics(overrides);
+        config.graphics = resolveGraphics(overrides, handheld);
         return config;
     }
 
@@ -211,6 +250,9 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     if (const std::optional<f64> value = document.number("render.foliage_shadow_distance");
         value.has_value() && *value >= 0.0 && *value <= 1000.0)
         config.foliageShadowDistance = static_cast<core::f32>(*value);
+    if (const std::optional<f64> value = document.number("debug.frame_report_seconds");
+        value.has_value() && *value >= 0.0 && *value <= 3600.0)
+        config.frameReportSeconds = *value;
     if (const std::optional<f64> value = document.number("scene.close_grace_seconds");
         value.has_value() && *value >= 0.0 && *value <= 60.0)
         config.sceneCloseGrace = *value;
@@ -260,15 +302,25 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     // The preset the FILE names, so `quality = "low"` plus `bloom = true` is a
     // preset with one thing turned back on rather than a set of eleven numbers
     // the author has to remember.
-    render::QualityLevel level = render::QualityLevel::High;
+    //
+    // **A machine's kind decides where nobody did** (`defaultQuality`), and a
+    // platform's own table decides over `[graphics]`: `[graphics.android]
+    // quality = "low"` is "high everywhere, low on a phone".
+    const std::string_view platform = platformTable(handheld);
+    const std::string platformQuality = std::string(platform) + ".quality";
+    render::QualityLevel level = render::defaultQuality(handheld);
     if (const std::optional<std::string_view> named = document.string("graphics.quality")) {
+        if (const std::optional<render::QualityLevel> parsedLevel = render::parseQuality(*named))
+            level = *parsedLevel;
+    }
+    if (const std::optional<std::string_view> named = document.string(platformQuality)) {
         if (const std::optional<render::QualityLevel> parsedLevel = render::parseQuality(*named))
             level = *parsedLevel;
     }
     // And the command line's preset wins over the file's, because it is the
     // outer layer: `--quality=low` on a project that asks for ultra is somebody
     // saying "not on this machine".
-    config.graphics = render::settingsFor(overrides.quality.value_or(level));
+    config.graphics = presetFor(overrides.quality.value_or(level), handheld);
 
     // **And when it wins, it wins whole (D052).** A file's per-key graphics
     // entries are refinements OF the level it names -- "high, but the shadows
@@ -279,8 +331,10 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     // was turned down, which is the opposite of what was asked for. The
     // command line's own per-key flags still apply, because those were typed by
     // the same person as the preset.
-    if (!overrides.quality)
-        applyFile(document, config.graphics);
+    if (!overrides.quality) {
+        applyFile(document, "graphics", config.graphics);
+        applyFile(document, platform, config.graphics);
+    }
     applyOverrides(overrides, config.graphics);
     config.graphics = render::clampSettings(config.graphics);
     return config;

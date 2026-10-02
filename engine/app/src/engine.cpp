@@ -1188,6 +1188,13 @@ std::optional<core::EngineError> run(const EngineOptions& options)
     core::u64 frameTriangles = 0;
     core::u32 frameLodDraws = 0;
     std::vector<f64> frameTimesMs;
+    // **A line every few seconds** (`EngineOptions::frameReportSeconds`): the
+    // frames since the last one, and the size the world was rendered at.
+    std::vector<f64> reportFrameMs;
+    core::u64 reportLastNs = 0;
+    core::u64 reportStartNs = 0;
+    core::u32 reportRenderWidth = 0;
+    core::u32 reportRenderHeight = 0;
     // **Where each frame went** (audit P1): the simulation, and the time spent
     // waiting on the GPU and the display -- a command buffer, a swapchain
     // image, the present -- with what is left the CPU drawing. Measured on the
@@ -2262,6 +2269,46 @@ std::optional<core::EngineError> run(const EngineOptions& options)
             .visibleObjects = static_cast<f64>(frameVisibleObjects),
             .instancedDraws = static_cast<f64>(frameInstancedDraws),
         });
+
+        // **How the frames went, said every few seconds** (the mobile ledger):
+        // a phone has no profiler attached and its frame rate falls as it
+        // warms, so what it did in the first ten seconds and in the seventh
+        // ten are two different answers -- and the log is what comes back
+        // from it. The wall clock, for the reason below.
+        if (options.frameReportSeconds > 0.0) {
+            const core::u64 reportNs = platform::nowNs();
+            if (reportLastNs != 0)
+                reportFrameMs.push_back(static_cast<f64>(reportNs - reportLastNs) / 1'000'000.0);
+            reportLastNs = reportNs;
+            if (reportStartNs == 0)
+                reportStartNs = reportNs;
+            const f64 elapsed = static_cast<f64>(reportNs - reportStartNs) / 1.0e9;
+            if (elapsed >= options.frameReportSeconds && !reportFrameMs.empty()) {
+                std::sort(reportFrameMs.begin(), reportFrameMs.end());
+                const core::usize count = reportFrameMs.size();
+                const auto at = [&](f64 fraction) {
+                    const auto index = static_cast<core::usize>(fraction * static_cast<f64>(count - 1) + 0.5);
+                    return reportFrameMs[std::min(index, count - 1)];
+                };
+                const render::QualityLevel quality =
+                    renderer != nullptr ? renderer->settings().quality : options.graphics.quality;
+                const std::array<I18nArg, 10> report{
+                    I18nArg{"seconds", std::round(elapsed * 10.0) / 10.0},
+                    I18nArg{"fps", std::round(static_cast<f64>(count) / elapsed * 10.0) / 10.0},
+                    I18nArg{"median", std::round(at(0.5) * 100.0) / 100.0},
+                    I18nArg{"p95", std::round(at(0.95) * 100.0) / 100.0},
+                    I18nArg{"worst", std::round(reportFrameMs.back() * 100.0) / 100.0},
+                    I18nArg{"draws", static_cast<core::i64>(frameDrawCalls)},
+                    I18nArg{"triangles", static_cast<core::i64>(frameTriangles)},
+                    I18nArg{"width", static_cast<core::i64>(reportRenderWidth)},
+                    I18nArg{"height", static_cast<core::i64>(reportRenderHeight)},
+                    I18nArg{"quality", render::qualityName(quality)},
+                };
+                core::log(LogLevel::Info, ENG_TR("engine.frame.info.report"), report);
+                reportFrameMs.clear();
+                reportStartNs = reportNs;
+            }
+        }
 
         if (options.frameStats || !options.soakReportPath.empty()) {
             // The WALL clock, not `frame.renderDt`. Headless drives the frame
@@ -5207,11 +5254,19 @@ std::optional<core::EngineError> run(const EngineOptions& options)
                 // height -- and how many a terrain cell may. An orthographic
                 // view keeps the distance rule.
                 // **And how far**: as far as the camera sees (`terrainLodFor`).
+                // **In the pixels the world is rendered at**, not the
+                // target's: at three quarters of the resolution, or under a
+                // handheld's cap, a cell covers that many fewer -- and ground
+                // refined for pixels nobody draws is built, uploaded and
+                // drawn for nothing.
+                const render::GraphicsSettings& graphics =
+                    renderer != nullptr ? renderer->settings() : options.graphics;
+                const f32 worldScale = render::effectiveRenderScale(graphics, targetWidth, targetHeight);
+                reportRenderWidth = static_cast<core::u32>(static_cast<f32>(targetWidth) * worldScale + 0.5f);
+                reportRenderHeight = static_cast<core::u32>(static_cast<f32>(targetHeight) * worldScale + 0.5f);
                 terrainLoader.setLodSettings(render::terrainLodFor(
                     terrainLoader.lodSettings(), snapshot.camera.projection, snapshot.camera.farPlane,
-                    static_cast<core::u32>(targetHeight > 0 ? targetHeight : 0),
-                    static_cast<f64>(renderer != nullptr ? renderer->settings().terrainPixelError
-                                                         : options.graphics.terrainPixelError)));
+                    reportRenderHeight, static_cast<f64>(graphics.terrainPixelError)));
                 voxelLoader.setFocus(snapshot.camera.origin);
                 foliage.setFocus(snapshot.camera.origin);
             }

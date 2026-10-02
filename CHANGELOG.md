@@ -90,6 +90,17 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Added
 
+- **A phone starts a level lower and renders the world under a cap** (ADR
+  0147, the mobile ledger): a project that names no level is `medium` on
+  Android, and each level caps the world's shorter side there (720, 900, 1080,
+  none) while the interface stays at the display's resolution. `[graphics]
+  render_cap` sets the cap by hand on any platform.
+- **A platform's own graphics table**: `[graphics.android]`,
+  `[graphics.windows]`, `[graphics.linux]` and `[graphics.macos]` are read
+  over `[graphics]` on that platform.
+- **`--frame-report=SECONDS`** and `[debug] frame_report_seconds`: a line in
+  the log every so many seconds with the frame rate, the median, p95 and worst
+  frame, the draws, the triangles and the resolution the world was rendered at.
 - **A water's bed, cut into the ground** (ADR 0146): `Water:Carve()` lowers
   the terrain under a river, a lake or a pool to its depth, with a bank
   `Water.BankWidth` wide sloping up to its edge, and answers how many columns
@@ -568,6 +579,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Changed
 
+- **The terrain's level of detail is chosen in rendered pixels**: at
+  `render_scale = 0.75` (the `low` preset) or under a cap, distant ground is
+  as coarse as that picture can show, where it was refined for the display's
+  full resolution.
 - **Frames are paced** (ADR 0147, stage G0). A window's frames wait for its
   display (`[display] vsync = true`, the default), may be capped
   (`max_frame_rate`), and are drawn ten times a second while the window is

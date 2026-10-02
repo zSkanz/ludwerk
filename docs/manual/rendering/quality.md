@@ -15,6 +15,7 @@ definition forbids.
 [graphics]
 quality = "high"          # low | medium | high | ultra
 render_scale = 1.0        # 0.5 to 1.0
+render_cap = 0            # the most pixels on the world's shorter side; 0 is no cap
 shadow_resolution = 1024  # texels; one cascade's tile, atlas is 2x2 tiles
 shadow_cascades = 4       # 0 through 4; 0 is "the sun casts no shadow"
 shadow_distance = 120.0   # metres
@@ -27,6 +28,39 @@ auto_exposure = true
 ```
 
 Every key is optional. An absent one leaves whatever the preset chose.
+
+## A platform's own table
+
+A platform may have a table to itself, read over `[graphics]` on that platform
+and nowhere else: `[graphics.android]`, `[graphics.windows]`,
+`[graphics.linux]`, `[graphics.macos]`, with the same keys.
+
+```toml
+[graphics]
+quality = "high"
+shadow_distance = 140.0
+
+[graphics.android]
+quality = "low"           # high everywhere, low on a phone
+render_cap = 720
+```
+
+## On a phone
+
+**A handheld starts one level lower**: a project that names no level is
+`medium` on Android and `high` on a desktop. The same frame is paid for there
+in heat and battery, and a phone that starts at sixty frames a second and
+warms is at thirty a minute later.
+
+**And the world is rendered under a cap.** A phone's display is around 1440
+pixels on its shorter side, at a density where no eye separates them: on a
+handheld each level caps the world's shorter side -- 720 at low, 900 at
+medium, 1080 at high, none at ultra -- and the picture is resolved up to the
+display, as `render_scale` does. The interface is drawn at the display's own
+resolution, so text stays sharp. `render_cap` in the project's file, or in
+`[graphics.android]`, sets it by hand; `0` removes it. The terrain's level of
+detail is chosen in the pixels the world is rendered at, so a capped picture
+also builds and draws less ground.
 
 ## The presets
 
@@ -110,6 +144,7 @@ apply, because they were typed by the same person as the preset.
 --shadow-cascades=N
 --shadow-distance=F
 --light-budget=N
+--frame-report=SECONDS
 --bloom            / --no-bloom
 --ambient-occlusion / --no-ambient-occlusion
 --anti-aliasing    / --no-anti-aliasing
@@ -118,10 +153,17 @@ apply, because they were typed by the same person as the preset.
 
 Parsing is strict: `--render-scale=0.75x` is a usage error rather than 0.75.
 
+`--frame-report=10`, or `[debug] frame_report_seconds = 10` in the project's
+file, writes a line to the log every ten seconds: the frames a second, the
+median, 95th-percentile and worst frame, the draws and triangles, and the
+resolution and level the world was rendered at. It is how a phone, which has
+no profiler attached, says what it did in its first ten seconds and in its
+seventh.
+
 ## Clamping
 
 Values are clamped rather than refused, once, at the last door:
-`render_scale` to 0.5–1.0; `shadow_resolution` to 256–2048 and then **down** to
+`render_scale` to 0.5–1.0; `render_cap` to 360–4320 when it is not zero; `shadow_resolution` to 256–2048 and then **down** to
 a power of two; `shadow_cascades` to at most 4; `shadow_distance` to 10–1000;
 `light_budget` to at most 256.
 

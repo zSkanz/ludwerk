@@ -113,6 +113,7 @@
   "platform.warn.io_pool_exhausted": "All {count} asynchronous read slots are in use; reads are falling back to the blocking path until one is released.",
   "platform.window.title": "{brand} {version}",
   "engine.frame.warn.catch_up_clamped": "Frame took {ms} ms; dropped simulated time after {ticks} catch-up ticks.",
+  "engine.frame.info.report": "{seconds} s: {fps} frames a second -- median {median} ms, p95 {p95} ms, worst {worst} ms; {draws} draws, {triangles} triangles; the world at {width} by {height} ({quality}).",
   "engine.frame.info.stats": "{frames} measured frames: median {median} ms, worst {worst} ms, {draws} draws for {objects} visible objects, {triangles} triangles.",
   "engine.frame.info.render_phase": "The render phase -- input at Rate = Render, the render steps and PreRender -- took {median} ms a frame (p95 {p95}).",
   "engine.frame.info.phases": "Of {frames} frames: p95 {p95} ms, p99 {p99} ms, {hitches} over 33 ms. Simulation {sim} ms (p95 {sim95}), drawing on the CPU {draw} ms (p95 {draw95}), waiting on the GPU and display {wait} ms (p95 {wait95}).",
