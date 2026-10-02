@@ -1,0 +1,18 @@
+# Options (ADR 0147, ADR 0154): a scene with a button that opens the engine's
+# own options screen -- `require("@engine/settings").open()` -- and a second
+# that changes the language the game and that screen are written in.
+#
+# No scene file: the script builds the scene, because the two calls are the
+# subject.
+
+[project]
+name = "Ludwerk Options"
+id = "dev.ludwerk.options"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — Options"
+width = 1280
+height = 720

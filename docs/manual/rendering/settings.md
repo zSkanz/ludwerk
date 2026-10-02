@@ -179,7 +179,11 @@ its own menu has the same two services to write it with.
   selection reaches is scrolled into sight. If something was selected when it
   opened it takes the selection, and gives it back when it closes.
 - On a handheld the Display page is the frame rate limit alone: there is no
-  window to arrange.
+  window to arrange. The window fits a phone held upright, and a word too long
+  for its box is drawn smaller rather than cut.
+
+`examples/33-options` is a scene with this screen and a button that changes
+the language.
 
 `settings.open` takes a table, every field optional:
 

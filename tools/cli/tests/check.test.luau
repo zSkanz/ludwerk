@@ -80,6 +80,31 @@ test.suite("check", function(suite)
         fs.removeDirectory(root, { recursive = true })
     end)
 
+    suite:case("an engine key a game re-words in one locale is not a stray key", function()
+        -- Found by `examples/33-options`: its pt-BR catalog says the options
+        -- screen's buttons, and the lint called each a key nothing asks for.
+        local root = scratch("enginekeys")
+        fs.createDirectory(`{root}/i18n`, { makeParents = true })
+        fs.writeStringToFile(`{root}/i18n/en.json`, '{"menu.play": "Play"}')
+        fs.writeStringToFile(
+            `{root}/i18n/pt-BR.json`,
+            '{"menu.play": "Jogar", "engine.settings.apply": "Aplicar", "scene.err.thing": "x", "hud.vidas": "Vidas"}'
+        )
+
+        -- With the engine's catalog to hand, its keys are known by name.
+        local known = check.checkCatalogs(root, { ["engine.settings.apply"] = true, ["scene.err.thing"] = true })
+        assert.eq(#known.missing, 0)
+        assert.eq(#known.extra, 1)
+        assert.eq(known.extra[1].key, "hud.vidas")
+
+        -- Without it, what is under `engine.` is taken for the engine's.
+        local guessed = check.checkCatalogs(root)
+        assert.eq(#guessed.extra, 2)
+        assert.eq(guessed.extra[1].key, "hud.vidas")
+        assert.eq(guessed.extra[2].key, "scene.err.thing")
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
     suite:case("a project with no catalogs, or one, has nothing to compare", function()
         local root = scratch("nocatalogs")
         assert.eq(check.checkCatalogs(root).catalogs, 0)

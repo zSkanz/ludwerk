@@ -348,6 +348,16 @@ function Settings.open(options: Options?): Screen
         return made
     end
 
+    -- **Words fit their box**: as large as `size`, and smaller where a
+    -- language says the thing in more letters or the window is a phone's.
+    local function fit(words: TextLabel | TextButton, size: number)
+        words.TextScaled = true
+        local bounds = Instance.new("UITextSizeConstraint")
+        bounds.MinTextSize = 10
+        bounds.MaxTextSize = size
+        bounds.Parent = words
+    end
+
     local function button(parent: Instance, size: number): TextButton
         local made = Instance.new("TextButton")
         made.Text = ""
@@ -375,13 +385,15 @@ function Settings.open(options: Options?): Screen
     window.Name = "Window"
     window.AnchorPoint = Vector2.new(0.5, 0.5)
     window.Position = UDim2.fromScale(0.5, 0.5)
-    window.Size = UDim2.fromScale(0.72, 0.88)
+    -- Nearly all of a phone held upright, and on a monitor no wider than a
+    -- row is comfortable to read across.
+    window.Size = UDim2.fromScale(0.94, 0.88)
     window.BackgroundColor = panel
     corner(window, radius + 6)
     window.Parent = backdrop
 
     local limits = Instance.new("UISizeConstraint")
-    limits.MinSize = Vector2.new(340, 380)
+    limits.MinSize = Vector2.new(300, 380)
     limits.MaxSize = Vector2.new(860, 660)
     limits.Parent = window
 
@@ -462,29 +474,36 @@ function Settings.open(options: Options?): Screen
         local tab = button(tabs, 20)
         tab.Name = name
         tab.LayoutOrder = index
-        tab.Size = UDim2.new(0, 120, 1, 0)
+        -- A share of the bar and no width of its own: two pages fit a phone
+        -- held upright as they fit a monitor.
+        tab.Size = UDim2.new(0, 0, 1, 0)
+        fit(tab, 20)
         pageButtons[name] = tab
     end
 
     local apply = button(bar, 20)
     apply.Name = "Apply"
     apply.LayoutOrder = 1
-    apply.Size = UDim2.new(0, 100, 1, 0)
+    apply.Size = UDim2.new(0, 0, 1, 0)
+    fit(apply, 20)
 
     local revert = button(bar, 20)
     revert.Name = "Revert"
     revert.LayoutOrder = 2
-    revert.Size = UDim2.new(0, 100, 1, 0)
+    revert.Size = UDim2.new(0, 0, 1, 0)
+    fit(revert, 20)
 
     local defaults = button(bar, 20)
     defaults.Name = "Defaults"
     defaults.LayoutOrder = 3
-    defaults.Size = UDim2.new(0, 100, 1, 0)
+    defaults.Size = UDim2.new(0, 0, 1, 0)
+    fit(defaults, 20)
 
     local back = button(bar, 20)
     back.Name = "Back"
     back.LayoutOrder = 4
-    back.Size = UDim2.new(0, 100, 1, 0)
+    back.Size = UDim2.new(0, 0, 1, 0)
+    fit(back, 20)
 
     local screen = {
         Gui = gui,
@@ -697,8 +716,9 @@ function Settings.open(options: Options?): Screen
 
         local caption = label(frame, 20, dim)
         caption.Name = "Caption"
-        caption.Size = UDim2.fromScale(0.5, 1)
+        caption.Size = UDim2.new(0.5, -8, 1, 0)
         caption.TextXAlignment = Enum.HorizontalAlignment.Left
+        fit(caption, 20)
 
         local value: TextLabel | TextButton
         local controls: { TextButton } = {}
@@ -707,6 +727,7 @@ function Settings.open(options: Options?): Screen
             switch.Name = "Value"
             switch.Position = UDim2.fromScale(0.5, 0)
             switch.Size = UDim2.fromScale(0.5, 1)
+            fit(switch, 20)
             table.insert(
                 connections,
                 switch.Activated:Connect(function()
@@ -740,6 +761,7 @@ function Settings.open(options: Options?): Screen
             words.Name = "Value"
             words.Position = UDim2.fromOffset(StepWidth, 0)
             words.Size = UDim2.new(1, -StepWidth * 2, 1, 0)
+            fit(words, 20)
 
             local more = button(box, 22)
             more.Name = "More"

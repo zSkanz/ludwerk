@@ -106,8 +106,10 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - [x] A picture test per preset (`options_screen_gate`); the manual page, which
   is `docs/manual/rendering/settings.md` ("for a player", "by script", "an
   options screen in one call", "in the editor").
-- [ ] An example game uses `@engine/settings`; the package regenerated; the owner
-  opens the editor (it no longer runs at 2 000 FPS) and the example's menu.
+- [x] An example game uses `@engine/settings`: `examples/33-options`, with the
+  language button beside it.
+- [ ] The owner opens the editor (it no longer runs at 2 000 FPS) and the
+  example's menu, in the package.
 
 ## Findings
 

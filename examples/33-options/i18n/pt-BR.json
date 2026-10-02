@@ -1,0 +1,10 @@
+{
+  "menu.options": "Opções",
+  "menu.language": "Idioma: {locale}",
+  "menu.hint": "Esc ou Start: opções   Setas ou direcional: mover   Enter ou A: pressionar",
+  "engine.settings.title": "Opções",
+  "engine.settings.apply": "Aplicar",
+  "engine.settings.revert": "Reverter",
+  "engine.settings.defaults": "Padrões",
+  "engine.settings.back": "Voltar"
+}

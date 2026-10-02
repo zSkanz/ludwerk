@@ -318,6 +318,19 @@ same API.
   shadow edges**: a cascade keeps last frame's box while it can, so after the
   sun's reach changed while the game ran an edge sits a fraction of a texel
   from where a fresh start puts it. The gate allows 512.
+  **It first waited two seconds at every level for the exposure meter**, and
+  on GitHub's Windows runner, which draws in software, it took nine minutes
+  and then ran out of its fifteen on `main`. The scene holds its exposure now
+  (`Lighting.AutoExposure` off), so a picture is taken a third of a second
+  after each step, and only `Low` and `Ultra` are compared with a fresh
+  start -- the two between are `graphics_runtime_differential`'s claim
+  already. About 460 frames in place of 5 600.
 - **Not in this slice**: a language row (a locale's own name is not something
-  `Translate` can give for a locale that is not the current one), and the
-  example game.
+  `Translate` can give for a locale that is not the current one).
+- **The example is `examples/33-options`**, and making it changed three
+  things. The window takes nearly all of a narrow screen and its buttons are
+  shares of their bar with no width of their own, because on a phone held
+  upright four buttons of a hundred did not fit; every word is scaled down to
+  its box, for a language that says the thing in more letters. And `ludwerk
+  check` no longer calls an engine key a game re-words in one locale a key
+  nothing asks for.

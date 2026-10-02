@@ -204,9 +204,32 @@ export type CatalogReport = {
     catalogs: number,
 }
 
+--- The keys of the engine's own catalog, beside the host that was found, or
+--- nothing when it is not there to read.
+local function engineCatalogKeys(engine: string?): { [string]: boolean }?
+    if engine == nil then
+        return nil
+    end
+    local folder = string.match(engine, "^(.*)[/\\][^/\\]*$")
+    if folder == nil then
+        return nil
+    end
+    local file = projectlib.joined(folder, "content", "i18n", "en.json")
+    if not fs.exists(file) then
+        return nil
+    end
+    return catalogKeys(file)
+end
+
 --- A project's catalogs against its default locale's (ADR 0154), in a fixed
 --- order: by locale, then by key.
-local function checkCatalogs(root: string): CatalogReport
+---
+--- **A key of the engine's own is not a stray one**: a game re-words the
+--- engine's text, or says it in a language the engine has no catalog for, by
+--- putting the engine's key in its own catalog -- in one locale and not in
+--- another, as it likes. `engineKeys` is the engine's catalog when it could be
+--- read; without it, a key under `engine.` is taken for the engine's.
+local function checkCatalogs(root: string, engineKeys: { [string]: boolean }?): CatalogReport
     local report: CatalogReport = { missing = {}, extra = {}, unreadable = {}, catalogs = 0 }
     local folder = projectlib.joined(root, "i18n")
     if not fs.exists(folder) then
@@ -253,7 +276,8 @@ local function checkCatalogs(root: string): CatalogReport
         end
         local own: { string } = {}
         for key in keys do
-            if not reference[key] then
+            local engines = if engineKeys then engineKeys[key] == true else string.sub(key, 1, 7) == "engine."
+            if not reference[key] and not engines then
                 table.insert(own, key)
             end
         end
@@ -330,7 +354,7 @@ local function run(options: Options): number
     end
 
     -- The game's catalogs against its default locale's (ADR 0154).
-    local catalogs = checkCatalogs(options.path)
+    local catalogs = checkCatalogs(options.path, engineCatalogKeys(engine))
     for _, file in catalogs.unreadable do
         print(tr("cli.check.err.catalog_unreadable", { file = file }))
     end
