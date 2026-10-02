@@ -51,10 +51,18 @@ endif()
 #
 #   Audio    -- miniaudio owns audio (ADR 0009); SDL's audio stack is never used.
 #   Render   -- SDL's 2D renderer is a rival to our own RHI (ADR 0005).
-#   Joystick, Haptic, Hidapi, Sensor
-#            -- gamepads belong to the Input Action System in M6 (ADR 0029).
-#              Together they are the single largest block of SDL source after
-#              video, so they stay off until the milestone that needs them.
+#   Sensor   -- nothing reads a gyroscope yet.
+#
+# **Joystick, Haptic and Hidapi are ON** (D476). They were listed here as "off
+# until the milestone that needs them", and that milestone -- M6, the Input
+# Action System (ADR 0029) -- wrote its gamepad half and never turned them on:
+# the engine opened every gamepad SDL reported, and SDL, built with its dummy
+# driver, reported none. No gamepad worked in any build for the whole of v1 and
+# v2, and nothing noticed, because every gamepad test fed made events to the
+# layer above. Hidapi is what a modern controller speaks (and what its rumble
+# goes through); it is SDL's own bundled copy, under its BSD-style licence.
+# `engine_platform_tests` now presses a button on a virtual device SDL itself
+# hosts, so a build without a joystick subsystem fails a test.
 #   Camera, Dialog, Tray, Power
 #            -- outside the v1 scope (R15).
 #
@@ -75,9 +83,9 @@ set(SDL_OFFSCREEN     ON  CACHE BOOL "" FORCE)
 
 set(SDL_AUDIO         OFF CACHE BOOL "" FORCE)
 set(SDL_RENDER        OFF CACHE BOOL "" FORCE)
-set(SDL_JOYSTICK      OFF CACHE BOOL "" FORCE)
-set(SDL_HAPTIC        OFF CACHE BOOL "" FORCE)
-set(SDL_HIDAPI        OFF CACHE BOOL "" FORCE)
+set(SDL_JOYSTICK      ON  CACHE BOOL "" FORCE)
+set(SDL_HAPTIC        ON  CACHE BOOL "" FORCE)
+set(SDL_HIDAPI        ON  CACHE BOOL "" FORCE)
 set(SDL_SENSOR        OFF CACHE BOOL "" FORCE)
 set(SDL_CAMERA        OFF CACHE BOOL "" FORCE)
 # ON since E6: the launcher shows the system folder picker so somebody can

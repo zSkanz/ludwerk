@@ -426,6 +426,41 @@ void pumpVibration() noexcept;
 // Every level to zero and everything still: what closing a game does.
 void stopVibration() noexcept;
 
+// --- A gamepad that is not there (D476) -------------------------------------------
+//
+// A virtual gamepad, hosted by the platform library itself: to everything
+// above this layer -- and to the library's own gamepad code below it -- it is
+// a device that was plugged in. It exists so that "a gamepad works" is a fact
+// a test can state on a machine with none: a button pressed here arrives as
+// the same event a real one sends, through the same code, and a rumble sent
+// to it is what the device was told.
+//
+// For tests and for automation. The id is what `detachVirtualGamepad` and the
+// setters take; zero means the platform could not make one -- which is what a
+// build with no joystick support answers, and what the test is there to catch.
+
+[[nodiscard]] u32 attachVirtualGamepad() noexcept;
+void detachVirtualGamepad(u32 id) noexcept;
+// Takes effect at the next `pumpEvents`, as a real device's does.
+void setVirtualGamepadButton(u32 id, GamepadButton button, bool down) noexcept;
+// -1 to 1 for a stick, 0 to 1 for a trigger.
+void setVirtualGamepadAxis(u32 id, GamepadAxis axis, f32 value) noexcept;
+
+// What the virtual gamepad was last told to do with its motors, 0 to 1.
+struct VirtualRumble
+{
+    f32 heavy = 0.0f;
+    f32 light = 0.0f;
+    f32 leftTrigger = 0.0f;
+    f32 rightTrigger = 0.0f;
+    // How many times it was told anything.
+    u32 calls = 0;
+};
+[[nodiscard]] VirtualRumble virtualGamepadRumble() noexcept;
+
+// Whether the platform library was built with a joystick subsystem at all.
+[[nodiscard]] bool gamepadsAvailable() noexcept;
+
 // Whether the platform layer delivers `TextInput` events for this window.
 //
 // Off by default, and that is SDL's rule rather than ours: a game that never

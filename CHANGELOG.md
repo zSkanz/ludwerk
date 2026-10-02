@@ -164,7 +164,7 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
   `PitchShiftSoundEffect`, under a `Sound` or an `AudioGroup`, in the order of
   their `Priority`.
 - **`HapticService`** (ADR 0131): `SetMotor`, `Vibrate`, `IsVibrationSupported`,
-  `IsMotorSupported`, and `Enum.VibrationMotor`. Not on hardware yet (D476).
+  `IsMotorSupported`, and `Enum.VibrationMotor`.
 - **A material is what a thing is made of** (ADR 0117): `Friction`,
   `Restitution`, `FootstepSound` and `Tags` on a material. A part collides
   with what it wears and a terrain with what each piece of ground is drawn as;
@@ -880,6 +880,10 @@ and any `LUAUG_*` environment variable to `ENG_*`. The command is `ludwerk`.
 
 ### Fixed
 
+- **A gamepad works** (D476): the platform library was built without its
+  joystick support, so no gamepad, in any build, ever reached the Input Action
+  System. It is built with it now -- with haptics and the HID layer a modern
+  controller speaks -- and `HapticService` drives a controller's motors.
 - **A project's content is compiled once** (D474): the import cache's key was
   different in every run, so every start compiled every mesh and picture
   again. A project with six sky pictures started in ten seconds, and starts

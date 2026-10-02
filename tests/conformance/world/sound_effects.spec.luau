@@ -150,13 +150,18 @@ describe("Sound effects", function()
 end)
 
 describe("HapticService", function()
-    it("answers for a run with no hands, and takes every call quietly", function()
-        -- A conformance run is headless: nothing here can vibrate, and saying
-        -- so is the whole of what it must do.
-        expect(HapticService:IsVibrationSupported(Enum.UserInputType.Gamepad)):ToBe(false)
-        expect(HapticService:IsVibrationSupported(Enum.UserInputType.Touch)):ToBe(false)
+    it("answers for whatever is there, and takes every call quietly", function()
+        -- A gamepad may be plugged into the machine this runs on: what is
+        -- asked is an answer, not which.
+        expect(type(HapticService:IsVibrationSupported(Enum.UserInputType.Gamepad))):ToBe("boolean")
+        expect(type(HapticService:IsVibrationSupported(Enum.UserInputType.Touch))):ToBe("boolean")
+        expect(type(HapticService:IsMotorSupported(Enum.UserInputType.Gamepad, Enum.VibrationMotor.Large))):ToBe(
+            "boolean"
+        )
+        -- A keyboard never does, and no device has a motor for each hand.
         expect(HapticService:IsVibrationSupported(Enum.UserInputType.Keyboard)):ToBe(false)
-        expect(HapticService:IsMotorSupported(Enum.UserInputType.Gamepad, Enum.VibrationMotor.Large)):ToBe(false)
+        expect(HapticService:IsMotorSupported(Enum.UserInputType.Gamepad, Enum.VibrationMotor.LeftHand)):ToBe(false)
+        expect(HapticService:IsMotorSupported(Enum.UserInputType.Touch, Enum.VibrationMotor.Large)):ToBe(false)
         HapticService:SetMotor(Enum.UserInputType.Gamepad, Enum.VibrationMotor.Large, 1)
         HapticService:SetMotor(Enum.UserInputType.Gamepad, Enum.VibrationMotor.Large, 0)
         HapticService:SetMotor(Enum.UserInputType.Keyboard, Enum.VibrationMotor.Small, 0.5)

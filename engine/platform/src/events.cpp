@@ -1,5 +1,7 @@
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_haptic.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_joystick.h>
 #include <algorithm>
 #include <cstring>
 #include <span>
@@ -922,6 +924,106 @@ GamepadAxis gamepadAxisFromName(std::string_view name) noexcept
             return naming.axis;
     }
     return GamepadAxis::Unknown;
+}
+
+// --- A gamepad that is not there (D476) -------------------------------------------
+
+namespace {
+
+// What the virtual gamepad's motors were told: written from the platform
+// library's own callbacks, on the thread that pumps.
+VirtualRumble g_virtualRumble;
+
+bool SDLCALL virtualRumble(void*, Uint16 low, Uint16 high)
+{
+    g_virtualRumble.heavy = static_cast<f32>(low) / 65535.0f;
+    g_virtualRumble.light = static_cast<f32>(high) / 65535.0f;
+    ++g_virtualRumble.calls;
+    return true;
+}
+
+bool SDLCALL virtualRumbleTriggers(void*, Uint16 left, Uint16 right)
+{
+    g_virtualRumble.leftTrigger = static_cast<f32>(left) / 65535.0f;
+    g_virtualRumble.rightTrigger = static_cast<f32>(right) / 65535.0f;
+    ++g_virtualRumble.calls;
+    return true;
+}
+
+[[nodiscard]] SDL_GamepadButton toSdlButton(GamepadButton button) noexcept
+{
+    for (int raw = 0; raw < SDL_GAMEPAD_BUTTON_COUNT; ++raw) {
+        if (translateGamepadButton(static_cast<Uint8>(raw)) == button)
+            return static_cast<SDL_GamepadButton>(raw);
+    }
+    return SDL_GAMEPAD_BUTTON_INVALID;
+}
+
+[[nodiscard]] SDL_GamepadAxis toSdlAxis(GamepadAxis axis) noexcept
+{
+    for (int raw = 0; raw < SDL_GAMEPAD_AXIS_COUNT; ++raw) {
+        if (translateGamepadAxis(static_cast<Uint8>(raw)) == axis)
+            return static_cast<SDL_GamepadAxis>(raw);
+    }
+    return SDL_GAMEPAD_AXIS_INVALID;
+}
+
+} // namespace
+
+bool gamepadsAvailable() noexcept
+{
+    // The dummy driver the library is built with when it has no joystick
+    // support cannot host a virtual device; a real build always can.
+    return (SDL_WasInit(SDL_INIT_GAMEPAD) & SDL_INIT_GAMEPAD) != 0;
+}
+
+u32 attachVirtualGamepad() noexcept
+{
+    SDL_VirtualJoystickDesc desc;
+    SDL_INIT_INTERFACE(&desc);
+    desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+    desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    desc.name = "Virtual gamepad";
+    desc.Rumble = virtualRumble;
+    desc.RumbleTriggers = virtualRumbleTriggers;
+    g_virtualRumble = VirtualRumble{};
+    return static_cast<u32>(SDL_AttachVirtualJoystick(&desc));
+}
+
+void detachVirtualGamepad(u32 id) noexcept
+{
+    if (id == 0)
+        return;
+    closeGamepad(static_cast<SDL_JoystickID>(id));
+    (void)SDL_DetachVirtualJoystick(static_cast<SDL_JoystickID>(id));
+}
+
+void setVirtualGamepadButton(u32 id, GamepadButton button, bool down) noexcept
+{
+    SDL_Joystick* joystick = SDL_GetJoystickFromID(static_cast<SDL_JoystickID>(id));
+    const SDL_GamepadButton raw = toSdlButton(button);
+    if (joystick != nullptr && raw != SDL_GAMEPAD_BUTTON_INVALID)
+        (void)SDL_SetJoystickVirtualButton(joystick, static_cast<int>(raw), down);
+}
+
+void setVirtualGamepadAxis(u32 id, GamepadAxis axis, f32 value) noexcept
+{
+    SDL_Joystick* joystick = SDL_GetJoystickFromID(static_cast<SDL_JoystickID>(id));
+    const SDL_GamepadAxis raw = toSdlAxis(axis);
+    if (joystick == nullptr || raw == SDL_GAMEPAD_AXIS_INVALID)
+        return;
+    const bool trigger = raw == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || raw == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+    // A trigger rests at the bottom of the range and a stick in the middle.
+    const f32 clamped = std::clamp(value, trigger ? 0.0f : -1.0f, 1.0f);
+    const auto wide =
+        trigger ? static_cast<Sint16>(clamped * 65535.0f - 32768.0f) : static_cast<Sint16>(clamped * 32767.0f);
+    (void)SDL_SetJoystickVirtualAxis(joystick, static_cast<int>(raw), wide);
+}
+
+VirtualRumble virtualGamepadRumble() noexcept
+{
+    return g_virtualRumble;
 }
 
 void setVibrationSink(VibrationSink* sink) noexcept

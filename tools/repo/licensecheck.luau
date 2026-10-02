@@ -94,8 +94,10 @@ local KnownCopyleft: { { prefix: string, why: string } } = {
     },
     {
         prefix = "third_party/sdl3/src/hidapi/",
-        why = "hidapi is triple-licensed GPLv3 / BSD / original and SDL vendors it under the BSD option --"
-            .. " and `third_party/CMakeLists.txt` sets `SDL_HIDAPI OFF`, so none of it is compiled at all",
+        why = "hidapi is triple-licensed -- GPLv3, a BSD-style licence, or its original one, at the choice of"
+            .. " whoever uses it (its own LICENSE.txt says so) -- and it is taken here under the BSD-style one"
+            .. " (LICENSE-bsd.txt), as SDL itself takes it. It IS compiled since D476 (`SDL_HIDAPI ON`): the GPL"
+            .. " text in this directory is one of three offers, not the terms of the code",
     },
     {
         prefix = "third_party/assimp/contrib/zlib/contrib/ada/",

@@ -88,12 +88,9 @@ clean-up).
 
 ## The repository
 
-- [ ] **Gamepads work** (D476, P1). The vendored SDL is built with
-  `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, as `third_party/
-  CMakeLists.txt` has said since M1 ("off until the milestone that needs
-  them"); M6 wrote the gamepad half of the Input Action System against a
-  library that reports none. A push of its own: three platforms, one of which
-  only CI builds.
+- [x] **Gamepads work** (D476, P1): the vendored SDL's joystick, haptic and
+  HID support are on, and `gamepad_tests.cpp` goes from a virtual device's
+  button to an `InputAction`.
 - [ ] **A clean-machine job in CI**: fresh clone, bootstrap, build,
   `ludwerk new`, run. The local gate does it (`tests/packaging`); no workflow
   does. (`m8-kickoff.md`)
@@ -103,6 +100,10 @@ clean-up).
 Nothing here can be built: each is a look with his eyes, a device in his hand,
 or a decision that is his.
 
+- [ ] **A real controller in a real hand** (D476): a gamepad's buttons and
+  sticks in a game, its rumble through `HapticService:SetMotor`, and a phone
+  that shakes on `HapticService:Vibrate`. The tests go through a virtual
+  device; nobody has felt it.
 - [ ] A person drags a brush across the ground at a window, and the ground
   changes. (`phase-2-4-plan.md`)
 - [ ] The end to end, by hand: open the flagship, sculpt a valley, dig, save,

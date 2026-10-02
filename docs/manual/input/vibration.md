@@ -17,11 +17,6 @@ HapticService:SetMotor(Gamepad, Enum.VibrationMotor.Large, 0)
 HapticService:Vibrate(1, 0.1)
 ```
 
-**Not on hardware yet.** Today's builds are made without the platform
-library's gamepad and haptic support (D476), so every question below answers
-false and nothing shakes. The service, its rules and its tests are in place
-for the build that turns them on.
-
 ## Two shapes
 
 **A gamepad's motor is a level.** `SetMotor(inputType, motor, value)` leaves it

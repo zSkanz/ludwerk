@@ -75,8 +75,8 @@
 - **Vibration is levels, re-sent each frame for half a second**: a game that
   stops pumping -- closed, crashed, frozen -- stops shaking by itself. Still
   while the window is not in front; the levels return with it.
-- **Not on hardware yet (D476)**: the vendored SDL is built with its
-  joystick, haptic and HID support off, as it has been since M1 -- which also
-  means no gamepad has ever worked. Turning them on is a build decision of
-  its own (three platforms, one of which only CI builds) and is the next
-  push's, by itself.
+- **On hardware since D476**: the vendored SDL was built with its joystick,
+  haptic and HID support off, as it had been since M1 -- which also meant no
+  gamepad had ever worked. They are on, in a push of their own, held by a test
+  that presses a button on a virtual device the library hosts and reads the
+  rumble it was sent.

@@ -142,9 +142,9 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
   vendored reverb, and the engine's own filters and five others.
 - [x] `HapticService` over SDL3; stop on focus loss. The service, its rules
   and its tests are in.
-- [ ] **On hardware** (D476): the vendored SDL is built with joystick, haptic
-  and HID off, so no gamepad works and nothing vibrates. Turn them on, as a
-  push of its own; then the Android vibrator on a phone.
+- [x] **On hardware** (D476): the vendored SDL's joystick, haptic and HID
+  support are on, and a virtual device proves the whole path. A real
+  controller and a phone's vibrator are on the owner's list.
 - [x] Tests: an effect changes the rendered samples (an offline render compared
   against the dry one and against what the effect is for); vibration calls
   reach the device (a fake standing where SDL does).

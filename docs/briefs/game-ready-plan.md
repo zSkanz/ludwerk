@@ -56,7 +56,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 | [x] 8 | **A3** bytecode in the export | foundation | The shipped game stops carrying its source |
 | [x] 9 | **B7** friction and footsteps | world | — |
 | [ ] 9b | **F5** solids (union, subtract, intersect) and two shapes | toolkit | Manifold adopted (2026-09-30); built after the block-world stages |
-| [x] 9c | **F6** sound effects and vibration | toolkit | Vibration waits on SDL's gamepad support being built in (D476) |
+| [x] 9c | **F6** sound effects and vibration | toolkit | — |
 | [ ] 10 | **E0 to E4** actors: scripts in parallel, committed in a fixed order | parallel | A game's own logic on every core |
 | [ ] 11 | **D1** `EditableImage` and `AudioStream` · **D3** `EditableMesh` | media | Creativity |
 | [ ] 12 | **C4** encryption, a player is a key, relay | network | Multiplayer across the internet |
