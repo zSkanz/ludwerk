@@ -6,12 +6,18 @@
 
 	The driver takes a picture at each of these moments:
 
-	- frames 150, 300, 450 and 600: the world alone at `Low`, `Medium`, `High`
-	  and `Ultra`, each chosen by a step of the screen's own quality row. Each
-	  must be the picture of a game started at that level, and no two
-	  neighbours may be the same picture;
-	- frame 640: the screen itself, on its first page;
-	- frame 670: its second page.
+	- frames 15, 35, 55 and 75: the world alone at `Low`, `Medium`, `High` and
+	  `Ultra`, each chosen by a step of the screen's own quality row. No two
+	  neighbours may be the same picture, and the first and the last must be
+	  the picture of a game started at that level;
+	- frame 90: the screen itself, on its first page;
+	- frame 105: its second page.
+
+	**The exposure is the world's and fixed** (`Lighting.AutoExposure` off),
+	so a picture a few frames after a change is the picture of that level, and
+	not of the meter catching up with it. The first version waited two seconds
+	at each level for the meter, and on a machine that draws in software it
+	ran past its fifteen minutes.
 
 	The colours of the theme are flat and far apart so that a probe can say
 	which thing it landed on.
@@ -23,6 +29,7 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
 Lighting.ClockTime = 15
+Lighting.AutoExposure = false
 
 local floor = Instance.new("Part")
 floor.Name = "Floor"
@@ -81,15 +88,16 @@ screen.Gui.Enabled = false
 for _ = 1, 4 do
     screen:Step("QualityLevel", -1)
 end
+screen:Step("QualityLevel", 1)
 
 local tick = 0
 RunService.Heartbeat:Connect(function()
     tick += 1
-    if tick == 30 or tick == 180 or tick == 330 or tick == 480 then
+    if tick == 20 or tick == 40 or tick == 60 then
         screen:Step("QualityLevel", 1)
-    elseif tick == 610 then
+    elseif tick == 80 then
         screen.Gui.Enabled = true
-    elseif tick == 650 then
+    elseif tick == 95 then
         screen:ShowPage("Display")
     end
 end)

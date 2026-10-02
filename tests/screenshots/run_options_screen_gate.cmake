@@ -5,11 +5,13 @@
 # steps the screen's own quality row the way a player's presses do:
 #
 #   1. A picture per level. The world at `Low`, `Medium`, `High` and `Ultra`,
-#      each chosen through the screen, is the picture of a game STARTED at that
-#      level -- and no two neighbouring levels are the same picture. A
-#      differential, as `run_settings_differential.cmake` is and for its
-#      reason: a level that is accepted and reaches nothing that draws looks
-#      exactly like one that works.
+#      each chosen through the screen, and no two neighbouring levels the
+#      same picture -- a differential, as `run_settings_differential.cmake` is
+#      and for its reason: a level that is accepted and reaches nothing that
+#      draws looks exactly like one that works. The first and the last are
+#      also the picture of a game STARTED at that level; the two between are
+#      `graphics_runtime_differential`'s claim already, and each comparison is
+#      two more runs on a machine that draws in software.
 #   2. The screen itself, by probes: the page that is shown, the button that
 #      says there is something to apply, a setting that is on, and the second
 #      page after it is turned to.
@@ -51,7 +53,7 @@ endfunction()
 # --- 1. A picture per level ---------------------------------------------------
 
 set(levels low medium high ultra)
-set(frames 150 300 450 600)
+set(frames 15 35 55 75)
 set(previous "")
 foreach(level frame IN ZIP_LISTS levels frames)
     render("${OUTPUT}/${level}-by-screen.png" ${frame} --width=640 --height=360)
@@ -59,27 +61,30 @@ foreach(level frame IN ZIP_LISTS levels frames)
         # The skip was already printed by `render`; there is nothing to compare.
         return()
     endif()
-    render("${OUTPUT}/${level}-from-start.png" ${frame} --width=640 --height=360 "--quality=${level}")
+    if(level STREQUAL "low" OR level STREQUAL "ultra")
+        render("${OUTPUT}/${level}-from-start.png" ${frame} --width=640 --height=360 "--quality=${level}")
+    endif()
 
-    # The same picture, to within two things a frame's history leaves. The
-    # exposure adapts, and the screen's frames spent their first seconds at
-    # other levels. And a shadow cascade keeps the box it had last frame while
-    # it can (`shadow.cpp`: that memory is what keeps the texel grid still), so
-    # after a level changed the sun's reach while the game ran, a shadow's edge
-    # sits a fraction of a texel from where a game started at that level puts
-    # it -- 228 pixels of 230 400 at `Ultra` on the machine this was written
-    # on, all of them on shadow edges, and none at the three levels below.
-    execute_process(
-        COMMAND "${IMGCMP}" "${OUTPUT}/${level}-by-screen.png" "${OUTPUT}/${level}-from-start.png"
-                --tolerance 3 --max-different-pixels 512
-        RESULT_VARIABLE same_result
-        OUTPUT_VARIABLE same_output
-        ERROR_VARIABLE same_output)
-    message("${same_output}")
-    if(NOT same_result EQUAL 0)
-        message(FATAL_ERROR
-            "options screen gate: `${level}` chosen on the screen is not the picture of a game started at "
-            "`${level}`.\nThe screen's quality row reaches the model and not everything that draws.")
+    # The same picture, to within what a frame's history leaves: a shadow
+    # cascade keeps the box it had last frame while it can (`shadow.cpp`: that
+    # memory is what keeps the texel grid still), so after a level changed the
+    # sun's reach while the game ran, a shadow's edge sits a fraction of a
+    # texel from where a game started at that level puts it -- 228 pixels of
+    # 230 400 at `Ultra` on the machine this was written on, all on shadow
+    # edges.
+    if(EXISTS "${OUTPUT}/${level}-from-start.png")
+        execute_process(
+            COMMAND "${IMGCMP}" "${OUTPUT}/${level}-by-screen.png" "${OUTPUT}/${level}-from-start.png"
+                    --tolerance 3 --max-different-pixels 512
+            RESULT_VARIABLE same_result
+            OUTPUT_VARIABLE same_output
+            ERROR_VARIABLE same_output)
+        message("${same_output}")
+        if(NOT same_result EQUAL 0)
+            message(FATAL_ERROR
+                "options screen gate: `${level}` chosen on the screen is not the picture of a game started at "
+                "`${level}`.\nThe screen's quality row reaches the model and not everything that draws.")
+        endif()
     endif()
 
     if(previous)
@@ -105,7 +110,7 @@ endforeach()
 # Each probe is x,y as fractions of the picture, then the colour. The window is
 # 860 by 633.6 in the middle of 1280 by 720, with 18 of padding; the scene's
 # theme says which colour is which thing.
-render("${OUTPUT}/graphics-page.png" 640 --width=1280 --height=720)
+render("${OUTPUT}/graphics-page.png" 90 --width=1280 --height=720)
 execute_process(
     COMMAND "${PROBE}" "${OUTPUT}/graphics-page.png"
         # The backdrop outside the window, and the window.
@@ -130,7 +135,7 @@ if(NOT probe_result EQUAL 0)
         "${OUTPUT}/graphics-page.png")
 endif()
 
-render("${OUTPUT}/display-page.png" 670 --width=1280 --height=720)
+render("${OUTPUT}/display-page.png" 105 --width=1280 --height=720)
 execute_process(
     COMMAND "${PROBE}" "${OUTPUT}/display-page.png"
         # The second page's button is the accent now.
