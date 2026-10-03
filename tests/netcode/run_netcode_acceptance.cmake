@@ -55,10 +55,13 @@ foreach(entry IN LISTS conditions)
 
     # Both at once: `execute_process` with two commands runs them together.
     # The server outlives the client by a few seconds and the client's frames
-    # cover the join, the walk and the measuring.
+    # cover the join, the walk and the measuring. **The client draws nothing**
+    # (`--rhi=null`): what is measured is the simulation and the link, and a
+    # runner with no GPU -- CI's Linux one -- could not open the ordinary
+    # device, so the client never ran and the bot printed nothing.
     execute_process(
         COMMAND "${HOST}" --headless --pace=60 "--serve=${port}" --frames=1800 "${game}"
-        COMMAND "${HOST}" --headless --pace=60 "--join=127.0.0.1:${port}" --frames=1500
+        COMMAND "${HOST}" --headless --rhi=null --pace=60 "--join=127.0.0.1:${port}" --frames=1500
                 "--net-delay=${delay}" "--net-jitter=${jitter}" "--net-loss=${loss}" "${game}"
         WORKING_DIRECTORY "${game}"
         RESULT_VARIABLE results
